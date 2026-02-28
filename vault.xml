@@ -8,7 +8,7 @@
     <Date>2026-02-28</Date>
     <Name>Vault</Name>
     <Description>
-        Veeam-style backup and restore plugin for Unraid. Back up and restore Docker containers (images, config, appdata) and virtual machines (live snapshots, cold backups) with full, incremental, and differential backup types. Supports local, SMB, NFS, SFTP, and S3-compatible storage destinations. Features job scheduling, retention policies, real-time progress monitoring, and a web-based management UI.
+        Backup and restore plugin for Unraid. Back up and restore Docker containers (images, config, appdata) and virtual machines (live snapshots, cold backups) with full, incremental, and differential backup types. Supports local, SMB, NFS, SFTP, and S3-compatible storage destinations. Features job scheduling, retention policies, real-time progress monitoring, and a web-based management UI.
     </Description>
     <Requires>
         **No external plugin dependencies** - Vault runs as a self-contained Go daemon with a built-in web UI.
