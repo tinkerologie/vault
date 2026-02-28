@@ -5,6 +5,7 @@ Ansible playbook for deploying, verifying, and managing the Vault plugin on Unra
 ## Setup
 
 1. Copy the inventory template:
+
    ```bash
    cp inventory.yml.example inventory.yml
    ```

@@ -113,16 +113,16 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 	imagePath := filepath.Join(destDir, "image.tar")
 	imgFile, err := os.Create(imagePath)
 	if err != nil {
-		imgReader.Close()
+		_ = imgReader.Close()
 		return nil, fmt.Errorf("creating image file: %w", err)
 	}
 	if _, err := io.Copy(imgFile, imgReader); err != nil {
-		imgFile.Close()
-		imgReader.Close()
+		_ = imgFile.Close()
+		_ = imgReader.Close()
 		return nil, fmt.Errorf("writing image: %w", err)
 	}
-	imgFile.Close()
-	imgReader.Close()
+	_ = imgFile.Close()
+	_ = imgReader.Close()
 	result.Files = append(result.Files, backupFileInfo(imagePath))
 
 	// Step 4: Tar bind mount volumes.

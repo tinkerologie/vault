@@ -21,17 +21,17 @@ func Open(path string) (*DB, error) {
 	}
 
 	if err := sqlDB.Ping(); err != nil {
-		sqlDB.Close()
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		sqlDB.Close()
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
 	if _, err := sqlDB.Exec(schema); err != nil {
-		sqlDB.Close()
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 

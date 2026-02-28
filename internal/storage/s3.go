@@ -11,13 +11,13 @@ import (
 )
 
 type S3Config struct {
-	Endpoint       string `json:"endpoint"`
-	Region         string `json:"region"`
-	Bucket         string `json:"bucket"`
-	AccessKeyID    string `json:"access_key_id"`
+	Endpoint        string `json:"endpoint"`
+	Region          string `json:"region"`
+	Bucket          string `json:"bucket"`
+	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
-	Prefix         string `json:"prefix"`
-	ForcePathStyle bool   `json:"force_path_style"`
+	Prefix          string `json:"prefix"`
+	ForcePathStyle  bool   `json:"force_path_style"`
 }
 
 type S3Adapter struct {

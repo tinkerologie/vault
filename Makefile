@@ -11,7 +11,7 @@ LDFLAGS := -s -w \
 	-X main.buildDate=$(DATE) \
 	-X main.commit=$(HASH)
 
-.PHONY: all build build-local test test-short test-coverage clean lint security-check package deploy
+.PHONY: all build build-local test test-short test-coverage clean lint security-check package deploy deps pre-commit-install pre-commit-run
 
 all: test build-local
 
@@ -41,10 +41,12 @@ clean:
 	rm -f coverage.out coverage.html
 
 lint:
-	golangci-lint run ./...
+	golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...
 
 security-check:
+	gosec -fmt=text -exclude-dir=vendor -exclude-dir=build -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703 -severity=medium -confidence=medium ./...
 	govulncheck ./...
+	go mod verify
 
 package: build
 	@mkdir -p $(BUILD_DIR)
@@ -54,3 +56,11 @@ package: build
 
 deploy:
 	cd ansible && ansible-playbook -i inventory.yml ansible.yml --tags deploy
+
+pre-commit-install:
+	@echo "Installing pre-commit hooks..."
+	pre-commit install
+	pre-commit install --hook-type commit-msg
+
+pre-commit-run:
+	pre-commit run --all-files

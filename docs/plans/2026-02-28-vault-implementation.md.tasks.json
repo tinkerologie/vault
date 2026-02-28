@@ -1,13 +1,47 @@
 {
   "planPath": "docs/plans/2026-02-28-vault-implementation.md",
   "tasks": [
-    {"id": 7, "subject": "Task 0-4: Core architecture (scaffolding, DB, storage interface, API, WebSocket)", "status": "pending"},
-    {"id": 8, "subject": "Task 7: Container backup handler (Docker SDK)", "status": "pending", "blockedBy": [7]},
-    {"id": 9, "subject": "Task 8: VM backup handler (libvirt API)", "status": "pending", "blockedBy": [7]},
-    {"id": 10, "subject": "Task 9: Remote storage adapters (SFTP, S3, SMB)", "status": "pending", "blockedBy": [7]},
-    {"id": 11, "subject": "Task 10-12: Job scheduler, executor, notifications", "status": "pending", "blockedBy": [7, 8, 9, 10]},
-    {"id": 12, "subject": "Task 13-14: PHP web UI (all pages)", "status": "pending", "blockedBy": [7, 11]},
-    {"id": 13, "subject": "Task 15-16: Plugin packaging + CI pipeline", "status": "pending", "blockedBy": [7, 12]}
+    {
+      "id": 7,
+      "subject": "Task 0-4: Core architecture (scaffolding, DB, storage interface, API, WebSocket)",
+      "status": "pending"
+    },
+    {
+      "id": 8,
+      "subject": "Task 7: Container backup handler (Docker SDK)",
+      "status": "pending",
+      "blockedBy": [7]
+    },
+    {
+      "id": 9,
+      "subject": "Task 8: VM backup handler (libvirt API)",
+      "status": "pending",
+      "blockedBy": [7]
+    },
+    {
+      "id": 10,
+      "subject": "Task 9: Remote storage adapters (SFTP, S3, SMB)",
+      "status": "pending",
+      "blockedBy": [7]
+    },
+    {
+      "id": 11,
+      "subject": "Task 10-12: Job scheduler, executor, notifications",
+      "status": "pending",
+      "blockedBy": [7, 8, 9, 10]
+    },
+    {
+      "id": 12,
+      "subject": "Task 13-14: PHP web UI (all pages)",
+      "status": "pending",
+      "blockedBy": [7, 11]
+    },
+    {
+      "id": 13,
+      "subject": "Task 15-16: Plugin packaging + CI pipeline",
+      "status": "pending",
+      "blockedBy": [7, 12]
+    }
   ],
   "lastUpdated": "2026-02-28T11:00:00Z"
 }

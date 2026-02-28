@@ -91,7 +91,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 func (c *Client) writePump() {
 	defer func() {
 		if c.conn != nil {
-			c.conn.CloseNow()
+			_ = c.conn.CloseNow()
 		}
 	}()
 	for msg := range c.send {
@@ -108,7 +108,7 @@ func (c *Client) readPump() {
 	defer func() {
 		c.hub.Unregister(c)
 		if c.conn != nil {
-			c.conn.CloseNow()
+			_ = c.conn.CloseNow()
 		}
 	}()
 	for {

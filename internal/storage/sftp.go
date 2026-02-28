@@ -62,7 +62,7 @@ func (s *SFTPAdapter) connect() (*sftp.Client, error) {
 
 	client, err := sftp.NewClient(conn)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("sftp client: %w", err)
 	}
 	return client, nil
@@ -102,7 +102,7 @@ func (s *SFTPAdapter) Read(path string) (io.ReadCloser, error) {
 	// Note: caller must close the returned ReadCloser. We wrap to also close the sftp client.
 	f, err := client.Open(s.fullPath(path))
 	if err != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, err
 	}
 	return &sftpReadCloser{file: f, client: client}, nil

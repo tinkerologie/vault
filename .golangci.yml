@@ -1,0 +1,132 @@
+# golangci-lint v2 configuration
+# Run: golangci-lint run --config=.golangci.yml ./...
+
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - gosec
+    - unconvert
+
+  settings:
+    gocyclo:
+      min-complexity: 200
+
+    errcheck:
+      check-blank: false
+      check-type-assertions: false
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (net.Conn).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*net/http.Server).Shutdown
+        - (*encoding/json.Encoder).Encode
+        - strconv.ParseUint
+        - strconv.ParseInt
+        - strconv.ParseFloat
+        - strconv.Atoi
+        - fmt.Sscanf
+        - fmt.Fprintf
+        - json.Marshal
+        - json.MarshalIndent
+        - (http.ResponseWriter).Write
+        - url.Parse
+        - os.Remove
+        - os.RemoveAll
+        - os.Chmod
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+
+    gosec:
+      excludes:
+        - G106
+        - G110
+        - G115
+        - G117
+        - G204
+        - G301
+        - G304
+        - G305
+        - G306
+        - G703
+
+  exclusions:
+    paths:
+      - build
+      - ansible
+      - plugin
+    rules:
+      # Exclude deprecated Docker API warnings
+      - linters:
+          - staticcheck
+        text: "(SA1019).*(NewClientWithOpts|WithAPIVersionNegotiation)"
+      - linters:
+          - staticcheck
+        text: "QF1008"
+      # Exclude Close/cleanup errcheck
+      - linters:
+          - errcheck
+        text: "Close"
+      # Exclude Logoff errcheck (SMB cleanup)
+      - linters:
+          - errcheck
+        text: "Logoff"
+      # Exclude Umount errcheck (SMB cleanup)
+      - linters:
+          - errcheck
+        text: "Umount"
+      # Exclude CloseNow errcheck (WebSocket cleanup)
+      - linters:
+          - errcheck
+        text: "CloseNow"
+      # Exclude Shutdown errcheck (HTTP server cleanup)
+      - linters:
+          - errcheck
+        text: "Shutdown"
+      # Exclude Encode errcheck (JSON response writer)
+      - linters:
+          - errcheck
+        text: "Encode"
+      # Exclude MkdirAll errcheck (directory creation)
+      - linters:
+          - errcheck
+        text: "MkdirAll"
+      # Exclude G104 gosec (errors unhandled in cleanup paths)
+      - linters:
+          - gosec
+        text: "G104"
+      # Exclude unused functions that are only called from linux-gated code
+      - linters:
+          - unused
+        text: "(copyFile|copyFileWithProgress)"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+run:
+  timeout: 5m
+  tests: false
+
+output:
+  formats:
+    text:
+      path: stdout
+      colors: true
+      print-linter-name: true
+      print-issued-lines: true
+  sort-order:
+    - file

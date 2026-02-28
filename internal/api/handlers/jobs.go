@@ -42,7 +42,10 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range req.Items {
 		item.JobID = id
-		h.db.AddJobItem(item)
+		if _, err := h.db.AddJobItem(item); err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	req.Job.ID = id
 	respondJSON(w, http.StatusCreated, req.Job)
@@ -75,10 +78,16 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Items != nil {
-		h.db.DeleteJobItems(id)
+		if err := h.db.DeleteJobItems(id); err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		for _, item := range req.Items {
 			item.JobID = id
-			h.db.AddJobItem(item)
+			if _, err := h.db.AddJobItem(item); err != nil {
+				respondError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 	}
 	respondJSON(w, http.StatusOK, req.Job)

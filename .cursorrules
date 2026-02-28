@@ -1,0 +1,24 @@
+# Cursor Rules — Vault
+
+Read `AGENTS.md` in the project root for comprehensive instructions.
+
+## Key Points
+
+- **Language:** Go 1.26 | **Target:** Linux/amd64 (Unraid OS)
+- **Architecture:** Layered (CLI → API Server → Handlers → DB/Storage/Engine)
+- **Storage:** Always implement `storage.Adapter` interface, register in `factory.go`
+- **Engine:** Always implement `engine.Handler` interface, use build tags for platform-specific code
+- **Build:** CGO_ENABLED=0, pure Go (`modernc.org/sqlite`)
+- **Database:** SQLite WAL mode, repos in `internal/db/`
+- **Router:** Chi v5 (`go-chi/chi/v5`), not gorilla/mux
+- **Testing:** Table-driven tests, `httptest` for API handlers
+- **Pre-commit:** Run `make pre-commit-run` before committing
+- **Commits:** Follow Conventional Commits: `feat(scope):`, `fix(scope):`, `docs(scope):`
+
+## Commands
+
+```bash
+make test && make lint        # Test and lint
+make pre-commit-run           # Full pre-commit checks
+make deploy                   # Deploy to Unraid (Ansible)
+```

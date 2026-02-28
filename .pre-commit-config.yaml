@@ -1,0 +1,218 @@
+---
+# Pre-commit hooks configuration
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+default_language_version:
+  python: python3
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '^(.*\.md|.*\.txt)$'
+      - id: end-of-file-fixer
+        exclude: '^(.*\.txt)$'
+      - id: check-yaml
+        args: ["--unsafe"]
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: detect-private-key
+
+  # Go formatting
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+        name: Go Format (gofmt)
+        description: Run gofmt to format Go code
+        args: ["-s", "-w"]
+        files: '\.go$'
+        exclude: "^vendor/"
+
+  # Go imports and vet as local hooks (better PATH handling)
+  - repo: local
+    hooks:
+      - id: go-imports
+        name: Go Imports (goimports)
+        description: Run goimports to organize imports
+        entry: bash -c 'export PATH="$HOME/go/bin:$PATH" && goimports -w "$@"' --
+        language: system
+        files: '\.go$'
+        exclude: "^vendor/"
+
+      - id: go-vet
+        name: Go Vet
+        description: Run go vet for static analysis
+        entry: go vet ./...
+        language: system
+        pass_filenames: false
+        files: '\.go$'
+
+  # Go build - verify code compiles for target platform
+  - repo: local
+    hooks:
+      - id: go-build
+        name: Go Build (linux/amd64)
+        description: Verify code compiles for target platform
+        entry: bash -c 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/vault/'
+        language: system
+        pass_filenames: false
+        files: '\.go$'
+
+  # Go mod tidy
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-mod-tidy
+        name: Go Mod Tidy
+        description: Ensure go.mod and go.sum are up to date
+
+  # golangci-lint - comprehensive linting with zero tolerance
+  - repo: local
+    hooks:
+      - id: golangci-lint
+        name: golangci-lint (Zero Tolerance)
+        description: Run golangci-lint with strict configuration
+        entry: >-
+          bash -c 'export PATH="$HOME/go/bin:$PATH";
+          if command -v golangci-lint >/dev/null 2>&1;
+          then golangci-lint run --timeout=5m --config=.golangci.yml
+          --max-issues-per-linter=0 --max-same-issues=0 --issues-exit-code=1 ./...;
+          else echo "golangci-lint not installed. Run go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest";
+          exit 1; fi'
+        types: [go]
+        language: system
+        pass_filenames: false
+
+  # gosec - Security scanning
+  - repo: local
+    hooks:
+      - id: gosec
+        name: GoSec Security Scanner
+        description: Security scanner for Go code
+        entry: >-
+          bash -c 'export PATH="$HOME/go/bin:$PATH";
+          if command -v gosec >/dev/null 2>&1;
+          then gosec -fmt=text -exclude-dir=vendor -exclude-dir=build
+          -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703
+          -severity=medium -confidence=medium ./...;
+          else echo "gosec not installed. Run go install github.com/securego/gosec/v2/cmd/gosec@latest";
+          exit 1; fi'
+        language: system
+        pass_filenames: false
+        files: '\.go$'
+
+  # Prettier - format Markdown, YAML, JSON, XML
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        name: Prettier
+        description: Format Markdown, YAML, JSON, and XML files
+        types_or: [markdown, yaml, json, xml]
+        exclude: '^(\.claude/|\.ai-scratch/|\.secrets\.baseline)'
+        additional_dependencies:
+          - prettier@3.5.3
+          - "@prettier/plugin-xml@3.4.1"
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.43.0
+    hooks:
+      - id: markdownlint
+        name: Markdown Lint
+        args:
+          [
+            "--fix",
+            "--disable",
+            "MD013",
+            "MD025",
+            "MD003",
+            "MD024",
+            "MD040",
+            "MD001",
+            "MD036",
+            "--",
+          ]
+        files: '\.md$'
+        exclude: '^(\.claude/|\.github/agents/)'
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        name: ShellCheck
+        description: Shell script analysis tool
+        args: ["--severity=error"]
+
+  # Detect secrets and credentials
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: Detect Secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: '^(go\.sum|.*\.lock)$'
+
+  # Spell checking
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        name: Code Spell Checker
+        args:
+          - --ignore-words-list=crate,nd,sav,fo,ue,numer,unexpect,aNULL,hax
+          - "--skip=*.sum,*.lock,*.json,*.mod,coverage.html"
+          - --quiet-level=2
+
+  # Go vulnerability check
+  - repo: local
+    hooks:
+      - id: govulncheck
+        name: Go Vulnerability Check
+        description: Check for known vulnerabilities in Go dependencies
+        entry: >-
+          bash -c 'export PATH="$HOME/go/bin:$PATH";
+          if command -v govulncheck >/dev/null 2>&1;
+          then govulncheck ./...;
+          else echo "govulncheck not installed. Run go install golang.org/x/vuln/cmd/govulncheck@latest";
+          exit 1; fi'
+        language: system
+        pass_filenames: false
+        files: '(\.go$|go\.mod$)'
+
+  # Go mod verify
+  - repo: local
+    hooks:
+      - id: go-mod-verify
+        name: Go Mod Verify
+        description: Verify dependencies have expected content
+        entry: go mod verify
+        language: system
+        pass_filenames: false
+        files: '^go\.(mod|sum)$'
+
+  # Custom: Check VERSION file format
+  - repo: local
+    hooks:
+      - id: check-version-format
+        name: Check VERSION Format
+        description: Ensure VERSION file follows expected format
+        entry: >-
+          bash -c 'if [[ -f VERSION ]]; then version=$(cat VERSION);
+          if ! [[ $version =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]];
+          then echo "VERSION file format invalid (found $version)";
+          exit 1; fi; fi'
+        language: system
+        pass_filenames: false
+        files: "^VERSION$"
