@@ -1,0 +1,69 @@
+{
+  "planPath": "docs/plans/2026-03-02-throughput-staging-plan.md",
+  "tasks": [
+    {
+      "id": 23,
+      "subject": "Task 1: Add DurationSeconds computed field to JobRun",
+      "status": "pending"
+    },
+    {
+      "id": 24,
+      "subject": "Task 2: Add formatSpeed() utility function",
+      "status": "pending"
+    },
+    {
+      "id": 25,
+      "subject": "Task 3: Add throughput chips to Dashboard activity timeline",
+      "status": "pending",
+      "blockedBy": [23, 24]
+    },
+    {
+      "id": 26,
+      "subject": "Task 4: Add throughput chips to History page",
+      "status": "pending",
+      "blockedBy": [23, 24]
+    },
+    {
+      "id": 27,
+      "subject": "Task 5: Add live throughput during active backups",
+      "status": "pending",
+      "blockedBy": [24, 25]
+    },
+    {
+      "id": 28,
+      "subject": "Task 6: Add ResolveInfo() to tempdir package",
+      "status": "pending"
+    },
+    {
+      "id": 29,
+      "subject": "Task 7: Add staging override to tempdir cascade",
+      "status": "pending",
+      "blockedBy": [28]
+    },
+    {
+      "id": 30,
+      "subject": "Task 8: Add staging API endpoints",
+      "status": "pending",
+      "blockedBy": [28, 29]
+    },
+    {
+      "id": 31,
+      "subject": "Task 9: Add staging API client methods",
+      "status": "pending",
+      "blockedBy": [30]
+    },
+    {
+      "id": 32,
+      "subject": "Task 10: Add staging directory section to Settings UI",
+      "status": "pending",
+      "blockedBy": [31]
+    },
+    {
+      "id": 33,
+      "subject": "Task 11: Final verification and build",
+      "status": "pending",
+      "blockedBy": [25, 26, 27, 32]
+    }
+  ],
+  "lastUpdated": "2026-03-02T18:55:00Z"
+}
