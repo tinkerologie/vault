@@ -10,6 +10,7 @@ vault
 *.dylib
 *.test
 *.out
+*.db
 coverage.out
 coverage.html
 
