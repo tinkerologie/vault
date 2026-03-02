@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
     <!ENTITY name      "vault">
     <!ENTITY author    "ruaan-deysel">
-    <!ENTITY version   "2026.3.00">
+    <!ENTITY version   "2026.03.00">
     <!ENTITY launch    "Settings/Vault">
     <!ENTITY gitURL    "https://github.com/&author;/&name;">
     <!ENTITY pluginURL "https://raw.githubusercontent.com/&author;/&name;/main/plugin/vault.plg">
@@ -16,16 +16,8 @@
         min="7.0" support="&support;">
 
 <CHANGES><![CDATA[
-### 2026.3.00
-- Security: API key authentication, TLS support, encrypted storage credentials
-- Full backup/restore engine for Docker containers and libvirt VMs
-- Storage: Local, SMB, NFS, SFTP, S3-compatible backends
-- Cron-based job scheduling with retention policies
-- Svelte 5 web UI with real-time WebSocket progress
-- Ansible-driven build/deploy/verify pipeline
-
-### 0.1.0
-- Initial release
+See full changelog at:
+https://github.com/ruaan-deysel/vault/blob/main/CHANGELOG.md
 ]]></CHANGES>
 
 <!-- Require Unraid 7.0 or later -->
