@@ -271,11 +271,13 @@
                   Jobs
                 </button>
                 <button onclick={() => openEdit(src)}
-                  class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors">
+                  class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors"
+                  aria-label="Edit replication target">
                   Edit
                 </button>
                 <button onclick={() => confirmDelete = { show: true, id: src.id, name: src.name }}
-                  class="px-3 py-1.5 bg-danger/10 hover:bg-danger/20 text-danger text-xs font-medium rounded-lg transition-colors">
+                  class="px-3 py-1.5 bg-danger/10 hover:bg-danger/20 text-danger text-xs font-medium rounded-lg transition-colors"
+                  aria-label="Delete replication target">
                   Delete
                 </button>
               </div>

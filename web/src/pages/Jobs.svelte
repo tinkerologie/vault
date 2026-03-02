@@ -236,6 +236,37 @@
     }
   }
 
+  async function duplicateJob(job) {
+    try {
+      const data = await api.getJob(job.id)
+      const fullJob = data.job
+      form = {
+        ...defaultForm(),
+        name: `${fullJob.name} (copy)`,
+        description: fullJob.description || '',
+        schedule: fullJob.schedule || '0 2 * * *',
+        storage_dest_id: fullJob.storage_dest_id || 0,
+        compression: fullJob.compression || 'zstd',
+        encryption: fullJob.encryption || 'none',
+        container_mode: fullJob.container_mode || 'one_by_one',
+        backup_type_chain: fullJob.backup_type_chain || 'full',
+        retention_count: fullJob.retention_count || 5,
+        retention_days: fullJob.retention_days || 30,
+        pre_script: fullJob.pre_script || '',
+        post_script: fullJob.post_script || '',
+        notify_on: fullJob.notify_on || 'failure',
+        verify_backup: fullJob.verify_backup ?? true,
+        enabled: false,
+        items: (data.items || []).map(i => ({ item_type: i.item_type, item_name: i.item_name })),
+      }
+      editing = null
+      step = 3
+      showModal = true
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
   function startNameEdit(job) {
     editingNameId = job.id
     editName = job.name
@@ -392,6 +423,7 @@
                 disabled={runningJob === job.id}
                 class="p-2 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors"
                 title="Run Now"
+                aria-label="Run backup now"
               >
                 {#if runningJob === job.id}
                   <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -399,10 +431,13 @@
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 {/if}
               </button>
-              <button onclick={() => openEdit(job.id)} class="p-2 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit">
+              <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              </button>
+              <button onclick={() => openEdit(job.id)} class="p-2 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit job">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
               </button>
-              <button onclick={() => deleteJob(job.id, job.name)} class="p-2 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete">
+              <button onclick={() => deleteJob(job.id, job.name)} class="p-2 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete job">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
             </div>

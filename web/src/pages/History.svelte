@@ -6,6 +6,7 @@
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import SizeChart from '../components/SizeChart.svelte'
+  import PullToRefresh from '../components/PullToRefresh.svelte'
 
   let loading = $state(true)
   let error = $state('')
@@ -145,6 +146,7 @@
   })
 </script>
 
+<PullToRefresh onrefresh={loadData}>
 <div>
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
     <div>
@@ -352,3 +354,4 @@
     {/if}
   {/if}
 </div>
+</PullToRefresh>

@@ -10,6 +10,7 @@
   import Welcome from '../components/Welcome.svelte'
   import HealthGauge from '../components/HealthGauge.svelte'
   import ActivityTimeline from '../components/ActivityTimeline.svelte'
+  import PullToRefresh from '../components/PullToRefresh.svelte'
 
   let loading = $state(true)
   let error = $state('')
@@ -154,6 +155,7 @@
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
 
+<PullToRefresh onrefresh={loadDashboard}>
 <div>
   <div class="mb-8">
     <h1 class="text-2xl font-bold text-text">Dashboard</h1>
@@ -550,3 +552,4 @@
     </div>
   {/if}
 </div>
+</PullToRefresh>

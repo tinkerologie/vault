@@ -1,0 +1,54 @@
+#!/bin/bash
+
+DAEMON=/usr/local/sbin/vault
+PIDFILE=/var/run/vault.pid
+DB=/boot/config/plugins/vault/vault.db
+CONFIG=/boot/config/plugins/vault/vault.cfg
+LOG=/var/log/vault.log
+
+# Read port from config, default to 24085.
+PORT=24085
+if [ -f "$CONFIG" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG"
+    PORT="${PORT:-24085}"
+fi
+ADDR=":${PORT}"
+
+start() {
+    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "Vault daemon is already running"
+        return 1
+    fi
+    echo "Starting Vault daemon..."
+    nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
+    echo $! > "$PIDFILE"
+    echo "Vault daemon started (PID: $(cat $PIDFILE))"
+}
+
+stop() {
+    if [ -f "$PIDFILE" ]; then
+        echo "Stopping Vault daemon..."
+        kill $(cat "$PIDFILE") 2>/dev/null
+        rm -f "$PIDFILE"
+        echo "Vault daemon stopped"
+    else
+        echo "Vault daemon is not running"
+    fi
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "Vault daemon is running (PID: $(cat $PIDFILE))"
+    else
+        echo "Vault daemon is not running"
+    fi
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; sleep 1; start ;;
+    status)  status ;;
+    *)       echo "Usage: $0 {start|stop|restart|status}" ;;
+esac

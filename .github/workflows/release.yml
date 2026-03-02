@@ -4,22 +4,70 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v2026.3.00)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   release:
+    name: Build and Release
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version: "1.26"
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+            VERSION=${TAG#v}
+          else
+            TAG=${GITHUB_REF#refs/tags/}
+            VERSION=${TAG#v}
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION (Tag: $TAG)"
+
+          if [[ "$VERSION" =~ (alpha|beta|rc) ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Verify VERSION file matches tag
+        run: |
+          FILE_VERSION=$(cat VERSION | tr -d '\n')
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+
+          if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: VERSION file ($FILE_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+          echo "VERSION file matches tag: $TAG_VERSION"
 
       - name: Download Go dependencies
         run: go mod download
@@ -27,23 +75,81 @@ jobs:
       - name: Run tests
         run: go test ./... -v
 
-      - name: Build web assets
-        run: cd web && npm ci && npm run build
-
-      - name: Cross-compile Linux binary
-        env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: amd64
+      - name: Build release package
         run: |
-          VERSION=$(cat VERSION)
-          DATE=$(date '+%Y.%m.%d')
-          HASH=$(git rev-parse --short HEAD)
-          go build -ldflags "-s -w -X main.version=${VERSION} -X main.buildDate=${DATE} -X main.commit=${HASH}" \
-            -o build/vault-linux-amd64 ./cmd/vault/
+          echo "Building release package..."
+          make package
 
-      - name: Create Release
+          PACKAGE_FILE="build/vault-${{ steps.version.outputs.version }}.tgz"
+          if [ ! -f "$PACKAGE_FILE" ]; then
+            echo "ERROR: Package file not found: $PACKAGE_FILE"
+            ls -la build/
+            exit 1
+          fi
+
+          echo "Package created: $PACKAGE_FILE"
+          ls -lh "$PACKAGE_FILE"
+
+      - name: Calculate MD5 checksum
+        id: checksum
+        run: |
+          PACKAGE_FILE="build/vault-${{ steps.version.outputs.version }}.tgz"
+          MD5=$(md5sum "$PACKAGE_FILE" | awk '{print $1}')
+
+          echo "md5=$MD5" >> $GITHUB_OUTPUT
+          echo "MD5 checksum: $MD5"
+
+          echo "$MD5" > build/MD5SUM
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/vault-linux-amd64
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: v${{ steps.version.outputs.version }}
           generate_release_notes: true
+          files: |
+            build/vault-${{ steps.version.outputs.version }}.tgz
+            build/MD5SUM
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          draft: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update PLG file with MD5 hash
+        run: |
+          MD5="${{ steps.checksum.outputs.md5 }}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          echo "Updating PLG file with MD5: $MD5"
+          sed -i "s/<!ENTITY md5.*\".*\">/<!ENTITY md5         \"$MD5\">/" plugin/vault.plg
+
+          echo "Updated PLG file"
+          grep "ENTITY md5" plugin/vault.plg
+
+      - name: Commit and push PLG updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet plugin/vault.plg; then
+            echo "No changes to PLG file"
+          else
+            git fetch origin main
+            git checkout main
+            git pull origin main
+
+            MD5="${{ steps.checksum.outputs.md5 }}"
+            sed -i "s/<!ENTITY md5.*\".*\">/<!ENTITY md5         \"$MD5\">/" plugin/vault.plg
+
+            git add plugin/vault.plg
+            git commit -m "chore: update PLG MD5 hash for v${{ steps.version.outputs.version }} [skip ci]"
+            git push origin main
+            echo "Committed and pushed PLG updates"
+          fi
+
+      - name: Release Summary
+        run: |
+          echo "## v${{ steps.version.outputs.version }} Released!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** vault-${{ steps.version.outputs.version }}.tgz" >> $GITHUB_STEP_SUMMARY
+          echo "**MD5:** ${{ steps.checksum.outputs.md5 }}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY

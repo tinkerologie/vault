@@ -13,7 +13,7 @@ LDFLAGS := -s -w \
 
 ANSIBLE_CMD := cd ansible && ansible-playbook -i inventory.yml ansible.yml
 
-.PHONY: all build build-local build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run
+.PHONY: all build build-local build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package
 
 all: test build-local
 
@@ -58,6 +58,25 @@ clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf web/dist
 	rm -f coverage.out coverage.html
+
+# ── Release packaging ──────────────────────────────────────────────────────────
+
+release: build-web
+	@echo "Cross-compiling for Linux/amd64..."
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64 ./cmd/vault/
+
+package: release
+	@echo "Creating plugin package..."
+	@mkdir -p $(BUILD_DIR)/pkg/usr/local/sbin
+	@mkdir -p $(BUILD_DIR)/pkg/etc/rc.d
+	@mkdir -p $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)
+	cp $(BUILD_DIR)/$(BINARY)-linux-amd64 $(BUILD_DIR)/pkg/usr/local/sbin/$(BINARY)
+	cp plugin/rc.vault $(BUILD_DIR)/pkg/etc/rc.d/rc.vault
+	cp -r plugin/pages/*.page $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
+	cp -r plugin/pages/include $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
+	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
+	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -czf ../$(BINARY)-$(VERSION).tgz usr/ etc/
+	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).tgz"
 
 lint:
 	golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...

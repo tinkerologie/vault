@@ -24,6 +24,10 @@
       e.preventDefault()
       showCommandPalette = !showCommandPalette
     }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'L') {
+      e.preventDefault()
+      cycleTheme()
+    }
   }
 
   const nav = [
@@ -53,9 +57,25 @@
     return route.startsWith(path)
   }
 
+  const mobileNav = [
+    { path: '/', label: 'Home', icon: nav[0].icon },
+    { path: '/jobs', label: 'Jobs', icon: nav[1].icon },
+    { path: '/history', label: 'History', icon: nav[3].icon },
+    { path: '/restore', label: 'Restore', icon: nav[4].icon },
+    { path: '/settings', label: 'More', icon: nav[7].icon },
+  ]
+
   function go(path) {
     navigate(path)
     mobileMenuOpen = false
+  }
+
+  function cycleTheme() {
+    /** @type {Array<'light'|'system'|'dark'>} */
+    const themes = ['light', 'system', 'dark']
+    const current = getTheme()
+    const next = themes[(themes.indexOf(current) + 1) % themes.length]
+    setTheme(next)
   }
 </script>
 
@@ -100,12 +120,10 @@
         {getWsStatus() === 'connected' ? 'Connected' : getWsStatus() === 'connecting' ? 'Connecting...' : 'Disconnected'}
       </div>
       <button
-        onclick={() => {
-          const next = getTheme() === 'dark' ? 'light' : getTheme() === 'light' ? 'system' : 'dark'
-          setTheme(next)
-        }}
+        onclick={cycleTheme}
         class="p-1.5 rounded-lg text-text-dim hover:text-text hover:bg-surface-3 transition-colors"
-        title="Theme: {getTheme()}"
+        title="Theme: {getTheme()} (Ctrl+Shift+L)"
+        aria-label="Toggle theme"
       >
         {#if getIsDark()}
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
@@ -144,7 +162,7 @@
   </div>
 
   <!-- Main content -->
-  <main class="flex-1 overflow-y-auto lg:pt-0 pt-14">
+  <main class="flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {#if getRoute() === '/'}
         <Dashboard />
@@ -167,5 +185,23 @@
       {/if}
     </div>
   </main>
+
+  <!-- Mobile bottom navigation -->
+  <nav class="fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-border flex justify-around py-2 z-40 lg:hidden" aria-label="Mobile navigation">
+    {#each mobileNav as item}
+      <button
+        onclick={() => go(item.path)}
+        class="flex flex-col items-center gap-0.5 px-3 py-1 text-xs transition-colors
+          {isActive(item.path) ? 'text-vault' : 'text-text-muted'}"
+        aria-label={item.label}
+      >
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d={item.icon} />
+        </svg>
+        <span>{item.label}</span>
+      </button>
+    {/each}
+  </nav>
+
   {/if}
 </div>

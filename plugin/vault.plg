@@ -4,155 +4,66 @@
     <!ENTITY author    "ruaan-deysel">
     <!ENTITY version   "2026.3.00">
     <!ENTITY launch    "Settings/Vault">
-    <!ENTITY gitURL      "https://github.com/&author;/&name;">
-    <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg">
-    <!ENTITY bundle      "&name;-&version;.tgz">
-    <!ENTITY bundleURL   "&gitURL;/releases/download/v&version;/&bundle;">
+    <!ENTITY gitURL    "https://github.com/&author;/&name;">
+    <!ENTITY pluginURL "https://raw.githubusercontent.com/&author;/&name;/main/plugin/vault.plg">
+    <!ENTITY bundle    "&name;-&version;.tgz">
+    <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
+    <!ENTITY md5       "">
+    <!ENTITY support   "&gitURL;/issues">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
         launch="&launch;" pluginURL="&pluginURL;" icon="shield"
-        min="7.0" support="">
+        min="7.0" support="&support;">
 
 <CHANGES><![CDATA[
-### 2026.3.0
+### 2026.3.00
 - Security: API key authentication, TLS support, encrypted storage credentials
 - Full backup/restore engine for Docker containers and libvirt VMs
-- Storage: Local, SMB, SFTP, S3-compatible backends
+- Storage: Local, SMB, NFS, SFTP, S3-compatible backends
 - Cron-based job scheduling with retention policies
 - Svelte 5 web UI with real-time WebSocket progress
 - Ansible-driven build/deploy/verify pipeline
 
 ### 0.1.0
 - Initial release
-- Docker container backup & restore (full image + config + appdata)
-- VM backup & restore (live snapshot + cold backup)
-- Storage destinations: Local, SMB, NFS, SFTP, S3-compatible
-- Full, incremental, and differential backup types
-- Veeam-style job scheduling with retention policies
-- Web UI with Dashboard, Jobs, Restore, Storage, History, Settings
 ]]></CHANGES>
 
-<!-- Download Go binary -->
-<FILE Name="/usr/local/sbin/vault" Mode="0755">
-    <URL>https://github.com/ruaandeysel/vault/releases/download/v&version;/vault-linux-amd64</URL>
-</FILE>
-
-<!-- Create plugin directories -->
+<!-- Require Unraid 7.0 or later -->
 <FILE Run="/bin/bash">
     <INLINE><![CDATA[
-mkdir -p /boot/config/plugins/vault
-mkdir -p /usr/local/emhttp/plugins/vault/include
-mkdir -p /usr/local/emhttp/plugins/vault/assets/css
-mkdir -p /usr/local/emhttp/plugins/vault/assets/js
-]]></INLINE>
-</FILE>
-
-<!-- Copy page files -->
-<FILE Name="/usr/local/emhttp/plugins/vault/Vault.page">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/Vault.page</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/VaultJobs.page">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultJobs.page</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/VaultRestore.page">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultRestore.page</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/VaultStorage.page">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultStorage.page</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/VaultHistory.page">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultHistory.page</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/VaultSettings.page">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultSettings.page</URL>
-</FILE>
-
-<!-- Copy includes -->
-<FILE Name="/usr/local/emhttp/plugins/vault/include/api.php">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/include/api.php</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/include/control.php">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/include/control.php</URL>
-</FILE>
-
-<!-- Copy assets -->
-<FILE Name="/usr/local/emhttp/plugins/vault/assets/css/vault.css">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/assets/css/vault.css</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/assets/js/vault.js">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/assets/js/vault.js</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/assets/js/jobs.js">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/assets/js/jobs.js</URL>
-</FILE>
-<FILE Name="/usr/local/emhttp/plugins/vault/assets/js/restore.js">
-    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/assets/js/restore.js</URL>
-</FILE>
-
-<!-- RC script for daemon management -->
-<FILE Name="/etc/rc.d/rc.vault" Mode="0755">
-    <INLINE><![CDATA[
-#!/bin/bash
-
-DAEMON=/usr/local/sbin/vault
-PIDFILE=/var/run/vault.pid
-DB=/boot/config/plugins/vault/vault.db
-CONFIG=/boot/config/plugins/vault/vault.cfg
-LOG=/var/log/vault.log
-
-# Read port from config, default to 24085.
-PORT=24085
-if [ -f "$CONFIG" ]; then
-    # shellcheck source=/dev/null
-    source "$CONFIG"
-    PORT="${PORT:-24085}"
+source /etc/unraid-version
+if [[ "${version%%.*}" -lt 7 ]]; then
+    echo "Vault requires Unraid 7.0 or later"
+    exit 1
 fi
-ADDR=":${PORT}"
-
-start() {
-    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
-        echo "Vault daemon is already running"
-        return 1
-    fi
-    echo "Starting Vault daemon..."
-    nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
-    echo $! > "$PIDFILE"
-    echo "Vault daemon started (PID: $(cat $PIDFILE))"
-}
-
-stop() {
-    if [ -f "$PIDFILE" ]; then
-        echo "Stopping Vault daemon..."
-        kill $(cat "$PIDFILE") 2>/dev/null
-        rm -f "$PIDFILE"
-        echo "Vault daemon stopped"
-    else
-        echo "Vault daemon is not running"
-    fi
-}
-
-status() {
-    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
-        echo "Vault daemon is running (PID: $(cat $PIDFILE))"
-    else
-        echo "Vault daemon is not running"
-    fi
-}
-
-case "$1" in
-    start)   start ;;
-    stop)    stop ;;
-    restart) stop; sleep 1; start ;;
-    status)  status ;;
-    *)       echo "Usage: $0 {start|stop|restart|status}" ;;
-esac
 ]]></INLINE>
 </FILE>
 
-<!-- Start daemon on install -->
+<!-- Download and install the bundle -->
+<FILE Name="/boot/config/plugins/&name;/&bundle;" Run="upgradepkg --install-new">
+    <URL>&bundleURL;</URL>
+    <MD5>&md5;</MD5>
+</FILE>
+
+<!-- Post-install: create default config and start daemon -->
 <FILE Run="/bin/bash">
     <INLINE><![CDATA[
+# Create default config if missing
+CONFIG="/boot/config/plugins/vault/vault.cfg"
+if [ ! -f "$CONFIG" ]; then
+    echo 'PORT=24085' > "$CONFIG"
+fi
+
+# Create data directory
+mkdir -p /boot/config/plugins/vault
+
+# Ensure permissions
+chmod 755 /usr/local/sbin/vault
+chmod 755 /etc/rc.d/rc.vault
+
+# Start daemon
 /etc/rc.d/rc.vault start
+
 echo "Vault plugin installed successfully"
 ]]></INLINE>
 </FILE>
@@ -160,12 +71,20 @@ echo "Vault plugin installed successfully"
 <!-- Removal script -->
 <FILE Run="/bin/bash" Method="remove">
     <INLINE><![CDATA[
-/etc/rc.d/rc.vault stop
+# Stop daemon
+/etc/rc.d/rc.vault stop 2>/dev/null
+
+# Remove installed package files
+removepkg vault-&version; 2>/dev/null
+
+# Clean up
 rm -f /usr/local/sbin/vault
 rm -f /etc/rc.d/rc.vault
 rm -rf /usr/local/emhttp/plugins/vault
 rm -f /var/log/vault.log
 rm -f /var/run/vault.pid
+rm -rf /boot/config/plugins/vault/*.tgz
+
 echo "Vault plugin removed"
 ]]></INLINE>
 </FILE>
