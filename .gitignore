@@ -2,6 +2,10 @@
 build/
 vault
 
+# Staging temp dirs
+.vault-stage/
+.vault-tmp/
+
 # Go
 *.exe
 *.exe~
@@ -24,6 +28,10 @@ ansible/inventory.yml
 .playwright/
 .playwright-cli/
 *.auth-state.json
+
+# Screenshots (review / verification)
+review-*.png
+*-screenshot*.png
 
 # AI agent scratch
 .ai-scratch/

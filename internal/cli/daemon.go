@@ -16,6 +16,7 @@ import (
 	"github.com/ruaandeysel/vault/internal/db"
 	"github.com/ruaandeysel/vault/internal/replication"
 	"github.com/ruaandeysel/vault/internal/scheduler"
+	"github.com/ruaandeysel/vault/internal/tempdir"
 	"github.com/spf13/cobra"
 )
 
@@ -51,6 +52,17 @@ var daemonCmd = &cobra.Command{
 			log.Printf("Warning: failed to clean up stale job runs: %v", err)
 		} else if cleaned > 0 {
 			log.Printf("Cleaned up %d stale job run(s) from previous session", cleaned)
+		}
+
+		// Clean up staging directories left behind by crashed backup/restore runs.
+		if dests, err := database.ListStorageDestinations(); err == nil {
+			configs := make([]tempdir.StorageConfig, len(dests))
+			for i, d := range dests {
+				configs[i] = tempdir.StorageConfig{Type: d.Type, Config: d.Config}
+			}
+			tempdir.CleanupStale(configs)
+		} else {
+			log.Printf("Warning: failed to list storage destinations for cleanup: %v", err)
 		}
 
 		// Load or generate the server key for sealing secrets at rest.

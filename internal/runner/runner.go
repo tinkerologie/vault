@@ -22,6 +22,7 @@ import (
 	"github.com/ruaandeysel/vault/internal/engine"
 	"github.com/ruaandeysel/vault/internal/notify"
 	"github.com/ruaandeysel/vault/internal/storage"
+	"github.com/ruaandeysel/vault/internal/tempdir"
 	"github.com/ruaandeysel/vault/internal/ws"
 )
 
@@ -421,11 +422,11 @@ func (r *Runner) RunJob(jobID int64) {
 // If verify is true, it reads each file back and validates SHA-256 checksums.
 // If passphrase is non-empty, each file is encrypted with age before uploading.
 func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string) (*engine.BackupResult, map[string]string, error) {
-	tmpDir, err := r.createTempDir(dest)
+	tmpDir, cleanup, err := tempdir.CreateBackupDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config})
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer cleanup()
 
 	var handler engine.Handler
 	switch item.Type {
@@ -463,6 +464,7 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating storage adapter: %w", err)
 	}
+	defer storage.CloseAdapter(adapter)
 
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
@@ -758,17 +760,18 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
+	defer storage.CloseAdapter(adapter)
 
 	itemStoragePath := filepath.Join(restorePoint.StoragePath, itemName)
 
 	// Parse checksums from restore point metadata for verification.
 	expectedChecksums := r.parseItemChecksums(restorePoint.Metadata, itemName)
 
-	tmpDir, err := os.MkdirTemp("", "vault-restore-*")
+	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config})
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer cleanup()
 
 	files, err := adapter.List(itemStoragePath)
 	if err != nil {
@@ -930,49 +933,6 @@ func (r *Runner) logActivity(level, category, message, details string) {
 	})
 }
 
-// cacheTmpPaths lists paths to try (in order) for fast SSD/NVMe-backed
-// temporary staging. The first writable path wins.
-var cacheTmpPaths = []string{
-	"/mnt/cache",
-}
-
-// createTempDir creates a temporary directory for backup staging.
-// Priority order:
-//  1. /mnt/cache/.vault-tmp — SSD/NVMe cache drive (fastest)
-//  2. <local-storage-path>/.vault-tmp — array storage (avoids /tmp)
-//  3. System temp dir — fallback
-func (r *Runner) createTempDir(dest db.StorageDestination) (string, error) {
-	// Try fast cache/SSD paths first.
-	for _, base := range cacheTmpPaths {
-		info, err := os.Stat(base)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		tmpBase := filepath.Join(base, ".vault-tmp")
-		if err := os.MkdirAll(tmpBase, 0750); err == nil {
-			dir, err := os.MkdirTemp(tmpBase, "backup-*")
-			if err == nil {
-				log.Printf("runner: using cache temp dir %s", dir)
-				return dir, nil
-			}
-		}
-	}
-
-	// Fall back to local storage path.
-	if dest.Type == "local" {
-		var cfg struct {
-			Path string `json:"path"`
-		}
-		if err := json.Unmarshal([]byte(dest.Config), &cfg); err == nil && cfg.Path != "" {
-			tmpBase := filepath.Join(cfg.Path, ".vault-tmp")
-			if err := os.MkdirAll(tmpBase, 0750); err == nil {
-				return os.MkdirTemp(tmpBase, "backup-*")
-			}
-		}
-	}
-	return os.MkdirTemp("", "vault-backup-*")
-}
-
 // sendNotification dispatches Unraid notifications based on job outcome and the
 // job's notify_on preference ("always", "failure", "never").
 // It also respects the global notifications_enabled setting.
@@ -1113,6 +1073,7 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 		log.Printf("runner: failed to create adapter for manifest: %v", err)
 		return
 	}
+	defer storage.CloseAdapter(adapter)
 
 	manifestPath := filepath.Join(basePath, "manifest.json")
 	if err := adapter.Write(manifestPath, strings.NewReader(string(data))); err != nil {
@@ -1141,6 +1102,7 @@ func (r *Runner) backupDatabase(dest db.StorageDestination, basePath string) {
 		log.Printf("runner: failed to create adapter for db backup: %v", err)
 		return
 	}
+	defer storage.CloseAdapter(adapter)
 
 	destPath := filepath.Join(basePath, "vault.db")
 	if err := adapter.Write(destPath, f); err != nil {
@@ -1157,6 +1119,7 @@ func (r *Runner) enforceRetention(dest db.StorageDestination, jobID int64, keepC
 	if err != nil {
 		log.Printf("runner: failed to create adapter for retention cleanup: %v", err)
 	}
+	defer storage.CloseAdapter(adapter)
 
 	// Count-based retention: keep most recent N restore points.
 	if keepCount > 0 {
@@ -1235,6 +1198,7 @@ func (r *Runner) CleanupJobStorage(jobID int64) error {
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
+	defer storage.CloseAdapter(adapter)
 
 	rps, err := r.db.ListRestorePoints(jobID)
 	if err != nil {
@@ -1261,6 +1225,7 @@ func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
+	defer storage.CloseAdapter(adapter)
 
 	r.DeleteStorageDir(adapter, "vault/")
 	return nil
@@ -1273,6 +1238,7 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]
 	if err != nil {
 		return nil, fmt.Errorf("creating storage adapter: %w", err)
 	}
+	defer storage.CloseAdapter(adapter)
 
 	// List all entries under vault/.
 	topEntries, err := adapter.List("vault/")

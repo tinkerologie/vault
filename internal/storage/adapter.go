@@ -20,3 +20,11 @@ type Adapter interface {
 	Stat(path string) (FileInfo, error)
 	TestConnection() error
 }
+
+// CloseAdapter closes an adapter if it implements io.Closer.
+// Safe to call on any Adapter; adapters without resources are no-ops.
+func CloseAdapter(a Adapter) {
+	if closer, ok := a.(io.Closer); ok {
+		closer.Close()
+	}
+}

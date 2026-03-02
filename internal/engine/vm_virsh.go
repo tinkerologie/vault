@@ -192,7 +192,9 @@ func (h *VMHandler) backupSnapshot(name string, diskPaths []string, destDir stri
 			"--active", "--delete", "--wait", "--verbose"); err != nil {
 			progress(name, 80, fmt.Sprintf("warning: blockcommit for %s: %v", filepath.Base(diskPath), err))
 		}
-		os.Remove(snapshotOverlay)
+		if err := os.Remove(snapshotOverlay); err != nil && !os.IsNotExist(err) {
+			progress(name, 80, fmt.Sprintf("warning: failed to remove snapshot overlay %s: %v", snapshotOverlay, err))
+		}
 	}
 
 	return nil

@@ -142,4 +142,11 @@ func (n *NFSAdapter) TestConnection() error {
 	return n.local.TestConnection()
 }
 
+// Close unmounts the NFS share and cleans up the temporary mount point.
+// It is safe to call if the share is not currently mounted.
+func (n *NFSAdapter) Close() error {
+	n.unmount()
+	return nil
+}
+
 var _ Adapter = (*NFSAdapter)(nil)
