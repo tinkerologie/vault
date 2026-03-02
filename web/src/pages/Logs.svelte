@@ -10,21 +10,31 @@
   let error = $state('')
   let entries = $state([])
   let category = $state('')
+  let levelFilter = $state('')
   let limit = $state(100)
   let expandedIds = $state(new Set())
+  let autoScroll = $state(true)
+  let logContainer = $state(null)
+  let copiedId = $state(null)
 
   // Real-time: prepend new activity entries via WebSocket instead of full reload
   onMount(() => {
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'activity' && msg.entry) {
-        // If user is filtering by category, only show matching entries
         if (category && msg.entry.category !== category) return
-        // Prepend the new entry — avoid duplicates by checking id
         if (!entries.some(e => e.id === msg.entry.id)) {
           entries = [msg.entry, ...entries].slice(0, limit)
+          // Auto-expand errors
+          if (msg.entry.level === 'error' && msg.entry.details) {
+            const next = new Set(expandedIds)
+            next.add(msg.entry.id)
+            expandedIds = next
+          }
+          if (autoScroll && logContainer) {
+            requestAnimationFrame(() => logContainer.scrollTop = 0)
+          }
         }
       } else if (msg.type === 'activity') {
-        // Legacy: no entry payload, do a full reload
         loadLogs()
       }
     })
@@ -38,11 +48,23 @@
     { value: 'system', label: 'System' },
   ]
 
+  const levels = [
+    { value: '', label: 'All Levels' },
+    { value: 'error', label: 'Error' },
+    { value: 'warning', label: 'Warning' },
+    { value: 'info', label: 'Info' },
+  ]
+
   async function loadLogs() {
     loading = true
     try {
       entries = (await api.getActivity(limit, category)) || []
       expandedIds = new Set()
+      // Auto-expand errors
+      for (const e of entries) {
+        if (e.level === 'error' && e.details) expandedIds.add(e.id)
+      }
+      expandedIds = new Set(expandedIds)
     } catch (e) {
       error = e.message || 'Failed to load activity log'
       entries = []
@@ -52,10 +74,13 @@
   }
 
   $effect(() => {
-    // Re-fetch when category changes
     category
     loadLogs()
   })
+
+  let filteredEntries = $derived(
+    levelFilter ? entries.filter(e => e.level === levelFilter) : entries
+  )
 
   function levelColor(level) {
     switch (level) {
@@ -106,6 +131,29 @@
   function detailLabel(key) {
     return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
+
+  async function copyEntry(entry) {
+    const text = `[${entry.level?.toUpperCase()}] [${entry.category}] ${entry.message}${entry.details ? '\n' + entry.details : ''}`
+    try {
+      await navigator.clipboard.writeText(text)
+      copiedId = entry.id
+      setTimeout(() => { copiedId = null }, 2000)
+    } catch { /* ignore */ }
+  }
+
+  function exportLogs() {
+    const lines = filteredEntries.map(e => {
+      const ts = formatDate(e.created_at)
+      return `[${ts}] [${e.level?.toUpperCase()}] [${e.category}] ${e.message}${e.details ? ' — ' + e.details : ''}`
+    })
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `vault-logs-${new Date().toISOString().slice(0, 10)}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 </script>
 
 <div>
@@ -114,14 +162,27 @@
       <h1 class="text-2xl font-bold text-text">Activity Log</h1>
       <p class="text-sm text-text-muted mt-1">System activity and backup operation history</p>
     </div>
-    <button onclick={loadLogs} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5" aria-label="Refresh">
-      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-      Refresh
-    </button>
+    <div class="flex items-center gap-2">
+      <!-- Auto-scroll toggle -->
+      <label class="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer" title="Auto-scroll to new entries">
+        <input type="checkbox" bind:checked={autoScroll} class="accent-vault w-3.5 h-3.5" />
+        Auto-scroll
+      </label>
+      <!-- Export button -->
+      <button onclick={exportLogs} disabled={filteredEntries.length === 0}
+        class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Export logs">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Export
+      </button>
+      <button onclick={loadLogs} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5" aria-label="Refresh">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Refresh
+      </button>
+    </div>
   </div>
 
   <!-- Filters -->
-  <div class="flex items-center gap-2 mb-4">
+  <div class="flex flex-wrap items-center gap-2 mb-4">
     {#each categories as cat}
       <button
         type="button"
@@ -133,6 +194,18 @@
         {cat.label}
       </button>
     {/each}
+    <div class="w-px h-5 bg-border"></div>
+    {#each levels as lev}
+      <button
+        type="button"
+        onclick={() => (levelFilter = lev.value)}
+        class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {levelFilter === lev.value
+          ? (lev.value === 'error' ? 'bg-danger text-white' : lev.value === 'warning' ? 'bg-warning text-white' : 'bg-vault text-white')
+          : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}"
+      >
+        {lev.label}
+      </button>
+    {/each}
   </div>
 
   {#if loading}
@@ -142,13 +215,13 @@
       <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       <span class="text-sm">{error}</span>
     </div>
-  {:else if entries.length === 0}
+  {:else if filteredEntries.length === 0}
     <EmptyState icon="📝" title="No activity yet" subtitle="Events are logged automatically" description="Activity from backup and restore operations will appear here." />
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+    <div class="bg-surface-2 border border-border rounded-xl overflow-hidden" bind:this={logContainer}>
       <div class="divide-y divide-border">
-        {#each entries as entry}
-          <div class="px-5 py-3.5 hover:bg-surface-3/30 transition-colors">
+        {#each filteredEntries as entry}
+          <div class="px-5 py-3.5 hover:bg-surface-3/30 transition-colors {entry.level === 'error' ? 'border-l-2 border-l-danger' : ''} group">
             <div class="flex items-start gap-3">
               <div class="mt-0.5 shrink-0">
                 <svg class="w-4 h-4 {entry.level === 'error' ? 'text-danger' : entry.level === 'warning' ? 'text-warning' : 'text-info'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -160,12 +233,20 @@
                   <span class="text-xs px-1.5 py-0.5 rounded font-medium {levelColor(entry.level)}">{entry.level}</span>
                   <span class="text-xs px-1.5 py-0.5 rounded font-medium {categoryBadge(entry.category)}">{entry.category}</span>
                   <span class="text-xs text-text-dim ml-auto shrink-0" title={formatDate(entry.created_at)}>{relTime(entry.created_at)}</span>
+                  <!-- Copy button -->
+                  <button type="button" onclick={(e) => { e.stopPropagation(); copyEntry(entry) }}
+                    class="opacity-0 group-hover:opacity-100 p-1 text-text-dim hover:text-text rounded transition-all" title="Copy entry">
+                    {#if copiedId === entry.id}
+                      <svg class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    {:else}
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    {/if}
+                  </button>
                 </div>
-                <p class="text-sm text-text">{entry.message}</p>
+                <p class="text-sm text-text {entry.level === 'error' ? 'font-medium' : ''}">{entry.message}</p>
                 {#if entry.details}
                   {@const parsed = tryParseJSON(entry.details)}
                   {#if parsed}
-                    <!-- Structured JSON details -->
                     <button
                       type="button"
                       class="text-xs text-text-dim mt-1 flex items-center gap-1 hover:text-text transition-colors"
@@ -192,7 +273,6 @@
                       </div>
                     {/if}
                   {:else}
-                    <!-- Legacy plain-text details -->
                     <p class="text-xs text-text-dim mt-1 font-mono truncate">{entry.details}</p>
                   {/if}
                 {/if}
@@ -202,6 +282,6 @@
         {/each}
       </div>
     </div>
-    <p class="text-xs text-text-dim mt-3 text-center">{entries.length} log entr{entries.length !== 1 ? 'ies' : 'y'}</p>
+    <p class="text-xs text-text-dim mt-3 text-center">{filteredEntries.length} log entr{filteredEntries.length !== 1 ? 'ies' : 'y'}</p>
   {/if}
 </div>

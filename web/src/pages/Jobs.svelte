@@ -24,6 +24,71 @@
   let editingNameId = $state(null)
   let editName = $state('')
 
+  // Bulk selection
+  let selectedJobs = $state(new Set())
+  let bulkRunning = $state(false)
+
+  let allSelected = $derived(jobs.length > 0 && selectedJobs.size === jobs.length)
+
+  function toggleSelectJob(id) {
+    const next = new Set(selectedJobs)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    selectedJobs = next
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      selectedJobs = new Set()
+    } else {
+      selectedJobs = new Set(jobs.map(j => j.id))
+    }
+  }
+
+  async function bulkEnable(enable) {
+    bulkRunning = true
+    try {
+      const targets = jobs.filter(j => selectedJobs.has(j.id) && j.enabled !== enable)
+      await Promise.all(targets.map(j => api.updateJob(j.id, { ...j, enabled: enable })))
+      showToast(`${targets.length} job${targets.length !== 1 ? 's' : ''} ${enable ? 'enabled' : 'disabled'}`, 'success')
+      selectedJobs = new Set()
+      await loadData()
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      bulkRunning = false
+    }
+  }
+
+  async function bulkRun() {
+    bulkRunning = true
+    try {
+      const ids = [...selectedJobs]
+      await Promise.all(ids.map(id => api.runJob(id)))
+      showToast(`${ids.length} job${ids.length !== 1 ? 's' : ''} queued`, 'success')
+      selectedJobs = new Set()
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      bulkRunning = false
+    }
+  }
+
+  async function bulkDelete() {
+    bulkRunning = true
+    try {
+      const ids = [...selectedJobs]
+      await Promise.all(ids.map(id => api.deleteJob(id, false)))
+      showToast(`${ids.length} job${ids.length !== 1 ? 's' : ''} deleted`, 'success')
+      selectedJobs = new Set()
+      await loadData()
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      bulkRunning = false
+    }
+  }
+
   // Wizard step
   let step = $state(1)
   const totalSteps = 3
@@ -243,6 +308,16 @@
     </button>
   </div>
 
+  {#if !loading && jobs.length > 0}
+    <div class="flex items-center gap-3 mb-3">
+      <label class="flex items-center gap-2 text-xs text-text-muted cursor-pointer select-none">
+        <input type="checkbox" checked={allSelected} onchange={toggleSelectAll}
+          class="accent-vault w-3.5 h-3.5" />
+        Select all ({selectedJobs.size}/{jobs.length})
+      </label>
+    </div>
+  {/if}
+
   {#if loading}
     <Skeleton variant="card" count={3} />
   {:else if jobs.length === 0}
@@ -250,10 +325,18 @@
   {:else}
     <div class="space-y-3">
       {#each jobs as job}
-        <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 transition-colors">
+        <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 transition-colors {selectedJobs.has(job.id) ? 'ring-1 ring-vault/40' : ''}">
           <div class="flex items-start justify-between">
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-3">
+                <!-- Bulk checkbox -->
+                <input
+                  type="checkbox"
+                  checked={selectedJobs.has(job.id)}
+                  onchange={() => toggleSelectJob(job.id)}
+                  onclick={(e) => e.stopPropagation()}
+                  class="accent-vault w-3.5 h-3.5 shrink-0 cursor-pointer"
+                />
                 <!-- Toggle switch -->
                 <button
                   onclick={(e) => { e.stopPropagation(); toggleEnabled(job) }}
@@ -330,7 +413,52 @@
   {/if}
 </div>
 
-<!-- Create/Edit Wizard Modal -->
+<!-- Bulk action bar -->
+{#if selectedJobs.size > 0}
+  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-border rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+    <span class="text-sm font-medium text-text">{selectedJobs.size} selected</span>
+    <div class="w-px h-6 bg-border"></div>
+    <button
+      onclick={() => bulkEnable(true)}
+      disabled={bulkRunning}
+      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-success hover:bg-success/10 rounded-lg transition-colors disabled:opacity-40"
+    >
+      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+      Enable
+    </button>
+    <button
+      onclick={() => bulkEnable(false)}
+      disabled={bulkRunning}
+      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-warning hover:bg-warning/10 rounded-lg transition-colors disabled:opacity-40"
+    >
+      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+      Disable
+    </button>
+    <button
+      onclick={bulkRun}
+      disabled={bulkRunning}
+      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-vault hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
+    >
+      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+      Run
+    </button>
+    <button
+      onclick={bulkDelete}
+      disabled={bulkRunning}
+      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-40"
+    >
+      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+      Delete
+    </button>
+    <div class="w-px h-6 bg-border"></div>
+    <button
+      onclick={() => { selectedJobs = new Set() }}
+      class="text-xs text-text-muted hover:text-text transition-colors"
+    >
+      Clear
+    </button>
+  </div>
+{/if}
 <Modal show={showModal} title={editing ? 'Edit Job' : 'Create Backup Job'} onclose={() => showModal = false}>
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">

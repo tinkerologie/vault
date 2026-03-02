@@ -13,9 +13,10 @@
   let showModal = $state(false)
   let editing = $state(null)
   let testing = $state(null)
-  let testResult = $state(null)
+  let testResults = $state(new Map())
   let toast = $state({ message: '', type: 'info', key: 0 })
   let confirmDelete = $state({ show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 })
+  let depCounts = $state(new Map())
 
   // Import state
   let showImport = $state(false)
@@ -48,6 +49,15 @@
     loading = true
     try {
       destinations = (await api.listStorage()) || []
+      // Load dependent job counts for each storage
+      const counts = new Map()
+      await Promise.all(destinations.map(async (d) => {
+        try {
+          const result = await api.getDependentJobs(d.id)
+          counts.set(d.id, result?.job_count || 0)
+        } catch { counts.set(d.id, 0) }
+      }))
+      depCounts = counts
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -187,10 +197,11 @@
 
   async function testConnection(id) {
     testing = id
-    testResult = null
     try {
       const result = await api.testStorage(id)
-      testResult = { id, ...result }
+      const next = new Map(testResults)
+      next.set(id, result)
+      testResults = next
       if (result.success) {
         showToast('Connection successful!', 'success')
       } else {
@@ -198,7 +209,9 @@
       }
     } catch (e) {
       showToast(e.message, 'error')
-      testResult = { id, success: false, error: e.message }
+      const next = new Map(testResults)
+      next.set(id, { success: false, error: e.message })
+      testResults = next
     } finally {
       testing = null
     }
@@ -214,10 +227,17 @@
   }
 
   const storageIcons = {
-    local: '💾',
-    sftp: '🔒',
-    smb: '🖥️',
-    nfs: '📁',
+    local: 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z',
+    sftp: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
+    smb: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+    nfs: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
+  }
+
+  const storageColors = {
+    local: 'text-blue-400',
+    sftp: 'text-emerald-400',
+    smb: 'text-purple-400',
+    nfs: 'text-amber-400',
   }
 </script>
 
@@ -243,10 +263,16 @@
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {#each destinations as dest}
         {@const cfg = parseConfig(dest.config)}
+        {@const tr = testResults.get(dest.id)}
+        {@const jobCount = depCounts.get(dest.id) || 0}
         <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 transition-colors">
           <div class="flex items-start justify-between mb-3">
             <div class="flex items-center gap-3">
-              <span class="text-2xl">{storageIcons[dest.type] || '📦'}</span>
+              <div class="w-10 h-10 rounded-lg bg-surface-3 flex items-center justify-center">
+                <svg class="w-5 h-5 {storageColors[dest.type] || 'text-text-muted'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons[dest.type] || storageIcons.local}/>
+                </svg>
+              </div>
               <div>
                 <h3 class="text-sm font-semibold text-text">{dest.name}</h3>
                 <span class="text-xs text-text-dim uppercase">{dest.type}</span>
@@ -278,19 +304,26 @@
           </div>
 
           <div class="flex items-center justify-between pt-3 border-t border-border">
-            <span class="text-xs text-text-dim">{formatDate(dest.created_at)}</span>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-text-dim">{formatDate(dest.created_at)}</span>
+              {#if jobCount > 0}
+                <span class="text-xs px-2 py-0.5 rounded-full bg-vault/10 text-vault font-medium">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
+              {:else}
+                <span class="text-xs text-text-dim">No jobs</span>
+              {/if}
+            </div>
             <button
               onclick={() => testConnection(dest.id)}
               disabled={testing === dest.id}
               class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors
-                {testResult?.id === dest.id
-                  ? (testResult.success ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger')
+                {tr
+                  ? (tr.success ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger')
                   : 'bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text'}"
             >
               {#if testing === dest.id}
                 Testing...
-              {:else if testResult?.id === dest.id}
-                {testResult.success ? '✓ Connected' : '✗ Failed'}
+              {:else if tr}
+                {tr.success ? '✓ Connected' : '✗ Failed'}
               {:else}
                 Test Connection
               {/if}

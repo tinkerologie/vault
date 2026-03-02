@@ -14,8 +14,17 @@
   import Settings from './pages/Settings.svelte'
   import Replication from './pages/Replication.svelte'
   import Spinner from './components/Spinner.svelte'
+  import CommandPalette from './components/CommandPalette.svelte'
 
   let mobileMenuOpen = $state(false)
+  let showCommandPalette = $state(false)
+
+  function handleGlobalKeydown(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault()
+      showCommandPalette = !showCommandPalette
+    }
+  }
 
   const nav = [
     { path: '/', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
@@ -49,6 +58,11 @@
     mobileMenuOpen = false
   }
 </script>
+
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<svelte:window onkeydown={handleGlobalKeydown} />
+
+<CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
 
 <div class="flex h-screen bg-surface">
   {#if !ready}

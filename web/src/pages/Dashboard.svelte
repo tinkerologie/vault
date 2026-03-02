@@ -430,11 +430,14 @@
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
                   {#each containers as c}
                     {@const isProtected = protectedItems.has(`container:${c.name}`)}
-                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'}">
+                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
                       <span class="text-sm text-text truncate">{c.name}</span>
                       {#if isProtected}
-                        <svg class="w-3.5 h-3.5 text-success ml-auto shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        <button onclick={() => navigate(`/restore?type=container&name=${encodeURIComponent(c.name)}`)} class="ml-auto opacity-0 group-hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {c.name}">
+                          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                        <svg class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
                       {:else}
                         <span class="text-[10px] text-text-dim ml-auto">unprotected</span>
                       {/if}
@@ -455,11 +458,14 @@
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
                   {#each vms as v}
                     {@const isProtected = protectedItems.has(`vm:${v.name}`)}
-                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'}">
+                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
                       <span class="text-sm text-text truncate">{v.name}</span>
                       {#if isProtected}
-                        <svg class="w-3.5 h-3.5 text-success ml-auto shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        <button onclick={() => navigate(`/restore?type=vm&name=${encodeURIComponent(v.name)}`)} class="ml-auto opacity-0 group-hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {v.name}">
+                          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                        <svg class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
                       {:else}
                         <span class="text-[10px] text-text-dim ml-auto">unprotected</span>
                       {/if}
@@ -480,14 +486,17 @@
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
                   {#each folders as f}
                     {@const isProtected = protectedItems.has(`folder:${f.name}`)}
-                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'}">
+                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
                       <span class="text-sm text-text truncate">{f.name}</span>
                       {#if f.preset}
                         <span class="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium shrink-0">{f.preset}</span>
                       {/if}
                       {#if isProtected}
-                        <svg class="w-3.5 h-3.5 text-success ml-auto shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        <button onclick={() => navigate(`/restore?type=folder&name=${encodeURIComponent(f.name)}`)} class="ml-auto opacity-0 group-hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {f.name}">
+                          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                        <svg class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
                       {:else}
                         <span class="text-[10px] text-text-dim ml-auto">unprotected</span>
                       {/if}
