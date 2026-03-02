@@ -73,7 +73,7 @@ export function parseConfig(cfg) {
 
 /** Convert a cron expression to human-readable text */
 export function describeSchedule(cron) {
-  if (!cron) return '—'
+  if (!cron) return 'Manual only'
   const parts = cron.trim().split(/\s+/)
   if (parts.length !== 5) return cron
   const [min, hr, dom, , dow] = parts
