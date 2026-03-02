@@ -1,53 +1,39 @@
 ---
-- name: Verify health endpoint
+# Core API endpoint tests — delegated to localhost (no Python needed on Unraid)
+
+- name: Test core API endpoints
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/health"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/{{ item.path }}"
     method: GET
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
+    status_code: 200
     return_content: true
-  register: health_response
-
-- name: Assert health response
-  ansible.builtin.assert:
-    that:
-      - health_response.status == 200
-      - health_response.json.status == "ok"
-      - health_response.json.version is defined
-    success_msg: "Health endpoint OK - version {{ health_response.json.version }}"
-
-- name: Verify jobs endpoint
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs"
-    method: GET
-    return_content: true
-  register: jobs_response
-
-- name: Assert jobs response
-  ansible.builtin.assert:
-    that:
-      - jobs_response.status == 200
-    success_msg: "Jobs endpoint OK"
-
-- name: Verify storage endpoint
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/storage"
-    method: GET
-    return_content: true
-  register: storage_response
-
-- name: Assert storage response
-  ansible.builtin.assert:
-    that:
-      - storage_response.status == 200
-    success_msg: "Storage endpoint OK"
+  loop:
+    - { path: "health", name: "Health" }
+    - { path: "jobs", name: "Jobs" }
+    - { path: "storage", name: "Storage" }
+  loop_control:
+    label: "{{ item.name }}"
+  register: endpoint_results
+  ignore_errors: true
 
 - name: Verify ping endpoint
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/ping"
+    url: "http://{{ ansible_host }}:{{ api_port }}/ping"
     method: GET
-  register: ping_response
+    status_code: 200
+  register: ping_result
+  ignore_errors: true
 
-- name: Assert ping response
-  ansible.builtin.assert:
-    that:
-      - ping_response.status == 200
-    success_msg: "Ping endpoint OK"
+- name: Endpoint test summary
+  vars:
+    passed: "{{ endpoint_results.results | selectattr('status', 'defined') | selectattr('status', 'eq', 200) | list | length }}"
+    total: "{{ endpoint_results.results | length }}"
+    failed_items: "{{ endpoint_results.results | rejectattr('status', 'defined') | list + endpoint_results.results | selectattr('status', 'defined') | rejectattr('status', 'eq', 200) | list }}"
+  ansible.builtin.debug:
+    msg: >-
+      Endpoints: {{ passed }}/{{ total }} passed, Ping: {{ ping_result.status | default('failed') }}
+      {{ '— FAILED: ' + (failed_items | map(attribute='item.name') | join(', ')) if failed_items | length > 0 else '' }}

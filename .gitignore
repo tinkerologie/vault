@@ -1,1 +1,45 @@
+# Build output
+build/
 vault
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Dependencies
+vendor/
+
+# Ansible secrets (inventory contains server credentials)
+ansible/inventory.yml
+
+# Playwright / browser automation
+.playwright/
+.playwright-cli/
+*.auth-state.json
+
+# AI agent scratch
+.ai-scratch/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets baseline (detect-secrets)
+# .secrets.baseline is tracked intentionally
+
+# Environment
+.env
+.env.*

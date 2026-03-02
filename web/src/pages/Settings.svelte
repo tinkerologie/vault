@@ -1,0 +1,785 @@
+<script>
+  import { onMount } from 'svelte'
+  import { api } from '../lib/api.js'
+  import { getWsStatus, connectWs, disconnectWs } from '../lib/ws.svelte.js'
+  import { getTheme, setTheme } from '../lib/theme.svelte.js'
+  import Toast from '../components/Toast.svelte'
+  import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import Spinner from '../components/Spinner.svelte'
+
+  let loading = $state(true)
+  let health = $state(null)
+  /** @type {Record<string, string>} */
+  let settings = $state({})
+  let saving = $state(false)
+  let toast = $state({ message: '', type: 'info', key: 0 })
+
+  // Tab navigation
+  /** @type {string} */
+  let activeTab = $state('general')
+  const tabs = [
+    { id: 'general', label: 'General' },
+    { id: 'security', label: 'Security' },
+    { id: 'notifications', label: 'Notifications' },
+    { id: 'reference', label: 'Reference' },
+  ]
+
+  // Encryption state
+  let encryptionEnabled = $state(false)
+  let encPassphrase = $state('')
+  let encConfirm = $state('')
+  let encSaving = $state(false)
+  let showEncPassphrase = $state(false)
+  let confirmEncRemoval = $state(false)
+  let revealedPassphrase = $state('')
+  let showingPassphrase = $state(false)
+  let loadingPassphrase = $state(false)
+  let changingPassphrase = $state(false)
+  let changeNewPass = $state('')
+  let changeConfirmPass = $state('')
+
+  // API Key state
+  let apiKeyEnabled = $state(false)
+  let apiKeyPreview = $state('')
+  let apiKeySaving = $state(false)
+  let newlyGeneratedKey = $state('')
+  let confirmKeyRevoke = $state(false)
+
+  function showToast(message, type = 'info') {
+    toast = { message, type, key: toast.key + 1 }
+  }
+
+  onMount(async () => {
+    try {
+      const [h, s, enc, keyStatus] = await Promise.all([api.health(), api.getSettings(), api.getEncryptionStatus(), api.getApiKeyStatus()])
+      health = h
+      settings = s || {}
+      encryptionEnabled = enc?.encryption_enabled || false
+      apiKeyEnabled = keyStatus?.enabled || false
+      apiKeyPreview = keyStatus?.preview || ''
+    } catch (e) {
+      console.error('Settings load error:', e)
+    } finally {
+      loading = false
+    }
+  })
+
+  async function toggleNotifications() {
+    const newVal = settings.notifications_enabled === 'true' ? 'false' : 'true'
+    saving = true
+    try {
+      settings = await api.updateSettings({ notifications_enabled: newVal })
+      showToast(newVal === 'true' ? 'Notifications enabled' : 'Notifications disabled', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      saving = false
+    }
+  }
+
+  function reconnectWebSocket() {
+    disconnectWs()
+    setTimeout(connectWs, 100)
+    showToast('Reconnecting WebSocket...', 'info')
+  }
+
+  async function saveEncryption() {
+    if (encPassphrase !== encConfirm) {
+      showToast('Passphrases do not match', 'error')
+      return
+    }
+    if (encPassphrase.length < 8) {
+      showToast('Passphrase must be at least 8 characters', 'error')
+      return
+    }
+    encSaving = true
+    try {
+      await api.setEncryption(encPassphrase)
+      encryptionEnabled = true
+      encPassphrase = ''
+      encConfirm = ''
+      showToast('Encryption passphrase set', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      encSaving = false
+    }
+  }
+
+  async function removeEncryption() {
+    confirmEncRemoval = true
+  }
+
+  async function doRemoveEncryption() {
+    confirmEncRemoval = false
+    encSaving = true
+    try {
+      await api.setEncryption('')
+      encryptionEnabled = false
+      revealedPassphrase = ''
+      showingPassphrase = false
+      changingPassphrase = false
+      showToast('Encryption disabled', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      encSaving = false
+    }
+  }
+
+  async function downloadEmergencyKit() {
+    try {
+      const res = await api.getEncryptionPassphrase()
+      const date = new Date().toISOString().split('T')[0]
+      const host = window.location.hostname
+      const content = [
+        'VAULT EMERGENCY KIT',
+        '====================',
+        '',
+        `Encryption Passphrase: ${res.passphrase}`,
+        '',
+        `Created: ${date}`,
+        `Server:  ${host}`,
+        '',
+        'IMPORTANT: Keep this file in a safe place.',
+        'You will need this passphrase to restore encrypted backups.',
+        'If you lose this passphrase, encrypted backups cannot be recovered.',
+        '',
+      ].join('\n')
+      const blob = new Blob([content], { type: 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `vault-emergency-kit-${date}.txt`
+      a.click()
+      URL.revokeObjectURL(url)
+      showToast('Emergency kit downloaded', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
+  async function toggleShowPassphrase() {
+    if (showingPassphrase) {
+      showingPassphrase = false
+      revealedPassphrase = ''
+      return
+    }
+    loadingPassphrase = true
+    try {
+      const res = await api.getEncryptionPassphrase()
+      revealedPassphrase = res.passphrase
+      showingPassphrase = true
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      loadingPassphrase = false
+    }
+  }
+
+  function startChangePassphrase() {
+    changingPassphrase = true
+    changeNewPass = ''
+    changeConfirmPass = ''
+  }
+
+  function cancelChangePassphrase() {
+    changingPassphrase = false
+    changeNewPass = ''
+    changeConfirmPass = ''
+  }
+
+  async function saveChangePassphrase() {
+    if (changeNewPass !== changeConfirmPass) {
+      showToast('Passphrases do not match', 'error')
+      return
+    }
+    if (changeNewPass.length < 8) {
+      showToast('Passphrase must be at least 8 characters', 'error')
+      return
+    }
+    encSaving = true
+    try {
+      await api.setEncryption(changeNewPass)
+      changingPassphrase = false
+      changeNewPass = ''
+      changeConfirmPass = ''
+      revealedPassphrase = ''
+      showingPassphrase = false
+      showToast('Encryption passphrase changed. Existing backups still require the old passphrase.', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      encSaving = false
+    }
+  }
+
+  let notificationsOn = $derived(settings.notifications_enabled !== 'false')
+
+  // --- API Key functions ---
+  async function generateApiKey() {
+    apiKeySaving = true
+    try {
+      const res = await api.generateApiKey()
+      newlyGeneratedKey = res.api_key
+      apiKeyEnabled = true
+      // Auto-store so the user doesn't get locked out.
+      const { setApiKey, checkAuthStatus } = await import('../lib/auth.svelte.js')
+      setApiKey(res.api_key)
+      await checkAuthStatus()
+      showToast('API key generated', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      apiKeySaving = false
+    }
+  }
+
+  async function rotateApiKey() {
+    apiKeySaving = true
+    try {
+      const res = await api.rotateApiKey()
+      newlyGeneratedKey = res.api_key
+      // Update stored key so we stay authenticated.
+      const { setApiKey } = await import('../lib/auth.svelte.js')
+      setApiKey(res.api_key)
+      // Refresh preview.
+      const status = await api.getApiKeyStatus()
+      apiKeyPreview = status?.preview || ''
+      showToast('API key rotated. Update all clients with the new key.', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      apiKeySaving = false
+    }
+  }
+
+  async function doRevokeApiKey() {
+    confirmKeyRevoke = false
+    apiKeySaving = true
+    try {
+      await api.revokeApiKey()
+      apiKeyEnabled = false
+      apiKeyPreview = ''
+      newlyGeneratedKey = ''
+      const { clearApiKey, checkAuthStatus } = await import('../lib/auth.svelte.js')
+      clearApiKey()
+      await checkAuthStatus()
+      showToast('API key revoked. Authentication disabled.', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      apiKeySaving = false
+    }
+  }
+
+  function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('Copied to clipboard', 'success')
+    }).catch(() => {
+      showToast('Failed to copy', 'error')
+    })
+  }
+</script>
+
+<Toast message={toast.message} type={toast.type} key={toast.key} />
+
+<div>
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-text">Settings</h1>
+    <p class="text-sm text-text-muted mt-1">Server information and preferences</p>
+  </div>
+
+  {#if loading}
+    <Spinner text="Loading settings..." />
+  {:else}
+    <!-- Tab Navigation -->
+    <div class="flex gap-1 border-b border-border mb-6 overflow-x-auto">
+      {#each tabs as tab}
+        <button
+          onclick={() => activeTab = tab.id}
+          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap {activeTab === tab.id ? 'border-vault text-vault' : 'border-transparent text-text-muted hover:text-text'}"
+        >
+          {tab.label}
+        </button>
+      {/each}
+    </div>
+
+    <div class="space-y-6">
+      <!-- === GENERAL TAB === -->
+      {#if activeTab === 'general'}
+      <!-- Appearance / Theme -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Appearance</h2>
+        </div>
+        <div class="px-5 py-4">
+          <p class="text-sm text-text-muted mb-3">Choose how Vault looks. Select a theme or follow your system preference.</p>
+          <div class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-xs">
+            {#each [
+              { value: 'light', label: 'Light', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
+              { value: 'system', label: 'System', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
+              { value: 'dark', label: 'Dark', icon: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z' },
+            ] as opt}
+              <button
+                type="button"
+                onclick={() => setTheme(opt.value)}
+                class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getTheme() === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
+              >
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+      </div>
+
+      {/if}
+
+      <!-- === NOTIFICATIONS TAB === -->
+      {#if activeTab === 'notifications'}
+      <!-- Notifications -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Notifications</h2>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">Unraid Notifications</p>
+              <p class="text-xs text-text-muted mt-0.5">Send alerts to the Unraid notification system when backups fail, partially complete, or succeed (based on each job's "Notify On" setting).</p>
+            </div>
+            <button
+              onclick={toggleNotifications}
+              disabled={saving}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={notificationsOn}
+              aria-label="Toggle notifications"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {notificationsOn ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {notificationsOn ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+          {#if notificationsOn}
+            <div class="px-5 py-3">
+              <p class="text-xs text-text-dim">
+                Each job has its own "Notify On" preference (Always, On Failure, Never) — configure it in the job's advanced settings. This global toggle enables or disables all Vault notifications.
+              </p>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      {/if}
+
+      <!-- === SECURITY TAB === -->
+      {#if activeTab === 'security'}
+      <!-- Encryption -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Encryption</h2>
+        </div>
+        <div class="divide-y divide-border">
+          {#if encryptionEnabled}
+            <!-- Description -->
+            <div class="px-5 py-4">
+              <p class="text-sm text-text-muted leading-relaxed">Keep this passphrase in a safe place, as you will need it to restore your encrypted backups. Download it as an emergency kit file and store it somewhere safe. Encryption keeps your backups private and secure.</p>
+            </div>
+
+            <!-- Download emergency kit -->
+            <div class="px-5 py-4 flex items-center justify-between gap-4">
+              <div>
+                <p class="text-sm font-medium text-text">Download emergency kit</p>
+                <p class="text-xs text-text-muted mt-0.5">We recommend saving this encryption key somewhere secure.</p>
+              </div>
+              <button onclick={downloadEmergencyKit} class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Download
+              </button>
+            </div>
+
+            <!-- Show passphrase -->
+            <div class="px-5 py-4">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <p class="text-sm font-medium text-text">Show my encryption key</p>
+                  <p class="text-xs text-text-muted mt-0.5">Please keep your encryption key private.</p>
+                </div>
+                <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
+                  {loadingPassphrase ? 'Loading...' : showingPassphrase ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              {#if showingPassphrase}
+                <div class="mt-3 px-3 py-2.5 bg-surface border border-border rounded-lg">
+                  <code class="text-sm text-text break-all select-all">{revealedPassphrase}</code>
+                </div>
+              {/if}
+            </div>
+
+            <!-- Change passphrase -->
+            <div class="px-5 py-4">
+              {#if !changingPassphrase}
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <p class="text-sm font-medium text-text">Change encryption key</p>
+                    <p class="text-xs text-text-muted mt-0.5">All future backups will use this encryption key.</p>
+                  </div>
+                  <button onclick={startChangePassphrase} class="text-sm font-medium text-danger hover:text-danger/80 transition-colors shrink-0">
+                    Change
+                  </button>
+                </div>
+              {:else}
+                <div class="space-y-3 max-w-sm">
+                  <p class="text-sm font-medium text-text">Change encryption key</p>
+                  <p class="text-xs text-warning">Existing encrypted backups will still require the old passphrase to restore.</p>
+                  <div>
+                    <label for="change-pass" class="block text-xs font-medium text-text-muted mb-1">New passphrase</label>
+                    <input id="change-pass" type="password" bind:value={changeNewPass} placeholder="Enter new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                  </div>
+                  <div>
+                    <label for="change-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm new passphrase</label>
+                    <input id="change-confirm" type="password" bind:value={changeConfirmPass} placeholder="Confirm new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                  </div>
+                  {#if changeNewPass && changeConfirmPass && changeNewPass !== changeConfirmPass}
+                    <p class="text-xs text-danger">Passphrases do not match</p>
+                  {/if}
+                  <div class="flex items-center gap-2">
+                    <button onclick={saveChangePassphrase} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                      {encSaving ? 'Saving...' : 'Update Passphrase'}
+                    </button>
+                    <button onclick={cancelChangePassphrase} class="px-4 py-2 text-sm font-medium rounded-lg text-text-muted hover:text-text transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              {/if}
+            </div>
+
+            <!-- Disable encryption -->
+            <div class="px-5 py-3 flex justify-end">
+              <button onclick={removeEncryption} disabled={encSaving} class="text-xs text-text-dim hover:text-danger transition-colors disabled:opacity-50">
+                {encSaving ? 'Removing...' : 'Disable encryption'}
+              </button>
+            </div>
+          {:else}
+            <div class="px-5 py-4">
+              <div class="flex items-center gap-2 mb-3">
+                <span class="inline-block w-2 h-2 rounded-full bg-text-dim"></span>
+                <span class="text-sm font-medium text-text">No encryption passphrase set</span>
+              </div>
+              <p class="text-xs text-text-muted mb-4">Set a global passphrase to enable age encryption for backup jobs. Jobs must individually opt-in to encryption. Existing encrypted backups always require the original passphrase to restore.</p>
+              <div class="space-y-3 max-w-sm">
+                <div>
+                  <label for="enc-pass" class="block text-xs font-medium text-text-muted mb-1">Passphrase</label>
+                  <div class="relative">
+                    <input id="enc-pass" type={showEncPassphrase ? 'text' : 'password'} bind:value={encPassphrase} placeholder="Enter encryption passphrase" class="w-full px-3 py-2 pr-10 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <button type="button" onclick={() => showEncPassphrase = !showEncPassphrase} class="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text p-1" aria-label="Toggle passphrase visibility">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={showEncPassphrase ? 'M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21' : 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'} /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label for="enc-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm Passphrase</label>
+                  <input id="enc-confirm" type={showEncPassphrase ? 'text' : 'password'} bind:value={encConfirm} placeholder="Confirm passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                </div>
+                {#if encPassphrase && encConfirm && encPassphrase !== encConfirm}
+                  <p class="text-xs text-danger">Passphrases do not match</p>
+                {/if}
+                <button onclick={saveEncryption} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {encSaving ? 'Saving...' : 'Set Passphrase'}
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- API Access -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-semibold text-text">API Access</h2>
+            <p class="text-xs text-text-muted mt-0.5">Manage authentication for the REST API</p>
+          </div>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium {apiKeyEnabled ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'}">
+            {apiKeyEnabled ? 'Enabled' : 'Disabled'}
+          </span>
+        </div>
+        <div class="p-5 space-y-4">
+          {#if !apiKeyEnabled}
+            <!-- No key exists — bootstrap -->
+            <div class="space-y-3">
+              <p class="text-sm text-text-muted">No API key is configured. Generate one to secure access to the Vault API. The key will be shown once — copy it immediately.</p>
+              <button onclick={generateApiKey} disabled={apiKeySaving} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                {apiKeySaving ? 'Generating...' : 'Generate API Key'}
+              </button>
+            </div>
+          {:else}
+            <!-- Key exists -->
+            <div class="space-y-4">
+              {#if newlyGeneratedKey}
+                <!-- One-time display -->
+                <div class="bg-warning/10 border border-warning/30 rounded-lg p-4 space-y-2">
+                  <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-warning flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                    <span class="text-sm font-medium text-warning">Save this key now — it won't be shown again</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <code class="flex-1 text-xs bg-surface px-3 py-2 rounded font-mono text-text break-all select-all">{newlyGeneratedKey}</code>
+                    <button onclick={() => copyToClipboard(newlyGeneratedKey)} class="flex-shrink-0 p-2 text-text-muted hover:text-text bg-surface rounded-lg transition-colors" aria-label="Copy key">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                    </button>
+                  </div>
+                  <button onclick={() => newlyGeneratedKey = ''} class="text-xs text-text-dim hover:text-text-muted transition-colors">Dismiss</button>
+                </div>
+              {/if}
+
+              <!-- Status row -->
+              <div class="flex items-center justify-between py-2">
+                <div>
+                  <span class="text-sm text-text-muted">Current Key</span>
+                  {#if apiKeyPreview}
+                    <code class="ml-2 text-xs bg-surface-3 text-text-muted px-2 py-0.5 rounded font-mono">{apiKeyPreview}</code>
+                  {/if}
+                </div>
+              </div>
+
+              <!-- Rotate -->
+              <div class="flex items-center justify-between py-2 border-t border-border">
+                <div>
+                  <span class="text-sm text-text">Rotate Key</span>
+                  <p class="text-xs text-text-muted">Generate a new key. The old key is invalidated immediately.</p>
+                </div>
+                <button onclick={rotateApiKey} disabled={apiKeySaving} class="px-3 py-1.5 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {apiKeySaving ? 'Rotating...' : 'Rotate'}
+                </button>
+              </div>
+
+              <!-- Revoke -->
+              <div class="flex items-center justify-between py-2 border-t border-border">
+                <div>
+                  <span class="text-sm text-text">Revoke Key</span>
+                  <p class="text-xs text-text-muted">Remove the API key entirely. Authentication will be disabled.</p>
+                </div>
+                <button onclick={() => confirmKeyRevoke = true} disabled={apiKeySaving} class="px-3 py-1.5 text-sm font-medium rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  Revoke
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      {/if}
+
+      <!-- === GENERAL TAB (cont.) === -->
+      {#if activeTab === 'general'}
+      <!-- Server Info -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Server Information</h2>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">Status</span>
+            <span class="text-sm font-medium {health?.status === 'ok' ? 'text-success' : 'text-danger'}">
+              {health?.status === 'ok' ? 'Online' : 'Offline'}
+            </span>
+          </div>
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">Version</span>
+            <span class="text-sm font-medium text-text">{health?.version || 'Unknown'}</span>
+          </div>
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">API Endpoint</span>
+            <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">{window.location.origin}/api/v1</code>
+          </div>
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">WebSocket</span>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full {getWsStatus() === 'connected' ? 'bg-success' : getWsStatus() === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger'}"></span>
+              <span class="text-sm text-text capitalize">{getWsStatus()}</span>
+              <button onclick={reconnectWebSocket} class="ml-2 text-xs text-vault hover:text-vault-dark transition-colors">Reconnect</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/if}
+
+      <!-- === REFERENCE TAB === -->
+      {#if activeTab === 'reference'}
+      <!-- Compression Info -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Compression Guide</h2>
+        </div>
+        <div class="p-5">
+          <p class="text-sm text-text-muted mb-4">Each backup job can choose its own compression. Here's how they compare:</p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-text-muted border-b border-border">
+                  <th class="pb-2 pr-4 font-medium">Algorithm</th>
+                  <th class="pb-2 pr-4 font-medium">Speed</th>
+                  <th class="pb-2 pr-4 font-medium">Ratio</th>
+                  <th class="pb-2 font-medium">Best For</th>
+                </tr>
+              </thead>
+              <tbody class="text-text">
+                <tr class="border-b border-border/50">
+                  <td class="py-2 pr-4 font-medium">
+                    Zstandard
+                    <span class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-vault/20 text-vault font-semibold uppercase">recommended</span>
+                  </td>
+                  <td class="py-2 pr-4">
+                    <div class="flex gap-0.5">
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                    </div>
+                  </td>
+                  <td class="py-2 pr-4">
+                    <div class="flex gap-0.5">
+                      <div class="w-2 h-2 rounded-full bg-info"></div>
+                      <div class="w-2 h-2 rounded-full bg-info"></div>
+                      <div class="w-2 h-2 rounded-full bg-info"></div>
+                      <div class="w-2 h-2 rounded-full bg-info"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                    </div>
+                  </td>
+                  <td class="py-2 text-xs text-text-muted">Best all-rounder. Fast compression & decompression with strong ratios. Industry standard for backups.</td>
+                </tr>
+                <tr class="border-b border-border/50">
+                  <td class="py-2 pr-4 font-medium">Gzip</td>
+                  <td class="py-2 pr-4">
+                    <div class="flex gap-0.5">
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                    </div>
+                  </td>
+                  <td class="py-2 pr-4">
+                    <div class="flex gap-0.5">
+                      <div class="w-2 h-2 rounded-full bg-info"></div>
+                      <div class="w-2 h-2 rounded-full bg-info"></div>
+                      <div class="w-2 h-2 rounded-full bg-info"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                    </div>
+                  </td>
+                  <td class="py-2 text-xs text-text-muted">Universal compatibility. Moderate speed. Good if restoring on systems without zstd.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-medium">None</td>
+                  <td class="py-2 pr-4">
+                    <div class="flex gap-0.5">
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                      <div class="w-2 h-2 rounded-full bg-success"></div>
+                    </div>
+                  </td>
+                  <td class="py-2 pr-4">
+                    <div class="flex gap-0.5">
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                      <div class="w-2 h-2 rounded-full bg-surface-4"></div>
+                    </div>
+                  </td>
+                  <td class="py-2 text-xs text-text-muted">Fastest backup/restore. Use when storage space is not a concern or data is already compressed.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- API Info -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">API Endpoints</h2>
+        </div>
+        <div class="p-5">
+          <div class="space-y-2 text-sm font-mono">
+            {#each [
+              ['GET', '/api/v1/health', 'Health check'],
+              ['GET', '/api/v1/settings', 'Get settings'],
+              ['PUT', '/api/v1/settings', 'Update settings'],
+              ['GET', '/api/v1/storage', 'List storage destinations'],
+              ['POST', '/api/v1/storage', 'Create storage destination'],
+              ['GET', '/api/v1/jobs', 'List backup jobs'],
+              ['POST', '/api/v1/jobs', 'Create backup job'],
+              ['GET', '/api/v1/jobs/:id/history', 'Job run history'],
+              ['GET', '/api/v1/jobs/:id/restore-points', 'Restore points'],
+              ['WS', '/api/v1/ws', 'WebSocket events'],
+            ] as [method, path, desc]}
+              <div class="flex items-center gap-3">
+                <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3rem] text-center
+                  {method === 'GET' ? 'bg-info/20 text-info' :
+                   method === 'POST' ? 'bg-success/20 text-success' :
+                   method === 'PUT' ? 'bg-warning/20 text-warning' :
+                   'bg-vault/20 text-vault'}">{method}</span>
+                <span class="text-text-muted">{path}</span>
+                <span class="text-text-dim text-xs ml-auto hidden sm:inline">{desc}</span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      </div>
+
+      {/if}
+
+      <!-- === GENERAL TAB (cont.) === -->
+      {#if activeTab === 'general'}
+      <!-- About -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">About Vault</h2>
+        </div>
+        <div class="p-5">
+          <p class="text-sm text-text-muted leading-relaxed">
+            Vault is a backup and restore manager for Unraid servers. It provides automated backup of Docker containers and libvirt VMs to pluggable storage destinations including local paths, SFTP, S3-compatible, and SMB/CIFS shares.
+          </p>
+          <div class="mt-4 flex items-center gap-4">
+            <a href="https://github.com/ruaan-deysel/vault" target="_blank" rel="noopener"
+              class="text-sm text-vault hover:text-vault-dark transition-colors flex items-center gap-2">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+              GitHub Repository
+            </a>
+          </div>
+        </div>
+      </div>
+      {/if}
+    </div>
+  {/if}
+</div>
+
+<ConfirmDialog
+  show={confirmEncRemoval}
+  title="Remove Encryption"
+  message="Remove encryption passphrase? Existing encrypted backups will still require the original passphrase to restore."
+  confirmLabel="Remove"
+  variant="danger"
+  onconfirm={doRemoveEncryption}
+  oncancel={() => { confirmEncRemoval = false }}
+/>
+
+<ConfirmDialog
+  show={confirmKeyRevoke}
+  title="Revoke API Key"
+  message="This will remove the API key and disable authentication. Anyone with network access will be able to use the API without a key."
+  confirmLabel="Revoke"
+  variant="danger"
+  onconfirm={doRevokeApiKey}
+  oncancel={() => { confirmKeyRevoke = false }}
+/>

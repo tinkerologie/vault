@@ -1,17 +1,24 @@
 ---
-- name: Test WebSocket upgrade endpoint
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/ws"
-    method: GET
-    headers:
-      Upgrade: websocket
-      Connection: Upgrade
-      Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
-      Sec-WebSocket-Version: "13"
-    status_code: [101, 400]
-  register: ws_response
-  ignore_errors: true
+# WebSocket upgrade handshake test — delegated to localhost
 
-- name: WebSocket endpoint check
-  ansible.builtin.debug:
-    msg: "WebSocket endpoint responded with status {{ ws_response.status | default('unreachable') }}"
+- name: Test WebSocket upgrade handshake
+  delegate_to: localhost
+  ansible.builtin.command:
+    cmd: >
+      curl -s -o /dev/null -w '%{http_code}' --max-time 5
+      -H 'Connection: Upgrade'
+      -H 'Upgrade: websocket'
+      -H 'Sec-WebSocket-Version: 13'
+      -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=='
+      -H 'X-API-Key: {{ api_key | default("") }}'
+      http://{{ ansible_host }}:{{ api_port }}/api/v1/ws
+  register: ws_result
+  changed_when: false
+  failed_when: false
+
+- name: Verify WebSocket upgrade succeeded
+  ansible.builtin.assert:
+    that:
+      - ws_result.stdout == '101'
+    fail_msg: "WebSocket handshake failed (HTTP {{ ws_result.stdout }}, expected 101)"
+    success_msg: "WebSocket upgrade successful (HTTP 101 Switching Protocols)"

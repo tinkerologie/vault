@@ -11,18 +11,36 @@ LDFLAGS := -s -w \
 	-X main.buildDate=$(DATE) \
 	-X main.commit=$(HASH)
 
-.PHONY: all build build-local test test-short test-coverage clean lint security-check package deploy deps pre-commit-install pre-commit-run
+ANSIBLE_CMD := cd ansible && ansible-playbook -i inventory.yml ansible.yml
+
+.PHONY: all build build-local build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run
 
 all: test build-local
+
+# ── Plugin lifecycle (Ansible-driven) ──────────────────────────────────────────
+
+build:
+	$(ANSIBLE_CMD) --tags build
+
+deploy:
+	$(ANSIBLE_CMD) --tags deploy
+
+verify:
+	$(ANSIBLE_CMD) --tags verify
+
+redeploy:
+	$(ANSIBLE_CMD) --tags redeploy
+
+# ── Local development utilities ────────────────────────────────────────────────
 
 deps:
 	go mod download
 	go mod tidy
 
-build:
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-$(GOOS)-$(GOARCH) ./cmd/vault/
+build-web:
+	cd web && npm ci && npm run build
 
-build-local:
+build-local: build-web
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/vault/
 
 test:
@@ -38,6 +56,7 @@ test-coverage:
 
 clean:
 	rm -rf $(BUILD_DIR)
+	rm -rf web/dist
 	rm -f coverage.out coverage.html
 
 lint:
@@ -47,15 +66,6 @@ security-check:
 	gosec -fmt=text -exclude-dir=vendor -exclude-dir=build -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703 -severity=medium -confidence=medium ./...
 	govulncheck ./...
 	go mod verify
-
-package: build
-	@mkdir -p $(BUILD_DIR)
-	@echo "Binary: $(BUILD_DIR)/$(BINARY)-$(GOOS)-$(GOARCH)"
-	@echo "Plugin: plugin/vault.plg"
-	@ls -lh $(BUILD_DIR)/$(BINARY)-$(GOOS)-$(GOARCH)
-
-deploy:
-	cd ansible && ansible-playbook -i inventory.yml ansible.yml --tags deploy
 
 pre-commit-install:
 	@echo "Installing pre-commit hooks..."

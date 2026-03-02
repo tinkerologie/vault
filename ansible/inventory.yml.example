@@ -8,4 +8,4 @@ all:
         -o StrictHostKeyChecking=no
         -o PubkeyAuthentication=no
         -o PreferredAuthentications=password
-      api_port: 28085
+      api_port: 24085

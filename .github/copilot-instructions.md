@@ -38,8 +38,11 @@ Task-oriented step-by-step guides in `.github/prompts/`:
 ## Quick Commands
 
 ```bash
-make deps && make build-local  # Setup and build
-make test                      # Run all tests
+make deps && make build-local  # Setup and build (local dev)
+make test                      # Run unit tests
 make pre-commit-run            # Lint + security checks
-make deploy                    # Deploy to Unraid (Ansible)
+make build                     # Ansible: lint → test → cross-compile
+make deploy                    # Ansible: deploy to Unraid
+make verify                    # Ansible: endpoint verification tests
+make redeploy                  # Ansible: full lifecycle
 ```

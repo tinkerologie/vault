@@ -1,6 +1,4 @@
-Menu="Utilities:Vault"
 Title="Settings"
-Type="xmenu"
 Tabs="true"
 Icon="shield"
 Markdown="false"
@@ -19,7 +17,7 @@ $health = vault_get('/health');
         <h3>Daemon Status</h3>
         <p>Status: <strong><?= ($health['status'] ?? 'offline') ?></strong></p>
         <p>Version: <strong><?= ($health['version'] ?? 'unknown') ?></strong></p>
-        <p>API Port: <strong>28085</strong></p>
+        <p>API Port: <strong><?= vault_get_port() ?></strong></p>
     </div>
 
     <h2>Default Settings</h2>

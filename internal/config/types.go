@@ -19,8 +19,8 @@ const (
 type VMBackupMode string
 
 const (
-	VMBackupLive VMBackupMode = "live"
-	VMBackupCold VMBackupMode = "cold"
+	VMBackupSnapshot VMBackupMode = "snapshot"
+	VMBackupCold     VMBackupMode = "cold"
 )
 
 type ContainerBackupMode string
@@ -30,6 +30,13 @@ const (
 	ContainerOneByOne ContainerBackupMode = "one_by_one"
 )
 
+type EncryptionType string
+
+const (
+	EncryptionNone EncryptionType = "none"
+	EncryptionAge  EncryptionType = "age"
+)
+
 type StorageType string
 
 const (
@@ -37,5 +44,4 @@ const (
 	StorageSMB   StorageType = "smb"
 	StorageNFS   StorageType = "nfs"
 	StorageSFTP  StorageType = "sftp"
-	StorageS3    StorageType = "s3"
 )

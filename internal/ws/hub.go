@@ -75,7 +75,18 @@ func (h *Hub) Broadcast(msg []byte) {
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
+		// Validate origin: allow same-origin and local network connections.
+		// The coder/websocket library rejects cross-origin by default when
+		// InsecureSkipVerify is false, but we use OriginPatterns to allow
+		// common local access patterns.
+		OriginPatterns: []string{
+			"localhost:*",
+			"127.0.0.1:*",
+			"*.local:*",
+			"192.168.*.*:*",
+			"10.*.*.*:*",
+			"172.16.*.*:*",
+		},
 	})
 	if err != nil {
 		log.Printf("ws accept error: %v", err)

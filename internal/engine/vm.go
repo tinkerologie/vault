@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && cgo
 
 package engine
 
@@ -239,6 +239,10 @@ func (h *VMHandler) backupCold(dom *libvirt.Domain, name string, state libvirt.D
 }
 
 // Restore restores a VM from a backup directory.
+//
+// If item.Settings["restore_destination"] is set, disk images and NVRAM
+// are restored under that base directory instead of their original paths,
+// and the domain XML is rewritten to reference the new locations.
 func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 5, "reading domain XML")
 
@@ -254,7 +258,29 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 		return fmt.Errorf("parsing domain XML: %w", err)
 	}
 
-	// Copy disk files back to original locations.
+	// Check for alternate restore destination.
+	restoreDest, _ := item.Settings["restore_destination"].(string)
+
+	// Build new paths if alternate destination is set.
+	newDiskPaths := make([]string, len(diskPaths))
+	newNvramPath := nvramPath
+	domainXMLStr := string(xmlData)
+
+	for i, dp := range diskPaths {
+		if restoreDest != "" {
+			newDiskPaths[i] = filepath.Join(restoreDest, filepath.Base(dp))
+			// Rewrite the disk source path in the XML.
+			domainXMLStr = strings.Replace(domainXMLStr, dp, newDiskPaths[i], -1)
+		} else {
+			newDiskPaths[i] = dp
+		}
+	}
+	if restoreDest != "" && nvramPath != "" {
+		newNvramPath = filepath.Join(restoreDest, filepath.Base(nvramPath))
+		domainXMLStr = strings.Replace(domainXMLStr, nvramPath, newNvramPath, -1)
+	}
+
+	// Copy disk files back.
 	progress(item.Name, 20, "restoring disk images")
 	totalDisks := len(diskPaths)
 	for i, diskPath := range diskPaths {
@@ -264,14 +290,15 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 			continue // skip if backup file doesn't exist
 		}
 
+		targetPath := newDiskPaths[i]
 		progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d", i+1, totalDisks))
-		if err := os.MkdirAll(filepath.Dir(diskPath), 0755); err != nil {
-			return fmt.Errorf("creating dir for disk %s: %w", diskPath, err)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("creating dir for disk %s: %w", targetPath, err)
 		}
-		if err := copyFileWithProgress(srcFile, diskPath, func(copied int64) {
+		if err := copyFileWithProgress(srcFile, targetPath, func(copied int64) {
 			progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
-			return fmt.Errorf("restoring disk %s: %w", diskPath, err)
+			return fmt.Errorf("restoring disk %s: %w", targetPath, err)
 		}
 	}
 
@@ -280,18 +307,18 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 		nvramSrc := filepath.Join(sourceDir, filepath.Base(nvramPath))
 		if _, err := os.Stat(nvramSrc); err == nil {
 			progress(item.Name, 80, "restoring NVRAM")
-			if err := os.MkdirAll(filepath.Dir(nvramPath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(newNvramPath), 0755); err != nil {
 				return fmt.Errorf("creating NVRAM dir: %w", err)
 			}
-			if err := copyFile(nvramSrc, nvramPath); err != nil {
+			if err := copyFile(nvramSrc, newNvramPath); err != nil {
 				return fmt.Errorf("restoring NVRAM: %w", err)
 			}
 		}
 	}
 
-	// Define domain from XML.
+	// Define domain from (possibly rewritten) XML.
 	progress(item.Name, 90, "defining domain")
-	dom, err := h.conn.DomainDefineXML(string(xmlData))
+	dom, err := h.conn.DomainDefineXML(domainXMLStr)
 	if err != nil {
 		return fmt.Errorf("defining domain: %w", err)
 	}

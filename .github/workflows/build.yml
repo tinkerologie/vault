@@ -16,14 +16,36 @@ jobs:
         with:
           go-version: "1.26"
 
-      - name: Download dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download Go dependencies
         run: go mod download
+
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0
 
       - name: Run tests
         run: go test ./... -v
 
-      - name: Build binary
-        run: make build
+      - name: Build web assets
+        run: cd web && npm ci && npm run build
+
+      - name: Cross-compile Linux binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          VERSION=$(cat VERSION)
+          DATE=$(date '+%Y.%m.%d')
+          HASH=$(git rev-parse --short HEAD)
+          go build -ldflags "-s -w -X main.version=${VERSION} -X main.buildDate=${DATE} -X main.commit=${HASH}" \
+            -o build/vault-linux-amd64 ./cmd/vault/
 
       - name: Upload binary
         uses: actions/upload-artifact@v4

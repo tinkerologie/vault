@@ -1,17 +1,60 @@
 ---
+# Build Vault binary — runs locally (no remote Python needed).
+# Steps: deps → lint → test → web build → cross-compile → verify.
 - name: Build Vault binary
   delegate_to: localhost
   block:
-    - name: Run tests
+    - name: Install Go dependencies
       ansible.builtin.command:
-        cmd: make test
+        cmd: go mod download
         chdir: "{{ playbook_dir }}/.."
       changed_when: false
 
-    - name: Build Linux binary
+    - name: Tidy Go modules
       ansible.builtin.command:
-        cmd: make build
+        cmd: go mod tidy
         chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
+    - name: Run linter
+      ansible.builtin.command:
+        cmd: golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
+    - name: Run unit tests
+      ansible.builtin.command:
+        cmd: go test ./... -v
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
+    - name: Install web dependencies
+      ansible.builtin.command:
+        cmd: npm ci
+        chdir: "{{ playbook_dir }}/../web"
+      changed_when: false
+
+    - name: Build web frontend
+      ansible.builtin.command:
+        cmd: npm run build
+        chdir: "{{ playbook_dir }}/../web"
+      changed_when: true
+
+    - name: Cross-compile Linux/amd64 binary
+      ansible.builtin.command:
+        cmd: >
+          go build
+          -ldflags "-s -w
+          -X main.version={{ version }}
+          -X main.buildDate={{ ansible_date_time.date | default(lookup('pipe', 'date +%Y.%m.%d')) }}
+          -X main.commit={{ lookup('pipe', 'git -C ' + playbook_dir + '/.. rev-parse --short HEAD 2>/dev/null || echo dev') }}"
+          -o {{ build_dir }}/vault-linux-amd64
+          ./cmd/vault/
+        chdir: "{{ playbook_dir }}/.."
+      environment:
+        CGO_ENABLED: "0"
+        GOOS: linux
+        GOARCH: amd64
       changed_when: true
 
     - name: Verify binary exists

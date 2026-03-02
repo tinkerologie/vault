@@ -1,16 +1,27 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
     <!ENTITY name      "vault">
-    <!ENTITY author    "ruaandeysel">
-    <!ENTITY version   "0.1.0">
+    <!ENTITY author    "ruaan-deysel">
+    <!ENTITY version   "2026.3.00">
     <!ENTITY launch    "Settings/Vault">
-    <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/vault.plg">
+    <!ENTITY gitURL      "https://github.com/&author;/&name;">
+    <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg">
+    <!ENTITY bundle      "&name;-&version;.tgz">
+    <!ENTITY bundleURL   "&gitURL;/releases/download/v&version;/&bundle;">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
         launch="&launch;" pluginURL="&pluginURL;" icon="shield"
         min="7.0" support="">
 
 <CHANGES><![CDATA[
+### 2026.3.0
+- Security: API key authentication, TLS support, encrypted storage credentials
+- Full backup/restore engine for Docker containers and libvirt VMs
+- Storage: Local, SMB, SFTP, S3-compatible backends
+- Cron-based job scheduling with retention policies
+- Svelte 5 web UI with real-time WebSocket progress
+- Ansible-driven build/deploy/verify pipeline
+
 ### 0.1.0
 - Initial release
 - Docker container backup & restore (full image + config + appdata)
@@ -60,6 +71,9 @@ mkdir -p /usr/local/emhttp/plugins/vault/assets/js
 <FILE Name="/usr/local/emhttp/plugins/vault/include/api.php">
     <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/include/api.php</URL>
 </FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/include/control.php">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/include/control.php</URL>
+</FILE>
 
 <!-- Copy assets -->
 <FILE Name="/usr/local/emhttp/plugins/vault/assets/css/vault.css">
@@ -83,8 +97,17 @@ mkdir -p /usr/local/emhttp/plugins/vault/assets/js
 DAEMON=/usr/local/sbin/vault
 PIDFILE=/var/run/vault.pid
 DB=/boot/config/plugins/vault/vault.db
-ADDR=:28085
+CONFIG=/boot/config/plugins/vault/vault.cfg
 LOG=/var/log/vault.log
+
+# Read port from config, default to 24085.
+PORT=24085
+if [ -f "$CONFIG" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG"
+    PORT="${PORT:-24085}"
+fi
+ADDR=":${PORT}"
 
 start() {
     if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then

@@ -1,8 +1,13 @@
 ---
+# CRUD verification tests — delegated to localhost (no Python needed on Unraid)
+
 - name: Create test storage destination
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/storage"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/storage"
     method: POST
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
     body_format: json
     body:
       name: "ansible-test-storage"
@@ -20,9 +25,12 @@
     success_msg: "Storage destination created (ID: {{ create_storage.json.id }})"
 
 - name: Create test backup job
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs"
     method: POST
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
     body_format: json
     body:
       name: "ansible-test-job"
@@ -48,9 +56,12 @@
     success_msg: "Backup job created (ID: {{ create_job.json.id }})"
 
 - name: Get job details
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}"
     method: GET
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
     return_content: true
   register: get_job
 
@@ -62,9 +73,12 @@
     success_msg: "Job retrieval OK"
 
 - name: Get job history
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}/history"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}/history"
     method: GET
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
     return_content: true
   register: job_history
 
@@ -75,9 +89,12 @@
     success_msg: "Job history endpoint OK"
 
 - name: Get restore points
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}/restore-points"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}/restore-points"
     method: GET
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
     return_content: true
   register: restore_points
 
@@ -88,23 +105,32 @@
     success_msg: "Restore points endpoint OK"
 
 - name: Test storage connection
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/storage/{{ create_storage.json.id }}/test"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/storage/{{ create_storage.json.id }}/test"
     method: POST
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
     return_content: true
   register: test_connection
   ignore_errors: true
 
 - name: Clean up test job
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}"
     method: DELETE
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
     status_code: 204
 
 - name: Clean up test storage
+  delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/api/v1/storage/{{ create_storage.json.id }}"
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/storage/{{ create_storage.json.id }}"
     method: DELETE
+    headers:
+      X-API-Key: "{{ api_key | default('') }}"
     status_code: 204
 
 - name: CRUD verification complete

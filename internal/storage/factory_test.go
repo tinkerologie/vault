@@ -28,8 +28,8 @@ func TestNewAdapterSFTP(t *testing.T) {
 	}
 }
 
-func TestNewAdapterS3(t *testing.T) {
-	adapter, err := NewAdapter("s3", `{"bucket":"test","access_key_id":"key","secret_access_key":"secret"}`)
+func TestNewAdapterSMB(t *testing.T) {
+	adapter, err := NewAdapter("smb", `{"host":"localhost","user":"test","password":"test","share":"backup"}`)
 	if err != nil {
 		t.Fatalf("NewAdapter() error = %v", err)
 	}
@@ -38,8 +38,8 @@ func TestNewAdapterS3(t *testing.T) {
 	}
 }
 
-func TestNewAdapterSMB(t *testing.T) {
-	adapter, err := NewAdapter("smb", `{"host":"localhost","user":"test","password":"test","share":"backup"}`)
+func TestNewAdapterNFS(t *testing.T) {
+	adapter, err := NewAdapter("nfs", `{"host":"nas.local","export":"/mnt/backups"}`)
 	if err != nil {
 		t.Fatalf("NewAdapter() error = %v", err)
 	}

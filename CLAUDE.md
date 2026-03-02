@@ -10,8 +10,18 @@ Vault is a Go backup daemon for Unraid servers. It backs up Docker containers an
 
 ## Build & Development Commands
 
+### Plugin Lifecycle (Ansible-driven)
+
 ```bash
-make build               # Cross-compile for linux/amd64 (CGO_ENABLED=0) → build/vault-linux-amd64
+make build               # Ansible: lint → test → web build → cross-compile Linux/amd64
+make deploy              # Ansible: deploy binary + assets to Unraid, start daemon
+make verify              # Ansible: run endpoint verification tests against Unraid
+make redeploy            # Ansible: full lifecycle (uninstall → build → deploy → verify)
+```
+
+### Local Development
+
+```bash
 make build-local         # Build for current platform → build/vault
 make deps                # go mod download && go mod tidy
 make test                # go test ./... -v
@@ -21,12 +31,11 @@ make lint                # golangci-lint with .golangci.yml config
 make security-check      # gosec + govulncheck + go mod verify
 make pre-commit-install  # Install pre-commit hooks
 make pre-commit-run      # Run all pre-commit checks
-make deploy              # Ansible deploy to Unraid host
 ```
 
 Run a single test: `go test ./internal/db/... -run TestJobCreate -v`
 
-Run the daemon locally: `./build/vault daemon --db=vault.db --addr=:28085`
+Run the daemon locally: `./build/vault daemon --db=vault.db --addr=:24085`
 
 ## Architecture
 
@@ -61,7 +70,7 @@ SQLite with WAL mode and busy timeout. Five tables: `storage_destinations`, `job
 
 ## API
 
-REST API at `/api/v1/` — jobs CRUD, storage destinations CRUD, job execution, restore points. WebSocket at `/api/v1/ws` for live progress. Default port: 28085.
+REST API at `/api/v1/` — jobs CRUD, storage destinations CRUD, job execution, restore points. WebSocket at `/api/v1/ws` for live progress. Default port: 24085.
 
 ## Deployment
 

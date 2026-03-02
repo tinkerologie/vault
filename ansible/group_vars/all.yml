@@ -6,8 +6,8 @@ plugin_dir: "/usr/local/emhttp/plugins/{{ plugin_name }}"
 config_dir: "/boot/config/plugins/{{ plugin_name }}"
 binary_path: "/usr/local/sbin/vault"
 rc_script: "/etc/rc.d/rc.vault"
-api_port: "{{ hostvars[inventory_hostname].api_port | default(28085) }}"
+api_port: "{{ hostvars[inventory_hostname].api_port | default(24085) }}"
 db_path: "{{ config_dir }}/vault.db"
 log_path: "/var/log/vault.log"
 pid_file: "/var/run/vault.pid"
-create_backup: false
+create_backup: true

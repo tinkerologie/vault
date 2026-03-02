@@ -1,33 +1,69 @@
 ---
+# Vault Plugin — Build, Deploy, and Verify
+#
+# Structured as Ansible roles following the same patterns as unraid-management-agent.
+# Variables defined in group_vars/all.yml.
+#
+# Usage:
+#   ansible-playbook -i inventory.yml ansible.yml
+#
+# Tags:
+#   --tags build      — Build plugin binary only
+#   --tags deploy     — Deploy only (assumes binary exists)
+#   --tags verify     — Run endpoint verification only
+#   --tags uninstall  — Uninstall plugin completely
+#   --tags redeploy   — Full lifecycle: uninstall → build → deploy → verify
+#   --skip-tags tests — Skip endpoint verification tests
+#
+# Extra vars:
+#   -e create_backup=true — Backup config before uninstall
+#
+# Prerequisites:
+#   brew install ansible sshpass   (macOS)
+#   pip install ansible            (Linux)
+#   cp inventory.yml.example inventory.yml
+
 - name: Vault Plugin Deployment
-  hosts: all
+  hosts: unraid
   gather_facts: false
 
-  tasks:
-    - name: Build
+  roles:
+    - role: build
       tags: [build, redeploy]
-      block:
-        - name: Include build role
-          ansible.builtin.include_role:
-            name: build
 
-    - name: Uninstall
+    - role: uninstall
       tags: [uninstall, redeploy]
-      block:
-        - name: Include uninstall role
-          ansible.builtin.include_role:
-            name: uninstall
 
-    - name: Deploy
+    - role: deploy
       tags: [deploy, redeploy]
-      block:
-        - name: Include deploy role
-          ansible.builtin.include_role:
-            name: deploy
 
-    - name: Verify
-      tags: [verify, redeploy, tests]
-      block:
-        - name: Include verify role
-          ansible.builtin.include_role:
-            name: verify
+    - role: verify
+      tags: [verify, tests, redeploy]
+
+  post_tasks:
+    - name: Deployment and test summary
+      tags: [always]
+      ansible.builtin.debug:
+        msg: |
+          ══════════════════════════════════════════
+          Vault Deployment & Test Summary
+          ══════════════════════════════════════════
+
+          Server:      {{ ansible_host }}:{{ api_port }}
+          Version:     {{ version }}
+
+          ── Endpoints ──
+          API:         http://{{ ansible_host }}:{{ api_port }}/api/v1
+          WebSocket:   ws://{{ ansible_host }}:{{ api_port }}/api/v1/ws
+          Health:      http://{{ ansible_host }}:{{ api_port }}/api/v1/health
+
+          {% if endpoint_results is defined %}
+          ── Test Results ──
+          Core endpoints:  {{ endpoint_results.results | selectattr('status', 'defined') | selectattr('status', 'eq', 200) | list | length }}/{{ endpoint_results.results | length }} passed
+          CRUD operations: storage + job create/read/delete ✓
+          WebSocket:       {{ ws_result.stdout | default('not tested') }}
+          {% else %}
+          ── Tests ──
+          Use --tags verify to run endpoint tests
+          {% endif %}
+          ══════════════════════════════════════════

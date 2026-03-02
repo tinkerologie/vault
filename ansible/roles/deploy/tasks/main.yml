@@ -1,140 +1,208 @@
 ---
+# Deploy Vault plugin to Unraid
+# Uses 'raw' module for remote tasks — Unraid has no Python interpreter
+# File transfers use sshpass+scp delegated to localhost
+
 - name: Deploy Vault plugin
   block:
+    - name: Check server connectivity
+      ansible.builtin.raw: echo "ok"
+      changed_when: false
+
     - name: Stop existing service
-      ansible.builtin.command:
-        cmd: "{{ rc_script }} stop"
-      ignore_errors: true
-      changed_when: true
+      ansible.builtin.raw: "{{ rc_script }} stop 2>/dev/null; killall vault 2>/dev/null; true"
+      register: stop_result
+      changed_when: "'no process' not in stop_result.stdout | default('')"
+
+    - name: Wait for service to stop
+      ansible.builtin.pause:
+        seconds: 2
 
     - name: Create plugin directories
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        mode: "0755"
-      loop:
-        - "{{ config_dir }}"
-        - "{{ plugin_dir }}"
-        - "{{ plugin_dir }}/include"
-        - "{{ plugin_dir }}/assets/css"
-        - "{{ plugin_dir }}/assets/js"
-
-    - name: Upload binary
-      ansible.builtin.copy:
-        src: "{{ plugin_binary }}"
-        dest: "{{ binary_path }}"
-        mode: "0755"
-      retries: 3
-      delay: 5
-
-    - name: Upload page files
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../plugin/pages/{{ item }}"
-        dest: "{{ plugin_dir }}/{{ item }}"
-        mode: "0644"
-      loop:
-        - Vault.page
-        - VaultJobs.page
-        - VaultRestore.page
-        - VaultStorage.page
-        - VaultHistory.page
-        - VaultSettings.page
-
-    - name: Upload PHP includes
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../plugin/pages/include/api.php"
-        dest: "{{ plugin_dir }}/include/api.php"
-        mode: "0644"
-
-    - name: Upload CSS assets
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../plugin/assets/css/vault.css"
-        dest: "{{ plugin_dir }}/assets/css/vault.css"
-        mode: "0644"
-
-    - name: Upload JS assets
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../plugin/assets/js/{{ item }}"
-        dest: "{{ plugin_dir }}/assets/js/{{ item }}"
-        mode: "0644"
-      loop:
-        - vault.js
-        - jobs.js
-        - restore.js
-
-    - name: Upload RC script
-      ansible.builtin.copy:
-        content: |
-          #!/bin/bash
-          DAEMON={{ binary_path }}
-          PIDFILE={{ pid_file }}
-          DB={{ db_path }}
-          ADDR=:{{ api_port }}
-          LOG={{ log_path }}
-
-          start() {
-              if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
-                  echo "Vault daemon is already running"
-                  return 1
-              fi
-              echo "Starting Vault daemon..."
-              nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
-              echo $! > "$PIDFILE"
-              echo "Vault daemon started (PID: $(cat $PIDFILE))"
-          }
-
-          stop() {
-              if [ -f "$PIDFILE" ]; then
-                  echo "Stopping Vault daemon..."
-                  kill $(cat "$PIDFILE") 2>/dev/null
-                  rm -f "$PIDFILE"
-                  echo "Vault daemon stopped"
-              else
-                  echo "Vault daemon is not running"
-              fi
-          }
-
-          status() {
-              if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
-                  echo "Vault daemon is running (PID: $(cat $PIDFILE))"
-              else
-                  echo "Vault daemon is not running"
-              fi
-          }
-
-          case "$1" in
-              start)   start ;;
-              stop)    stop ;;
-              restart) stop; sleep 1; start ;;
-              status)  status ;;
-              *)       echo "Usage: $0 {start|stop|restart|status}" ;;
-          esac
-        dest: "{{ rc_script }}"
-        mode: "0755"
-
-    - name: Start Vault daemon
-      ansible.builtin.command:
-        cmd: "{{ rc_script }} start"
+      ansible.builtin.raw: >
+        mkdir -p
+        {{ config_dir }}
+        {{ plugin_dir }}
+        {{ plugin_dir }}/include
       changed_when: true
 
-    - name: Wait for daemon to be ready
+    - name: Upload binary via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p '{{ ansible_password }}'
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          -o ConnectTimeout=10
+          {{ plugin_binary }}
+          {{ ansible_user }}@{{ ansible_host }}:{{ binary_path }}
+      register: scp_binary
+      retries: 3
+      delay: 3
+      until: scp_binary.rc == 0
+      changed_when: true
+
+    - name: Set binary permissions
+      ansible.builtin.raw: "chmod 0755 {{ binary_path }}"
+      changed_when: true
+
+    - name: Upload Vault page via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p '{{ ansible_password }}'
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ playbook_dir }}/../plugin/pages/Vault.page
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/Vault.page
+      changed_when: true
+
+    - name: Clean up old sub-page files
+      ansible.builtin.raw: >
+        rm -f
+        {{ plugin_dir }}/VaultJobs.page
+        {{ plugin_dir }}/VaultRestore.page
+        {{ plugin_dir }}/VaultStorage.page
+        {{ plugin_dir }}/VaultHistory.page
+        {{ plugin_dir }}/VaultSettings.page
+        && rm -rf {{ plugin_dir }}/assets
+      changed_when: true
+
+    - name: Upload PHP includes via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p '{{ ansible_password }}'
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ playbook_dir }}/../plugin/pages/include/api.php
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/api.php
+      changed_when: true
+
+    - name: Upload control.php via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p '{{ ansible_password }}'
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ playbook_dir }}/../plugin/pages/include/control.php
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/control.php
+      changed_when: true
+
+    - name: Upload apply.sh via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p '{{ ansible_password }}'
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ playbook_dir }}/../plugin/pages/include/apply.sh
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/apply.sh
+      changed_when: true
+
+    - name: Set apply.sh permissions
+      ansible.builtin.raw: "chmod 0755 {{ plugin_dir }}/include/apply.sh"
+      changed_when: true
+
+    - name: Write plugin config file
+      ansible.builtin.raw: |
+        if [ ! -f {{ config_dir }}/vault.cfg ]; then
+          cat > {{ config_dir }}/vault.cfg << 'CFGEOF'
+        SERVICE="yes"
+        PORT="{{ api_port }}"
+        CFGEOF
+          chmod 0644 {{ config_dir }}/vault.cfg
+        fi
+      changed_when: true
+
+    - name: Write RC script
+      ansible.builtin.raw: |
+        cat > {{ rc_script }} << 'RCEOF'
+        #!/bin/bash
+        DAEMON={{ binary_path }}
+        PIDFILE={{ pid_file }}
+        DB={{ db_path }}
+        CONFIG={{ config_dir }}/vault.cfg
+        LOG={{ log_path }}
+
+        # Read config (PORT, SERVICE).
+        PORT={{ api_port }}
+        SERVICE=yes
+        if [ -f "$CONFIG" ]; then
+            source "$CONFIG"
+        fi
+
+        ADDR=":$PORT"
+
+        start() {
+            if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+                echo "Vault daemon is already running"
+                return 1
+            fi
+            echo "Starting Vault daemon on port $PORT..."
+            nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
+            echo $! > "$PIDFILE"
+            echo "Vault daemon started (PID: $(cat $PIDFILE))"
+        }
+
+        stop() {
+            if [ -f "$PIDFILE" ]; then
+                echo "Stopping Vault daemon..."
+                kill $(cat "$PIDFILE") 2>/dev/null
+                rm -f "$PIDFILE"
+                echo "Vault daemon stopped"
+            else
+                echo "Vault daemon is not running"
+            fi
+        }
+
+        status() {
+            if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+                echo "Vault daemon is running (PID: $(cat $PIDFILE)) on port $PORT"
+            else
+                echo "Vault daemon is not running"
+            fi
+        }
+
+        case "$1" in
+            start)   start ;;
+            stop)    stop ;;
+            restart) stop; sleep 1; start ;;
+            status)  status ;;
+            *)       echo "Usage: $0 {start|stop|restart|status}" ;;
+        esac
+        RCEOF
+        chmod 0755 {{ rc_script }}
+      changed_when: true
+
+    - name: Start Vault daemon
+      ansible.builtin.raw: "{{ rc_script }} start"
+      changed_when: true
+
+    - name: Wait for API to be ready
+      delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ api_port }}/api/v1/health"
+        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/health"
         method: GET
-        return_content: true
+        status_code: 200
       register: health_check
       retries: 10
       delay: 2
       until: health_check.status == 200
 
-    - name: Display deployment status
+    - name: Show service status
+      ansible.builtin.raw: "pidof vault"
+      register: pid_result
+      changed_when: false
+
+    - name: Report deployment
       ansible.builtin.debug:
-        msg: "Vault v{{ version }} deployed successfully - API responding on port {{ api_port }}"
+        msg: "Vault v{{ version }} deployed (PID: {{ pid_result.stdout | trim }}) — API on port {{ api_port }}"
 
   rescue:
-    - name: Deployment failed - collect logs
-      ansible.builtin.command:
-        cmd: "tail -50 {{ log_path }}"
+    - name: Deploy failed — collect logs
+      ansible.builtin.raw: "tail -50 {{ log_path }} 2>/dev/null || echo 'No logs available'"
       register: vault_logs
       ignore_errors: true
       changed_when: false
@@ -142,6 +210,10 @@
     - name: Display error logs
       ansible.builtin.debug:
         msg: "{{ vault_logs.stdout_lines | default(['No logs available']) }}"
+
+    - name: Deploy failed — ensure service is stopped
+      ansible.builtin.raw: "killall -9 vault 2>/dev/null; true"
+      changed_when: false
 
     - name: Fail with deployment error
       ansible.builtin.fail:

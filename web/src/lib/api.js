@@ -1,0 +1,90 @@
+import { getApiKey } from './auth.svelte.js'
+
+const BASE = '/api/v1'
+
+async function request(method, path, body = null) {
+  const headers = { 'Content-Type': 'application/json' }
+  const key = getApiKey()
+  if (key) {
+    headers['Authorization'] = `Bearer ${key}`
+  }
+  const opts = { method, headers }
+  if (body !== null) opts.body = JSON.stringify(body)
+  const res = await fetch(BASE + path, opts)
+  if (res.status === 204) return null
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  return data
+}
+
+export const api = {
+  // Health
+  health: () => request('GET', '/health'),
+  getHealthSummary: () => request('GET', '/health/summary'),
+
+  // Storage
+  listStorage: () => request('GET', '/storage'),
+  getStorage: (id) => request('GET', `/storage/${id}`),
+  createStorage: (data) => request('POST', '/storage', data),
+  updateStorage: (id, data) => request('PUT', `/storage/${id}`, data),
+  deleteStorage: (id, { deleteFiles = false, force = false } = {}) => {
+    const params = new URLSearchParams()
+    if (deleteFiles) params.set('deleteFiles', 'true')
+    if (force) params.set('force', 'true')
+    const qs = params.toString()
+    return request('DELETE', `/storage/${id}${qs ? '?' + qs : ''}`)
+  },
+  testStorage: (id) => request('POST', `/storage/${id}/test`),
+  scanStorage: (id) => request('POST', `/storage/${id}/scan`),
+  importBackups: (id, backups) => request('POST', `/storage/${id}/import`, { backups }),
+  restoreDB: (id, storagePath) => request('POST', `/storage/${id}/restore-db`, { storage_path: storagePath }),
+  getDependentJobs: (id) => request('GET', `/storage/${id}/jobs`),
+
+  // Jobs
+  listJobs: () => request('GET', '/jobs'),
+  getJob: (id) => request('GET', `/jobs/${id}`),
+  createJob: (data) => request('POST', '/jobs', data),
+  updateJob: (id, data) => request('PUT', `/jobs/${id}`, data),
+  deleteJob: (id, deleteFiles = false) => request('DELETE', `/jobs/${id}${deleteFiles ? '?deleteFiles=true' : ''}`),
+  getJobHistory: (id, limit = 50) => request('GET', `/jobs/${id}/history?limit=${limit}`),
+  getRestorePoints: (id) => request('GET', `/jobs/${id}/restore-points`),
+  runJob: (id) => request('POST', `/jobs/${id}/run`),
+  restoreJob: (id, data) => request('POST', `/jobs/${id}/restore`, data),
+  getNextRuns: () => request('GET', '/jobs/next-runs'),
+  getNextRun: (id) => request('GET', `/jobs/${id}/next-run`),
+
+  // Discovery
+  browse: (path = '') => request('GET', `/browse${path ? '?path=' + encodeURIComponent(path) : ''}`),
+  listContainers: () => request('GET', '/containers'),
+  listVMs: () => request('GET', '/vms'),
+  listFolders: () => request('GET', '/folders'),
+  listPlugins: () => request('GET', '/plugins'),
+
+  // Settings
+  getSettings: () => request('GET', '/settings'),
+  updateSettings: (data) => request('PUT', '/settings', data),
+  getEncryptionStatus: () => request('GET', '/settings/encryption'),
+  setEncryption: (passphrase) => request('POST', '/settings/encryption', { passphrase }),
+  verifyEncryption: (passphrase) => request('POST', '/settings/encryption/verify', { passphrase }),
+  getEncryptionPassphrase: () => request('GET', '/settings/encryption/passphrase'),
+
+  // API Key
+  getApiKeyStatus: () => request('GET', '/settings/api-key'),
+  generateApiKey: () => request('POST', '/settings/api-key/generate'),
+  rotateApiKey: () => request('POST', '/settings/api-key/rotate'),
+  revokeApiKey: () => request('DELETE', '/settings/api-key'),
+
+  // Activity Log
+  getActivity: (limit = 100, category = '') =>
+    request('GET', `/activity?limit=${limit}${category ? '&category=' + encodeURIComponent(category) : ''}`),
+
+  // Replication
+  listReplicationSources: () => request('GET', '/replication'),
+  getReplicationSource: (id) => request('GET', `/replication/${id}`),
+  createReplicationSource: (data) => request('POST', '/replication', data),
+  updateReplicationSource: (id, data) => request('PUT', `/replication/${id}`, data),
+  deleteReplicationSource: (id) => request('DELETE', `/replication/${id}`),
+  testReplicationSource: (id) => request('POST', `/replication/${id}/test`),
+  syncReplicationSource: (id) => request('POST', `/replication/${id}/sync`),
+  listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
+}

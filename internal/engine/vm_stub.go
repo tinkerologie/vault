@@ -9,7 +9,7 @@ type VMHandler struct{}
 
 // NewVMHandler returns an error on non-Linux platforms.
 func NewVMHandler() (*VMHandler, error) {
-	return nil, fmt.Errorf("VM backup handler is not supported on this platform (requires Linux with libvirt)")
+	return nil, fmt.Errorf("VM backup handler is not supported on this platform (requires Linux)")
 }
 
 // ListItems is not supported on this platform.

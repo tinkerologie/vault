@@ -1,68 +1,177 @@
 Menu="Utilities"
 Title="Vault"
-Type="xmenu"
-Tabs="true"
 Icon="shield"
 Markdown="false"
 ---
 <?php
 require_once '/usr/local/emhttp/plugins/vault/include/api.php';
 
-$health = vault_get('/health');
-$jobs = vault_get('/jobs') ?: [];
-$storage = vault_get('/storage') ?: [];
+$plugin  = 'vault';
+$cfg     = vault_load_config();
+$port    = $cfg['PORT'] ?? '24085';
+
+// Check if daemon is actually running via health endpoint.
+$health  = vault_get('/health');
+$running = !empty($health) && ($health['status'] ?? '') === 'ok';
+$version = $health['version'] ?? '';
+
+// Build endpoint URLs with correct IPv6 handling.
+$raw_addr = $_SERVER['SERVER_ADDR'];
+$addr_esc = htmlspecialchars(
+    (strpos($raw_addr, ':') !== false) ? "[$raw_addr]" : $raw_addr,
+    ENT_QUOTES, 'UTF-8'
+);
+$port_esc = htmlspecialchars($port, ENT_QUOTES, 'UTF-8');
 ?>
 
-<link rel="stylesheet" href="/plugins/vault/assets/css/vault.css">
+<style>
+.vault-status {
+    margin-bottom: 20px;
+}
+.vault-status-text {
+    font-weight: bold;
+}
+.vault-status-text.running {
+    color: var(--green-500, green);
+}
+.vault-status-text.stopped {
+    color: var(--red-500, red);
+}
+.vault-endpoints {
+    margin: 10px 0;
+    font-size: 0.9em;
+}
+.vault-endpoints p {
+    margin: 2px 0;
+}
+.vault-webui-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background: #f59e0b;
+    color: #fff;
+    border-radius: 4px;
+    font-weight: bold;
+    text-decoration: none;
+    font-size: 13px;
+    margin-top: 8px;
+}
+.vault-webui-link:hover {
+    background: #d97706;
+    color: #fff;
+    text-decoration: none;
+}
+</style>
 
-<div class="vault-dashboard">
-    <div class="vault-header">
-        <h1>Vault Dashboard</h1>
-        <span class="vault-status <?= ($health['status'] ?? '') === 'ok' ? 'status-ok' : 'status-error' ?>">
-            Daemon: <?= ($health['status'] ?? 'offline') ?>
-        </span>
+<div class="title"><span class="left"><i class="title fa fa-cogs"></i>Service Control</span></div>
+
+<div class="vault-status">
+    <strong>Status:</strong>
+    <i id="vault-status-orb" class="fa fa-circle <?= $running ? 'green-orb' : 'grey-orb' ?>"></i>
+    <span id="vault-status-text" class="vault-status-text <?= $running ? 'running' : 'stopped' ?>">
+        <?= $running ? 'RUNNING' : 'STOPPED' ?>
+    </span>
+    <span id="vault-version" style="margin-left: 6px; font-size: 0.85em; color: var(--gray-500, #888); display: <?= ($running && $version) ? 'inline' : 'none' ?>;"><?php if ($version): ?>v<?= htmlspecialchars($version) ?><?php endif; ?></span>
+
+    <div id="vault-endpoints" class="vault-endpoints" style="display: <?= $running ? 'block' : 'none' ?>;">
+        <p><strong>API Endpoint:</strong> http://<?= $addr_esc ?>:<?= $port_esc ?>/api/v1</p>
+        <p><strong>WebSocket:</strong> ws://<?= $addr_esc ?>:<?= $port_esc ?>/api/v1/ws</p>
     </div>
 
-    <div class="vault-cards">
-        <div class="vault-card">
-            <h3>Backup Jobs</h3>
-            <div class="vault-card-value"><?= count($jobs) ?></div>
-            <a href="/Settings/VaultJobs">Manage Jobs</a>
-        </div>
-        <div class="vault-card">
-            <h3>Storage Destinations</h3>
-            <div class="vault-card-value"><?= count($storage) ?></div>
-            <a href="/Settings/VaultStorage">Manage Storage</a>
-        </div>
+    <div id="vault-webui" style="display: <?= $running ? 'block' : 'none' ?>;">
+        <a href="http://<?= $addr_esc ?>:<?= $port_esc ?>/" target="_blank"
+           class="vault-webui-link" title="Open Vault Web Interface">
+            <i class="fa fa-external-link" style="font-size:12px"></i>
+            Open Web UI
+        </a>
     </div>
 
-    <h2>Recent Activity</h2>
-    <table class="vault-table">
-        <thead>
-            <tr>
-                <th>Job</th>
-                <th>Status</th>
-                <th>Type</th>
-                <th>Items</th>
-                <th>Started</th>
-            </tr>
-        </thead>
-        <tbody id="recent-activity">
-            <?php foreach ($jobs as $job):
-                $runs = vault_get('/jobs/' . $job['id'] . '/history?limit=1');
-                if (!empty($runs)):
-                    $run = $runs[0];
-            ?>
-            <tr>
-                <td><?= htmlspecialchars($job['name']) ?></td>
-                <td><span class="vault-badge badge-<?= $run['status'] ?>"><?= $run['status'] ?></span></td>
-                <td><?= $run['backup_type'] ?></td>
-                <td><?= $run['items_done'] ?>/<?= $run['items_total'] ?></td>
-                <td><?= $run['started_at'] ?></td>
-            </tr>
-            <?php endif; endforeach; ?>
-        </tbody>
-    </table>
+    <div style="margin-top: 10px;">
+        <?php if ($running): ?>
+            <input type="button" id="vault-btn-startstop" value="Stop" onclick="serviceControl('stop')">
+            <input type="button" id="vault-btn-restart" value="Restart" onclick="serviceControl('restart')">
+        <?php else: ?>
+            <input type="button" id="vault-btn-startstop" value="Start" onclick="serviceControl('start')">
+            <input type="button" id="vault-btn-restart" value="Restart" onclick="serviceControl('restart')" disabled>
+        <?php endif; ?>
+    </div>
 </div>
 
-<script src="/plugins/vault/assets/js/vault.js"></script>
+<div class="title"><span class="left"><i class="title fa fa-wrench"></i>Configuration</span></div>
+
+<form id="vaultConfigForm" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="<?=$plugin?>/vault.cfg">
+<input type="hidden" name="#command" value="/plugins/<?=$plugin?>/include/apply.sh">
+
+<dl>
+    <dt>API Port:</dt>
+    <dd><input type="number" name="PORT" value="<?= htmlspecialchars($port) ?>" class="narrow" min="1024" max="65535"></dd>
+</dl>
+<blockquote class="inline_help">
+Port number for the Vault API server and Web UI (default: 24085).
+</blockquote>
+
+<dl>
+    <dt><input type="submit" name="#default" value="Default"></dt>
+    <dd><input type="submit" name="#apply" value="Apply" disabled><input type="button" value="Done" onclick="done()"></dd>
+</dl>
+</form>
+
+<script>
+function serviceControl(action) {
+    var btn = document.getElementById('vault-btn-startstop');
+    var restartBtn = document.getElementById('vault-btn-restart');
+    var orb = document.getElementById('vault-status-orb');
+    var statusText = document.getElementById('vault-status-text');
+    var endpoints = document.getElementById('vault-endpoints');
+    var webui = document.getElementById('vault-webui');
+    var version = document.getElementById('vault-version');
+
+    btn.disabled = true;
+    if (restartBtn) restartBtn.disabled = true;
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/plugins/vault/include/control.php', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState !== 4) return;
+        btn.disabled = false;
+
+        var running = false;
+        if (xhr.status === 200) {
+            try {
+                var data = JSON.parse(xhr.responseText);
+                running = data.running;
+            } catch(e) {
+                running = (action === 'start' || action === 'restart');
+            }
+        } else {
+            running = (action === 'start' || action === 'restart');
+        }
+
+        if (running) {
+            orb.className = 'fa fa-circle green-orb';
+            statusText.textContent = 'RUNNING';
+            statusText.className = 'vault-status-text running';
+            endpoints.style.display = 'block';
+            webui.style.display = 'block';
+            if (version) version.style.display = 'inline';
+            btn.value = 'Stop';
+            btn.onclick = function() { serviceControl('stop'); };
+            if (restartBtn) restartBtn.disabled = false;
+        } else {
+            orb.className = 'fa fa-circle grey-orb';
+            statusText.textContent = 'STOPPED';
+            statusText.className = 'vault-status-text stopped';
+            endpoints.style.display = 'none';
+            webui.style.display = 'none';
+            if (version) version.style.display = 'none';
+            btn.value = 'Start';
+            btn.onclick = function() { serviceControl('start'); };
+            if (restartBtn) restartBtn.disabled = true;
+        }
+    };
+    xhr.send('action=' + action + '&csrf_token=<?=$var["csrf_token"]?>');
+}
+</script>

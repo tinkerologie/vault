@@ -1,0 +1,41 @@
+package handlers
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/ruaandeysel/vault/internal/db"
+)
+
+// ActivityHandler serves activity log endpoints.
+type ActivityHandler struct {
+	db *db.DB
+}
+
+// NewActivityHandler creates a new ActivityHandler.
+func NewActivityHandler(database *db.DB) *ActivityHandler {
+	return &ActivityHandler{db: database}
+}
+
+// List returns recent activity log entries.
+//
+//	GET /api/v1/activity?limit=100&category=backup
+func (h *ActivityHandler) List(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	category := r.URL.Query().Get("category")
+
+	entries, err := h.db.ListActivityLogs(limit, category)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if entries == nil {
+		entries = []db.ActivityLogEntry{}
+	}
+	respondJSON(w, http.StatusOK, entries)
+}

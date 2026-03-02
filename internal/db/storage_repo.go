@@ -53,3 +53,11 @@ func (d *DB) DeleteStorageDestination(id int64) error {
 	_, err := d.Exec("DELETE FROM storage_destinations WHERE id = ?", id)
 	return err
 }
+
+// CountJobsByStorageDestID returns the number of jobs that reference the
+// given storage destination.
+func (d *DB) CountJobsByStorageDestID(storageDestID int64) (int, error) {
+	var count int
+	err := d.QueryRow("SELECT COUNT(*) FROM jobs WHERE storage_dest_id = ?", storageDestID).Scan(&count)
+	return count, err
+}

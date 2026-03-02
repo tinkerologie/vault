@@ -122,11 +122,21 @@ WAL mode for concurrent reads. Foreign keys enabled via PRAGMA. Schema applied i
 
 ## Build Commands
 
+### Plugin Lifecycle (Ansible-driven)
+
+```bash
+make build               # Ansible: lint → test → web build → cross-compile Linux/amd64
+make deploy              # Ansible: deploy binary + assets to Unraid, start daemon
+make verify              # Ansible: run endpoint verification tests against Unraid
+make redeploy            # Ansible: full lifecycle (uninstall → build → deploy → verify)
+```
+
+### Local Development
+
 ```bash
 make deps                # Install and tidy dependencies
-make build               # Cross-compile for Linux/amd64 (CGO_ENABLED=0)
 make build-local         # Build for current platform
-make test                # Run all tests (go test ./... -v)
+make test                # Run unit tests (go test ./... -v)
 make test-short          # Run short tests only
 make test-coverage       # Generate coverage.html
 make lint                # Run golangci-lint with .golangci.yml
@@ -134,16 +144,15 @@ make security-check      # Run gosec + govulncheck + go mod verify
 make clean               # Remove build artifacts
 make pre-commit-install  # Install pre-commit hooks
 make pre-commit-run      # Run all pre-commit checks
-make deploy              # Deploy to Unraid via Ansible
 ```
 
 ### Running the Daemon
 
 ```bash
-./build/vault daemon --db=vault.db --addr=:28085
+./build/vault daemon --db=vault.db --addr=:24085
 ```
 
-Defaults: DB at `/boot/config/plugins/vault/vault.db`, API on port 28085.
+Defaults: DB at `/boot/config/plugins/vault/vault.db`, API on port 24085.
 
 ## Code Style and Conventions
 
@@ -261,7 +270,7 @@ go test ./internal/db/... -run TestJobCreate -v  # Single test
 
 ## API Structure
 
-Base URL: `http://localhost:28085/api/v1`
+Base URL: `http://localhost:24085/api/v1`
 
 - `GET /health` — Health check
 - `GET/POST /storage` — List/create storage destinations

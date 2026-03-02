@@ -1,0 +1,121 @@
+@import 'tailwindcss';
+
+/* Vault theme — amber accent, light/dark support */
+@theme {
+  --color-amber-50: #fffbeb;
+  --color-amber-100: #fef3c7;
+  --color-amber-200: #fde68a;
+  --color-amber-300: #fcd34d;
+  --color-amber-400: #fbbf24;
+  --color-amber-500: #f59e0b;
+  --color-amber-600: #d97706;
+  --color-amber-700: #b45309;
+  --color-amber-800: #92400e;
+  --color-amber-900: #78350f;
+  --color-vault: #f59e0b;
+  --color-vault-dark: #d97706;
+  /* Light mode (default) */
+  --color-surface: #ffffff;
+  --color-surface-2: #f9fafb;
+  --color-surface-3: #f3f4f6;
+  --color-surface-4: #e5e7eb;
+  --color-surface-5: #d1d5db;
+  --color-border: #e5e7eb;
+  --color-border-hover: #d1d5db;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+  --color-text-dim: #9ca3af;
+  --color-success: #16a34a;
+  --color-danger: #dc2626;
+  --color-warning: #d97706;
+  --color-info: #2563eb;
+}
+
+/* Dark mode overrides */
+.dark {
+  --color-surface: #111827;
+  --color-surface-2: #1f2937;
+  --color-surface-3: #374151;
+  --color-surface-4: #4b5563;
+  --color-surface-5: #6b7280;
+  --color-border: #374151;
+  --color-border-hover: #4b5563;
+  --color-text: #f9fafb;
+  --color-text-muted: #9ca3af;
+  --color-text-dim: #6b7280;
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
+}
+
+html {
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-surface); }
+::-webkit-scrollbar-thumb { background: var(--color-surface-3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-surface-4); }
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid var(--color-vault);
+  outline-offset: 2px;
+}
+
+/* Button system */
+.btn {
+  @apply px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+.btn-primary {
+  @apply bg-vault text-white hover:bg-vault-dark;
+}
+.btn-secondary {
+  @apply bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text;
+}
+.btn-danger {
+  @apply bg-danger text-white hover:bg-danger/90;
+}
+.btn-ghost {
+  @apply text-text-muted hover:text-text hover:bg-surface-3;
+}
+.btn-sm {
+  @apply px-3 py-1.5 text-xs;
+}
+.btn-icon {
+  @apply p-2 rounded-lg text-text-muted hover:bg-surface-3;
+}
+
+/* Status badge system */
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+.badge-success {
+  @apply bg-success/15 text-success;
+}
+.badge-danger {
+  @apply bg-danger/15 text-danger;
+}
+.badge-warning {
+  @apply bg-warning/15 text-warning;
+}
+.badge-info {
+  @apply bg-info/15 text-info;
+}
+.badge-vault {
+  @apply bg-vault/15 text-vault;
+}
+.badge-neutral {
+  @apply bg-surface-3 text-text-muted;
+}

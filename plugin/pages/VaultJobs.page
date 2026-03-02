@@ -1,6 +1,4 @@
-Menu="Utilities:Vault"
 Title="Jobs"
-Type="xmenu"
 Tabs="true"
 Icon="shield"
 Markdown="false"

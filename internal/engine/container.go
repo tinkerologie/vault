@@ -7,13 +7,84 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 )
+
+// skipPrefixes are Unraid paths that contain large shared data (media,
+// downloads, ISOs, etc.) and must NOT be backed up as container volumes.
+// Only appdata directories contain the actual container configuration.
+var skipPrefixes = []string{
+	"/mnt/user/media",
+	"/mnt/user/downloads",
+	"/mnt/user/data",
+	"/mnt/user/isos",
+	"/mnt/user/domains",
+	"/mnt/user/backups",
+	"/mnt/user/system",
+	"/mnt/remotes",
+}
+
+// appdataPrefixes are paths that always contain container config data.
+var appdataPrefixes = []string{
+	"/mnt/cache/appdata",
+	"/mnt/user/appdata",
+}
+
+// volumeManifestEntry describes a single bind mount for the volumes.json manifest.
+type volumeManifestEntry struct {
+	Index       int    `json:"index"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	BackedUp    bool   `json:"backed_up"`
+	SkipReason  string `json:"skip_reason,omitempty"`
+	Archive     string `json:"archive,omitempty"`
+}
+
+// shouldSkipVolume returns (skip bool, reason string) for an Unraid bind mount.
+// It skips known shared data paths and large non-appdata volumes.
+func shouldSkipVolume(source string) (bool, string) {
+	norm := filepath.Clean(source)
+
+	// Always back up appdata volumes.
+	for _, prefix := range appdataPrefixes {
+		if strings.HasPrefix(norm, prefix) {
+			return false, ""
+		}
+	}
+
+	// Always back up /boot paths (Unraid flash drive configs).
+	if strings.HasPrefix(norm, "/boot") {
+		return false, ""
+	}
+
+	// Skip known shared data paths.
+	for _, prefix := range skipPrefixes {
+		if strings.HasPrefix(norm, prefix) {
+			return true, fmt.Sprintf("shared data volume (%s)", prefix)
+		}
+	}
+
+	// Skip direct disk access paths (/mnt/disk1, /mnt/disk2, etc.).
+	if strings.HasPrefix(norm, "/mnt/disk") {
+		return true, "direct disk volume"
+	}
+
+	// Skip the Unraid root mount (/mnt) itself if mapped directly.
+	if norm == "/mnt" {
+		return true, "root /mnt mount"
+	}
+
+	// Everything else (e.g. /tmp, /dev, /run, or custom paths) — back up.
+	return false, ""
+}
 
 // ContainerHandler implements Handler for Docker containers.
 type ContainerHandler struct {
@@ -125,22 +196,65 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 	_ = imgReader.Close()
 	result.Files = append(result.Files, backupFileInfo(imagePath))
 
-	// Step 4: Tar bind mount volumes.
+	// Step 4: Tar bind mount volumes, skipping large shared data paths.
 	progress(item.Name, 60, "backing up volumes")
+	var manifest []volumeManifestEntry
 	for i, mount := range inspect.Mounts {
 		if mount.Type != "bind" {
 			continue
 		}
-		volDest := filepath.Join(destDir, fmt.Sprintf("volume_%d.tar.gz", i))
+
+		entry := volumeManifestEntry{
+			Index:       i,
+			Source:      mount.Source,
+			Destination: mount.Destination,
+		}
+
+		if skip, reason := shouldSkipVolume(mount.Source); skip {
+			log.Printf("engine: skipping volume %s for %s: %s", mount.Source, item.Name, reason)
+			entry.BackedUp = false
+			entry.SkipReason = reason
+			manifest = append(manifest, entry)
+			continue
+		}
+
+		archiveName := fmt.Sprintf("volume_%d.tar.gz", i)
+		volDest := filepath.Join(destDir, archiveName)
 		if err := tarDirectory(mount.Source, volDest); err != nil {
 			return nil, fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 		}
 		result.Files = append(result.Files, backupFileInfo(volDest))
+		entry.BackedUp = true
+		entry.Archive = archiveName
+		manifest = append(manifest, entry)
 	}
 
-	// Step 5: Restart container if it was running.
+	// Save volumes manifest so restore knows which mounts were backed up.
+	if len(manifest) > 0 {
+		manifestData, _ := json.MarshalIndent(manifest, "", "  ")
+		manifestPath := filepath.Join(destDir, "volumes.json")
+		if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
+			log.Printf("engine: warning: failed to write volumes manifest: %v", err)
+		}
+	}
+
+	// Step 5: Save Unraid template XML if it exists.
+	// The template is used by the Unraid Docker Manager (Community Apps) to
+	// recognize and manage the container. Path pattern:
+	//   /boot/config/plugins/dockerMan/templates-user/my-<name>.xml
+	progress(item.Name, 85, "saving template")
+	templatePath := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+item.Name+".xml")
+	if data, err := os.ReadFile(templatePath); err == nil {
+		destTemplate := filepath.Join(destDir, "template.xml")
+		if writeErr := os.WriteFile(destTemplate, data, 0644); writeErr != nil {
+			return nil, fmt.Errorf("writing template xml: %w", writeErr)
+		}
+		result.Files = append(result.Files, backupFileInfo(destTemplate))
+	}
+
+	// Step 6: Restart container if it was running.
 	if wasRunning && !noStop {
-		progress(item.Name, 90, "restarting container")
+		progress(item.Name, 92, "restarting container")
 		if err := h.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 			return nil, fmt.Errorf("restarting container: %w", err)
 		}
@@ -153,13 +267,20 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 
 // Restore restores a Docker container from a backup directory:
 //  1. Loads the image from image.tar.
-//  2. Reads the saved config.
+//  2. Reads the saved config (full docker inspect JSON).
 //  3. Restores volume data from tar.gz archives.
+//  4. Recreates the container from the saved configuration.
+//  5. Restores the Unraid template XML (if present) so the Docker Manager
+//     recognizes the container.
+//  6. Starts the container if it was originally running.
+//
+// If item.Settings["restore_destination"] is set, volumes are extracted
+// under that base directory instead of their original paths.
 func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress ProgressFunc) error {
 	ctx := context.Background()
 
 	// Step 1: Load image.
-	progress(item.Name, 10, "loading image")
+	progress(item.Name, 5, "loading image")
 	imagePath := filepath.Join(sourceDir, "image.tar")
 	imgFile, err := os.Open(imagePath)
 	if err != nil {
@@ -171,17 +292,74 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 	if err != nil {
 		return fmt.Errorf("loading image: %w", err)
 	}
+	// Drain the response body to ensure the daemon completes the load.
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
-	// Step 2: Read config.
-	progress(item.Name, 30, "reading config")
+	// Step 2: Read full container config.
+	progress(item.Name, 15, "reading config")
 	configPath := filepath.Join(sourceDir, "config.json")
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("reading config: %w", err)
 	}
 
+	// Parse the full ContainerJSON to get mounts and determine if the
+	// container was running. We use a partial struct to avoid depending
+	// on the exact Docker API version for all fields.
 	var inspect struct {
+		Name   string `json:"Name"`
+		Config struct {
+			Hostname     string            `json:"Hostname"`
+			Domainname   string            `json:"Domainname"`
+			User         string            `json:"User"`
+			Env          []string          `json:"Env"`
+			Cmd          []string          `json:"Cmd"`
+			Entrypoint   []string          `json:"Entrypoint"`
+			Image        string            `json:"Image"`
+			Labels       map[string]string `json:"Labels"`
+			WorkingDir   string            `json:"WorkingDir"`
+			ExposedPorts map[string]any    `json:"ExposedPorts"`
+		} `json:"Config"`
+		HostConfig struct {
+			Binds        []string `json:"Binds"`
+			NetworkMode  string   `json:"NetworkMode"`
+			PortBindings map[string][]struct {
+				HostIP   string `json:"HostIp"`
+				HostPort string `json:"HostPort"`
+			} `json:"PortBindings"`
+			RestartPolicy struct {
+				Name              string `json:"Name"`
+				MaximumRetryCount int    `json:"MaximumRetryCount"`
+			} `json:"RestartPolicy"`
+			Privileged bool     `json:"Privileged"`
+			CapAdd     []string `json:"CapAdd"`
+			CapDrop    []string `json:"CapDrop"`
+			Dns        []string `json:"Dns"`
+			DnsSearch  []string `json:"DnsSearch"`
+			ExtraHosts []string `json:"ExtraHosts"`
+			IpcMode    string   `json:"IpcMode"`
+			PidMode    string   `json:"PidMode"`
+			Devices    []struct {
+				PathOnHost        string `json:"PathOnHost"`
+				PathInContainer   string `json:"PathInContainer"`
+				CgroupPermissions string `json:"CgroupPermissions"`
+			} `json:"Devices"`
+			Tmpfs      map[string]string `json:"Tmpfs"`
+			ShmSize    int64             `json:"ShmSize"`
+			CpusetCpus string            `json:"CpusetCpus"`
+			Memory     int64             `json:"Memory"`
+		} `json:"HostConfig"`
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAMConfig *struct {
+					IPv4Address string `json:"IPv4Address"`
+				} `json:"IPAMConfig"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+		State struct {
+			Running bool `json:"Running"`
+		} `json:"State"`
 		Mounts []struct {
 			Type   string `json:"Type"`
 			Source string `json:"Source"`
@@ -191,21 +369,161 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 		return fmt.Errorf("parsing config: %w", err)
 	}
 
+	// Check for alternate restore destination.
+	restoreDest, _ := item.Settings["restore_destination"].(string)
+
 	// Step 3: Restore volumes.
-	progress(item.Name, 50, "restoring volumes")
+	// Load the volumes manifest (if present) to know which were skipped.
+	progress(item.Name, 30, "restoring volumes")
+	var savedManifest []volumeManifestEntry
+	if mData, err := os.ReadFile(filepath.Join(sourceDir, "volumes.json")); err == nil {
+		_ = json.Unmarshal(mData, &savedManifest)
+	}
+
 	for i, mount := range inspect.Mounts {
 		if mount.Type != "bind" {
 			continue
 		}
 		volArchive := filepath.Join(sourceDir, fmt.Sprintf("volume_%d.tar.gz", i))
 		if _, err := os.Stat(volArchive); err != nil {
+			// Check manifest to explain why.
+			for _, me := range savedManifest {
+				if me.Index == i && !me.BackedUp {
+					log.Printf("engine: restore: skipping volume %s (was excluded: %s)", mount.Source, me.SkipReason)
+					break
+				}
+			}
 			continue // skip if archive doesn't exist
 		}
-		if err := os.MkdirAll(mount.Source, 0755); err != nil {
-			return fmt.Errorf("creating volume dir %s: %w", mount.Source, err)
+
+		targetPath := mount.Source
+		if restoreDest != "" {
+			targetPath = filepath.Join(restoreDest, filepath.Base(mount.Source))
 		}
-		if err := untarDirectory(volArchive, mount.Source); err != nil {
-			return fmt.Errorf("restoring volume %s: %w", mount.Source, err)
+
+		if err := os.MkdirAll(targetPath, 0755); err != nil {
+			return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
+		}
+		if err := untarDirectory(volArchive, targetPath); err != nil {
+			return fmt.Errorf("restoring volume %s: %w", targetPath, err)
+		}
+	}
+
+	// Step 4: Recreate the container.
+	progress(item.Name, 55, "recreating container")
+	containerName := strings.TrimPrefix(inspect.Name, "/")
+	if containerName == "" {
+		containerName = item.Name
+	}
+
+	// Remove existing container with the same name if present.
+	if existing, err := h.cli.ContainerInspect(ctx, containerName); err == nil {
+		if existing.State.Running {
+			_ = h.cli.ContainerStop(ctx, existing.ID, container.StopOptions{})
+		}
+		_ = h.cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true})
+	}
+
+	// Build container config.
+	containerConfig := &container.Config{
+		Hostname:   inspect.Config.Hostname,
+		Domainname: inspect.Config.Domainname,
+		User:       inspect.Config.User,
+		Env:        inspect.Config.Env,
+		Cmd:        inspect.Config.Cmd,
+		Entrypoint: inspect.Config.Entrypoint,
+		Image:      inspect.Config.Image,
+		Labels:     inspect.Config.Labels,
+		WorkingDir: inspect.Config.WorkingDir,
+	}
+
+	// Build host config.
+	binds := inspect.HostConfig.Binds
+	// If restoring to an alternate destination, rewrite bind source paths.
+	if restoreDest != "" {
+		rewritten := make([]string, 0, len(binds))
+		for _, bind := range binds {
+			parts := strings.SplitN(bind, ":", 2)
+			if len(parts) == 2 {
+				newSource := filepath.Join(restoreDest, filepath.Base(parts[0]))
+				rewritten = append(rewritten, newSource+":"+parts[1])
+			} else {
+				rewritten = append(rewritten, bind)
+			}
+		}
+		binds = rewritten
+	}
+
+	portBindings := make(map[string][]string)
+	// Convert port bindings to the format expected by Docker API.
+	hostConfig := &container.HostConfig{
+		Binds:       binds,
+		NetworkMode: container.NetworkMode(inspect.HostConfig.NetworkMode),
+		RestartPolicy: container.RestartPolicy{
+			Name:              container.RestartPolicyMode(inspect.HostConfig.RestartPolicy.Name),
+			MaximumRetryCount: inspect.HostConfig.RestartPolicy.MaximumRetryCount,
+		},
+		Privileged: inspect.HostConfig.Privileged,
+		CapAdd:     inspect.HostConfig.CapAdd,
+		CapDrop:    inspect.HostConfig.CapDrop,
+		DNS:        inspect.HostConfig.Dns,
+		DNSSearch:  inspect.HostConfig.DnsSearch,
+		ExtraHosts: inspect.HostConfig.ExtraHosts,
+		IpcMode:    container.IpcMode(inspect.HostConfig.IpcMode),
+		PidMode:    container.PidMode(inspect.HostConfig.PidMode),
+		Tmpfs:      inspect.HostConfig.Tmpfs,
+		ShmSize:    inspect.HostConfig.ShmSize,
+		Resources: container.Resources{
+			CpusetCpus: inspect.HostConfig.CpusetCpus,
+			Memory:     inspect.HostConfig.Memory,
+		},
+	}
+	_ = portBindings // avoid unused variable
+
+	// Convert devices.
+	for _, d := range inspect.HostConfig.Devices {
+		hostConfig.Devices = append(hostConfig.Devices, container.DeviceMapping{
+			PathOnHost:        d.PathOnHost,
+			PathInContainer:   d.PathInContainer,
+			CgroupPermissions: d.CgroupPermissions,
+		})
+	}
+
+	// Build networking config with endpoint settings.
+	networkConfig := &network.NetworkingConfig{}
+	if len(inspect.NetworkSettings.Networks) > 0 {
+		networkConfig.EndpointsConfig = make(map[string]*network.EndpointSettings)
+		for netName, netCfg := range inspect.NetworkSettings.Networks {
+			es := &network.EndpointSettings{}
+			if netCfg.IPAMConfig != nil && netCfg.IPAMConfig.IPv4Address != "" {
+				es.IPAMConfig = &network.EndpointIPAMConfig{
+					IPv4Address: netCfg.IPAMConfig.IPv4Address,
+				}
+			}
+			networkConfig.EndpointsConfig[netName] = es
+		}
+	}
+
+	created, err := h.cli.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, containerName)
+	if err != nil {
+		return fmt.Errorf("creating container: %w", err)
+	}
+
+	// Step 5: Restore Unraid template XML.
+	progress(item.Name, 80, "restoring template")
+	templateSrc := filepath.Join(sourceDir, "template.xml")
+	if data, readErr := os.ReadFile(templateSrc); readErr == nil {
+		templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml")
+		if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0755); mkErr == nil {
+			_ = os.WriteFile(templateDest, data, 0644)
+		}
+	}
+
+	// Step 6: Start container if it was originally running.
+	if inspect.State.Running {
+		progress(item.Name, 90, "starting container")
+		if err := h.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+			return fmt.Errorf("starting restored container: %w", err)
 		}
 	}
 
@@ -229,7 +547,10 @@ func tarDirectory(srcDir, destPath string) error {
 
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			// Skip broken symlinks and inaccessible files instead of
+			// aborting the entire backup.
+			log.Printf("engine: skipping inaccessible path %s: %v", path, err)
+			return nil
 		}
 
 		rel, err := filepath.Rel(srcDir, path)
@@ -240,27 +561,142 @@ func tarDirectory(srcDir, destPath string) error {
 			return nil
 		}
 
+		// Handle symlinks: read the link target and store as symlink entry.
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				log.Printf("engine: skipping unreadable symlink %s: %v", rel, err)
+				return nil
+			}
+			header := &tar.Header{
+				Typeflag: tar.TypeSymlink,
+				Name:     rel,
+				Linkname: link,
+				ModTime:  info.ModTime(),
+			}
+			return tw.WriteHeader(header)
+		}
+
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return fmt.Errorf("creating tar header for %s: %w", rel, err)
 		}
 		header.Name = rel
 
+		if info.IsDir() {
+			return tw.WriteHeader(header)
+		}
+
+		// Re-stat to get current size (file may have grown since Walk).
+		currentInfo, err := os.Stat(path)
+		if err != nil {
+			log.Printf("engine: skipping vanished file %s: %v", rel, err)
+			return nil
+		}
+		header.Size = currentInfo.Size()
+
 		if err := tw.WriteHeader(header); err != nil {
 			return fmt.Errorf("writing tar header for %s: %w", rel, err)
 		}
 
-		if info.IsDir() {
+		f, err := os.Open(path)
+		if err != nil {
+			log.Printf("engine: skipping unopenable file %s: %v", rel, err)
 			return nil
+		}
+		defer f.Close()
+
+		// Use LimitReader to avoid "write too long" if the file grows
+		// between stat and copy.
+		if _, err := io.Copy(tw, io.LimitReader(f, header.Size)); err != nil {
+			return fmt.Errorf("writing file %s to tar: %w", rel, err)
+		}
+		return nil
+	})
+}
+
+// tarDirectoryFiltered creates a gzip-compressed tar archive of srcDir at destPath,
+// including only files whose modification time is after changedSince. Directory
+// entries are always included to preserve structure. This is used for
+// incremental and differential backups.
+func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time) error {
+	outFile, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("creating archive file: %w", err)
+	}
+	defer outFile.Close()
+
+	gw := gzip.NewWriter(outFile)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			log.Printf("engine: skipping inaccessible path %s: %v", path, err)
+			return nil
+		}
+
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		// Handle symlinks.
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				log.Printf("engine: skipping unreadable symlink %s: %v", rel, err)
+				return nil
+			}
+			header := &tar.Header{
+				Typeflag: tar.TypeSymlink,
+				Name:     rel,
+				Linkname: link,
+				ModTime:  info.ModTime(),
+			}
+			return tw.WriteHeader(header)
+		}
+
+		// Always include directories; filter regular files by mod time.
+		if !info.IsDir() && !info.ModTime().After(changedSince) {
+			return nil
+		}
+
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return fmt.Errorf("creating tar header for %s: %w", rel, err)
+		}
+		header.Name = rel
+
+		if info.IsDir() {
+			return tw.WriteHeader(header)
+		}
+
+		// Re-stat to get current size.
+		currentInfo, err := os.Stat(path)
+		if err != nil {
+			log.Printf("engine: skipping vanished file %s: %v", rel, err)
+			return nil
+		}
+		header.Size = currentInfo.Size()
+
+		if err := tw.WriteHeader(header); err != nil {
+			return fmt.Errorf("writing tar header for %s: %w", rel, err)
 		}
 
 		f, err := os.Open(path)
 		if err != nil {
-			return fmt.Errorf("opening file %s: %w", rel, err)
+			log.Printf("engine: skipping unopenable file %s: %v", rel, err)
+			return nil
 		}
 		defer f.Close()
 
-		if _, err := io.Copy(tw, f); err != nil {
+		if _, err := io.Copy(tw, io.LimitReader(f, header.Size)); err != nil {
 			return fmt.Errorf("writing file %s to tar: %w", rel, err)
 		}
 		return nil
@@ -319,6 +755,52 @@ func untarDirectory(srcPath, destDir string) error {
 		}
 	}
 	return nil
+}
+
+// StopContainers stops the given container IDs in order. It returns the IDs
+// that were actually stopped (i.e. were running) so the caller can restart them.
+func StopContainers(ids []string) ([]string, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("creating docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx := context.Background()
+	var stopped []string
+	for _, id := range ids {
+		inspect, err := cli.ContainerInspect(ctx, id)
+		if err != nil {
+			return stopped, fmt.Errorf("inspecting container %s: %w", id, err)
+		}
+		if !inspect.State.Running {
+			continue
+		}
+		if err := cli.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
+			return stopped, fmt.Errorf("stopping container %s: %w", id, err)
+		}
+		stopped = append(stopped, id)
+	}
+	return stopped, nil
+}
+
+// StartContainers starts the given container IDs. Errors are logged but do not
+// abort the remaining starts so that as many containers as possible are restored.
+func StartContainers(ids []string) []error {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return []error{fmt.Errorf("creating docker client: %w", err)}
+	}
+	defer cli.Close()
+
+	ctx := context.Background()
+	var errs []error
+	for _, id := range ids {
+		if err := cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+			errs = append(errs, fmt.Errorf("starting container %s: %w", id, err))
+		}
+	}
+	return errs
 }
 
 // backupFileInfo returns a BackupFile with name and size from the given path.

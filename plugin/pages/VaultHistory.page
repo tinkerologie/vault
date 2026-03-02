@@ -1,6 +1,4 @@
-Menu="Utilities:Vault"
 Title="History"
-Type="xmenu"
 Tabs="true"
 Icon="shield"
 Markdown="false"

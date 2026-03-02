@@ -1,82 +1,107 @@
 ---
-- name: Uninstall Vault plugin
-  block:
-    - name: Check if Vault is installed
-      ansible.builtin.stat:
-        path: "{{ binary_path }}"
-      register: vault_binary
+# Uninstall Vault plugin from Unraid
+# Uses 'raw' module — Unraid has no Python interpreter
 
-    - name: Stop Vault daemon
-      ansible.builtin.command:
-        cmd: "{{ rc_script }} stop"
-      when: vault_binary.stat.exists
-      ignore_errors: true
-      changed_when: true
+- name: Check server before uninstall
+  ansible.builtin.raw: echo "ok"
+  changed_when: false
 
-    - name: Force kill if still running
-      ansible.builtin.shell:
-        cmd: "killall vault 2>/dev/null || true"
-      when: vault_binary.stat.exists
-      changed_when: true
+- name: Check if Vault is installed
+  ansible.builtin.raw: test -f {{ binary_path }} && echo "EXISTS" || echo "MISSING"
+  register: plugin_check
+  changed_when: false
 
-    - name: Wait for process to stop
-      ansible.builtin.pause:
-        seconds: 2
-      when: vault_binary.stat.exists
+- name: Stop Vault daemon via RC script
+  ansible.builtin.raw: "{{ rc_script }} stop 2>/dev/null; true"
+  changed_when: true
+  ignore_errors: true
 
-    - name: Verify API is unreachable
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ api_port }}/api/v1/health"
-        method: GET
-      register: api_check
-      failed_when: false
-      changed_when: false
+- name: Kill any vault process
+  ansible.builtin.raw: "killall vault 2>/dev/null; true"
+  changed_when: true
 
-    - name: Assert API is down
-      ansible.builtin.assert:
-        that: api_check.status != 200
-        fail_msg: "Vault API is still responding after stop"
-        success_msg: "Vault API confirmed unreachable"
-      when: vault_binary.stat.exists
+- name: Kill anything on API port
+  ansible.builtin.raw: "fuser -k {{ api_port }}/tcp 2>/dev/null; true"
+  changed_when: true
 
-    - name: Remove binary
-      ansible.builtin.file:
-        path: "{{ binary_path }}"
-        state: absent
+- name: Wait for service to stop
+  ansible.builtin.pause:
+    seconds: 3
 
-    - name: Remove RC script
-      ansible.builtin.file:
-        path: "{{ rc_script }}"
-        state: absent
+- name: Verify process is stopped
+  ansible.builtin.raw: "pidof vault 2>/dev/null && echo RUNNING || echo STOPPED"
+  register: pid_after_stop
+  changed_when: false
 
-    - name: Remove plugin directory
-      ansible.builtin.file:
-        path: "{{ plugin_dir }}"
-        state: absent
+- name: Force kill if still running
+  ansible.builtin.raw: "killall -9 vault 2>/dev/null; true"
+  when: "'RUNNING' in pid_after_stop.stdout"
+  changed_when: "'RUNNING' in pid_after_stop.stdout"
 
-    - name: Remove PID file
-      ansible.builtin.file:
-        path: "{{ pid_file }}"
-        state: absent
+- name: Wait after force kill
+  ansible.builtin.pause:
+    seconds: 2
+  when: "'RUNNING' in pid_after_stop.stdout"
 
-    - name: Remove log file
-      ansible.builtin.file:
-        path: "{{ log_path }}"
-        state: absent
+- name: Verify API is unreachable after stop
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/health"
+    method: GET
+    status_code: 200
+    timeout: 3
+  register: api_after_stop
+  failed_when: false
+  changed_when: false
 
-    - name: Remove config directory (optional)
-      ansible.builtin.file:
-        path: "{{ config_dir }}"
-        state: absent
-      when: not create_backup
+- name: Confirm API is down
+  ansible.builtin.assert:
+    that:
+      - api_after_stop.status != 200
+    fail_msg: "API is still responding after stop — PID may still be running"
+    success_msg: "API confirmed unreachable after service stop"
 
-    - name: Backup config directory before removal
-      ansible.builtin.command:
-        cmd: "cp -r {{ config_dir }} {{ config_dir }}.bak.{{ ansible_date_time.iso8601_basic_short | default('backup') }}"
-      when: create_backup
-      ignore_errors: true
-      changed_when: true
+- name: Backup config directory before removal
+  ansible.builtin.raw: "cp -r {{ config_dir }} {{ config_dir }}.bak.$(date +%Y%m%dT%H%M%S) 2>/dev/null || true"
+  when: create_backup
+  changed_when: true
 
-    - name: Display uninstall status
-      ansible.builtin.debug:
-        msg: "Vault plugin uninstalled successfully"
+- name: Remove Vault files and directories
+  ansible.builtin.raw: |
+    rm -f {{ binary_path }}
+    rm -f {{ rc_script }}
+    rm -rf {{ plugin_dir }}
+    rm -f {{ pid_file }}
+    rm -f {{ log_path }}
+  changed_when: true
+
+- name: Remove config directory
+  ansible.builtin.raw: "rm -rf {{ config_dir }}"
+  when: not create_backup
+  changed_when: true
+
+- name: Verify plugin directory removed
+  ansible.builtin.raw: "test -d {{ plugin_dir }} && echo EXISTS || echo REMOVED"
+  register: dir_after_remove
+  changed_when: false
+
+- name: Confirm full uninstall
+  ansible.builtin.assert:
+    that:
+      - "'REMOVED' in dir_after_remove.stdout"
+    fail_msg: "Uninstall incomplete — plugin directory still exists"
+    success_msg: "Plugin fully uninstalled (binary, config, and log removed)"
+
+- name: Uninstall summary
+  ansible.builtin.debug:
+    msg: |
+      ══════════════════════════════════════
+      Vault Plugin Uninstalled
+      ══════════════════════════════════════
+      Service:     stopped ✓
+      Binary:      {{ binary_path }} removed ✓
+      Plugin dir:  {{ plugin_dir }} removed ✓
+      RC script:   {{ rc_script }} removed ✓
+      Log file:    {{ log_path }} removed ✓
+      API:         unreachable ✓
+      ══════════════════════════════════════

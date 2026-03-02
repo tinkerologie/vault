@@ -55,3 +55,52 @@ func TestDeleteStorageDestination(t *testing.T) {
 		t.Error("Get after Delete should fail")
 	}
 }
+
+func TestCountJobsByStorageDestID(t *testing.T) {
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})
+	otherID, _ := d.CreateStorageDestination(StorageDestination{Name: "other", Type: "local", Config: "{}"})
+
+	tests := []struct {
+		name      string
+		setup     func()
+		storageID int64
+		want      int
+	}{
+		{
+			name:      "no jobs",
+			setup:     func() {},
+			storageID: destID,
+			want:      0,
+		},
+		{
+			name: "two jobs on target, one on other",
+			setup: func() {
+				d.CreateJob(Job{Name: "job-a", StorageDestID: destID, BackupTypeChain: "full"})
+				d.CreateJob(Job{Name: "job-b", StorageDestID: destID, BackupTypeChain: "full"})
+				d.CreateJob(Job{Name: "job-c", StorageDestID: otherID, BackupTypeChain: "full"})
+			},
+			storageID: destID,
+			want:      2,
+		},
+		{
+			name:      "non-existent storage returns zero",
+			setup:     func() {},
+			storageID: 9999,
+			want:      0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			got, err := d.CountJobsByStorageDestID(tt.storageID)
+			if err != nil {
+				t.Fatalf("CountJobsByStorageDestID() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("CountJobsByStorageDestID(%d) = %d, want %d", tt.storageID, got, tt.want)
+			}
+		})
+	}
+}

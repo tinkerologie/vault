@@ -1,23 +1,29 @@
 package storage
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type SFTPConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	User     string `json:"user"`
-	Password string `json:"password"`
-	KeyFile  string `json:"key_file"`
-	BasePath string `json:"base_path"`
+	Host           string `json:"host"`
+	Port           int    `json:"port"`
+	User           string `json:"user"`
+	Password       string `json:"password"`
+	KeyFile        string `json:"key_file"`
+	BasePath       string `json:"base_path"`
+	HostKey        string `json:"host_key"`         // SHA-256 fingerprint of host public key
+	KnownHostsFile string `json:"known_hosts_file"` // Path to OpenSSH known_hosts file
 }
 
 type SFTPAdapter struct {
@@ -51,7 +57,7 @@ func (s *SFTPAdapter) connect() (*sftp.Client, error) {
 	sshConfig := &ssh.ClientConfig{
 		User:            s.config.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: s.hostKeyCallback(),
 	}
 
 	addr := net.JoinHostPort(s.config.Host, fmt.Sprintf("%d", s.config.Port))
@@ -70,6 +76,35 @@ func (s *SFTPAdapter) connect() (*sftp.Client, error) {
 
 func (s *SFTPAdapter) fullPath(path string) string {
 	return filepath.Join(s.config.BasePath, filepath.Clean(path))
+}
+
+// hostKeyCallback returns the appropriate SSH host key callback based on config.
+// Priority: known_hosts_file → host_key fingerprint → insecure (backward compat).
+func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
+	// Option 1: Use a known_hosts file (OpenSSH format).
+	if s.config.KnownHostsFile != "" {
+		cb, err := knownhosts.New(s.config.KnownHostsFile)
+		if err == nil {
+			return cb
+		}
+		// Fall through on error.
+	}
+
+	// Option 2: Verify against a SHA-256 fingerprint of the host key.
+	if s.config.HostKey != "" {
+		expected := strings.TrimPrefix(s.config.HostKey, "SHA256:")
+		return func(_ string, _ net.Addr, key ssh.PublicKey) error {
+			hash := sha256.Sum256(key.Marshal())
+			actual := hex.EncodeToString(hash[:])
+			if !strings.EqualFold(actual, expected) {
+				return fmt.Errorf("host key mismatch: expected %s, got %s", expected, actual)
+			}
+			return nil
+		}
+	}
+
+	// Fallback: accept any key (backward compatibility with existing configs).
+	return ssh.InsecureIgnoreHostKey() //nolint:gosec // user chose not to configure host key
 }
 
 func (s *SFTPAdapter) Write(path string, reader io.Reader) error {
