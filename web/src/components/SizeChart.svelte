@@ -3,10 +3,10 @@
 
   let { runs = [] } = $props()
 
-  // Extract size data points from runs, ordered by date ascending
+  // Extract size data points from completed runs only (failed runs have partial/misleading sizes)
   let dataPoints = $derived.by(() => {
     const points = runs
-      .filter(r => r.size_bytes > 0 && r.started_at)
+      .filter(r => r.size_bytes > 0 && r.started_at && (r.status === 'completed' || r.status === 'success'))
       .map(r => ({ date: new Date(r.started_at), size: r.size_bytes, name: r.jobName }))
       .sort((a, b) => a.date - b.date)
       .slice(-30) // Last 30 data points
