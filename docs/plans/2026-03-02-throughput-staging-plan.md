@@ -993,7 +993,443 @@ git commit -m "feat: add staging directory configuration to Settings UI"
 
 ---
 
-## Task 11: Final verification and build
+## Task 11: Add live auto-refresh to all pages via WebSocket
+
+**Files:**
+
+- Modify: `web/src/pages/Dashboard.svelte`
+- Modify: `web/src/pages/History.svelte`
+- Modify: `web/src/pages/Jobs.svelte`
+- Modify: `web/src/pages/Storage.svelte`
+- Modify: `web/src/pages/Restore.svelte`
+- Modify: `web/src/components/RestoreWizard.svelte`
+
+**Context:** Currently only Dashboard (on `job_run_completed`) and Logs (on `activity`) auto-refresh. Jobs, Storage, and Restore have zero WebSocket subscriptions. History over-fetches on every per-item event causing flicker. Users must manually refresh or navigate away and back to see updated data.
+
+**Step 1: Add WebSocket subscriptions to Jobs.svelte**
+
+Import `onWsMessage` and subscribe in `onMount`:
+
+```js
+import { onWsMessage } from "../lib/ws.svelte.js";
+
+onMount(() => {
+  loadData();
+  const unsub = onWsMessage((msg) => {
+    if (msg.type === "job_run_started" || msg.type === "job_run_completed") {
+      loadData();
+    }
+  });
+  return unsub;
+});
+```
+
+This refreshes the job list and next-run times whenever a backup starts or finishes.
+
+**Step 2: Add WebSocket subscriptions to Storage.svelte**
+
+Import `onWsMessage` and subscribe in `onMount`:
+
+```js
+import { onWsMessage } from "../lib/ws.svelte.js";
+
+onMount(() => {
+  loadData();
+  const unsub = onWsMessage((msg) => {
+    if (msg.type === "job_run_completed") {
+      loadData();
+    }
+  });
+  return unsub;
+});
+```
+
+This refreshes dependent job counts and last-tested info when backups complete.
+
+**Step 3: Fix History.svelte over-fetching**
+
+Currently History reloads on every `item_backup_done` mid-run, causing loading flicker. Change the WS handler to only refetch on run-level events:
+
+```js
+const unsub = onWsMessage((msg) => {
+  if (msg.type === "job_run_started" || msg.type === "job_run_completed") {
+    loadData();
+  }
+});
+```
+
+Remove `item_backup_done`, `item_backup_failed`, `item_restore_done`, `item_restore_failed` from the trigger list — those are mid-run events that don't change the History view meaningfully until the run completes.
+
+**Step 4: Fix Dashboard to also refresh on `job_run_started`**
+
+The Dashboard currently only refreshes on `job_run_completed`. Add `job_run_started` to also refresh the sidebar stats (job count, next runs):
+
+```js
+if (msg.type === "job_run_completed" || msg.type === "job_run_started") {
+  loadDashboard();
+}
+```
+
+**Step 5: Add WebSocket subscription to Restore page**
+
+In `Restore.svelte`, subscribe to refresh the job list when new backups complete (new restore points available):
+
+```js
+import { onWsMessage } from "../lib/ws.svelte.js";
+
+onMount(async () => {
+  jobs = await api.listJobs();
+  loading = false;
+  const unsub = onWsMessage((msg) => {
+    if (msg.type === "job_run_completed") {
+      api.listJobs().then((j) => (jobs = j));
+    }
+  });
+  return unsub;
+});
+```
+
+**Step 6: Handle restore completion in RestoreWizard.svelte**
+
+The wizard currently sets `restoring = true` but never clears it because it doesn't listen for WS events. Add a subscription:
+
+```js
+import { onWsMessage } from "../lib/ws.svelte.js";
+
+// Inside the component, after onMount or in $effect:
+const unsub = onWsMessage((msg) => {
+  if (msg.type === "job_run_completed" && msg.run_type === "restore") {
+    restoring = false;
+    // Optionally show success/failure based on msg.status
+  }
+});
+```
+
+Also return `unsub` from `onMount` for cleanup.
+
+**Step 7: Verify web build succeeds**
+
+Run: `cd web && npm run build`
+Expected: Build succeeds.
+
+**Step 8: Commit**
+
+```bash
+git add web/src/pages/Dashboard.svelte web/src/pages/History.svelte web/src/pages/Jobs.svelte web/src/pages/Storage.svelte web/src/pages/Restore.svelte web/src/components/RestoreWizard.svelte
+git commit -m "feat: add live auto-refresh via WebSocket to all pages"
+```
+
+---
+
+## Task 12: Add multi-item restore to RestoreWizard
+
+**Files:**
+
+- Modify: `web/src/components/RestoreWizard.svelte`
+
+**Context:** The backend supports restoring multiple items in a single API call via an `items` array in the request body (`internal/api/handlers/jobs.go:188-291`). The frontend RestoreWizard only sends a single `item_name`/`item_type` using the legacy single-item mode. Users cannot select multiple containers/VMs to restore at once.
+
+**Step 1: Add multi-select state**
+
+Replace the single `selectedItem` state with a set-based multi-select:
+
+```js
+let selectedItems = $state(new Map()); // key: "type:name", value: {name, type, jobs}
+```
+
+**Step 2: Update item selection to toggle**
+
+Change `selectItem` to toggle items in/out of the selection:
+
+```js
+function toggleItem(item) {
+  const key = `${item.type}:${item.name}`;
+  if (selectedItems.has(key)) {
+    selectedItems.delete(key);
+    selectedItems = new Map(selectedItems); // trigger reactivity
+  } else {
+    selectedItems.set(key, item);
+    selectedItems = new Map(selectedItems);
+  }
+}
+```
+
+**Step 3: Update the item list UI**
+
+Add checkboxes or visual selection indicators to each item card. Show a count badge: "3 selected". Add a "Select All" / "Deselect All" toggle.
+
+**Step 4: Update Step 2 (Choose Version)**
+
+When multiple items are selected, show a combined restore point picker. The user picks a single restore point (job run) that contains all selected items, or picks individual restore points per item.
+
+Simplest approach: pick the most recent restore point from each job that covers the selected items.
+
+**Step 5: Update `doRestore` to use `items` array**
+
+```js
+async function doRestore() {
+  restoring = true;
+  const items = Array.from(selectedItems.values()).map((item) => ({
+    item_name: item.name,
+    item_type: item.type,
+  }));
+  try {
+    await api.restoreJob(selectedJob.id, {
+      items,
+      restore_point: selectedVersion,
+    });
+    showToast(`Restoring ${items.length} item(s)...`, "info");
+  } catch (e) {
+    showToast(e.message, "error");
+    restoring = false;
+  }
+}
+```
+
+**Step 6: Update the restore API client if needed**
+
+Check `web/src/lib/api.js` — the `restoreJob` method should already pass through the request body. If it only sends `item_name`/`item_type`, update it to accept a flexible payload.
+
+**Step 7: Verify web build succeeds**
+
+Run: `cd web && npm run build`
+Expected: Build succeeds.
+
+**Step 8: Commit**
+
+```bash
+git add web/src/components/RestoreWizard.svelte web/src/lib/api.js
+git commit -m "feat: add multi-item restore selection to RestoreWizard"
+```
+
+---
+
+## Task 13: Add NFS storage type to frontend
+
+**Files:**
+
+- Modify: `web/src/pages/Storage.svelte`
+
+**Context:** The backend fully supports NFS storage (`internal/storage/nfs.go`, `internal/config/types.go:45`, `internal/storage/factory.go`). The frontend has NFS icons and colors defined (`Storage.svelte:233,240`) but the storage type dropdown is missing the NFS option, there's no config template for NFS fields, and the config summary has no NFS branch.
+
+**Step 1: Add NFS to the storage type dropdown**
+
+In `Storage.svelte`, find the type `<select>` (around line 351-353) and add:
+
+```html
+<option value="local">Local Path</option>
+<option value="sftp">SFTP</option>
+<option value="smb">SMB / CIFS</option>
+<option value="nfs">NFS</option>
+```
+
+**Step 2: Add NFS config template**
+
+In the `onTypeChange()` defaults object (around line 222-224), add:
+
+```js
+const defaults = {
+  local: { path: "" },
+  sftp: { host: "", port: 22, user: "", password: "", path: "" },
+  smb: { host: "", share: "", user: "", password: "", path: "" },
+  nfs: { host: "", export: "", base_path: "", version: "4", options: "" },
+};
+```
+
+These fields match `NFSConfig` in `internal/storage/nfs.go:13-20`.
+
+**Step 3: Add NFS config form fields**
+
+In the create/edit modal, add an NFS config section (similar to SFTP/SMB):
+
+```svelte
+{:else if form.type === 'nfs'}
+  <div class="grid grid-cols-2 gap-3">
+    <div class="col-span-2">
+      <label class="block text-sm font-medium text-text-muted mb-1.5">NFS Host</label>
+      <input type="text" bind:value={form.config.host} placeholder="192.168.1.100" class="..." />
+    </div>
+    <div class="col-span-2">
+      <label class="block text-sm font-medium text-text-muted mb-1.5">Export Path</label>
+      <input type="text" bind:value={form.config.export} placeholder="/mnt/user/backups" class="..." />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-text-muted mb-1.5">Base Path</label>
+      <input type="text" bind:value={form.config.base_path} placeholder="vault" class="..." />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-text-muted mb-1.5">NFS Version</label>
+      <select bind:value={form.config.version} class="...">
+        <option value="3">NFSv3</option>
+        <option value="4">NFSv4</option>
+      </select>
+    </div>
+    <div class="col-span-2">
+      <label class="block text-sm font-medium text-text-muted mb-1.5">Mount Options</label>
+      <input type="text" bind:value={form.config.options} placeholder="Optional: rw,sync" class="..." />
+    </div>
+  </div>
+```
+
+**Step 4: Add NFS config summary branch**
+
+In the storage card config summary section (around line 296-303), add:
+
+```svelte
+{:else if dest.type === 'nfs'}
+  <p class="text-xs text-text-muted truncate">{parseConfig(dest.config).host}:{parseConfig(dest.config).export}</p>
+```
+
+**Step 5: Verify web build succeeds**
+
+Run: `cd web && npm run build`
+Expected: Build succeeds.
+
+**Step 6: Commit**
+
+```bash
+git add web/src/pages/Storage.svelte
+git commit -m "feat: add NFS storage type to frontend UI"
+```
+
+---
+
+## Task 14: Add backup type guide to Jobs and Settings Reference
+
+**Files:**
+
+- Modify: `web/src/pages/Jobs.svelte`
+- Modify: `web/src/pages/Settings.svelte`
+
+**Context:** The backup type dropdown (full/incremental/differential) has no tooltip or explanation in Jobs.svelte. Settings Reference tab has a compression guide but no backup type guide.
+
+**Step 1: Add helper text below backup type dropdown in Jobs.svelte**
+
+Find the backup type `<select>` (around line 593-599) and add below it:
+
+```svelte
+<p class="text-xs text-text-dim mt-1">
+  {form.backup_type_chain === 'full' ? 'Backs up everything every time. Largest but most reliable.' :
+   form.backup_type_chain === 'incremental' ? 'Only backs up changes since last backup. Fastest and smallest.' :
+   form.backup_type_chain === 'differential' ? 'Backs up changes since last full backup. Balance of speed and safety.' : ''}
+</p>
+```
+
+**Step 2: Add backup type guide to Settings Reference tab**
+
+In `Settings.svelte`, in the Reference tab section (after the Compression Guide), add a Backup Type Guide:
+
+```svelte
+<!-- Backup Type Guide -->
+<div class="bg-surface border border-border rounded-xl overflow-hidden">
+  <div class="px-5 py-4 border-b border-border">
+    <h2 class="text-base font-semibold text-text">Backup Type Guide</h2>
+  </div>
+  <div class="p-5">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-border">
+            <th class="text-left py-2 pr-4 text-text-muted font-medium">Type</th>
+            <th class="text-left py-2 pr-4 text-text-muted font-medium">Description</th>
+            <th class="text-left py-2 pr-4 text-text-muted font-medium">Speed</th>
+            <th class="text-left py-2 text-text-muted font-medium">Storage</th>
+          </tr>
+        </thead>
+        <tbody class="text-text">
+          <tr class="border-b border-border/50">
+            <td class="py-2 pr-4 font-medium">Full</td>
+            <td class="py-2 pr-4">Complete backup every time</td>
+            <td class="py-2 pr-4">Slowest</td>
+            <td class="py-2">Largest</td>
+          </tr>
+          <tr class="border-b border-border/50">
+            <td class="py-2 pr-4 font-medium">Incremental</td>
+            <td class="py-2 pr-4">Only changes since last backup (any type)</td>
+            <td class="py-2 pr-4">Fastest</td>
+            <td class="py-2">Smallest</td>
+          </tr>
+          <tr>
+            <td class="py-2 pr-4 font-medium">Differential</td>
+            <td class="py-2 pr-4">Changes since last full backup</td>
+            <td class="py-2 pr-4">Medium</td>
+            <td class="py-2">Medium</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+```
+
+**Step 3: Verify web build succeeds**
+
+Run: `cd web && npm run build`
+Expected: Build succeeds.
+
+**Step 4: Commit**
+
+```bash
+git add web/src/pages/Jobs.svelte web/src/pages/Settings.svelte
+git commit -m "feat: add backup type explanations to Jobs form and Settings Reference"
+```
+
+---
+
+## Task 15: Display container stop/restart status via WebSocket
+
+**Files:**
+
+- Modify: `web/src/lib/progress.svelte.js`
+- Modify: `web/src/pages/Dashboard.svelte`
+
+**Context:** The backend broadcasts `containers_stopping_all` and `containers_restarting_all` WebSocket events when jobs use stop-all mode. The frontend never handles these, so users see no indication that containers are being stopped or restarted during a backup.
+
+**Step 1: Add handlers in progress.svelte.js**
+
+Add cases for the two new message types:
+
+```js
+case "containers_stopping_all": {
+  // Set a phase indicator
+  phaseMessage = `Stopping ${msg.count} containers...`;
+  break;
+}
+case "containers_restarting_all": {
+  phaseMessage = `Restarting ${msg.count} containers...`;
+  break;
+}
+```
+
+Export `phaseMessage` as a `$state` variable that Dashboard can display.
+
+**Step 2: Display phase message on Dashboard**
+
+In the running backup section of Dashboard, show the phase message above the per-item progress:
+
+```svelte
+{#if phaseMessage}
+  <p class="text-xs text-warning animate-pulse">{phaseMessage}</p>
+{/if}
+```
+
+Clear `phaseMessage` when `item_backup_start` fires (backup has started, containers were stopped successfully).
+
+**Step 3: Verify web build succeeds**
+
+Run: `cd web && npm run build`
+Expected: Build succeeds.
+
+**Step 4: Commit**
+
+```bash
+git add web/src/lib/progress.svelte.js web/src/pages/Dashboard.svelte
+git commit -m "feat: show container stop/restart status during backups"
+```
+
+---
+
+## Task 16: Final verification and build
 
 **Files:**
 
@@ -1026,15 +1462,18 @@ Start the daemon and verify:
 1. Dashboard shows avg speed below health gauge
 2. Activity timeline entries show speed chips (e.g. "32.2 MB/s")
 3. History page entries show speed chips
-4. Settings > General tab shows Staging Directory section with:
-   - Current path and source label
-   - Disk space bar with free/total
-   - Custom path input with Set button
-   - Cascade order (collapsible)
+4. Settings > General tab shows Staging Directory section with disk space bar, custom path, cascade
+5. All pages auto-refresh when a backup starts/completes (no manual refresh needed)
+6. History page does not flicker during active backups
+7. Jobs page updates next-run times after backups
+8. RestoreWizard supports multi-item selection and clears spinner on completion
+9. NFS storage type can be created via the UI
+10. Backup type dropdown shows explanatory text
+11. Container stop/restart shows status during backups
 
 **Step 6: Commit all remaining changes (if any)**
 
 ```bash
 git add -A
-git commit -m "chore: final verification - throughput display and staging config"
+git commit -m "chore: final verification - all features"
 ```

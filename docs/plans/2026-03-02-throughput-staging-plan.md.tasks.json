@@ -59,11 +59,37 @@
       "blockedBy": [31]
     },
     {
-      "id": 33,
-      "subject": "Task 11: Final verification and build",
+      "id": 34,
+      "subject": "Task 11: Add live auto-refresh to all pages via WebSocket",
+      "status": "pending"
+    },
+    {
+      "id": 35,
+      "subject": "Task 12: Add multi-item restore to RestoreWizard",
       "status": "pending",
-      "blockedBy": [25, 26, 27, 32]
+      "blockedBy": [34]
+    },
+    {
+      "id": 36,
+      "subject": "Task 13: Add NFS storage type to frontend",
+      "status": "pending"
+    },
+    {
+      "id": 37,
+      "subject": "Task 14: Add backup type guide to Jobs and Settings Reference",
+      "status": "pending"
+    },
+    {
+      "id": 38,
+      "subject": "Task 15: Display container stop/restart status via WebSocket",
+      "status": "pending"
+    },
+    {
+      "id": 33,
+      "subject": "Task 16: Final verification and build",
+      "status": "pending",
+      "blockedBy": [25, 26, 27, 32, 34, 35, 36, 37, 38]
     }
   ],
-  "lastUpdated": "2026-03-02T18:55:00Z"
+  "lastUpdated": "2026-03-02T21:30:00Z"
 }
