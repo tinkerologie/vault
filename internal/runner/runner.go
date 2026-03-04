@@ -28,10 +28,11 @@ import (
 
 // Runner executes backup and restore operations for jobs.
 type Runner struct {
-	db        *db.DB
-	hub       *ws.Hub
-	serverKey []byte // AES-256 key for unsealing secrets.
-	mu        sync.Mutex
+	db              *db.DB
+	hub             *ws.Hub
+	serverKey       []byte // AES-256 key for unsealing secrets.
+	snapshotManager *db.SnapshotManager
+	mu              sync.Mutex
 }
 
 // New creates a new Runner.
@@ -41,6 +42,12 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 		hub:       hub,
 		serverKey: serverKey,
 	}
+}
+
+// SetSnapshotManager sets the snapshot manager used to persist the database
+// to the cache drive after successful backup jobs.
+func (r *Runner) SetSnapshotManager(sm *db.SnapshotManager) {
+	r.snapshotManager = sm
 }
 
 // RunJob executes a backup for the given job ID. It is safe to call from
@@ -295,6 +302,26 @@ func (r *Runner) RunJob(jobID int64) {
 				"size_bytes":  itemSize,
 				"verified":    job.VerifyBackup,
 			})
+
+			// After successful backup of a container item (per-item mode), verify health.
+			// In per-item mode the engine handler restarts each container after backup.
+			if item.ItemType == "container" && job.ContainerMode != "stop_all" {
+				go func(itemID, itemName string) {
+					result, err := engine.VerifyContainerHealth(itemID, itemName, 60*time.Second)
+					if err != nil {
+						log.Printf("runner: health check error for %s: %v", itemName, err)
+						return
+					}
+					r.broadcast(map[string]any{
+						"type":        "container_health_check",
+						"job_id":      jobID,
+						"name":        result.ContainerName,
+						"status":      result.Status,
+						"message":     result.Message,
+						"duration_ms": result.Duration.Milliseconds(),
+					})
+				}(item.ItemID, item.ItemName)
+			}
 		}
 
 		// Update in-flight progress so the UI reflects real-time counts.
@@ -312,6 +339,49 @@ func (r *Runner) RunJob(jobID int64) {
 			for _, e := range errs {
 				log.Printf("runner: stop_all restart error for job %d: %v", jobID, e)
 			}
+		}
+
+		// Verify container health after restarts (informational — does not affect status).
+		r.broadcast(map[string]any{
+			"type":    "phase_message",
+			"job_id":  jobID,
+			"message": fmt.Sprintf("Verifying health of %d containers...", len(stoppedContainerIDs)),
+		})
+
+		var healthResults []map[string]any
+		for _, id := range stoppedContainerIDs {
+			// Find the container name from items.
+			name := id
+			for _, item := range items {
+				if item.ItemID == id {
+					name = item.ItemName
+					break
+				}
+			}
+			result, err := engine.VerifyContainerHealth(id, name, 60*time.Second)
+			if err != nil {
+				log.Printf("runner: health check error for %s: %v", name, err)
+				continue
+			}
+			healthResults = append(healthResults, map[string]any{
+				"name":        result.ContainerName,
+				"status":      result.Status,
+				"message":     result.Message,
+				"duration_ms": result.Duration.Milliseconds(),
+			})
+			r.broadcast(map[string]any{
+				"type":        "container_health_check",
+				"job_id":      jobID,
+				"name":        result.ContainerName,
+				"status":      result.Status,
+				"message":     result.Message,
+				"duration_ms": result.Duration.Milliseconds(),
+			})
+		}
+		if len(healthResults) > 0 {
+			r.logActivity("info", "health",
+				fmt.Sprintf("Health check: %s", job.Name),
+				structuredDetails(healthResults))
 		}
 	}
 
@@ -369,6 +439,13 @@ func (r *Runner) RunJob(jobID int64) {
 
 		// Auto-backup the SQLite database to storage.
 		r.backupDatabase(dest, basePath)
+
+		// Persist database to cache drive after successful backup.
+		if r.snapshotManager != nil {
+			if err := r.snapshotManager.SaveSnapshot(); err != nil {
+				log.Printf("runner: snapshot save error: %v", err)
+			}
+		}
 	}
 
 	if job.RetentionCount > 0 || job.RetentionDays > 0 {
@@ -413,8 +490,8 @@ func (r *Runner) RunJob(jobID int64) {
 			"failed_items": failedNames,
 		}))
 
-	// Send Unraid notifications based on job's notify_on setting.
-	r.sendNotification(job, status, itemsDone, itemsFailed, totalSize)
+	// Send Unraid + Discord notifications based on job's notify_on setting.
+	r.sendNotification(job, status, itemsDone, itemsFailed, totalSize, int(time.Since(jobStart).Seconds()), failedNames)
 }
 
 // backupItem executes a single item backup using the appropriate engine handler,
@@ -422,7 +499,8 @@ func (r *Runner) RunJob(jobID int64) {
 // If verify is true, it reads each file back and validates SHA-256 checksums.
 // If passphrase is non-empty, each file is encrypted with age before uploading.
 func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string) (*engine.BackupResult, map[string]string, error) {
-	tmpDir, cleanup, err := tempdir.CreateBackupDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config})
+	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
+	tmpDir, cleanup, err := tempdir.CreateBackupDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config}, stageOverride)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating temp dir: %w", err)
 	}
@@ -688,6 +766,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	run.Log = string(logJSON)
 	run.ItemsDone = itemsDone
 	run.ItemsFailed = itemsFailed
+	run.SizeBytes = restorePoint.SizeBytes
 	_ = r.db.UpdateJobRun(run)
 
 	r.broadcast(map[string]any{
@@ -699,6 +778,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		"items_done":   itemsDone,
 		"items_failed": itemsFailed,
 		"items_total":  len(targets),
+		"size_bytes":   restorePoint.SizeBytes,
 	})
 
 	level := "info"
@@ -767,7 +847,8 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 	// Parse checksums from restore point metadata for verification.
 	expectedChecksums := r.parseItemChecksums(restorePoint.Metadata, itemName)
 
-	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config})
+	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
+	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config}, stageOverride)
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
 	}
@@ -936,7 +1017,7 @@ func (r *Runner) logActivity(level, category, message, details string) {
 // sendNotification dispatches Unraid notifications based on job outcome and the
 // job's notify_on preference ("always", "failure", "never").
 // It also respects the global notifications_enabled setting.
-func (r *Runner) sendNotification(job db.Job, status string, done, failed int, sizeBytes int64) {
+func (r *Runner) sendNotification(job db.Job, status string, done, failed int, sizeBytes int64, durationSec int, failedNames []string) {
 	// Check global notification switch first.
 	globalEnabled, _ := r.db.GetSetting("notifications_enabled", "true")
 	if globalEnabled != "true" {
@@ -951,6 +1032,7 @@ func (r *Runner) sendNotification(job db.Job, status string, done, failed int, s
 		return
 	}
 
+	// Unraid notifications.
 	switch status {
 	case "completed":
 		if pref == "always" {
@@ -966,6 +1048,92 @@ func (r *Runner) sendNotification(job db.Job, status string, done, failed int, s
 		if err := notify.JobPartial(job.Name, done, failed); err != nil {
 			log.Printf("runner: notification error: %v", err)
 		}
+	}
+
+	// Discord notifications.
+	webhookURL, _ := r.db.GetSetting("discord_webhook_url", "")
+	discordPref, _ := r.db.GetSetting("discord_notify_on", "always")
+	if webhookURL != "" && discordPref != "never" {
+		shouldSend := discordPref == "always" || (discordPref == "failure" && status != "completed")
+		if shouldSend {
+			embed := r.buildDiscordEmbed(job.Name, status, done, failed, sizeBytes, durationSec, failedNames)
+			go func() {
+				if err := notify.SendDiscord(webhookURL, embed); err != nil {
+					log.Printf("runner: discord notification error: %v", err)
+				}
+			}()
+		}
+	}
+}
+
+func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, sizeBytes int64, durationSec int, failedNames []string) notify.DiscordEmbed {
+	var title string
+	var color int
+	switch status {
+	case "completed":
+		title = "✅ Backup Completed"
+		color = notify.ColorSuccess
+	case "partial":
+		title = "⚠️ Backup Partially Completed"
+		color = notify.ColorWarning
+	default:
+		title = "❌ Backup Failed"
+		color = notify.ColorDanger
+	}
+
+	fields := []notify.DiscordField{
+		{Name: "Duration", Value: fmtDuration(durationSec), Inline: true},
+		{Name: "Size", Value: fmtSize(sizeBytes), Inline: true},
+	}
+	if durationSec > 0 {
+		fields = append(fields, notify.DiscordField{Name: "Speed", Value: fmtSize(sizeBytes/int64(durationSec)) + "/s", Inline: true})
+	}
+	fields = append(fields, notify.DiscordField{
+		Name:   "Items",
+		Value:  fmt.Sprintf("%d/%d succeeded", done, done+failed),
+		Inline: true,
+	})
+	if len(failedNames) > 0 {
+		names := strings.Join(failedNames, ", ")
+		if len(names) > 200 {
+			names = names[:200] + "..."
+		}
+		fields = append(fields, notify.DiscordField{Name: "Failed Items", Value: names})
+	}
+
+	return notify.DiscordEmbed{
+		Title:       title,
+		Description: jobName,
+		Color:       color,
+		Fields:      fields,
+	}
+}
+
+func fmtDuration(seconds int) string {
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	if seconds < 3600 {
+		return fmt.Sprintf("%dm %ds", seconds/60, seconds%60)
+	}
+	return fmt.Sprintf("%dh %dm", seconds/3600, (seconds%3600)/60)
+}
+
+func fmtSize(bytes int64) string {
+	const (
+		kb = 1024
+		mb = kb * 1024
+		gb = mb * 1024
+	)
+	switch {
+	case bytes >= gb:
+		return fmt.Sprintf("%.1f GB", float64(bytes)/float64(gb))
+	case bytes >= mb:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/float64(mb))
+	case bytes >= kb:
+		return fmt.Sprintf("%.0f KB", float64(bytes)/float64(kb))
+	default:
+		return fmt.Sprintf("%d B", bytes)
 	}
 }
 
@@ -1283,6 +1451,104 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]
 	}
 
 	return manifests, nil
+}
+
+// ScanAppdataBackups scans a storage destination for backup directories
+// created by Commifreak's unraid-appdata.backup plugin. These directories
+// follow the naming convention ab_YYYYMMDD_HHMMSS and contain .tar.gz
+// archives (one per container) and optionally cube-*.zip flash backups.
+func (r *Runner) ScanAppdataBackups(dest db.StorageDestination) ([]map[string]any, error) {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return nil, fmt.Errorf("creating storage adapter: %w", err)
+	}
+	defer storage.CloseAdapter(adapter)
+
+	// List all entries at the root level.
+	topEntries, err := adapter.List("")
+	if err != nil {
+		return nil, fmt.Errorf("listing root directory: %w", err)
+	}
+
+	var manifests []map[string]any
+
+	for _, entry := range topEntries {
+		if !entry.IsDir {
+			continue
+		}
+
+		// Extract directory name from path.
+		dirName := filepath.Base(entry.Path)
+		if !strings.HasPrefix(dirName, "ab_") {
+			continue
+		}
+
+		// Parse timestamp from directory name: ab_YYYYMMDD_HHMMSS
+		createdAt := parseAppdataTimestamp(dirName)
+
+		// List files inside this ab_ directory.
+		files, err := adapter.List(entry.Path)
+		if err != nil {
+			log.Printf("runner: scan appdata: failed to list %s: %v", entry.Path, err)
+			continue
+		}
+
+		for _, f := range files {
+			if f.IsDir {
+				continue
+			}
+
+			fileName := filepath.Base(f.Path)
+
+			var jobName, compression string
+
+			switch {
+			case strings.HasSuffix(fileName, ".tar.gz"):
+				jobName = strings.TrimSuffix(fileName, ".tar.gz")
+				compression = "gzip"
+			case strings.HasPrefix(fileName, "cube-") && strings.HasSuffix(fileName, ".zip"):
+				jobName = "flash-backup"
+				compression = "zip"
+			default:
+				// Skip non-backup files (.xml, .json, .log, etc.)
+				continue
+			}
+
+			manifests = append(manifests, map[string]any{
+				"source":       "appdata.backup",
+				"job_name":     jobName,
+				"storage_path": f.Path,
+				"backup_type":  "full",
+				"compression":  compression,
+				"size_bytes":   float64(f.Size),
+				"created_at":   createdAt,
+			})
+		}
+	}
+
+	return manifests, nil
+}
+
+// parseAppdataTimestamp parses a directory name like ab_20260304_040001
+// into an ISO 8601 timestamp string. Returns empty string on parse failure.
+func parseAppdataTimestamp(dirName string) string {
+	// Expected format: ab_YYYYMMDD_HHMMSS
+	parts := strings.SplitN(dirName, "_", 3)
+	if len(parts) != 3 {
+		return ""
+	}
+	dateStr := parts[1] // YYYYMMDD
+	timeStr := parts[2] // HHMMSS
+
+	if len(dateStr) != 8 || len(timeStr) != 6 {
+		return ""
+	}
+
+	t, err := time.Parse("20060102150405", dateStr+timeStr)
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // ImportBackups creates job and restore point records from previously
