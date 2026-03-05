@@ -42,7 +42,7 @@
         } catch { return [] }
       })
       const results = await Promise.all(promises)
-      allRuns = results.flat().sort((a, b) => new Date(b.started_at) - new Date(a.started_at))
+      allRuns = results.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
     } catch (e) {
       error = e.message || 'Failed to load history'
     } finally {

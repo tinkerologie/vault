@@ -117,7 +117,7 @@
         } catch { return [] }
       })
       const allRuns = await Promise.all(runPromises)
-      recentRuns = allRuns.flat().sort((a, b) => new Date(b.started_at) - new Date(a.started_at)).slice(0, 10)
+      recentRuns = allRuns.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()).slice(0, 10)
       error = ''
     } catch (e) {
       error = e.message || 'Failed to load dashboard'

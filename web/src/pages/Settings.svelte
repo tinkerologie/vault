@@ -431,7 +431,7 @@
             ] as opt (opt.value)}
               <button
                 type="button"
-                onclick={() => setTheme(opt.value)}
+                onclick={() => setTheme(/** @type {'light'|'dark'|'system'} */ (opt.value))}
                 class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getTheme() === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
               >
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>

@@ -496,7 +496,7 @@
     </button>
     <div class="w-px h-6 bg-border"></div>
     <button
-      onclick={() => { selectedJobs = new Set() }}
+      onclick={() => { selectedJobs = new SvelteSet() }}
       class="text-xs text-text-muted hover:text-text transition-colors"
     >
       Clear

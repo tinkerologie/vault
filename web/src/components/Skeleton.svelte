@@ -1,5 +1,5 @@
 <script>
-  /** @type {'stats' | 'card' | 'table'} */
+  /** @type {{ variant?: 'stats' | 'card' | 'table', count?: number }} */
   let { variant = 'card', count = 3 } = $props()
 </script>
 

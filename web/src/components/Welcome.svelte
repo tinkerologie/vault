@@ -1,4 +1,5 @@
 <script>
+  /** @type {{ onstart?: (e: MouseEvent) => void }} */
   let { onstart = () => {} } = $props()
 </script>
 

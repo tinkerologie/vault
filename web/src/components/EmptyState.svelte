@@ -1,6 +1,6 @@
 <script>
   // eslint-disable-next-line no-unused-vars -- children is an implicit Svelte slot prop
-  let { icon = '', title = '', description = '', subtitle = '', actionLabel = '', onaction = null, iconSlot, children } = $props()
+  let { icon = '', title = '', description = '', subtitle = '', actionLabel = '', onaction = null, iconSlot = undefined, children = undefined } = $props()
 </script>
 
 <div class="flex flex-col items-center justify-center py-16 text-center">

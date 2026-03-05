@@ -437,8 +437,8 @@
   show={confirmDelete.show}
   title="Delete Replication Target"
   message="Are you sure you want to delete '{confirmDelete.name}'? All replicated jobs from this target will also be removed."
-  confirmText="Delete"
-  danger={true}
+  confirmLabel="Delete"
+  variant="danger"
   onconfirm={deleteSource}
   oncancel={() => confirmDelete = { show: false, id: 0, name: '' }}
 />

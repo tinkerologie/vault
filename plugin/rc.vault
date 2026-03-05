@@ -16,20 +16,20 @@ fi
 ADDR=":${PORT}"
 
 start() {
-    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
         echo "Vault daemon is already running"
         return 1
     fi
     echo "Starting Vault daemon..."
     nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
-    echo "Vault daemon started (PID: $(cat $PIDFILE))"
+    echo "Vault daemon started (PID: $(cat "$PIDFILE"))"
 }
 
 stop() {
     if [ -f "$PIDFILE" ]; then
         echo "Stopping Vault daemon..."
-        kill $(cat "$PIDFILE") 2>/dev/null
+        kill "$(cat "$PIDFILE")" 2>/dev/null
         rm -f "$PIDFILE"
         echo "Vault daemon stopped"
     else
@@ -38,8 +38,8 @@ stop() {
 }
 
 status() {
-    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
-        echo "Vault daemon is running (PID: $(cat $PIDFILE))"
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "Vault daemon is running (PID: $(cat "$PIDFILE"))"
     else
         echo "Vault daemon is not running"
     fi

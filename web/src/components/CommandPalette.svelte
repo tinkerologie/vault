@@ -2,7 +2,7 @@
   import { api } from '../lib/api.js'
   import { navigate } from '../lib/router.svelte.js'
 
-  let { show = false, onclose = () => {} } = $props()
+  let { show = $bindable(false), onclose = () => {} } = $props()
 
   let query = $state('')
   let selectedIndex = $state(0)

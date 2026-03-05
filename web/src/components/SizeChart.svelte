@@ -8,7 +8,7 @@
     const points = runs
       .filter(r => r.size_bytes > 0 && r.started_at && (r.status === 'completed' || r.status === 'success'))
       .map(r => ({ date: new Date(r.started_at), size: r.size_bytes, name: r.jobName }))
-      .sort((a, b) => a.date - b.date)
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
       .slice(-30) // Last 30 data points
     return points
   })
