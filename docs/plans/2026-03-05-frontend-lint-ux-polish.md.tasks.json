@@ -1,0 +1,53 @@
+{
+  "planPath": "docs/plans/2026-03-05-frontend-lint-ux-polish.md",
+  "tasks": [
+    {
+      "id": 7,
+      "subject": "Task 1: Install ESLint Dependencies",
+      "status": "pending"
+    },
+    {
+      "id": 8,
+      "subject": "Task 2: Create ESLint Config",
+      "status": "pending",
+      "blockedBy": [7]
+    },
+    {
+      "id": 9,
+      "subject": "Task 3: Add Lint Scripts",
+      "status": "pending",
+      "blockedBy": [8]
+    },
+    {
+      "id": 10,
+      "subject": "Task 4: Fix All ESLint Issues",
+      "status": "pending",
+      "blockedBy": [9]
+    },
+    {
+      "id": 11,
+      "subject": "Task 5: Deploy to Unraid",
+      "status": "pending",
+      "blockedBy": [10]
+    },
+    {
+      "id": 12,
+      "subject": "Task 6: Playwright UX Review",
+      "status": "pending",
+      "blockedBy": [11]
+    },
+    {
+      "id": 13,
+      "subject": "Task 7: Fix UX Issues Found",
+      "status": "pending",
+      "blockedBy": [12]
+    },
+    {
+      "id": 14,
+      "subject": "Task 8: Final Verification",
+      "status": "pending",
+      "blockedBy": [13]
+    }
+  ],
+  "lastUpdated": "2026-03-05T11:35:00Z"
+}
