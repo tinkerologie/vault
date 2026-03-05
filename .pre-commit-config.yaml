@@ -119,7 +119,7 @@ repos:
         name: Prettier
         description: Format Markdown, YAML, JSON, and XML files
         types_or: [markdown, yaml, json, xml]
-        exclude: '^(\.claude/|\.ai-scratch/|\.secrets\.baseline)'
+        exclude: '^(\.claude/|\.ai-scratch/|\.secrets\.baseline|docs/plans/)'
         additional_dependencies:
           - prettier@3.5.3
           - "@prettier/plugin-xml@3.4.1"
@@ -144,7 +144,7 @@ repos:
             "--",
           ]
         files: '\.md$'
-        exclude: '^(\.claude/|\.github/agents/)'
+        exclude: '^(\.claude/|\.github/agents/|docs/plans/)'
 
   # Shell script linting
   - repo: https://github.com/shellcheck-py/shellcheck-py
@@ -172,7 +172,7 @@ repos:
         name: Code Spell Checker
         args:
           - --ignore-words-list=crate,nd,sav,fo,ue,numer,unexpect,aNULL,hax,hass
-          - "--skip=*.sum,*.lock,*.json,*.mod,coverage.html"
+          - "--skip=*.sum,*.lock,*.json,*.mod,coverage.html,docs/plans/*"
           - --quiet-level=2
 
   # Go vulnerability check
