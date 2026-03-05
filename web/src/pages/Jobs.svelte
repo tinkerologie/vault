@@ -1,8 +1,10 @@
 <script>
   import { onMount } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { navigate } from '../lib/router.svelte.js'
   import { api } from '../lib/api.js'
-  import { formatDate, describeSchedule, relTimeUntil } from '../lib/utils.js'
+  import { onWsMessage } from '../lib/ws.svelte.js'
+  import { describeSchedule, relTimeUntil } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
@@ -25,13 +27,13 @@
   let editName = $state('')
 
   // Bulk selection
-  let selectedJobs = $state(new Set())
+  let selectedJobs = $state(new SvelteSet())
   let bulkRunning = $state(false)
 
   let allSelected = $derived(jobs.length > 0 && selectedJobs.size === jobs.length)
 
   function toggleSelectJob(id) {
-    const next = new Set(selectedJobs)
+    const next = new SvelteSet(selectedJobs)
     if (next.has(id)) next.delete(id)
     else next.add(id)
     selectedJobs = next
@@ -39,9 +41,9 @@
 
   function toggleSelectAll() {
     if (allSelected) {
-      selectedJobs = new Set()
+      selectedJobs = new SvelteSet()
     } else {
-      selectedJobs = new Set(jobs.map(j => j.id))
+      selectedJobs = new SvelteSet(jobs.map(j => j.id))
     }
   }
 
@@ -51,7 +53,7 @@
       const targets = jobs.filter(j => selectedJobs.has(j.id) && j.enabled !== enable)
       await Promise.all(targets.map(j => api.updateJob(j.id, { ...j, enabled: enable })))
       showToast(`${targets.length} job${targets.length !== 1 ? 's' : ''} ${enable ? 'enabled' : 'disabled'}`, 'success')
-      selectedJobs = new Set()
+      selectedJobs = new SvelteSet()
       await loadData()
     } catch (e) {
       showToast(e.message, 'error')
@@ -66,7 +68,7 @@
       const ids = [...selectedJobs]
       await Promise.all(ids.map(id => api.runJob(id)))
       showToast(`${ids.length} job${ids.length !== 1 ? 's' : ''} queued`, 'success')
-      selectedJobs = new Set()
+      selectedJobs = new SvelteSet()
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -80,7 +82,7 @@
       const ids = [...selectedJobs]
       await Promise.all(ids.map(id => api.deleteJob(id, false)))
       showToast(`${ids.length} job${ids.length !== 1 ? 's' : ''} deleted`, 'success')
-      selectedJobs = new Set()
+      selectedJobs = new SvelteSet()
       await loadData()
     } catch (e) {
       showToast(e.message, 'error')
@@ -122,8 +124,14 @@
     toast = { message, type, key: toast.key + 1 }
   }
 
-  onMount(async () => {
-    await loadData()
+  onMount(() => {
+    loadData()
+    const unsub = onWsMessage((msg) => {
+      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed') {
+        loadData()
+      }
+    })
+    return unsub
   })
 
   async function loadData() {
@@ -355,7 +363,7 @@
     <EmptyState icon="📋" title="No backup jobs" subtitle="Step 1: Set up a job" description="Create your first backup job to get started." actionLabel="Create Job" onaction={() => openCreate()} />
   {:else}
     <div class="space-y-3">
-      {#each jobs as job}
+      {#each jobs as job (job.id)}
         <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 transition-colors {selectedJobs.has(job.id) ? 'ring-1 ring-vault/40' : ''}">
           <div class="flex items-start justify-between">
             <div class="flex-1 min-w-0">
@@ -380,6 +388,7 @@
                 </button>
                 <!-- Inline editable name -->
                 {#if editingNameId === job.id}
+                  <!-- svelte-ignore a11y_autofocus -->
                   <input
                     type="text" bind:value={editName}
                     onkeydown={(e) => { if (e.key === 'Enter') saveJobName(job); if (e.key === 'Escape') editingNameId = null }}
@@ -497,7 +506,7 @@
 <Modal show={showModal} title={editing ? 'Edit Job' : 'Create Backup Job'} onclose={() => showModal = false}>
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
-    {#each [{n:1, label:'Items'}, {n:2, label:'Schedule'}, {n:3, label:'Review'}] as s}
+    {#each [{n:1, label:'Items'}, {n:2, label:'Schedule'}, {n:3, label:'Review'}] as s (s.n)}
       <button
         type="button"
         onclick={() => { if (s.n < step || canNext) step = s.n }}
@@ -553,7 +562,7 @@
           <select id="storage" bind:value={form.storage_dest_id}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
             <option value={0}>— Select —</option>
-            {#each storageList as s}
+            {#each storageList as s (s.id)}
               <option value={s.id}>{s.name} ({s.type})</option>
             {/each}
           </select>
@@ -597,6 +606,11 @@
               <option value="incremental">Incremental</option>
               <option value="differential">Differential</option>
             </select>
+            <p class="text-xs text-text-dim mt-1">
+              {form.backup_type_chain === 'full' ? 'Backs up everything every time. Largest but most reliable.' :
+               form.backup_type_chain === 'incremental' ? 'Only backs up changes since last backup. Fastest and smallest.' :
+               form.backup_type_chain === 'differential' ? 'Backs up changes since last full backup. Balance of speed and safety.' : ''}
+            </p>
           </div>
           <div>
             <label for="compression" class="block text-sm font-medium text-text-muted mb-1.5">Compression</label>

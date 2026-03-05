@@ -67,7 +67,6 @@
   </div>
 
   {#if open}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) open = false }}>
       <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
         <!-- Header -->
@@ -81,7 +80,7 @@
         <!-- Breadcrumbs -->
         <div class="px-5 py-2 border-b border-border/50 flex items-center gap-1 text-xs text-text-muted overflow-x-auto">
           <button onclick={() => goTo('')} class="hover:text-vault shrink-0">/mnt</button>
-          {#each breadcrumbs as crumb}
+          {#each breadcrumbs as crumb (crumb.path)}
             <span class="text-text-dim">/</span>
             <button onclick={() => goTo(crumb.path)} class="hover:text-vault shrink-0">{crumb.name}</button>
           {/each}
@@ -101,7 +100,7 @@
             <div class="flex items-center justify-center py-8 text-text-dim text-sm">No subdirectories</div>
           {:else}
             <div class="divide-y divide-border/30">
-              {#each entries as entry}
+              {#each entries as entry (entry.path)}
                 <button
                   onclick={() => selectDir(entry)}
                   class="w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-surface-3 transition-colors group"

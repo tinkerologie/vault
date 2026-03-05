@@ -1,9 +1,12 @@
 <script>
-  let { icon = '', title = '', description = '', subtitle = '', actionLabel = '', onaction = null } = $props()
+  // eslint-disable-next-line no-unused-vars -- children is an implicit Svelte slot prop
+  let { icon = '', title = '', description = '', subtitle = '', actionLabel = '', onaction = null, iconSlot, children } = $props()
 </script>
 
 <div class="flex flex-col items-center justify-center py-16 text-center">
-  {#if icon}
+  {#if iconSlot}
+    <div class="mb-3 opacity-30">{@render iconSlot()}</div>
+  {:else if icon}
     <div class="text-4xl mb-3 opacity-30">{icon}</div>
   {/if}
   <h3 class="text-lg font-medium text-text-muted">{title}</h3>

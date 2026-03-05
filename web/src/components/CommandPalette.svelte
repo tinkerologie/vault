@@ -111,8 +111,6 @@
 </script>
 
 {#if show}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <!-- svelte-ignore a11y_interactive_supports_focus -->
   <div
     class="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm"
     onclick={(e) => { if (e.target === e.currentTarget) onclose() }}
@@ -120,6 +118,7 @@
     role="dialog"
     aria-modal="true"
     aria-label="Command palette"
+    tabindex="-1"
   >
     <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
       <!-- Search input -->
@@ -144,7 +143,7 @@
             <p class="text-sm text-text-muted">No matching commands</p>
           </div>
         {:else}
-          {#each filteredCommands as cmd, i}
+          {#each filteredCommands as cmd, i (cmd.id)}
             <button
               type="button"
               class="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { formatDate } from '../lib/utils.js'
+  import { formatDate, describeSchedule } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
@@ -23,6 +23,9 @@
   let expandedSource = $state(null)
   let replicatedJobs = $state([])
   let loadingJobs = $state(false)
+
+  let modalTesting = $state(false)
+  let modalTestResult = $state(null)
 
   let form = $state(defaultForm())
 
@@ -68,9 +71,27 @@
     }
   }
 
+  async function testModalConnection() {
+    if (!form.url) {
+      modalTestResult = { success: false, error: 'Enter a URL first' }
+      return
+    }
+    modalTesting = true
+    modalTestResult = null
+    try {
+      const result = await api.testReplicationURL(form.url, form.api_key || '')
+      modalTestResult = { success: true, version: result.version, warning: result.warning }
+    } catch (e) {
+      modalTestResult = { success: false, error: e.message }
+    } finally {
+      modalTesting = false
+    }
+  }
+
   function openCreate() {
     editing = null
     form = defaultForm()
+    modalTestResult = null
     showModal = true
   }
 
@@ -84,6 +105,7 @@
       schedule: src.schedule || '0 3 * * *',
       enabled: src.enabled,
     }
+    modalTestResult = null
     showModal = true
   }
 
@@ -95,10 +117,6 @@
         await api.updateReplicationSource(editing.id, payload)
         showToast('Target updated', 'success')
       } else {
-        if (!payload.api_key) {
-          showToast('API key is required', 'error')
-          return
-        }
         await api.createReplicationSource(payload)
         showToast('Target created', 'success')
       }
@@ -185,7 +203,7 @@
   <div class="flex items-center justify-between mb-6">
     <div>
       <h1 class="text-2xl font-bold text-text">Replication</h1>
-      <p class="text-sm text-text-muted mt-1">Replicate backups from remote Vault servers for disaster recovery</p>
+      <p class="text-sm text-text-muted mt-1">Replicate backups to remote Vault servers for disaster recovery</p>
     </div>
     <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
@@ -196,16 +214,22 @@
   {#if loading}
     <Spinner text="Loading replication targets..." />
   {:else if sources.length === 0}
-    <EmptyState icon="🔄" title="No replication targets" description="Add a remote Vault server to replicate backups for disaster recovery." actionLabel="Add Target" onaction={() => openCreate()} />
+    <EmptyState title="No replication targets" description="Add a remote Vault server to replicate backups for disaster recovery." actionLabel="Add Target" onaction={() => openCreate()}>
+      {#snippet iconSlot()}
+        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="space-y-4">
-      {#each sources as src}
+      {#each sources as src (src.id)}
         {@const badge = statusBadge(src)}
         <div class="bg-surface-2 border border-border rounded-xl overflow-hidden hover:border-vault/30 transition-colors">
           <div class="p-5">
             <div class="flex items-start justify-between">
               <div class="flex items-center gap-3">
-                <span class="text-2xl">🔄</span>
+                <div class="w-10 h-10 rounded-lg bg-surface-3 flex items-center justify-center">
+                  <svg class="w-5 h-5 text-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                </div>
                 <div>
                   <h3 class="font-semibold text-text">{src.name}</h3>
                   <p class="text-xs text-text-dim mt-0.5 font-mono">{src.url}</p>
@@ -221,7 +245,7 @@
               </div>
               <div>
                 <span class="text-text-dim text-xs">Schedule</span>
-                <p class="text-text font-medium">{src.schedule || 'Manual'}</p>
+                <p class="text-text font-medium">{describeSchedule(src.schedule)}</p>
               </div>
               <div>
                 <span class="text-text-dim text-xs">Last Sync</span>
@@ -251,19 +275,18 @@
                 {/if}
               </button>
               <button onclick={() => testConnection(src.id)} disabled={testing === src.id}
-                class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5
+                  {testResult?.id === src.id ? (testResult.success ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger') : 'bg-surface-3 hover:bg-surface-4 text-text'}">
                 {#if testing === src.id}
                   <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  Testing...
+                {:else if testResult?.id === src.id}
+                  {testResult.success ? '✓ Connected' : '✗ Failed'}
                 {:else}
                   <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                  Test
                 {/if}
-                Test
               </button>
-              {#if testResult?.id === src.id}
-                <span class="text-xs {testResult.success ? 'text-success' : 'text-danger'}">
-                  {testResult.success ? '✓ Connected' : `✗ ${testResult.error}`}
-                </span>
-              {/if}
               <div class="ml-auto flex items-center gap-2">
                 <button onclick={() => toggleExpand(src.id)}
                   class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5">
@@ -296,10 +319,18 @@
               {:else}
                 <div class="space-y-2">
                   <h4 class="text-xs font-semibold text-text-dim uppercase tracking-wider">Replicated Jobs ({replicatedJobs.length})</h4>
-                  {#each replicatedJobs as job}
+                  {#each replicatedJobs as job (job.name)}
                     <div class="flex items-center justify-between py-2 px-3 bg-surface-2 rounded-lg">
                       <div class="flex items-center gap-2">
-                        <span class="text-sm">{job.backup_type === 'container' ? '🐳' : job.backup_type === 'vm' ? '🖥️' : '📁'}</span>
+                        <svg class="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          {#if job.backup_type === 'container'}
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                          {:else if job.backup_type === 'vm'}
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                          {:else}
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                          {/if}
+                        </svg>
                         <span class="text-sm font-medium text-text">{job.name}</span>
                       </div>
                       <span class="text-xs text-text-muted">{job.backup_type}</span>
@@ -333,11 +364,36 @@
 
       <div>
         <label for="repl-key" class="block text-sm font-medium text-text mb-1">
-          API Key {editing ? '(leave blank to keep current)' : ''}
+          API Key <span class="text-text-dim font-normal">(optional{editing ? ', blank keeps current' : ''})</span>
         </label>
-        <input id="repl-key" type="password" bind:value={form.api_key} placeholder={editing ? '••••••••' : 'Enter API key'}
-          required={!editing}
+        <input id="repl-key" type="password" bind:value={form.api_key} placeholder={editing ? '••••••••' : 'Leave blank if not required'}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+        <p class="text-xs text-text-dim mt-1">Only needed if the remote server has API key authentication enabled</p>
+      </div>
+
+      <!-- Test Connection -->
+      <div class="flex items-center gap-3">
+        <button type="button" onclick={testModalConnection} disabled={modalTesting || !form.url}
+          class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5">
+          {#if modalTesting}
+            <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Testing...
+          {:else}
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            Test Connection
+          {/if}
+        </button>
+        {#if modalTestResult}
+          <span class="text-xs {modalTestResult.success ? (modalTestResult.warning ? 'text-warning' : 'text-success') : 'text-danger'}">
+            {#if modalTestResult.success && modalTestResult.warning}
+              ⚠ Connected (v{modalTestResult.version}) — {modalTestResult.warning}
+            {:else if modalTestResult.success}
+              ✓ Connected (v{modalTestResult.version})
+            {:else}
+              ✗ {modalTestResult.error}
+            {/if}
+          </span>
+        {/if}
       </div>
 
       <div>
@@ -345,7 +401,7 @@
         <select id="repl-storage" required bind:value={form.storage_dest_id}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault">
           <option value={0} disabled>Select storage...</option>
-          {#each destinations as dest}
+          {#each destinations as dest (dest.id)}
             <option value={dest.id}>{dest.name} ({dest.type})</option>
           {/each}
         </select>
@@ -353,7 +409,7 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-text mb-1">Sync Schedule</label>
+        <span class="block text-sm font-medium text-text mb-1">Sync Schedule</span>
         <ScheduleBuilder bind:value={form.schedule} />
       </div>
 

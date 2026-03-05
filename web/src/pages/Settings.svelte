@@ -1,11 +1,13 @@
 <script>
   import { onMount } from 'svelte'
   import { api } from '../lib/api.js'
+  import { formatBytes } from '../lib/utils.js'
   import { getWsStatus, connectWs, disconnectWs } from '../lib/ws.svelte.js'
   import { getTheme, setTheme } from '../lib/theme.svelte.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Spinner from '../components/Spinner.svelte'
+  import PathBrowser from '../components/PathBrowser.svelte'
 
   let loading = $state(true)
   let health = $state(null)
@@ -38,6 +40,23 @@
   let changeNewPass = $state('')
   let changeConfirmPass = $state('')
 
+  // Staging state
+  let stagingInfo = $state(null)
+  let stagingOverrideInput = $state('')
+  let stagingSaving = $state(false)
+  let cascadeExpanded = $state(false)
+
+  // Database info state
+  let databaseInfo = $state(null)
+  let snapshotPathInput = $state('')
+  let snapshotPathSaving = $state(false)
+
+  // Discord state
+  let discordWebhookUrl = $state('')
+  let discordNotifyOn = $state('always')
+  let discordSaving = $state(false)
+  let discordTesting = $state(false)
+
   // API Key state
   let apiKeyEnabled = $state(false)
   let apiKeyPreview = $state('')
@@ -51,12 +70,18 @@
 
   onMount(async () => {
     try {
-      const [h, s, enc, keyStatus] = await Promise.all([api.health(), api.getSettings(), api.getEncryptionStatus(), api.getApiKeyStatus()])
+      const [h, s, enc, keyStatus, staging, dbInfo] = await Promise.all([api.health(), api.getSettings(), api.getEncryptionStatus(), api.getApiKeyStatus(), api.getStagingInfo().catch(() => null), api.getDatabaseInfo().catch(() => null)])
       health = h
       settings = s || {}
       encryptionEnabled = enc?.encryption_enabled || false
       apiKeyEnabled = keyStatus?.enabled || false
       apiKeyPreview = keyStatus?.preview || ''
+      stagingInfo = staging
+      stagingOverrideInput = staging?.override || ''
+      discordWebhookUrl = s?.discord_webhook_url || ''
+      discordNotifyOn = s?.discord_notify_on || 'always'
+      databaseInfo = dbInfo
+      snapshotPathInput = dbInfo?.snapshot_path_override || ''
     } catch (e) {
       console.error('Settings load error:', e)
     } finally {
@@ -81,6 +106,89 @@
     disconnectWs()
     setTimeout(connectWs, 100)
     showToast('Reconnecting WebSocket...', 'info')
+  }
+
+  async function saveDiscordSettings() {
+    discordSaving = true
+    try {
+      settings = await api.updateSettings({
+        discord_webhook_url: discordWebhookUrl,
+        discord_notify_on: discordNotifyOn,
+      })
+      showToast('Discord settings saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      discordSaving = false
+    }
+  }
+
+  async function testDiscord() {
+    if (!discordWebhookUrl) {
+      showToast('Enter a webhook URL first', 'error')
+      return
+    }
+    discordTesting = true
+    try {
+      await api.testDiscordWebhook(discordWebhookUrl)
+      showToast('Test notification sent to Discord!', 'success')
+    } catch (e) {
+      showToast('Discord test failed: ' + e.message, 'error')
+    } finally {
+      discordTesting = false
+    }
+  }
+
+  async function saveStagingOverride() {
+    stagingSaving = true
+    try {
+      stagingInfo = await api.setStagingOverride(stagingOverrideInput)
+      stagingOverrideInput = stagingInfo?.override || ''
+      showToast(stagingOverrideInput ? 'Staging path updated' : 'Staging reset to auto', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      stagingSaving = false
+    }
+  }
+
+  async function resetStagingOverride() {
+    stagingOverrideInput = ''
+    stagingSaving = true
+    try {
+      stagingInfo = await api.setStagingOverride('')
+      showToast('Staging reset to automatic cascade', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      stagingSaving = false
+    }
+  }
+
+  async function saveSnapshotPath() {
+    snapshotPathSaving = true
+    try {
+      databaseInfo = await api.setSnapshotPath(snapshotPathInput)
+      snapshotPathInput = databaseInfo?.snapshot_path_override || ''
+      showToast(snapshotPathInput ? 'Snapshot path updated (takes effect on restart)' : 'Snapshot path reset to default', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      snapshotPathSaving = false
+    }
+  }
+
+  async function resetSnapshotPath() {
+    snapshotPathInput = ''
+    snapshotPathSaving = true
+    try {
+      databaseInfo = await api.setSnapshotPath('')
+      showToast('Snapshot path reset to default (takes effect on restart)', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      snapshotPathSaving = false
+    }
   }
 
   async function saveEncryption() {
@@ -295,7 +403,7 @@
   {:else}
     <!-- Tab Navigation -->
     <div class="flex gap-1 border-b border-border mb-6 overflow-x-auto">
-      {#each tabs as tab}
+      {#each tabs as tab (tab.id)}
         <button
           onclick={() => activeTab = tab.id}
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap {activeTab === tab.id ? 'border-vault text-vault' : 'border-transparent text-text-muted hover:text-text'}"
@@ -320,7 +428,7 @@
               { value: 'light', label: 'Light', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
               { value: 'system', label: 'System', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
               { value: 'dark', label: 'Dark', icon: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z' },
-            ] as opt}
+            ] as opt (opt.value)}
               <button
                 type="button"
                 onclick={() => setTheme(opt.value)}
@@ -369,6 +477,64 @@
               </p>
             </div>
           {/if}
+        </div>
+      </div>
+
+      <!-- Discord Notifications -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Discord Notifications</h2>
+          <p class="text-xs text-text-muted mt-0.5">Get backup status alerts sent to a Discord channel via webhook.</p>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="px-5 py-4">
+            <label for="discord-url" class="block text-sm font-medium text-text mb-1.5">Webhook URL</label>
+            <div class="flex gap-2">
+              <input
+                id="discord-url"
+                type="url"
+                bind:value={discordWebhookUrl}
+                placeholder="https://discord.com/api/webhooks/..."
+                class="flex-1 text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              />
+              <button
+                onclick={testDiscord}
+                disabled={discordTesting || !discordWebhookUrl}
+                class="px-3 py-2 text-sm font-medium text-text-muted bg-surface-3 border border-border rounded-lg hover:bg-surface-4 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0"
+              >
+                {#if discordTesting}
+                  <Spinner size="sm" />
+                {:else}
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                {/if}
+                Test
+              </button>
+            </div>
+          </div>
+          <div class="px-5 py-4">
+            <label for="discord-notify" class="block text-sm font-medium text-text mb-1.5">Notify On</label>
+            <select
+              id="discord-notify"
+              bind:value={discordNotifyOn}
+              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+            >
+              <option value="always">All backups (success & failure)</option>
+              <option value="failure">Failures only</option>
+              <option value="never">Disabled</option>
+            </select>
+          </div>
+          <div class="px-5 py-3 flex justify-end">
+            <button
+              onclick={saveDiscordSettings}
+              disabled={discordSaving}
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {#if discordSaving}
+                <Spinner size="sm" />
+              {/if}
+              Save Discord Settings
+            </button>
+          </div>
         </div>
       </div>
 
@@ -576,6 +742,79 @@
 
       <!-- === GENERAL TAB (cont.) === -->
       {#if activeTab === 'general'}
+
+      <!-- Staging Directory -->
+      {#if stagingInfo}
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Staging Directory</h2>
+        </div>
+        <div class="p-5 space-y-4">
+          <div>
+            <p class="text-sm text-text font-mono">{stagingInfo.resolved_path}</p>
+            <p class="text-xs text-text-muted mt-0.5">
+              {stagingInfo.source === 'override' ? 'Custom override' :
+               stagingInfo.source === 'cache' ? 'SSD Cache (automatic)' :
+               stagingInfo.source === 'local-storage' ? 'Local storage fallback' :
+               'System temp fallback'}
+            </p>
+          </div>
+
+          {#if stagingInfo.disk_total_bytes > 0}
+            {@const usedPct = ((stagingInfo.disk_total_bytes - stagingInfo.disk_free_bytes) / stagingInfo.disk_total_bytes) * 100}
+            <div>
+              <div class="h-2 rounded-full bg-surface overflow-hidden">
+                <div class="h-full rounded-full transition-all {usedPct > 90 ? 'bg-danger' : usedPct > 70 ? 'bg-warning' : 'bg-success'}"
+                     style="width: {usedPct.toFixed(1)}%"></div>
+              </div>
+              <p class="text-xs text-text-muted mt-1">
+                {formatBytes(stagingInfo.disk_free_bytes)} free of {formatBytes(stagingInfo.disk_total_bytes)}
+              </p>
+            </div>
+          {/if}
+
+          <div>
+            <span class="text-xs text-text-muted block mb-1.5">Custom Path (optional)</span>
+            <PathBrowser bind:value={stagingOverrideInput} onselect={saveStagingOverride} />
+            {#if stagingInfo.override}
+              <button onclick={resetStagingOverride} disabled={stagingSaving} class="mt-2 text-xs text-vault hover:underline">
+                Reset to automatic
+              </button>
+            {/if}
+          </div>
+
+          <div>
+            <button onclick={() => cascadeExpanded = !cascadeExpanded} class="text-xs text-text-muted hover:text-text flex items-center gap-1">
+              <svg class="w-3 h-3 transition-transform {cascadeExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+              Cascade order
+            </button>
+            {#if cascadeExpanded}
+              <div class="mt-2 space-y-1 text-xs text-text-muted">
+                {#each stagingInfo.cascade as item, i (i)}
+                  <div class="flex items-center gap-2">
+                    <span>{i + 1}.</span>
+                    <span class="font-mono">{item.path}</span>
+                    <span>({item.source})</span>
+                    {#if item.available}
+                      <svg class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                      </svg>
+                    {:else}
+                      <svg class="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                      </svg>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+      </div>
+      {/if}
+
       <!-- Server Info -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
@@ -704,6 +943,47 @@
         </div>
       </div>
 
+      <!-- Backup Type Guide -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Backup Type Guide</h2>
+        </div>
+        <div class="p-5">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-border">
+                  <th class="text-left py-2 pr-4 text-text-muted font-medium">Type</th>
+                  <th class="text-left py-2 pr-4 text-text-muted font-medium">Description</th>
+                  <th class="text-left py-2 pr-4 text-text-muted font-medium">Speed</th>
+                  <th class="text-left py-2 text-text-muted font-medium">Storage</th>
+                </tr>
+              </thead>
+              <tbody class="text-text">
+                <tr class="border-b border-border/50">
+                  <td class="py-2 pr-4 font-medium">Full</td>
+                  <td class="py-2 pr-4">Complete backup every time</td>
+                  <td class="py-2 pr-4">Slowest</td>
+                  <td class="py-2">Largest</td>
+                </tr>
+                <tr class="border-b border-border/50">
+                  <td class="py-2 pr-4 font-medium">Incremental</td>
+                  <td class="py-2 pr-4">Only changes since last backup (any type)</td>
+                  <td class="py-2 pr-4">Fastest</td>
+                  <td class="py-2">Smallest</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-medium">Differential</td>
+                  <td class="py-2 pr-4">Changes since last full backup</td>
+                  <td class="py-2 pr-4">Medium</td>
+                  <td class="py-2">Medium</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- API Info -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
@@ -722,7 +1002,7 @@
               ['GET', '/api/v1/jobs/:id/history', 'Job run history'],
               ['GET', '/api/v1/jobs/:id/restore-points', 'Restore points'],
               ['WS', '/api/v1/ws', 'WebSocket events'],
-            ] as [method, path, desc]}
+            ] as [method, path, desc] (path)}
               <div class="flex items-center gap-3">
                 <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3rem] text-center
                   {method === 'GET' ? 'bg-info/20 text-info' :
@@ -741,6 +1021,73 @@
 
       <!-- === GENERAL TAB (cont.) === -->
       {#if activeTab === 'general'}
+
+      <!-- Database Location -->
+      {#if databaseInfo}
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Database Location</h2>
+          <p class="text-xs text-text-muted mt-0.5">Where Vault stores its database and how it protects the USB flash drive.</p>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">Mode</span>
+            <span class="text-sm font-medium text-text">
+              {#if databaseInfo.mode === 'hybrid'}
+                Hybrid (RAM + SSD snapshots)
+              {:else if databaseInfo.mode === 'direct'}
+                Direct SSD
+              {:else}
+                Legacy USB
+              {/if}
+            </span>
+          </div>
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">Working</span>
+            <span class="text-sm font-mono text-text truncate ml-4">{databaseInfo.working_path}</span>
+          </div>
+          {#if databaseInfo.snapshot_path}
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">Snapshot</span>
+            <span class="text-sm font-mono text-text truncate ml-4">{databaseInfo.snapshot_path}</span>
+          </div>
+          {/if}
+          {#if databaseInfo.last_snapshot}
+          {@const snapDate = new Date(databaseInfo.last_snapshot)}
+          {#if snapDate.getFullYear() > 1970}
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">Last snapshot</span>
+            <span class="text-sm text-text">{snapDate.toLocaleString()}</span>
+          </div>
+          {/if}
+          {/if}
+          {#if databaseInfo.snapshot_size_bytes}
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">Snapshot size</span>
+            <span class="text-sm text-text">{formatBytes(databaseInfo.snapshot_size_bytes)}</span>
+          </div>
+          {/if}
+        </div>
+        {#if databaseInfo.mode === 'hybrid'}
+        <div class="px-5 py-4 border-t border-border">
+          <span class="text-xs text-text-muted block mb-1.5">Custom Snapshot Path (optional)</span>
+          <PathBrowser bind:value={snapshotPathInput} onselect={saveSnapshotPath} />
+          {#if databaseInfo.snapshot_path_override}
+            <button onclick={resetSnapshotPath} disabled={snapshotPathSaving} class="mt-2 text-xs text-vault hover:underline">
+              Reset to default
+            </button>
+          {/if}
+          <p class="text-xs text-text-dim mt-2">Changes take effect on next daemon restart.</p>
+        </div>
+        {/if}
+        {#if databaseInfo.mode === 'legacy_usb'}
+        <div class="px-5 py-3 bg-amber-500/10 border-t border-amber-500/20">
+          <p class="text-xs text-amber-400">No cache drive detected. Database writes go directly to the USB flash drive, which may reduce its lifespan.</p>
+        </div>
+        {/if}
+      </div>
+      {/if}
+
       <!-- About -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
@@ -748,7 +1095,7 @@
         </div>
         <div class="p-5">
           <p class="text-sm text-text-muted leading-relaxed">
-            Vault is a backup and restore manager for Unraid servers. It provides automated backup of Docker containers and libvirt VMs to pluggable storage destinations including local paths, SFTP, S3-compatible, and SMB/CIFS shares.
+            Vault is a backup and restore manager for Unraid servers. It provides automated backup of Docker containers and libvirt VMs to pluggable storage destinations including local paths, SFTP, SMB/CIFS, and NFS shares.
           </p>
           <div class="mt-4 flex items-center gap-4">
             <a href="https://github.com/ruaan-deysel/vault" target="_blank" rel="noopener"

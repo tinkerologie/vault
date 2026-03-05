@@ -3,6 +3,7 @@
   import { connectWs, getWsStatus } from './lib/ws.svelte.js'
   import { initTheme, getTheme, setTheme, getIsDark } from './lib/theme.svelte.js'
   import { checkAuthStatus } from './lib/auth.svelte.js'
+  import { api, setReplicaMode } from './lib/api.js'
   import { onMount } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -13,6 +14,7 @@
   import Logs from './pages/Logs.svelte'
   import Settings from './pages/Settings.svelte'
   import Replication from './pages/Replication.svelte'
+  import Recovery from './pages/Recovery.svelte'
   import Spinner from './components/Spinner.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
 
@@ -30,25 +32,37 @@
     }
   }
 
-  const nav = [
+  const allNav = [
     { path: '/', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
-    { path: '/jobs', label: 'Jobs', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4' },
+    { path: '/jobs', label: 'Jobs', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', daemonOnly: true },
     { path: '/storage', label: 'Storage', icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
     { path: '/history', label: 'History', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { path: '/restore', label: 'Restore', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
+    { path: '/restore', label: 'Restore', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', daemonOnly: true },
     { path: '/logs', label: 'Logs', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
     { path: '/replication', label: 'Replication', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
+    { path: '/recovery', label: 'Recovery', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z', daemonOnly: true },
     { path: '/settings', label: 'Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
   ]
 
-  let ready = $state(false)
+  // Filter nav items based on mode — hide daemon-only pages in replica mode.
+  let nav = $derived(allNav.filter(item => !replicaMode || !item.daemonOnly))
 
-  onMount(() => {
+  let ready = $state(false)
+  let replicaMode = $state(false)
+
+  onMount(async () => {
     initTheme()
-    checkAuthStatus().then(() => {
-      connectWs()
-      ready = true
-    })
+    await checkAuthStatus()
+    // Detect replica mode from health endpoint.
+    try {
+      const health = await api.health()
+      if (health.mode === 'replica') {
+        setReplicaMode(true)
+        replicaMode = true
+      }
+    } catch { /* ignore — default to daemon mode */ }
+    connectWs()
+    ready = true
   })
 
   function isActive(path) {
@@ -57,13 +71,21 @@
     return route.startsWith(path)
   }
 
-  const mobileNav = [
-    { path: '/', label: 'Home', icon: nav[0].icon },
-    { path: '/jobs', label: 'Jobs', icon: nav[1].icon },
-    { path: '/history', label: 'History', icon: nav[3].icon },
-    { path: '/restore', label: 'Restore', icon: nav[4].icon },
-    { path: '/settings', label: 'More', icon: nav[7].icon },
+  const daemonMobileNav = [
+    { path: '/', label: 'Home', icon: allNav[0].icon },
+    { path: '/jobs', label: 'Jobs', icon: allNav[1].icon },
+    { path: '/history', label: 'History', icon: allNav[3].icon },
+    { path: '/restore', label: 'Restore', icon: allNav[4].icon },
+    { path: '/settings', label: 'More', icon: allNav[8].icon },
   ]
+  const replicaMobileNav = [
+    { path: '/', label: 'Home', icon: allNav[0].icon },
+    { path: '/replication', label: 'Replication', icon: allNav[6].icon },
+    { path: '/history', label: 'History', icon: allNav[3].icon },
+    { path: '/logs', label: 'Logs', icon: allNav[5].icon },
+    { path: '/settings', label: 'More', icon: allNav[8].icon },
+  ]
+  let mobileNav = $derived(replicaMode ? replicaMobileNav : daemonMobileNav)
 
   function go(path) {
     navigate(path)
@@ -79,7 +101,6 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 <CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
@@ -97,13 +118,13 @@
       </div>
       <div>
         <span class="text-lg font-bold text-text tracking-tight">VAULT</span>
-        <span class="text-xs text-text-dim block -mt-0.5">Backup Manager</span>
+        <span class="text-xs text-text-dim block -mt-0.5">{replicaMode ? 'Replica' : 'Backup Manager'}</span>
       </div>
     </div>
 
     <!-- Nav links -->
     <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-      {#each nav as item}
+      {#each nav as item (item.path)}
         <button onclick={() => go(item.path)}
           class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left
             {isActive(item.path) ? 'bg-vault/10 text-vault' : 'text-text-muted hover:text-text hover:bg-surface-3'}">
@@ -149,7 +170,7 @@
     </div>
     {#if mobileMenuOpen}
       <nav class="px-3 pb-3 space-y-1 bg-surface-2 border-t border-border">
-        {#each nav as item}
+        {#each nav as item (item.path)}
           <button onclick={() => go(item.path)}
             class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left
               {isActive(item.path) ? 'bg-vault/10 text-vault' : 'text-text-muted'}">
@@ -178,6 +199,8 @@
         <Logs />
       {:else if getRoute() === '/replication'}
         <Replication />
+      {:else if getRoute() === '/recovery'}
+        <Recovery />
       {:else if getRoute() === '/settings'}
         <Settings />
       {:else}
@@ -188,7 +211,7 @@
 
   <!-- Mobile bottom navigation -->
   <nav class="fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-border flex justify-around py-2 z-40 lg:hidden" aria-label="Mobile navigation">
-    {#each mobileNav as item}
+    {#each mobileNav as item (item.path)}
       <button
         onclick={() => go(item.path)}
         class="flex flex-col items-center gap-0.5 px-3 py-1 text-xs transition-colors

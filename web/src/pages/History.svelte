@@ -1,7 +1,8 @@
 <script>
   import { onMount } from 'svelte'
+  import { SvelteSet, SvelteMap } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
-  import { formatDate, relTime, formatBytes, statusBadge, getFailureReason } from '../lib/utils.js'
+  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -18,20 +19,20 @@
   let searchQuery = $state('')
   let pageSize = 20
   let visibleCount = $state(pageSize)
-  let expandedRunIds = $state(new Set())
+  let expandedRunIds = $state(new SvelteSet())
 
   onMount(() => {
     loadData()
     const unsub = onWsMessage((msg) => {
-      if (['job_run_started', 'job_run_completed', 'item_backup_done', 'item_backup_failed', 'item_restore_done', 'item_restore_failed'].includes(msg.type)) {
-        loadData()
+      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed') {
+        loadData(true)
       }
     })
     return unsub
   })
 
-  async function loadData() {
-    loading = true
+  async function loadData(silent = false) {
+    if (!silent) loading = true
     try {
       jobs = (await api.listJobs()) || []
       const promises = jobs.map(async (job) => {
@@ -73,10 +74,10 @@
 
   // Group by date
   let dateGroups = $derived.by(() => {
-    const groups = new Map()
+    const groups = new SvelteMap()
     for (const run of paginatedRuns) {
       const d = new Date(run.started_at)
-      const key = d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+      const key = d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key).push(run)
     }
@@ -94,16 +95,7 @@
   })
 
   function duration(run) {
-    if (!run.started_at || !run.completed_at) return '—'
-    const start = new Date(run.started_at)
-    const end = new Date(run.completed_at)
-    const secs = Math.floor((end - start) / 1000)
-    if (secs < 60) return `${secs}s`
-    const mins = Math.floor(secs / 60)
-    const remSecs = secs % 60
-    if (mins < 60) return `${mins}m ${remSecs}s`
-    const hrs = Math.floor(mins / 60)
-    return `${hrs}h ${mins % 60}m`
+    return formatDurationFromDates(run.started_at, run.completed_at)
   }
 
   function tryParseJSON(str) {
@@ -112,7 +104,7 @@
   }
 
   function toggleRunExpand(runId) {
-    const next = new Set(expandedRunIds)
+    const next = new SvelteSet(expandedRunIds)
     if (next.has(runId)) next.delete(runId)
     else next.add(runId)
     expandedRunIds = next
@@ -199,7 +191,7 @@
       </div>
 
       <!-- Status filter pills -->
-      {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running']] as [val, label]}
+      {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running']] as [val, label] (val)}
         <button type="button" onclick={() => selectedStatus = val}
           class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {selectedStatus === val ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
           {label}
@@ -219,7 +211,7 @@
       <select bind:value={selectedJob}
         class="px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text">
         <option value={0}>All Jobs</option>
-        {#each jobs as job}
+        {#each jobs as job (job.id)}
           <option value={job.id}>{job.name}</option>
         {/each}
       </select>
@@ -233,7 +225,7 @@
 
       <!-- Date-grouped timeline -->
       <div class="space-y-8">
-        {#each dateGroups as [dateLabel, runs]}
+        {#each dateGroups as [dateLabel, runs] (dateLabel)}
           <div>
             <!-- Date header -->
             <div class="flex items-center gap-3 mb-3">
@@ -245,7 +237,7 @@
 
             <!-- Timeline entries -->
             <div class="ml-1 border-l-2 border-border pl-5 space-y-3">
-              {#each runs as run}
+              {#each runs as run (run.id)}
                 {@const icon = statusIcon(run.status)}
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                 <div
@@ -288,6 +280,9 @@
                           {#if run.size_bytes}
                             <span>{formatBytes(run.size_bytes)}</span>
                           {/if}
+                          {#if run.duration_seconds && run.size_bytes}
+                            <span>{formatSpeed(run.size_bytes, run.duration_seconds)}</span>
+                          {/if}
                         </div>
                         {#if run.status === 'failed' && getFailureReason(run)}
                           <p class="text-xs text-danger mt-1.5 truncate max-w-md" title={getFailureReason(run)}>{getFailureReason(run)}</p>
@@ -308,7 +303,7 @@
                       {#if Array.isArray(items)}
                         <p class="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">Per-Item Results</p>
                         <div class="space-y-1.5">
-                          {#each items as item}
+                          {#each items as item (item.name)}
                             <div class="flex items-center gap-2 text-sm">
                               {#if item.status === 'ok'}
                                 <svg class="w-4 h-4 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>

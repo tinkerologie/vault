@@ -1,13 +1,16 @@
 <script>
+  import { onMount } from 'svelte'
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
-  import { formatDate, relTime, formatBytes, statusBadge } from '../lib/utils.js'
+  import { onWsMessage } from '../lib/ws.svelte.js'
+  import { formatDate, relTime, formatBytes } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
   import Spinner from './Spinner.svelte'
 
-  let { jobs = [], onrestore = () => {} } = $props()
+  let { jobs = [], onrestore = () => {}, initialJobId = null } = $props()
 
   let step = $state(1)
-  let selectedItem = $state(null)
+  let selectedItems = new SvelteMap() // key: "type:name", value: item object
   let selectedPoint = $state(null)
   let restoreDestination = $state('')
   let showDestOverride = $state(false)
@@ -20,8 +23,15 @@
 
   // Restore progress
   let restoring = $state(false)
-  let restoreStatus = $state('')
-  let restoreLog = $state('')
+
+  onMount(() => {
+    const unsub = onWsMessage((msg) => {
+      if (msg.type === 'job_run_completed' && msg.run_type === 'restore') {
+        restoring = false
+      }
+    })
+    return unsub
+  })
 
   // Gather all backed-up items across all jobs
   $effect(() => {
@@ -34,7 +44,7 @@
       const details = await Promise.all(
         jobs.filter(j => j.enabled !== false).map(j => api.getJob(j.id).catch(() => null))
       )
-      const itemMap = new Map()
+      const itemMap = new SvelteMap()
       for (const detail of details) {
         if (!detail?.items) continue
         for (const item of detail.items) {
@@ -51,6 +61,17 @@
         }
       }
       allItems = Array.from(itemMap.values())
+      // Auto-select items from a pre-selected job (e.g. quick restore from Dashboard)
+      if (initialJobId && selectedItems.size === 0) {
+        const jid = Number(initialJobId)
+        for (const item of allItems) {
+          if (item.jobs.some(j => j.id === jid)) {
+            const key = `${item.type}:${item.name}`
+            selectedItems.set(key, item)
+          }
+        }
+        selectedItems = new SvelteMap(selectedItems)
+      }
     } catch { /* ignore */ } finally {
       loading = false
     }
@@ -64,6 +85,8 @@
     const types = new Set(allItems.map(i => i.type))
     return ['all', ...types]
   })
+
+  let selectedCount = $derived(selectedItems.size)
 
   function typeIcon(type) {
     switch (type) {
@@ -83,19 +106,60 @@
     }
   }
 
-  async function selectItem(item) {
-    selectedItem = item
+  function toggleItem(item) {
+    const key = `${item.type}:${item.name}`
+    const next = new SvelteMap(selectedItems)
+    if (next.has(key)) {
+      next.delete(key)
+    } else {
+      next.set(key, item)
+    }
+    selectedItems = next
+  }
+
+  function isSelected(item) {
+    return selectedItems.has(`${item.type}:${item.name}`)
+  }
+
+  function selectAll() {
+    const next = new SvelteMap(selectedItems)
+    for (const item of filteredItems) {
+      const key = `${item.type}:${item.name}`
+      next.set(key, item)
+    }
+    selectedItems = next
+  }
+
+  function clearSelection() {
+    selectedItems = new SvelteMap()
+  }
+
+  async function proceedToStep2() {
+    if (selectedItems.size === 0) return
     step = 2
     loadingPoints = true
     restorePoints = []
     try {
-      const allPoints = []
-      for (const job of item.jobs) {
-        const points = await api.getRestorePoints(job.id).catch(() => [])
-        for (const p of (points || [])) {
-          allPoints.push({ ...p, jobName: job.name, jobId: job.id, encryption: job.encryption })
+      // Collect all jobs that contain any of the selected items
+      const selectedArr = Array.from(selectedItems.values())
+      const relevantJobIds = new SvelteSet()
+      for (const item of selectedArr) {
+        for (const job of item.jobs) {
+          relevantJobIds.add(job.id)
         }
       }
+
+      // Fetch restore points from all relevant jobs
+      const allPoints = []
+      for (const jobId of relevantJobIds) {
+        const job = jobs.find(j => j.id === jobId)
+        const points = await api.getRestorePoints(jobId).catch(() => [])
+        for (const p of (points || [])) {
+          allPoints.push({ ...p, jobName: job?.name, jobId: jobId, encryption: job?.encryption })
+        }
+      }
+
+      // Sort by date descending
       restorePoints = allPoints.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
     } catch { /* ignore */ } finally {
       loadingPoints = false
@@ -117,16 +181,17 @@
     try { return JSON.parse(meta) } catch { return {} }
   }
 
+  let selectedItemsArray = $derived(Array.from(selectedItems.values()))
+
   function doRestore() {
-    if (!selectedItem || !selectedPoint) return
+    if (selectedItems.size === 0 || !selectedPoint) return
     restoring = true
-    restoreStatus = 'running'
-    restoreLog = 'Restoring...'
+
+    const items = selectedItemsArray.map(item => item.name)
 
     const payload = {
       restore_point_id: selectedPoint.id,
-      item_name: selectedItem.name,
-      item_type: selectedItem.type,
+      items,
     }
     if (showDestOverride && restoreDestination.trim()) {
       payload.destination = restoreDestination.trim()
@@ -140,15 +205,15 @@
 
   function goBack() {
     if (step === 3) { step = 2; selectedPoint = null }
-    else if (step === 2) { step = 1; selectedItem = null; restorePoints = [] }
+    else if (step === 2) { step = 1; restorePoints = [] }
   }
 </script>
 
 <div>
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
-    {#each [{n:1, label:'Select Item'}, {n:2, label:'Choose Version'}, {n:3, label:'Restore'}] as s}
-      <button type="button" onclick={() => { if (s.n < step) { if (s.n === 1) { step = 1; selectedItem = null; selectedPoint = null } else if (s.n === 2) { step = 2; selectedPoint = null } } }}
+    {#each [{n:1, label:'Select Items'}, {n:2, label:'Choose Version'}, {n:3, label:'Restore'}] as s (s.n)}
+      <button type="button" onclick={() => { if (s.n < step) { if (s.n === 1) { step = 1; selectedPoint = null } else if (s.n === 2) { step = 2; selectedPoint = null } } }}
         class="flex items-center gap-2 {s.n <= step ? '' : 'opacity-40'}">
         <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-white' : s.n === step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
@@ -165,7 +230,7 @@
     {/each}
   </div>
 
-  <!-- Step 1: What to restore -->
+  <!-- Step 1: What to restore (multi-select) -->
   {#if step === 1}
     {#if loading}
       <Spinner text="Loading backed-up items..." />
@@ -175,21 +240,44 @@
         <p class="text-sm text-text-muted">No backed-up items found. Run a backup first.</p>
       </div>
     {:else}
-      <!-- Type filter tabs -->
-      <div class="flex items-center gap-2 mb-4">
-        {#each typeOptions() as t}
-          <button type="button" onclick={() => typeFilter = t}
-            class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors capitalize {typeFilter === t ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
-            {t === 'all' ? 'All' : t + 's'}
+      <!-- Type filter tabs + selection controls -->
+      <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div class="flex items-center gap-2">
+          {#each typeOptions() as t (t)}
+            <button type="button" onclick={() => typeFilter = t}
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors capitalize {typeFilter === t ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
+              {t === 'all' ? 'All' : t + 's'}
+            </button>
+          {/each}
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick={selectAll}
+            class="px-3 py-1.5 text-xs font-medium rounded-lg bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4 transition-colors">
+            Select All
           </button>
-        {/each}
+          {#if selectedCount > 0}
+            <button type="button" onclick={clearSelection}
+              class="px-3 py-1.5 text-xs font-medium rounded-lg bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4 transition-colors">
+              Clear
+            </button>
+          {/if}
+        </div>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {#each filteredItems as item}
-          <button type="button" onclick={() => selectItem(item)}
-            class="bg-surface-2 border border-border rounded-xl p-4 text-left hover:border-vault/40 hover:shadow-sm transition-all group">
+        {#each filteredItems as item (`${item.type}:${item.name}`)}
+          {@const selected = isSelected(item)}
+          <button type="button" onclick={() => toggleItem(item)}
+            class="bg-surface-2 border rounded-xl p-4 text-left hover:shadow-sm transition-all group
+              {selected ? 'border-vault ring-1 ring-vault/30' : 'border-border hover:border-vault/40'}">
             <div class="flex items-center gap-3 mb-2">
+              <!-- Checkbox indicator -->
+              <div class="w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors
+                {selected ? 'bg-vault border-vault' : 'border-border group-hover:border-vault/40'}">
+                {#if selected}
+                  <svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                {/if}
+              </div>
               <div class="w-9 h-9 rounded-lg bg-surface-3 flex items-center justify-center group-hover:bg-vault/10 transition-colors">
                 <svg class="w-5 h-5 {typeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={typeIcon(item.type)}/></svg>
               </div>
@@ -202,6 +290,22 @@
           </button>
         {/each}
       </div>
+
+      <!-- Selection summary + Next button -->
+      <div class="flex items-center justify-between mt-4 pt-4 border-t border-border">
+        <span class="text-sm text-text-muted">
+          {#if selectedCount > 0}
+            {selectedCount} item{selectedCount !== 1 ? 's' : ''} selected
+          {:else}
+            Select items to restore
+          {/if}
+        </span>
+        <button type="button" onclick={proceedToStep2} disabled={selectedCount === 0}
+          class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+          Next
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>
     {/if}
 
   <!-- Step 2: Which version -->
@@ -212,10 +316,14 @@
         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         Back to items
       </button>
-      <div class="flex items-center gap-3 mt-2">
-        <svg class="w-5 h-5 {typeColor(selectedItem.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={typeIcon(selectedItem.type)}/></svg>
-        <h3 class="text-base font-semibold text-text">{selectedItem.name}</h3>
-        <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-dim capitalize">{selectedItem.type}</span>
+      <div class="flex items-center gap-3 mt-2 flex-wrap">
+        {#each selectedItemsArray as item (`${item.type}:${item.name}`)}
+          <div class="flex items-center gap-1.5 px-2.5 py-1 bg-surface-3 rounded-lg">
+            <svg class="w-4 h-4 {typeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={typeIcon(item.type)}/></svg>
+            <span class="text-xs font-medium text-text">{item.name}</span>
+            <span class="text-xs text-text-dim capitalize">({item.type})</span>
+          </div>
+        {/each}
       </div>
     </div>
 
@@ -224,11 +332,11 @@
     {:else if restorePoints.length === 0}
       <div class="text-center py-12">
         <p class="text-4xl mb-3">🕐</p>
-        <p class="text-sm text-text-muted">No restore points found for this item.</p>
+        <p class="text-sm text-text-muted">No restore points found for the selected items.</p>
       </div>
     {:else}
       <div class="space-y-2">
-        {#each restorePoints as rp, i}
+        {#each restorePoints as rp, i (rp.id)}
           {@const meta = parseMetadata(rp.metadata)}
           {@const isRecommended = i === 0 && (rp.status === 'completed' || rp.status === 'success')}
           <button type="button" onclick={() => selectPoint(rp)}
@@ -275,9 +383,22 @@
       <h3 class="text-sm font-semibold text-text mb-3">Restore Summary</h3>
       <div class="space-y-2 text-sm">
         <div class="flex justify-between">
-          <span class="text-text-muted">Item</span>
-          <span class="text-text font-medium">{selectedItem.name} ({selectedItem.type})</span>
+          <span class="text-text-muted">Items</span>
+          <span class="text-text font-medium">
+            {#if selectedCount === 1}
+              {selectedItemsArray[0].name} ({selectedItemsArray[0].type})
+            {:else}
+              {selectedCount} items
+            {/if}
+          </span>
         </div>
+        {#if selectedCount > 1}
+          <div class="flex flex-wrap gap-1.5 justify-end">
+            {#each selectedItemsArray as item (`${item.type}:${item.name}`)}
+              <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-dim">{item.name}</span>
+            {/each}
+          </div>
+        {/if}
         <div class="flex justify-between">
           <span class="text-text-muted">Restore Point</span>
           <span class="text-text">{formatDate(selectedPoint.created_at)}</span>
@@ -329,7 +450,14 @@
       </svg>
       <div>
         <p class="text-sm font-medium text-warning">This will overwrite existing data</p>
-        <p class="text-xs text-text-muted mt-0.5">Restoring will replace current files for <strong class="text-text">{selectedItem.name}</strong> with the backup version.</p>
+        <p class="text-xs text-text-muted mt-0.5">Restoring will replace current files for
+          {#if selectedCount === 1}
+            <strong class="text-text">{selectedItemsArray[0].name}</strong>
+          {:else}
+            <strong class="text-text">{selectedCount} selected items</strong>
+          {/if}
+          with the backup version.
+        </p>
       </div>
     </div>
 

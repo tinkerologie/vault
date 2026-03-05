@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte'
   import { api } from '../lib/api.js'
+  import { getRawHash } from '../lib/router.svelte.js'
+  import { onWsMessage } from '../lib/ws.svelte.js'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -10,11 +12,32 @@
   let jobs = $state([])
   let toast = $state({ message: '', type: 'info', key: 0 })
 
+  // Parse query params from hash route (e.g. #/restore?job=1)
+  function getInitialJobId() {
+    const raw = getRawHash()
+    const qIdx = raw.indexOf('?')
+    if (qIdx === -1) return null
+    const params = new URLSearchParams(raw.slice(qIdx))
+    return params.get('job')
+  }
+
+  const initialJobId = getInitialJobId()
+
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
 
-  onMount(async () => {
+  onMount(() => {
+    loadJobs()
+    const unsub = onWsMessage((msg) => {
+      if (msg.type === 'job_run_completed') {
+        loadJobs()
+      }
+    })
+    return unsub
+  })
+
+  async function loadJobs() {
     try {
       jobs = (await api.listJobs()) || []
     } catch (e) {
@@ -22,12 +45,14 @@
     } finally {
       loading = false
     }
-  })
+  }
 
   async function handleRestore(jobId, payload) {
     try {
       await api.restoreJob(jobId, payload)
-      showToast(`Restore started for ${payload.item_name}`, 'success')
+      const count = payload.items?.length || 1
+      const label = count === 1 ? (payload.items?.[0] || payload.item_name) : `${count} items`
+      showToast(`Restore started for ${label}`, 'success')
     } catch (e) {
       showToast(`Restore failed: ${e.message}`, 'error')
     }
@@ -47,6 +72,6 @@
   {:else if jobs.length === 0}
     <EmptyState icon="🔄" title="No backup jobs" description="Create a backup job first, then come back to restore." />
   {:else}
-    <RestoreWizard {jobs} onrestore={handleRestore} />
+    <RestoreWizard {jobs} onrestore={handleRestore} {initialJobId} />
   {/if}
 </div>

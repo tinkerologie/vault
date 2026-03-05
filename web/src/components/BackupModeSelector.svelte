@@ -50,9 +50,9 @@
 <div class="space-y-5">
   {#if hasContainers}
     <div>
-      <label class="block text-sm font-medium text-text mb-2">Container Backup Mode</label>
+      <span class="block text-sm font-medium text-text mb-2">Container Backup Mode</span>
       <div class="grid grid-cols-1 gap-2">
-        {#each containerModes as mode}
+        {#each containerModes as mode (mode.value)}
           <button
             type="button"
             onclick={() => (containerMode = mode.value)}
@@ -86,9 +86,9 @@
 
   {#if hasVMs}
     <div>
-      <label class="block text-sm font-medium text-text mb-2">VM Backup Mode</label>
+      <span class="block text-sm font-medium text-text mb-2">VM Backup Mode</span>
       <div class="grid grid-cols-1 gap-2">
-        {#each vmModes as mode}
+        {#each vmModes as mode (mode.value)}
           <button
             type="button"
             onclick={() => (vmMode = mode.value)}

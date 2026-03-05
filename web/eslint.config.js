@@ -9,7 +9,19 @@ export default [
     languageOptions: {
       globals: {
         ...globals.browser,
+        requestAnimationFrame: 'readonly',
+        cancelAnimationFrame: 'readonly',
+        clearInterval: 'readonly',
+        ResizeObserver: 'readonly',
       },
+    },
+    rules: {
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+      'svelte/no-unnecessary-state-wrap': 'off',
     },
   },
   {

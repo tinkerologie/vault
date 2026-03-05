@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { formatDate, relTime, formatBytes } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
@@ -12,7 +13,7 @@
   let category = $state('')
   let levelFilter = $state('')
   let limit = $state(100)
-  let expandedIds = $state(new Set())
+  let expandedIds = $state(new SvelteSet())
   let autoScroll = $state(true)
   let logContainer = $state(null)
   let copiedId = $state(null)
@@ -26,7 +27,7 @@
           entries = [msg.entry, ...entries].slice(0, limit)
           // Auto-expand errors
           if (msg.entry.level === 'error' && msg.entry.details) {
-            const next = new Set(expandedIds)
+            const next = new SvelteSet(expandedIds)
             next.add(msg.entry.id)
             expandedIds = next
           }
@@ -59,12 +60,12 @@
     loading = true
     try {
       entries = (await api.getActivity(limit, category)) || []
-      expandedIds = new Set()
+      expandedIds = new SvelteSet()
       // Auto-expand errors
       for (const e of entries) {
         if (e.level === 'error' && e.details) expandedIds.add(e.id)
       }
-      expandedIds = new Set(expandedIds)
+      expandedIds = new SvelteSet(expandedIds)
     } catch (e) {
       error = e.message || 'Failed to load activity log'
       entries = []
@@ -115,7 +116,7 @@
   }
 
   function toggleExpand(id) {
-    const next = new Set(expandedIds)
+    const next = new SvelteSet(expandedIds)
     if (next.has(id)) next.delete(id)
     else next.add(id)
     expandedIds = next
@@ -183,7 +184,7 @@
 
   <!-- Filters -->
   <div class="flex flex-wrap items-center gap-2 mb-4">
-    {#each categories as cat}
+    {#each categories as cat (cat.value)}
       <button
         type="button"
         onclick={() => (category = cat.value)}
@@ -195,7 +196,7 @@
       </button>
     {/each}
     <div class="w-px h-5 bg-border"></div>
-    {#each levels as lev}
+    {#each levels as lev (lev.value)}
       <button
         type="button"
         onclick={() => (levelFilter = lev.value)}
@@ -220,7 +221,7 @@
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl overflow-hidden" bind:this={logContainer}>
       <div class="divide-y divide-border">
-        {#each filteredEntries as entry}
+        {#each filteredEntries as entry (entry.id)}
           <div class="px-5 py-3.5 hover:bg-surface-3/30 transition-colors {entry.level === 'error' ? 'border-l-2 border-l-danger' : ''} group">
             <div class="flex items-start gap-3">
               <div class="mt-0.5 shrink-0">
@@ -259,7 +260,7 @@
                     </button>
                     {#if expandedIds.has(entry.id)}
                       <div class="mt-2 flex flex-wrap gap-1.5">
-                        {#each Object.entries(parsed) as [key, value]}
+                        {#each Object.entries(parsed) as [key, value] (key)}
                           {#if Array.isArray(value) && value.length > 0}
                             <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-danger/10 text-danger font-medium">
                               {detailLabel(key)}: {value.join(', ')}

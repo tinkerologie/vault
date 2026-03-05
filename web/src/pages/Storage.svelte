@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte'
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
+  import { onWsMessage } from '../lib/ws.svelte.js'
   import { formatDate, parseConfig } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
@@ -13,10 +15,10 @@
   let showModal = $state(false)
   let editing = $state(null)
   let testing = $state(null)
-  let testResults = $state(new Map())
+  let testResults = $state(new SvelteMap())
   let toast = $state({ message: '', type: 'info', key: 0 })
   let confirmDelete = $state({ show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 })
-  let depCounts = $state(new Map())
+  let depCounts = $state(new SvelteMap())
 
   // Import state
   let showImport = $state(false)
@@ -24,7 +26,7 @@
   let importStorageName = $state('')
   let scanning = $state(false)
   let scannedBackups = $state([])
-  let selectedBackups = $state(new Set())
+  let selectedBackups = $state(new SvelteSet())
   let importing = $state(false)
 
   let form = $state(defaultForm())
@@ -41,8 +43,14 @@
     toast = { message, type, key: toast.key + 1 }
   }
 
-  onMount(async () => {
-    await loadData()
+  onMount(() => {
+    loadData()
+    const unsub = onWsMessage((msg) => {
+      if (msg.type === 'job_run_completed') {
+        loadData()
+      }
+    })
+    return unsub
   })
 
   async function loadData() {
@@ -50,12 +58,12 @@
     try {
       destinations = (await api.listStorage()) || []
       // Load dependent job counts for each storage
-      const counts = new Map()
+      const counts = new SvelteMap()
       await Promise.all(destinations.map(async (d) => {
         try {
           const result = await api.getDependentJobs(d.id)
           counts.set(d.id, result?.job_count || 0)
-        } catch { counts.set(d.id, 0) }
+        } catch { /* ignore */ counts.set(d.id, 0) }
       }))
       depCounts = counts
     } catch (e) {
@@ -108,7 +116,7 @@
     try {
       const result = await api.getDependentJobs(id)
       jobCount = result?.job_count || 0
-    } catch (_) { /* ignore */ }
+    } catch { /* ignore */ }
     confirmDelete = { show: true, id, name, deleteFiles: false, jobCount }
   }
 
@@ -128,7 +136,7 @@
     importStorageId = id
     importStorageName = name
     scannedBackups = []
-    selectedBackups = new Set()
+    selectedBackups = new SvelteSet()
     showImport = true
     await scanStorage()
   }
@@ -138,7 +146,7 @@
     try {
       const results = await api.scanStorage(importStorageId)
       scannedBackups = results || []
-      selectedBackups = new Set(scannedBackups.map((_, i) => i))
+      selectedBackups = new SvelteSet(scannedBackups.map((_b, i) => i))
     } catch (e) {
       showToast(`Scan failed: ${e.message}`, 'error')
     } finally {
@@ -147,7 +155,7 @@
   }
 
   function toggleBackup(idx) {
-    const s = new Set(selectedBackups)
+    const s = new SvelteSet(selectedBackups)
     if (s.has(idx)) s.delete(idx)
     else s.add(idx)
     selectedBackups = s
@@ -155,16 +163,16 @@
 
   function toggleAllBackups() {
     if (selectedBackups.size === scannedBackups.length) {
-      selectedBackups = new Set()
+      selectedBackups = new SvelteSet()
     } else {
-      selectedBackups = new Set(scannedBackups.map((_, i) => i))
+      selectedBackups = new SvelteSet(scannedBackups.map((_b, i) => i))
     }
   }
 
   async function doImport() {
     importing = true
     try {
-      const backups = scannedBackups.filter((_, i) => selectedBackups.has(i))
+      const backups = scannedBackups.filter((_b, i) => selectedBackups.has(i))
       const result = await api.importBackups(importStorageId, backups)
       showToast(`Imported ${result.imported} of ${result.total} backups`, 'success')
       showImport = false
@@ -199,7 +207,7 @@
     testing = id
     try {
       const result = await api.testStorage(id)
-      const next = new Map(testResults)
+      const next = new SvelteMap(testResults)
       next.set(id, result)
       testResults = next
       if (result.success) {
@@ -209,7 +217,7 @@
       }
     } catch (e) {
       showToast(e.message, 'error')
-      const next = new Map(testResults)
+      const next = new SvelteMap(testResults)
       next.set(id, { success: false, error: e.message })
       testResults = next
     } finally {
@@ -222,6 +230,7 @@
       local: { path: '' },
       sftp: { host: '', port: 22, user: '', password: '', path: '' },
       smb: { host: '', share: '', user: '', password: '', path: '' },
+      nfs: { host: '', export: '', base_path: '', version: '4', options: '' },
     }
     form.config = defaults[form.type] || {}
   }
@@ -258,10 +267,14 @@
   {#if loading}
     <Spinner text="Loading storage..." />
   {:else if destinations.length === 0}
-    <EmptyState icon="💾" title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel="Add Storage" onaction={() => openCreate()} />
+    <EmptyState title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel="Add Storage" onaction={() => openCreate()}>
+      {#snippet iconSlot()}
+        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons.local}/></svg>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {#each destinations as dest}
+      {#each destinations as dest (dest.id)}
         {@const cfg = parseConfig(dest.config)}
         {@const tr = testResults.get(dest.id)}
         {@const jobCount = depCounts.get(dest.id) || 0}
@@ -279,8 +292,9 @@
               </div>
             </div>
             <div class="flex items-center gap-1">
-              <button onclick={() => openImport(dest.id, dest.name)} class="p-1.5 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+              <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                Import
               </button>
               <button onclick={() => openEdit(dest)} class="p-1.5 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit storage">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
@@ -300,6 +314,8 @@
               <p>Path: {cfg.path || '/'}</p>
             {:else if dest.type === 'smb'}
               <p>Share: \\{cfg.host || '—'}\{cfg.share || '—'}</p>
+            {:else if dest.type === 'nfs'}
+              <p class="text-xs text-text-muted truncate">{cfg.host}:{cfg.export}</p>
             {/if}
           </div>
 
@@ -315,7 +331,7 @@
             <button
               onclick={() => testConnection(dest.id)}
               disabled={testing === dest.id}
-              class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors
+              class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors min-w-[110px] text-center
                 {tr
                   ? (tr.success ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger')
                   : 'bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text'}"
@@ -325,7 +341,7 @@
               {:else if tr}
                 {tr.success ? '✓ Connected' : '✗ Failed'}
               {:else}
-                Test Connection
+                Test
               {/if}
             </button>
           </div>
@@ -351,6 +367,7 @@
         <option value="local">Local Path</option>
         <option value="sftp">SFTP</option>
         <option value="smb">SMB / CIFS</option>
+        <option value="nfs">NFS</option>
       </select>
     </div>
 
@@ -420,6 +437,37 @@
         <input id="cfg_smbpath" type="text" bind:value={form.config.path}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="vault" />
       </div>
+    {:else if form.type === 'nfs'}
+      <div class="grid grid-cols-2 gap-3">
+        <div class="col-span-2">
+          <label for="nfs_host" class="block text-sm font-medium text-text-muted mb-1.5">NFS Host</label>
+          <input id="nfs_host" type="text" bind:value={form.config.host} placeholder="192.168.1.100"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+        <div class="col-span-2">
+          <label for="nfs_export" class="block text-sm font-medium text-text-muted mb-1.5">Export Path</label>
+          <input id="nfs_export" type="text" bind:value={form.config.export} placeholder="/mnt/user/backups"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+        <div>
+          <label for="nfs_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path</label>
+          <input id="nfs_base" type="text" bind:value={form.config.base_path} placeholder="vault"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+        <div>
+          <label for="nfs_version" class="block text-sm font-medium text-text-muted mb-1.5">NFS Version</label>
+          <select id="nfs_version" bind:value={form.config.version}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+            <option value="3">NFSv3</option>
+            <option value="4">NFSv4</option>
+          </select>
+        </div>
+        <div class="col-span-2">
+          <label for="nfs_options" class="block text-sm font-medium text-text-muted mb-1.5">Mount Options</label>
+          <input id="nfs_options" type="text" bind:value={form.config.options} placeholder="Optional: rw,sync"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+      </div>
     {/if}
 
     <div class="flex justify-end gap-3 pt-4 border-t border-border">
@@ -435,7 +483,6 @@
 
 <!-- Enhanced Delete Dialog -->
 {#if confirmDelete.show}
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
     onclick={(e) => { if (e.target === e.currentTarget) confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
@@ -493,7 +540,11 @@
   {#if scanning}
     <Spinner text="Scanning storage for backups..." />
   {:else if scannedBackups.length === 0}
-    <EmptyState icon="📂" title="No backups found" description="No backup manifests were found on this storage destination." />
+    <EmptyState title="No backups found" description="No backup manifests were found on this storage destination.">
+      {#snippet iconSlot()}
+        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+      {/snippet}
+    </EmptyState>
     <div class="flex justify-end mt-4">
       <button type="button" onclick={() => showImport = false}
         class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
@@ -513,7 +564,7 @@
 
       <!-- Backup list -->
       <div class="max-h-72 overflow-y-auto space-y-2 border border-border rounded-lg p-2">
-        {#each scannedBackups as backup, idx}
+        {#each scannedBackups as backup, idx (idx)}
           <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {selectedBackups.has(idx) ? 'border-vault/50 bg-vault/5' : 'border-border hover:border-vault/30'}">
             <input type="checkbox" checked={selectedBackups.has(idx)}
               onchange={() => toggleBackup(idx)} class="mt-0.5 accent-vault" />
@@ -544,7 +595,7 @@
           <div class="mt-3 pl-6 space-y-2">
             <p class="text-xs text-text-dim">Each backup contains a snapshot of the Vault database. Restoring it will replace <strong>all</strong> current data (jobs, history, settings).</p>
             <div class="max-h-40 overflow-y-auto space-y-1">
-              {#each scannedBackups as backup}
+              {#each scannedBackups as backup (backup.storage_path)}
                 <button
                   type="button"
                   onclick={() => doRestoreDB(backup.storage_path)}

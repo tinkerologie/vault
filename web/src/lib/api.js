@@ -2,6 +2,15 @@ import { getApiKey } from './auth.svelte.js'
 
 const BASE = '/api/v1'
 
+/** @type {boolean} */
+let _isReplica = false
+
+/** Returns true if connected to a read-only replica instance. */
+export function isReplicaMode() { return _isReplica }
+
+/** Set replica mode (called once during app init). */
+export function setReplicaMode(val) { _isReplica = val }
+
 async function request(method, path, body = null) {
   const headers = { 'Content-Type': 'application/json' }
   const key = getApiKey()
@@ -68,6 +77,15 @@ export const api = {
   verifyEncryption: (passphrase) => request('POST', '/settings/encryption/verify', { passphrase }),
   getEncryptionPassphrase: () => request('GET', '/settings/encryption/passphrase'),
 
+  // Staging
+  getStagingInfo: () => request('GET', '/settings/staging'),
+  getDatabaseInfo: () => request('GET', '/settings/database'),
+  setSnapshotPath: (path) => request('PUT', '/settings/database', { snapshot_path: path }),
+  setStagingOverride: (override) => request('PUT', '/settings/staging', { override }),
+
+  // Discord
+  testDiscordWebhook: (webhookUrl) => request('POST', '/settings/discord/test', { webhook_url: webhookUrl }),
+
   // API Key
   getApiKeyStatus: () => request('GET', '/settings/api-key'),
   generateApiKey: () => request('POST', '/settings/api-key/generate'),
@@ -78,6 +96,9 @@ export const api = {
   getActivity: (limit = 100, category = '') =>
     request('GET', `/activity?limit=${limit}${category ? '&category=' + encodeURIComponent(category) : ''}`),
 
+  // Recovery
+  getRecoveryPlan: () => request('GET', '/recovery/plan'),
+
   // Replication
   listReplicationSources: () => request('GET', '/replication'),
   getReplicationSource: (id) => request('GET', `/replication/${id}`),
@@ -85,6 +106,7 @@ export const api = {
   updateReplicationSource: (id, data) => request('PUT', `/replication/${id}`, data),
   deleteReplicationSource: (id) => request('DELETE', `/replication/${id}`),
   testReplicationSource: (id) => request('POST', `/replication/${id}/test`),
+  testReplicationURL: (url, apiKey) => request('POST', '/replication/test-url', { url, api_key: apiKey }),
   syncReplicationSource: (id) => request('POST', `/replication/${id}/sync`),
   listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
 }

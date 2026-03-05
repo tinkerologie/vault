@@ -60,7 +60,7 @@
   })
 
   function formatDateShort(d) {
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
 </script>
 
@@ -84,13 +84,13 @@
       {/if}
     </div>
 
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="relative"
-      onmouseleave={() => hoveredIndex = -1}>
+      onmouseleave={() => hoveredIndex = -1}
+      role="img" aria-label="Backup size trend chart">
       <svg viewBox="0 0 {width} {height}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">
         <g transform="translate({padding.left},{padding.top})">
           <!-- Horizontal grid lines -->
-          {#each [0, 0.25, 0.5, 0.75, 1] as frac}
+          {#each [0, 0.25, 0.5, 0.75, 1] as frac (frac)}
             <line x1="0" y1={chartHeight * (1 - frac)} x2={chartWidth} y2={chartHeight * (1 - frac)}
               stroke="var(--color-border)" stroke-width="0.5" stroke-dasharray="4 4" />
           {/each}
@@ -102,13 +102,13 @@
           <path d={linePath} fill="none" stroke="var(--color-vault)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 
           <!-- Data points (dots) -->
-          {#each dataPoints as p, i}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
+          {#each dataPoints as p, i (i)}
             <circle
               cx={x(i)} cy={y(p.size)} r={hoveredIndex === i ? 5 : 3}
               fill={hoveredIndex === i ? 'var(--color-vault)' : 'var(--color-surface-2)'}
               stroke="var(--color-vault)" stroke-width="2"
               class="transition-all duration-150 cursor-pointer"
+              role="img"
               onmouseenter={() => hoveredIndex = i}
             />
           {/each}

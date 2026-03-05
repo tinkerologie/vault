@@ -8,6 +8,7 @@ let itemProgress = $state({}) // { item_name: { percent, message, item_type, sta
 let overallDone = $state(0)
 let overallFailed = $state(0)
 let overallTotal = $state(0)
+let phaseMessage = $state(null)
 let elapsedSec = $state(0)
 let _elapsedInterval = null
 
@@ -19,6 +20,7 @@ export function getProgress() {
     get overallFailed() { return overallFailed },
     get overallTotal() { return overallTotal },
     get elapsedSec() { return elapsedSec },
+    get phaseMessage() { return phaseMessage },
   }
 }
 
@@ -39,7 +41,16 @@ export function handleProgressMessage(msg, jobNameResolver) {
       _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
       return true
     }
+    case 'containers_stopping_all': {
+      phaseMessage = `Stopping ${msg.count} containers...`
+      return true
+    }
+    case 'containers_restarting_all': {
+      phaseMessage = `Restarting ${msg.count} containers...`
+      return true
+    }
     case 'item_backup_start': {
+      phaseMessage = null
       if (msg.items_total) overallTotal = msg.items_total
       itemProgress = {
         ...itemProgress,
@@ -99,6 +110,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       return true
     }
     case 'job_run_completed': {
+      phaseMessage = null
       clearInterval(_elapsedInterval)
       if (activeRun) {
         setTimeout(() => {

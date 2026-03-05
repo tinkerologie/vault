@@ -1,14 +1,16 @@
 <script>
   import { onMount } from 'svelte'
   import { navigate } from '../lib/router.svelte.js'
-  import { api } from '../lib/api.js'
+  import { SvelteSet } from 'svelte/reactivity'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { formatDate, relTime, formatBytes, statusBadge, relTimeUntil } from '../lib/utils.js'
+  import { relTimeUntil, formatSpeed } from '../lib/utils.js'
   import { getProgress, handleProgressMessage } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import Toast from '../components/Toast.svelte'
   import Welcome from '../components/Welcome.svelte'
   import HealthGauge from '../components/HealthGauge.svelte'
+  import ComplianceBadge from '../components/ComplianceBadge.svelte'
   import ActivityTimeline from '../components/ActivityTimeline.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
 
@@ -21,11 +23,15 @@
   let containers = $state([])
   let vms = $state([])
   let folders = $state([])
-  let protectedItems = $state(new Set())
+  let protectedItems = $state(new SvelteSet())
   let runningJob = $state(null)
   let toast = $state({ message: '', type: 'info', key: 0 })
   let nextRuns = $state({})
   let healthSummary = $state(null)
+  let replicationSources = $state([])
+  let liveSpeed = $state(null)
+  let liveCumulativeBytes = $state(0)
+  let liveStartTime = $state(null)
   // Shared progress state (persists across page navigations)
   const progress = getProgress()
 
@@ -49,8 +55,17 @@
     loadDashboard()
     const unsub = onWsMessage((msg) => {
       const jobNameResolver = (id) => jobs.find(j => j.id === id)?.name
-      const handled = handleProgressMessage(msg, jobNameResolver)
-      if (msg.type === 'job_run_completed') {
+      handleProgressMessage(msg, jobNameResolver)
+      if (msg.type === 'item_backup_done') {
+        liveCumulativeBytes += msg.size_bytes || 0
+        if (!liveStartTime) liveStartTime = Date.now()
+        const elapsed = (Date.now() - liveStartTime) / 1000
+        if (elapsed > 0) liveSpeed = formatSpeed(liveCumulativeBytes, elapsed)
+      }
+      if (msg.type === 'job_run_completed' || msg.type === 'job_run_started') {
+        liveSpeed = null
+        liveCumulativeBytes = 0
+        liveStartTime = null
         loadDashboard()
       }
     })
@@ -59,7 +74,7 @@
 
   async function loadDashboard() {
     try {
-      const [h, j, s, cRes, vRes, fRes, nextRunsData, hSummary] = await Promise.all([
+      const [h, j, s, cRes, vRes, fRes, nextRunsData, hSummary, replSources] = await Promise.all([
         api.health(),
         api.listJobs(),
         api.listStorage(),
@@ -68,6 +83,7 @@
         api.listFolders().catch(() => ({ items: [], available: false })),
         api.getNextRuns().catch(() => ({})),
         api.getHealthSummary().catch(() => null),
+        api.listReplicationSources().catch(() => []),
       ])
       health = h
       jobs = j || []
@@ -77,13 +93,14 @@
       folders = fRes.items || []
       nextRuns = nextRunsData || {}
       healthSummary = hSummary
+      replicationSources = replSources || []
 
       const enabledJobs = jobs.filter(j => j.enabled)
       if (enabledJobs.length > 0) {
         const jobDetails = await Promise.all(
           enabledJobs.map(j => api.getJob(j.id).catch(() => null))
         )
-        const pSet = new Set()
+        const pSet = new SvelteSet()
         for (const detail of jobDetails) {
           if (!detail?.items) continue
           for (const item of detail.items) {
@@ -122,7 +139,7 @@
   }
 
   const enabledJobs = $derived(jobs.filter(j => j.enabled))
-  const totalSize = $derived(recentRuns.reduce((sum, r) => sum + (r.size_bytes || 0), 0))
+  // totalSize available if needed: recentRuns.reduce((sum, r) => sum + (r.size_bytes || 0), 0)
 
   const protectedContainers = $derived(containers.filter(c => protectedItems.has(`container:${c.name}`)))
   const unprotectedContainers = $derived(containers.filter(c => !protectedItems.has(`container:${c.name}`)))
@@ -138,6 +155,14 @@
     const times = Object.values(nextRuns).map(t => new Date(t)).filter(d => !isNaN(d.getTime()))
     if (times.length === 0) return null
     return new Date(Math.min(...times.map(d => d.getTime()))).toISOString()
+  })
+
+  const avgSpeed = $derived.by(() => {
+    const completed = recentRuns.filter(r => (r.status === 'completed' || r.status === 'success') && r.size_bytes && r.duration_seconds);
+    if (!completed.length) return null;
+    const totalBytes = completed.reduce((s, r) => s + r.size_bytes, 0);
+    const totalSecs = completed.reduce((s, r) => s + r.duration_seconds, 0);
+    return formatSpeed(totalBytes, totalSecs);
   })
 
   const healthSummaryText = $derived(() => {
@@ -243,7 +268,12 @@
 
     <!-- Health Gauge -->
     {#if healthSummary && jobs.length > 0}
-      <HealthGauge score={healthSummary.health_score} summary={healthSummaryText()} />
+      <HealthGauge score={healthSummary.health_score} summary={healthSummaryText()} {avgSpeed} />
+    {/if}
+
+    <!-- 3-2-1 Compliance Badge -->
+    {#if jobs.length > 0}
+      <ComplianceBadge {storage} {jobs} {replicationSources} />
     {/if}
 
     <!-- Stats Grid -->
@@ -339,6 +369,9 @@
               <span class="text-danger">{progress.overallFailed} failed</span>
             {/if}
             <span>{elapsedStr}</span>
+            {#if liveSpeed}
+              <span class="text-xs text-info font-medium">{liveSpeed}</span>
+            {/if}
           </div>
         </div>
 
@@ -353,9 +386,16 @@
           </div>
         </div>
 
+        <!-- Phase message (e.g. stopping/restarting containers) -->
+        {#if progress.phaseMessage}
+          <div class="px-5 pt-3">
+            <p class="text-xs text-warning animate-pulse">{progress.phaseMessage}</p>
+          </div>
+        {/if}
+
         <!-- Per-item progress list -->
         <div class="p-5 space-y-3 max-h-80 overflow-y-auto">
-          {#each progressItems as [name, info]}
+          {#each progressItems as [name, info] (name)}
             <div class="flex items-center gap-3">
               <!-- Status icon -->
               <div class="w-5 h-5 flex items-center justify-center shrink-0">
@@ -430,7 +470,7 @@
                   <span class="text-xs text-text-dim ml-auto">{protectedContainers.length}/{containers.length}</span>
                 </div>
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
-                  {#each containers as c}
+                  {#each containers as c (c.name)}
                     {@const isProtected = protectedItems.has(`container:${c.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
@@ -458,7 +498,7 @@
                   <span class="text-xs text-text-dim ml-auto">{protectedVMs.length}/{vms.length}</span>
                 </div>
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
-                  {#each vms as v}
+                  {#each vms as v (v.name)}
                     {@const isProtected = protectedItems.has(`vm:${v.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
@@ -486,7 +526,7 @@
                   <span class="text-xs text-text-dim ml-auto">{protectedFolders.length}/{folders.length}</span>
                 </div>
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
-                  {#each folders as f}
+                  {#each folders as f (f.name)}
                     {@const isProtected = protectedItems.has(`folder:${f.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
@@ -525,25 +565,37 @@
           <div class="px-5 py-8 text-center text-sm text-text-muted">No backup jobs configured</div>
         {:else}
           <div class="divide-y divide-border">
-            {#each jobs.slice(0, 5) as job}
+            {#each jobs.slice(0, 5) as job (job.id)}
               <div class="px-5 py-3 flex items-center justify-between">
                 <div>
                   <p class="text-sm font-medium text-text">{job.name}</p>
                   <p class="text-xs text-text-dim">{job.enabled ? 'Enabled' : 'Disabled'} · {job.compression || 'none'}</p>
                 </div>
-                <button
-                  onclick={() => runNow(job)}
-                  disabled={runningJob === job.id}
-                  class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-vault/10 text-vault hover:bg-vault/20 disabled:opacity-50"
-                >
-                  {#if runningJob === job.id}
-                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    Running...
-                  {:else}
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
-                    Run Now
-                  {/if}
-                </button>
+                {#if !isReplicaMode()}
+                <div class="flex items-center gap-2">
+                  <button
+                    onclick={() => navigate(`/restore?job=${job.id}`)}
+                    class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text"
+                    title="Restore from {job.name}"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    Restore
+                  </button>
+                  <button
+                    onclick={() => runNow(job)}
+                    disabled={runningJob === job.id}
+                    class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-vault/10 text-vault hover:bg-vault/20 disabled:opacity-50"
+                  >
+                    {#if runningJob === job.id}
+                      <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                      Running...
+                    {:else}
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+                      Run Now
+                    {/if}
+                  </button>
+                </div>
+                {/if}
               </div>
             {/each}
           </div>

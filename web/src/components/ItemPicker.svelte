@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import { SvelteMap } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import Spinner from './Spinner.svelte'
   import PathBrowser from './PathBrowser.svelte'
@@ -23,7 +24,7 @@
   let customFolderPath = $state('')
 
   // Selected items tracked as map: "type:name" -> item
-  let selected = $state(new Map())
+  let selected = new SvelteMap()
 
   // Drag state for reorder
   let dragIndex = $state(-1)
@@ -31,7 +32,7 @@
   // Initialize selected from prop
   $effect(() => {
     if (items.length > 0 && selected.size === 0) {
-      const m = new Map()
+      const m = new SvelteMap()
       for (const it of items) {
         m.set(`${it.item_type}:${it.item_name}`, it)
       }
@@ -43,7 +44,7 @@
     loading = true
     error = ''
     try {
-      const [cRes, vRes, fRes, pRes] = await Promise.all([
+      const [cRes, vRes, fRes, pluginRes] = await Promise.all([
         api.listContainers(),
         api.listVMs(),
         api.listFolders().catch(() => ({ items: [], available: true })),
@@ -55,8 +56,8 @@
       vmsAvailable = vRes.available
       folders = fRes.items || []
       foldersAvailable = true
-      plugins = pRes.items || []
-      pluginsAvailable = pRes.available
+      plugins = pluginRes.items || []
+      pluginsAvailable = pluginRes.available
       if (!containersAvailable && vmsAvailable) activeTab = 'vms'
       else if (!containersAvailable && !vmsAvailable) activeTab = 'folders'
     } catch (e) {
@@ -102,12 +103,12 @@
   }
 
   function toggle(type, item) {
-    const key = `${type}:${item.name}`
-    const m = new Map(selected)
-    if (m.has(key)) {
-      m.delete(key)
+    const _key = `${type}:${item.name}`
+    const m = new SvelteMap(selected)
+    if (m.has(_key)) {
+      m.delete(_key)
     } else {
-      m.set(key, {
+      m.set(_key, {
         item_type: type,
         item_name: item.name,
         item_id: item.settings?.id || item.name,
@@ -120,7 +121,7 @@
 
   function selectAll(type) {
     const list = type === 'container' ? filteredContainers() : type === 'vm' ? filteredVMs() : type === 'plugin' ? filteredPlugins() : filteredFolders()
-    const m = new Map(selected)
+    const m = new SvelteMap(selected)
     const allSelected = list.every((it) => m.has(`${type}:${it.name}`))
     for (const it of list) {
       const key = `${type}:${it.name}`
@@ -142,9 +143,9 @@
   function addCustomFolder() {
     if (!customFolderPath.trim()) return
     const name = customFolderPath.split('/').filter(Boolean).pop() || customFolderPath
-    const key = `folder:${name}`
-    const m = new Map(selected)
-    m.set(key, {
+    const fKey = `folder:${name}`
+    const m = new SvelteMap(selected)
+    m.set(fKey, {
       item_type: 'folder',
       item_name: name,
       item_id: customFolderPath,
@@ -166,7 +167,7 @@
     const arr = Array.from(selected.entries())
     const [moved] = arr.splice(fromIdx, 1)
     arr.splice(toIdx, 0, moved)
-    selected = new Map(arr)
+    selected = new SvelteMap(arr)
     emitChange()
   }
 
@@ -297,7 +298,7 @@
           {filtered.every((c) => isSelected('container', c.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
         </button>
         <div class="space-y-1 max-h-64 overflow-y-auto pr-1">
-          {#each filtered as container}
+          {#each filtered as container (container.name)}
             {@const sel = isSelected('container', container.name)}
             <button
               type="button"
@@ -354,7 +355,7 @@
           {filtered.every((v) => isSelected('vm', v.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
         </button>
         <div class="space-y-1 max-h-64 overflow-y-auto pr-1">
-          {#each filtered as vm}
+          {#each filtered as vm (vm.name)}
             {@const sel = isSelected('vm', vm.name)}
             <button
               type="button"
@@ -433,7 +434,7 @@
       {/if}
       {#if filtered.length > 0}
         <div class="space-y-1 max-h-64 overflow-y-auto pr-1">
-          {#each filtered as folder}
+          {#each filtered as folder (folder.name)}
             {@const sel = isSelected('folder', folder.name)}
             <button
               type="button"
@@ -479,7 +480,7 @@
           {filtered.every((p) => isSelected('plugin', p.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
         </button>
         <div class="space-y-1 max-h-64 overflow-y-auto pr-1">
-          {#each filtered as plugin}
+          {#each filtered as plugin (plugin.name)}
             {@const sel = isSelected('plugin', plugin.name)}
             <button
               type="button"
@@ -525,7 +526,7 @@
       <div class="mt-4 pt-3 border-t border-border">
         <p class="text-xs font-medium text-text-muted mb-2">Backup Order (drag to reorder)</p>
         <div class="space-y-1" role="list">
-          {#each selectedArray as [key, item], idx}
+          {#each selectedArray as [key, item], idx (key)}
             <div
               class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-3/50 border border-border text-sm {dragIndex === idx ? 'opacity-50' : ''}"
               draggable="true"

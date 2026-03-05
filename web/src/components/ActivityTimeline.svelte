@@ -1,5 +1,5 @@
 <script>
-  import { statusBadge, relTime, formatBytes, getFailureReason } from '../lib/utils.js'
+  import { statusBadge, relTime, formatBytes, formatSpeed, formatDurationFromDates, getFailureReason } from '../lib/utils.js'
 
   let { runs = [], maxItems = 8 } = $props()
 
@@ -11,7 +11,7 @@
 
     for (const run of runs.slice(0, maxItems)) {
       const d = new Date(run.started_at).toDateString()
-      const label = d === today ? 'Today' : d === yesterday ? 'Yesterday' : new Date(run.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      const label = d === today ? 'Today' : d === yesterday ? 'Yesterday' : new Date(run.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
       if (!groups[label]) groups[label] = []
       groups[label].push(run)
     }
@@ -19,13 +19,8 @@
   })
 
   function durationStr(run) {
-    if (!run.started_at || !run.completed_at) return ''
-    const start = new Date(run.started_at)
-    const end = new Date(run.completed_at)
-    const sec = Math.round((end - start) / 1000)
-    if (sec < 60) return `${sec}s`
-    if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
-    return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
+    const d = formatDurationFromDates(run.started_at, run.completed_at)
+    return d === '—' ? '' : d
   }
 </script>
 
@@ -34,15 +29,15 @@
     <h2 class="text-base font-semibold text-text">Recent Activity</h2>
   </div>
   {#if runs.length === 0}
-    <div class="px-5 py-8 text-center text-sm text-text-muted">No backup runs yet</div>
+    <div class="px-5 py-8 text-center text-sm text-text-muted">No recent activity</div>
   {:else}
     <div class="divide-y divide-border">
-      {#each grouped as [label, groupRuns]}
+      {#each grouped as [label, groupRuns] (label)}
         <div>
           <div class="px-5 py-2 bg-surface-3/50">
             <span class="text-xs font-medium text-text-dim uppercase tracking-wide">{label}</span>
           </div>
-          {#each groupRuns as run}
+          {#each groupRuns as run (run.id)}
             <div class="px-5 py-3 flex items-start gap-3">
               <!-- Timeline dot -->
               <div class="mt-1.5 shrink-0">
@@ -52,8 +47,15 @@
               <div class="flex-1 min-w-0">
                 <div class="flex items-center justify-between gap-2">
                   <div class="flex items-center gap-2 min-w-0">
+                    {#if run.run_type === 'restore'}
+                      <svg class="w-3.5 h-3.5 text-info shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
+                    {/if}
                     <span class="text-sm font-medium text-text truncate">{run.jobName || 'Job'}</span>
-                    <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 {statusBadge(run.status)}">{run.status}</span>
+                    {#if run.run_type === 'restore'}
+                      <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 badge badge-info">restored</span>
+                    {:else}
+                      <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 {statusBadge(run.status)}">{run.status}</span>
+                    {/if}
                   </div>
                   <span class="text-xs text-text-dim shrink-0">{relTime(run.started_at)}</span>
                 </div>
@@ -63,6 +65,9 @@
                   {/if}
                   {#if run.size_bytes}
                     <span>{formatBytes(run.size_bytes)}</span>
+                  {/if}
+                  {#if run.duration_seconds && run.size_bytes}
+                    <span>{formatSpeed(run.size_bytes, run.duration_seconds)}</span>
                   {/if}
                   {#if run.items_total}
                     <span>{run.items_done || 0}/{run.items_total} items</span>

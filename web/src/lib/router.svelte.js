@@ -3,7 +3,10 @@
 let current = $state(getHash())
 
 function getHash() {
-  return window.location.hash.slice(1) || '/'
+  const raw = window.location.hash.slice(1) || '/'
+  // Strip query params for route matching
+  const qIdx = raw.indexOf('?')
+  return qIdx === -1 ? raw : raw.slice(0, qIdx)
 }
 
 function handleHashChange() {
@@ -20,4 +23,9 @@ export function navigate(path) {
 
 export function getRoute() {
   return current
+}
+
+/** Get the raw hash including query params */
+export function getRawHash() {
+  return window.location.hash.slice(1) || '/'
 }

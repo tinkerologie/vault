@@ -128,3 +128,31 @@ export function getFailureReason(run) {
   }
   return 'Backup failed — expand for details'
 }
+
+/** Format seconds into human-readable duration (e.g. "11m 4s", "2h 15m") */
+export function formatDuration(seconds) {
+  if (seconds == null || seconds < 0) return '—'
+  const sec = Math.round(seconds)
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
+}
+
+/** Format a start/end date pair into human-readable duration */
+export function formatDurationFromDates(startedAt, completedAt) {
+  if (!startedAt || !completedAt) return '—'
+  const start = new Date(startedAt)
+  const end = new Date(completedAt)
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return '—'
+  return formatDuration((end - start) / 1000)
+}
+
+/** Format bytes/seconds into human-readable speed (e.g. "31.2 MB/s") */
+export function formatSpeed(bytes, seconds) {
+  if (!bytes || !seconds || seconds === 0) return null;
+  const bps = bytes / seconds;
+  const k = 1024;
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  const i = Math.min(Math.floor(Math.log(bps) / Math.log(k)), units.length - 1);
+  return parseFloat((bps / Math.pow(k, i)).toFixed(1)) + ' ' + units[i];
+}

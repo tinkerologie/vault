@@ -157,9 +157,9 @@
 <div class="space-y-4">
   <!-- Frequency selector -->
   <div>
-    <label class="block text-sm font-medium text-text-muted mb-1.5">Frequency</label>
+    <span class="block text-sm font-medium text-text-muted mb-1.5">Frequency</span>
     <div class="grid grid-cols-4 gap-1 bg-surface-3 rounded-lg p-1">
-      {#each frequencyOptions as opt}
+      {#each frequencyOptions as opt (opt.value)}
         <button
           type="button"
           onclick={() => { frequency = opt.value; buildCron() }}
@@ -176,7 +176,7 @@
     <div>
       <label class="block text-xs font-medium text-text-muted mb-1" for="sched-time-d">Time</label>
       <select id="sched-time-d" bind:value={selectedTimeIndex} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-        {#each timeSlots as slot, i}
+        {#each timeSlots as slot, i (i)}
           <option value={i}>{slot.label}</option>
         {/each}
       </select>
@@ -184,9 +184,9 @@
 
     <!-- Weekday toggles -->
     <div>
-      <label class="block text-xs font-medium text-text-muted mb-1.5">Days</label>
+      <span class="block text-xs font-medium text-text-muted mb-1.5">Days</span>
       <div class="flex gap-1">
-        {#each dayNames as day, i}
+        {#each dayNames as day, i (i)}
           <button
             type="button"
             onclick={() => toggleWeekday(i)}
@@ -203,7 +203,7 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-weekday">Day of Week</label>
         <select id="sched-weekday" bind:value={weekday} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-          {#each dayNamesFull as day, i}
+          {#each dayNamesFull as day, i (i)}
             <option value={i}>{day}</option>
           {/each}
         </select>
@@ -211,7 +211,7 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-time-w">Time</label>
         <select id="sched-time-w" bind:value={selectedTimeIndex} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-          {#each timeSlots as slot, i}
+          {#each timeSlots as slot, i (i)}
             <option value={i}>{slot.label}</option>
           {/each}
         </select>
@@ -223,7 +223,7 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-monthday">Day of Month</label>
         <select id="sched-monthday" bind:value={monthday} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-          {#each Array(28) as _, d}
+          {#each Array(28) as _s, d (d)}
             <option value={d + 1}>{d + 1}</option>
           {/each}
         </select>
@@ -231,7 +231,7 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-time-m">Time</label>
         <select id="sched-time-m" bind:value={selectedTimeIndex} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-          {#each timeSlots as slot, i}
+          {#each timeSlots as slot, i (i)}
             <option value={i}>{slot.label}</option>
           {/each}
         </select>
@@ -243,7 +243,7 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-month">Month</label>
         <select id="sched-month" bind:value={month} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-          {#each monthNames as name, i}
+          {#each monthNames as name, i (i)}
             <option value={i + 1}>{name}</option>
           {/each}
         </select>
@@ -251,7 +251,7 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-monthday-y">Day</label>
         <select id="sched-monthday-y" bind:value={monthday} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-          {#each Array(28) as _, d}
+          {#each Array(28) as _s, d (d)}
             <option value={d + 1}>{d + 1}</option>
           {/each}
         </select>
@@ -259,7 +259,7 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-time-y">Time</label>
         <select id="sched-time-y" bind:value={selectedTimeIndex} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-          {#each timeSlots as slot, i}
+          {#each timeSlots as slot, i (i)}
             <option value={i}>{slot.label}</option>
           {/each}
         </select>
