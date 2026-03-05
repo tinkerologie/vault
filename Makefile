@@ -13,7 +13,7 @@ LDFLAGS := -s -w \
 
 ANSIBLE_CMD := cd ansible && ansible-playbook -i inventory.yml ansible.yml
 
-.PHONY: all build build-local build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package
+.PHONY: all build build-local build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push
 
 all: test build-local
 
@@ -81,6 +81,9 @@ package: release
 lint:
 	golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...
 
+lint-web:
+	cd web && npm run lint
+
 security-check:
 	gosec -fmt=text -exclude-dir=vendor -exclude-dir=build -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703 -severity=medium -confidence=medium ./...
 	govulncheck ./...
@@ -93,3 +96,14 @@ pre-commit-install:
 
 pre-commit-run:
 	pre-commit run --all-files
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+
+docker-build:
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(HASH) --build-arg BUILD_DATE=$(DATE) -t vault-replica:$(VERSION) .
+
+docker-push: docker-build
+	docker tag vault-replica:$(VERSION) ruaandeysel/vault-replica:$(VERSION)
+	docker tag vault-replica:$(VERSION) ruaandeysel/vault-replica:latest
+	docker push ruaandeysel/vault-replica:$(VERSION)
+	docker push ruaandeysel/vault-replica:latest
