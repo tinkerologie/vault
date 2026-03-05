@@ -94,6 +94,39 @@ func TestAPIKeyAuth(t *testing.T) {
 	}
 }
 
+func TestReadOnlyGuard(t *testing.T) {
+	t.Parallel()
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := ReadOnlyGuard(okHandler)
+
+	tests := []struct {
+		name       string
+		method     string
+		wantStatus int
+	}{
+		{"GET passes through", http.MethodGet, http.StatusOK},
+		{"HEAD passes through", http.MethodHead, http.StatusOK},
+		{"POST blocked", http.MethodPost, http.StatusForbidden},
+		{"PUT blocked", http.MethodPut, http.StatusForbidden},
+		{"DELETE blocked", http.MethodDelete, http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(tt.method, "/", nil)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
 func TestLocalUIBypass(t *testing.T) {
 	t.Parallel()
 

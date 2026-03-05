@@ -33,18 +33,17 @@
   let allSelected = $derived(jobs.length > 0 && selectedJobs.size === jobs.length)
 
   function toggleSelectJob(id) {
-    if (selectedJobs.has(id)) selectedJobs.delete(id)
-    else selectedJobs.add(id)
+    const next = new SvelteSet(selectedJobs)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    selectedJobs = next
   }
 
   function toggleSelectAll() {
     if (allSelected) {
-      selectedJobs.clear()
+      selectedJobs = new SvelteSet()
     } else {
-      selectedJobs.clear()
-      for (const j of jobs) {
-        selectedJobs.add(j.id)
-      }
+      selectedJobs = new SvelteSet(jobs.map(j => j.id))
     }
   }
 
@@ -54,7 +53,7 @@
       const targets = jobs.filter(j => selectedJobs.has(j.id) && j.enabled !== enable)
       await Promise.all(targets.map(j => api.updateJob(j.id, { ...j, enabled: enable })))
       showToast(`${targets.length} job${targets.length !== 1 ? 's' : ''} ${enable ? 'enabled' : 'disabled'}`, 'success')
-      selectedJobs.clear()
+      selectedJobs = new SvelteSet()
       await loadData()
     } catch (e) {
       showToast(e.message, 'error')
@@ -69,7 +68,7 @@
       const ids = [...selectedJobs]
       await Promise.all(ids.map(id => api.runJob(id)))
       showToast(`${ids.length} job${ids.length !== 1 ? 's' : ''} queued`, 'success')
-      selectedJobs.clear()
+      selectedJobs = new SvelteSet()
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -83,7 +82,7 @@
       const ids = [...selectedJobs]
       await Promise.all(ids.map(id => api.deleteJob(id, false)))
       showToast(`${ids.length} job${ids.length !== 1 ? 's' : ''} deleted`, 'success')
-      selectedJobs.clear()
+      selectedJobs = new SvelteSet()
       await loadData()
     } catch (e) {
       showToast(e.message, 'error')
@@ -497,7 +496,7 @@
     </button>
     <div class="w-px h-6 bg-border"></div>
     <button
-      onclick={() => { selectedJobs.clear() }}
+      onclick={() => { selectedJobs = new Set() }}
       class="text-xs text-text-muted hover:text-text transition-colors"
     >
       Clear

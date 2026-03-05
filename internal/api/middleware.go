@@ -93,6 +93,20 @@ func extractToken(r *http.Request) string {
 	return ""
 }
 
+// ReadOnlyGuard returns middleware that blocks non-GET/HEAD requests in
+// replica mode. Used to prevent write operations on read-only replicas.
+func ReadOnlyGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"this is a read-only replica"}`)) //nolint:errcheck
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // BodySizeLimit returns middleware that limits the request body to maxBytes.
 // Requests exceeding the limit receive a 413 Payload Too Large response.
 func BodySizeLimit(maxBytes int64) func(http.Handler) http.Handler {

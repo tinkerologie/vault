@@ -208,6 +208,141 @@ func TestGetAPIKeyStatus_WithKey(t *testing.T) {
 	}
 }
 
+func TestGetStagingInfo(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/staging", nil)
+	w := httptest.NewRecorder()
+	h.GetStagingInfo(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Should have a resolved_path (at minimum the system temp dir).
+	if resp["resolved_path"] == nil || resp["resolved_path"] == "" {
+		t.Error("expected non-empty resolved_path")
+	}
+	if resp["source"] == nil || resp["source"] == "" {
+		t.Error("expected non-empty source")
+	}
+	// Cascade should be present.
+	cascade, ok := resp["cascade"].([]any)
+	if !ok || len(cascade) == 0 {
+		t.Error("expected non-empty cascade list")
+	}
+}
+
+func TestSetStagingOverride_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader("not json"))
+	w := httptest.NewRecorder()
+	h.SetStagingOverride(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestSetStagingOverride_RelativePath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"override": "relative/path"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetStagingOverride(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestSetStagingOverride_NonexistentPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"override": "/nonexistent/path/that/does/not/exist"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetStagingOverride(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestSetStagingOverride_ValidPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Use the system temp dir as a known valid absolute directory.
+	tmpDir := t.TempDir()
+	body := `{"override": "` + tmpDir + `"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetStagingOverride(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["override"] != tmpDir {
+		t.Errorf("override = %v, want %s", resp["override"], tmpDir)
+	}
+	if resp["source"] != "override" {
+		t.Errorf("source = %v, want override", resp["source"])
+	}
+}
+
+func TestSetStagingOverride_ClearOverride(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// First set an override.
+	tmpDir := t.TempDir()
+	body := `{"override": "` + tmpDir + `"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetStagingOverride(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("set: status = %d", w.Code)
+	}
+
+	// Clear the override by sending an empty string.
+	body2 := `{"override": ""}`
+	req2 := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader(body2))
+	w2 := httptest.NewRecorder()
+	h.SetStagingOverride(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("clear: status = %d, want %d; body: %s", w2.Code, http.StatusOK, w2.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w2.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["override"] != "" {
+		t.Errorf("override = %v, want empty string", resp["override"])
+	}
+	if resp["source"] == "override" {
+		t.Error("source should not be 'override' after clearing")
+	}
+}
+
 func TestGenerateAPIKey_Format(t *testing.T) {
 	t.Parallel()
 

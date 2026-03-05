@@ -49,8 +49,8 @@ func (h *DiscoverHandler) ListContainers(w http.ResponseWriter, r *http.Request)
 //
 //	GET /api/v1/vms
 func (h *DiscoverHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
-	handler, err := engine.NewVMHandler()
-	if err != nil {
+	handler, err := engine.NewVMHandler() //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
+	if err != nil {                       //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
 		// libvirt not available — return empty list gracefully.
 		respondJSON(w, http.StatusOK, map[string]any{
 			"items":     []engine.BackupItem{},
@@ -60,8 +60,8 @@ func (h *DiscoverHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := handler.ListItems()
-	if err != nil {
+	items, err := handler.ListItems() //nolint:staticcheck // platform-dependent
+	if err != nil {                   //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
 		respondJSON(w, http.StatusOK, map[string]any{
 			"items":     []engine.BackupItem{},
 			"available": false,
@@ -110,8 +110,8 @@ func (h *DiscoverHandler) ListFolders(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/v1/plugins
 func (h *DiscoverHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
-	handler, err := engine.NewPluginHandler()
-	if err != nil {
+	handler, err := engine.NewPluginHandler() //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
+	if err != nil {                           //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
 		// Plugin handler not available (non-Linux) — return empty list gracefully.
 		respondJSON(w, http.StatusOK, map[string]any{
 			"items":     []engine.BackupItem{},
@@ -121,8 +121,8 @@ func (h *DiscoverHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := handler.ListItems()
-	if err != nil {
+	items, err := handler.ListItems() //nolint:staticcheck // platform-dependent
+	if err != nil {                   //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
 		respondJSON(w, http.StatusOK, map[string]any{
 			"items":     []engine.BackupItem{},
 			"available": false,

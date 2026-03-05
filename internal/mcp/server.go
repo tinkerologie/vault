@@ -524,7 +524,7 @@ type createStorageInput struct {
 func (s *MCPServer) addCreateStorageTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "create_storage",
-		Description: "Create a new storage destination. Type is one of: local, smb, nfs, sftp, s3. Config is a JSON string with the backend-specific configuration.",
+		Description: "Create a new storage destination. Type is one of: local, smb, nfs, sftp. Config is a JSON string with the backend-specific configuration.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input createStorageInput) (*mcp.CallToolResult, any, error) {
 		dest := db.StorageDestination{
 			Name:   input.Name,
@@ -655,13 +655,13 @@ func (s *MCPServer) addListVMsTool() {
 		Name:        "list_vms",
 		Description: "List all libvirt virtual machines available for backup",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ listVMsInput) (*mcp.CallToolResult, any, error) {
-		handler, err := engine.NewVMHandler()
-		if err != nil {
+		handler, err := engine.NewVMHandler() //nolint:staticcheck // platform-dependent
+		if err != nil {                       //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
 			r, _ := textResult(map[string]any{"items": []any{}, "available": false, "error": err.Error()})
 			return r, nil, nil
 		}
-		items, err := handler.ListItems()
-		if err != nil {
+		items, err := handler.ListItems() //nolint:staticcheck // platform-dependent
+		if err != nil {                   //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
 			r, _ := textResult(map[string]any{"items": []any{}, "available": false, "error": err.Error()})
 			return r, nil, nil
 		}

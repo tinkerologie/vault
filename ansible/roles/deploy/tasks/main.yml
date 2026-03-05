@@ -18,6 +18,11 @@
       ansible.builtin.pause:
         seconds: 2
 
+    - name: Clean up stale USB files
+      ansible.builtin.raw: >
+        rm -rf {{ config_dir }}.bak.* {{ config_dir }}/vault.db.migrated 2>/dev/null; true
+      changed_when: false
+
     - name: Create plugin directories
       ansible.builtin.raw: >
         mkdir -p

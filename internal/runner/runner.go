@@ -169,6 +169,32 @@ func (r *Runner) RunJob(jobID int64) {
 		jobStart      = time.Now()
 	)
 
+	// Resolve container IDs by name — stored IDs may be stale after
+	// container updates, reboots, or Docker Compose recreates.
+	resolvedIDs := make(map[string]string) // item_name -> current container ID
+	if hasContainerItems(items) {
+		ch, err := engine.NewContainerHandler()
+		if err == nil {
+			if current, err := ch.ListItems(); err == nil {
+				byName := make(map[string]string, len(current))
+				for _, c := range current {
+					if id, ok := c.Settings["id"].(string); ok {
+						byName[c.Name] = id
+					}
+				}
+				for _, item := range items {
+					if item.ItemType == "container" {
+						if currentID, ok := byName[item.ItemName]; ok && currentID != item.ItemID {
+							log.Printf("runner: container %q: ID changed from %s to %s (resolved by name)",
+								item.ItemName, item.ItemID[:12], currentID[:12])
+							resolvedIDs[item.ItemName] = currentID
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// stop_all mode: stop all container items up-front, set no_stop so the
 	// individual handler skips stop/start, then restart them all after the loop.
 	var stoppedContainerIDs []string
@@ -176,7 +202,11 @@ func (r *Runner) RunJob(jobID int64) {
 		var containerIDs []string
 		for _, item := range items {
 			if item.ItemType == "container" {
-				containerIDs = append(containerIDs, item.ItemID)
+				id := item.ItemID
+				if resolved, ok := resolvedIDs[item.ItemName]; ok {
+					id = resolved
+				}
+				containerIDs = append(containerIDs, id)
 			}
 		}
 		if len(containerIDs) > 0 {
@@ -200,11 +230,16 @@ func (r *Runner) RunJob(jobID int64) {
 			settings = make(map[string]any)
 		}
 
+		itemID := item.ItemID
+		if resolved, ok := resolvedIDs[item.ItemName]; ok {
+			itemID = resolved
+		}
+
 		backupItem := engine.BackupItem{
 			Name: item.ItemName,
 			Type: item.ItemType,
 			Settings: map[string]any{
-				"id":    item.ItemID,
+				"id":    itemID,
 				"image": settings["image"],
 				"state": settings["state"],
 			},
@@ -1457,15 +1492,15 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]
 // created by Commifreak's unraid-appdata.backup plugin. These directories
 // follow the naming convention ab_YYYYMMDD_HHMMSS and contain .tar.gz
 // archives (one per container) and optionally cube-*.zip flash backups.
-func (r *Runner) ScanAppdataBackups(dest db.StorageDestination) ([]map[string]any, error) {
+func (r *Runner) ScanAppdataBackups(dest db.StorageDestination, basePath string) ([]map[string]any, error) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		return nil, fmt.Errorf("creating storage adapter: %w", err)
 	}
 	defer storage.CloseAdapter(adapter)
 
-	// List all entries at the root level.
-	topEntries, err := adapter.List("")
+	// List entries in the base path (root if empty).
+	topEntries, err := adapter.List(basePath)
 	if err != nil {
 		return nil, fmt.Errorf("listing root directory: %w", err)
 	}
@@ -1776,4 +1811,14 @@ func (r *Runner) buildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error
 		chain[i], chain[j] = chain[j], chain[i]
 	}
 	return chain, nil
+}
+
+// hasContainerItems returns true if any item in the list is a container.
+func hasContainerItems(items []db.JobItem) bool {
+	for _, item := range items {
+		if item.ItemType == "container" {
+			return true
+		}
+	}
+	return false
 }

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // StageDirName is the hidden directory name used for staging.
@@ -33,21 +34,53 @@ type StorageConfig struct {
 	Config string // JSON blob from storage_destinations.config
 }
 
+// StagingInfo contains information about the resolved staging directory.
+type StagingInfo struct {
+	ResolvedPath   string        `json:"resolved_path"`
+	Source         string        `json:"source"`
+	Override       string        `json:"override"`
+	DiskFreeBytes  uint64        `json:"disk_free_bytes"`
+	DiskTotalBytes uint64        `json:"disk_total_bytes"`
+	Cascade        []CascadeItem `json:"cascade"`
+}
+
+// CascadeItem represents one level of the staging cascade.
+type CascadeItem struct {
+	Path      string `json:"path"`
+	Available bool   `json:"available"`
+	Source    string `json:"source"`
+}
+
 // CreateBackupDir creates a temporary staging directory for a backup operation.
 // It returns the path and a cleanup function that removes the temp dir and
 // prunes its empty parent .vault-stage directory.
-func CreateBackupDir(dest StorageConfig) (string, func(), error) {
-	return createDir(dest, "backup-*")
+func CreateBackupDir(dest StorageConfig, override string) (string, func(), error) {
+	return createDir(dest, "backup-*", override)
 }
 
 // CreateRestoreDir creates a temporary staging directory for a restore operation.
 // Same cascade strategy as CreateBackupDir.
-func CreateRestoreDir(dest StorageConfig) (string, func(), error) {
-	return createDir(dest, "restore-*")
+func CreateRestoreDir(dest StorageConfig, override string) (string, func(), error) {
+	return createDir(dest, "restore-*", override)
 }
 
 // createDir implements the cascade strategy for both backup and restore dirs.
-func createDir(dest StorageConfig, pattern string) (string, func(), error) {
+func createDir(dest StorageConfig, pattern string, override string) (string, func(), error) {
+	// Try override first.
+	if override != "" {
+		if info, err := os.Stat(override); err == nil && info.IsDir() {
+			stageBase := filepath.Join(override, StageDirName)
+			if err := os.MkdirAll(stageBase, 0750); err == nil {
+				dir, err := os.MkdirTemp(stageBase, pattern)
+				if err == nil {
+					log.Printf("tempdir: using override staging dir %s", dir)
+					return dir, cleanupFunc(dir, stageBase), nil
+				}
+			}
+		}
+		log.Printf("tempdir: override path %s unusable, falling back to cascade", override)
+	}
+
 	// Try fast cache/SSD paths first.
 	for _, base := range CachePaths {
 		info, err := os.Stat(base)
@@ -187,4 +220,79 @@ func cleanLegacyDirs(seen map[string]bool) {
 		seen[legacyBase] = true
 		cleanStageDir(legacyBase)
 	}
+}
+
+// ResolveInfo returns information about which staging directory would be used,
+// without actually creating any directories.
+func ResolveInfo(destinations []StorageConfig, override string) StagingInfo {
+	info := StagingInfo{Override: override}
+
+	// Build cascade list.
+	for _, base := range CachePaths {
+		stagePath := filepath.Join(base, StageDirName)
+		ci := CascadeItem{Path: stagePath, Source: "cache"}
+		if fi, err := os.Stat(base); err == nil && fi.IsDir() {
+			ci.Available = true
+		}
+		info.Cascade = append(info.Cascade, ci)
+	}
+	for _, dest := range destinations {
+		if dest.Type != "local" {
+			continue
+		}
+		var cfg struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(dest.Config), &cfg); err == nil && cfg.Path != "" {
+			stagePath := filepath.Join(cfg.Path, StageDirName)
+			ci := CascadeItem{Path: stagePath, Source: "local-storage"}
+			if fi, err := os.Stat(cfg.Path); err == nil && fi.IsDir() {
+				ci.Available = true
+			}
+			info.Cascade = append(info.Cascade, ci)
+		}
+	}
+	info.Cascade = append(info.Cascade, CascadeItem{Path: os.TempDir(), Available: true, Source: "system"})
+
+	// Resolve which path wins.
+	if override != "" {
+		if fi, err := os.Stat(override); err == nil && fi.IsDir() {
+			info.ResolvedPath = override
+			info.Source = "override"
+		}
+	}
+	if info.ResolvedPath == "" {
+		for _, ci := range info.Cascade {
+			if ci.Available {
+				info.ResolvedPath = ci.Path
+				info.Source = ci.Source
+				break
+			}
+		}
+	}
+
+	// Get disk space.
+	if info.ResolvedPath != "" {
+		info.DiskFreeBytes, info.DiskTotalBytes = diskSpace(info.ResolvedPath)
+	}
+
+	return info
+}
+
+func diskSpace(path string) (free, total uint64) {
+	// Walk up to an existing directory if the path doesn't exist yet.
+	p := path
+	for p != "" && p != "/" {
+		if _, err := os.Stat(p); err == nil {
+			break
+		}
+		p = filepath.Dir(p)
+	}
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(p, &stat); err != nil {
+		return 0, 0
+	}
+	total = stat.Blocks * uint64(stat.Bsize)
+	free = stat.Bavail * uint64(stat.Bsize)
+	return free, total
 }

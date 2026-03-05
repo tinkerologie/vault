@@ -268,7 +268,7 @@
 
     <!-- Health Gauge -->
     {#if healthSummary && jobs.length > 0}
-      <HealthGauge score={healthSummary.health_score} summary={healthSummaryText()} {avgSpeed} />
+      <HealthGauge score={healthSummary.health_score} summary={healthSummaryText} {avgSpeed} />
     {/if}
 
     <!-- 3-2-1 Compliance Badge -->
@@ -304,8 +304,8 @@
           </div>
         </div>
         <p class="text-xs text-text-dim mt-2">{enabledJobs.length} enabled</p>
-        {#if soonestNextRun()}
-          <p class="text-xs text-vault font-medium mt-1">Next: {relTimeUntil(soonestNextRun())}</p>
+        {#if soonestNextRun}
+          <p class="text-xs text-vault font-medium mt-1">Next: {relTimeUntil(soonestNextRun)}</p>
         {/if}
       </button>
 

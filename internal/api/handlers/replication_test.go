@@ -152,7 +152,6 @@ func TestReplicationHandlerValidation(t *testing.T) {
 	}{
 		{"missing name", `{"url":"http://x","api_key":"k","storage_dest_id":1}`, http.StatusBadRequest},
 		{"missing url", `{"name":"n","api_key":"k","storage_dest_id":1}`, http.StatusBadRequest},
-		{"missing api_key", `{"name":"n","url":"http://x","storage_dest_id":1}`, http.StatusBadRequest},
 		{"missing storage_dest_id", `{"name":"n","url":"http://x","api_key":"k"}`, http.StatusBadRequest},
 		{"invalid json", `{broken`, http.StatusBadRequest},
 	}

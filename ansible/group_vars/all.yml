@@ -10,4 +10,10 @@ api_port: "{{ hostvars[inventory_hostname].api_port | default(24085) }}"
 db_path: "{{ config_dir }}/vault.db"
 log_path: "/var/log/vault.log"
 pid_file: "/var/run/vault.pid"
-create_backup: true
+create_backup: false
+
+# Vault Replica container
+replica_port: "{{ hostvars[inventory_hostname].replica_port | default(24086) }}"
+replica_data_dir: /mnt/cache/appdata/vault-replica
+replica_storage_dir: /mnt/user/backups/vault-replica
+timezone: Australia/Sydney

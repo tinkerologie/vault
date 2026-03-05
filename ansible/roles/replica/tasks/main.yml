@@ -1,0 +1,85 @@
+---
+# Deploy vault-replica Docker container on Unraid
+# Uses 'raw' module — Unraid has no Python interpreter
+
+- name: Check Docker is available
+  ansible.builtin.raw: docker info > /dev/null 2>&1 && echo "OK" || echo "FAIL"
+  register: docker_check
+  changed_when: false
+
+- name: Assert Docker is running
+  ansible.builtin.assert:
+    that:
+      - "'OK' in docker_check.stdout"
+    fail_msg: "Docker is not available on the target host"
+
+- name: Check if vault-replica container exists
+  ansible.builtin.raw: docker ps -a --filter name=vault-replica --format '{{ "{{" }}.Status{{ "}}" }}' 2>/dev/null
+  register: existing_container
+  changed_when: false
+
+- name: Stop existing vault-replica container
+  ansible.builtin.raw: docker stop vault-replica 2>/dev/null; docker rm vault-replica 2>/dev/null; true
+  when: existing_container.stdout | trim | length > 0
+  changed_when: true
+
+- name: Create replica data directories
+  ansible.builtin.raw: >
+    mkdir -p {{ replica_data_dir }}
+    {{ replica_storage_dir }}
+  changed_when: true
+
+- name: Start vault-replica container
+  ansible.builtin.raw: >
+    docker run -d
+    --name vault-replica
+    --restart unless-stopped
+    -p {{ replica_port }}:24085
+    -v {{ replica_data_dir }}:/data
+    -v {{ replica_storage_dir }}:/storage
+    -e TZ={{ timezone | default('UTC') }}
+    vault-replica:latest
+    --db=/data/vault.db
+    --addr=:24085
+  register: container_start
+  changed_when: true
+
+- name: Wait for replica API to be ready
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ replica_port }}/api/v1/health"
+    method: GET
+    status_code: 200
+  register: replica_health
+  retries: 10
+  delay: 2
+  until: replica_health.status == 200
+
+- name: Verify replica is in read-only mode
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ replica_port }}/api/v1/health"
+    method: GET
+    return_content: true
+  register: health_response
+
+- name: Assert replica mode
+  ansible.builtin.assert:
+    that:
+      - "'replica' in health_response.content"
+    fail_msg: "Replica is not in read-only mode"
+    success_msg: "Vault replica running in read-only mode"
+
+- name: Report replica deployment
+  ansible.builtin.debug:
+    msg: |
+      ══════════════════════════════════════
+      Vault Replica Container Deployed
+      ══════════════════════════════════════
+      Container:   vault-replica
+      Port:        {{ replica_port }}
+      Data dir:    {{ replica_data_dir }}
+      Storage dir: {{ replica_storage_dir }}
+      API:         http://{{ ansible_host }}:{{ replica_port }}
+      Mode:        read-only replica
+      ══════════════════════════════════════

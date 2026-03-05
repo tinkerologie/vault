@@ -57,7 +57,7 @@ $destinations = vault_get('/storage') ?: [];
                     <option value="local">Local Path</option>
                     <option value="smb">SMB Share</option>
                     <option value="sftp">SFTP/SSH</option>
-                    <option value="s3">S3 Compatible</option>
+                    <option value="nfs">NFS</option>
                 </select>
             </div>
             <div id="storageConfigFields">

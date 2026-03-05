@@ -13,6 +13,7 @@
 #   --tags verify     — Run endpoint verification only
 #   --tags uninstall  — Uninstall plugin completely
 #   --tags redeploy   — Full lifecycle: uninstall → build → deploy → verify
+#   --tags replica    — Deploy vault-replica Docker container
 #   --skip-tags tests — Skip endpoint verification tests
 #
 # Extra vars:
@@ -39,6 +40,9 @@
 
     - role: verify
       tags: [verify, tests, redeploy]
+
+    - role: replica
+      tags: [replica]
 
   post_tasks:
     - name: Deployment and test summary

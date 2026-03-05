@@ -80,7 +80,7 @@
     typeFilter === 'all' ? allItems : allItems.filter(i => i.type === typeFilter)
   )
 
-  let typeOptions = $derived(() => {
+  let typeOptions = $derived.by(() => {
     const types = new Set(allItems.map(i => i.type))
     return ['all', ...types]
   })
@@ -248,7 +248,7 @@
       <!-- Type filter tabs + selection controls -->
       <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div class="flex items-center gap-2">
-          {#each typeOptions() as t (t)}
+          {#each typeOptions as t (t)}
             <button type="button" onclick={() => typeFilter = t}
               class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors capitalize {typeFilter === t ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
               {t === 'all' ? 'All' : t + 's'}

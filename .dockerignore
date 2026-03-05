@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+.playwright-cli
+build/
+ansible/
+docs/
+plugin/
+coverage.*
+*.db
+*.key

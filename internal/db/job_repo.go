@@ -182,10 +182,25 @@ func (d *DB) CleanupStaleRuns() (int64, error) {
 	return res.RowsAffected()
 }
 
+// DeleteOldFailedRuns removes failed/error job runs older than keepDays.
+func (d *DB) DeleteOldFailedRuns(keepDays int) (int64, error) {
+	res, err := d.Exec(
+		`DELETE FROM job_runs WHERE status IN ('failed', 'error')
+		AND completed_at IS NOT NULL
+		AND completed_at < datetime('now', '-' || ? || ' days')`,
+		keepDays,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 	rows, err := d.Query(
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
-		items_total, items_done, items_failed, size_bytes
+		items_total, items_done, items_failed, size_bytes,
+		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END
 		FROM job_runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?`, jobID, limit,
 	)
 	if err != nil {
@@ -197,7 +212,7 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 		var run JobRun
 		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
-			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes); err != nil {
+			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)

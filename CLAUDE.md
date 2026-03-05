@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vault is a Go backup daemon for Unraid servers. It backs up Docker containers and libvirt VMs to pluggable storage destinations (local, SFTP, S3, SMB). It ships as an Unraid plugin (`.plg`) with a PHP/JS web UI.
+Vault is a Go backup daemon for Unraid servers. It backs up Docker containers and libvirt VMs to pluggable storage destinations (local, SFTP, SMB, NFS). It ships as an Unraid plugin (`.plg`) with a Svelte 5 web UI.
 
 ## Build & Development Commands
 
@@ -46,7 +46,7 @@ Run the daemon locally: `./build/vault daemon --db=vault.db --addr=:24085`
 - `internal/api/` — Chi router, REST handlers, WebSocket hub integration. Routes defined in `routes.go`, handlers in `handlers/`.
 - `internal/db/` — SQLite (pure Go via modernc.org/sqlite, WAL mode). Schema applied inline at open time (`migrations.go`). Models and repos split by domain (`job_repo.go`, `storage_repo.go`).
 - `internal/engine/` — Backup/restore logic. `ContainerHandler` uses Docker SDK. `VMHandler` uses libvirt (Linux-only via build tags; `vm_stub.go` provides stubs on other platforms).
-- `internal/storage/` — `Adapter` interface with factory pattern (`factory.go`). Implementations: `local.go`, `sftp.go`, `s3.go`, `smb.go`. Config stored as JSON blob in DB.
+- `internal/storage/` — `Adapter` interface with factory pattern (`factory.go`). Implementations: `local.go`, `sftp.go`, `smb.go`, `nfs.go`. Config stored as JSON blob in DB.
 - `internal/scheduler/` — Cron-based job scheduler using `robfig/cron/v3`. Loads jobs from DB, supports reload.
 - `internal/ws/` — WebSocket pub/sub hub for real-time progress streaming.
 - `internal/notify/` — Unraid notification integration (no-ops gracefully on non-Linux).
@@ -75,6 +75,18 @@ REST API at `/api/v1/` — jobs CRUD, storage destinations CRUD, job execution, 
 ## Deployment
 
 The daemon runs on Unraid at `/boot/config/plugins/vault/vault`. Plugin XML (`vault.plg`) defines install/remove lifecycle and the `rc.vault` service script. Ansible playbook in `ansible/` handles build/deploy/verify with tagged roles.
+
+## Build, Test, Deploy & Verify Workflow
+
+**Always use the full Ansible pipeline for building, testing, and deploying.** After code changes:
+
+1. **Build & Test:** `make build` (runs lint → test → web build → cross-compile)
+2. **Deploy:** `make deploy` (deploys binary + assets to Unraid, starts daemon)
+3. **Verify API:** `make verify` (runs endpoint verification tests against Unraid)
+4. **Verify UI:** Use the `playwright-cli` skill to navigate every affected page on `http://192.168.20.21:24085` and verify the UI renders correctly. Take snapshots to confirm content.
+5. **Full lifecycle shortcut:** `make redeploy` (uninstall → build → deploy → verify)
+
+**Never skip UI verification.** After deploying, always use Playwright to confirm the web console works end-to-end.
 
 ## Version
 

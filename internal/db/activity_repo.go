@@ -52,6 +52,16 @@ func (d *DB) DeleteOldActivityLogs(keepDays int) error {
 	return err
 }
 
+// CapActivityLogs ensures the activity log doesn't exceed maxRows entries.
+func (d *DB) CapActivityLogs(maxRows int) error {
+	_, err := d.Exec(
+		`DELETE FROM activity_log WHERE id NOT IN (
+			SELECT id FROM activity_log ORDER BY created_at DESC LIMIT ?
+		)`, maxRows,
+	)
+	return err
+}
+
 // LogActivity is a convenience method for inserting a log entry.
 func (d *DB) LogActivity(level, category, message, details string) {
 	_, _ = d.CreateActivityLog(ActivityLogEntry{

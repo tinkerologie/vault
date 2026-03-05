@@ -36,18 +36,19 @@ type JobItem struct {
 }
 
 type JobRun struct {
-	ID          int64      `json:"id"`
-	JobID       int64      `json:"job_id"`
-	Status      string     `json:"status"`
-	BackupType  string     `json:"backup_type"`
-	RunType     string     `json:"run_type"`
-	StartedAt   time.Time  `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at"`
-	Log         string     `json:"log"`
-	ItemsTotal  int        `json:"items_total"`
-	ItemsDone   int        `json:"items_done"`
-	ItemsFailed int        `json:"items_failed"`
-	SizeBytes   int64      `json:"size_bytes"`
+	ID              int64      `json:"id"`
+	JobID           int64      `json:"job_id"`
+	Status          string     `json:"status"`
+	BackupType      string     `json:"backup_type"`
+	RunType         string     `json:"run_type"`
+	StartedAt       time.Time  `json:"started_at"`
+	CompletedAt     *time.Time `json:"completed_at"`
+	Log             string     `json:"log"`
+	ItemsTotal      int        `json:"items_total"`
+	ItemsDone       int        `json:"items_done"`
+	ItemsFailed     int        `json:"items_failed"`
+	SizeBytes       int64      `json:"size_bytes"`
+	DurationSeconds *int       `json:"duration_seconds"`
 }
 
 type RestorePoint struct {

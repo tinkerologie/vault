@@ -180,7 +180,7 @@ func TestScanAppdataBackups(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		manifests, err := r.ScanAppdataBackups(dest)
+		manifests, err := r.ScanAppdataBackups(dest, "")
 		if err != nil {
 			t.Fatalf("ScanAppdataBackups error = %v", err)
 		}
@@ -236,7 +236,7 @@ func TestScanAppdataBackups(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		manifests, err := r.ScanAppdataBackups(dest)
+		manifests, err := r.ScanAppdataBackups(dest, "")
 		if err != nil {
 			t.Fatalf("ScanAppdataBackups error = %v", err)
 		}
@@ -275,7 +275,7 @@ func TestScanAppdataBackups(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		manifests, err := r.ScanAppdataBackups(dest)
+		manifests, err := r.ScanAppdataBackups(dest, "")
 		if err != nil {
 			t.Fatalf("ScanAppdataBackups error = %v", err)
 		}
@@ -293,7 +293,7 @@ func TestScanAppdataBackups(t *testing.T) {
 		dest := createLocalDest(t, database, storageDir)
 
 		// No ab_ directories at all.
-		manifests, err := r.ScanAppdataBackups(dest)
+		manifests, err := r.ScanAppdataBackups(dest, "")
 		if err != nil {
 			t.Fatalf("ScanAppdataBackups error = %v", err)
 		}
@@ -315,7 +315,7 @@ func TestScanAppdataBackups(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		manifests, err := r.ScanAppdataBackups(dest)
+		manifests, err := r.ScanAppdataBackups(dest, "")
 		if err != nil {
 			t.Fatalf("ScanAppdataBackups error = %v", err)
 		}
@@ -328,6 +328,42 @@ func TestScanAppdataBackups(t *testing.T) {
 		}
 		if createdAt != "2026-03-04T04:00:01Z" {
 			t.Errorf("created_at = %q, want 2026-03-04T04:00:01Z", createdAt)
+		}
+	})
+
+	t.Run("custom_base_path", func(t *testing.T) {
+		t.Parallel()
+		r, database, storageDir := setupTestRunner(t)
+		dest := createLocalDest(t, database, storageDir)
+
+		// Put ab_ directories inside a subfolder.
+		abDir := filepath.Join(storageDir, "custom", "backups", "ab_20260304_040001")
+		if err := os.MkdirAll(abDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(abDir, "nginx.tar.gz"), make([]byte, 64), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Scanning root should find nothing.
+		rootManifests, err := r.ScanAppdataBackups(dest, "")
+		if err != nil {
+			t.Fatalf("ScanAppdataBackups (root) error = %v", err)
+		}
+		if len(rootManifests) != 0 {
+			t.Errorf("root scan got %d manifests, want 0", len(rootManifests))
+		}
+
+		// Scanning the custom path should find the backup.
+		manifests, err := r.ScanAppdataBackups(dest, "custom/backups")
+		if err != nil {
+			t.Fatalf("ScanAppdataBackups (custom) error = %v", err)
+		}
+		if len(manifests) != 1 {
+			t.Fatalf("got %d manifests, want 1", len(manifests))
+		}
+		if manifests[0]["job_name"] != "nginx" {
+			t.Errorf("job_name = %v, want nginx", manifests[0]["job_name"])
 		}
 	})
 }

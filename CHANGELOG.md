@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - Full backup/restore engine for Docker containers, libvirt VMs, and folders
-- Storage backends: Local, SMB, NFS, SFTP, S3-compatible
+- Storage backends: Local, SMB, NFS, SFTP, NFS
 - Cron-based job scheduling with retention policies
 - Svelte 5 web UI with real-time WebSocket progress
 - API key authentication and TLS support
@@ -36,7 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Initial release
 - Docker container backup and restore (full image + config + appdata)
 - VM backup and restore (live snapshot + cold backup)
-- Storage destinations: Local, SMB, NFS, SFTP, S3-compatible
+- Storage destinations: Local, SMB, NFS, SFTP, NFS
 - Full, incremental, and differential backup types
 - Job scheduling with retention policies
 - Web UI with Dashboard, Jobs, Restore, Storage, History, Settings

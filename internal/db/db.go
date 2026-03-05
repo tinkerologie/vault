@@ -52,3 +52,9 @@ func Open(path string) (*DB, error) {
 
 	return &DB{DB: sqlDB, path: path}, nil
 }
+
+// Vacuum reclaims free space in the database file.
+func (d *DB) Vacuum() error {
+	_, err := d.Exec("VACUUM")
+	return err
+}

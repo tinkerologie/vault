@@ -146,6 +146,15 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Also scan for appdata.backup (ab_*) directories.
+	// Optional ?path= parameter allows scanning a custom subfolder.
+	abManifests, err := h.runner.ScanAppdataBackups(dest, r.URL.Query().Get("path"))
+	if err != nil {
+		log.Printf("Warning: appdata.backup scan failed: %v", err)
+	}
+	manifests = append(manifests, abManifests...)
+
 	if manifests == nil {
 		manifests = []map[string]any{}
 	}

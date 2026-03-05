@@ -36,7 +36,7 @@ func TestCreateBackupDir(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir, cleanup, err := CreateBackupDir(tt.dest)
+			dir, cleanup, err := CreateBackupDir(tt.dest, "")
 			if err != nil {
 				t.Fatalf("CreateBackupDir() error = %v", err)
 			}
@@ -64,7 +64,7 @@ func TestCreateRestoreDir(t *testing.T) {
 		Config: `{"path":"` + t.TempDir() + `"}`,
 	}
 
-	dir, cleanup, err := CreateRestoreDir(dest)
+	dir, cleanup, err := CreateRestoreDir(dest, "")
 	if err != nil {
 		t.Fatalf("CreateRestoreDir() error = %v", err)
 	}
@@ -90,7 +90,7 @@ func TestCreateBackupDirLocalStaging(t *testing.T) {
 	CachePaths = []string{"/nonexistent-cache-path"}
 	defer func() { CachePaths = origPaths }()
 
-	dir, cleanup, err := CreateBackupDir(dest)
+	dir, cleanup, err := CreateBackupDir(dest, "")
 	if err != nil {
 		t.Fatalf("CreateBackupDir() error = %v", err)
 	}
@@ -103,6 +103,26 @@ func TestCreateBackupDirLocalStaging(t *testing.T) {
 		t.Fatalf("unexpected: dir %s not relative to %s: %v", dir, stageBase, err)
 	}
 	if filepath.IsAbs(rel) || len(rel) >= 2 && rel[:2] == ".." {
+		t.Errorf("expected dir under %s, got %s", stageBase, dir)
+	}
+}
+
+func TestCreateBackupDirWithOverride(t *testing.T) {
+	overridePath := t.TempDir()
+	dest := StorageConfig{Type: "sftp", Config: `{}`}
+
+	dir, cleanup, err := CreateBackupDir(dest, overridePath)
+	if err != nil {
+		t.Fatalf("CreateBackupDir() error = %v", err)
+	}
+	defer cleanup()
+
+	stageBase := filepath.Join(overridePath, StageDirName)
+	rel, err := filepath.Rel(stageBase, dir)
+	if err != nil {
+		t.Fatalf("dir %s not relative to %s: %v", dir, stageBase, err)
+	}
+	if filepath.IsAbs(rel) || (len(rel) >= 2 && rel[:2] == "..") {
 		t.Errorf("expected dir under %s, got %s", stageBase, dir)
 	}
 }
@@ -233,4 +253,36 @@ func TestCleanupStaleNoOp(t *testing.T) {
 
 	CleanupStale(nil)
 	CleanupStale([]StorageConfig{})
+}
+
+func TestResolveInfo(t *testing.T) {
+	localPath := t.TempDir()
+	dests := []StorageConfig{
+		{Type: "local", Config: `{"path":"` + localPath + `"}`},
+	}
+
+	info := ResolveInfo(dests, "")
+	if info.ResolvedPath == "" {
+		t.Fatal("ResolvedPath should not be empty")
+	}
+	if info.Source == "" {
+		t.Fatal("Source should not be empty")
+	}
+	if info.DiskTotalBytes == 0 {
+		t.Fatal("DiskTotalBytes should be non-zero")
+	}
+	if len(info.Cascade) == 0 {
+		t.Fatal("Cascade should not be empty")
+	}
+}
+
+func TestResolveInfoWithOverride(t *testing.T) {
+	overridePath := t.TempDir()
+	info := ResolveInfo(nil, overridePath)
+	if info.Source != "override" {
+		t.Errorf("Source = %q, want %q", info.Source, "override")
+	}
+	if info.ResolvedPath != overridePath {
+		t.Errorf("ResolvedPath = %q, want %q", info.ResolvedPath, overridePath)
+	}
 }

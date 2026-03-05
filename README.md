@@ -7,7 +7,7 @@ to pluggable storage destinations with a REST API, WebSocket real-time progress,
 
 - **Docker Container Backup & Restore** — Full image, config, and appdata volume backup via Docker SDK
 - **VM Backup & Restore** — Live snapshot and cold backup via libvirt
-- **Pluggable Storage** — Local, SFTP, S3-compatible, and SMB backends
+- **Pluggable Storage** — Local, SFTP, SMB, and NFS backends
 - **Full, Incremental, and Differential** backup types with retention policies
 - **Cron-based Scheduling** — Flexible job scheduling with history tracking
 - **REST API** — Complete CRUD for jobs and storage destinations
@@ -101,7 +101,7 @@ CLI (Cobra) → API Server (Chi + WebSocket Hub) → Handlers → DB / Storage /
 | CLI       | `internal/cli/`       | Cobra commands (`vault daemon`)                  |
 | API       | `internal/api/`       | Chi router, REST handlers, WebSocket integration |
 | Database  | `internal/db/`        | SQLite with WAL mode (pure Go)                   |
-| Storage   | `internal/storage/`   | Pluggable adapters (Local, SFTP, S3, SMB)        |
+| Storage   | `internal/storage/`   | Pluggable adapters (Local, SFTP, SMB, NFS)       |
 | Engine    | `internal/engine/`    | Backup/restore logic (Docker, libvirt)           |
 | Scheduler | `internal/scheduler/` | Cron-based job scheduling                        |
 | WebSocket | `internal/ws/`        | Pub/sub hub for real-time events                 |
@@ -109,12 +109,12 @@ CLI (Cobra) → API Server (Chi + WebSocket Hub) → Handlers → DB / Storage /
 
 ### Storage Backends
 
-| Backend | Config Key | Description                           |
-| ------- | ---------- | ------------------------------------- |
-| Local   | `local`    | Local filesystem path                 |
-| SFTP    | `sftp`     | SSH File Transfer Protocol            |
-| S3      | `s3`       | S3-compatible (AWS, MinIO, Backblaze) |
-| SMB     | `smb`      | Windows/Samba file shares             |
+| Backend | Config Key | Description                |
+| ------- | ---------- | -------------------------- |
+| Local   | `local`    | Local filesystem path      |
+| SFTP    | `sftp`     | SSH File Transfer Protocol |
+| SMB     | `smb`      | Windows/Samba file shares  |
+| NFS     | `nfs`      | Network File System shares |
 
 Storage adapters implement the `Adapter` interface and are instantiated via a factory pattern
 in `internal/storage/factory.go`.

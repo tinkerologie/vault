@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ruaandeysel/vault/internal/api/handlers"
 	"github.com/ruaandeysel/vault/internal/crypto"
 	"github.com/ruaandeysel/vault/internal/db"
 	"github.com/ruaandeysel/vault/internal/replication"
@@ -24,6 +25,7 @@ type ServerConfig struct {
 	TLSKey    string
 	ServerKey []byte // AES-256 key for sealing secrets at rest.
 	Version   string // Application version injected at build time.
+	ReadOnly  bool   // When true, write endpoints return 403 (replica mode).
 }
 
 type Server struct {
@@ -37,6 +39,8 @@ type Server struct {
 
 	// nextRunResolver looks up the next scheduled run time for a job.
 	nextRunResolver func(jobID int64) (string, bool)
+
+	settingsHandler *handlers.SettingsHandler
 
 	// cachedKey holds the resolved API key (from DB or CLI fallback).
 	// Protected by keyMu; refreshed lazily by keyResolver().
@@ -125,6 +129,11 @@ func (s *Server) SetReplicationSyncer(syncer *replication.Syncer) {
 // Syncer returns the replication syncer for use by API handlers.
 func (s *Server) Syncer() *replication.Syncer {
 	return s.syncer
+}
+
+// SettingsHandler returns the settings handler for external configuration.
+func (s *Server) SettingsHandler() *handlers.SettingsHandler {
+	return s.settingsHandler
 }
 
 func (s *Server) Start() error {

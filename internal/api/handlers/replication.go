@@ -63,8 +63,8 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if src.Name == "" || src.URL == "" || src.APIKey == "" {
-		respondError(w, http.StatusBadRequest, "name, url, and api_key are required")
+	if src.Name == "" || src.URL == "" {
+		respondError(w, http.StatusBadRequest, "name and url are required")
 		return
 	}
 	if src.StorageDestID == 0 {
@@ -72,13 +72,15 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Seal the API key before storing.
-	sealed, err := crypto.Seal(h.serverKey, src.APIKey)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to seal api key")
-		return
+	// Seal the API key before storing (empty key = no auth needed on remote).
+	if src.APIKey != "" {
+		sealed, err := crypto.Seal(h.serverKey, src.APIKey)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to seal api key")
+			return
+		}
+		src.APIKey = sealed
 	}
-	src.APIKey = sealed
 
 	id, err := h.db.CreateReplicationSource(src)
 	if err != nil {
@@ -115,15 +117,16 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	src.ID = id
 
-	// If API key is the redacted placeholder or empty, keep the existing one.
-	if src.APIKey == "" || src.APIKey == "••••••••" {
+	// If API key is the redacted placeholder, keep the existing one.
+	// Empty string means "no API key" (clear it). Any other value = new key.
+	if src.APIKey == "••••••••" {
 		existing, err := h.db.GetReplicationSource(id)
 		if err != nil {
 			respondError(w, http.StatusNotFound, "not found")
 			return
 		}
 		src.APIKey = existing.APIKey
-	} else {
+	} else if src.APIKey != "" {
 		// Seal the new API key.
 		sealed, err := crypto.Seal(h.serverKey, src.APIKey)
 		if err != nil {
@@ -132,6 +135,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		src.APIKey = sealed
 	}
+	// else: empty string = no API key (for LAN setups without auth)
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
@@ -170,10 +174,13 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	apiKey, err := crypto.Unseal(h.serverKey, src.APIKey)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to unseal api key")
-		return
+	var apiKey string
+	if src.APIKey != "" {
+		apiKey, err = crypto.Unseal(h.serverKey, src.APIKey)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to unseal api key")
+			return
+		}
 	}
 
 	client := replication.NewClient(src.URL, apiKey)
@@ -182,6 +189,41 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// TestURL tests connectivity to a remote Vault URL without requiring a saved source.
+// Accepts JSON body: {"url": "http://...", "api_key": "optional"}.
+func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL    string `json:"url"`
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.URL == "" {
+		respondError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+
+	client := replication.NewClient(req.URL, req.APIKey)
+	health, err := client.TestConnection()
+	if err != nil {
+		respondError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Also check an authenticated endpoint to verify the API key works.
+	// ListJobs requires auth — if it fails, connection works but auth doesn't.
+	result := map[string]string{
+		"status":  "ok",
+		"version": health.Version,
+	}
+	if _, err := client.ListJobs(); err != nil {
+		result["warning"] = "Connected but API key may be required or invalid for sync operations"
+	}
+	respondJSON(w, http.StatusOK, result)
 }
 
 // SyncNow triggers an immediate sync for a replication source.

@@ -148,10 +148,18 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 	}
 
 	// Step 1: Inspect and save config.
+	// Resolve the container by name first — container IDs change when
+	// containers are recreated (updates, reboots, compose recreate).
 	progress(item.Name, 10, "inspecting container")
 	inspect, err := h.cli.ContainerInspect(ctx, containerID)
 	if err != nil {
-		return nil, fmt.Errorf("inspecting container: %w", err)
+		// Stored ID is stale — try resolving by container name instead.
+		inspect, err = h.cli.ContainerInspect(ctx, item.Name)
+		if err != nil {
+			return nil, fmt.Errorf("inspecting container: %w", err)
+		}
+		containerID = inspect.ID
+		log.Printf("[backup] container %q: resolved by name (ID changed from stored value to %s)", item.Name, containerID[:12])
 	}
 
 	configPath := filepath.Join(destDir, "config.json")
@@ -801,6 +809,97 @@ func StartContainers(ids []string) []error {
 		}
 	}
 	return errs
+}
+
+// HealthCheckResult describes the post-restart health of a container.
+type HealthCheckResult struct {
+	ContainerName string        `json:"container_name"`
+	Status        string        `json:"status"` // "healthy", "running", "unhealthy", "failed"
+	Duration      time.Duration `json:"duration_ms"`
+	Message       string        `json:"message"`
+}
+
+// VerifyContainerHealth polls a container's state after restart to determine
+// if it is healthy. It checks Docker HEALTHCHECK status, running state, and
+// optionally exposed port connectivity. Timeout is per-container.
+func VerifyContainerHealth(containerID, containerName string, timeout time.Duration) (*HealthCheckResult, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("creating docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	start := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return &HealthCheckResult{
+				ContainerName: containerName,
+				Status:        "failed",
+				Duration:      time.Since(start),
+				Message:       "Timed out waiting for healthy state",
+			}, nil
+		case <-ticker.C:
+			inspect, err := cli.ContainerInspect(ctx, containerID)
+			if err != nil {
+				continue
+			}
+
+			state := inspect.State
+			if state == nil {
+				continue
+			}
+
+			// Container not running at all — immediate failure.
+			if !state.Running {
+				if state.Restarting {
+					continue // still restarting, keep polling
+				}
+				return &HealthCheckResult{
+					ContainerName: containerName,
+					Status:        "failed",
+					Duration:      time.Since(start),
+					Message:       fmt.Sprintf("Container is %s (exit code %d)", state.Status, state.ExitCode),
+				}, nil
+			}
+
+			// If container defines a HEALTHCHECK, wait for it.
+			if state.Health != nil {
+				switch state.Health.Status {
+				case "healthy":
+					return &HealthCheckResult{
+						ContainerName: containerName,
+						Status:        "healthy",
+						Duration:      time.Since(start),
+						Message:       "Docker HEALTHCHECK passed",
+					}, nil
+				case "unhealthy":
+					return &HealthCheckResult{
+						ContainerName: containerName,
+						Status:        "unhealthy",
+						Duration:      time.Since(start),
+						Message:       "Docker HEALTHCHECK reports unhealthy",
+					}, nil
+				default:
+					continue // "starting" — keep polling
+				}
+			}
+
+			// No HEALTHCHECK defined — "running" is good enough.
+			return &HealthCheckResult{
+				ContainerName: containerName,
+				Status:        "running",
+				Duration:      time.Since(start),
+				Message:       "Container is running (no HEALTHCHECK defined)",
+			}, nil
+		}
+	}
 }
 
 // backupFileInfo returns a BackupFile with name and size from the given path.

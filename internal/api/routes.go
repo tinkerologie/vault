@@ -24,6 +24,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// Settings handler is shared between public and authenticated routes.
 		settingsH := handlers.NewSettingsHandler(s.db, s.config.ServerKey)
 		settingsH.SetOnKeyChange(s.InvalidateKeyCache)
+		s.settingsHandler = settingsH
 
 		// Public endpoints (no auth required).
 		r.Get("/health", s.handleHealth)
@@ -43,6 +44,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 			storageH := handlers.NewStorageHandler(s.db, s.runner)
 			r.Route("/storage", func(r chi.Router) {
+				// Storage CRUD is allowed in replica mode — replicas need
+				// storage destinations configured for replication targets.
 				r.Get("/", storageH.List)
 				r.Post("/", storageH.Create)
 				r.Get("/{id}", storageH.Get)
@@ -67,6 +70,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 				jobH.SetNextRunResolver(s.nextRunResolver)
 			}
 			r.Route("/jobs", func(r chi.Router) {
+				if s.config.ReadOnly {
+					r.Use(ReadOnlyGuard)
+				}
 				r.Get("/", jobH.List)
 				r.Post("/", jobH.Create)
 				r.Get("/next-runs", jobH.AllNextRuns)
@@ -90,6 +96,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 				r.Get("/api-key", settingsH.GetAPIKeyStatus)
 				r.Post("/api-key/rotate", settingsH.RotateAPIKey)
 				r.Delete("/api-key", settingsH.RevokeAPIKey)
+				r.Get("/staging", settingsH.GetStagingInfo)
+				r.Put("/staging", settingsH.SetStagingOverride)
+				r.Post("/discord/test", settingsH.TestDiscordWebhook)
+				r.Get("/database", settingsH.GetDatabaseInfo)
+				r.Put("/database", settingsH.SetSnapshotPath)
 			})
 
 			browseH := handlers.NewBrowseHandler()
@@ -98,11 +109,14 @@ func (s *Server) setupRoutes() *chi.Mux {
 			activityH := handlers.NewActivityHandler(s.db)
 			r.Get("/activity", activityH.List)
 
-			discoverH := handlers.NewDiscoverHandler()
-			r.Get("/containers", discoverH.ListContainers)
-			r.Get("/vms", discoverH.ListVMs)
-			r.Get("/folders", discoverH.ListFolders)
-			r.Get("/plugins", discoverH.ListPlugins)
+			// Discovery endpoints are only relevant in daemon mode.
+			if !s.config.ReadOnly {
+				discoverH := handlers.NewDiscoverHandler()
+				r.Get("/containers", discoverH.ListContainers)
+				r.Get("/vms", discoverH.ListVMs)
+				r.Get("/folders", discoverH.ListFolders)
+				r.Get("/plugins", discoverH.ListPlugins)
+			}
 
 			replH := handlers.NewReplicationHandler(s.db, s.Syncer, s.config.ServerKey, func() error {
 				if s.schedReload != nil {
@@ -113,6 +127,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Route("/replication", func(r chi.Router) {
 				r.Get("/", replH.List)
 				r.Post("/", replH.Create)
+				r.Post("/test-url", replH.TestURL)
 				r.Get("/{id}", replH.Get)
 				r.Put("/{id}", replH.Update)
 				r.Delete("/{id}", replH.Delete)
@@ -121,10 +136,15 @@ func (s *Server) setupRoutes() *chi.Mux {
 				r.Get("/{id}/jobs", replH.ListReplicatedJobs)
 			})
 
-			// MCP (Model Context Protocol) HTTP transport.
-			mcpSrv := mcpserver.New(s.db, s.runner)
-			r.Handle("/mcp", mcpSrv.HTTPHandler())
-			r.Handle("/mcp/*", mcpSrv.HTTPHandler())
+			recoveryH := handlers.NewRecoveryHandler(s.db, s.config.Version)
+			r.Get("/recovery/plan", recoveryH.GetPlan)
+
+			// MCP is only available in daemon mode.
+			if !s.config.ReadOnly {
+				mcpSrv := mcpserver.New(s.db, s.runner)
+				r.Handle("/mcp", mcpSrv.HTTPHandler())
+				r.Handle("/mcp/*", mcpSrv.HTTPHandler())
+			}
 		})
 	})
 
@@ -153,9 +173,14 @@ func (s *Server) setupRoutes() *chi.Mux {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	mode := "daemon"
+	if s.config.ReadOnly {
+		mode = "replica"
+	}
 	respondJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"version": s.config.Version,
+		"mode":    mode,
 	})
 }
 

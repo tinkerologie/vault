@@ -19,7 +19,7 @@
 
 ## Overview
 
-**Vault** is a backup/restore daemon for Unraid servers. It backs up Docker containers, libvirt VMs, and folders to pluggable storage destinations (local, SFTP, S3, SMB). It exposes a REST API and a WebSocket endpoint for real-time progress.
+**Vault** is a backup/restore daemon for Unraid servers. It backs up Docker containers, libvirt VMs, and folders to pluggable storage destinations (local, SFTP, SMB, NFS). It exposes a REST API and a WebSocket endpoint for real-time progress.
 
 The HA integration should:
 
@@ -352,7 +352,7 @@ Progress is streamed via WebSocket (see below).
 ]
 ```
 
-**Storage types:** `"local"`, `"sftp"`, `"s3"`, `"smb"`
+**Storage types:** `"local"`, `"sftp"`, `"smb"`, `"nfs"`
 
 #### POST `/storage/{id}/test` — Test Connection
 
@@ -902,11 +902,11 @@ Vault supports optional API key authentication. When the daemon is started with 
 
 ### Supported Auth Methods
 
-| Method              | Example                             |
-| ------------------- | ----------------------------------- |
-| Bearer token header | `Authorization: Bearer my-api-key`  |
-| API key header      | `X-API-Key: my-api-key`             |
-| Query parameter     | `?token=my-api-key`                 |
+| Method              | Example                            |
+| ------------------- | ---------------------------------- |
+| Bearer token header | `Authorization: Bearer my-api-key` |
+| API key header      | `X-API-Key: my-api-key`            |
+| Query parameter     | `?token=my-api-key`                |
 
 ### Integration Flow
 

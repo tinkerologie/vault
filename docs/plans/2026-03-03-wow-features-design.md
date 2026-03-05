@@ -461,3 +461,66 @@ After all phases, Vault will be the only Unraid backup tool that:
 - **Suggests optimal backup times** based on actual container activity
 
 No other Unraid backup tool — CA Backup, Appdata Backup, VM Backup, or Duplicati — offers any of these features.
+
+---
+
+## Quick Fixes (Pre-Phase 5)
+
+These are small improvements to ship immediately alongside the wow features.
+
+### Fix 1: Restore Activity in Dashboard Timeline
+
+**Problem:** The Dashboard "Recent Activity" shows all job runs but doesn't visually distinguish restore runs from backup runs.
+
+**Fix:**
+
+- In `ActivityTimeline.svelte`, check `run.run_type` field
+- If `run_type === 'restore'`, show a blue "restored" badge instead of green "completed"
+- Add a restore icon (rotate-ccw) next to the job name for restore runs
+- The data is already included — `GetJobRuns` returns all run types
+
+### Fix 2: Locale-Aware Date/Time Formatting
+
+**Problem:** `formatDate()` in `utils.js` and date labels in `ActivityTimeline.svelte` are hardcoded to `'en-US'` locale, showing US-style dates regardless of the user's region.
+
+**Fix:**
+
+- In `web/src/lib/utils.js`, change `formatDate()` to use `undefined` locale instead of `'en-US'`:
+
+  ```js
+  d.toLocaleDateString(undefined, { ... })
+  ```
+
+  This makes the browser use the system's locale (e.g., "3 Mar 2026 2:25 pm" in Australia).
+
+- In `ActivityTimeline.svelte`, change the date group label to also use `undefined` locale.
+- This single-line change respects whatever region the user's browser is set to.
+
+### Fix 3: Auto-Purge Old Failed Runs
+
+**Problem:** Failed backup runs clutter the History page forever.
+
+**Fix:**
+
+- Add a new setting: `failed_run_retention_days` (default: 30)
+- On daemon startup (in `daemon.go`), after pruning activity logs, also prune old failed job runs:
+
+  ```sql
+  DELETE FROM job_runs WHERE status IN ('failed', 'error')
+    AND completed_at < datetime('now', '-30 days')
+  ```
+
+- Add corresponding `DeleteOldFailedRuns(keepDays int)` method to `job_repo.go`
+- Successful runs are kept forever (governed by the job's retention policy)
+- UI: Add the setting to Settings > General as "Auto-remove failed runs after N days"
+
+### Fix 4: Memory & Logging Safeguards
+
+**Investigation result:** Vault uses only **44 MB RSS** on the Unraid server. The "System: 9.57 GiB" shown in Unraid's dashboard is Linux kernel page cache and buffers (normal behavior — Linux aggressively caches disk I/O in free RAM). The actual available memory is 19 GiB. Vault is not the memory culprit.
+
+**Safeguards to add anyway:**
+
+- **Log rotation:** The daemon already uses Go's `log` package which writes to stdout/stderr. The RC script redirects to `/var/log/vault.log`. Add `logrotate`-style truncation: on startup, if vault.log > 10 MB, truncate to last 5000 lines.
+- **Activity log cap:** Already prunes entries older than 90 days on startup. Add a row count cap: if > 10,000 entries, delete oldest entries beyond that limit.
+- **Job run cap:** After retention enforcement per job, also enforce a global cap: if any job has > 500 runs, delete the oldest beyond that limit.
+- **SQLite VACUUM:** Run `VACUUM` after large deletions (startup cleanup) to reclaim disk space.

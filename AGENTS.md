@@ -45,7 +45,7 @@
 │   │   ├── factory.go          # NewAdapter() factory dispatch
 │   │   ├── local.go            # LocalAdapter
 │   │   ├── sftp.go             # SFTPAdapter
-│   │   ├── s3.go               # S3Adapter (supports custom endpoints)
+│   │   ├── nfs.go              # NFSAdapter (NFS mount-based)
 │   │   └── smb.go              # SMBAdapter
 │   └── ws/                     # WebSocket hub (pub/sub broadcast)
 ├── plugin/                     # Unraid plugin (.plg installer, PHP pages, JS/CSS)
@@ -176,7 +176,7 @@ func NewAdapter(storageType string, configJSON []byte) (Adapter, error) {
         var cfg LocalConfig
         json.Unmarshal(configJSON, &cfg)
         return NewLocalAdapter(cfg)
-    // ... sftp, s3, smb
+    // ... sftp, smb, nfs
     }
 }
 ```
@@ -255,18 +255,18 @@ go test ./internal/db/... -run TestJobCreate -v  # Single test
 
 ## Key Dependencies
 
-| Package                        | Purpose                    |
-| ------------------------------ | -------------------------- |
-| `github.com/go-chi/chi/v5`     | HTTP router                |
-| `github.com/spf13/cobra`       | CLI framework              |
-| `github.com/robfig/cron/v3`    | Cron scheduler             |
-| `modernc.org/sqlite`           | Pure Go SQLite driver      |
-| `github.com/docker/docker`     | Docker Engine SDK          |
-| `libvirt.org/go/libvirt`       | VM management (Linux only) |
-| `github.com/aws/aws-sdk-go-v2` | S3 storage adapter         |
-| `github.com/cloudsoda/go-smb2` | SMB storage adapter        |
-| `github.com/pkg/sftp`          | SFTP storage adapter       |
-| `github.com/coder/websocket`   | WebSocket server           |
+| Package                           | Purpose                    |
+| --------------------------------- | -------------------------- |
+| `github.com/go-chi/chi/v5`        | HTTP router                |
+| `github.com/spf13/cobra`          | CLI framework              |
+| `github.com/robfig/cron/v3`       | Cron scheduler             |
+| `modernc.org/sqlite`              | Pure Go SQLite driver      |
+| `github.com/docker/docker`        | Docker Engine SDK          |
+| `libvirt.org/go/libvirt`          | VM management (Linux only) |
+| `github.com/vmware/go-nfs-client` | NFS storage adapter        |
+| `github.com/cloudsoda/go-smb2`    | SMB storage adapter        |
+| `github.com/pkg/sftp`             | SFTP storage adapter       |
+| `github.com/coder/websocket`      | WebSocket server           |
 
 ## API Structure
 

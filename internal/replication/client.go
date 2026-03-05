@@ -23,7 +23,7 @@ func NewClient(baseURL, apiKey string) *Client {
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 10 * time.Minute,
 		},
 	}
 }
@@ -178,5 +178,5 @@ func (c *Client) doRequestWithParams(method, path string, params map[string]stri
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)
 	}
-	return c.httpClient.Do(req) //nolint:gosec // baseURL is admin-configured, not user-tainted
+	return c.httpClient.Do(req) // #nosec G704 -- baseURL is admin-configured, not user-tainted //nolint:gosec
 }

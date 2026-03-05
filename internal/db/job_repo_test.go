@@ -198,6 +198,41 @@ func TestRestorePointChain(t *testing.T) {
 	}
 }
 
+func TestGetJobRunsDurationSeconds(t *testing.T) {
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})
+	jobID, _ := d.CreateJob(Job{Name: "duration-job", StorageDestID: destID, BackupTypeChain: "full"})
+
+	runID, err := d.CreateJobRun(JobRun{
+		JobID: jobID, Status: "running", BackupType: "full", RunType: "backup",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.Exec(
+		`UPDATE job_runs SET status='completed', started_at=datetime('now','-10 seconds'), completed_at=datetime('now'), size_bytes=10485760 WHERE id=?`,
+		runID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := d.GetJobRuns(jobID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) == 0 {
+		t.Fatal("expected at least one run")
+	}
+	run := runs[0]
+	if run.DurationSeconds == nil {
+		t.Fatal("DurationSeconds should be non-nil for completed run")
+	}
+	if *run.DurationSeconds < 9 || *run.DurationSeconds > 12 {
+		t.Errorf("DurationSeconds = %d, expected ~10", *run.DurationSeconds)
+	}
+}
+
 func TestRetentionCount(t *testing.T) {
 	d := setupTestDB(t)
 	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})

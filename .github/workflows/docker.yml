@@ -1,0 +1,88 @@
+name: Docker
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g., v2026.3.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG=${GITHUB_REF#refs/tags/}
+          fi
+          VERSION=${TAG#v}
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+          tags: |
+            ruaandeysel/vault-replica:latest
+            ruaandeysel/vault-replica:${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/vault-replica:latest
+            ghcr.io/${{ github.repository_owner }}/vault-replica:${{ steps.version.outputs.version }}
+
+      - name: Summary
+        env:
+          IMG_VERSION: ${{ steps.version.outputs.version }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "## Docker Image Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Version:** $IMG_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Platforms:** linux/amd64, linux/arm64" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Images:**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`ruaandeysel/vault-replica:$IMG_VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`ghcr.io/$REPO_OWNER/vault-replica:$IMG_VERSION\`" >> "$GITHUB_STEP_SUMMARY"

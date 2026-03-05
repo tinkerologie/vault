@@ -261,30 +261,10 @@ func (s *Syncer) syncRestorePoint(
 	localJobID int64,
 	localAdapter storage.Adapter,
 ) (int64, error) {
-	// List all files in the remote storage path.
-	files, err := client.ListStorageFiles(rj.StorageDestID, rrp.StoragePath)
+	// Recursively list and download all files in the remote storage path.
+	totalBytes, err := s.downloadDir(client, rj.StorageDestID, rrp.StoragePath, localAdapter)
 	if err != nil {
-		return 0, fmt.Errorf("list remote files: %w", err)
-	}
-
-	var totalBytes int64
-
-	for _, f := range files {
-		if f.IsDir {
-			continue
-		}
-
-		rc, err := client.DownloadFile(rj.StorageDestID, f.Path)
-		if err != nil {
-			return totalBytes, fmt.Errorf("download %q: %w", f.Path, err)
-		}
-
-		if err := localAdapter.Write(f.Path, rc); err != nil {
-			rc.Close()
-			return totalBytes, fmt.Errorf("write %q: %w", f.Path, err)
-		}
-		rc.Close()
-		totalBytes += f.Size
+		return totalBytes, err
 	}
 
 	// Create a local restore point record. We use a stub job_run_id of 0
@@ -340,6 +320,40 @@ func (s *Syncer) broadcast(data map[string]any) {
 		return
 	}
 	s.hub.Broadcast(msg)
+}
+
+// downloadDir recursively lists and downloads all files from a remote storage path.
+func (s *Syncer) downloadDir(client *Client, storageID int64, dirPath string, localAdapter storage.Adapter) (int64, error) {
+	files, err := client.ListStorageFiles(storageID, dirPath)
+	if err != nil {
+		return 0, fmt.Errorf("list remote files at %q: %w", dirPath, err)
+	}
+
+	var totalBytes int64
+	for _, f := range files {
+		if f.IsDir {
+			// Recurse into subdirectories.
+			bytes, err := s.downloadDir(client, storageID, f.Path, localAdapter)
+			if err != nil {
+				return totalBytes, err
+			}
+			totalBytes += bytes
+			continue
+		}
+
+		rc, err := client.DownloadFile(storageID, f.Path)
+		if err != nil {
+			return totalBytes, fmt.Errorf("download %q: %w", f.Path, err)
+		}
+
+		if err := localAdapter.Write(f.Path, rc); err != nil {
+			rc.Close()
+			return totalBytes, fmt.Errorf("write %q: %w", f.Path, err)
+		}
+		rc.Close()
+		totalBytes += f.Size
+	}
+	return totalBytes, nil
 }
 
 // logSyncError logs a replication sync failure to the activity log.

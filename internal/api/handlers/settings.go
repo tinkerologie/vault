@@ -5,16 +5,25 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/ruaandeysel/vault/internal/crypto"
 	"github.com/ruaandeysel/vault/internal/db"
+	"github.com/ruaandeysel/vault/internal/notify"
+	"github.com/ruaandeysel/vault/internal/tempdir"
 )
 
 // SettingsHandler handles global application settings.
 type SettingsHandler struct {
-	db          *db.DB
-	serverKey   []byte // AES-256 key for sealing secrets at rest.
-	onKeyChange func() // called after API key is changed to invalidate caches.
+	db              *db.DB
+	serverKey       []byte // AES-256 key for sealing secrets at rest.
+	onKeyChange     func() // called after API key is changed to invalidate caches.
+	snapshotManager interface {
+		SnapshotPath() string
+		LastSnapshot() time.Time
+	}
 }
 
 // NewSettingsHandler creates a new SettingsHandler.
@@ -25,6 +34,81 @@ func NewSettingsHandler(database *db.DB, serverKey []byte) *SettingsHandler {
 // SetOnKeyChange sets a callback that is called after the API key changes.
 func (h *SettingsHandler) SetOnKeyChange(fn func()) {
 	h.onKeyChange = fn
+}
+
+// SetSnapshotManager sets the snapshot manager used by the database info endpoint.
+func (h *SettingsHandler) SetSnapshotManager(sm interface {
+	SnapshotPath() string
+	LastSnapshot() time.Time
+}) {
+	h.snapshotManager = sm
+}
+
+// GetDatabaseInfo returns information about the database mode and location.
+//
+//	GET /api/v1/settings/database
+func (h *SettingsHandler) GetDatabaseInfo(w http.ResponseWriter, _ *http.Request) {
+	info := map[string]any{
+		"mode":         "legacy_usb",
+		"working_path": h.db.Path(),
+	}
+
+	// Include the configured snapshot path override (may be empty).
+	override, _ := h.db.GetSetting("snapshot_path_override", "")
+	info["snapshot_path_override"] = override
+
+	if h.snapshotManager != nil {
+		snapPath := h.snapshotManager.SnapshotPath()
+		info["mode"] = "hybrid"
+		info["snapshot_path"] = snapPath
+
+		// Use in-memory timestamp if available, fall back to file mtime.
+		lastSnap := h.snapshotManager.LastSnapshot()
+		if fi, err := os.Stat(snapPath); err == nil {
+			info["snapshot_size_bytes"] = fi.Size()
+			if lastSnap.IsZero() {
+				lastSnap = fi.ModTime()
+			}
+		}
+		if !lastSnap.IsZero() {
+			info["last_snapshot"] = lastSnap
+		}
+	}
+
+	respondJSON(w, http.StatusOK, info)
+}
+
+// SetSnapshotPath sets or clears the snapshot path override.
+// Changes take effect on next daemon restart.
+//
+//	PUT /api/v1/settings/database
+func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SnapshotPath string `json:"snapshot_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if req.SnapshotPath != "" {
+		if !filepath.IsAbs(req.SnapshotPath) {
+			respondError(w, http.StatusBadRequest, "path must be absolute")
+			return
+		}
+		dir := filepath.Dir(req.SnapshotPath)
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			respondError(w, http.StatusBadRequest, "parent directory does not exist")
+			return
+		}
+	}
+
+	if err := h.db.SetSetting("snapshot_path_override", req.SnapshotPath); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.GetDatabaseInfo(w, r)
 }
 
 // List returns all settings as a JSON object.
@@ -308,6 +392,52 @@ func (h *SettingsHandler) RevokeAPIKey(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// GetStagingInfo returns info about the current staging directory.
+func (h *SettingsHandler) GetStagingInfo(w http.ResponseWriter, r *http.Request) {
+	override, _ := h.db.GetSetting("staging_dir_override", "")
+	dests, err := h.db.ListStorageDestinations()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	configs := make([]tempdir.StorageConfig, len(dests))
+	for i, d := range dests {
+		configs[i] = tempdir.StorageConfig{Type: d.Type, Config: d.Config}
+	}
+	info := tempdir.ResolveInfo(configs, override)
+	respondJSON(w, http.StatusOK, info)
+}
+
+// SetStagingOverride sets or clears the staging directory override.
+func (h *SettingsHandler) SetStagingOverride(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Override string `json:"override"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if req.Override != "" {
+		if !filepath.IsAbs(req.Override) {
+			respondError(w, http.StatusBadRequest, "path must be absolute")
+			return
+		}
+		if fi, err := os.Stat(req.Override); err != nil || !fi.IsDir() {
+			respondError(w, http.StatusBadRequest, "path does not exist or is not a directory")
+			return
+		}
+	}
+
+	if err := h.db.SetSetting("staging_dir_override", req.Override); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Return updated staging info.
+	h.GetStagingInfo(w, r)
+}
+
 // storeAPIKey hashes, seals, and persists the API key, then invalidates caches.
 func (h *SettingsHandler) storeAPIKey(key string) error {
 	hash, err := crypto.HashPassphrase(key)
@@ -334,4 +464,35 @@ func (h *SettingsHandler) storeAPIKey(key string) error {
 	}
 
 	return nil
+}
+
+// TestDiscordWebhook sends a test message to a Discord webhook URL.
+//
+//	POST /api/v1/settings/discord/test
+func (h *SettingsHandler) TestDiscordWebhook(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		WebhookURL string `json:"webhook_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.WebhookURL == "" {
+		respondError(w, http.StatusBadRequest, "webhook_url is required")
+		return
+	}
+
+	embed := notify.DiscordEmbed{
+		Title:       "🔔 Test Notification",
+		Description: "Vault is connected to Discord!",
+		Color:       notify.ColorInfo,
+		Fields: []notify.DiscordField{
+			{Name: "Status", Value: "Connection verified", Inline: true},
+		},
+	}
+	if err := notify.SendDiscord(req.WebhookURL, embed); err != nil {
+		respondError(w, http.StatusBadGateway, "Discord webhook failed: "+err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Test notification sent"})
 }
