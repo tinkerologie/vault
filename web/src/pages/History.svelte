@@ -104,10 +104,8 @@
   }
 
   function toggleRunExpand(runId) {
-    const next = new SvelteSet(expandedRunIds)
-    if (next.has(runId)) next.delete(runId)
-    else next.add(runId)
-    expandedRunIds = next
+    if (expandedRunIds.has(runId)) expandedRunIds.delete(runId)
+    else expandedRunIds.add(runId)
   }
 
   function hasLogDetails(run) {

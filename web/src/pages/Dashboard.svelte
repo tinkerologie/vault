@@ -151,7 +151,7 @@
   const totalProtected = $derived(protectedContainers.length + protectedVMs.length + protectedFolders.length)
   const protectionPct = $derived(totalItems > 0 ? Math.round((totalProtected / totalItems) * 100) : 0)
 
-  const soonestNextRun = $derived(() => {
+  const soonestNextRun = $derived.by(() => {
     const times = Object.values(nextRuns).map(t => new Date(t)).filter(d => !isNaN(d.getTime()))
     if (times.length === 0) return null
     return new Date(Math.min(...times.map(d => d.getTime()))).toISOString()
@@ -165,7 +165,7 @@
     return formatSpeed(totalBytes, totalSecs);
   })
 
-  const healthSummaryText = $derived(() => {
+  const healthSummaryText = $derived.by(() => {
     if (!healthSummary) return ''
     const s = healthSummary
     if (s.health_score >= 80) return 'All backups healthy'

@@ -27,14 +27,16 @@
       vms = vRes.items || []
 
       // Compute protected items from enabled jobs.
+      const enabledJobs = (jobs || []).filter(j => j.enabled)
+      const jobDetails = await Promise.all(
+        enabledJobs.map(j => api.getJob(j.id).catch(() => null))
+      )
       const pSet = new SvelteSet()
-      for (const job of (jobs || []).filter(j => j.enabled)) {
-        try {
-          const detail = await api.getJob(job.id)
-          for (const item of (detail?.items || [])) {
-            pSet.add(`${item.item_type}:${item.item_name}`)
-          }
-        } catch { /* ignored */ }
+      for (const detail of jobDetails) {
+        if (!detail?.items) continue
+        for (const item of detail.items) {
+          pSet.add(`${item.item_type}:${item.item_name}`)
+        }
       }
       protectedItems = pSet
     } catch (e) {
@@ -51,10 +53,8 @@
   let readinessPct = $derived(totalItems > 0 ? Math.round(((totalItems - totalUnprotected) / totalItems) * 100) : 100)
 
   function toggleStep(step) {
-    const s = new SvelteSet(expandedSteps)
-    if (s.has(step)) s.delete(step)
-    else s.add(step)
-    expandedSteps = s
+    if (expandedSteps.has(step)) expandedSteps.delete(step)
+    else expandedSteps.add(step)
   }
 
   function statusColor(status) {

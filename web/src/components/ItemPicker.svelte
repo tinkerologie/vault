@@ -104,31 +104,28 @@
 
   function toggle(type, item) {
     const _key = `${type}:${item.name}`
-    const m = new SvelteMap(selected)
-    if (m.has(_key)) {
-      m.delete(_key)
+    if (selected.has(_key)) {
+      selected.delete(_key)
     } else {
-      m.set(_key, {
+      selected.set(_key, {
         item_type: type,
         item_name: item.name,
         item_id: item.settings?.id || item.name,
         settings: JSON.stringify(item.settings || {}),
       })
     }
-    selected = m
     emitChange()
   }
 
   function selectAll(type) {
     const list = type === 'container' ? filteredContainers() : type === 'vm' ? filteredVMs() : type === 'plugin' ? filteredPlugins() : filteredFolders()
-    const m = new SvelteMap(selected)
-    const allSelected = list.every((it) => m.has(`${type}:${it.name}`))
+    const allSelected = list.every((it) => selected.has(`${type}:${it.name}`))
     for (const it of list) {
       const key = `${type}:${it.name}`
       if (allSelected) {
-        m.delete(key)
+        selected.delete(key)
       } else {
-        m.set(key, {
+        selected.set(key, {
           item_type: type,
           item_name: it.name,
           item_id: it.settings?.id || it.name,
@@ -136,7 +133,6 @@
         })
       }
     }
-    selected = m
     emitChange()
   }
 
@@ -144,14 +140,12 @@
     if (!customFolderPath.trim()) return
     const name = customFolderPath.split('/').filter(Boolean).pop() || customFolderPath
     const fKey = `folder:${name}`
-    const m = new SvelteMap(selected)
-    m.set(fKey, {
+    selected.set(fKey, {
       item_type: 'folder',
       item_name: name,
       item_id: customFolderPath,
       settings: JSON.stringify({ path: customFolderPath, preset: '' }),
     })
-    selected = m
     customFolderPath = ''
     showAddFolder = false
     emitChange()
@@ -167,7 +161,10 @@
     const arr = Array.from(selected.entries())
     const [moved] = arr.splice(fromIdx, 1)
     arr.splice(toIdx, 0, moved)
-    selected = new SvelteMap(arr)
+    selected.clear()
+    for (const [k, v] of arr) {
+      selected.set(k, v)
+    }
     emitChange()
   }
 

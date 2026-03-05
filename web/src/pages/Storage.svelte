@@ -155,17 +155,18 @@
   }
 
   function toggleBackup(idx) {
-    const s = new SvelteSet(selectedBackups)
-    if (s.has(idx)) s.delete(idx)
-    else s.add(idx)
-    selectedBackups = s
+    if (selectedBackups.has(idx)) selectedBackups.delete(idx)
+    else selectedBackups.add(idx)
   }
 
   function toggleAllBackups() {
     if (selectedBackups.size === scannedBackups.length) {
-      selectedBackups = new SvelteSet()
+      selectedBackups.clear()
     } else {
-      selectedBackups = new SvelteSet(scannedBackups.map((_b, i) => i))
+      selectedBackups.clear()
+      for (let i = 0; i < scannedBackups.length; i++) {
+        selectedBackups.add(i)
+      }
     }
   }
 
@@ -207,9 +208,7 @@
     testing = id
     try {
       const result = await api.testStorage(id)
-      const next = new SvelteMap(testResults)
-      next.set(id, result)
-      testResults = next
+      testResults.set(id, result)
       if (result.success) {
         showToast('Connection successful!', 'success')
       } else {
@@ -217,9 +216,7 @@
       }
     } catch (e) {
       showToast(e.message, 'error')
-      const next = new SvelteMap(testResults)
-      next.set(id, { success: false, error: e.message })
-      testResults = next
+      testResults.set(id, { success: false, error: e.message })
     } finally {
       testing = null
     }

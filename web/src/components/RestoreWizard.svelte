@@ -10,7 +10,7 @@
   let { jobs = [], onrestore = () => {}, initialJobId = null } = $props()
 
   let step = $state(1)
-  let selectedItems = new SvelteMap() // key: "type:name", value: item object
+  let selectedItems = $state(new SvelteMap()) // key: "type:name", value: item object
   let selectedPoint = $state(null)
   let restoreDestination = $state('')
   let showDestOverride = $state(false)
@@ -70,7 +70,6 @@
             selectedItems.set(key, item)
           }
         }
-        selectedItems = new SvelteMap(selectedItems)
       }
     } catch { /* ignore */ } finally {
       loading = false
@@ -108,13 +107,11 @@
 
   function toggleItem(item) {
     const key = `${item.type}:${item.name}`
-    const next = new SvelteMap(selectedItems)
-    if (next.has(key)) {
-      next.delete(key)
+    if (selectedItems.has(key)) {
+      selectedItems.delete(key)
     } else {
-      next.set(key, item)
+      selectedItems.set(key, item)
     }
-    selectedItems = next
   }
 
   function isSelected(item) {
@@ -122,16 +119,14 @@
   }
 
   function selectAll() {
-    const next = new SvelteMap(selectedItems)
     for (const item of filteredItems) {
       const key = `${item.type}:${item.name}`
-      next.set(key, item)
+      selectedItems.set(key, item)
     }
-    selectedItems = next
   }
 
   function clearSelection() {
-    selectedItems = new SvelteMap()
+    selectedItems.clear()
   }
 
   async function proceedToStep2() {
@@ -149,12 +144,22 @@
         }
       }
 
-      // Fetch restore points from all relevant jobs
+      // Fetch restore points from all relevant jobs in parallel
+      const jobMap = new Map(Array.from(relevantJobIds).map(id => [id, jobs.find(j => j.id === id)]))
+      const pointsByJob = await Promise.all(
+        Array.from(relevantJobIds).map(jobId =>
+          api.getRestorePoints(jobId).catch(() => []).then(points => ({
+            jobId,
+            points: points || []
+          }))
+        )
+      )
+
+      // Flatten and enrich restore points
       const allPoints = []
-      for (const jobId of relevantJobIds) {
-        const job = jobs.find(j => j.id === jobId)
-        const points = await api.getRestorePoints(jobId).catch(() => [])
-        for (const p of (points || [])) {
+      for (const { jobId, points } of pointsByJob) {
+        const job = jobMap.get(jobId)
+        for (const p of points) {
           allPoints.push({ ...p, jobName: job?.name, jobId: jobId, encryption: job?.encryption })
         }
       }

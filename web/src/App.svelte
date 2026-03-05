@@ -71,19 +71,20 @@
     return route.startsWith(path)
   }
 
+  const iconFor = (path) => allNav.find(n => n.path === path)?.icon
   const daemonMobileNav = [
-    { path: '/', label: 'Home', icon: allNav[0].icon },
-    { path: '/jobs', label: 'Jobs', icon: allNav[1].icon },
-    { path: '/history', label: 'History', icon: allNav[3].icon },
-    { path: '/restore', label: 'Restore', icon: allNav[4].icon },
-    { path: '/settings', label: 'More', icon: allNav[8].icon },
+    { path: '/', label: 'Home', icon: iconFor('/') },
+    { path: '/jobs', label: 'Jobs', icon: iconFor('/jobs') },
+    { path: '/history', label: 'History', icon: iconFor('/history') },
+    { path: '/restore', label: 'Restore', icon: iconFor('/restore') },
+    { path: '/settings', label: 'More', icon: iconFor('/settings') },
   ]
   const replicaMobileNav = [
-    { path: '/', label: 'Home', icon: allNav[0].icon },
-    { path: '/replication', label: 'Replication', icon: allNav[6].icon },
-    { path: '/history', label: 'History', icon: allNav[3].icon },
-    { path: '/logs', label: 'Logs', icon: allNav[5].icon },
-    { path: '/settings', label: 'More', icon: allNav[8].icon },
+    { path: '/', label: 'Home', icon: iconFor('/') },
+    { path: '/replication', label: 'Replication', icon: iconFor('/replication') },
+    { path: '/history', label: 'History', icon: iconFor('/history') },
+    { path: '/logs', label: 'Logs', icon: iconFor('/logs') },
+    { path: '/settings', label: 'More', icon: iconFor('/settings') },
   ]
   let mobileNav = $derived(replicaMode ? replicaMobileNav : daemonMobileNav)
 

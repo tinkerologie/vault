@@ -9,10 +9,6 @@ export default [
     languageOptions: {
       globals: {
         ...globals.browser,
-        requestAnimationFrame: 'readonly',
-        cancelAnimationFrame: 'readonly',
-        clearInterval: 'readonly',
-        ResizeObserver: 'readonly',
       },
     },
     rules: {

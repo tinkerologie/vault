@@ -27,9 +27,7 @@
           entries = [msg.entry, ...entries].slice(0, limit)
           // Auto-expand errors
           if (msg.entry.level === 'error' && msg.entry.details) {
-            const next = new SvelteSet(expandedIds)
-            next.add(msg.entry.id)
-            expandedIds = next
+            expandedIds.add(msg.entry.id)
           }
           if (autoScroll && logContainer) {
             requestAnimationFrame(() => logContainer.scrollTop = 0)
@@ -60,12 +58,11 @@
     loading = true
     try {
       entries = (await api.getActivity(limit, category)) || []
-      expandedIds = new SvelteSet()
+      expandedIds.clear()
       // Auto-expand errors
       for (const e of entries) {
         if (e.level === 'error' && e.details) expandedIds.add(e.id)
       }
-      expandedIds = new SvelteSet(expandedIds)
     } catch (e) {
       error = e.message || 'Failed to load activity log'
       entries = []
@@ -116,10 +113,8 @@
   }
 
   function toggleExpand(id) {
-    const next = new SvelteSet(expandedIds)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    expandedIds = next
+    if (expandedIds.has(id)) expandedIds.delete(id)
+    else expandedIds.add(id)
   }
 
   function formatDetailValue(key, value) {
