@@ -169,13 +169,14 @@ func (h *VMHandler) backupSnapshot(name string, diskPaths []string, destDir stri
 	}
 
 	// Copy the backing files (original disk images before snapshot).
+	// Use copyOrFlattenDisk to handle qcow2 overlays with backing chains.
 	totalDisks := len(diskPaths)
 	for i, diskPath := range diskPaths {
 		pct := 30 + (i*40)/max(totalDisks, 1)
 		progress(name, pct, fmt.Sprintf("copying disk %d/%d: %s", i+1, totalDisks, filepath.Base(diskPath)))
 
 		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
-		if err := copyFileWithProgress(diskPath, destPath, func(copied int64) {
+		if err := copyOrFlattenDisk(diskPath, destPath, func(copied int64) {
 			progress(name, pct, fmt.Sprintf("copying disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
 			return fmt.Errorf("copying disk %s: %w", diskPath, err)
@@ -230,14 +231,15 @@ func (h *VMHandler) backupCold(name, state string, diskPaths []string, destDir s
 		}
 	}
 
-	// Copy disk images.
+	// Copy disk images. Flatten qcow2 overlays with backing chains
+	// so the backup is fully self-contained.
 	totalDisks := len(diskPaths)
 	for i, diskPath := range diskPaths {
 		pct := 30 + (i*50)/max(totalDisks, 1)
 		progress(name, pct, fmt.Sprintf("copying disk %d/%d: %s", i+1, totalDisks, filepath.Base(diskPath)))
 
 		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
-		if err := copyFileWithProgress(diskPath, destPath, func(copied int64) {
+		if err := copyOrFlattenDisk(diskPath, destPath, func(copied int64) {
 			progress(name, pct, fmt.Sprintf("copying disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
 			return fmt.Errorf("copying disk %s: %w", diskPath, err)
@@ -391,9 +393,9 @@ func buildSnapshotXMLVirsh(name string, diskPaths []string) string {
 	var disksXML strings.Builder
 	for _, dp := range diskPaths {
 		snapPath := dp + ".snap"
-		disksXML.WriteString(fmt.Sprintf(
+		_, _ = fmt.Fprintf(&disksXML,
 			`<disk name="%s" snapshot="external"><source file="%s"/></disk>`,
-			dp, snapPath))
+			dp, snapPath)
 	}
 
 	return fmt.Sprintf(`<domainsnapshot>

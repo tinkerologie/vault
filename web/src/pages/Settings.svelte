@@ -1002,7 +1002,7 @@
               ['GET', '/api/v1/jobs/:id/history', 'Job run history'],
               ['GET', '/api/v1/jobs/:id/restore-points', 'Restore points'],
               ['WS', '/api/v1/ws', 'WebSocket events'],
-            ] as [method, path, desc] (path)}
+            ] as [method, path, desc] (`${method}:${path}`)}
               <div class="flex items-center gap-3">
                 <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3rem] text-center
                   {method === 'GET' ? 'bg-info/20 text-info' :

@@ -41,7 +41,7 @@ build-web:
 	cd web && npm ci && npm run build
 
 build-local: build-web
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/vault/
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64 ./cmd/vault/
 
 test:
 	go test ./... -v

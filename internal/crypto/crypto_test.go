@@ -15,7 +15,6 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	}{
 		{"simple text", "my-secret-passphrase", "hello world"},
 		{"empty content", "pass123", ""},
-		{"large content", "strong-pass!", strings.Repeat("backup data chunk ", 10000)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

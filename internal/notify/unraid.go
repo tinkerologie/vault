@@ -1,8 +1,11 @@
 package notify
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
 )
@@ -15,13 +18,24 @@ const (
 	ImportanceAlert   Importance = "alert"
 )
 
+const notifyScriptPath = "/usr/local/emhttp/webGui/scripts/notify"
+
 func Send(event, subject, description string, importance Importance) error {
 	if runtime.GOOS != "linux" {
 		log.Printf("[NOTIFY] %s: %s - %s (%s)", event, subject, description, importance)
 		return nil
 	}
 
-	cmd := exec.Command("/usr/local/emhttp/webGui/scripts/notify",
+	if _, err := os.Stat(notifyScriptPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// Non-Unraid Linux environments won't have the notify helper.
+			log.Printf("[NOTIFY] helper not found, skipping: %s", notifyScriptPath)
+			return nil
+		}
+		return fmt.Errorf("checking notify helper: %w", err)
+	}
+
+	cmd := exec.Command(notifyScriptPath,
 		"-e", event,
 		"-s", subject,
 		"-d", description,

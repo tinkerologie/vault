@@ -541,6 +541,12 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 
 // tarDirectory creates a gzip-compressed tar archive of srcDir at destPath.
 func tarDirectory(srcDir, destPath string) error {
+	root, err := os.OpenRoot(srcDir)
+	if err != nil {
+		return fmt.Errorf("opening source root: %w", err)
+	}
+	defer root.Close()
+
 	outFile, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
@@ -607,7 +613,7 @@ func tarDirectory(srcDir, destPath string) error {
 			return fmt.Errorf("writing tar header for %s: %w", rel, err)
 		}
 
-		f, err := os.Open(path)
+		f, err := root.Open(rel)
 		if err != nil {
 			log.Printf("engine: skipping unopenable file %s: %v", rel, err)
 			return nil
@@ -628,6 +634,12 @@ func tarDirectory(srcDir, destPath string) error {
 // entries are always included to preserve structure. This is used for
 // incremental and differential backups.
 func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time) error {
+	root, err := os.OpenRoot(srcDir)
+	if err != nil {
+		return fmt.Errorf("opening source root: %w", err)
+	}
+	defer root.Close()
+
 	outFile, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
@@ -697,7 +709,7 @@ func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time) error
 			return fmt.Errorf("writing tar header for %s: %w", rel, err)
 		}
 
-		f, err := os.Open(path)
+		f, err := root.Open(rel)
 		if err != nil {
 			log.Printf("engine: skipping unopenable file %s: %v", rel, err)
 			return nil

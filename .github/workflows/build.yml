@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +26,9 @@ jobs:
       - name: Download Go dependencies
         run: go mod download
 
+      - name: Build web assets
+        run: cd web && npm ci && npm run build
+
       - name: Run linter
         uses: golangci/golangci-lint-action@v7
         with:
@@ -31,9 +37,6 @@ jobs:
 
       - name: Run tests
         run: go test ./... -v
-
-      - name: Build web assets
-        run: cd web && npm ci && npm run build
 
       - name: Cross-compile Linux binary
         env:
@@ -48,6 +51,7 @@ jobs:
             -o build/vault-linux-amd64 ./cmd/vault/
 
       - name: Upload binary
+        if: ${{ env.ACT != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: vault-linux-amd64

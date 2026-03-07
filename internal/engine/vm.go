@@ -151,13 +151,14 @@ func (h *VMHandler) backupSnapshot(dom *libvirt.Domain, name string, diskPaths [
 	}
 
 	// Copy the backing files (original disk images before snapshot).
+	// Use copyOrFlattenDisk to handle qcow2 overlays with backing chains.
 	totalDisks := len(diskPaths)
 	for i, diskPath := range diskPaths {
 		pct := 30 + (i*40)/totalDisks
 		progress(name, pct, fmt.Sprintf("copying disk %d/%d: %s", i+1, totalDisks, filepath.Base(diskPath)))
 
 		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
-		if err := copyFileWithProgress(diskPath, destPath, func(copied int64) {
+		if err := copyOrFlattenDisk(diskPath, destPath, func(copied int64) {
 			progress(name, pct, fmt.Sprintf("copying disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
 			return fmt.Errorf("copying disk %s: %w", diskPath, err)
@@ -212,14 +213,15 @@ func (h *VMHandler) backupCold(dom *libvirt.Domain, name string, state libvirt.D
 		}
 	}
 
-	// Copy disk images.
+	// Copy disk images. Flatten qcow2 overlays with backing chains
+	// so the backup is fully self-contained.
 	totalDisks := len(diskPaths)
 	for i, diskPath := range diskPaths {
 		pct := 30 + (i*50)/totalDisks
 		progress(name, pct, fmt.Sprintf("copying disk %d/%d: %s", i+1, totalDisks, filepath.Base(diskPath)))
 
 		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
-		if err := copyFileWithProgress(diskPath, destPath, func(copied int64) {
+		if err := copyOrFlattenDisk(diskPath, destPath, func(copied int64) {
 			progress(name, pct, fmt.Sprintf("copying disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
 			return fmt.Errorf("copying disk %s: %w", diskPath, err)

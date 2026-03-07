@@ -18,17 +18,18 @@ func NewBrowseHandler() *BrowseHandler {
 
 // dirEntry represents a single directory in the browse response.
 type dirEntry struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	IsDir bool   `json:"is_dir"`
 }
 
 // unraidRoots are the well-known Unraid mount points shown as top-level shortcuts.
 var unraidRoots = []dirEntry{
-	{Name: "Flash Drive", Path: "/boot"},
-	{Name: "User Shares", Path: "/mnt/user"},
-	{Name: "Cache", Path: "/mnt/cache"},
-	{Name: "Unassigned Devices", Path: "/mnt/disks"},
-	{Name: "Remote Mounts", Path: "/mnt/remotes"},
+	{Name: "Flash Drive", Path: "/boot", IsDir: true},
+	{Name: "User Shares", Path: "/mnt/user", IsDir: true},
+	{Name: "Cache", Path: "/mnt/cache", IsDir: true},
+	{Name: "Unassigned Devices", Path: "/mnt/disks", IsDir: true},
+	{Name: "Remote Mounts", Path: "/mnt/remotes", IsDir: true},
 }
 
 // allowedPrefixes are the filesystem prefixes allowed for browsing.
@@ -65,7 +66,7 @@ func (h *BrowseHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := h.listDirs(clean)
+	entries, err := h.listEntries(clean, r.URL.Query().Get("files") == "true")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -111,16 +112,18 @@ func (h *BrowseHandler) discoverRoots() []dirEntry {
 			}
 			if isArrayDisk {
 				roots = append(roots, dirEntry{
-					Name: "Array Disk " + suffix,
-					Path: "/mnt/" + name,
+					Name:  "Array Disk " + suffix,
+					Path:  "/mnt/" + name,
+					IsDir: true,
 				})
 			}
 		}
 		// Match additional cache pools (cache2, cache3, etc.).
 		if strings.HasPrefix(name, "cache") && name != "cache" {
 			roots = append(roots, dirEntry{
-				Name: "Cache Pool (" + name + ")",
-				Path: "/mnt/" + name,
+				Name:  "Cache Pool (" + name + ")",
+				Path:  "/mnt/" + name,
+				IsDir: true,
 			})
 		}
 	}
@@ -128,31 +131,43 @@ func (h *BrowseHandler) discoverRoots() []dirEntry {
 	return roots
 }
 
-// listDirs reads directory entries and returns only subdirectories.
-func (h *BrowseHandler) listDirs(path string) ([]dirEntry, error) {
+// listEntries reads directory entries. When includeFiles is false, only
+// subdirectories are returned (the default). When true, files are included
+// alongside directories so the browser can be used to pick individual files.
+func (h *BrowseHandler) listEntries(path string, includeFiles bool) ([]dirEntry, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
 
-	dirs := make([]dirEntry, 0, len(entries))
+	result := make([]dirEntry, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		// Skip hidden directories.
+		// Skip hidden entries.
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		dirs = append(dirs, dirEntry{
-			Name: e.Name(),
-			Path: filepath.Join(path, e.Name()),
-		})
+		if e.IsDir() {
+			result = append(result, dirEntry{
+				Name:  e.Name(),
+				Path:  filepath.Join(path, e.Name()),
+				IsDir: true,
+			})
+		} else if includeFiles {
+			result = append(result, dirEntry{
+				Name:  e.Name(),
+				Path:  filepath.Join(path, e.Name()),
+				IsDir: false,
+			})
+		}
 	}
 
-	sort.Slice(dirs, func(i, j int) bool {
-		return dirs[i].Name < dirs[j].Name
+	sort.Slice(result, func(i, j int) bool {
+		// Directories first, then alphabetical.
+		if result[i].IsDir != result[j].IsDir {
+			return result[i].IsDir
+		}
+		return result[i].Name < result[j].Name
 	})
 
-	return dirs, nil
+	return result, nil
 }

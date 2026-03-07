@@ -123,7 +123,7 @@ func (r *Runner) RunJob(jobID int64) {
 		}))
 
 	timestamp := time.Now().Format("2006-01-02_150405")
-	basePath := fmt.Sprintf("vault/%s/%d_%s", job.Name, runID, timestamp)
+	basePath := fmt.Sprintf("%s/%d_%s", job.Name, runID, timestamp)
 
 	// Resolve encryption passphrase if job has encryption enabled.
 	var encryptPassphrase string
@@ -1385,7 +1385,7 @@ func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) {
 
 // CleanupJobStorage deletes all backup files on storage for the given job.
 // It fetches all restore points, removes their storage directories, then
-// removes the top-level job directory (vault/<job_name>/).
+// removes the top-level job directory (<job_name>/).
 func (r *Runner) CleanupJobStorage(jobID int64) error {
 	job, err := r.db.GetJob(jobID)
 	if err != nil {
@@ -1415,14 +1415,14 @@ func (r *Runner) CleanupJobStorage(jobID int64) error {
 	}
 
 	// Also clean up the top-level job directory.
-	jobDir := fmt.Sprintf("vault/%s", job.Name)
+	jobDir := job.Name
 	r.DeleteStorageDir(adapter, jobDir)
 
 	return nil
 }
 
 // CleanupStorageDestination deletes all Vault backup files from a storage
-// destination by removing the top-level vault/ directory.
+// destination by removing all top-level job directories.
 func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
@@ -1430,7 +1430,15 @@ func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 	}
 	defer storage.CloseAdapter(adapter)
 
-	r.DeleteStorageDir(adapter, "vault/")
+	// List and delete all top-level job directories.
+	topEntries, listErr := adapter.List(".")
+	if listErr == nil {
+		for _, entry := range topEntries {
+			if entry.IsDir {
+				r.DeleteStorageDir(adapter, entry.Path)
+			}
+		}
+	}
 	return nil
 }
 
@@ -1443,15 +1451,15 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]
 	}
 	defer storage.CloseAdapter(adapter)
 
-	// List all entries under vault/.
-	topEntries, err := adapter.List("vault/")
+	// List all entries under the storage root.
+	topEntries, err := adapter.List(".")
 	if err != nil {
-		return nil, fmt.Errorf("listing vault/ directory: %w", err)
+		return nil, fmt.Errorf("listing storage root: %w", err)
 	}
 
 	var manifests []map[string]any
 
-	// Walk vault/<job_name>/<run_id>_<timestamp>/manifest.json.
+	// Walk <job_name>/<run_id>_<timestamp>/manifest.json.
 	for _, jobDir := range topEntries {
 		if !jobDir.IsDir {
 			continue

@@ -51,7 +51,7 @@ func TestImportBackups(t *testing.T) {
 		backups := []map[string]any{
 			{
 				"job_name":     "my-containers",
-				"storage_path": "vault/my-containers/1_2026-01-15_020000",
+				"storage_path": "my-containers/1_2026-01-15_020000",
 				"backup_type":  "full",
 				"size_bytes":   float64(1024000),
 				"compression":  "zstd",
@@ -87,7 +87,7 @@ func TestImportBackups(t *testing.T) {
 		if len(rps) != 1 {
 			t.Fatalf("got %d restore points, want 1", len(rps))
 		}
-		if rps[0].StoragePath != "vault/my-containers/1_2026-01-15_020000" {
+		if rps[0].StoragePath != "my-containers/1_2026-01-15_020000" {
 			t.Errorf("StoragePath = %q", rps[0].StoragePath)
 		}
 		if rps[0].SizeBytes != 1024000 {
@@ -101,7 +101,7 @@ func TestImportBackups(t *testing.T) {
 		dest := createLocalDest(t, database, storageDir)
 
 		backups := []map[string]any{
-			{"job_name": "dedup-test", "storage_path": "vault/dedup-test/1_run", "backup_type": "full"},
+			{"job_name": "dedup-test", "storage_path": "dedup-test/1_run", "backup_type": "full"},
 		}
 
 		imported1, _ := r.ImportBackups(dest.ID, backups)
@@ -121,9 +121,9 @@ func TestImportBackups(t *testing.T) {
 		dest := createLocalDest(t, database, storageDir)
 
 		backups := []map[string]any{
-			{"storage_path": "vault/orphan/1_run", "backup_type": "full"},
-			{"job_name": "", "storage_path": "vault/empty/1_run"},
-			{"job_name": "valid", "storage_path": "vault/valid/1_run", "backup_type": "full"},
+			{"storage_path": "orphan/1_run", "backup_type": "full"},
+			{"job_name": "", "storage_path": "empty/1_run"},
+			{"job_name": "valid", "storage_path": "valid/1_run", "backup_type": "full"},
 		}
 
 		imported, _ := r.ImportBackups(dest.ID, backups)
@@ -144,7 +144,7 @@ func TestImportBackups(t *testing.T) {
 		})
 
 		backups := []map[string]any{
-			{"job_name": "existing-job", "storage_path": "vault/existing-job/1_run", "backup_type": "full"},
+			{"job_name": "existing-job", "storage_path": "existing-job/1_run", "backup_type": "full"},
 		}
 		imported, _ := r.ImportBackups(dest.ID, backups)
 		if imported != 1 {
@@ -375,22 +375,22 @@ func TestScanStorageManifests(t *testing.T) {
 	dest := createLocalDest(t, database, storageDir)
 
 	// Create a realistic directory structure:
-	// vault/my-job/1_2026-01-15_020000/manifest.json
-	// vault/my-job/2_2026-01-16_020000/manifest.json
-	// vault/other-job/3_2026-01-17_020000/ (no manifest — should be skipped)
+	// my-job/1_2026-01-15_020000/manifest.json
+	// my-job/2_2026-01-16_020000/manifest.json
+	// other-job/3_2026-01-17_020000/ (no manifest — should be skipped)
 	runs := []struct {
 		dir      string
 		manifest map[string]any
 	}{
 		{
-			dir: filepath.Join(storageDir, "vault", "my-job", "1_2026-01-15_020000"),
+			dir: filepath.Join(storageDir, "my-job", "1_2026-01-15_020000"),
 			manifest: map[string]any{
 				"version": float64(1), "job_name": "my-job", "backup_type": "full",
 				"size_bytes": float64(500), "created_at": "2026-01-15T02:00:00Z",
 			},
 		},
 		{
-			dir: filepath.Join(storageDir, "vault", "my-job", "2_2026-01-16_020000"),
+			dir: filepath.Join(storageDir, "my-job", "2_2026-01-16_020000"),
 			manifest: map[string]any{
 				"version": float64(1), "job_name": "my-job", "backup_type": "incremental",
 				"size_bytes": float64(100), "created_at": "2026-01-16T02:00:00Z",
@@ -409,7 +409,7 @@ func TestScanStorageManifests(t *testing.T) {
 	}
 
 	// Create a run directory without manifest.
-	if err := os.MkdirAll(filepath.Join(storageDir, "vault", "other-job", "3_2026-01-17_020000"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(storageDir, "other-job", "3_2026-01-17_020000"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -436,7 +436,7 @@ func TestDeleteStorageDir(t *testing.T) {
 	r, _, storageDir := setupTestRunner(t)
 
 	// Create files to delete.
-	dir := filepath.Join(storageDir, "vault", "test-job", "run1")
+	dir := filepath.Join(storageDir, "test-job", "run1")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestDeleteStorageDir(t *testing.T) {
 	}
 
 	adapter := storage.NewLocalAdapter(storageDir)
-	r.DeleteStorageDir(adapter, "vault/test-job/run1")
+	r.DeleteStorageDir(adapter, "test-job/run1")
 
 	// Verify files are gone.
 	entries, err := os.ReadDir(dir)
@@ -475,12 +475,12 @@ func TestCleanupJobStorage(t *testing.T) {
 	})
 	database.CreateRestorePoint(db.RestorePoint{
 		JobRunID: runID, JobID: jobID, BackupType: "full",
-		StoragePath: "vault/cleanup-test/1_2026-01-01_020000",
+		StoragePath: "cleanup-test/1_2026-01-01_020000",
 		Metadata:    "{}", SizeBytes: 100,
 	})
 
 	// Create the storage files.
-	runDir := filepath.Join(storageDir, "vault", "cleanup-test", "1_2026-01-01_020000")
+	runDir := filepath.Join(storageDir, "cleanup-test", "1_2026-01-01_020000")
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

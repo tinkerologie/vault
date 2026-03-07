@@ -12,6 +12,7 @@
   import ItemPicker from '../components/ItemPicker.svelte'
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import BackupModeSelector from '../components/BackupModeSelector.svelte'
+  import ScriptBrowser from '../components/ScriptBrowser.svelte'
 
   let loading = $state(true)
   let jobs = $state([])
@@ -707,25 +708,8 @@
             Scripts & Notifications
           </summary>
           <div class="space-y-4 mt-3 pl-6">
-            <div>
-              <label for="pre_script" class="block text-xs font-medium text-text-muted mb-1">Pre-Backup Script</label>
-              <input id="pre_script" type="text" bind:value={form.pre_script}
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="/path/to/script.sh" />
-            </div>
-            <div>
-              <label for="post_script" class="block text-xs font-medium text-text-muted mb-1">Post-Backup Script</label>
-              <input id="post_script" type="text" bind:value={form.post_script}
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="/path/to/script.sh" />
-            </div>
-            <div>
-              <label for="notify_on" class="block text-xs font-medium text-text-muted mb-1">Notify On</label>
-              <select id="notify_on" bind:value={form.notify_on}
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
-                <option value="always">Always</option>
-                <option value="failure">On Failure</option>
-                <option value="never">Never</option>
-              </select>
-            </div>
+            <ScriptBrowser bind:value={form.pre_script} label="Pre-Backup Script" placeholder="/path/to/script.sh" />
+            <ScriptBrowser bind:value={form.post_script} label="Post-Backup Script" placeholder="/path/to/script.sh" />
           </div>
         </details>
 

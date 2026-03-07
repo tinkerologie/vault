@@ -64,6 +64,7 @@ export const api = {
 
   // Discovery
   browse: (path = '') => request('GET', `/browse${path ? '?path=' + encodeURIComponent(path) : ''}`),
+  browseFiles: (path = '') => request('GET', `/browse?files=true${path ? '&path=' + encodeURIComponent(path) : ''}`),
   listContainers: () => request('GET', '/containers'),
   listVMs: () => request('GET', '/vms'),
   listFolders: () => request('GET', '/folders'),
