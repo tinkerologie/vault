@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -54,10 +55,7 @@ func LocalUIBypass(resolve KeyResolver) func(http.Handler) http.Handler {
 	apiKeyAuth := APIKeyAuth(resolve)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Browsers always set Sec-Fetch-Site on requests. If the
-			// value is "same-origin", the request came from the SPA
-			// served by this same server — let it through.
-			if r.Header.Get("Sec-Fetch-Site") == "same-origin" {
+			if isTrustedUIRequest(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -82,8 +80,7 @@ func AdminBoundary(resolve KeyResolver) func(http.Handler) http.Handler {
 	apiKeyAuth := APIKeyAuth(resolve)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Same-origin browser requests are always allowed.
-			if r.Header.Get("Sec-Fetch-Site") == "same-origin" {
+			if isTrustedUIRequest(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -103,6 +100,55 @@ func AdminBoundary(resolve KeyResolver) func(http.Handler) http.Handler {
 			apiKeyAuth(next).ServeHTTP(w, r)
 		})
 	}
+}
+
+// isTrustedUIRequest identifies requests originating from the built-in web UI.
+// Browsers typically send Fetch Metadata and Origin/Referer headers for these
+// requests, while ordinary third-party API clients do not.
+func isTrustedUIRequest(r *http.Request) bool {
+	if r.Header.Get("Sec-Fetch-Site") == "same-origin" {
+		return true
+	}
+
+	requestOrigin := effectiveRequestOrigin(r)
+	if requestOrigin == "" {
+		return false
+	}
+
+	if origin := r.Header.Get("Origin"); origin != "" && sameOrigin(origin, requestOrigin) {
+		return true
+	}
+
+	if referer := r.Header.Get("Referer"); referer != "" && sameOrigin(referer, requestOrigin) {
+		return true
+	}
+
+	return false
+}
+
+func effectiveRequestOrigin(r *http.Request) string {
+	host := r.Host
+	if host == "" {
+		return ""
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	} else if forwardedProto := r.Header.Get("X-Forwarded-Proto"); forwardedProto != "" {
+		scheme = forwardedProto
+	}
+
+	return scheme + "://" + host
+}
+
+func sameOrigin(candidate string, expected string) bool {
+	u, err := url.Parse(candidate)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+
+	return strings.EqualFold(u.Scheme+"://"+u.Host, expected)
 }
 
 // extractToken extracts the API key from the request.

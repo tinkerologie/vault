@@ -708,8 +708,8 @@
             Scripts & Notifications
           </summary>
           <div class="space-y-4 mt-3 pl-6">
-            <ScriptBrowser bind:value={form.pre_script} label="Pre-Backup Script" placeholder="/path/to/script.sh" />
-            <ScriptBrowser bind:value={form.post_script} label="Post-Backup Script" placeholder="/path/to/script.sh" />
+            <ScriptBrowser bind:value={form.pre_script} inputId="pre-backup-script" label="Pre-Backup Script" placeholder="/path/to/script.sh" />
+            <ScriptBrowser bind:value={form.post_script} inputId="post-backup-script" label="Post-Backup Script" placeholder="/path/to/script.sh" />
           </div>
         </details>
 

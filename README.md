@@ -64,9 +64,10 @@ The built-in web UI does not require an API key — same-origin browser requests
 are allowed through automatically. API keys are intended for **third-party
 integrations** such as Home Assistant, external scripts, or AI assistants.
 
-Generate a key from the Settings → Security page in the web UI or via
-`POST /api/v1/settings/api-key/generate` (bootstrap only — unauthenticated when
-no key exists). Present the key using `Authorization: Bearer <key>` or the
+Generate a key from the Settings → Security page in the web UI. The
+`POST /api/v1/settings/api-key/generate` endpoint exists for browser UI
+bootstrap and is blocked for external clients until a key is configured.
+Present the key using `Authorization: Bearer <key>` or the
 `X-API-Key` header.
 
 Key rotation (`POST /api-key/rotate`) and revocation (`DELETE /api-key`) are
@@ -125,22 +126,22 @@ location before dismissing the one-time reveal panel.
 
 ### Settings
 
-| Method | Endpoint                          | Description                       |
-| ------ | --------------------------------- | --------------------------------- |
-| GET    | `/settings`                       | List settings                     |
-| PUT    | `/settings`                       | Update settings                   |
-| GET    | `/settings/encryption`            | Encryption status                 |
-| POST   | `/settings/encryption`            | Set encryption passphrase         |
-| POST   | `/settings/encryption/verify`     | Verify encryption passphrase      |
-| GET    | `/settings/api-key`               | API key status                    |
-| POST   | `/settings/api-key/generate`      | Generate the first API key (bootstrap, unauthenticated) |
-| POST   | `/settings/api-key/rotate`        | Rotate the API key (browser or API key required) |
-| DELETE | `/settings/api-key`               | Revoke the API key (browser or API key required) |
-| GET    | `/settings/staging`               | Staging directory info            |
-| PUT    | `/settings/staging`               | Override the staging directory    |
-| GET    | `/settings/database`              | Database snapshot settings        |
-| PUT    | `/settings/database`              | Update database snapshot settings |
-| POST   | `/settings/discord/test`          | Test the Discord webhook          |
+| Method | Endpoint                      | Description                                            |
+| ------ | ----------------------------- | ------------------------------------------------------ |
+| GET    | `/settings`                   | List settings                                          |
+| PUT    | `/settings`                   | Update settings                                        |
+| GET    | `/settings/encryption`        | Encryption status                                      |
+| POST   | `/settings/encryption`        | Set encryption passphrase                              |
+| POST   | `/settings/encryption/verify` | Verify encryption passphrase                           |
+| GET    | `/settings/api-key`           | API key status                                         |
+| POST   | `/settings/api-key/generate`  | Generate the first API key (browser UI bootstrap only) |
+| POST   | `/settings/api-key/rotate`    | Rotate the API key (browser or API key required)       |
+| DELETE | `/settings/api-key`           | Revoke the API key (browser or API key required)       |
+| GET    | `/settings/staging`           | Staging directory info                                 |
+| PUT    | `/settings/staging`           | Override the staging directory                         |
+| GET    | `/settings/database`          | Database snapshot settings                             |
+| PUT    | `/settings/database`          | Update database snapshot settings                      |
+| POST   | `/settings/discord/test`      | Test the Discord webhook                               |
 
 ### Discovery, Activity, Replication, and Recovery
 

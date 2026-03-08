@@ -29,8 +29,6 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// Public endpoints (no auth required).
 		r.Get("/health", s.handleHealth)
 		r.Get("/auth/status", s.handleAuthStatus)
-		// Generate is public only when no key exists (handler enforces this).
-		r.Post("/settings/api-key/generate", settingsH.GenerateAPIKey)
 
 		// Authenticated API routes.
 		// LocalUIBypass allows same-origin browser requests (the SPA) through
@@ -95,9 +93,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 				r.Post("/encryption", settingsH.SetEncryption)
 				r.Post("/encryption/verify", settingsH.VerifyEncryption)
 				r.Get("/api-key", settingsH.GetAPIKeyStatus)
-				// Rotate and revoke require the browser-or-key boundary so that
-				// arbitrary external clients cannot call these even when no key is
-				// configured yet.
+				// Key bootstrap, rotation, and revocation require the browser-or-key
+				// boundary so arbitrary external clients cannot call these security
+				// endpoints when no key is configured yet.
+				r.With(AdminBoundary(s.keyResolver())).Post("/api-key/generate", settingsH.GenerateAPIKey)
 				r.With(AdminBoundary(s.keyResolver())).Post("/api-key/rotate", settingsH.RotateAPIKey)
 				r.With(AdminBoundary(s.keyResolver())).Delete("/api-key", settingsH.RevokeAPIKey)
 				r.Get("/staging", settingsH.GetStagingInfo)

@@ -139,6 +139,8 @@ func TestLocalUIBypass(t *testing.T) {
 		name         string
 		apiKey       string
 		secFetchSite string
+		origin       string
+		referer      string
 		authHeader   string
 		wantStatus   int
 	}{
@@ -179,6 +181,18 @@ func TestLocalUIBypass(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
+			name:       "same-origin origin bypasses auth",
+			apiKey:     "test-secret-key",
+			origin:     "http://example.com",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "same-origin referer bypasses auth",
+			apiKey:     "test-secret-key",
+			referer:    "http://example.com/#/settings",
+			wantStatus: http.StatusOK,
+		},
+		{
 			name:         "none origin requires key",
 			apiKey:       "test-secret-key",
 			secFetchSite: "none",
@@ -201,6 +215,12 @@ func TestLocalUIBypass(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			if tt.secFetchSite != "" {
 				req.Header.Set("Sec-Fetch-Site", tt.secFetchSite)
+			}
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.referer != "" {
+				req.Header.Set("Referer", tt.referer)
 			}
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
@@ -228,6 +248,8 @@ func TestAdminBoundary(t *testing.T) {
 		name         string
 		apiKey       string
 		secFetchSite string
+		origin       string
+		referer      string
 		authHeader   string
 		wantStatus   int
 	}{
@@ -266,6 +288,18 @@ func TestAdminBoundary(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
+			name:       "same-origin origin allowed without key configured",
+			apiKey:     "",
+			origin:     "http://example.com",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "same-origin referer allowed without key configured",
+			apiKey:     "",
+			referer:    "http://example.com/#/settings",
+			wantStatus: http.StatusOK,
+		},
+		{
 			name:       "key configured + wrong token = 401",
 			apiKey:     "secret",
 			authHeader: "Bearer wrong",
@@ -290,6 +324,12 @@ func TestAdminBoundary(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", nil)
 			if tt.secFetchSite != "" {
 				req.Header.Set("Sec-Fetch-Site", tt.secFetchSite)
+			}
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.referer != "" {
+				req.Header.Set("Referer", tt.referer)
 			}
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
