@@ -12,3 +12,6 @@
 
     - name: Test MCP streamable HTTP endpoint
       ansible.builtin.include_tasks: mcp.yml
+
+    - name: Run folder backup/restore smoke test
+      ansible.builtin.include_tasks: folder_smoke_test.yml

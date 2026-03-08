@@ -33,9 +33,9 @@
   let encSaving = $state(false)
   let showEncPassphrase = $state(false)
   let confirmEncRemoval = $state(false)
-  let revealedPassphrase = $state('')
-  let showingPassphrase = $state(false)
-  let loadingPassphrase = $state(false)
+  // One-time passphrase reveal: holds the passphrase value only immediately
+  // after the user sets or changes it. Cleared when the user dismisses.
+  let justSetPassphrase = $state('')
   let changingPassphrase = $state(false)
   let changeNewPass = $state('')
   let changeConfirmPass = $state('')
@@ -202,11 +202,13 @@
     }
     encSaving = true
     try {
+      const savedPassphrase = encPassphrase
       await api.setEncryption(encPassphrase)
       encryptionEnabled = true
       encPassphrase = ''
       encConfirm = ''
-      showToast('Encryption passphrase set', 'success')
+      justSetPassphrase = savedPassphrase
+      showToast('Encryption passphrase set — save it now, it cannot be retrieved later', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -224,8 +226,7 @@
     try {
       await api.setEncryption('')
       encryptionEnabled = false
-      revealedPassphrase = ''
-      showingPassphrase = false
+      justSetPassphrase = ''
       changingPassphrase = false
       showToast('Encryption disabled', 'success')
     } catch (e) {
@@ -235,54 +236,34 @@
     }
   }
 
-  async function downloadEmergencyKit() {
-    try {
-      const res = await api.getEncryptionPassphrase()
-      const date = new Date().toISOString().split('T')[0]
-      const host = window.location.hostname
-      const content = [
-        'VAULT EMERGENCY KIT',
-        '====================',
-        '',
-        `Encryption Passphrase: ${res.passphrase}`,
-        '',
-        `Created: ${date}`,
-        `Server:  ${host}`,
-        '',
-        'IMPORTANT: Keep this file in a safe place.',
-        'You will need this passphrase to restore encrypted backups.',
-        'If you lose this passphrase, encrypted backups cannot be recovered.',
-        '',
-      ].join('\n')
-      const blob = new Blob([content], { type: 'text/plain' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `vault-emergency-kit-${date}.txt`
-      a.click()
-      URL.revokeObjectURL(url)
-      showToast('Emergency kit downloaded', 'success')
-    } catch (e) {
-      showToast(e.message, 'error')
-    }
-  }
-
-  async function toggleShowPassphrase() {
-    if (showingPassphrase) {
-      showingPassphrase = false
-      revealedPassphrase = ''
-      return
-    }
-    loadingPassphrase = true
-    try {
-      const res = await api.getEncryptionPassphrase()
-      revealedPassphrase = res.passphrase
-      showingPassphrase = true
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      loadingPassphrase = false
-    }
+  /** Download an emergency kit using the passphrase the user just entered.
+   *  Only available immediately after setting or changing the passphrase. */
+  function downloadEmergencyKit() {
+    if (!justSetPassphrase) return
+    const date = new Date().toISOString().split('T')[0]
+    const host = window.location.hostname
+    const content = [
+      'VAULT EMERGENCY KIT',
+      '====================',
+      '',
+      `Encryption Passphrase: ${justSetPassphrase}`,
+      '',
+      `Created: ${date}`,
+      `Server:  ${host}`,
+      '',
+      'IMPORTANT: Keep this file in a safe place.',
+      'You will need this passphrase to restore encrypted backups.',
+      'If you lose this passphrase, encrypted backups cannot be recovered.',
+      '',
+    ].join('\n')
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `vault-emergency-kit-${date}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast('Emergency kit downloaded', 'success')
   }
 
   function startChangePassphrase() {
@@ -308,13 +289,13 @@
     }
     encSaving = true
     try {
+      const savedPassphrase = changeNewPass
       await api.setEncryption(changeNewPass)
       changingPassphrase = false
       changeNewPass = ''
       changeConfirmPass = ''
-      revealedPassphrase = ''
-      showingPassphrase = false
-      showToast('Encryption passphrase changed. Existing backups still require the old passphrase.', 'success')
+      justSetPassphrase = savedPassphrase
+      showToast('Encryption passphrase changed — save the new passphrase now. Existing backups still require the old passphrase.', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -549,40 +530,39 @@
         </div>
         <div class="divide-y divide-border">
           {#if encryptionEnabled}
-            <!-- Description -->
-            <div class="px-5 py-4">
-              <p class="text-sm text-text-muted leading-relaxed">Keep this passphrase in a safe place, as you will need it to restore your encrypted backups. Download it as an emergency kit file and store it somewhere safe. Encryption keeps your backups private and secure.</p>
-            </div>
-
-            <!-- Download emergency kit -->
-            <div class="px-5 py-4 flex items-center justify-between gap-4">
-              <div>
-                <p class="text-sm font-medium text-text">Download emergency kit</p>
-                <p class="text-xs text-text-muted mt-0.5">We recommend saving this encryption key somewhere secure.</p>
-              </div>
-              <button onclick={downloadEmergencyKit} class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                Download
-              </button>
-            </div>
-
-            <!-- Show passphrase -->
-            <div class="px-5 py-4">
-              <div class="flex items-center justify-between gap-4">
-                <div>
-                  <p class="text-sm font-medium text-text">Show my encryption key</p>
-                  <p class="text-xs text-text-muted mt-0.5">Please keep your encryption key private.</p>
+            <!-- One-time passphrase reveal — shown only immediately after set/change -->
+            {#if justSetPassphrase}
+              <div class="px-5 py-4 bg-warning/5 border-b border-warning/30">
+                <div class="flex items-start gap-3 mb-3">
+                  <svg class="w-5 h-5 text-warning mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                  <div>
+                    <p class="text-sm font-semibold text-warning">Save this passphrase now — it cannot be retrieved later</p>
+                    <p class="text-xs text-text-muted mt-1">This is the only time the passphrase is shown. Store it in a safe place before dismissing.</p>
+                  </div>
                 </div>
-                <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
-                  {loadingPassphrase ? 'Loading...' : showingPassphrase ? 'Hide' : 'Show'}
-                </button>
-              </div>
-              {#if showingPassphrase}
-                <div class="mt-3 px-3 py-2.5 bg-surface border border-border rounded-lg">
-                  <code class="text-sm text-text break-all select-all">{revealedPassphrase}</code>
+                <div class="flex items-center gap-2 mb-3">
+                  <code class="flex-1 text-sm bg-surface px-3 py-2 rounded-lg font-mono text-text break-all select-all border border-border">{justSetPassphrase}</code>
+                  <button onclick={() => navigator.clipboard.writeText(justSetPassphrase).then(() => showToast('Copied to clipboard', 'success')).catch(() => showToast('Failed to copy', 'error'))} class="flex-shrink-0 p-2 text-text-muted hover:text-text bg-surface rounded-lg border border-border transition-colors" aria-label="Copy passphrase">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  </button>
                 </div>
-              {/if}
-            </div>
+                <div class="flex items-center gap-3">
+                  <button onclick={downloadEmergencyKit} class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-info/10 text-info hover:bg-info/20 rounded-lg transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                    Download Emergency Kit
+                  </button>
+                  <button onclick={() => justSetPassphrase = ''} class="text-xs text-text-dim hover:text-text-muted transition-colors">I've saved it — dismiss</button>
+                </div>
+              </div>
+            {:else}
+              <!-- Description when passphrase already saved/dismissed -->
+              <div class="px-5 py-4">
+                <div class="flex items-start gap-2">
+                  <svg class="w-4 h-4 text-success mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                  <p class="text-sm text-text-muted leading-relaxed">Encryption is active. The passphrase is not retrievable from this UI — use the emergency kit you downloaded when you set it.</p>
+                </div>
+              </div>
+            {/if}
 
             <!-- Change passphrase -->
             <div class="px-5 py-4">

@@ -268,33 +268,6 @@ func (h *SettingsHandler) GetEncryptionStatus(w http.ResponseWriter, _ *http.Req
 	})
 }
 
-// GetEncryptionPassphrase returns the unsealed encryption passphrase.
-// This is used by the UI to show the passphrase or generate an emergency kit.
-//
-//	GET /api/v1/settings/encryption/passphrase
-func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http.Request) {
-	sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", "")
-	if sealed == "" {
-		respondError(w, http.StatusNotFound, "no encryption passphrase configured")
-		return
-	}
-
-	if len(h.serverKey) == 0 {
-		respondError(w, http.StatusInternalServerError, "server key not available")
-		return
-	}
-
-	passphrase, err := crypto.Unseal(h.serverKey, sealed)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "unsealing passphrase: "+err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{
-		"passphrase": passphrase,
-	})
-}
-
 // apiKeySize is the number of random bytes used to generate an API key.
 const apiKeySize = 32
 

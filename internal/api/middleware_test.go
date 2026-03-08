@@ -215,3 +215,92 @@ func TestLocalUIBypass(t *testing.T) {
 		})
 	}
 }
+
+func TestAdminBoundary(t *testing.T) {
+	t.Parallel()
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	tests := []struct {
+		name         string
+		apiKey       string
+		secFetchSite string
+		authHeader   string
+		wantStatus   int
+	}{
+		{
+			name:         "same-origin always allowed",
+			apiKey:       "secret",
+			secFetchSite: "same-origin",
+			wantStatus:   http.StatusOK,
+		},
+		{
+			name:         "same-origin allowed even with no key configured",
+			apiKey:       "",
+			secFetchSite: "same-origin",
+			wantStatus:   http.StatusOK,
+		},
+		{
+			name:       "no key configured + no same-origin = 403",
+			apiKey:     "",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:         "cross-site with no key configured = 403",
+			apiKey:       "",
+			secFetchSite: "cross-site",
+			wantStatus:   http.StatusForbidden,
+		},
+		{
+			name:       "key configured + no token = 401",
+			apiKey:     "secret",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "key configured + valid token = 200",
+			apiKey:     "secret",
+			authHeader: "Bearer secret",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "key configured + wrong token = 401",
+			apiKey:     "secret",
+			authHeader: "Bearer wrong",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:         "cross-site + key configured + valid token = 200",
+			apiKey:       "secret",
+			secFetchSite: "cross-site",
+			authHeader:   "Bearer secret",
+			wantStatus:   http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mw := AdminBoundary(func() string { return tt.apiKey })
+			handler := mw(okHandler)
+
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			if tt.secFetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tt.secFetchSite)
+			}
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}

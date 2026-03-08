@@ -94,10 +94,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 				r.Get("/encryption", settingsH.GetEncryptionStatus)
 				r.Post("/encryption", settingsH.SetEncryption)
 				r.Post("/encryption/verify", settingsH.VerifyEncryption)
-				r.Get("/encryption/passphrase", settingsH.GetEncryptionPassphrase)
 				r.Get("/api-key", settingsH.GetAPIKeyStatus)
-				r.Post("/api-key/rotate", settingsH.RotateAPIKey)
-				r.Delete("/api-key", settingsH.RevokeAPIKey)
+				// Rotate and revoke require the browser-or-key boundary so that
+				// arbitrary external clients cannot call these even when no key is
+				// configured yet.
+				r.With(AdminBoundary(s.keyResolver())).Post("/api-key/rotate", settingsH.RotateAPIKey)
+				r.With(AdminBoundary(s.keyResolver())).Delete("/api-key", settingsH.RevokeAPIKey)
 				r.Get("/staging", settingsH.GetStagingInfo)
 				r.Put("/staging", settingsH.SetStagingOverride)
 				r.Post("/discord/test", settingsH.TestDiscordWebhook)

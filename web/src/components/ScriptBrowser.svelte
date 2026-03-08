@@ -54,10 +54,11 @@
 </script>
 
 <div class="space-y-1">
-  <label class="block text-xs font-medium text-text-muted mb-1">{label}</label>
+  <label for="script-browser-input" class="block text-xs font-medium text-text-muted mb-1">{label}</label>
   <div class="flex gap-2">
     <div class="relative flex-1">
       <input
+        id="script-browser-input"
         type="text"
         bind:value
         {placeholder}

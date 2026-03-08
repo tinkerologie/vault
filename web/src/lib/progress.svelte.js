@@ -38,7 +38,7 @@ export function restoreFromStatus(status) {
     job_id: status.job_id,
     run_id: status.run_id,
     job_name: status.job_name || `Job #${status.job_id}`,
-    started_at: status.started_at ? new Date(status.started_at).getTime() : Date.now(),
+    started_at: status.started_at ? Date.parse(status.started_at) : Date.now(),
   }
   overallDone = status.items_done || 0
   overallFailed = status.items_failed || 0
@@ -49,7 +49,7 @@ export function restoreFromStatus(status) {
     itemProgress = { [status.current_item]: { percent: 0, message: 'In progress...', status: 'running' } }
   }
   // Resume elapsed timer from the real start time.
-  const startMs = status.started_at ? new Date(status.started_at).getTime() : Date.now()
+  const startMs = status.started_at ? Date.parse(status.started_at) : Date.now()
   elapsedSec = Math.max(0, Math.round((Date.now() - startMs) / 1000))
   clearInterval(_elapsedInterval)
   _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)

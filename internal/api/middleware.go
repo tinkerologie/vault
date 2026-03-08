@@ -69,6 +69,42 @@ func LocalUIBypass(resolve KeyResolver) func(http.Handler) http.Handler {
 	}
 }
 
+// AdminBoundary returns middleware that allows same-origin browser requests
+// through unconditionally, but enforces API key authentication for all other
+// requests — even when no API key is currently configured. This prevents
+// arbitrary external clients from calling admin-only endpoints (key rotation,
+// key revocation) when authentication has not yet been set up.
+//
+// Unlike LocalUIBypass, this does NOT fall back to "allow-all" when no key is
+// configured, ensuring these security-sensitive endpoints are browser-only
+// unless the caller presents a valid key.
+func AdminBoundary(resolve KeyResolver) func(http.Handler) http.Handler {
+	apiKeyAuth := APIKeyAuth(resolve)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Same-origin browser requests are always allowed.
+			if r.Header.Get("Sec-Fetch-Site") == "same-origin" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Non-same-origin: require a valid API key.
+			// If no key is configured we still block rather than allow-all,
+			// because these routes are not intended for external clients.
+			apiKey := resolve()
+			if apiKey == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error":"this endpoint is only accessible from the browser UI or with a valid API key"}`)) //nolint:errcheck
+				return
+			}
+
+			// Key is configured — delegate to normal API key auth.
+			apiKeyAuth(next).ServeHTTP(w, r)
+		})
+	}
+}
+
 // extractToken extracts the API key from the request.
 // It checks (in order): Authorization Bearer header, X-API-Key header,
 // and the "token" query parameter (for WebSocket connections).

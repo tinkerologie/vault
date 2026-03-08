@@ -79,7 +79,6 @@ export const api = {
   getEncryptionStatus: () => request('GET', '/settings/encryption'),
   setEncryption: (passphrase) => request('POST', '/settings/encryption', { passphrase }),
   verifyEncryption: (passphrase) => request('POST', '/settings/encryption/verify', { passphrase }),
-  getEncryptionPassphrase: () => request('GET', '/settings/encryption/passphrase'),
 
   // Staging
   getStagingInfo: () => request('GET', '/settings/staging'),
