@@ -3,7 +3,6 @@
 package engine
 
 import (
-	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,10 +86,19 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 	}
 	result.Files = append(result.Files, backupFileInfo(xmlPath))
 
-	// Parse XML to find disk paths and NVRAM.
-	diskPaths, nvramPath, err := parseDomainDisks(xmlDesc)
+	// Parse XML to find disk paths, target devices, and NVRAM.
+	disks, nvramPath, err := parseDomainDisksWithTargets(xmlDesc)
 	if err != nil {
 		return nil, fmt.Errorf("parsing domain XML: %w", err)
+	}
+
+	changedSince, hasChangedSince := parseChangedSince(item.Settings)
+	copyDisks := disks
+	if hasChangedSince {
+		copyDisks, err = filterChangedDomainDisks(disks, changedSince)
+		if err != nil {
+			return nil, fmt.Errorf("filtering changed disks: %w", err)
+		}
 	}
 
 	// Determine backup mode.
@@ -105,11 +113,11 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 
 	switch backupMode {
 	case "snapshot":
-		if err := h.backupSnapshot(dom, item.Name, diskPaths, destDir, progress, result); err != nil {
+		if err := h.backupSnapshot(dom, item.Name, disks, copyDisks, destDir, progress, result); err != nil {
 			return nil, err
 		}
 	case "cold":
-		if err := h.backupCold(dom, item.Name, state, diskPaths, destDir, progress, result); err != nil {
+		if err := h.backupCold(dom, item.Name, state, copyDisks, destDir, progress, result); err != nil {
 			return nil, err
 		}
 	default:
@@ -118,15 +126,26 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 
 	// Copy NVRAM file if present.
 	if nvramPath != "" {
-		progress(item.Name, 90, "copying NVRAM")
 		if _, err := os.Stat(nvramPath); err == nil {
-			nvramDest := filepath.Join(destDir, filepath.Base(nvramPath))
-			if err := copyFileWithProgress(nvramPath, nvramDest, func(copied int64) {
-				progress(item.Name, 92, fmt.Sprintf("copying NVRAM: %d bytes", copied))
-			}); err != nil {
-				return nil, fmt.Errorf("copying NVRAM: %w", err)
+			copyNVRAM := true
+			if hasChangedSince {
+				copyNVRAM, err = pathChangedSince(nvramPath, changedSince)
+				if err != nil {
+					return nil, fmt.Errorf("checking NVRAM changes: %w", err)
+				}
 			}
-			result.Files = append(result.Files, backupFileInfo(nvramDest))
+			if copyNVRAM {
+				progress(item.Name, 90, "copying NVRAM")
+			}
+			if copyNVRAM {
+				nvramDest := filepath.Join(destDir, filepath.Base(nvramPath))
+				if err := copyFileWithProgress(nvramPath, nvramDest, func(copied int64) {
+					progress(item.Name, 92, fmt.Sprintf("copying NVRAM: %d bytes", copied))
+				}); err != nil {
+					return nil, fmt.Errorf("copying NVRAM: %w", err)
+				}
+				result.Files = append(result.Files, backupFileInfo(nvramDest))
+			}
 		}
 	}
 
@@ -136,13 +155,16 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 }
 
 // backupSnapshot performs a live snapshot-based backup.
-func (h *VMHandler) backupSnapshot(dom *libvirt.Domain, name string, diskPaths []string, destDir string, progress ProgressFunc, result *BackupResult) error {
+func (h *VMHandler) backupSnapshot(dom *libvirt.Domain, name string, snapshotDisks []domainDisk, copyDisks []domainDisk, destDir string, progress ProgressFunc, result *BackupResult) error {
 	progress(name, 20, "creating external snapshot")
 
 	// Build snapshot XML for external disks.
-	snapshotXML := buildSnapshotXML(name, diskPaths)
+	snapshotXML, err := buildSnapshotXML(name, snapshotDisks)
+	if err != nil {
+		return fmt.Errorf("building snapshot XML: %w", err)
+	}
 
-	_, err := dom.CreateSnapshotXML(snapshotXML,
+	_, err = dom.CreateSnapshotXML(snapshotXML,
 		libvirt.DOMAIN_SNAPSHOT_CREATE_DISK_ONLY|
 			libvirt.DOMAIN_SNAPSHOT_CREATE_ATOMIC|
 			libvirt.DOMAIN_SNAPSHOT_CREATE_NO_METADATA)
@@ -152,12 +174,13 @@ func (h *VMHandler) backupSnapshot(dom *libvirt.Domain, name string, diskPaths [
 
 	// Copy the backing files (original disk images before snapshot).
 	// Use copyOrFlattenDisk to handle qcow2 overlays with backing chains.
-	totalDisks := len(diskPaths)
-	for i, diskPath := range diskPaths {
-		pct := 30 + (i*40)/totalDisks
+	totalDisks := len(copyDisks)
+	for i, disk := range copyDisks {
+		diskPath := disk.Path
+		pct := 30 + (i*40)/max(totalDisks, 1)
 		progress(name, pct, fmt.Sprintf("copying disk %d/%d: %s", i+1, totalDisks, filepath.Base(diskPath)))
 
-		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
+		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", disk.Index, filepath.Ext(diskPath)))
 		if err := copyOrFlattenDisk(diskPath, destPath, func(copied int64) {
 			progress(name, pct, fmt.Sprintf("copying disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
@@ -168,12 +191,12 @@ func (h *VMHandler) backupSnapshot(dom *libvirt.Domain, name string, diskPaths [
 
 	// Blockcommit snapshot overlays back into base images.
 	progress(name, 75, "committing snapshot changes")
-	for i, diskPath := range diskPaths {
-		snapshotOverlay := diskPath + ".snap"
-		if err := dom.BlockCommit(fmt.Sprintf("vd%c", 'a'+i), "", "",
+	for _, disk := range snapshotDisks {
+		snapshotOverlay := disk.Path + ".snap"
+		if err := dom.BlockCommit(disk.Target, "", "",
 			0, libvirt.DOMAIN_BLOCK_COMMIT_ACTIVE|libvirt.DOMAIN_BLOCK_COMMIT_DELETE); err != nil {
 			// Best-effort: log but don't fail.
-			progress(name, 80, fmt.Sprintf("warning: blockcommit for %s: %v", filepath.Base(diskPath), err))
+			progress(name, 80, fmt.Sprintf("warning: blockcommit for %s: %v", filepath.Base(disk.Path), err))
 		}
 		// Clean up snapshot overlay file.
 		os.Remove(snapshotOverlay)
@@ -183,7 +206,7 @@ func (h *VMHandler) backupSnapshot(dom *libvirt.Domain, name string, diskPaths [
 }
 
 // backupCold performs a cold (shutdown) backup.
-func (h *VMHandler) backupCold(dom *libvirt.Domain, name string, state libvirt.DomainState, diskPaths []string, destDir string, progress ProgressFunc, result *BackupResult) error {
+func (h *VMHandler) backupCold(dom *libvirt.Domain, name string, state libvirt.DomainState, disks []domainDisk, destDir string, progress ProgressFunc, result *BackupResult) error {
 	wasRunning := state == libvirt.DOMAIN_RUNNING || state == libvirt.DOMAIN_PAUSED
 
 	if wasRunning {
@@ -215,12 +238,13 @@ func (h *VMHandler) backupCold(dom *libvirt.Domain, name string, state libvirt.D
 
 	// Copy disk images. Flatten qcow2 overlays with backing chains
 	// so the backup is fully self-contained.
-	totalDisks := len(diskPaths)
-	for i, diskPath := range diskPaths {
-		pct := 30 + (i*50)/totalDisks
+	totalDisks := len(disks)
+	for i, disk := range disks {
+		diskPath := disk.Path
+		pct := 30 + (i*50)/max(totalDisks, 1)
 		progress(name, pct, fmt.Sprintf("copying disk %d/%d: %s", i+1, totalDisks, filepath.Base(diskPath)))
 
-		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
+		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", disk.Index, filepath.Ext(diskPath)))
 		if err := copyOrFlattenDisk(diskPath, destPath, func(copied int64) {
 			progress(name, pct, fmt.Sprintf("copying disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
@@ -328,61 +352,6 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 
 	progress(item.Name, 100, "restore complete")
 	return nil
-}
-
-// domainXML is used for parsing domain XML to extract disk and NVRAM paths.
-type domainXML struct {
-	XMLName xml.Name `xml:"domain"`
-	Devices struct {
-		Disks []struct {
-			Device string `xml:"device,attr"`
-			Source struct {
-				File string `xml:"file,attr"`
-			} `xml:"source"`
-		} `xml:"disk"`
-	} `xml:"devices"`
-	OS struct {
-		NVRAMs []struct {
-			Path string `xml:",chardata"`
-		} `xml:"nvram"`
-	} `xml:"os"`
-}
-
-// parseDomainDisks extracts disk image paths and NVRAM path from domain XML.
-func parseDomainDisks(xmlDesc string) (diskPaths []string, nvramPath string, err error) {
-	var d domainXML
-	if err := xml.Unmarshal([]byte(xmlDesc), &d); err != nil {
-		return nil, "", fmt.Errorf("unmarshalling domain XML: %w", err)
-	}
-
-	for _, disk := range d.Devices.Disks {
-		if disk.Device == "disk" && disk.Source.File != "" {
-			diskPaths = append(diskPaths, disk.Source.File)
-		}
-	}
-
-	if len(d.OS.NVRAMs) > 0 {
-		nvramPath = strings.TrimSpace(d.OS.NVRAMs[0].Path)
-	}
-
-	return diskPaths, nvramPath, nil
-}
-
-// buildSnapshotXML creates XML for an external disk-only snapshot.
-func buildSnapshotXML(name string, diskPaths []string) string {
-	var disksXML strings.Builder
-	for _, dp := range diskPaths {
-		snapPath := dp + ".snap"
-		disksXML.WriteString(fmt.Sprintf(
-			`<disk name="%s" snapshot="external"><source file="%s"/></disk>`,
-			dp, snapPath))
-	}
-
-	return fmt.Sprintf(`<domainsnapshot>
-  <name>vault-backup-%s</name>
-  <description>Vault backup snapshot</description>
-  <disks>%s</disks>
-</domainsnapshot>`, name, disksXML.String())
 }
 
 // domainStateString converts a libvirt domain state to a human-readable string.

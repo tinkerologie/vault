@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -48,10 +49,26 @@ type volumeManifestEntry struct {
 	Archive     string `json:"archive,omitempty"`
 }
 
+// devicePrefixes are virtual / system filesystem paths that must never be
+// backed up — they contain device nodes and kernel interfaces, not data.
+var devicePrefixes = []string{
+	"/dev",
+	"/proc",
+	"/sys",
+	"/run",
+}
+
 // shouldSkipVolume returns (skip bool, reason string) for an Unraid bind mount.
 // It skips known shared data paths and large non-appdata volumes.
 func shouldSkipVolume(source string) (bool, string) {
 	norm := filepath.Clean(source)
+
+	// Skip device and virtual filesystem paths.
+	for _, prefix := range devicePrefixes {
+		if norm == prefix || strings.HasPrefix(norm, prefix+"/") {
+			return true, fmt.Sprintf("device/virtual path (%s)", prefix)
+		}
+	}
 
 	// Always back up appdata volumes.
 	for _, prefix := range appdataPrefixes {
@@ -82,7 +99,7 @@ func shouldSkipVolume(source string) (bool, string) {
 		return true, "root /mnt mount"
 	}
 
-	// Everything else (e.g. /tmp, /dev, /run, or custom paths) — back up.
+	// Everything else (e.g. /tmp or custom paths) — back up.
 	return false, ""
 }
 
@@ -175,6 +192,7 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 	// Step 2: Stop container if running (unless no_stop setting).
 	wasRunning := inspect.State.Running
 	noStop, _ := item.Settings["no_stop"].(bool)
+	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	if wasRunning && !noStop {
 		progress(item.Name, 20, "stopping container")
 		if err := h.cli.ContainerStop(ctx, containerID, container.StopOptions{}); err != nil {
@@ -182,95 +200,148 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 		}
 	}
 
-	// Step 3: Save image.
-	progress(item.Name, 40, "saving image")
-	imageName := inspect.Config.Image
-	imgReader, err := h.cli.ImageSave(ctx, []string{imageName})
-	if err != nil {
-		return nil, fmt.Errorf("saving image: %w", err)
-	}
-	imagePath := filepath.Join(destDir, "image.tar")
-	imgFile, err := os.Create(imagePath)
-	if err != nil {
-		_ = imgReader.Close()
-		return nil, fmt.Errorf("creating image file: %w", err)
-	}
-	if _, err := io.Copy(imgFile, imgReader); err != nil {
-		_ = imgFile.Close()
-		_ = imgReader.Close()
-		return nil, fmt.Errorf("writing image: %w", err)
-	}
-	_ = imgFile.Close()
-	_ = imgReader.Close()
-	result.Files = append(result.Files, backupFileInfo(imagePath))
-
-	// Step 4: Tar bind mount volumes, skipping large shared data paths.
-	progress(item.Name, 60, "backing up volumes")
-	var manifest []volumeManifestEntry
-	for i, mount := range inspect.Mounts {
-		if mount.Type != "bind" {
-			continue
+	if err := runWithRestart(wasRunning && !noStop, item.Name, progress, func() error {
+		// Step 3: Save image.
+		includeImage := true
+		if hasChangedSince {
+			if createdAt, err := time.Parse(time.RFC3339Nano, inspect.Created); err == nil && !createdAt.After(changedSince) {
+				includeImage = false
+			}
+		}
+		if includeImage {
+			progress(item.Name, 40, "saving image")
+			imageName := inspect.Config.Image
+			imgReader, err := h.cli.ImageSave(ctx, []string{imageName})
+			if err != nil {
+				return fmt.Errorf("saving image: %w", err)
+			}
+			imagePath := filepath.Join(destDir, "image.tar")
+			imgFile, err := os.Create(imagePath)
+			if err != nil {
+				_ = imgReader.Close()
+				return fmt.Errorf("creating image file: %w", err)
+			}
+			if _, err := io.Copy(imgFile, imgReader); err != nil {
+				_ = imgFile.Close()
+				_ = imgReader.Close()
+				return fmt.Errorf("writing image: %w", err)
+			}
+			_ = imgFile.Close()
+			_ = imgReader.Close()
+			result.Files = append(result.Files, backupFileInfo(imagePath))
 		}
 
-		entry := volumeManifestEntry{
-			Index:       i,
-			Source:      mount.Source,
-			Destination: mount.Destination,
-		}
+		// Step 4: Tar bind mount volumes, skipping large shared data paths.
+		progress(item.Name, 60, "backing up volumes")
+		var manifest []volumeManifestEntry
+		for i, mount := range inspect.Mounts {
+			if mount.Type != "bind" {
+				continue
+			}
 
-		if skip, reason := shouldSkipVolume(mount.Source); skip {
-			log.Printf("engine: skipping volume %s for %s: %s", mount.Source, item.Name, reason)
-			entry.BackedUp = false
-			entry.SkipReason = reason
+			entry := volumeManifestEntry{
+				Index:       i,
+				Source:      mount.Source,
+				Destination: mount.Destination,
+			}
+
+			if skip, reason := shouldSkipVolume(mount.Source); skip {
+				log.Printf("engine: skipping volume %s for %s: %s", mount.Source, item.Name, reason)
+				entry.BackedUp = false
+				entry.SkipReason = reason
+				manifest = append(manifest, entry)
+				continue
+			}
+
+			if hasChangedSince {
+				changed, err := pathChangedSince(mount.Source, changedSince)
+				if err != nil {
+					return fmt.Errorf("checking volume %s changes: %w", mount.Source, err)
+				}
+				if !changed {
+					entry.BackedUp = false
+					entry.SkipReason = "unchanged since reference"
+					manifest = append(manifest, entry)
+					continue
+				}
+			}
+
+			archiveName := fmt.Sprintf("volume_%d.tar.gz", i)
+			volDest := filepath.Join(destDir, archiveName)
+			if err := tarDirectory(mount.Source, volDest); err != nil {
+				return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+			}
+			result.Files = append(result.Files, backupFileInfo(volDest))
+			entry.BackedUp = true
+			entry.Archive = archiveName
 			manifest = append(manifest, entry)
-			continue
 		}
 
-		archiveName := fmt.Sprintf("volume_%d.tar.gz", i)
-		volDest := filepath.Join(destDir, archiveName)
-		if err := tarDirectory(mount.Source, volDest); err != nil {
-			return nil, fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+		// Save volumes manifest so restore knows which mounts were backed up.
+		if len(manifest) > 0 {
+			manifestData, _ := json.MarshalIndent(manifest, "", "  ")
+			manifestPath := filepath.Join(destDir, "volumes.json")
+			if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
+				log.Printf("engine: warning: failed to write volumes manifest: %v", err)
+			}
 		}
-		result.Files = append(result.Files, backupFileInfo(volDest))
-		entry.BackedUp = true
-		entry.Archive = archiveName
-		manifest = append(manifest, entry)
-	}
 
-	// Save volumes manifest so restore knows which mounts were backed up.
-	if len(manifest) > 0 {
-		manifestData, _ := json.MarshalIndent(manifest, "", "  ")
-		manifestPath := filepath.Join(destDir, "volumes.json")
-		if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
-			log.Printf("engine: warning: failed to write volumes manifest: %v", err)
+		// Step 5: Save Unraid template XML if it exists.
+		// The template is used by the Unraid Docker Manager (Community Apps) to
+		// recognize and manage the container. Path pattern:
+		//   /boot/config/plugins/dockerMan/templates-user/my-<name>.xml
+		templatePath := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+item.Name+".xml")
+		if data, err := os.ReadFile(templatePath); err == nil {
+			includeTemplate := true
+			if hasChangedSince {
+				changed, changeErr := pathChangedSince(templatePath, changedSince)
+				if changeErr != nil {
+					return fmt.Errorf("checking template changes: %w", changeErr)
+				}
+				includeTemplate = changed
+			}
+			if includeTemplate {
+				progress(item.Name, 85, "saving template")
+				destTemplate := filepath.Join(destDir, "template.xml")
+				if writeErr := os.WriteFile(destTemplate, data, 0644); writeErr != nil {
+					return fmt.Errorf("writing template xml: %w", writeErr)
+				}
+				result.Files = append(result.Files, backupFileInfo(destTemplate))
+			}
 		}
-	}
 
-	// Step 5: Save Unraid template XML if it exists.
-	// The template is used by the Unraid Docker Manager (Community Apps) to
-	// recognize and manage the container. Path pattern:
-	//   /boot/config/plugins/dockerMan/templates-user/my-<name>.xml
-	progress(item.Name, 85, "saving template")
-	templatePath := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+item.Name+".xml")
-	if data, err := os.ReadFile(templatePath); err == nil {
-		destTemplate := filepath.Join(destDir, "template.xml")
-		if writeErr := os.WriteFile(destTemplate, data, 0644); writeErr != nil {
-			return nil, fmt.Errorf("writing template xml: %w", writeErr)
-		}
-		result.Files = append(result.Files, backupFileInfo(destTemplate))
-	}
-
-	// Step 6: Restart container if it was running.
-	if wasRunning && !noStop {
-		progress(item.Name, 92, "restarting container")
-		if err := h.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-			return nil, fmt.Errorf("restarting container: %w", err)
-		}
+		return nil
+	}, func() error {
+		return h.cli.ContainerStart(ctx, containerID, container.StartOptions{})
+	}); err != nil {
+		return nil, err
 	}
 
 	progress(item.Name, 100, "backup complete")
 	result.Success = true
 	return result, nil
+}
+
+// runWithRestart ensures a previously running container is started again even
+// if later backup steps fail after the stop operation has already succeeded.
+func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, run func() error, restart func() error) error {
+	runErr := run()
+	if !shouldRestart {
+		return runErr
+	}
+
+	progress(itemName, 92, "restarting container")
+	restartErr := restart()
+	if restartErr == nil {
+		return runErr
+	}
+
+	wrappedRestartErr := fmt.Errorf("restarting container: %w", restartErr)
+	if runErr != nil {
+		return errors.Join(runErr, wrappedRestartErr)
+	}
+
+	return wrappedRestartErr
 }
 
 // Restore restores a Docker container from a backup directory:

@@ -1,0 +1,22 @@
+---
+# MCP streamable HTTP verification — uses the official Go SDK client transport.
+
+- name: Verify MCP streamable HTTP with official SDK client
+  delegate_to: localhost
+  ansible.builtin.command:
+    cmd: >
+      go run {{ playbook_dir }}/../scripts/verify-mcp-streamable-http.go
+      -endpoint http://{{ ansible_host }}:{{ api_port }}/api/v1/mcp
+      -api-key {{ api_key | quote }}
+  register: mcp_result
+  changed_when: false
+
+- name: Assert MCP streamable HTTP verification passed
+  ansible.builtin.assert:
+    that:
+      - mcp_result.rc == 0
+      - mcp_result.stdout is search('MCP streamable HTTP OK:')
+    fail_msg: >-
+      MCP streamable HTTP verification failed:
+      {{ mcp_result.stderr | default('') }} {{ mcp_result.stdout | default('') }}
+    success_msg: "{{ mcp_result.stdout }}"

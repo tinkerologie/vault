@@ -3,8 +3,8 @@
 package engine
 
 import (
-	"encoding/xml"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,10 +94,19 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 	}
 	result.Files = append(result.Files, backupFileInfo(xmlPath))
 
-	// Parse XML to find disk paths and NVRAM.
-	diskPaths, nvramPath, err := parseDomainDisksVirsh(xmlDesc)
+	// Parse XML to find disk paths, target devices, and NVRAM.
+	disks, nvramPath, err := parseDomainDisksWithTargets(xmlDesc)
 	if err != nil {
 		return nil, fmt.Errorf("parsing domain XML: %w", err)
+	}
+
+	changedSince, hasChangedSince := parseChangedSince(item.Settings)
+	copyDisks := disks
+	if hasChangedSince {
+		copyDisks, err = filterChangedDomainDisks(disks, changedSince)
+		if err != nil {
+			return nil, fmt.Errorf("filtering changed disks: %w", err)
+		}
 	}
 
 	// Determine backup mode.
@@ -112,11 +121,11 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 
 	switch backupMode {
 	case "snapshot":
-		if err := h.backupSnapshot(item.Name, diskPaths, destDir, progress, result); err != nil {
+		if err := h.backupSnapshot(item.Name, disks, copyDisks, destDir, progress, result); err != nil {
 			return nil, err
 		}
 	case "cold":
-		if err := h.backupCold(item.Name, state, diskPaths, destDir, progress, result); err != nil {
+		if err := h.backupCold(item.Name, state, copyDisks, destDir, progress, result); err != nil {
 			return nil, err
 		}
 	default:
@@ -125,15 +134,26 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 
 	// Copy NVRAM file if present.
 	if nvramPath != "" {
-		progress(item.Name, 90, "copying NVRAM")
 		if _, err := os.Stat(nvramPath); err == nil {
-			nvramDest := filepath.Join(destDir, filepath.Base(nvramPath))
-			if err := copyFileWithProgress(nvramPath, nvramDest, func(copied int64) {
-				progress(item.Name, 92, fmt.Sprintf("copying NVRAM: %d bytes", copied))
-			}); err != nil {
-				return nil, fmt.Errorf("copying NVRAM: %w", err)
+			copyNVRAM := true
+			if hasChangedSince {
+				copyNVRAM, err = pathChangedSince(nvramPath, changedSince)
+				if err != nil {
+					return nil, fmt.Errorf("checking NVRAM changes: %w", err)
+				}
 			}
-			result.Files = append(result.Files, backupFileInfo(nvramDest))
+			if copyNVRAM {
+				progress(item.Name, 90, "copying NVRAM")
+			}
+			if copyNVRAM {
+				nvramDest := filepath.Join(destDir, filepath.Base(nvramPath))
+				if err := copyFileWithProgress(nvramPath, nvramDest, func(copied int64) {
+					progress(item.Name, 92, fmt.Sprintf("copying NVRAM: %d bytes", copied))
+				}); err != nil {
+					return nil, fmt.Errorf("copying NVRAM: %w", err)
+				}
+				result.Files = append(result.Files, backupFileInfo(nvramDest))
+			}
 		}
 	}
 
@@ -143,11 +163,45 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 }
 
 // backupSnapshot performs a live snapshot-based backup using virsh.
-func (h *VMHandler) backupSnapshot(name string, diskPaths []string, destDir string, progress ProgressFunc, result *BackupResult) error {
+func (h *VMHandler) backupSnapshot(name string, disks []domainDisk, copyDisks []domainDisk, destDir string, progress ProgressFunc, result *BackupResult) error {
+	// Clean up stale snapshot overlays from a previous failed backup.
+	// If a prior run crashed after creating the snapshot but before
+	// blockcommit ran, the domain XML now points at .snap overlays.
+	// We blockcommit each stale overlay back into the base image so
+	// that diskPaths points at real data files again.
+	cleanDisks, err := h.cleanStaleSnapshots(name, disks, progress)
+	if err != nil {
+		// If any disk path ends in .snap, we cannot safely proceed — creating
+		// a snapshot would produce a .snap.snap double overlay.
+		for _, disk := range disks {
+			if strings.HasSuffix(disk.Path, ".snap") {
+				return fmt.Errorf("stale snapshot cleanup failed and disk paths contain .snap overlays: %w", err)
+			}
+		}
+		progress(name, 15, fmt.Sprintf("warning: stale snapshot cleanup: %v", err))
+		cleanDisks = disks
+	}
+
+	// If cleanup changed the disk paths (stale overlays were resolved),
+	// re-save domain.xml so a future restore uses the correct base paths.
+	if len(cleanDisks) > 0 && !sameDomainDisks(cleanDisks, disks) {
+		xmlDesc, xmlErr := virshOutput("dumpxml", name, "--security-info", "--inactive")
+		if xmlErr == nil {
+			xmlPath := filepath.Join(destDir, "domain.xml")
+			if writeErr := os.WriteFile(xmlPath, []byte(xmlDesc), 0644); writeErr != nil {
+				log.Printf("engine: warning: failed to re-save domain.xml after cleanup: %v", writeErr)
+			}
+		}
+	}
+	disks = cleanDisks
+
 	progress(name, 20, "creating external snapshot")
 
 	// Build snapshot XML.
-	snapshotXML := buildSnapshotXMLVirsh(name, diskPaths)
+	snapshotXML, err := buildSnapshotXML(name, disks)
+	if err != nil {
+		return fmt.Errorf("building snapshot XML: %w", err)
+	}
 
 	// Write snapshot XML to temp file.
 	tmpFile, err := os.CreateTemp("", "vault-snapshot-*.xml")
@@ -170,12 +224,13 @@ func (h *VMHandler) backupSnapshot(name string, diskPaths []string, destDir stri
 
 	// Copy the backing files (original disk images before snapshot).
 	// Use copyOrFlattenDisk to handle qcow2 overlays with backing chains.
-	totalDisks := len(diskPaths)
-	for i, diskPath := range diskPaths {
+	totalDisks := len(copyDisks)
+	for i, disk := range copyDisks {
+		diskPath := disk.Path
 		pct := 30 + (i*40)/max(totalDisks, 1)
 		progress(name, pct, fmt.Sprintf("copying disk %d/%d: %s", i+1, totalDisks, filepath.Base(diskPath)))
 
-		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
+		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", disk.Index, filepath.Ext(diskPath)))
 		if err := copyOrFlattenDisk(diskPath, destPath, func(copied int64) {
 			progress(name, pct, fmt.Sprintf("copying disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
@@ -186,12 +241,11 @@ func (h *VMHandler) backupSnapshot(name string, diskPaths []string, destDir stri
 
 	// Blockcommit snapshot overlays back.
 	progress(name, 75, "committing snapshot changes")
-	for i, diskPath := range diskPaths {
-		target := fmt.Sprintf("vd%c", 'a'+i)
-		snapshotOverlay := diskPath + ".snap"
-		if err := virshRun("blockcommit", name, target,
+	for _, disk := range disks {
+		snapshotOverlay := disk.Path + ".snap"
+		if err := virshRun("blockcommit", name, disk.Target,
 			"--active", "--delete", "--wait", "--verbose"); err != nil {
-			progress(name, 80, fmt.Sprintf("warning: blockcommit for %s: %v", filepath.Base(diskPath), err))
+			progress(name, 80, fmt.Sprintf("warning: blockcommit for %s: %v", filepath.Base(disk.Path), err))
 		}
 		if err := os.Remove(snapshotOverlay); err != nil && !os.IsNotExist(err) {
 			progress(name, 80, fmt.Sprintf("warning: failed to remove snapshot overlay %s: %v", snapshotOverlay, err))
@@ -202,7 +256,7 @@ func (h *VMHandler) backupSnapshot(name string, diskPaths []string, destDir stri
 }
 
 // backupCold performs a cold (shutdown) backup using virsh.
-func (h *VMHandler) backupCold(name, state string, diskPaths []string, destDir string, progress ProgressFunc, result *BackupResult) error {
+func (h *VMHandler) backupCold(name, state string, disks []domainDisk, destDir string, progress ProgressFunc, result *BackupResult) error {
 	wasRunning := state == "running" || state == "paused"
 
 	if wasRunning {
@@ -233,12 +287,13 @@ func (h *VMHandler) backupCold(name, state string, diskPaths []string, destDir s
 
 	// Copy disk images. Flatten qcow2 overlays with backing chains
 	// so the backup is fully self-contained.
-	totalDisks := len(diskPaths)
-	for i, diskPath := range diskPaths {
+	totalDisks := len(disks)
+	for i, disk := range disks {
+		diskPath := disk.Path
 		pct := 30 + (i*50)/max(totalDisks, 1)
 		progress(name, pct, fmt.Sprintf("copying disk %d/%d: %s", i+1, totalDisks, filepath.Base(diskPath)))
 
-		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
+		destPath := filepath.Join(destDir, fmt.Sprintf("vdisk%d%s", disk.Index, filepath.Ext(diskPath)))
 		if err := copyOrFlattenDisk(diskPath, destPath, func(copied int64) {
 			progress(name, pct, fmt.Sprintf("copying disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
@@ -269,7 +324,7 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 	}
 
 	// Parse the XML to find original disk paths.
-	diskPaths, nvramPath, err := parseDomainDisksVirsh(string(xmlData))
+	diskPaths, nvramPath, err := parseDomainDisks(string(xmlData))
 	if err != nil {
 		return fmt.Errorf("parsing domain XML: %w", err)
 	}
@@ -350,57 +405,134 @@ func virshOutput(args ...string) (string, error) {
 	return string(out), nil
 }
 
-// domainXMLVirsh is used for parsing domain XML to extract disk and NVRAM paths.
-type domainXMLVirsh struct {
-	XMLName xml.Name `xml:"domain"`
-	Devices struct {
-		Disks []struct {
-			Device string `xml:"device,attr"`
-			Source struct {
-				File string `xml:"file,attr"`
-			} `xml:"source"`
-		} `xml:"disk"`
-	} `xml:"devices"`
-	OS struct {
-		NVRAMs []struct {
-			Path string `xml:",chardata"`
-		} `xml:"nvram"`
-	} `xml:"os"`
+// stripSnapSuffix strips all trailing ".snap" suffixes from a path,
+// returning the base image path (e.g. "img.qcow2.snap.snap" → "img.qcow2").
+func stripSnapSuffix(path string) string {
+	for strings.HasSuffix(path, ".snap") {
+		path = strings.TrimSuffix(path, ".snap")
+	}
+	return path
 }
 
-// parseDomainDisksVirsh extracts disk image paths and NVRAM path from domain XML.
-func parseDomainDisksVirsh(xmlDesc string) (diskPaths []string, nvramPath string, err error) {
-	var d domainXMLVirsh
-	if err := xml.Unmarshal([]byte(xmlDesc), &d); err != nil {
-		return nil, "", fmt.Errorf("unmarshalling domain XML: %w", err)
+// cleanStaleSnapshots detects disk paths that are leftover snapshot overlays
+// (ending in ".snap") from a previous failed backup and resolves them back
+// to the base image. Handles chains of any depth (e.g. .snap.snap.snap).
+//
+// Strategy:
+//  1. If the overlay file exists on disk, try blockcommit to merge it back.
+//  2. If the overlay is missing or blockcommit fails, rewrite the domain XML
+//     to point directly at the base image and remove stale overlay files.
+func (h *VMHandler) cleanStaleSnapshots(name string, disks []domainDisk, progress ProgressFunc) ([]domainDisk, error) {
+	// Quick check: any stale overlays at all?
+	hasStale := false
+	for _, disk := range disks {
+		if strings.HasSuffix(disk.Path, ".snap") {
+			hasStale = true
+			break
+		}
+	}
+	if !hasStale {
+		return disks, nil
 	}
 
-	for _, disk := range d.Devices.Disks {
-		if disk.Device == "disk" && disk.Source.File != "" {
-			diskPaths = append(diskPaths, disk.Source.File)
+	needRedefine := false
+	for _, disk := range disks {
+		if !strings.HasSuffix(disk.Path, ".snap") {
+			continue
+		}
+
+		base := stripSnapSuffix(disk.Path)
+		log.Printf("engine: detected stale snapshot overlay %s, base image %s", disk.Path, base)
+		progress(name, 12, fmt.Sprintf("cleaning stale snapshot: %s", filepath.Base(disk.Path)))
+
+		// If the active overlay file exists on disk, try blockcommit first.
+		if _, statErr := os.Stat(disk.Path); statErr == nil {
+			if err := virshRun("blockcommit", name, disk.Target,
+				"--active", "--delete", "--wait", "--verbose"); err != nil {
+				log.Printf("engine: blockcommit failed for %s: %v, will redefine XML", disk.Path, err)
+				needRedefine = true
+			} else {
+				// Blockcommit succeeded. Remove overlay if --delete didn't.
+				if err := os.Remove(disk.Path); err != nil && !os.IsNotExist(err) {
+					log.Printf("engine: warning: failed to remove overlay %s: %v", disk.Path, err)
+				}
+				continue
+			}
+		} else {
+			log.Printf("engine: stale overlay %s not on disk, will redefine XML to use %s", disk.Path, base)
+			needRedefine = true
+		}
+
+		// Clean up any intermediate overlay files that may be lying around.
+		cur := disk.Path
+		for cur != base {
+			if err := os.Remove(cur); err == nil {
+				log.Printf("engine: removed stale overlay file %s", cur)
+			}
+			cur = strings.TrimSuffix(cur, ".snap")
 		}
 	}
 
-	if len(d.OS.NVRAMs) > 0 {
-		nvramPath = strings.TrimSpace(d.OS.NVRAMs[0].Path)
+	// If any disk needed XML rewrite (overlay missing or blockcommit failed),
+	// dump the domain XML, patch the disk source paths, and redefine.
+	if needRedefine {
+		progress(name, 14, "redefining domain XML to remove stale overlays")
+		xmlDesc, err := virshOutput("dumpxml", name, "--inactive")
+		if err != nil {
+			return nil, fmt.Errorf("reading domain XML for redefine: %w", err)
+		}
+
+		// Replace each stale overlay path (at any depth) with the base in the XML.
+		patchedXML := xmlDesc
+		for _, disk := range disks {
+			if !strings.HasSuffix(disk.Path, ".snap") {
+				continue
+			}
+			base := stripSnapSuffix(disk.Path)
+			// Replace from longest to shortest to avoid partial matches.
+			// Walking from the full path down strips each layer.
+			cur := disk.Path
+			for cur != base {
+				patchedXML = strings.ReplaceAll(patchedXML, cur, base)
+				cur = strings.TrimSuffix(cur, ".snap")
+			}
+		}
+
+		// Write patched XML and redefine the domain.
+		tmpFile, err := os.CreateTemp("", "vault-redefine-*.xml")
+		if err != nil {
+			return nil, fmt.Errorf("creating temp XML for redefine: %w", err)
+		}
+		if _, err := tmpFile.WriteString(patchedXML); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			return nil, fmt.Errorf("writing patched XML: %w", err)
+		}
+		tmpFile.Close()
+		defer os.Remove(tmpFile.Name())
+
+		if err := virshRun("define", tmpFile.Name()); err != nil {
+			return nil, fmt.Errorf("redefining domain with patched XML: %w", err)
+		}
+		log.Printf("engine: redefined domain %s to remove stale snapshot overlay paths", name)
 	}
 
-	return diskPaths, nvramPath, nil
-}
-
-// buildSnapshotXMLVirsh creates XML for an external disk-only snapshot.
-func buildSnapshotXMLVirsh(name string, diskPaths []string) string {
-	var disksXML strings.Builder
-	for _, dp := range diskPaths {
-		snapPath := dp + ".snap"
-		_, _ = fmt.Fprintf(&disksXML,
-			`<disk name="%s" snapshot="external"><source file="%s"/></disk>`,
-			dp, snapPath)
+	// Re-read domain XML to confirm the current paths.
+	xmlDesc, err := virshOutput("dumpxml", name, "--inactive")
+	if err != nil {
+		return nil, fmt.Errorf("re-reading domain XML after cleanup: %w", err)
+	}
+	finalDisks, _, err := parseDomainDisksWithTargets(xmlDesc)
+	if err != nil {
+		return nil, fmt.Errorf("re-parsing domain XML after cleanup: %w", err)
 	}
 
-	return fmt.Sprintf(`<domainsnapshot>
-  <name>vault-backup-%s</name>
-  <description>Vault backup snapshot</description>
-  <disks>%s</disks>
-</domainsnapshot>`, name, disksXML.String())
+	// Verify no paths still have .snap suffixes.
+	for _, disk := range finalDisks {
+		if strings.HasSuffix(disk.Path, ".snap") {
+			return nil, fmt.Errorf("disk %s still has .snap suffix after cleanup", disk.Path)
+		}
+	}
+
+	return finalDisks, nil
 }

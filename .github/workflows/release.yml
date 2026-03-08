@@ -90,17 +90,6 @@ jobs:
           echo "Package created: $PACKAGE_FILE"
           ls -lh "$PACKAGE_FILE"
 
-      - name: Calculate MD5 checksum
-        id: checksum
-        run: |
-          PACKAGE_FILE="build/vault-${{ steps.version.outputs.version }}.tgz"
-          MD5=$(md5sum "$PACKAGE_FILE" | awk '{print $1}')
-
-          echo "md5=$MD5" >> $GITHUB_OUTPUT
-          echo "MD5 checksum: $MD5"
-
-          echo "$MD5" > build/MD5SUM
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -109,10 +98,52 @@ jobs:
           generate_release_notes: true
           files: |
             build/vault-${{ steps.version.outputs.version }}.tgz
-            build/MD5SUM
           prerelease: ${{ steps.version.outputs.prerelease }}
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate GitHub-hosted MD5 checksum
+        id: checksum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          ASSET="vault-${VERSION}.tgz"
+          PACKAGE_FILE="/tmp/${ASSET}"
+
+          rm -f "$PACKAGE_FILE"
+
+          for attempt in 1 2 3 4 5; do
+            if gh release download "$TAG" --repo "${{ github.repository }}" --pattern "$ASSET" --dir /tmp; then
+              break
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              echo "ERROR: failed to download GitHub-hosted asset after $attempt attempts"
+              exit 1
+            fi
+
+            echo "Asset not available yet, retrying in 5 seconds..."
+            sleep 5
+          done
+
+          if command -v md5sum &> /dev/null; then
+            MD5=$(md5sum "$PACKAGE_FILE" | awk '{print $1}')
+          else
+            MD5=$(md5 -q "$PACKAGE_FILE")
+          fi
+
+          echo "md5=$MD5" >> $GITHUB_OUTPUT
+          echo "GitHub-hosted MD5 checksum: $MD5"
+
+          printf "%s\n" "$MD5" > build/MD5SUM
+
+      - name: Upload MD5 checksum asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.version.outputs.tag }}" build/MD5SUM --clobber --repo "${{ github.repository }}"
 
       - name: Update PLG file with MD5 hash
         run: |
@@ -151,5 +182,5 @@ jobs:
           echo "## v${{ steps.version.outputs.version }} Released!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Package:** vault-${{ steps.version.outputs.version }}.tgz" >> $GITHUB_STEP_SUMMARY
-          echo "**MD5:** ${{ steps.checksum.outputs.md5 }}" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub-hosted MD5:** ${{ steps.checksum.outputs.md5 }}" >> $GITHUB_STEP_SUMMARY
           echo "**URL:** https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY

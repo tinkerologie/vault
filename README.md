@@ -1,182 +1,246 @@
 # Vault
 
-Backup and restore daemon for [Unraid](https://unraid.net/) servers. Backs up Docker containers and libvirt VMs
-to pluggable storage destinations with a REST API, WebSocket real-time progress, and an integrated web UI.
+Backup and restore daemon for [Unraid](https://unraid.net/) servers.
+
+Vault backs up Docker containers, libvirt VMs, folders, and plugins to pluggable storage destinations.
+It ships with a REST API, a Streamable HTTP and stdio MCP server, WebSocket progress events, and an
+integrated web UI.
 
 ## Features
 
-- **Docker Container Backup & Restore** — Full image, config, and appdata volume backup via Docker SDK
-- **VM Backup & Restore** — Live snapshot and cold backup via libvirt
-- **Pluggable Storage** — Local, SFTP, SMB, and NFS backends
-- **Full, Incremental, and Differential** backup types with retention policies
-- **Cron-based Scheduling** — Flexible job scheduling with history tracking
-- **REST API** — Complete CRUD for jobs and storage destinations
-- **WebSocket** — Real-time progress streaming during backup/restore operations
-- **Unraid Web UI** — Dashboard, Jobs, Restore, Storage, History, and Settings pages
+- Docker container backup and restore with image, config, and appdata handling
+- VM backup and restore with snapshot and cold modes
+- Folder and plugin backup support
+- Full, incremental, and differential backup chains
+- Local, SFTP, SMB, and NFS storage backends
+- Cron-based scheduling with retention policies
+- Web UI with Dashboard, Jobs, Restore, Storage, History, Replication, Recovery, and Settings
+- WebSocket progress streaming and runner queue visibility
+- MCP tools for AI assistants and automation
 
 ## Requirements
 
-- **Go 1.26+** (for building from source)
-- **Unraid 7.0+** (target deployment platform)
-- **Ansible** (optional, for automated deployment)
+- Go 1.26 or newer to build from source
+- Unraid 7.0 or newer for the target deployment platform
+- Ansible for the automated deploy and verify workflow
 
 ## Quick Start
 
 ```bash
-# Install dependencies
 make deps
-
-# Build for current platform (development)
 make build-local
-
-# Run the daemon
 ./build/vault daemon --db=vault.db --addr=:24085
 ```
 
-The API will be available at `http://localhost:24085/api/v1/`.
+The REST API will be available at `http://localhost:24085/api/v1`.
 
-## Build
-
-```bash
-make deps          # Download and tidy Go modules
-make build         # Cross-compile for Linux/amd64 (CGO_ENABLED=0)
-make build-local   # Build for current platform
-make package       # Build and display binary info
-make clean         # Remove build artifacts
-```
-
-The production binary is built with `CGO_ENABLED=0` for a fully static, pure-Go binary using
-[modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (no C dependencies).
-
-## Testing
+## Build, Test, and Verify
 
 ```bash
-make test            # Run all tests
-make test-short      # Run short tests only
-make test-coverage   # Generate HTML coverage report
-
-# Run a single test
-go test ./internal/db/... -run TestJobCreate -v
+make deps                # Download and tidy Go modules
+make build-local         # Build for the current platform
+make build               # Lint -> test -> web build -> Linux/amd64 binary
+make test                # Run all unit tests
+make test-short          # Run short tests only
+make test-coverage       # Generate coverage.out and coverage.html
+make lint                # Run golangci-lint
+make security-check      # Run gosec, govulncheck, and go mod verify
+make pre-commit-run      # Run the full local quality gate
+make deploy              # Deploy to the configured Unraid server
+make verify              # Verify live REST, WebSocket, and MCP after deploy
+make redeploy            # Full lifecycle: uninstall -> build -> deploy -> verify
 ```
 
-## Linting & Security
+The production binary is built with `CGO_ENABLED=0` and uses
+[modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite), so it stays pure Go.
 
-```bash
-make lint              # Run golangci-lint
-make security-check    # Run gosec, govulncheck, go mod verify
-make pre-commit-run    # Run all pre-commit checks
-make pre-commit-install  # Install pre-commit hooks
-```
-
-## API
+## REST API
 
 Base URL: `http://<host>:24085/api/v1`
 
-| Method | Endpoint                    | Description                |
-| ------ | --------------------------- | -------------------------- |
-| GET    | `/health`                   | Health check               |
-| GET    | `/storage`                  | List storage destinations  |
-| POST   | `/storage`                  | Create storage destination |
-| GET    | `/storage/{id}`             | Get storage destination    |
-| PUT    | `/storage/{id}`             | Update storage destination |
-| DELETE | `/storage/{id}`             | Delete storage destination |
-| POST   | `/storage/{id}/test`        | Test storage connection    |
-| GET    | `/jobs`                     | List jobs                  |
-| POST   | `/jobs`                     | Create job                 |
-| GET    | `/jobs/{id}`                | Get job                    |
-| PUT    | `/jobs/{id}`                | Update job                 |
-| DELETE | `/jobs/{id}`                | Delete job                 |
-| GET    | `/jobs/{id}/history`        | Job run history            |
-| GET    | `/jobs/{id}/restore-points` | Restore points             |
-| GET    | `/ws`                       | WebSocket connection       |
+### Core and Auth
+
+| Method | Endpoint          | Description                                            |
+| ------ | ----------------- | ------------------------------------------------------ |
+| GET    | `/health`         | Basic health, version, and mode                        |
+| GET    | `/health/summary` | Aggregated dashboard health metrics                    |
+| GET    | `/auth/status`    | Whether external API clients require an API key        |
+| GET    | `/ws`             | WebSocket event stream                                 |
+| GET    | `/runner/status`  | Current backup or restore state, including queued jobs |
+
+### Jobs
+
+| Method | Endpoint                    | Description                                  |
+| ------ | --------------------------- | -------------------------------------------- |
+| GET    | `/jobs`                     | List jobs                                    |
+| POST   | `/jobs`                     | Create job                                   |
+| GET    | `/jobs/next-runs`           | Next scheduled run for every job             |
+| GET    | `/jobs/{id}`                | Get a job and its items                      |
+| PUT    | `/jobs/{id}`                | Update a job                                 |
+| DELETE | `/jobs/{id}`                | Delete a job                                 |
+| GET    | `/jobs/{id}/history`        | Job run history                              |
+| GET    | `/jobs/{id}/restore-points` | Restore points with chain health annotations |
+| POST   | `/jobs/{id}/run`            | Trigger an immediate backup                  |
+| POST   | `/jobs/{id}/restore`        | Trigger a restore                            |
+| GET    | `/jobs/{id}/next-run`       | Next scheduled run for one job               |
+
+### Storage
+
+| Method | Endpoint                   | Description                               |
+| ------ | -------------------------- | ----------------------------------------- |
+| GET    | `/storage`                 | List storage destinations                 |
+| POST   | `/storage`                 | Create storage destination                |
+| GET    | `/storage/{id}`            | Get storage destination                   |
+| PUT    | `/storage/{id}`            | Update storage destination                |
+| DELETE | `/storage/{id}`            | Delete storage destination                |
+| POST   | `/storage/{id}/test`       | Test storage connection                   |
+| POST   | `/storage/{id}/scan`       | Scan storage for importable backups       |
+| POST   | `/storage/{id}/import`     | Import backups discovered during scan     |
+| POST   | `/storage/{id}/restore-db` | Restore the Vault database from storage   |
+| GET    | `/storage/{id}/jobs`       | Jobs that depend on a storage destination |
+| GET    | `/storage/{id}/list`       | List files under a storage path           |
+| GET    | `/storage/{id}/files`      | Download a file from storage              |
+
+### Settings
+
+| Method | Endpoint                          | Description                       |
+| ------ | --------------------------------- | --------------------------------- |
+| GET    | `/settings`                       | List settings                     |
+| PUT    | `/settings`                       | Update settings                   |
+| GET    | `/settings/encryption`            | Encryption status                 |
+| POST   | `/settings/encryption`            | Set encryption passphrase         |
+| POST   | `/settings/encryption/verify`     | Verify encryption passphrase      |
+| GET    | `/settings/encryption/passphrase` | Read the configured passphrase    |
+| GET    | `/settings/api-key`               | API key status                    |
+| POST   | `/settings/api-key/generate`      | Generate the first API key        |
+| POST   | `/settings/api-key/rotate`        | Rotate the API key                |
+| DELETE | `/settings/api-key`               | Revoke the API key                |
+| GET    | `/settings/staging`               | Staging directory info            |
+| PUT    | `/settings/staging`               | Override the staging directory    |
+| GET    | `/settings/database`              | Database snapshot settings        |
+| PUT    | `/settings/database`              | Update database snapshot settings |
+| POST   | `/settings/discord/test`          | Test the Discord webhook          |
+
+### Discovery, Activity, Replication, and Recovery
+
+| Method | Endpoint                 | Description                        |
+| ------ | ------------------------ | ---------------------------------- |
+| GET    | `/browse`                | Browse filesystem paths            |
+| GET    | `/containers`            | Discover Docker containers         |
+| GET    | `/vms`                   | Discover VMs                       |
+| GET    | `/folders`               | Discover folder presets            |
+| GET    | `/plugins`               | Discover plugins                   |
+| GET    | `/activity`              | Activity log                       |
+| GET    | `/replication`           | List replication sources           |
+| POST   | `/replication`           | Create replication source          |
+| POST   | `/replication/test-url`  | Test a replication URL and API key |
+| GET    | `/replication/{id}`      | Get replication source             |
+| PUT    | `/replication/{id}`      | Update replication source          |
+| DELETE | `/replication/{id}`      | Delete replication source          |
+| POST   | `/replication/{id}/test` | Test replication connection        |
+| POST   | `/replication/{id}/sync` | Trigger replication immediately    |
+| GET    | `/replication/{id}/jobs` | List replicated jobs               |
+| GET    | `/recovery/plan`         | Recovery plan                      |
+
+## MCP
+
+Vault exposes MCP over two transports:
+
+- Streamable HTTP at `http://<host>:24085/api/v1/mcp`
+- Stdio via `vault mcp --db <path>`
+
+The MCP surface is intentionally curated rather than a 1:1 mirror of every REST route.
+It currently covers these tool groups:
+
+- Jobs: `list_jobs`, `get_job`, `create_job`, `update_job`, `delete_job`, `run_job`, `get_job_history`
+- Storage: `list_storage`, `get_storage`, `create_storage`, `update_storage`, `delete_storage`,
+  `test_storage`, `list_storage_files`
+- Discovery: `list_containers`, `list_vms`, `list_folders`, `list_plugins`
+- Status: `get_health`, `get_health_summary`, `get_runner_status`, `get_activity_log`
+- Restore: `list_restore_points`, `restore_item`
+- Replication overview: `list_replication`, `get_replication`, `delete_replication`
+
+REST remains the full management surface. Settings management, auth bootstrap, storage scan or import,
+file downloads, replication create or sync flows, and the recovery plan endpoint are REST-only today.
 
 ## Architecture
 
 ```text
-CLI (Cobra) → API Server (Chi + WebSocket Hub) → Handlers → DB / Storage / Engine
+CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / Engine
 ```
 
-| Layer     | Package               | Description                                      |
-| --------- | --------------------- | ------------------------------------------------ |
-| CLI       | `internal/cli/`       | Cobra commands (`vault daemon`)                  |
-| API       | `internal/api/`       | Chi router, REST handlers, WebSocket integration |
-| Database  | `internal/db/`        | SQLite with WAL mode (pure Go)                   |
-| Storage   | `internal/storage/`   | Pluggable adapters (Local, SFTP, SMB, NFS)       |
-| Engine    | `internal/engine/`    | Backup/restore logic (Docker, libvirt)           |
-| Scheduler | `internal/scheduler/` | Cron-based job scheduling                        |
-| WebSocket | `internal/ws/`        | Pub/sub hub for real-time events                 |
-| Notify    | `internal/notify/`    | Unraid notification integration                  |
-
-### Storage Backends
-
-| Backend | Config Key | Description                |
-| ------- | ---------- | -------------------------- |
-| Local   | `local`    | Local filesystem path      |
-| SFTP    | `sftp`     | SSH File Transfer Protocol |
-| SMB     | `smb`      | Windows/Samba file shares  |
-| NFS     | `nfs`      | Network File System shares |
-
-Storage adapters implement the `Adapter` interface and are instantiated via a factory pattern
-in `internal/storage/factory.go`.
-
-### Build Tags
-
-- `//go:build linux` — Real libvirt VM handler (`internal/engine/vm.go`)
-- `//go:build !linux` — Stub for macOS/Windows development (`internal/engine/vm_stub.go`)
+| Layer     | Package               | Description                                             |
+| --------- | --------------------- | ------------------------------------------------------- |
+| CLI       | `internal/cli/`       | Cobra commands including `vault daemon` and `vault mcp` |
+| API       | `internal/api/`       | Chi router, REST handlers, WebSocket integration        |
+| MCP       | `internal/mcp/`       | Model Context Protocol tools over HTTP and stdio        |
+| Database  | `internal/db/`        | SQLite with WAL mode                                    |
+| Storage   | `internal/storage/`   | Local, SFTP, SMB, and NFS adapters                      |
+| Engine    | `internal/engine/`    | Backup and restore logic                                |
+| Scheduler | `internal/scheduler/` | Cron-based scheduling                                   |
+| WebSocket | `internal/ws/`        | Real-time event hub                                     |
+| Notify    | `internal/notify/`    | Unraid notifications                                    |
 
 ## Deployment
 
 ### Unraid Plugin
 
-Install via the Unraid Community Applications or manually with the plugin URL:
+Install via the Unraid Community Applications store or manually with the plugin URL:
 
 ```text
-https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/vault.plg
+https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
 ```
 
 The daemon runs at `/usr/local/sbin/vault` with the database at
-`/boot/config/plugins/vault/vault.db`. Manage the service with:
+`/boot/config/plugins/vault/vault.db`.
+
+Service management:
 
 ```bash
-/etc/rc.d/rc.vault start|stop|restart|status
+/etc/rc.d/rc.vault start
+/etc/rc.d/rc.vault stop
+/etc/rc.d/rc.vault restart
+/etc/rc.d/rc.vault status
 ```
 
-### Ansible (Automated)
+### Ansible
 
 ```bash
 cd ansible
-cp inventory.yml.example inventory.yml   # Add your Unraid server details
-ansible-playbook -i inventory.yml ansible.yml --tags deploy    # Deploy only
-ansible-playbook -i inventory.yml ansible.yml --tags redeploy  # Full lifecycle
-ansible-playbook -i inventory.yml ansible.yml --tags verify    # Run tests
+cp inventory.yml.example inventory.yml
+ansible-playbook -i inventory.yml ansible.yml --tags deploy
+ansible-playbook -i inventory.yml ansible.yml --tags verify
 ```
 
-See [ansible/README.md](ansible/README.md) for full usage options.
+See [ansible/README.md](ansible/README.md) for the full deployment workflow.
 
 ## Project Structure
 
 ```text
 ├── cmd/vault/           # CLI entry point
 ├── internal/
-│   ├── api/            # HTTP server and REST handlers
-│   ├── cli/            # Cobra CLI commands
-│   ├── config/         # Enum constants and types
-│   ├── db/             # SQLite database and repositories
-│   ├── engine/         # Backup/restore logic
-│   ├── notify/         # Unraid notifications
-│   ├── scheduler/      # Cron job scheduler
-│   ├── storage/        # Storage backend adapters
-│   └── ws/             # WebSocket hub
-├── plugin/             # Unraid plugin files (.plg, PHP, JS, CSS)
-├── ansible/            # Deployment automation
-└── docs/plans/         # Design documents
+│   ├── api/             # HTTP server and REST handlers
+│   ├── cli/             # Cobra CLI commands
+│   ├── config/          # Enum constants and types
+│   ├── db/              # SQLite database and repositories
+│   ├── engine/          # Backup and restore logic
+│   ├── mcp/             # MCP tools and transports
+│   ├── notify/          # Unraid notifications
+│   ├── replication/     # Remote Vault replication
+│   ├── scheduler/       # Cron scheduler
+│   ├── storage/         # Storage backend adapters
+│   └── ws/              # WebSocket hub
+├── plugin/              # Unraid plugin files (.plg, PHP, JS, CSS)
+├── ansible/             # Deployment automation
+├── scripts/             # Local development and verification helpers
+├── web/                 # Svelte frontend
+└── docs/                # Specs and reference docs
 ```
 
 ## Version
 
-Date-based versioning (`YYYY.M.D`) tracked in the `VERSION` file and injected via ldflags at
-build time.
+Vault uses date-based versioning in `VERSION` with the format `YYYY.MM.PATCH`.
 
 ## License
 
-This project is a third-party community plugin for Unraid OS.
+Vault is a third-party community plugin for Unraid OS.

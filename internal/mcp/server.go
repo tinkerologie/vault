@@ -23,19 +23,35 @@ type MCPServer struct {
 	db     *db.DB
 	runner *runner.Runner
 	server *mcp.Server
+	config Config
+}
+
+// Config controls MCP metadata exposed to clients.
+type Config struct {
+	Version  string
+	ReadOnly bool
 }
 
 // New creates a new MCP server with all Vault tools registered.
-func New(database *db.DB, r *runner.Runner) *MCPServer {
+func New(database *db.DB, r *runner.Runner, configs ...Config) *MCPServer {
+	cfg := Config{Version: "dev"}
+	if len(configs) > 0 {
+		cfg = configs[0]
+		if cfg.Version == "" {
+			cfg.Version = "dev"
+		}
+	}
+
 	s := &MCPServer{
 		db:     database,
 		runner: r,
+		config: cfg,
 	}
 
 	mcpSrv := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "vault",
-			Version: "1.0.0",
+			Version: cfg.Version,
 		},
 		nil,
 	)
@@ -87,10 +103,12 @@ func (s *MCPServer) registerTools() {
 	s.addListContainersTool()
 	s.addListVMsTool()
 	s.addListFoldersTool()
+	s.addListPluginsTool()
 
 	// Health and status tools
 	s.addGetHealthTool()
 	s.addGetHealthSummaryTool()
+	s.addGetRunnerStatusTool()
 	s.addGetActivityLogTool()
 
 	// Restore tools
@@ -323,7 +341,27 @@ func (s *MCPServer) addGetHealthTool() {
 		Name:        "get_health",
 		Description: "Check the Vault server health status",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ getHealthInput) (*mcp.CallToolResult, any, error) {
-		r, _ := textResult(map[string]string{"status": "ok"})
+		mode := "daemon"
+		if s.config.ReadOnly {
+			mode = "replica"
+		}
+		r, _ := textResult(map[string]string{
+			"status":  "ok",
+			"version": s.config.Version,
+			"mode":    mode,
+		})
+		return r, nil, nil
+	})
+}
+
+type getRunnerStatusInput struct{}
+
+func (s *MCPServer) addGetRunnerStatusTool() {
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "get_runner_status",
+		Description: "Get the current backup or restore runner status, including queued jobs",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ getRunnerStatusInput) (*mcp.CallToolResult, any, error) {
+		r, _ := textResult(s.runner.Status())
 		return r, nil, nil
 	})
 }
@@ -362,11 +400,15 @@ func (s *MCPServer) addListRestorePointsTool() {
 		Name:        "list_restore_points",
 		Description: "List available restore points for a backup job",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input listRestorePointsInput) (*mcp.CallToolResult, any, error) {
+		job, err := s.db.GetJob(input.JobID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("getting job %d: %w", input.JobID, err)
+		}
 		rps, err := s.db.ListRestorePoints(input.JobID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing restore points: %w", err)
 		}
-		r, _ := textResult(rps)
+		r, _ := textResult(runner.AnnotateRestorePoints(job, rps))
 		return r, nil, nil
 	})
 }
@@ -684,6 +726,28 @@ func (s *MCPServer) addListFoldersTool() {
 		}
 		items, err := handler.ListItems()
 		if err != nil {
+			r, _ := textResult(map[string]any{"items": []any{}, "available": false, "error": err.Error()})
+			return r, nil, nil
+		}
+		r, _ := textResult(map[string]any{"items": items, "available": true})
+		return r, nil, nil
+	})
+}
+
+type listPluginsInput struct{}
+
+func (s *MCPServer) addListPluginsTool() {
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "list_plugins",
+		Description: "List installed Unraid plugins available for backup",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ listPluginsInput) (*mcp.CallToolResult, any, error) {
+		handler, err := engine.NewPluginHandler() //nolint:staticcheck // platform-dependent
+		if err != nil {                           //nolint:staticcheck // platform-dependent: stub returns error on non-Linux
+			r, _ := textResult(map[string]any{"items": []any{}, "available": false, "error": err.Error()})
+			return r, nil, nil
+		}
+		items, err := handler.ListItems() //nolint:staticcheck // platform-dependent
+		if err != nil {                   //nolint:staticcheck // platform-dependent: stub returns error on non-Linux
 			r, _ := textResult(map[string]any{"items": []any{}, "available": false, "error": err.Error()})
 			return r, nil, nil
 		}

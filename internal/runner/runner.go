@@ -27,12 +27,45 @@ import (
 )
 
 // Runner executes backup and restore operations for jobs.
+// RunStatus holds the state of the currently executing backup/restore.
+// It is returned by Runner.Status() so the API can inform late-joining
+// WebSocket clients or freshly loaded dashboards.
+type RunStatus struct {
+	Active      bool         `json:"active"`
+	JobID       int64        `json:"job_id,omitempty"`
+	RunID       int64        `json:"run_id,omitempty"`
+	JobName     string       `json:"job_name,omitempty"`
+	RunType     string       `json:"run_type,omitempty"`
+	ItemsTotal  int          `json:"items_total,omitempty"`
+	ItemsDone   int          `json:"items_done,omitempty"`
+	ItemsFailed int          `json:"items_failed,omitempty"`
+	StartedAt   string       `json:"started_at,omitempty"`
+	CurrentItem string       `json:"current_item,omitempty"`
+	Queue       []QueueEntry `json:"queue,omitempty"`
+}
+
+// QueueEntry represents a job waiting to run.
+type QueueEntry struct {
+	JobID    int64  `json:"job_id"`
+	JobName  string `json:"job_name"`
+	QueuedAt string `json:"queued_at"`
+}
+
+// Runner executes backup and restore operations for jobs.
 type Runner struct {
 	db              *db.DB
 	hub             *ws.Hub
 	serverKey       []byte // AES-256 key for unsealing secrets.
 	snapshotManager *db.SnapshotManager
 	mu              sync.Mutex
+
+	// statusMu protects the live run status fields below.
+	statusMu   sync.RWMutex
+	currentRun *RunStatus
+
+	// queueMu protects the pending job queue.
+	queueMu sync.Mutex
+	queue   []QueueEntry
 }
 
 // New creates a new Runner.
@@ -42,6 +75,42 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 		hub:       hub,
 		serverKey: serverKey,
 	}
+}
+
+// Status returns a snapshot of the currently running backup/restore, or
+// an inactive status if nothing is running. Safe to call concurrently.
+func (r *Runner) Status() RunStatus {
+	r.statusMu.RLock()
+	var s RunStatus
+	if r.currentRun != nil {
+		s = *r.currentRun
+	}
+	r.statusMu.RUnlock()
+
+	r.queueMu.Lock()
+	if len(r.queue) > 0 {
+		s.Queue = make([]QueueEntry, len(r.queue))
+		copy(s.Queue, r.queue)
+	}
+	r.queueMu.Unlock()
+
+	return s
+}
+
+func (r *Runner) setRunStatus(s *RunStatus) {
+	r.statusMu.Lock()
+	r.currentRun = s
+	r.statusMu.Unlock()
+}
+
+func (r *Runner) updateRunProgress(done, failed int, currentItem string) {
+	r.statusMu.Lock()
+	if r.currentRun != nil {
+		r.currentRun.ItemsDone = done
+		r.currentRun.ItemsFailed = failed
+		r.currentRun.CurrentItem = currentItem
+	}
+	r.statusMu.Unlock()
 }
 
 // SetSnapshotManager sets the snapshot manager used to persist the database
@@ -54,8 +123,37 @@ func (r *Runner) SetSnapshotManager(sm *db.SnapshotManager) {
 // a goroutine. It creates the job_run record, performs backups for each item,
 // updates progress via WebSocket, and creates restore points on success.
 func (r *Runner) RunJob(jobID int64) {
+	// Look up the job name before queuing so the queue entry is informative.
+	jobName := fmt.Sprintf("Job #%d", jobID)
+	if j, err := r.db.GetJob(jobID); err == nil {
+		jobName = j.Name
+	}
+
+	entry := QueueEntry{
+		JobID:    jobID,
+		JobName:  jobName,
+		QueuedAt: time.Now().Format(time.RFC3339),
+	}
+	r.queueMu.Lock()
+	r.queue = append(r.queue, entry)
+	r.queueMu.Unlock()
+
+	r.broadcastQueueUpdate()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Remove ourselves from the queue now that we hold the lock.
+	r.queueMu.Lock()
+	for i, e := range r.queue {
+		if e.JobID == jobID && e.QueuedAt == entry.QueuedAt {
+			r.queue = append(r.queue[:i], r.queue[i+1:]...)
+			break
+		}
+	}
+	r.queueMu.Unlock()
+
+	r.broadcastQueueUpdate()
 
 	job, err := r.db.GetJob(jobID)
 	if err != nil {
@@ -93,6 +191,7 @@ func (r *Runner) RunJob(jobID int64) {
 
 	// Recover from panics so the run is marked failed instead of staying "running" forever.
 	defer func() {
+		r.setRunStatus(nil)
 		if rec := recover(); rec != nil {
 			log.Printf("runner: PANIC during job %d run %d: %v", jobID, runID, rec)
 			run.Status = "failed"
@@ -114,6 +213,16 @@ func (r *Runner) RunJob(jobID int64) {
 		"job_id":      jobID,
 		"run_id":      runID,
 		"items_total": len(items),
+	})
+
+	r.setRunStatus(&RunStatus{
+		Active:     true,
+		JobID:      jobID,
+		RunID:      runID,
+		JobName:    job.Name,
+		RunType:    "backup",
+		ItemsTotal: len(items),
+		StartedAt:  time.Now().Format(time.RFC3339),
 	})
 
 	r.logActivity("info", "backup", fmt.Sprintf("Backup started: %s", job.Name),
@@ -257,15 +366,14 @@ func (r *Runner) RunJob(jobID int64) {
 			backupItem.Settings["backup_mode"] = job.VMMode
 		}
 
+		if btResult.ParentRP != nil && (item.ItemType == "container" || item.ItemType == "vm" || item.ItemType == "folder") {
+			backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
+		}
+
 		// Folder items need the path from settings.
 		if item.ItemType == "folder" {
 			backupItem.Settings["path"] = settings["path"]
 			backupItem.Settings["preset"] = settings["preset"]
-			// For incremental/differential: pass the reference timestamp so the
-			// folder handler can skip files that haven't changed.
-			if btResult.ParentRP != nil {
-				backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
-			}
 		}
 
 		itemPath := filepath.Join(basePath, item.ItemName)
@@ -279,6 +387,8 @@ func (r *Runner) RunJob(jobID int64) {
 			"items_total": len(items),
 			"items_done":  itemsDone,
 		})
+
+		r.updateRunProgress(itemsDone, itemsFailed, item.ItemName)
 
 		result, checksums, backupErr := r.backupItem(backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression)
 		if backupErr != nil {
@@ -361,6 +471,7 @@ func (r *Runner) RunJob(jobID int64) {
 
 		// Update in-flight progress so the UI reflects real-time counts.
 		_ = r.db.UpdateJobRunProgress(runID, itemsDone, itemsFailed, totalSize)
+		r.updateRunProgress(itemsDone, itemsFailed, "")
 	}
 
 	// stop_all mode: restart all containers that were stopped before the loop.
@@ -441,6 +552,18 @@ func (r *Runner) RunJob(jobID int64) {
 			"items":        itemsDone,
 			"items_failed": itemsFailed,
 			"job_name":     job.Name,
+		}
+		// Store per-item sizes so the restore wizard can show individual item sizes.
+		itemSizes := make(map[string]int64, len(itemResults))
+		for _, res := range itemResults {
+			name, _ := res["name"].(string)
+			size, _ := res["size_bytes"].(int64)
+			if name != "" && size > 0 {
+				itemSizes[name] = size
+			}
+		}
+		if len(itemSizes) > 0 {
+			rpMeta["item_sizes"] = itemSizes
 		}
 		if job.VerifyBackup && len(itemChecksums) > 0 {
 			rpMeta["checksums"] = itemChecksums
@@ -710,6 +833,15 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		"items_total": len(targets),
 	})
 
+	r.setRunStatus(&RunStatus{
+		Active:     true,
+		JobID:      restorePoint.JobID,
+		RunID:      runID,
+		RunType:    "restore",
+		ItemsTotal: len(targets),
+		StartedAt:  time.Now().Format(time.RFC3339),
+	})
+
 	r.logActivity("info", "restore",
 		fmt.Sprintf("Restore started: %d item(s) from restore point %d", len(targets), restorePoint.ID),
 		structuredDetails(map[string]any{
@@ -722,6 +854,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 
 	// Recover from panics so the run is marked failed.
 	defer func() {
+		r.setRunStatus(nil)
 		if rec := recover(); rec != nil {
 			log.Printf("runner: PANIC during restore run %d: %v", runID, rec)
 			run.Status = "failed"
@@ -847,6 +980,9 @@ func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, d
 		if err != nil {
 			return fmt.Errorf("building restore chain: %w", err)
 		}
+		if usesMergedRestoreChain(itemType) {
+			return r.restoreMergedChain(chain, itemName, itemType, destination, passphrase)
+		}
 		for i, rp := range chain {
 			log.Printf("runner: restoring chain step %d/%d (type=%s, id=%d)",
 				i+1, len(chain), rp.BackupType, rp.ID)
@@ -859,8 +995,50 @@ func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, d
 	return r.restoreSinglePoint(restorePoint, itemName, itemType, destination, passphrase)
 }
 
+func usesMergedRestoreChain(itemType string) bool {
+	switch itemType {
+	case "container", "vm":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType, destination, passphrase string) error {
+	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
+	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer cleanup()
+
+	for i, rp := range chain {
+		log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
+		if err := r.stageRestorePointItem(rp, itemName, tmpDir, passphrase); err != nil {
+			return fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
+		}
+	}
+
+	return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir)
+}
+
 // restoreSinglePoint restores a single restore point (without chain logic).
 func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string) error {
+	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
+	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer cleanup()
+
+	if err := r.stageRestorePointItem(restorePoint, itemName, tmpDir, passphrase); err != nil {
+		return err
+	}
+
+	return r.restoreStagedItem(restorePoint.JobID, itemName, itemType, destination, tmpDir)
+}
+
+func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, tmpDir, passphrase string) error {
 	job, err := r.db.GetJob(restorePoint.JobID)
 	if err != nil {
 		return fmt.Errorf("getting job: %w", err)
@@ -881,13 +1059,6 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 
 	// Parse checksums from restore point metadata for verification.
 	expectedChecksums := r.parseItemChecksums(restorePoint.Metadata, itemName)
-
-	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
-	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config}, stageOverride)
-	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
-	}
-	defer cleanup()
 
 	files, err := adapter.List(itemStoragePath)
 	if err != nil {
@@ -920,14 +1091,14 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 			localName = strings.TrimSuffix(localName, ".age")
 		}
 
-		// Decompress if the file has a compression extension (.gz, .zst).
-		decompressed, closeDecompress, decmpErr := decompressReader(dataReader, localName)
+		// Decompress the transport layer using the job's configured compression.
+		decompressed, closeDecompress, restoredName, decmpErr := decompressStoredReader(dataReader, localName, job.Compression)
 		if decmpErr != nil {
 			reader.Close()
 			return fmt.Errorf("decompressing %s: %w", fi.Path, decmpErr)
 		}
 		dataReader = decompressed
-		localName = strings.TrimSuffix(strings.TrimSuffix(localName, ".gz"), ".zst")
+		localName = restoredName
 
 		localPath := filepath.Join(tmpDir, localName)
 		out, err := os.Create(localPath)
@@ -955,7 +1126,12 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 		}
 	}
 
+	return nil
+}
+
+func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination, tmpDir string) error {
 	var handler engine.Handler
+	var err error
 	switch itemType {
 	case "container":
 		handler, err = engine.NewContainerHandler()
@@ -990,7 +1166,7 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 
 	// For folder items, load the path from job items settings.
 	if itemType == "folder" {
-		jobItems, itemsErr := r.db.GetJobItems(restorePoint.JobID)
+		jobItems, itemsErr := r.db.GetJobItems(jobID)
 		if itemsErr == nil {
 			for _, ji := range jobItems {
 				if ji.ItemName == itemName && ji.ItemType == "folder" {
@@ -1022,6 +1198,19 @@ func (r *Runner) broadcast(data map[string]any) {
 		return
 	}
 	r.hub.Broadcast(msg)
+}
+
+// broadcastQueueUpdate sends the current queue state to all WebSocket clients.
+func (r *Runner) broadcastQueueUpdate() {
+	r.queueMu.Lock()
+	q := make([]QueueEntry, len(r.queue))
+	copy(q, r.queue)
+	r.queueMu.Unlock()
+
+	r.broadcast(map[string]any{
+		"type":  "queue_update",
+		"queue": q,
+	})
 }
 
 // logActivity writes an activity log entry and broadcasts it via WebSocket
@@ -1324,37 +1513,22 @@ func (r *Runner) enforceRetention(dest db.StorageDestination, jobID int64, keepC
 	}
 	defer storage.CloseAdapter(adapter)
 
-	// Count-based retention: keep most recent N restore points.
-	if keepCount > 0 {
-		oldRPs, err := r.db.GetOldRestorePoints(jobID, keepCount)
-		if err != nil {
-			log.Printf("runner: failed to get old restore points for job %d: %v", jobID, err)
-		} else {
-			for _, rp := range oldRPs {
-				if adapter != nil && rp.StoragePath != "" {
-					r.deleteStorageDir(adapter, rp.StoragePath)
-				}
-			}
-			if err := r.db.DeleteOldRestorePoints(jobID, keepCount); err != nil {
-				log.Printf("runner: failed to delete old restore points for job %d: %v", jobID, err)
-			}
-		}
+	allRestorePoints, err := r.db.ListRestorePoints(jobID)
+	if err != nil {
+		log.Printf("runner: failed to list restore points for job %d: %v", jobID, err)
+		return
 	}
 
-	// Days-based retention: delete restore points older than N days.
-	if keepDays > 0 {
-		expiredRPs, err := r.db.GetExpiredRestorePoints(jobID, keepDays)
-		if err != nil {
-			log.Printf("runner: failed to get expired restore points for job %d: %v", jobID, err)
-		} else {
-			for _, rp := range expiredRPs {
-				if adapter != nil && rp.StoragePath != "" {
-					r.deleteStorageDir(adapter, rp.StoragePath)
-				}
-			}
-			if err := r.db.DeleteExpiredRestorePoints(jobID, keepDays); err != nil {
-				log.Printf("runner: failed to delete expired restore points for job %d: %v", jobID, err)
-			}
+	protected := protectedRestorePointIDs(allRestorePoints, keepCount, keepDays, time.Now())
+	for _, rp := range allRestorePoints {
+		if _, ok := protected[rp.ID]; ok {
+			continue
+		}
+		if adapter != nil && rp.StoragePath != "" {
+			r.deleteStorageDir(adapter, rp.StoragePath)
+		}
+		if err := r.db.DeleteRestorePoint(rp.ID); err != nil {
+			log.Printf("runner: failed to delete restore point %d for job %d: %v", rp.ID, jobID, err)
 		}
 	}
 }
@@ -1807,7 +1981,7 @@ func (r *Runner) buildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error
 		parent, err := r.db.GetRestorePoint(current.ParentRestorePointID)
 		if err != nil {
 			if err == sql.ErrNoRows {
-				break
+				return nil, fmt.Errorf("missing parent restore point %d for restore point %d", current.ParentRestorePointID, current.ID)
 			}
 			return nil, fmt.Errorf("getting parent restore point %d: %w", current.ParentRestorePointID, err)
 		}
@@ -1819,6 +1993,53 @@ func (r *Runner) buildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error
 		chain[i], chain[j] = chain[j], chain[i]
 	}
 	return chain, nil
+}
+
+func protectedRestorePointIDs(all []db.RestorePoint, keepCount, keepDays int, now time.Time) map[int64]struct{} {
+	protected := make(map[int64]struct{}, len(all))
+	if len(all) == 0 {
+		return protected
+	}
+
+	candidates := all
+	if keepCount > 0 && keepCount < len(candidates) {
+		candidates = candidates[:keepCount]
+	}
+	if keepDays > 0 {
+		cutoff := now.AddDate(0, 0, -keepDays)
+		filtered := make([]db.RestorePoint, 0, len(candidates))
+		for _, rp := range candidates {
+			if !rp.CreatedAt.Before(cutoff) {
+				filtered = append(filtered, rp)
+			}
+		}
+		candidates = filtered
+	}
+
+	byID := make(map[int64]db.RestorePoint, len(all))
+	for _, rp := range all {
+		byID[rp.ID] = rp
+	}
+
+	for _, rp := range candidates {
+		current := rp
+		for {
+			if _, ok := protected[current.ID]; ok {
+				break
+			}
+			protected[current.ID] = struct{}{}
+			if current.ParentRestorePointID <= 0 {
+				break
+			}
+			parent, ok := byID[current.ParentRestorePointID]
+			if !ok {
+				break
+			}
+			current = parent
+		}
+	}
+
+	return protected
 }
 
 // hasContainerItems returns true if any item in the list is a container.

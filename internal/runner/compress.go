@@ -4,8 +4,14 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/klauspost/compress/zstd"
+)
+
+var (
+	_ = decompressReader
+	_ = fileCompressionExt
 )
 
 // compressWriter wraps a writer with the specified compression and returns the
@@ -58,6 +64,28 @@ func decompressReader(r io.Reader, fileName string) (io.Reader, func() error, er
 
 	default:
 		return r, func() error { return nil }, nil
+	}
+}
+
+// decompressStoredReader unwraps the transport compression configured for the
+// job. This avoids misclassifying intrinsic artifact extensions like .tar.gz
+// as transport compression when the job itself was stored with compression=none.
+func decompressStoredReader(r io.Reader, fileName, compression string) (io.Reader, func() error, string, error) {
+	switch compression {
+	case "gzip":
+		gr, err := gzip.NewReader(r)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("creating gzip reader: %w", err)
+		}
+		return gr, gr.Close, strings.TrimSuffix(fileName, ".gz"), nil
+	case "zstd":
+		zr, err := zstd.NewReader(r)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("creating zstd reader: %w", err)
+		}
+		return zr, func() error { zr.Close(); return nil }, strings.TrimSuffix(fileName, ".zst"), nil
+	default:
+		return r, func() error { return nil }, fileName, nil
 	}
 }
 

@@ -4,8 +4,8 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { relTimeUntil, formatSpeed } from '../lib/utils.js'
-  import { getProgress, handleProgressMessage } from '../lib/progress.svelte.js'
+  import { relTime, relTimeUntil, formatSpeed } from '../lib/utils.js'
+  import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import Toast from '../components/Toast.svelte'
   import Welcome from '../components/Welcome.svelte'
@@ -53,6 +53,8 @@
 
   onMount(() => {
     loadDashboard()
+    // Restore progress overlay if a backup/restore is already running.
+    api.getRunnerStatus().then(s => restoreFromStatus(s)).catch(() => {})
     const unsub = onWsMessage((msg) => {
       const jobNameResolver = (id) => jobs.find(j => j.id === id)?.name
       handleProgressMessage(msg, jobNameResolver)
@@ -434,6 +436,29 @@
           {#if progressItems.length === 0}
             <p class="text-sm text-text-muted text-center py-2">Preparing backup...</p>
           {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Queued Jobs -->
+    {#if progress.queue.length > 0}
+      <div class="bg-surface-2 border border-border rounded-xl mb-8 overflow-hidden">
+        <div class="px-5 py-3 border-b border-border flex items-center gap-3">
+          <svg class="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+          <h2 class="text-sm font-semibold text-text">Queued</h2>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-surface-4 text-text-dim font-medium">{progress.queue.length}</span>
+        </div>
+        <div class="divide-y divide-border">
+          {#each progress.queue as entry (entry.job_id + entry.queued_at)}
+            <div class="px-5 py-3 flex items-center gap-3">
+              <div class="w-2 h-2 rounded-full bg-warning/60 shrink-0"></div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-text truncate">{entry.job_name}</p>
+                <p class="text-xs text-text-dim">Waiting for current job to finish</p>
+              </div>
+              <span class="text-xs text-text-dim shrink-0">queued {relTime(entry.queued_at)}</span>
+            </div>
+          {/each}
         </div>
       </div>
     {/if}

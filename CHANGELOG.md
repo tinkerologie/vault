@@ -4,9 +4,27 @@ All notable changes to the Vault plugin will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project uses date-based versioning (`YYYY.MM.PATCH`).
 
+## [Unreleased]
+
+### Added in Unreleased
+
+- MCP tools for plugin discovery and runner status
+- Restore-point chain health annotations in the API and MCP restore-point listings
+
+### Changed in Unreleased
+
+- MCP health output now includes version and mode, aligned with the REST `/health` response
+- README refreshed to document the current REST API, MCP transports, and tool coverage
+- `make verify` now exercises MCP streamable HTTP via the official Go SDK client
+
+### Fixed in Unreleased
+
+- Restore-point docs now reflect chain health and retention-preserved parents
+- Repository URLs now point at `ruaan-deysel/vault`
+
 ## [2026.03.00] - 2026-03-02
 
-### Added
+### Added in 2026.03.00
 
 - Full backup/restore engine for Docker containers, libvirt VMs, and folders
 - Storage backends: Local, SMB, NFS, SFTP, NFS
@@ -25,13 +43,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Proper Unraid plugin bundle pattern with MD5 verification
 - GitHub Actions release workflow with automatic PLG MD5 update
 
-### Fixed
+### Fixed in 2026.03.00
 
 - Backup trend chart no longer includes failed runs with partial sizes
 
 ## [0.1.0] - 2025-01-01
 
-### Added
+### Added in 0.1.0
 
 - Initial release
 - Docker container backup and restore (full image + config + appdata)
@@ -41,5 +59,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Job scheduling with retention policies
 - Web UI with Dashboard, Jobs, Restore, Storage, History, Settings
 
+[Unreleased]: https://github.com/ruaan-deysel/vault/compare/v2026.03.00...HEAD
 [2026.03.00]: https://github.com/ruaan-deysel/vault/releases/tag/v2026.03.00
 [0.1.0]: https://github.com/ruaan-deysel/vault/releases/tag/v0.1.0

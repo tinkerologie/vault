@@ -62,6 +62,9 @@ export const api = {
   getNextRuns: () => request('GET', '/jobs/next-runs'),
   getNextRun: (id) => request('GET', `/jobs/${id}/next-run`),
 
+  // Runner
+  getRunnerStatus: () => request('GET', '/runner/status'),
+
   // Discovery
   browse: (path = '') => request('GET', `/browse${path ? '?path=' + encodeURIComponent(path) : ''}`),
   browseFiles: (path = '') => request('GET', `/browse?files=true${path ? '&path=' + encodeURIComponent(path) : ''}`),

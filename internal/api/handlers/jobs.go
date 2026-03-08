@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -157,12 +158,21 @@ func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 
 func (h *JobHandler) GetRestorePoints(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	job, err := h.db.GetJob(id)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	rps, err := h.db.ListRestorePoints(id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, rps)
+	respondJSON(w, http.StatusOK, runner.AnnotateRestorePoints(job, rps))
 }
 
 // RunNow triggers an immediate backup run for a job.
@@ -183,6 +193,13 @@ func (h *JobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 		"message": "backup started",
 		"job_id":  id,
 	})
+}
+
+// RunnerStatus returns the current state of the backup/restore runner.
+//
+//	GET /api/v1/runner/status
+func (h *JobHandler) RunnerStatus(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, h.runner.Status())
 }
 
 // Restore triggers a restore from a specific restore point.

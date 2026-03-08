@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -78,6 +79,13 @@ func TestShouldSkipVolume(t *testing.T) {
 		// Root /mnt — skipped.
 		{"root mnt", "/mnt", true, "root /mnt mount"},
 
+		// Device and virtual filesystem paths — skipped.
+		{"dev rtc", "/dev/rtc", true, "device/virtual path (/dev)"},
+		{"dev dri", "/dev/dri", true, "device/virtual path (/dev)"},
+		{"proc", "/proc/self/fd", true, "device/virtual path (/proc)"},
+		{"sys", "/sys/class/net", true, "device/virtual path (/sys)"},
+		{"run", "/run/udev", true, "device/virtual path (/run)"},
+
 		// Other system paths — backed up.
 		{"tmp", "/tmp/something", false, ""},
 		{"etc", "/etc/localtime", false, ""},
@@ -95,5 +103,66 @@ func TestShouldSkipVolume(t *testing.T) {
 				t.Errorf("shouldSkipVolume(%q) reason = %q, want %q", tt.source, gotReason, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestRunWithRestartRestartsAfterBackupFailure(t *testing.T) {
+	t.Parallel()
+
+	backupErr := errors.New("backup failed")
+	var restartCalled bool
+
+	err := runWithRestart(true, "plex", func(string, int, string) {}, func() error {
+		return backupErr
+	}, func() error {
+		restartCalled = true
+		return nil
+	})
+
+	if !restartCalled {
+		t.Fatal("expected restart to be attempted after backup failure")
+	}
+	if !errors.Is(err, backupErr) {
+		t.Fatalf("expected backup error, got %v", err)
+	}
+}
+
+func TestRunWithRestartJoinsRestartError(t *testing.T) {
+	t.Parallel()
+
+	backupErr := errors.New("backup failed")
+	restartErr := errors.New("start failed")
+
+	err := runWithRestart(true, "plex", func(string, int, string) {}, func() error {
+		return backupErr
+	}, func() error {
+		return restartErr
+	})
+
+	if !errors.Is(err, backupErr) {
+		t.Fatalf("expected joined error to include backup failure, got %v", err)
+	}
+	if !errors.Is(err, restartErr) {
+		t.Fatalf("expected joined error to include restart failure, got %v", err)
+	}
+}
+
+func TestRunWithRestartSkipsRestartWhenNotNeeded(t *testing.T) {
+	t.Parallel()
+
+	var restartCalled bool
+
+	err := runWithRestart(false, "plex", func(string, int, string) {}, func() error {
+		return nil
+	}, func() error {
+		restartCalled = true
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if restartCalled {
+		t.Fatal("expected restart to be skipped")
 	}
 }

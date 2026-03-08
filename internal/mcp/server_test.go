@@ -26,7 +26,7 @@ func setupTest(t *testing.T) (*mcp.ClientSession, *db.DB) {
 	go hub.Run()
 
 	r := runner.New(database, hub, nil)
-	srv := New(database, r)
+	srv := New(database, r, Config{Version: "test-version"})
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 
@@ -64,8 +64,8 @@ func TestListTools(t *testing.T) {
 	expected := []string{
 		"list_jobs", "get_job", "create_job", "update_job", "delete_job", "run_job", "get_job_history",
 		"list_storage", "get_storage", "create_storage", "update_storage", "delete_storage", "test_storage", "list_storage_files",
-		"list_containers", "list_vms", "list_folders",
-		"get_health", "get_health_summary", "get_activity_log",
+		"list_containers", "list_vms", "list_folders", "list_plugins",
+		"get_health", "get_health_summary", "get_runner_status", "get_activity_log",
 		"list_restore_points", "restore_item",
 		"list_replication", "get_replication", "delete_replication",
 	}
@@ -254,6 +254,14 @@ func TestHealthTools(t *testing.T) {
 	if status != "ok" {
 		t.Errorf("get_health status = %q, want %q", status, "ok")
 	}
+	version := jsonField[string](t, healthResult, "version")
+	if version != "test-version" {
+		t.Errorf("get_health version = %q, want %q", version, "test-version")
+	}
+	mode := jsonField[string](t, healthResult, "mode")
+	if mode != "daemon" {
+		t.Errorf("get_health mode = %q, want %q", mode, "daemon")
+	}
 
 	// get_health_summary
 	summaryResult := callTool(t, session, ctx, "get_health_summary", nil)
@@ -261,6 +269,12 @@ func TestHealthTools(t *testing.T) {
 	// With no jobs, score should be 0.
 	if score != 0 {
 		t.Errorf("get_health_summary health_score = %v, want 0", score)
+	}
+
+	statusResult := callTool(t, session, ctx, "get_runner_status", nil)
+	active := jsonField[bool](t, statusResult, "active")
+	if active {
+		t.Error("get_runner_status active = true, want false")
 	}
 }
 
@@ -270,7 +284,7 @@ func TestDiscoverTools(t *testing.T) {
 	defer cancel()
 
 	// These tools should return gracefully even if Docker/libvirt aren't available.
-	for _, tool := range []string{"list_containers", "list_vms", "list_folders"} {
+	for _, tool := range []string{"list_containers", "list_vms", "list_folders", "list_plugins"} {
 		t.Run(tool, func(t *testing.T) {
 			result := callTool(t, session, ctx, tool, nil)
 			// Should have "items" and "available" keys, not an error.
@@ -285,6 +299,84 @@ func TestDiscoverTools(t *testing.T) {
 				t.Errorf("%s result missing 'available' key", tool)
 			}
 		})
+	}
+}
+
+func TestListRestorePointsAnnotated(t *testing.T) {
+	session, database := setupTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	now := time.Now().UTC()
+
+	destID, err := database.CreateStorageDestination(db.StorageDestination{
+		Name:   "local",
+		Type:   "local",
+		Config: `{"path":"/tmp/vault-test"}`,
+	})
+	if err != nil {
+		t.Fatalf("creating storage: %v", err)
+	}
+	jobID, err := database.CreateJob(db.Job{Name: "chain", StorageDestID: destID, RetentionCount: 1})
+	if err != nil {
+		t.Fatalf("creating job: %v", err)
+	}
+	runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "completed", BackupType: "full", ItemsTotal: 1})
+	if err != nil {
+		t.Fatalf("creating run: %v", err)
+	}
+	fullID, err := database.CreateRestorePoint(db.RestorePoint{
+		JobRunID:    runID,
+		JobID:       jobID,
+		BackupType:  "full",
+		StoragePath: "/backups/full",
+		Metadata:    "{}",
+		SizeBytes:   100,
+	})
+	if err != nil {
+		t.Fatalf("creating full restore point: %v", err)
+	}
+	_, err = database.Exec(`UPDATE restore_points SET created_at = ? WHERE id = ?`, now.Add(-time.Hour), fullID)
+	if err != nil {
+		t.Fatalf("dating full restore point: %v", err)
+	}
+	incrID, err := database.CreateRestorePoint(db.RestorePoint{
+		JobRunID:             runID,
+		JobID:                jobID,
+		BackupType:           "incremental",
+		StoragePath:          "/backups/inc",
+		Metadata:             "{}",
+		SizeBytes:            50,
+		ParentRestorePointID: fullID,
+	})
+	if err != nil {
+		t.Fatalf("creating incremental restore point: %v", err)
+	}
+	_, err = database.Exec(`UPDATE restore_points SET created_at = ? WHERE id = ?`, now, incrID)
+	if err != nil {
+		t.Fatalf("dating incremental restore point: %v", err)
+	}
+
+	result := callTool(t, session, ctx, "list_restore_points", map[string]any{"job_id": float64(jobID)})
+	points := jsonArray(t, result)
+	if len(points) != 2 {
+		t.Fatalf("list_restore_points count = %d, want 2", len(points))
+	}
+	byType := make(map[string]map[string]any, len(points))
+	for _, point := range points {
+		entry := point.(map[string]any)
+		backupType, _ := entry["backup_type"].(string)
+		byType[backupType] = entry
+	}
+	latest := byType["incremental"]
+	if latest["chain_status"] != "healthy" {
+		t.Errorf("latest chain_status = %v, want healthy", latest["chain_status"])
+	}
+	if latest["chain_depth"] != float64(2) {
+		t.Errorf("latest chain_depth = %v, want 2", latest["chain_depth"])
+	}
+	base := byType["full"]
+	if base["retention_preserved"] != true {
+		t.Errorf("base retention_preserved = %v, want true", base["retention_preserved"])
 	}
 }
 

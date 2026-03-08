@@ -10,6 +10,7 @@ let overallFailed = $state(0)
 let overallTotal = $state(0)
 let phaseMessage = $state(null)
 let elapsedSec = $state(0)
+let jobQueue = $state([])
 let _elapsedInterval = null
 
 export function getProgress() {
@@ -21,13 +22,55 @@ export function getProgress() {
     get overallTotal() { return overallTotal },
     get elapsedSec() { return elapsedSec },
     get phaseMessage() { return phaseMessage },
+    get queue() { return jobQueue },
   }
+}
+
+/** Restore progress state from the runner status API response.
+ *  Called on page load / WebSocket reconnect so the progress overlay
+ *  re-appears even if the job_run_started message was missed.
+ */
+export function restoreFromStatus(status) {
+  if (!status?.active) return
+  // Don't overwrite an already-active run (WebSocket already initialised it).
+  if (activeRun) return
+  activeRun = {
+    job_id: status.job_id,
+    run_id: status.run_id,
+    job_name: status.job_name || `Job #${status.job_id}`,
+    started_at: status.started_at ? new Date(status.started_at).getTime() : Date.now(),
+  }
+  overallDone = status.items_done || 0
+  overallFailed = status.items_failed || 0
+  overallTotal = status.items_total || 0
+  jobQueue = status.queue || []
+  itemProgress = {}
+  if (status.current_item) {
+    itemProgress = { [status.current_item]: { percent: 0, message: 'In progress...', status: 'running' } }
+  }
+  // Resume elapsed timer from the real start time.
+  const startMs = status.started_at ? new Date(status.started_at).getTime() : Date.now()
+  elapsedSec = Math.max(0, Math.round((Date.now() - startMs) / 1000))
+  clearInterval(_elapsedInterval)
+  _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
 }
 
 /** Handle an incoming WebSocket message — update progress state.
  *  Returns true if this message was a progress event (handled).
  */
 export function handleProgressMessage(msg, jobNameResolver) {
+  // If we receive item-level progress but don't have an activeRun yet
+  // (e.g. page was reloaded mid-backup), synthesize the run from message data.
+  if (!activeRun && msg.job_id && msg.run_id &&
+      (msg.type === 'item_backup_start' || msg.type === 'backup_progress' ||
+       msg.type === 'item_backup_done' || msg.type === 'item_backup_failed')) {
+    const jName = jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
+    activeRun = { job_id: msg.job_id, run_id: msg.run_id, job_name: jName, started_at: Date.now() }
+    overallTotal = msg.items_total || 0
+    clearInterval(_elapsedInterval)
+    _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
+  }
+
   switch (msg.type) {
     case 'job_run_started': {
       const jName = jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
@@ -107,6 +150,10 @@ export function handleProgressMessage(msg, jobNameResolver) {
       overallFailed++
       if (msg.items_done !== undefined) overallDone = msg.items_done
       if (msg.items_total) overallTotal = msg.items_total
+      return true
+    }
+    case 'queue_update': {
+      jobQueue = msg.queue || []
       return true
     }
     case 'job_run_completed': {

@@ -9,3 +9,6 @@
 
     - name: Test WebSocket endpoint
       ansible.builtin.include_tasks: websocket.yml
+
+    - name: Test MCP streamable HTTP endpoint
+      ansible.builtin.include_tasks: mcp.yml

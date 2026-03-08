@@ -86,6 +86,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 				r.Get("/{id}/next-run", jobH.NextRun)
 			})
 
+			r.Get("/runner/status", jobH.RunnerStatus)
+
 			r.Route("/settings", func(r chi.Router) {
 				r.Get("/", settingsH.List)
 				r.Put("/", settingsH.Update)
@@ -141,7 +143,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 			// MCP is only available in daemon mode.
 			if !s.config.ReadOnly {
-				mcpSrv := mcpserver.New(s.db, s.runner)
+				mcpSrv := mcpserver.New(s.db, s.runner, mcpserver.Config{
+					Version:  s.config.Version,
+					ReadOnly: s.config.ReadOnly,
+				})
 				r.Handle("/mcp", mcpSrv.HTTPHandler())
 				r.Handle("/mcp/*", mcpSrv.HTTPHandler())
 			}

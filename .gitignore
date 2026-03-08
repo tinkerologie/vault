@@ -36,6 +36,20 @@ review-*.png
 # AI agent scratch
 .ai-scratch/
 
+# Local AI agent settings and notes
+.claude/
+CLAUDE.md
+
+# Local planning and private docs
+docs/plans/
+docs/private/
+*.local.md
+*.local.json
+
+# Local secrets and shell environment
+.envrc
+secrets/
+
 # OS files
 .DS_Store
 Thumbs.db

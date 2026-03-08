@@ -29,7 +29,7 @@ var mcpCmd = &cobra.Command{
 		go hub.Run()
 
 		r := runner.New(database, hub, nil)
-		srv := mcpserver.New(database, r)
+		srv := mcpserver.New(database, r, mcpserver.Config{Version: version})
 
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()

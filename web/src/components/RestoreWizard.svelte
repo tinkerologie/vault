@@ -186,7 +186,42 @@
     try { return JSON.parse(meta) } catch { return {} }
   }
 
+  /** Calculate the total size of only the selected items from a restore point's metadata. */
+  function selectedRestoreSize(rp) {
+    const meta = parseMetadata(rp.metadata)
+    const itemSizes = meta.item_sizes
+    if (!itemSizes) return rp.size_bytes
+    const selectedNames = new Set(Array.from(selectedItems.values()).map(i => i.name))
+    let total = 0
+    for (const [name, size] of Object.entries(itemSizes)) {
+      if (selectedNames.has(name)) total += size
+    }
+    return total || rp.size_bytes
+  }
+
   let selectedItemsArray = $derived(Array.from(selectedItems.values()))
+
+  function chainDependencies(rp) {
+    return Math.max(0, (rp?.chain_depth || 1) - 1)
+  }
+
+  function chainHealthTone(rp) {
+    if (rp?.chain_status === 'broken') return 'text-danger'
+    if (chainDependencies(rp) > 0) return 'text-info'
+    return 'text-success'
+  }
+
+  function chainHealthLabel(rp) {
+    if (!rp) return 'Unknown'
+    if (rp.chain_status === 'broken') return 'Broken chain'
+    if (chainDependencies(rp) > 0) return `Needs ${chainDependencies(rp)} earlier backup${chainDependencies(rp) === 1 ? '' : 's'}`
+    return 'Standalone'
+  }
+
+  function retentionPreservedMessage(rp) {
+    const count = rp?.retention_preserved_for || 0
+    return `Kept because ${count} newer restore point${count === 1 ? '' : 's'} still depend on it.`
+  }
 
   function doRestore() {
     if (selectedItems.size === 0 || !selectedPoint) return
@@ -350,6 +385,14 @@
             <div class="flex items-center justify-between mb-2">
               <div class="flex items-center gap-2">
                 <span class="text-xs px-2 py-0.5 rounded-full font-medium uppercase bg-vault/10 text-vault">{rp.backup_type}</span>
+                {#if rp.chain_status === 'broken'}
+                  <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-danger/15 text-danger">Broken chain</span>
+                {:else if chainDependencies(rp) > 0}
+                  <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-info/15 text-info">Chain x{rp.chain_depth}</span>
+                {/if}
+                {#if rp.retention_preserved}
+                  <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-warning/15 text-warning">Retained for chain</span>
+                {/if}
                 {#if isRecommended}
                   <span class="text-xs px-2 py-0.5 rounded-full bg-success/15 text-success font-medium">Recommended</span>
                 {/if}
@@ -360,13 +403,21 @@
               <span class="text-xs text-text-dim">{relTime(rp.created_at)}</span>
             </div>
             <div class="flex items-center gap-4 text-xs text-text-dim">
-              <span>{formatBytes(rp.size_bytes)}</span>
+              <span>{formatBytes(selectedRestoreSize(rp))}{selectedRestoreSize(rp) !== rp.size_bytes ? ' selected' : ''}</span>
               <span>Run #{rp.job_run_id}</span>
               <span class="text-text-muted">{rp.jobName}</span>
               {#if meta.items}
                 <span>{meta.items} items</span>
               {/if}
             </div>
+            {#if rp.chain_status === 'broken'}
+              <p class="mt-2 text-xs text-danger">{rp.chain_warning}</p>
+            {:else if chainDependencies(rp) > 0}
+              <p class="mt-2 text-xs text-info">Restore replays {chainDependencies(rp)} earlier backup{chainDependencies(rp) === 1 ? '' : 's'} in this chain.</p>
+            {/if}
+            {#if rp.retention_preserved}
+              <p class="mt-1 text-xs text-warning">{retentionPreservedMessage(rp)}</p>
+            {/if}
           </button>
         {/each}
       </div>
@@ -410,14 +461,52 @@
         </div>
         <div class="flex justify-between">
           <span class="text-text-muted">Size</span>
-          <span class="text-text">{formatBytes(selectedPoint.size_bytes)}</span>
+          <span class="text-text">{formatBytes(selectedPoint ? selectedRestoreSize(selectedPoint) : 0)}{selectedPoint && selectedRestoreSize(selectedPoint) !== selectedPoint.size_bytes ? ' (selected items)' : ''}</span>
         </div>
         <div class="flex justify-between">
           <span class="text-text-muted">Backup Type</span>
           <span class="text-text uppercase text-xs">{selectedPoint.backup_type}</span>
         </div>
+        <div class="flex justify-between">
+          <span class="text-text-muted">Chain Health</span>
+          <span class="text-xs font-medium {chainHealthTone(selectedPoint)}">{chainHealthLabel(selectedPoint)}</span>
+        </div>
       </div>
     </div>
+
+    {#if selectedPoint?.chain_status === 'broken'}
+      <div class="bg-danger/10 border border-danger/30 rounded-xl p-4 mb-4 flex items-start gap-3">
+        <svg class="w-5 h-5 text-danger shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-7.938 4h15.876c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L2.33 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <div>
+          <p class="text-sm font-medium text-danger">Restore chain is broken</p>
+          <p class="text-xs text-text-muted mt-0.5">{selectedPoint.chain_warning}</p>
+        </div>
+      </div>
+    {:else if chainDependencies(selectedPoint) > 0}
+      <div class="bg-info/10 border border-info/30 rounded-xl p-4 mb-4 flex items-start gap-3">
+        <svg class="w-5 h-5 text-info shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+        </svg>
+        <div>
+          <p class="text-sm font-medium text-info">Restore will replay the full chain</p>
+          <p class="text-xs text-text-muted mt-0.5">This point depends on {chainDependencies(selectedPoint)} earlier backup{chainDependencies(selectedPoint) === 1 ? '' : 's'} and Vault will stage them before restoring.</p>
+        </div>
+      </div>
+    {/if}
+
+    {#if selectedPoint?.retention_preserved}
+      <div class="bg-warning/10 border border-warning/30 rounded-xl p-4 mb-4 flex items-start gap-3">
+        <svg class="w-5 h-5 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div>
+          <p class="text-sm font-medium text-warning">Retention is preserving this restore point</p>
+          <p class="text-xs text-text-muted mt-0.5">{retentionPreservedMessage(selectedPoint)}</p>
+        </div>
+      </div>
+    {/if}
 
     <!-- Options -->
     <div class="space-y-5 mb-6">
@@ -467,7 +556,7 @@
     </div>
 
     <!-- Restore button -->
-    <button type="button" onclick={doRestore} disabled={restoring || (needsPassphrase && !passphrase)}
+    <button type="button" onclick={doRestore} disabled={restoring || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase)}
       class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
       {#if restoring}
         <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
