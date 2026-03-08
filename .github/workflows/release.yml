@@ -18,6 +18,8 @@ jobs:
   release:
     name: Build and Release
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
 
     steps:
       - name: Checkout code
@@ -71,6 +73,9 @@ jobs:
 
       - name: Download Go dependencies
         run: go mod download
+
+      - name: Build web assets
+        run: cd web && npm ci && npm run build
 
       - name: Run tests
         run: go test ./... -v
