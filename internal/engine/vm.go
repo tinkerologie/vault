@@ -3,10 +3,10 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"libvirt.org/go/libvirt"
@@ -79,6 +79,10 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 	xmlDesc, err := dom.GetXMLDesc(libvirt.DOMAIN_XML_SECURE | libvirt.DOMAIN_XML_INACTIVE)
 	if err != nil {
 		return nil, fmt.Errorf("getting domain XML: %w", err)
+	}
+	xmlDesc, err = stripDomainBackingStores(xmlDesc)
+	if err != nil {
+		return nil, fmt.Errorf("sanitizing domain XML: %w", err)
 	}
 	xmlPath := filepath.Join(destDir, "domain.xml")
 	if err := os.WriteFile(xmlPath, []byte(xmlDesc), 0644); err != nil {
@@ -217,13 +221,13 @@ func (h *VMHandler) backupCold(dom *libvirt.Domain, name string, state libvirt.D
 
 		// Wait for domain to shut down (up to 5 minutes).
 		progress(name, 20, "waiting for shutdown")
-		deadline := time.Now().Add(5 * time.Minute)
+		deadline := time.Now().Add(vmShutdownTimeout)
 		for time.Now().Before(deadline) {
 			st, _, _ := dom.GetState()
 			if st == libvirt.DOMAIN_SHUTOFF {
 				break
 			}
-			time.Sleep(2 * time.Second)
+			time.Sleep(vmShutdownPollInterval)
 		}
 
 		st, _, _ := dom.GetState()
@@ -278,65 +282,46 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 		return fmt.Errorf("reading domain XML: %w", err)
 	}
 
-	// Parse the XML to find original disk paths.
-	diskPaths, nvramPath, err := parseDomainDisks(string(xmlData))
-	if err != nil {
-		return fmt.Errorf("parsing domain XML: %w", err)
-	}
-
-	// Check for alternate restore destination.
 	restoreDest, _ := item.Settings["restore_destination"].(string)
-
-	// Build new paths if alternate destination is set.
-	newDiskPaths := make([]string, len(diskPaths))
-	newNvramPath := nvramPath
-	domainXMLStr := string(xmlData)
-
-	for i, dp := range diskPaths {
-		if restoreDest != "" {
-			newDiskPaths[i] = filepath.Join(restoreDest, filepath.Base(dp))
-			// Rewrite the disk source path in the XML.
-			domainXMLStr = strings.Replace(domainXMLStr, dp, newDiskPaths[i], -1)
-		} else {
-			newDiskPaths[i] = dp
-		}
+	plan, err := buildVMRestorePlan(xmlData, restoreDest)
+	if err != nil {
+		return fmt.Errorf("building restore plan: %w", err)
 	}
-	if restoreDest != "" && nvramPath != "" {
-		newNvramPath = filepath.Join(restoreDest, filepath.Base(nvramPath))
-		domainXMLStr = strings.Replace(domainXMLStr, nvramPath, newNvramPath, -1)
+
+	if err := h.reconcileExistingDomainForRestore(item.Name, progress); err != nil {
+		return fmt.Errorf("cleaning up existing domain: %w", err)
 	}
 
 	// Copy disk files back.
 	progress(item.Name, 20, "restoring disk images")
-	totalDisks := len(diskPaths)
-	for i, diskPath := range diskPaths {
+	totalDisks := len(plan.Disks)
+	for i, disk := range plan.Disks {
 		pct := 20 + (i*50)/max(totalDisks, 1)
-		srcFile := filepath.Join(sourceDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
+		srcFile := filepath.Join(sourceDir, disk.BackupFile)
 		if _, err := os.Stat(srcFile); err != nil {
 			continue // skip if backup file doesn't exist
 		}
 
-		targetPath := newDiskPaths[i]
 		progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d", i+1, totalDisks))
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-			return fmt.Errorf("creating dir for disk %s: %w", targetPath, err)
+		if err := os.MkdirAll(filepath.Dir(disk.TargetPath), 0755); err != nil {
+			return fmt.Errorf("creating dir for disk %s: %w", disk.TargetPath, err)
 		}
-		if err := copyFileWithProgress(srcFile, targetPath, func(copied int64) {
+		if err := copyOrFlattenDisk(srcFile, disk.TargetPath, func(copied int64) {
 			progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
-			return fmt.Errorf("restoring disk %s: %w", targetPath, err)
+			return fmt.Errorf("restoring disk %s: %w", disk.TargetPath, err)
 		}
 	}
 
 	// Restore NVRAM if present.
-	if nvramPath != "" {
-		nvramSrc := filepath.Join(sourceDir, filepath.Base(nvramPath))
+	if plan.NVRAMBackupFile != "" {
+		nvramSrc := filepath.Join(sourceDir, plan.NVRAMBackupFile)
 		if _, err := os.Stat(nvramSrc); err == nil {
 			progress(item.Name, 80, "restoring NVRAM")
-			if err := os.MkdirAll(filepath.Dir(newNvramPath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(plan.NVRAMTargetPath), 0755); err != nil {
 				return fmt.Errorf("creating NVRAM dir: %w", err)
 			}
-			if err := copyFile(nvramSrc, newNvramPath); err != nil {
+			if err := copyFile(nvramSrc, plan.NVRAMTargetPath); err != nil {
 				return fmt.Errorf("restoring NVRAM: %w", err)
 			}
 		}
@@ -344,7 +329,7 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 
 	// Define domain from (possibly rewritten) XML.
 	progress(item.Name, 90, "defining domain")
-	dom, err := h.conn.DomainDefineXML(domainXMLStr)
+	dom, err := h.conn.DomainDefineXML(plan.DomainXML)
 	if err != nil {
 		return fmt.Errorf("defining domain: %w", err)
 	}
@@ -352,6 +337,120 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 
 	progress(item.Name, 100, "restore complete")
 	return nil
+}
+
+func (h *VMHandler) reconcileExistingDomainForRestore(name string, progress ProgressFunc) error {
+	dom, err := h.conn.LookupDomainByName(name)
+	if err != nil {
+		if isLibvirtNoDomainError(err) {
+			return nil
+		}
+		return fmt.Errorf("looking up existing domain %s: %w", name, err)
+	}
+	defer dom.Free()
+
+	progress(name, 10, "cleaning up existing domain")
+	state, _, err := dom.GetState()
+	if err != nil {
+		return fmt.Errorf("getting existing domain state: %w", err)
+	}
+
+	if !libvirtDomainIsShutOff(state) {
+		progress(name, 12, "stopping existing domain")
+		shutdownErr := dom.Shutdown()
+		if shutdownErr == nil {
+			state, err = waitForLibvirtDomainShutOff(dom, name, vmShutdownTimeout)
+			if err != nil {
+				return err
+			}
+		}
+
+		if shutdownErr != nil || !libvirtDomainIsShutOff(state) {
+			progress(name, 14, "forcing existing domain stop")
+			if err := dom.Destroy(); err != nil {
+				if shutdownErr != nil {
+					return fmt.Errorf("stopping existing domain: shutdown failed: %v; destroy failed: %w", shutdownErr, err)
+				}
+				return fmt.Errorf("forcing existing domain stop: %w", err)
+			}
+
+			if _, err := waitForLibvirtDomainShutOff(dom, name, 30*time.Second); err != nil {
+				return err
+			}
+		}
+	}
+
+	progress(name, 16, "removing existing domain definition")
+	hasManagedSave, err := dom.HasManagedSaveImage(0)
+	if err != nil {
+		return fmt.Errorf("checking managed save: %w", err)
+	}
+	if hasManagedSave {
+		if err := dom.ManagedSaveRemove(0); err != nil {
+			return fmt.Errorf("removing managed save: %w", err)
+		}
+	}
+
+	if err := libvirtUndefineDomain(dom); err != nil {
+		return fmt.Errorf("undefining existing domain %s: %w", name, err)
+	}
+
+	return nil
+}
+
+func waitForLibvirtDomainShutOff(dom *libvirt.Domain, name string, timeout time.Duration) (libvirt.DomainState, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		state, _, err := dom.GetState()
+		if err != nil {
+			return 0, fmt.Errorf("waiting for domain %s to shut off: %w", name, err)
+		}
+		if libvirtDomainIsShutOff(state) {
+			return state, nil
+		}
+		if time.Now().After(deadline) {
+			return state, fmt.Errorf("waiting for domain %s to shut off: timed out with state %s", name, domainStateString(state))
+		}
+
+		time.Sleep(vmShutdownPollInterval)
+	}
+}
+
+func libvirtDomainIsShutOff(state libvirt.DomainState) bool {
+	return state == libvirt.DOMAIN_SHUTOFF || state == libvirt.DOMAIN_SHUTDOWN
+}
+
+func libvirtUndefineDomain(dom *libvirt.Domain) error {
+	attempts := []libvirt.DomainUndefineFlagsValues{
+		libvirt.DOMAIN_UNDEFINE_MANAGED_SAVE | libvirt.DOMAIN_UNDEFINE_SNAPSHOTS_METADATA | libvirt.DOMAIN_UNDEFINE_CHECKPOINTS_METADATA | libvirt.DOMAIN_UNDEFINE_NVRAM,
+		libvirt.DOMAIN_UNDEFINE_SNAPSHOTS_METADATA | libvirt.DOMAIN_UNDEFINE_CHECKPOINTS_METADATA | libvirt.DOMAIN_UNDEFINE_NVRAM,
+		libvirt.DOMAIN_UNDEFINE_SNAPSHOTS_METADATA | libvirt.DOMAIN_UNDEFINE_NVRAM,
+		libvirt.DOMAIN_UNDEFINE_SNAPSHOTS_METADATA | libvirt.DOMAIN_UNDEFINE_CHECKPOINTS_METADATA,
+		libvirt.DOMAIN_UNDEFINE_SNAPSHOTS_METADATA,
+		libvirt.DOMAIN_UNDEFINE_NVRAM,
+		0,
+	}
+
+	var lastErr error
+	for _, flags := range attempts {
+		var err error
+		if flags == 0 {
+			err = dom.Undefine()
+		} else {
+			err = dom.UndefineFlags(flags)
+		}
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+
+	return lastErr
+}
+
+func isLibvirtNoDomainError(err error) bool {
+	var libvirtErr libvirt.Error
+	return errors.As(err, &libvirtErr) && libvirtErr.Code == libvirt.ERR_NO_DOMAIN
 }
 
 // domainStateString converts a libvirt domain state to a human-readable string.

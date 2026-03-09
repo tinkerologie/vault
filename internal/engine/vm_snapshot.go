@@ -15,6 +15,7 @@ var (
 	_ = domainDiskPaths
 	_ = sameDomainDisks
 	_ = buildSnapshotXML
+	_ = stripDomainBackingStores
 )
 
 type domainDisk struct {
@@ -146,4 +147,78 @@ func buildSnapshotXML(name string, disks []domainDisk) (string, error) {
 	}
 
 	return string(xmlBytes), nil
+}
+
+func stripDomainBackingStores(xmlDesc string) (string, error) {
+	const openTag = "<backingStore"
+
+	var out strings.Builder
+	searchFrom := 0
+	for {
+		start := strings.Index(xmlDesc[searchFrom:], openTag)
+		if start == -1 {
+			out.WriteString(xmlDesc[searchFrom:])
+			return out.String(), nil
+		}
+
+		start += searchFrom
+		out.WriteString(xmlDesc[searchFrom:start])
+
+		length, err := backingStoreSectionLength(xmlDesc[start:])
+		if err != nil {
+			return "", err
+		}
+
+		searchFrom = start + length
+	}
+}
+
+func backingStoreSectionLength(xmlFragment string) (int, error) {
+	const (
+		openTagPrefix = "<backingStore"
+		closeTag      = "</backingStore>"
+	)
+
+	depth := 0
+	position := 0
+	for position < len(xmlFragment) {
+		nextOpen := strings.Index(xmlFragment[position:], openTagPrefix)
+		nextClose := strings.Index(xmlFragment[position:], closeTag)
+
+		switch {
+		case nextOpen == -1 && nextClose == -1:
+			return 0, fmt.Errorf("unterminated backingStore section")
+		case nextOpen != -1 && (nextClose == -1 || nextOpen < nextClose):
+			openIndex := position + nextOpen
+			endIndex := strings.IndexByte(xmlFragment[openIndex:], '>')
+			if endIndex == -1 {
+				return 0, fmt.Errorf("unterminated backingStore start tag")
+			}
+			endIndex += openIndex
+			depth++
+			position = endIndex + 1
+			if isSelfClosingXMLTag(xmlFragment[openIndex : endIndex+1]) {
+				depth--
+				if depth == 0 {
+					return position, nil
+				}
+			}
+		case nextClose != -1:
+			if depth == 0 {
+				return 0, fmt.Errorf("unexpected backingStore closing tag")
+			}
+			position += nextClose + len(closeTag)
+			depth--
+			if depth == 0 {
+				return position, nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("unterminated backingStore section")
+}
+
+func isSelfClosingXMLTag(tag string) bool {
+	trimmed := strings.TrimSpace(tag)
+	return strings.HasSuffix(trimmed, "/>")
 }

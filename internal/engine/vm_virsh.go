@@ -88,6 +88,10 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 	if err != nil {
 		return nil, fmt.Errorf("getting domain XML: %w", err)
 	}
+	xmlDesc, err = stripDomainBackingStores(xmlDesc)
+	if err != nil {
+		return nil, fmt.Errorf("sanitizing domain XML: %w", err)
+	}
 	xmlPath := filepath.Join(destDir, "domain.xml")
 	if err := os.WriteFile(xmlPath, []byte(xmlDesc), 0644); err != nil {
 		return nil, fmt.Errorf("writing domain XML: %w", err)
@@ -187,6 +191,9 @@ func (h *VMHandler) backupSnapshot(name string, disks []domainDisk, copyDisks []
 	if len(cleanDisks) > 0 && !sameDomainDisks(cleanDisks, disks) {
 		xmlDesc, xmlErr := virshOutput("dumpxml", name, "--security-info", "--inactive")
 		if xmlErr == nil {
+			xmlDesc, xmlErr = stripDomainBackingStores(xmlDesc)
+		}
+		if xmlErr == nil {
 			xmlPath := filepath.Join(destDir, "domain.xml")
 			if writeErr := os.WriteFile(xmlPath, []byte(xmlDesc), 0644); writeErr != nil {
 				log.Printf("engine: warning: failed to re-save domain.xml after cleanup: %v", writeErr)
@@ -267,13 +274,13 @@ func (h *VMHandler) backupCold(name, state string, disks []domainDisk, destDir s
 
 		// Wait for domain to shut down (up to 5 minutes).
 		progress(name, 20, "waiting for shutdown")
-		deadline := time.Now().Add(5 * time.Minute)
+		deadline := time.Now().Add(vmShutdownTimeout)
 		for time.Now().Before(deadline) {
 			stateOut, _ := virshOutput("domstate", name)
 			if strings.TrimSpace(stateOut) == "shut off" {
 				break
 			}
-			time.Sleep(2 * time.Second)
+			time.Sleep(vmShutdownPollInterval)
 		}
 
 		stateOut, _ := virshOutput("domstate", name)
@@ -323,41 +330,45 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 		return fmt.Errorf("reading domain XML: %w", err)
 	}
 
-	// Parse the XML to find original disk paths.
-	diskPaths, nvramPath, err := parseDomainDisks(string(xmlData))
+	restoreDest, _ := item.Settings["restore_destination"].(string)
+	plan, err := buildVMRestorePlan(xmlData, restoreDest)
 	if err != nil {
-		return fmt.Errorf("parsing domain XML: %w", err)
+		return fmt.Errorf("building restore plan: %w", err)
+	}
+
+	if err := h.reconcileExistingDomainForRestore(item.Name, progress); err != nil {
+		return fmt.Errorf("cleaning up existing domain: %w", err)
 	}
 
 	// Copy disk files back.
 	progress(item.Name, 20, "restoring disk images")
-	totalDisks := len(diskPaths)
-	for i, diskPath := range diskPaths {
+	totalDisks := len(plan.Disks)
+	for i, disk := range plan.Disks {
 		pct := 20 + (i*50)/max(totalDisks, 1)
-		srcFile := filepath.Join(sourceDir, fmt.Sprintf("vdisk%d%s", i, filepath.Ext(diskPath)))
+		srcFile := filepath.Join(sourceDir, disk.BackupFile)
 		if _, err := os.Stat(srcFile); err != nil {
 			continue
 		}
 		progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d", i+1, totalDisks))
-		if err := os.MkdirAll(filepath.Dir(diskPath), 0755); err != nil {
-			return fmt.Errorf("creating dir for disk %s: %w", diskPath, err)
+		if err := os.MkdirAll(filepath.Dir(disk.TargetPath), 0755); err != nil {
+			return fmt.Errorf("creating dir for disk %s: %w", disk.TargetPath, err)
 		}
-		if err := copyFileWithProgress(srcFile, diskPath, func(copied int64) {
+		if err := copyOrFlattenDisk(srcFile, disk.TargetPath, func(copied int64) {
 			progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
-			return fmt.Errorf("restoring disk %s: %w", diskPath, err)
+			return fmt.Errorf("restoring disk %s: %w", disk.TargetPath, err)
 		}
 	}
 
 	// Restore NVRAM.
-	if nvramPath != "" {
-		nvramSrc := filepath.Join(sourceDir, filepath.Base(nvramPath))
+	if plan.NVRAMBackupFile != "" {
+		nvramSrc := filepath.Join(sourceDir, plan.NVRAMBackupFile)
 		if _, err := os.Stat(nvramSrc); err == nil {
 			progress(item.Name, 80, "restoring NVRAM")
-			if err := os.MkdirAll(filepath.Dir(nvramPath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(plan.NVRAMTargetPath), 0755); err != nil {
 				return fmt.Errorf("creating NVRAM dir: %w", err)
 			}
-			if err := copyFile(nvramSrc, nvramPath); err != nil {
+			if err := copyFile(nvramSrc, plan.NVRAMTargetPath); err != nil {
 				return fmt.Errorf("restoring NVRAM: %w", err)
 			}
 		}
@@ -369,7 +380,7 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 	if err != nil {
 		return fmt.Errorf("creating temp XML file: %w", err)
 	}
-	if _, err := tmpXML.Write(xmlData); err != nil {
+	if _, err := tmpXML.WriteString(plan.DomainXML); err != nil {
 		tmpXML.Close()
 		os.Remove(tmpXML.Name())
 		return fmt.Errorf("writing domain XML: %w", err)
@@ -382,6 +393,57 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 	}
 
 	progress(item.Name, 100, "restore complete")
+	return nil
+}
+
+func (h *VMHandler) reconcileExistingDomainForRestore(name string, progress ProgressFunc) error {
+	exists, err := virshDomainExists(name)
+	if err != nil {
+		return fmt.Errorf("checking existing domain: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+
+	progress(name, 10, "cleaning up existing domain")
+	state, err := virshDomainState(name)
+	if err != nil {
+		return fmt.Errorf("getting existing domain state: %w", err)
+	}
+
+	if !virshDomainIsShutOff(state) {
+		progress(name, 12, "stopping existing domain")
+		shutdownErr := virshRun("shutdown", name)
+		if shutdownErr == nil {
+			state, err = virshWaitForDomainShutOff(name, vmShutdownTimeout)
+			if err != nil {
+				return err
+			}
+		}
+
+		if shutdownErr != nil || !virshDomainIsShutOff(state) {
+			progress(name, 14, "forcing existing domain stop")
+			if err := virshRun("destroy", name); err != nil {
+				if shutdownErr != nil {
+					return fmt.Errorf("stopping existing domain: shutdown failed: %v; destroy failed: %w", shutdownErr, err)
+				}
+				return fmt.Errorf("forcing existing domain stop: %w", err)
+			}
+
+			if _, err := virshWaitForDomainShutOff(name, 30*time.Second); err != nil {
+				return err
+			}
+		}
+	}
+
+	progress(name, 16, "removing existing domain definition")
+	if err := virshRemoveManagedSave(name); err != nil {
+		return fmt.Errorf("removing managed save: %w", err)
+	}
+	if err := virshUndefineDomain(name); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -403,6 +465,93 @@ func virshOutput(args ...string) (string, error) {
 		return "", fmt.Errorf("virsh %s: %w", strings.Join(args, " "), err)
 	}
 	return string(out), nil
+}
+
+func virshDomainExists(name string) (bool, error) {
+	out, err := virshOutput("list", "--all", "--name")
+	if err != nil {
+		return false, fmt.Errorf("listing domains: %w", err)
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == name {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func virshDomainState(name string) (string, error) {
+	out, err := virshOutput("domstate", name)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func virshWaitForDomainShutOff(name string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		state, err := virshDomainState(name)
+		if err != nil {
+			return "", fmt.Errorf("waiting for domain %s to shut off: %w", name, err)
+		}
+		if virshDomainIsShutOff(state) {
+			return state, nil
+		}
+		if time.Now().After(deadline) {
+			return state, fmt.Errorf("waiting for domain %s to shut off: timed out with state %q", name, state)
+		}
+
+		time.Sleep(vmShutdownPollInterval)
+	}
+}
+
+func virshDomainIsShutOff(state string) bool {
+	switch strings.TrimSpace(state) {
+	case "shut off", "shutoff":
+		return true
+	default:
+		return false
+	}
+}
+
+func virshRemoveManagedSave(name string) error {
+	if err := virshRun("managedsave-remove", name); err != nil {
+		errText := err.Error()
+		if strings.Contains(errText, "has no managed save image") ||
+			strings.Contains(errText, "no managed save image") ||
+			strings.Contains(errText, "managed save image is not present") {
+			return nil
+		}
+		return err
+	}
+
+	return nil
+}
+
+func virshUndefineDomain(name string) error {
+	attempts := [][]string{
+		{"undefine", name, "--managed-save", "--snapshots-metadata", "--checkpoints-metadata", "--nvram"},
+		{"undefine", name, "--snapshots-metadata", "--checkpoints-metadata", "--nvram"},
+		{"undefine", name, "--snapshots-metadata", "--nvram"},
+		{"undefine", name, "--snapshots-metadata", "--checkpoints-metadata"},
+		{"undefine", name, "--snapshots-metadata"},
+		{"undefine", name, "--nvram"},
+		{"undefine", name},
+	}
+
+	var lastErr error
+	for _, args := range attempts {
+		if err := virshRun(args...); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+
+	return fmt.Errorf("undefining existing domain %s: %w", name, lastErr)
 }
 
 // stripSnapSuffix strips all trailing ".snap" suffixes from a path,

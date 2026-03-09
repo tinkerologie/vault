@@ -170,3 +170,170 @@ func TestBuildSnapshotXMLRequiresTarget(t *testing.T) {
 		t.Fatal("expected error when disk target is missing")
 	}
 }
+
+func TestBuildVMRestorePlanKeepsOriginalPaths(t *testing.T) {
+	t.Parallel()
+
+	xmlDesc := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+      <target dev="vda"></target>
+    </disk>
+  </devices>
+  <os>
+    <nvram>/etc/libvirt/qemu/nvram/Home_Assistant_VARS.fd</nvram>
+  </os>
+</domain>`
+
+	plan, err := buildVMRestorePlan([]byte(xmlDesc), "")
+	if err != nil {
+		t.Fatalf("buildVMRestorePlan() error = %v", err)
+	}
+
+	if len(plan.Disks) != 1 {
+		t.Fatalf("expected 1 disk, got %d", len(plan.Disks))
+	}
+
+	if plan.Disks[0].BackupFile != "vdisk0.qcow2" {
+		t.Fatalf("unexpected backup file: %q", plan.Disks[0].BackupFile)
+	}
+
+	if plan.Disks[0].TargetPath != "/mnt/cache/domains/haos/haos.qcow2" {
+		t.Fatalf("unexpected target path: %q", plan.Disks[0].TargetPath)
+	}
+
+	if plan.NVRAMBackupFile != "Home_Assistant_VARS.fd" {
+		t.Fatalf("unexpected NVRAM backup file: %q", plan.NVRAMBackupFile)
+	}
+
+	if plan.NVRAMTargetPath != "/etc/libvirt/qemu/nvram/Home_Assistant_VARS.fd" {
+		t.Fatalf("unexpected NVRAM target path: %q", plan.NVRAMTargetPath)
+	}
+
+	if plan.DomainXML != xmlDesc {
+		t.Fatalf("expected original XML to be preserved when no restore destination is provided")
+	}
+}
+
+func TestBuildVMRestorePlanRewritesRestoreDestination(t *testing.T) {
+	t.Parallel()
+
+	xmlDesc := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+      <target dev="vda"></target>
+    </disk>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/data.img"></source>
+      <target dev="vdb"></target>
+    </disk>
+  </devices>
+  <os>
+    <nvram>/etc/libvirt/qemu/nvram/Home_Assistant_VARS.fd</nvram>
+  </os>
+</domain>`
+
+	restoreDest := "/tmp/vault-restore/haos"
+	plan, err := buildVMRestorePlan([]byte(xmlDesc), restoreDest)
+	if err != nil {
+		t.Fatalf("buildVMRestorePlan() error = %v", err)
+	}
+
+	if len(plan.Disks) != 2 {
+		t.Fatalf("expected 2 disks, got %d", len(plan.Disks))
+	}
+
+	if plan.Disks[0].TargetPath != filepath.Join(restoreDest, "haos.qcow2") {
+		t.Fatalf("unexpected first target path: %q", plan.Disks[0].TargetPath)
+	}
+
+	if plan.Disks[1].TargetPath != filepath.Join(restoreDest, "data.img") {
+		t.Fatalf("unexpected second target path: %q", plan.Disks[1].TargetPath)
+	}
+
+	if plan.NVRAMTargetPath != filepath.Join(restoreDest, "Home_Assistant_VARS.fd") {
+		t.Fatalf("unexpected NVRAM target path: %q", plan.NVRAMTargetPath)
+	}
+
+	if strings.Contains(plan.DomainXML, "/mnt/cache/domains/haos/haos.qcow2") {
+		t.Fatalf("expected disk source path to be rewritten: %s", plan.DomainXML)
+	}
+
+	if !strings.Contains(plan.DomainXML, filepath.Join(restoreDest, "haos.qcow2")) {
+		t.Fatalf("expected rewritten disk path in XML: %s", plan.DomainXML)
+	}
+
+	if !strings.Contains(plan.DomainXML, filepath.Join(restoreDest, "Home_Assistant_VARS.fd")) {
+		t.Fatalf("expected rewritten NVRAM path in XML: %s", plan.DomainXML)
+	}
+}
+
+func TestStripDomainBackingStores(t *testing.T) {
+	t.Parallel()
+
+	xmlDesc := `<domain>
+	<metadata>
+		<vmtemplate xmlns="unraid" name="Linux"></vmtemplate>
+	</metadata>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+      <backingStore type="file">
+        <format type="qcow2"></format>
+        <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+        <backingStore/>
+      </backingStore>
+      <target dev="vda"></target>
+    </disk>
+  </devices>
+</domain>`
+
+	sanitized, err := stripDomainBackingStores(xmlDesc)
+	if err != nil {
+		t.Fatalf("stripDomainBackingStores() error = %v", err)
+	}
+
+	if strings.Contains(sanitized, "<backingStore") {
+		t.Fatalf("expected backingStore sections to be removed: %s", sanitized)
+	}
+
+	if !strings.Contains(sanitized, `/mnt/cache/domains/haos/haos.qcow2`) {
+		t.Fatalf("expected primary disk source to remain: %s", sanitized)
+	}
+
+	if strings.Count(sanitized, `xmlns="unraid"`) != 1 {
+		t.Fatalf("expected namespace declarations to be preserved exactly once: %s", sanitized)
+	}
+}
+
+func TestBuildVMRestorePlanStripsLegacyBackingStore(t *testing.T) {
+	t.Parallel()
+
+	xmlDesc := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+      <backingStore type="file">
+        <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+        <backingStore/>
+      </backingStore>
+      <target dev="vda"></target>
+    </disk>
+  </devices>
+</domain>`
+
+	plan, err := buildVMRestorePlan([]byte(xmlDesc), "")
+	if err != nil {
+		t.Fatalf("buildVMRestorePlan() error = %v", err)
+	}
+
+	if strings.Contains(plan.DomainXML, "<backingStore") {
+		t.Fatalf("expected buildVMRestorePlan() to strip backingStore sections: %s", plan.DomainXML)
+	}
+
+	if len(plan.Disks) != 1 || plan.Disks[0].TargetPath != "/mnt/cache/domains/haos/haos.qcow2" {
+		t.Fatalf("unexpected restore plan after stripping backingStore: %+v", plan.Disks)
+	}
+}
