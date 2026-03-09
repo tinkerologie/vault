@@ -44,12 +44,7 @@
   when: "'RUNNING' in pid_after_stop.stdout"
 
 - name: Verify API is unreachable after stop
-  delegate_to: localhost
-  ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/health"
-    method: GET
-    status_code: 200
-    timeout: 3
+  ansible.builtin.raw: "curl -fsS http://127.0.0.1:{{ api_port }}/api/v1/health >/dev/null"
   register: api_after_stop
   failed_when: false
   changed_when: false
@@ -57,7 +52,7 @@
 - name: Confirm API is down
   ansible.builtin.assert:
     that:
-      - api_after_stop.status != 200
+      - api_after_stop.rc != 0
     fail_msg: "API is still responding after stop — PID may still be running"
     success_msg: "API confirmed unreachable after service stop"
 

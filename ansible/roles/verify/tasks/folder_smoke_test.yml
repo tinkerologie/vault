@@ -1,0 +1,203 @@
+---
+# Disposable end-to-end folder backup/restore smoke test.
+# Creates a temporary source folder and file, backs it up, restores into a
+# separate destination, asserts the file contents match, then cleans up.
+# All API calls are delegated to localhost so no Python is required on Unraid.
+
+- block:
+    - name: Create temporary source folder on Unraid
+      ansible.builtin.raw: mkdir -p /tmp/vault-smoke-src && echo 'vault-smoke-test-content' > /tmp/vault-smoke-src/testfile.txt
+
+    - name: Create temporary restore destination folder on Unraid
+      ansible.builtin.raw: mkdir -p /tmp/vault-smoke-restore
+
+    - name: Create temporary storage destination for smoke test
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage"
+        method: POST
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        body_format: json
+        body:
+          name: "smoke-test-storage"
+          type: "local"
+          config: '{"path":"/tmp/vault-smoke-backups"}'
+        return_content: true
+        status_code: 201
+      register: smoke_storage
+
+    - name: Assert smoke storage created
+      ansible.builtin.assert:
+        that:
+          - smoke_storage.status == 201
+          - smoke_storage.json.id is defined
+        success_msg: "Smoke test storage created (ID: {{ smoke_storage.json.id }})"
+
+    - name: Create temporary folder backup job for smoke test
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs"
+        method: POST
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        body_format: json
+        body:
+          name: "smoke-test-folder-job"
+          description: "Disposable folder backup smoke test"
+          enabled: false
+          schedule: ""
+          backup_type_chain: "full"
+          retention_count: 1
+          retention_days: 1
+          compression: "zstd"
+          notify_on: "failure"
+          storage_dest_id: "{{ smoke_storage.json.id }}"
+          items:
+            - item_type: "folder"
+              item_name: "vault-smoke-src"
+              item_id: "/tmp/vault-smoke-src"
+              settings: '{"path":"/tmp/vault-smoke-src","preset":""}'
+        return_content: true
+        status_code: 201
+      register: smoke_job
+
+    - name: Assert smoke job created
+      ansible.builtin.assert:
+        that:
+          - smoke_job.status == 201
+          - smoke_job.json.id is defined
+        success_msg: "Smoke test job created (ID: {{ smoke_job.json.id }})"
+
+    - name: Trigger smoke test backup run
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}/run"
+        method: POST
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+        status_code: [200, 202]
+
+    - name: Poll until backup completes (up to 60 s)
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/runner/status"
+        method: GET
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+      register: runner_status
+      until: not runner_status.json.active
+      retries: 30
+      delay: 2
+
+    - name: Get smoke test job history
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}/history"
+        method: GET
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+      register: smoke_history
+
+    - name: Assert smoke test backup succeeded
+      ansible.builtin.assert:
+        that:
+          - smoke_history.status == 200
+          - smoke_history.json | length > 0
+          - smoke_history.json[0].status == 'completed'
+        success_msg: "Smoke test backup completed successfully"
+        fail_msg: "Smoke test backup failed: {{ (smoke_history.json[0].log if (smoke_history.json | length > 0) else 'no history available') }}"
+
+    - name: Get smoke test restore points
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}/restore-points"
+        method: GET
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+      register: smoke_restore_points
+
+    - name: Assert at least one restore point exists
+      ansible.builtin.assert:
+        that:
+          - smoke_restore_points.status == 200
+          - smoke_restore_points.json | length > 0
+        success_msg: "Restore point found: {{ smoke_restore_points.json | length }} point(s)"
+
+    - name: Trigger folder restore into temporary destination
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}/restore"
+        method: POST
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        body_format: json
+        body:
+          restore_point_id: "{{ smoke_restore_points.json[0].id }}"
+          destination: "/tmp/vault-smoke-restore"
+        return_content: true
+        status_code: [200, 202]
+
+    - name: Poll until restore completes (up to 60 s)
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/runner/status"
+        method: GET
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+      register: runner_status_restore
+      until: not runner_status_restore.json.active
+      retries: 30
+      delay: 2
+
+    - name: Read restored file from Unraid
+      ansible.builtin.raw: find /tmp/vault-smoke-restore -name 'testfile.txt' | head -1 | xargs cat
+      register: restored_content
+
+    - name: Assert restored file content matches original
+      ansible.builtin.assert:
+        that:
+          - "'vault-smoke-test-content' in restored_content.stdout"
+        success_msg: "Restored file content verified"
+        fail_msg: "Restored file content mismatch: {{ restored_content.stdout }}"
+
+    - name: Folder smoke test complete
+      ansible.builtin.debug:
+        msg: "Folder backup/restore smoke test passed"
+  always:
+    - name: Clean up smoke test job
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}?deleteFiles=true"
+        method: DELETE
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        status_code: 204
+      when:
+        - smoke_job is defined
+        - smoke_job.json is defined
+        - smoke_job.json.id is defined
+      ignore_errors: true
+
+    - name: Clean up smoke test storage
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ smoke_storage.json.id }}?deleteFiles=true"
+        method: DELETE
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        status_code: 204
+      when:
+        - smoke_storage is defined
+        - smoke_storage.json is defined
+        - smoke_storage.json.id is defined
+      ignore_errors: true
+
+    - name: Clean up temporary folders on Unraid
+      ansible.builtin.raw: rm -rf /tmp/vault-smoke-src /tmp/vault-smoke-restore /tmp/vault-smoke-backups
+      ignore_errors: true

@@ -1,5 +1,7 @@
 /** Authentication state management for API key auth */
 
+import { buildApiRequest } from './runtime-config.js'
+
 const STORAGE_KEY = 'vault_api_key'
 
 let apiKey = $state(localStorage.getItem(STORAGE_KEY) || '')
@@ -46,7 +48,8 @@ export function clearApiKey() {
  */
 export async function checkAuthStatus() {
   try {
-    const res = await fetch('/api/v1/auth/status')
+    const { url, options } = buildApiRequest('GET', '/auth/status')
+    const res = await fetch(url, options)
     const data = await res.json()
     // Use ui_auth_required for the SPA — the server never requires
     // browser-based users to authenticate (origin-based bypass).
@@ -64,9 +67,10 @@ export async function checkAuthStatus() {
  */
 export async function validateApiKey(key) {
   try {
-    const res = await fetch('/api/v1/health', {
+    const { url, options } = buildApiRequest('GET', '/health', {
       headers: { Authorization: `Bearer ${key}` },
     })
+    const res = await fetch(url, options)
     return res.ok
   } catch {
     return false

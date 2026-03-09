@@ -3,8 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -137,43 +141,121 @@ func (s *Server) SettingsHandler() *handlers.SettingsHandler {
 }
 
 func (s *Server) Start() error {
-	srv := &http.Server{
-		Addr:         s.config.Addr,
-		Handler:      s.router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-	}
-	if s.config.TLSCert != "" && s.config.TLSKey != "" {
-		log.Printf("Vault API server listening on %s (TLS)", s.config.Addr)
-		return srv.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
-	}
-	log.Printf("Vault API server listening on %s", s.config.Addr)
-	return srv.ListenAndServe()
+	return s.serve(context.Background())
 }
 
 func (s *Server) StartWithContext(ctx context.Context) error {
-	srv := &http.Server{
-		Addr:         s.config.Addr,
-		Handler:      s.router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-	}
+	return s.serve(ctx)
+}
 
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("server shutdown error: %v", err)
+func (s *Server) serve(ctx context.Context) error {
+	addrs := s.listenAddrs()
+	servers := make([]*http.Server, 0, len(addrs))
+	listeners := make([]net.Listener, 0, len(addrs))
+
+	for _, addr := range addrs {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			for _, existing := range listeners {
+				existing.Close()
+			}
+			return fmt.Errorf("listen on %s: %w", addr, err)
 		}
-	}()
-
-	if s.config.TLSCert != "" && s.config.TLSKey != "" {
-		log.Printf("Vault API server listening on %s (TLS)", s.config.Addr)
-		return srv.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
+		listeners = append(listeners, ln)
+		servers = append(servers, &http.Server{
+			Addr:         addr,
+			Handler:      s.router,
+			ReadTimeout:  15 * time.Second,
+			WriteTimeout: 15 * time.Second,
+		})
 	}
-	log.Printf("Vault API server listening on %s", s.config.Addr)
-	return srv.ListenAndServe()
+
+	shutdownAll := func(parent context.Context) {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if parent != nil {
+			shutdownCtx, cancel = context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+		}
+		defer cancel()
+		for _, srv := range servers {
+			if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("server shutdown error: %v", err)
+			}
+		}
+	}
+
+	if ctx != nil {
+		go func() {
+			<-ctx.Done()
+			shutdownAll(ctx)
+		}()
+	}
+
+	errCh := make(chan error, len(servers))
+	for i, srv := range servers {
+		ln := listeners[i]
+		if s.config.TLSCert != "" && s.config.TLSKey != "" {
+			log.Printf("Vault API server listening on %s (TLS)", ln.Addr().String())
+			go func(server *http.Server, listener net.Listener) {
+				errCh <- server.ServeTLS(listener, s.config.TLSCert, s.config.TLSKey)
+			}(srv, ln)
+			continue
+		}
+
+		log.Printf("Vault API server listening on %s", ln.Addr().String())
+		go func(server *http.Server, listener net.Listener) {
+			errCh <- server.Serve(listener)
+		}(srv, ln)
+	}
+
+	closed := false
+	for range servers {
+		err := <-errCh
+		if errors.Is(err, http.ErrServerClosed) {
+			closed = true
+			continue
+		}
+		if err != nil {
+			shutdownAll(ctx)
+			return err
+		}
+	}
+
+	if closed {
+		return http.ErrServerClosed
+	}
+
+	return nil
+}
+
+func (s *Server) listenAddrs() []string {
+	addrs := []string{s.config.Addr}
+	loopbackAddr, ok := loopbackListenerFor(s.config.Addr)
+	if !ok {
+		return addrs
+	}
+
+	return append([]string{loopbackAddr}, addrs...)
+}
+
+func loopbackListenerFor(addr string) (string, bool) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return "", false
+	}
+
+	normalized := strings.Trim(strings.TrimSpace(host), "[]")
+	if normalized == "" || strings.EqualFold(normalized, "localhost") {
+		return "", false
+	}
+
+	ip := net.ParseIP(normalized)
+	if ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() {
+			return "", false
+		}
+	}
+
+	return net.JoinHostPort("127.0.0.1", port), true
 }
 
 func respondJSON(w http.ResponseWriter, status int, data any) {

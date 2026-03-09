@@ -1,10 +1,10 @@
 ---
-# CRUD verification tests — delegated to localhost (no Python needed on Unraid)
+# CRUD verification tests — delegated to localhost through the verification tunnel.
 
 - name: Create test storage destination
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/storage"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage"
     method: POST
     headers:
       X-API-Key: "{{ api_key | default('') }}"
@@ -27,7 +27,7 @@
 - name: Create test backup job
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs"
     method: POST
     headers:
       X-API-Key: "{{ api_key | default('') }}"
@@ -58,7 +58,7 @@
 - name: Get job details
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ create_job.json.id }}"
     method: GET
     headers:
       X-API-Key: "{{ api_key | default('') }}"
@@ -75,7 +75,7 @@
 - name: Get job history
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}/history"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ create_job.json.id }}/history"
     method: GET
     headers:
       X-API-Key: "{{ api_key | default('') }}"
@@ -91,7 +91,7 @@
 - name: Get restore points
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}/restore-points"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ create_job.json.id }}/restore-points"
     method: GET
     headers:
       X-API-Key: "{{ api_key | default('') }}"
@@ -107,7 +107,7 @@
 - name: Test storage connection
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/storage/{{ create_storage.json.id }}/test"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ create_storage.json.id }}/test"
     method: POST
     headers:
       X-API-Key: "{{ api_key | default('') }}"
@@ -118,7 +118,7 @@
 - name: Clean up test job
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ create_job.json.id }}"
     method: DELETE
     headers:
       X-API-Key: "{{ api_key | default('') }}"
@@ -127,7 +127,7 @@
 - name: Clean up test storage
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/storage/{{ create_storage.json.id }}"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ create_storage.json.id }}"
     method: DELETE
     headers:
       X-API-Key: "{{ api_key | default('') }}"

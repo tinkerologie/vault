@@ -6,7 +6,7 @@
   ansible.builtin.command:
     cmd: >
       go run {{ playbook_dir }}/../scripts/verify-mcp-streamable-http.go
-      -endpoint http://{{ ansible_host }}:{{ api_port }}/api/v1/mcp
+      -endpoint http://127.0.0.1:{{ verify_local_port }}/api/v1/mcp
       -api-key {{ api_key | quote }}
   register: mcp_result
   changed_when: false

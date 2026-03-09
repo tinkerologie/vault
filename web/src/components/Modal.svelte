@@ -1,5 +1,5 @@
 <script>
-  /** @type {{ show: boolean, title?: string, onclose?: () => void }} */
+  /** @type {{ show: boolean, title?: string, onclose?: () => void, children?: import('svelte').Snippet }} */
   let { show = false, title = '', onclose = () => {}, children } = $props()
 
   let dialogEl = $state(null)

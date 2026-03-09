@@ -43,7 +43,10 @@ fi
 # Create default config if missing
 CONFIG="/boot/config/plugins/vault/vault.cfg"
 if [ ! -f "$CONFIG" ]; then
-    echo 'PORT=24085' > "$CONFIG"
+    cat > "$CONFIG" <<'CFGEOF'
+PORT=24085
+BIND_ADDRESS=127.0.0.1
+CFGEOF
 fi
 
 # Create data directory

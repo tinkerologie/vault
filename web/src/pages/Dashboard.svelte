@@ -5,7 +5,7 @@
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { relTime, relTimeUntil, formatSpeed } from '../lib/utils.js'
-  import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
+  import { getProgress, handleProgressMessage, restoreFromStatus, syncFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import Toast from '../components/Toast.svelte'
   import Welcome from '../components/Welcome.svelte'
@@ -56,6 +56,9 @@
     // Restore progress overlay if a backup/restore is already running.
     api.getRunnerStatus().then(s => restoreFromStatus(s)).catch(() => {})
     const unsub = onWsMessage((msg) => {
+      if (msg.type === 'runner_status_snapshot') {
+        syncFromStatus(msg.status)
+      }
       const jobNameResolver = (id) => jobs.find(j => j.id === id)?.name
       handleProgressMessage(msg, jobNameResolver)
       if (msg.type === 'item_backup_done') {

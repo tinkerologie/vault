@@ -1,5 +1,5 @@
 ---
-# WebSocket upgrade handshake test — delegated to localhost
+# WebSocket upgrade handshake test — delegated to localhost through the verification tunnel.
 
 - name: Test WebSocket upgrade handshake
   delegate_to: localhost
@@ -11,7 +11,7 @@
       -H 'Sec-WebSocket-Version: 13'
       -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=='
       -H 'X-API-Key: {{ api_key | default("") }}'
-      http://{{ ansible_host }}:{{ api_port }}/api/v1/ws
+        http://127.0.0.1:{{ verify_local_port }}/api/v1/ws
   register: ws_result
   changed_when: false
   failed_when: false

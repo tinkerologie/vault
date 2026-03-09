@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/ruaandeysel/vault/internal/api"
@@ -195,6 +197,10 @@ var daemonCmd = &cobra.Command{
 			log.Println("CLI API key seeded into database")
 		}
 
+		if err := validateListenAddress(addr, apiKey != "" || database.HasAPIKey()); err != nil {
+			return err
+		}
+
 		cfg := api.ServerConfig{
 			Addr:      addr,
 			APIKey:    apiKey,
@@ -254,6 +260,43 @@ var daemonCmd = &cobra.Command{
 		}
 		return err
 	},
+}
+
+func validateListenAddress(addr string, hasAPIKey bool) error {
+	if isLoopbackListenAddress(addr) {
+		return nil
+	}
+	if hasAPIKey {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"non-loopback bind address %q requires an API key; generate one first while Vault is bound to 127.0.0.1",
+		addr,
+	)
+}
+
+func isLoopbackListenAddress(addr string) bool {
+	host := listenAddressHost(addr)
+	if host == "" {
+		return false
+	}
+
+	normalized := strings.Trim(strings.TrimSpace(host), "[]")
+	if strings.EqualFold(normalized, "localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(normalized)
+	return ip != nil && ip.IsLoopback()
+}
+
+func listenAddressHost(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err == nil {
+		return host
+	}
+	return addr
 }
 
 func init() {

@@ -1,7 +1,7 @@
 <script>
   import { api } from '../lib/api.js'
 
-  let { value = $bindable(''), label = 'Script', placeholder = '/path/to/script.sh' } = $props()
+  let { value = $bindable(''), label = 'Script', placeholder = '/path/to/script.sh', inputId = 'script-browser-input' } = $props()
 
   let open = $state(false)
   let entries = $state([])
@@ -54,10 +54,11 @@
 </script>
 
 <div class="space-y-1">
-  <label class="block text-xs font-medium text-text-muted mb-1">{label}</label>
+  <label for={inputId} class="block text-xs font-medium text-text-muted mb-1">{label}</label>
   <div class="flex gap-2">
     <div class="relative flex-1">
       <input
+        id={inputId}
         type="text"
         bind:value
         {placeholder}

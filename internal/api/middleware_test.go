@@ -127,6 +127,26 @@ func TestReadOnlyGuard(t *testing.T) {
 	}
 }
 
+func TestTrustedLocalProxyRequest(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(trustedProxyHeader, trustedProxyValue)
+	req.RemoteAddr = "192.168.1.25:1234"
+
+	if !isTrustedLocalProxyRequest(req, "192.168.1.25:24085") {
+		t.Fatal("expected trusted proxy request to be accepted")
+	}
+}
+
+func TestTrustedLocalProxyRequestRejectsRemoteSource(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(trustedProxyHeader, trustedProxyValue)
+	req.RemoteAddr = "203.0.113.10:1234"
+
+	if isTrustedLocalProxyRequest(req, "192.168.1.25:24085") {
+		t.Fatal("expected remote proxy request to be rejected")
+	}
+}
+
 func TestLocalUIBypass(t *testing.T) {
 	t.Parallel()
 
@@ -139,6 +159,9 @@ func TestLocalUIBypass(t *testing.T) {
 		name         string
 		apiKey       string
 		secFetchSite string
+		origin       string
+		referer      string
+		remoteAddr   string
 		authHeader   string
 		wantStatus   int
 	}{
@@ -179,6 +202,32 @@ func TestLocalUIBypass(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
+			name:       "same-origin origin bypasses auth",
+			apiKey:     "test-secret-key",
+			origin:     "http://example.com",
+			remoteAddr: "example.com:1234",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "same-origin referer bypasses auth",
+			apiKey:     "test-secret-key",
+			referer:    "http://example.com/#/settings",
+			remoteAddr: "example.com:1234",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "loopback bypasses auth",
+			apiKey:     "test-secret-key",
+			remoteAddr: "127.0.0.1:1234",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "non-loopback requires auth",
+			apiKey:     "test-secret-key",
+			remoteAddr: "192.168.1.25:1234",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
 			name:         "none origin requires key",
 			apiKey:       "test-secret-key",
 			secFetchSite: "none",
@@ -195,12 +244,148 @@ func TestLocalUIBypass(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			mw := LocalUIBypass(func() string { return tt.apiKey })
+			mw := LocalUIBypass(func() string { return tt.apiKey }, "127.0.0.1:24085")
 			handler := mw(okHandler)
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			if tt.secFetchSite != "" {
 				req.Header.Set("Sec-Fetch-Site", tt.secFetchSite)
+			}
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.referer != "" {
+				req.Header.Set("Referer", tt.referer)
+			}
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
+			}
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestAdminBoundary(t *testing.T) {
+	t.Parallel()
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	tests := []struct {
+		name         string
+		apiKey       string
+		secFetchSite string
+		origin       string
+		referer      string
+		remoteAddr   string
+		authHeader   string
+		wantStatus   int
+	}{
+		{
+			name:         "same-origin always allowed",
+			apiKey:       "secret",
+			secFetchSite: "same-origin",
+			wantStatus:   http.StatusOK,
+		},
+		{
+			name:         "same-origin allowed even with no key configured",
+			apiKey:       "",
+			secFetchSite: "same-origin",
+			wantStatus:   http.StatusOK,
+		},
+		{
+			name:       "no key configured + no same-origin = 403",
+			apiKey:     "",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:         "cross-site with no key configured = 403",
+			apiKey:       "",
+			secFetchSite: "cross-site",
+			wantStatus:   http.StatusForbidden,
+		},
+		{
+			name:       "key configured + no token = 401",
+			apiKey:     "secret",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "key configured + valid token = 200",
+			apiKey:     "secret",
+			authHeader: "Bearer secret",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "same-origin origin allowed without key configured",
+			apiKey:     "",
+			origin:     "http://example.com",
+			remoteAddr: "example.com:1234",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "same-origin referer allowed without key configured",
+			apiKey:     "",
+			referer:    "http://example.com/#/settings",
+			remoteAddr: "example.com:1234",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "loopback allowed without key configured",
+			apiKey:     "",
+			remoteAddr: "127.0.0.1:1234",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "non-loopback is forbidden when no key configured",
+			apiKey:     "",
+			remoteAddr: "192.168.1.25:1234",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "key configured + wrong token = 401",
+			apiKey:     "secret",
+			authHeader: "Bearer wrong",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:         "cross-site + key configured + valid token = 200",
+			apiKey:       "secret",
+			secFetchSite: "cross-site",
+			authHeader:   "Bearer secret",
+			wantStatus:   http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mw := AdminBoundary(func() string { return tt.apiKey }, "127.0.0.1:24085")
+			handler := mw(okHandler)
+
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			if tt.secFetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tt.secFetchSite)
+			}
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.referer != "" {
+				req.Header.Set("Referer", tt.referer)
+			}
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
 			}
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)

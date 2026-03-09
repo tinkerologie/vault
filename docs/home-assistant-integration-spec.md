@@ -25,14 +25,21 @@ The HA integration should:
 
 1. Monitor Vault health, job statuses, and backup history
 2. Trigger on-demand backups (e.g., before an HA OS upgrade)
-3. Show real-time backup progress via WebSocket
+3. Show live backup progress, preferably via WebSocket when the chosen forward supports it and otherwise by polling
 4. Work with HA's built-in backup mechanism to trigger Vault backups as a pre-upgrade step
 5. Expose sensors, binary sensors, and services for use in automations
 
-**Vault API base URL:** `http://<unraid-ip>:24085/api/v1`
-**WebSocket URL:** `ws://<unraid-ip>:24085/api/v1/ws`
+**Default secure daemon target:** `http://127.0.0.1:24085/api/v1`
+**Direct LAN example:** `http://192.168.1.10:24085/api/v1`
+**WebSocket example:** `ws://192.168.1.10:24085/api/v1/ws`
 
-> **Authentication** is supported via API key (`--api-key` flag or `VAULT_API_KEY` env var). When configured, all API requests require a valid key via `Authorization: Bearer <key>`, `X-API-Key: <key>` header, or `?token=<key>` query parameter. TLS is also supported (`--tls-cert`, `--tls-key`) — when enabled, use `https://` and `wss://` URLs.
+> **Connection model on Unraid:** Vault defaults to `BIND_ADDRESS=127.0.0.1`, which keeps the daemon local-only. The Unraid browser UI reaches it through an authenticated plugin proxy, but that proxy is browser-only and is not a supported endpoint for Home Assistant or other third-party integrations.
+>
+> For direct Home Assistant access, change `BIND_ADDRESS` to a specific Unraid LAN IP or `0.0.0.0`, restart Vault, and configure an API key before exposing the API on the network.
+>
+> If you keep the loopback-only default, Home Assistant must use some kind of forward or tunnel to reach the daemon.
+>
+> **Authentication** is supported via API key (`--api-key` flag or `VAULT_API_KEY` env var). When configured, all API requests require a valid key via `Authorization: Bearer <key>`, `X-API-Key: <key>` header, or `?token=<key>` query parameter.
 >
 > The `/api/v1/auth/status` endpoint returns `{"auth_required": true/false}` so the integration can detect whether authentication is needed.
 >
@@ -46,13 +53,13 @@ The HA integration should:
 
 ```text
 Home Assistant
-├── config_flow.py          # UI setup: host, port
+├── config_flow.py          # UI setup: base URL, API key
 ├── __init__.py             # Platform setup, coordinator
 ├── coordinator.py          # DataUpdateCoordinator (polls API)
 ├── sensor.py               # Sensors (job status, last run, size, etc.)
 ├── binary_sensor.py        # Binary sensors (vault online, job running)
 ├── button.py               # Buttons (run backup now)
-├── const.py                # Constants (DOMAIN, DEFAULT_PORT, etc.)
+├── const.py                # Constants (DOMAIN, CONF_BASE_URL, etc.)
 ├── services.yaml           # Service definitions
 ├── strings.json            # UI translations
 ├── manifest.json           # Integration manifest
@@ -62,7 +69,7 @@ Home Assistant
 ### Recommended Approach
 
 - Use a **`DataUpdateCoordinator`** that polls `/health`, `/jobs`, and `/activity` every 30–60 seconds
-- Optionally maintain a persistent **WebSocket** connection to `/api/v1/ws` for real-time backup progress events (fire HA events like `vault_backup_started`, `vault_backup_completed`, etc.)
+- Optionally maintain a persistent **WebSocket** connection to `/api/v1/ws` when the chosen forward supports upgrades; otherwise poll `/runner/status` and `/activity` for live state
 - Register **services** for on-demand operations (run backup, restore)
 
 ---
@@ -73,12 +80,9 @@ The integration should use HA's config flow UI:
 
 ### User Input
 
-| Field   | Type   | Default | Description                            |
-| ------- | ------ | ------- | -------------------------------------- |
-| host    | string | —       | Unraid IP or hostname                  |
-| port    | int    | 24085   | Vault API port                         |
-| api_key | string | —       | API key (optional, if auth is enabled) |
-| tls     | bool   | false   | Use HTTPS/WSS instead of HTTP/WS       |
+- `base_url` (string, required): Vault API URL ending in `/api/v1`; use a direct LAN URL or a forwarded URL
+- `api_key` (string, optional): API key when Vault authentication is enabled
+- `verify_ssl` (bool, default `true`): verify the TLS certificate when using HTTPS
 
 ### Validation Step
 
@@ -87,7 +91,7 @@ During config flow validation:
 1. Check if auth is required:
 
 ```http
-GET http://{host}:{port}/api/v1/auth/status
+GET {base_url}/auth/status
 ```
 
 ```json
@@ -97,7 +101,7 @@ GET http://{host}:{port}/api/v1/auth/status
 1. Validate connectivity (include auth header if `auth_required` is `true`):
 
 ```http
-GET http://{host}:{port}/api/v1/health
+GET {base_url}/health
 Authorization: Bearer <api_key>
 ```
 
@@ -114,7 +118,7 @@ If `auth_required` is `true` and no `api_key` was provided, prompt the user to e
 
 ## Vault REST API Reference
 
-All endpoints are under `http://{host}:{port}/api/v1`.
+All endpoints are under `{base_url}`.
 All responses are JSON. Errors return `{"error": "message"}`.
 
 **Authentication:** When API key auth is enabled, include one of:
@@ -426,19 +430,19 @@ These are informational — useful for showing what's available to back up.
 
 ## WebSocket Real-Time Events
 
-**Endpoint:** `ws://{host}:{port}/api/v1/ws`
+**Endpoint:** `{ws_url}` such as `ws://192.168.1.10:24085/api/v1/ws`
 
-Connect using a standard WebSocket client. The server broadcasts JSON messages to all connected clients.
+Connect using a standard WebSocket client whenever the chosen API URL supports WebSocket upgrades. The server broadcasts JSON messages to all connected clients.
+
+If the chosen path does not support WebSockets, the integration should fall back to polling `GET {base_url}/runner/status` and `GET {base_url}/activity`.
 
 **Authentication:** If API key auth is enabled, pass the key as a query parameter:
 
 ```text
-ws://{host}:{port}/api/v1/ws?token=<api_key>
+ws://192.168.1.10:24085/api/v1/ws?token=<api_key>
 ```
 
-**Origin validation:** The WebSocket endpoint only accepts connections from local network origins (localhost, `127.0.0.1`, `*.local`, `192.168.*.*`, `10.*.*.*`, `172.16.*.*`). HA running on the same LAN will connect without issues.
-
-**TLS:** When TLS is enabled, use `wss://` instead of `ws://`.
+**TLS:** Use `wss://` whenever the selected Home Assistant endpoint is HTTPS.
 
 ### Message Types
 
@@ -568,12 +572,12 @@ Create a single **device** for each Vault instance:
 
 ```python
 {
-    "identifiers": {(DOMAIN, f"{host}:{port}")},
+    "identifiers": {(DOMAIN, base_url)},
     "name": "Vault Backup",
     "manufacturer": "Vault",
     "model": "Unraid Backup Daemon",
     "sw_version": version,  # from /health
-    "configuration_url": f"http://{host}:{port}",
+    "configuration_url": base_url.rsplit('/api/v1', 1)[0],
 }
 ```
 
@@ -969,9 +973,8 @@ class VaultData:
 ```python
 import aiohttp
 
-async def websocket_listener(hass, host, port, api_key=None, use_tls=False):
-    scheme = "wss" if use_tls else "ws"
-    url = f"{scheme}://{host}:{port}/api/v1/ws"
+async def websocket_listener(hass, ws_url, api_key=None):
+    url = ws_url.rstrip('/')
     if api_key:
         url += f"?token={api_key}"
     async with aiohttp.ClientSession() as session:
