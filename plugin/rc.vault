@@ -6,23 +6,35 @@ DB=/boot/config/plugins/vault/vault.db
 CONFIG=/boot/config/plugins/vault/vault.cfg
 LOG=/var/log/vault.log
 
-# Read port from config, default to 24085.
+# Read bind address and port from config.
+BIND_ADDRESS=127.0.0.1
 PORT=24085
 if [ -f "$CONFIG" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG"
+    BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
     PORT="${PORT:-24085}"
 fi
-ADDR=":${PORT}"
+LISTEN_HOST="$BIND_ADDRESS"
+if [[ "$LISTEN_HOST" == *:* && "$LISTEN_HOST" != \[* ]]; then
+    LISTEN_HOST="[$LISTEN_HOST]"
+fi
+ADDR="${LISTEN_HOST}:${PORT}"
 
 start() {
     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
         echo "Vault daemon is already running"
         return 1
     fi
-    echo "Starting Vault daemon..."
+    echo "Starting Vault daemon on ${ADDR}..."
     nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
+    sleep 1
+    if ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "Vault daemon failed to start. Check $LOG"
+        rm -f "$PIDFILE"
+        return 1
+    fi
     echo "Vault daemon started (PID: $(cat "$PIDFILE"))"
 }
 

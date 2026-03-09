@@ -1,6 +1,6 @@
 #!/bin/bash
 # apply.sh — Called by Unraid's /update.php after saving vault.cfg.
-# Restarts the Vault daemon to pick up port changes (if it is running).
+# Restarts the Vault daemon to pick up port or bind-address changes (if it is running).
 
 RC="/etc/rc.d/rc.vault"
 PIDFILE="/var/run/vault.pid"

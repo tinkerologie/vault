@@ -34,7 +34,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// LocalUIBypass allows same-origin browser requests (the SPA) through
 		// without an API key. External clients must provide a valid key.
 		r.Group(func(r chi.Router) {
-			r.Use(LocalUIBypass(s.keyResolver()))
+			r.Use(LocalUIBypass(s.keyResolver(), s.config.Addr))
 			r.Get("/ws", s.hub.HandleWS)
 
 			healthH := handlers.NewHealthHandler(s.db)
@@ -96,9 +96,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 				// Key bootstrap, rotation, and revocation require the browser-or-key
 				// boundary so arbitrary external clients cannot call these security
 				// endpoints when no key is configured yet.
-				r.With(AdminBoundary(s.keyResolver())).Post("/api-key/generate", settingsH.GenerateAPIKey)
-				r.With(AdminBoundary(s.keyResolver())).Post("/api-key/rotate", settingsH.RotateAPIKey)
-				r.With(AdminBoundary(s.keyResolver())).Delete("/api-key", settingsH.RevokeAPIKey)
+				r.With(AdminBoundary(s.keyResolver(), s.config.Addr)).Post("/api-key/generate", settingsH.GenerateAPIKey)
+				r.With(AdminBoundary(s.keyResolver(), s.config.Addr)).Post("/api-key/rotate", settingsH.RotateAPIKey)
+				r.With(AdminBoundary(s.keyResolver(), s.config.Addr)).Delete("/api-key", settingsH.RevokeAPIKey)
 				r.Get("/staging", settingsH.GetStagingInfo)
 				r.Put("/staging", settingsH.SetStagingOverride)
 				r.Post("/discord/test", settingsH.TestDiscordWebhook)

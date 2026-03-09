@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -102,4 +103,28 @@ func TestGenerateAPIKeyRequiresBrowserBoundary(t *testing.T) {
 			t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
 		}
 	})
+}
+
+func TestListenAddrs(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		want []string
+	}{
+		{name: "loopback only", addr: "127.0.0.1:24085", want: []string{"127.0.0.1:24085"}},
+		{name: "wildcard only", addr: ":24085", want: []string{":24085"}},
+		{name: "all interfaces only", addr: "0.0.0.0:24085", want: []string{"0.0.0.0:24085"}},
+		{name: "specific lan ip adds loopback", addr: "192.168.20.21:24085", want: []string{"127.0.0.1:24085", "192.168.20.21:24085"}},
+		{name: "hostname adds loopback", addr: "vault.local:24085", want: []string{"127.0.0.1:24085", "vault.local:24085"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewServer(testDB(t), ServerConfig{Addr: tt.addr})
+			got := srv.listenAddrs()
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("listenAddrs() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

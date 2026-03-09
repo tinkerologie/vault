@@ -55,6 +55,38 @@ export function restoreFromStatus(status) {
   _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
 }
 
+/** Keep progress state aligned with the latest runner-status snapshot.
+ *  Used by proxy polling mode where item-level WebSocket events are unavailable.
+ */
+export function syncFromStatus(status) {
+  if (!status?.active) return
+
+  if (!activeRun || activeRun.run_id !== status.run_id) {
+    restoreFromStatus(status)
+    return
+  }
+
+  overallDone = status.items_done || 0
+  overallFailed = status.items_failed || 0
+  overallTotal = status.items_total || 0
+  jobQueue = status.queue || []
+
+  if (status.current_item) {
+    const existing = itemProgress[status.current_item] || {}
+    itemProgress = {
+      ...itemProgress,
+      [status.current_item]: {
+        ...existing,
+        status: 'running',
+        message: existing.message || 'In progress...',
+      },
+    }
+  }
+
+  const startMs = status.started_at ? Date.parse(status.started_at) : Date.now()
+  elapsedSec = Math.max(0, Math.round((Date.now() - startMs) / 1000))
+}
+
 /** Handle an incoming WebSocket message — update progress state.
  *  Returns true if this message was a progress event (handled).
  */

@@ -1,10 +1,10 @@
 ---
-# Core API endpoint tests — delegated to localhost (no Python needed on Unraid)
+# Core API endpoint tests — run through an SSH tunnel to the local-only daemon.
 
 - name: Test core API endpoints
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/{{ item.path }}"
+    url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/{{ item.path }}"
     method: GET
     headers:
       X-API-Key: "{{ api_key | default('') }}"
@@ -22,7 +22,7 @@
 - name: Verify ping endpoint
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ api_port }}/ping"
+    url: "http://127.0.0.1:{{ verify_local_port }}/ping"
     method: GET
     status_code: 200
   register: ping_result

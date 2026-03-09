@@ -53,13 +53,13 @@
           Vault Deployment & Test Summary
           ══════════════════════════════════════════
 
-          Server:      {{ ansible_host }}:{{ api_port }}
+          Server:      {{ ansible_host }}
           Version:     {{ version }}
 
           ── Endpoints ──
-          API:         http://{{ ansible_host }}:{{ api_port }}/api/v1
-          WebSocket:   ws://{{ ansible_host }}:{{ api_port }}/api/v1/ws
-          Health:      http://{{ ansible_host }}:{{ api_port }}/api/v1/health
+          Browser UI:  /plugins/{{ plugin_name }}/include/app.php#/
+          Proxy API:   /plugins/{{ plugin_name }}/include/proxy.php
+          Daemon Bind: {{ daemon_bind_display | default(bind_address ~ ':' ~ api_port) }}
 
           {% if endpoint_results is defined %}
           ── Test Results ──

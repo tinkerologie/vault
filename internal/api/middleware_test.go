@@ -127,6 +127,26 @@ func TestReadOnlyGuard(t *testing.T) {
 	}
 }
 
+func TestTrustedLocalProxyRequest(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(trustedProxyHeader, trustedProxyValue)
+	req.RemoteAddr = "192.168.1.25:1234"
+
+	if !isTrustedLocalProxyRequest(req, "192.168.1.25:24085") {
+		t.Fatal("expected trusted proxy request to be accepted")
+	}
+}
+
+func TestTrustedLocalProxyRequestRejectsRemoteSource(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(trustedProxyHeader, trustedProxyValue)
+	req.RemoteAddr = "203.0.113.10:1234"
+
+	if isTrustedLocalProxyRequest(req, "192.168.1.25:24085") {
+		t.Fatal("expected remote proxy request to be rejected")
+	}
+}
+
 func TestLocalUIBypass(t *testing.T) {
 	t.Parallel()
 
@@ -141,6 +161,7 @@ func TestLocalUIBypass(t *testing.T) {
 		secFetchSite string
 		origin       string
 		referer      string
+		remoteAddr   string
 		authHeader   string
 		wantStatus   int
 	}{
@@ -184,13 +205,27 @@ func TestLocalUIBypass(t *testing.T) {
 			name:       "same-origin origin bypasses auth",
 			apiKey:     "test-secret-key",
 			origin:     "http://example.com",
+			remoteAddr: "example.com:1234",
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "same-origin referer bypasses auth",
 			apiKey:     "test-secret-key",
 			referer:    "http://example.com/#/settings",
+			remoteAddr: "example.com:1234",
 			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "loopback bypasses auth",
+			apiKey:     "test-secret-key",
+			remoteAddr: "127.0.0.1:1234",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "non-loopback requires auth",
+			apiKey:     "test-secret-key",
+			remoteAddr: "192.168.1.25:1234",
+			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name:         "none origin requires key",
@@ -209,7 +244,7 @@ func TestLocalUIBypass(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			mw := LocalUIBypass(func() string { return tt.apiKey })
+			mw := LocalUIBypass(func() string { return tt.apiKey }, "127.0.0.1:24085")
 			handler := mw(okHandler)
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -221,6 +256,9 @@ func TestLocalUIBypass(t *testing.T) {
 			}
 			if tt.referer != "" {
 				req.Header.Set("Referer", tt.referer)
+			}
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
 			}
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
@@ -250,6 +288,7 @@ func TestAdminBoundary(t *testing.T) {
 		secFetchSite string
 		origin       string
 		referer      string
+		remoteAddr   string
 		authHeader   string
 		wantStatus   int
 	}{
@@ -291,13 +330,27 @@ func TestAdminBoundary(t *testing.T) {
 			name:       "same-origin origin allowed without key configured",
 			apiKey:     "",
 			origin:     "http://example.com",
+			remoteAddr: "example.com:1234",
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "same-origin referer allowed without key configured",
 			apiKey:     "",
 			referer:    "http://example.com/#/settings",
+			remoteAddr: "example.com:1234",
 			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "loopback allowed without key configured",
+			apiKey:     "",
+			remoteAddr: "127.0.0.1:1234",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "non-loopback is forbidden when no key configured",
+			apiKey:     "",
+			remoteAddr: "192.168.1.25:1234",
+			wantStatus: http.StatusForbidden,
 		},
 		{
 			name:       "key configured + wrong token = 401",
@@ -318,7 +371,7 @@ func TestAdminBoundary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			mw := AdminBoundary(func() string { return tt.apiKey })
+			mw := AdminBoundary(func() string { return tt.apiKey }, "127.0.0.1:24085")
 			handler := mw(okHandler)
 
 			req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -330,6 +383,9 @@ func TestAdminBoundary(t *testing.T) {
 			}
 			if tt.referer != "" {
 				req.Header.Set("Referer", tt.referer)
+			}
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
 			}
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)

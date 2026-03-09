@@ -4,6 +4,7 @@
   import { api } from '../lib/api.js'
   import { formatDate, relTime, formatBytes } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
+  import { getLiveMode } from '../lib/runtime-config.js'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
 
@@ -17,6 +18,7 @@
   let autoScroll = $state(true)
   let logContainer = $state(null)
   let copiedId = $state(null)
+  const liveMode = getLiveMode()
 
   // Real-time: prepend new activity entries via WebSocket instead of full reload
   onMount(() => {
@@ -37,7 +39,11 @@
         loadLogs()
       }
     })
-    return unsub
+    const pollTimer = liveMode === 'poll' ? setInterval(() => { loadLogs() }, 5000) : null
+    return () => {
+      unsub()
+      if (pollTimer) clearInterval(pollTimer)
+    }
   })
 
   const categories = [

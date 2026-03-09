@@ -1,6 +1,45 @@
 ---
 - name: Verify Vault deployment
   block:
+    - name: Read effective daemon bind for verification
+      ansible.builtin.raw: |
+        if [ -f {{ config_dir }}/vault.cfg ]; then
+          # shellcheck source=/dev/null
+          . {{ config_dir }}/vault.cfg
+        fi
+        BIND_VALUE="${BIND_ADDRESS:-{{ bind_address }}}"
+        PORT_VALUE="${PORT:-{{ api_port }}}"
+        TARGET_VALUE="$BIND_VALUE"
+        if [ "$TARGET_VALUE" = "0.0.0.0" ] || [ "$TARGET_VALUE" = "::" ]; then
+          TARGET_VALUE="127.0.0.1"
+        fi
+        printf '%s\n%s\n' "${BIND_VALUE}:${PORT_VALUE}" "$TARGET_VALUE"
+      register: verify_bind_info
+      changed_when: false
+
+    - name: Set verification bind facts
+      ansible.builtin.set_fact:
+        daemon_bind_display: "{{ verify_bind_info.stdout_lines[0] | default(bind_address ~ ':' ~ api_port) }}"
+        verify_target_host: "{{ verify_bind_info.stdout_lines[1] | default('127.0.0.1') }}"
+
+    - name: Remove stale verification tunnel socket
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "/tmp/vault-verify-{{ inventory_hostname }}.sock"
+        state: absent
+
+    - name: Start SSH tunnel to local-only Vault daemon
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p '{{ ansible_password }}'
+          ssh -M -S /tmp/vault-verify-{{ inventory_hostname }}.sock -f -N
+          -L 127.0.0.1:{{ verify_local_port }}:{% if ':' in verify_target_host and not verify_target_host.startswith('[') %}[{{ verify_target_host }}]{% else %}{{ verify_target_host }}{% endif %}:{{ api_port }}
+          -o ExitOnForwardFailure=yes
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ ansible_user }}@{{ ansible_host }}
+
     - name: Test health endpoint
       ansible.builtin.include_tasks: endpoints.yml
 
@@ -15,3 +54,21 @@
 
     - name: Run folder backup/restore smoke test
       ansible.builtin.include_tasks: folder_smoke_test.yml
+  always:
+    - name: Stop SSH tunnel to local-only Vault daemon
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          ssh -S /tmp/vault-verify-{{ inventory_hostname }}.sock -O exit
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ ansible_user }}@{{ ansible_host }}
+      ignore_errors: true
+      changed_when: false
+
+    - name: Remove verification tunnel socket
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "/tmp/vault-verify-{{ inventory_hostname }}.sock"
+        state: absent
+      ignore_errors: true

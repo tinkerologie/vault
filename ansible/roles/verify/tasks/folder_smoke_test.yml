@@ -14,7 +14,7 @@
     - name: Create temporary storage destination for smoke test
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/storage"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage"
         method: POST
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -37,7 +37,7 @@
     - name: Create temporary folder backup job for smoke test
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs"
         method: POST
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -72,7 +72,7 @@
     - name: Trigger smoke test backup run
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ smoke_job.json.id }}/run"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}/run"
         method: POST
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -82,7 +82,7 @@
     - name: Poll until backup completes (up to 60 s)
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/runner/status"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/runner/status"
         method: GET
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -95,7 +95,7 @@
     - name: Get smoke test job history
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ smoke_job.json.id }}/history"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}/history"
         method: GET
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -114,7 +114,7 @@
     - name: Get smoke test restore points
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ smoke_job.json.id }}/restore-points"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}/restore-points"
         method: GET
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -131,7 +131,7 @@
     - name: Trigger folder restore into temporary destination
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ smoke_job.json.id }}/restore"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}/restore"
         method: POST
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -145,7 +145,7 @@
     - name: Poll until restore completes (up to 60 s)
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/runner/status"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/runner/status"
         method: GET
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -173,7 +173,7 @@
     - name: Clean up smoke test job
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/jobs/{{ smoke_job.json.id }}?deleteFiles=true"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ smoke_job.json.id }}?deleteFiles=true"
         method: DELETE
         headers:
           X-API-Key: "{{ api_key | default('') }}"
@@ -187,7 +187,7 @@
     - name: Clean up smoke test storage
       delegate_to: localhost
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ api_port }}/api/v1/storage/{{ smoke_storage.json.id }}?deleteFiles=true"
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ smoke_storage.json.id }}?deleteFiles=true"
         method: DELETE
         headers:
           X-API-Key: "{{ api_key | default('') }}"

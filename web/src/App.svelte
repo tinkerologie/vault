@@ -4,6 +4,7 @@
   import { initTheme, getTheme, setTheme, getIsDark } from './lib/theme.svelte.js'
   import { checkAuthStatus } from './lib/auth.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
+  import { getLiveMode } from './lib/runtime-config.js'
   import { onMount } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -49,6 +50,7 @@
 
   let ready = $state(false)
   let replicaMode = $state(false)
+  const liveMode = getLiveMode()
 
   onMount(async () => {
     initTheme()
@@ -138,8 +140,8 @@
     <!-- WS status footer -->
     <div class="px-6 py-4 border-t border-border flex items-center justify-between">
       <div class="flex items-center gap-2 text-xs text-text-dim">
-        <span class="w-2 h-2 rounded-full shrink-0 {getWsStatus() === 'connected' ? 'bg-success' : getWsStatus() === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger'}"></span>
-        {getWsStatus() === 'connected' ? 'Connected' : getWsStatus() === 'connecting' ? 'Connecting...' : 'Disconnected'}
+        <span class="w-2 h-2 rounded-full shrink-0 {getWsStatus() === 'connected' ? 'bg-success' : getWsStatus() === 'polling' ? 'bg-info' : getWsStatus() === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger'}"></span>
+        {getWsStatus() === 'connected' ? 'Connected' : getWsStatus() === 'polling' ? 'Polling' : getWsStatus() === 'connecting' ? 'Connecting...' : 'Disconnected'}
       </div>
       <button
         onclick={cycleTheme}
@@ -154,6 +156,9 @@
         {/if}
       </button>
     </div>
+    {#if liveMode === 'poll'}
+      <div class="px-6 pb-4 text-[11px] text-text-dim">Authenticated Unraid proxy mode</div>
+    {/if}
   </aside>
 
   <!-- Mobile header -->

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
+  import { getLiveMode } from '../lib/runtime-config.js'
   import { formatDate, describeSchedule } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
@@ -26,6 +27,7 @@
 
   let modalTesting = $state(false)
   let modalTestResult = $state(null)
+  const liveMode = getLiveMode()
 
   let form = $state(defaultForm())
 
@@ -52,7 +54,11 @@
         loadData()
       }
     })
-    return unsub
+    const pollTimer = liveMode === 'poll' ? setInterval(() => { loadData() }, 10000) : null
+    return () => {
+      unsub()
+      if (pollTimer) clearInterval(pollTimer)
+    }
   })
 
   async function loadData() {

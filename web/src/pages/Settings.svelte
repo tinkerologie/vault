@@ -3,6 +3,7 @@
   import { api } from '../lib/api.js'
   import { formatBytes } from '../lib/utils.js'
   import { getWsStatus, connectWs, disconnectWs } from '../lib/ws.svelte.js'
+  import { getApiDisplayBase, getDaemonBindAddress, getDaemonPort, getLiveMode, isProxyMode } from '../lib/runtime-config.js'
   import { getTheme, setTheme } from '../lib/theme.svelte.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
@@ -63,6 +64,18 @@
   let apiKeySaving = $state(false)
   let newlyGeneratedKey = $state('')
   let confirmKeyRevoke = $state(false)
+  const proxyMode = isProxyMode()
+  const liveMode = getLiveMode()
+  const apiDisplayBase = proxyMode ? 'Authenticated Unraid plugin proxy' : new URL(getApiDisplayBase(), window.location.origin).toString()
+  const daemonBindAddress = getDaemonBindAddress()
+  const daemonPort = getDaemonPort()
+  const wildcardBind = daemonBindAddress === '0.0.0.0' || daemonBindAddress === '::'
+  const loopbackBind = daemonBindAddress === '127.0.0.1' || daemonBindAddress === '::1' || daemonBindAddress === 'localhost'
+  const daemonDisplayHost = wildcardBind ? window.location.hostname : daemonBindAddress
+  const daemonDisplayAuthority = daemonDisplayHost.includes(':') && !daemonDisplayHost.startsWith('[')
+    ? `[${daemonDisplayHost}]:${daemonPort}`
+    : `${daemonDisplayHost}:${daemonPort}`
+  const directDaemonEndpoint = `http://${daemonDisplayAuthority}/api/v1`
 
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
@@ -654,10 +667,20 @@
           </span>
         </div>
         <div class="p-5 space-y-4">
+          {#if !loopbackBind}
+            <div class="bg-warning/10 border border-warning/30 rounded-lg p-4">
+              <p class="text-sm font-medium text-warning">Network-exposed daemon</p>
+              <p class="text-xs text-text-muted mt-1">Bind Address is set to {daemonBindAddress}. Keep API key authentication enabled while the daemon is reachable on the network.</p>
+            </div>
+          {/if}
+
           {#if !apiKeyEnabled}
             <!-- No key exists — bootstrap -->
             <div class="space-y-3">
               <p class="text-sm text-text-muted">No API key is configured. Generate one to secure access to the Vault API. The key will be shown once — copy it immediately.</p>
+              {#if !loopbackBind}
+                <p class="text-xs text-warning">Vault will refuse to start on this bind address until an API key is configured.</p>
+              {/if}
               <button onclick={generateApiKey} disabled={apiKeySaving} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 {apiKeySaving ? 'Generating...' : 'Generate API Key'}
               </button>
@@ -708,8 +731,11 @@
                 <div>
                   <span class="text-sm text-text">Revoke Key</span>
                   <p class="text-xs text-text-muted">Remove the API key entirely. Authentication will be disabled.</p>
+                  {#if !loopbackBind}
+                    <p class="text-xs text-warning mt-1">Unavailable while the daemon is bound to a non-loopback address.</p>
+                  {/if}
                 </div>
-                <button onclick={() => confirmKeyRevoke = true} disabled={apiKeySaving} class="px-3 py-1.5 text-sm font-medium rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                <button onclick={() => confirmKeyRevoke = true} disabled={apiKeySaving || !loopbackBind} class="px-3 py-1.5 text-sm font-medium rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                   Revoke
                 </button>
               </div>
@@ -813,16 +839,26 @@
           </div>
           <div class="px-5 py-3 flex items-center justify-between">
             <span class="text-sm text-text-muted">API Endpoint</span>
-            <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">{window.location.origin}/api/v1</code>
+            {#if proxyMode}
+              <span class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">{apiDisplayBase}</span>
+            {:else}
+              <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">{apiDisplayBase}</code>
+            {/if}
           </div>
           <div class="px-5 py-3 flex items-center justify-between">
             <span class="text-sm text-text-muted">WebSocket</span>
             <div class="flex items-center gap-2">
-              <span class="w-2 h-2 rounded-full {getWsStatus() === 'connected' ? 'bg-success' : getWsStatus() === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger'}"></span>
+              <span class="w-2 h-2 rounded-full {getWsStatus() === 'connected' ? 'bg-success' : getWsStatus() === 'polling' ? 'bg-info' : getWsStatus() === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger'}"></span>
               <span class="text-sm text-text capitalize">{getWsStatus()}</span>
               <button onclick={reconnectWebSocket} class="ml-2 text-xs text-vault hover:text-vault-dark transition-colors">Reconnect</button>
             </div>
           </div>
+          {#if liveMode === 'poll'}
+          <div class="px-5 py-3 flex items-center justify-between">
+            <span class="text-sm text-text-muted">Live Updates</span>
+            <span class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">Polling via authenticated Unraid plugin proxy</span>
+          </div>
+          {/if}
         </div>
       </div>
 
@@ -970,6 +1006,21 @@
           <h2 class="text-base font-semibold text-text">API Endpoints</h2>
         </div>
         <div class="p-5">
+          {#if proxyMode}
+            <div class="mb-4 space-y-2 text-sm text-text-muted">
+              <p>The browser UI reaches Vault through the authenticated Unraid plugin proxy, but automation clients should use the daemon API instead.</p>
+              {#if loopbackBind}
+                <p>The daemon is currently local-only at <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">http://127.0.0.1:{daemonPort}/api/v1</code>.</p>
+                <p>To let Home Assistant connect directly, change Bind Address to a specific LAN IP or <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">0.0.0.0</code>, then configure an API key before restarting Vault.</p>
+              {:else if wildcardBind}
+                <p>The daemon listens on all interfaces. External integrations can use your Unraid IP or hostname plus the daemon port, for example <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">{directDaemonEndpoint}</code>.</p>
+                <p>Keep API key authentication enabled before exposing the API on the network.</p>
+              {:else}
+                <p>The daemon is configured for direct machine-to-machine access at <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">{directDaemonEndpoint}</code>.</p>
+                <p>Home Assistant can connect directly to that endpoint with an API key. If WebSocket upgrades are allowed on that path, it can also use <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">/api/v1/ws</code>.</p>
+              {/if}
+            </div>
+          {/if}
           <div class="space-y-2 text-sm font-mono">
             {#each [
               ['GET', '/api/v1/health', 'Health check'],
@@ -981,7 +1032,7 @@
               ['POST', '/api/v1/jobs', 'Create backup job'],
               ['GET', '/api/v1/jobs/:id/history', 'Job run history'],
               ['GET', '/api/v1/jobs/:id/restore-points', 'Restore points'],
-              ['WS', '/api/v1/ws', 'WebSocket events'],
+              [liveMode === 'poll' ? 'POLL' : 'WS', liveMode === 'poll' ? '/api/v1/runner/status' : '/api/v1/ws', liveMode === 'poll' ? 'Polling live status via proxy mode' : 'WebSocket events'],
             ] as [method, path, desc] (`${method}:${path}`)}
               <div class="flex items-center gap-3">
                 <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3rem] text-center
