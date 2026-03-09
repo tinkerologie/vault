@@ -4,7 +4,7 @@
   import { initTheme, getTheme, setTheme, getIsDark } from './lib/theme.svelte.js'
   import { checkAuthStatus } from './lib/auth.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
-  import { getLiveMode } from './lib/runtime-config.js'
+  import { getLiveMode, isProxyMode } from './lib/runtime-config.js'
   import { onMount } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -51,6 +51,7 @@
   let ready = $state(false)
   let replicaMode = $state(false)
   const liveMode = getLiveMode()
+  const proxyMode = isProxyMode()
 
   onMount(async () => {
     initTheme()
@@ -156,8 +157,10 @@
         {/if}
       </button>
     </div>
-    {#if liveMode === 'poll'}
-      <div class="px-6 pb-4 text-[11px] text-text-dim">Authenticated Unraid proxy mode</div>
+    {#if proxyMode && liveMode === 'poll'}
+      <div class="px-6 pb-4 text-[11px] text-text-dim">Polling via authenticated Unraid plugin proxy</div>
+    {:else if proxyMode}
+      <div class="px-6 pb-4 text-[11px] text-text-dim">Authenticated Unraid plugin proxy</div>
     {/if}
   </aside>
 

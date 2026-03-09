@@ -55,6 +55,9 @@
     - name: Run folder backup/restore smoke test
       ansible.builtin.include_tasks: folder_smoke_test.yml
 
+    - name: Run VM backup smoke test
+      ansible.builtin.include_tasks: vm_backup_smoke_test.yml
+
     - name: Run VM restore/start smoke test
       ansible.builtin.include_tasks: vm_restore_smoke_test.yml
       when:
@@ -62,6 +65,15 @@
         - verify_vm_restore_item_name is defined
         - (verify_vm_restore_job_id | int) > 0
         - (verify_vm_restore_item_name | string | length) > 0
+
+    - name: Run deleted-VM restore/start smoke test
+      ansible.builtin.include_tasks: vm_restore_deleted_vm_smoke_test.yml
+      when:
+        - verify_vm_restore_job_id is defined
+        - verify_vm_restore_item_name is defined
+        - (verify_vm_restore_job_id | int) > 0
+        - (verify_vm_restore_item_name | string | length) > 0
+        - verify_vm_restore_delete_and_restore | default(false) | bool
   always:
     - name: Stop SSH tunnel to local-only Vault daemon
       delegate_to: localhost

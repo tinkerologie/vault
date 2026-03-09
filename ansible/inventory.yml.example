@@ -9,3 +9,14 @@ all:
         -o PubkeyAuthentication=no
         -o PreferredAuthentications=password
       api_port: 24085
+      # Optional: force VM backup smoke verification to use a specific VM.
+      # Use a shutoff VM with verify_vm_backup_mode: cold to validate the
+      # paused-session cold-backup path deterministically.
+      # verify_vm_backup_item_name: "Fedora"
+      # verify_vm_backup_mode: "cold"
+      # Optional: validate VM restore against an existing job that already has
+      # restore points. Leave delete-and-restore disabled unless you explicitly
+      # want verify to undefine the VM and recreate it from backup.
+      # verify_vm_restore_job_id: 71
+      # verify_vm_restore_item_name: "Home Assistant"
+      # verify_vm_restore_delete_and_restore: true

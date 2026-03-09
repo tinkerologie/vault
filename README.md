@@ -10,6 +10,7 @@ integrated web UI.
 
 - Docker container backup and restore with image, config, and appdata handling
 - VM backup and restore with snapshot and cold modes
+  Cold VM backups use libvirt backup jobs and, when the guest is shut off, a temporary paused boot session so the original power state is preserved after backup.
 - Folder and plugin backup support
 - Full, incremental, and differential backup chains
 - Local, SFTP, SMB, and NFS storage backends
@@ -47,7 +48,7 @@ make lint                # Run golangci-lint
 make security-check      # Run gosec, govulncheck, and go mod verify
 make pre-commit-run      # Run the full local quality gate
 make deploy              # Deploy to the configured Unraid server
-make verify              # Verify live REST, WebSocket, and MCP after deploy
+make verify              # Verify live REST, WebSocket, MCP, folder smoke, and VM backup smoke when a VM is available
 make redeploy            # Full lifecycle: uninstall -> build -> deploy -> verify
 ```
 

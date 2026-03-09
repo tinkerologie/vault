@@ -1,0 +1,302 @@
+---
+# Non-destructive VM backup smoke test.
+#
+# Prefers the first VM candidate that is already shut off, shutting down, or
+# paused, then runs a disposable cold backup job against local storage. If no
+# inactive candidate exists, it falls back to the first running VM and validates
+# DomainBackupBegin in snapshot mode instead so live verification still proves
+# the backup API works against the host libvirt/QEMU version.
+
+- block:
+    - name: Discover VMs for backup smoke test
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/vms"
+        method: GET
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+      register: vm_backup_smoke_discovery
+
+    - name: Set requested VM backup smoke selectors
+      ansible.builtin.set_fact:
+        vm_backup_smoke_requested_name: "{{ verify_vm_backup_item_name | default('') | string }}"
+        vm_backup_smoke_requested_mode: "{{ verify_vm_backup_mode | default('auto') | string | lower }}"
+        vm_backup_smoke_inactive_states:
+          - shutoff
+          - shut off
+          - shutdown
+          - paused
+        vm_backup_smoke_running_states:
+          - running
+          - blocked
+
+    - name: Assert requested VM backup smoke mode is valid
+      ansible.builtin.assert:
+        that:
+          - vm_backup_smoke_requested_mode in ['auto', 'cold', 'snapshot']
+        fail_msg: "verify_vm_backup_mode must be one of: auto, cold, snapshot"
+
+    - name: Select inactive VM candidates for cold backup smoke test
+      ansible.builtin.set_fact:
+        vm_backup_smoke_inactive_candidates: >-
+          {{
+            (vm_backup_smoke_discovery.json['items'] | default([]) | selectattr('settings.state', 'equalto', 'shutoff') | list)
+            + (vm_backup_smoke_discovery.json['items'] | default([]) | selectattr('settings.state', 'equalto', 'shut off') | list)
+            + (vm_backup_smoke_discovery.json['items'] | default([]) | selectattr('settings.state', 'equalto', 'shutdown') | list)
+            + (vm_backup_smoke_discovery.json['items'] | default([]) | selectattr('settings.state', 'equalto', 'paused') | list)
+          }}
+
+    - name: Select running VM candidates for snapshot backup smoke test fallback
+      ansible.builtin.set_fact:
+        vm_backup_smoke_running_candidates: >-
+          {{
+            (vm_backup_smoke_discovery.json['items'] | default([]) | selectattr('settings.state', 'equalto', 'running') | list)
+            + (vm_backup_smoke_discovery.json['items'] | default([]) | selectattr('settings.state', 'equalto', 'blocked') | list)
+          }}
+
+    - name: Select requested VM backup smoke candidates
+      ansible.builtin.set_fact:
+        vm_backup_smoke_requested_candidates: >-
+          {{
+            vm_backup_smoke_discovery.json['items'] | default([])
+            | selectattr('name', 'equalto', vm_backup_smoke_requested_name)
+            | list
+          }}
+      when: vm_backup_smoke_requested_name | length > 0
+
+    - name: Assert requested VM backup smoke candidate exists
+      ansible.builtin.assert:
+        that:
+          - vm_backup_smoke_requested_candidates | length > 0
+        fail_msg: "verify_vm_backup_item_name '{{ vm_backup_smoke_requested_name }}' was not found on the host"
+      when: vm_backup_smoke_requested_name | length > 0
+
+    - name: Skip VM backup smoke test when no VM candidate exists
+      ansible.builtin.debug:
+        msg: "Skipping VM backup smoke test because no VM candidate was discovered"
+      when:
+        - vm_backup_smoke_requested_name | length == 0
+        - vm_backup_smoke_inactive_candidates | length == 0
+        - vm_backup_smoke_running_candidates | length == 0
+
+    - block:
+        - name: Set selected VM backup smoke candidate and mode
+          ansible.builtin.set_fact:
+            vm_backup_smoke_vm: >-
+              {{
+                vm_backup_smoke_requested_candidates[0]
+                if (vm_backup_smoke_requested_name | length) > 0
+                else (
+                  vm_backup_smoke_inactive_candidates[0]
+                  if (vm_backup_smoke_inactive_candidates | length) > 0
+                  else vm_backup_smoke_running_candidates[0]
+                )
+              }}
+            vm_backup_smoke_auto_mode: >-
+              {{
+                'cold'
+                if (vm_backup_smoke_inactive_candidates | length) > 0
+                else 'snapshot'
+              }}
+            vm_backup_smoke_mode: >-
+              {{
+                vm_backup_smoke_requested_mode
+                if vm_backup_smoke_requested_mode != 'auto'
+                else (
+                  'cold'
+                  if (
+                    (vm_backup_smoke_requested_name | length) > 0 and
+                    ((vm_backup_smoke_requested_candidates[0].settings.state | default('unknown') | string | lower) in vm_backup_smoke_inactive_states)
+                  )
+                  else vm_backup_smoke_auto_mode
+                )
+              }}
+
+        - name: Normalize selected VM backup smoke state
+          ansible.builtin.set_fact:
+            vm_backup_smoke_vm_state_normalized: "{{ vm_backup_smoke_vm.settings.state | default('unknown') | string | lower }}"
+
+        - name: Assert forced cold VM backup smoke target is not running
+          ansible.builtin.assert:
+            that:
+              - vm_backup_smoke_vm_state_normalized in vm_backup_smoke_inactive_states
+            fail_msg: >-
+              verify_vm_backup_mode=cold requires the selected VM to already be shutoff,
+              shutdown, or paused; '{{ vm_backup_smoke_vm.name }}' is {{ vm_backup_smoke_vm.settings.state | default('unknown') }}
+          when: vm_backup_smoke_mode == 'cold'
+
+        - name: Create temporary VM backup storage path on Unraid
+          ansible.builtin.raw: mkdir -p /tmp/vault-vm-smoke-backups
+
+        - name: Create temporary storage destination for VM backup smoke test
+          delegate_to: localhost
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage"
+            method: POST
+            headers:
+              X-API-Key: "{{ api_key | default('') }}"
+            body_format: json
+            body:
+              name: "smoke-test-vm-storage"
+              type: "local"
+              config: '{"path":"/tmp/vault-vm-smoke-backups"}'
+            return_content: true
+            status_code: 201
+          register: vm_backup_smoke_storage
+
+        - name: Assert VM backup smoke storage created
+          ansible.builtin.assert:
+            that:
+              - vm_backup_smoke_storage.status == 201
+              - vm_backup_smoke_storage.json.id is defined
+            success_msg: "VM backup smoke storage created (ID: {{ vm_backup_smoke_storage.json.id }})"
+
+        - name: Create temporary VM backup job for smoke test
+          delegate_to: localhost
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs"
+            method: POST
+            headers:
+              X-API-Key: "{{ api_key | default('') }}"
+            body_format: json
+            body:
+              name: "smoke-test-vm-job"
+              description: "Disposable VM backup smoke test"
+              enabled: false
+              schedule: ""
+              backup_type_chain: "full"
+              retention_count: 1
+              retention_days: 1
+              compression: "none"
+              vm_mode: "{{ vm_backup_smoke_mode }}"
+              notify_on: "failure"
+              storage_dest_id: "{{ vm_backup_smoke_storage.json.id }}"
+              items:
+                - item_type: "vm"
+                  item_name: "{{ vm_backup_smoke_vm.name }}"
+                  item_id: "{{ vm_backup_smoke_vm.settings.uuid | default(vm_backup_smoke_vm.name) }}"
+                  settings: "{{ {'uuid': (vm_backup_smoke_vm.settings.uuid | default('')), 'state': (vm_backup_smoke_vm.settings.state | default('unknown'))} | to_json }}"
+            return_content: true
+            status_code: 201
+          register: vm_backup_smoke_job
+
+        - name: Assert VM backup smoke job created
+          ansible.builtin.assert:
+            that:
+              - vm_backup_smoke_job.status == 201
+              - vm_backup_smoke_job.json.id is defined
+            success_msg: "VM backup smoke job created (ID: {{ vm_backup_smoke_job.json.id }})"
+
+        - name: Trigger VM backup smoke job run
+          delegate_to: localhost
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ vm_backup_smoke_job.json.id }}/run"
+            method: POST
+            headers:
+              X-API-Key: "{{ api_key | default('') }}"
+            return_content: true
+            status_code: [200, 202]
+
+        - name: Poll until VM backup smoke run completes (up to 20 min)
+          delegate_to: localhost
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/runner/status"
+            method: GET
+            headers:
+              X-API-Key: "{{ api_key | default('') }}"
+            return_content: true
+          register: vm_backup_smoke_runner_status
+          until: not vm_backup_smoke_runner_status.json.active
+          retries: 300
+          delay: 4
+
+        - name: Get VM backup smoke job history
+          delegate_to: localhost
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ vm_backup_smoke_job.json.id }}/history"
+            method: GET
+            headers:
+              X-API-Key: "{{ api_key | default('') }}"
+            return_content: true
+          register: vm_backup_smoke_history
+
+        - name: Collect VM backup smoke runs
+          ansible.builtin.set_fact:
+            vm_backup_smoke_runs: "{{ vm_backup_smoke_history.json | selectattr('run_type', 'equalto', 'backup') | list }}"
+
+        - name: Assert VM backup smoke run succeeded
+          ansible.builtin.assert:
+            that:
+              - vm_backup_smoke_runs | length > 0
+              - vm_backup_smoke_runs[0].status == 'completed'
+            success_msg: "VM backup smoke run completed successfully"
+            fail_msg: "VM backup smoke run failed: {{ (vm_backup_smoke_runs[0].log if (vm_backup_smoke_runs | length > 0) else 'no backup history available') }}"
+
+        - name: Get VM backup smoke restore points
+          delegate_to: localhost
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ vm_backup_smoke_job.json.id }}/restore-points"
+            method: GET
+            headers:
+              X-API-Key: "{{ api_key | default('') }}"
+            return_content: true
+          register: vm_backup_smoke_restore_points
+
+        - name: Assert VM backup smoke restore point exists
+          ansible.builtin.assert:
+            that:
+              - vm_backup_smoke_restore_points.status == 200
+              - vm_backup_smoke_restore_points.json | length > 0
+            success_msg: "VM backup smoke restore point created"
+
+        - name: Read VM backup smoke files from Unraid storage path
+          ansible.builtin.raw: find /tmp/vault-vm-smoke-backups -type f | sort
+          register: vm_backup_smoke_files
+          changed_when: false
+
+        - name: Assert VM backup smoke artifacts were written
+          ansible.builtin.assert:
+            that:
+              - "'domain.xml' in vm_backup_smoke_files.stdout"
+              - "'vdisk' in vm_backup_smoke_files.stdout"
+            success_msg: "VM backup smoke artifacts found on storage path"
+            fail_msg: "VM backup smoke artifacts missing: {{ vm_backup_smoke_files.stdout }}"
+
+        - name: VM backup smoke test complete
+          ansible.builtin.debug:
+            msg: "VM backup smoke test passed for {{ vm_backup_smoke_vm.name }} (mode: {{ vm_backup_smoke_mode }}, state: {{ vm_backup_smoke_vm.settings.state | default('unknown') }})"
+      when:
+        - (vm_backup_smoke_requested_name | length > 0 and vm_backup_smoke_requested_candidates | length > 0) or (vm_backup_smoke_requested_name | length == 0 and ((vm_backup_smoke_inactive_candidates | length > 0) or (vm_backup_smoke_running_candidates | length > 0)))
+  always:
+    - name: Clean up VM backup smoke job
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ vm_backup_smoke_job.json.id }}?deleteFiles=true"
+        method: DELETE
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        status_code: 204
+      when:
+        - vm_backup_smoke_job is defined
+        - vm_backup_smoke_job.json is defined
+        - vm_backup_smoke_job.json.id is defined
+      ignore_errors: true
+
+    - name: Clean up VM backup smoke storage
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ vm_backup_smoke_storage.json.id }}?deleteFiles=true"
+        method: DELETE
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        status_code: 204
+      when:
+        - vm_backup_smoke_storage is defined
+        - vm_backup_smoke_storage.json is defined
+        - vm_backup_smoke_storage.json.id is defined
+      ignore_errors: true
+
+    - name: Clean up VM backup smoke files on Unraid
+      ansible.builtin.raw: rm -rf /tmp/vault-vm-smoke-backups
+      ignore_errors: true

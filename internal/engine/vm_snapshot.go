@@ -3,7 +3,10 @@ package engine
 import (
 	"encoding/xml"
 	"fmt"
+	"path/filepath"
 	"strings"
+
+	libvirt "github.com/digitalocean/go-libvirt"
 )
 
 // These helpers are consumed by linux-tagged VM implementations, but this file
@@ -14,7 +17,9 @@ var (
 	_ = parseDomainDisksWithTargets
 	_ = domainDiskPaths
 	_ = sameDomainDisks
+	_ = buildBackupXML
 	_ = buildSnapshotXML
+	_ = selectBackupDiskXML
 	_ = stripDomainBackingStores
 )
 
@@ -59,6 +64,33 @@ type domainSnapshotDisk struct {
 
 type domainSnapshotSource struct {
 	File string `xml:"file,attr"`
+}
+
+type domainBackupXML struct {
+	XMLName xml.Name           `xml:"domainbackup"`
+	Disks   []domainBackupDisk `xml:"disks>disk"`
+}
+
+type domainBackupDisk struct {
+	Name   string              `xml:"name,attr"`
+	Backup string              `xml:"backup,attr,omitempty"`
+	Type   string              `xml:"type,attr,omitempty"`
+	Target *domainBackupTarget `xml:"target,omitempty"`
+	Driver *domainBackupDriver `xml:"driver,omitempty"`
+}
+
+type domainBackupTarget struct {
+	File string `xml:"file,attr"`
+}
+
+type domainBackupDriver struct {
+	Type string `xml:"type,attr,omitempty"`
+}
+
+type vmBackupArtifact struct {
+	Disk       domainDisk
+	BackupFile string
+	TargetPath string
 }
 
 func parseDomainDisksWithTargets(xmlDesc string) ([]domainDisk, string, error) {
@@ -147,6 +179,60 @@ func buildSnapshotXML(name string, disks []domainDisk) (string, error) {
 	}
 
 	return string(xmlBytes), nil
+}
+
+func buildBackupXML(destDir string, disks []domainDisk) (string, []vmBackupArtifact, error) {
+	backup := domainBackupXML{
+		Disks: make([]domainBackupDisk, 0, len(disks)),
+	}
+	artifacts := make([]vmBackupArtifact, 0, len(disks))
+
+	for _, disk := range disks {
+		if disk.Target == "" {
+			return "", nil, fmt.Errorf("disk %s has no target device", disk.Path)
+		}
+
+		backupFile := fmt.Sprintf("vdisk%d%s", disk.Index, filepath.Ext(disk.Path))
+		targetPath := filepath.Join(destDir, backupFile)
+		driverType := backupDriverType(disk.Path)
+
+		backup.Disks = append(backup.Disks, domainBackupDisk{
+			Name:   disk.Target,
+			Backup: "yes",
+			Type:   "file",
+			Target: &domainBackupTarget{File: targetPath},
+			Driver: &domainBackupDriver{Type: driverType},
+		})
+		artifacts = append(artifacts, vmBackupArtifact{
+			Disk:       disk,
+			BackupFile: backupFile,
+			TargetPath: targetPath,
+		})
+	}
+
+	xmlBytes, err := xml.MarshalIndent(backup, "", "  ")
+	if err != nil {
+		return "", nil, fmt.Errorf("marshalling backup XML: %w", err)
+	}
+
+	return string(xmlBytes), artifacts, nil
+}
+
+func backupDriverType(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".qcow2", ".qcow":
+		return "qcow2"
+	default:
+		return "raw"
+	}
+}
+
+func selectBackupDiskXML(state libvirt.DomainState, liveXML, inactiveXML string) string {
+	if state == libvirt.DomainShutoff || state == libvirt.DomainShutdown {
+		return inactiveXML
+	}
+
+	return liveXML
 }
 
 func stripDomainBackingStores(xmlDesc string) (string, error) {

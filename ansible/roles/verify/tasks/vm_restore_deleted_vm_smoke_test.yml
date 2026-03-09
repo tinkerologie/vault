@@ -1,0 +1,162 @@
+---
+# Optional destructive deleted-VM restore/start smoke test.
+#
+# Runs only when verify_vm_restore_delete_and_restore=true in addition to the
+# existing verify_vm_restore_job_id and verify_vm_restore_item_name settings.
+#
+# The task saves the current inactive domain XML and moves existing VM disk
+# files into a temporary safety directory before deleting the VM definition.
+# If the restore fails, that safety directory is intentionally left in place so
+# the operator can recover the original files manually.
+
+- block:
+    - name: Get deleted-VM smoke restore points
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ verify_vm_restore_job_id }}/restore-points"
+        method: GET
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+      register: vm_deleted_restore_points
+
+    - name: Assert at least one deleted-VM smoke restore point exists
+      ansible.builtin.assert:
+        that:
+          - vm_deleted_restore_points.status == 200
+          - vm_deleted_restore_points.json | length > 0
+        success_msg: "Deleted-VM restore smoke point found"
+
+    - name: Set deleted-VM restore smoke facts
+      ansible.builtin.set_fact:
+        vm_deleted_restore_point_id: "{{ vm_deleted_restore_points.json[0].id }}"
+        vm_deleted_restore_safe_dir: >-
+          /mnt/cache/.vault-verify-restore-delete-{{ verify_vm_restore_item_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('(^-|-$)', '') }}
+
+    - name: Delete VM definition and stash original disks
+      ansible.builtin.raw: |
+        set -eu
+        SAFE_DIR='{{ vm_deleted_restore_safe_dir }}'
+        VM='{{ verify_vm_restore_item_name }}'
+
+        rm -rf "$SAFE_DIR"
+        mkdir -p "$SAFE_DIR/disks"
+
+        if virsh dominfo "$VM" >/dev/null 2>&1; then
+          STATE=$(virsh domstate "$VM" | tr -d '\r')
+          printf '%s\n' "$STATE" > "$SAFE_DIR/original-state.txt"
+          virsh dumpxml --inactive "$VM" > "$SAFE_DIR/domain.xml"
+
+          if printf '%s' "$STATE" | grep -qiE 'running|paused|in shutdown|blocked|pmsuspended'; then
+            virsh destroy "$VM"
+          fi
+
+          virsh domblklist --details "$VM" | tail -n +3 | while read -r TYPE DEVICE TARGET SOURCE; do
+            if [ "$DEVICE" != 'disk' ] || [ -z "$SOURCE" ]; then
+              continue
+            fi
+            DEST="$SAFE_DIR/disks/$SOURCE"
+            mkdir -p "$(dirname "$DEST")"
+            if [ -e "$SOURCE" ]; then
+              mv "$SOURCE" "$DEST"
+            fi
+          done
+
+          virsh undefine "$VM" --nvram 2>/dev/null || virsh undefine "$VM"
+        fi
+
+        printf 'deleted_vm_safe_dir=%s\n' "$SAFE_DIR"
+        if virsh dominfo "$VM" >/dev/null 2>&1; then
+          printf 'vm_defined=yes\n'
+        else
+          printf 'vm_defined=no\n'
+        fi
+      register: vm_deleted_restore_cleanup
+
+    - name: Trigger deleted-VM restore smoke test
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ verify_vm_restore_job_id }}/restore"
+        method: POST
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        body_format: json
+        body:
+          restore_point_id: "{{ vm_deleted_restore_point_id }}"
+          item_name: "{{ verify_vm_restore_item_name }}"
+          item_type: "vm"
+        return_content: true
+        status_code: [200, 202]
+
+    - name: Poll until deleted-VM restore completes (up to 10 min)
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/runner/status"
+        method: GET
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+      register: vm_deleted_runner_status
+      until: not vm_deleted_runner_status.json.active
+      retries: 150
+      delay: 4
+
+    - name: Get deleted-VM smoke job history
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ verify_vm_restore_job_id }}/history"
+        method: GET
+        headers:
+          X-API-Key: "{{ api_key | default('') }}"
+        return_content: true
+      register: vm_deleted_history
+
+    - name: Collect deleted-VM smoke restore runs
+      ansible.builtin.set_fact:
+        vm_deleted_restore_runs: "{{ vm_deleted_history.json | selectattr('run_type', 'equalto', 'restore') | list }}"
+
+    - name: Assert deleted-VM restore succeeded
+      ansible.builtin.assert:
+        that:
+          - vm_deleted_restore_runs | length > 0
+          - vm_deleted_restore_runs[0].status == 'completed'
+        success_msg: "Deleted-VM restore completed successfully"
+        fail_msg: "Deleted-VM restore failed: {{ (vm_deleted_restore_runs[0].log if (vm_deleted_restore_runs | length > 0) else 'no restore history available') }}"
+
+    - name: Start recreated VM with virsh
+      ansible.builtin.raw: "virsh start '{{ verify_vm_restore_item_name }}'"
+      register: vm_deleted_start
+      failed_when: >-
+        vm_deleted_start.rc != 0 and
+        'already active' not in (vm_deleted_start.stdout | lower) and
+        'already active' not in (vm_deleted_start.stderr | lower)
+      changed_when: >-
+        'started' in (vm_deleted_start.stdout | lower) or
+        'started' in (vm_deleted_start.stderr | lower)
+
+    - name: Wait for recreated VM to report running
+      ansible.builtin.raw: "virsh domstate '{{ verify_vm_restore_item_name }}'"
+      register: vm_deleted_state
+      until: "'running' in (vm_deleted_state.stdout | lower)"
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: Read recreated VM block mapping
+      ansible.builtin.raw: "virsh domblklist --details '{{ verify_vm_restore_item_name }}'"
+      register: vm_deleted_blklist
+      changed_when: false
+
+    - name: Remove deleted-VM restore safety stash after success
+      ansible.builtin.raw: "rm -rf '{{ vm_deleted_restore_safe_dir }}'"
+      changed_when: false
+
+    - name: Deleted-VM restore smoke test complete
+      ansible.builtin.debug:
+        msg: "Deleted-VM restore/start smoke test passed for {{ verify_vm_restore_item_name }}"
+  rescue:
+    - name: Deleted-VM restore smoke test failed with safety stash preserved
+      ansible.builtin.debug:
+        msg: >-
+          Deleted-VM restore smoke test failed. Original VM files were preserved at
+          {{ vm_deleted_restore_safe_dir | default('/mnt/cache/.vault-verify-restore-delete-unknown') }}

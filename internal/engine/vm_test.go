@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	libvirt "github.com/digitalocean/go-libvirt"
 )
 
 func TestVMBackupResultTypes(t *testing.T) {
@@ -168,6 +170,72 @@ func TestBuildSnapshotXMLRequiresTarget(t *testing.T) {
 	_, err := buildSnapshotXML("vm", []domainDisk{{Path: "/mnt/cache/domains/haos/haos.qcow2"}})
 	if err == nil {
 		t.Fatal("expected error when disk target is missing")
+	}
+}
+
+func TestSelectBackupDiskXMLUsesLiveXMLForRunningVMs(t *testing.T) {
+	t.Parallel()
+
+	liveXML := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2.snap"></source>
+      <target dev="hdc"></target>
+    </disk>
+  </devices>
+</domain>`
+	inactiveXML := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+      <target dev="hdc"></target>
+    </disk>
+  </devices>
+</domain>`
+
+	selected := selectBackupDiskXML(libvirt.DomainRunning, liveXML, inactiveXML)
+	disks, _, err := parseDomainDisksWithTargets(selected)
+	if err != nil {
+		t.Fatalf("parseDomainDisksWithTargets() error = %v", err)
+	}
+	if len(disks) != 1 {
+		t.Fatalf("expected 1 disk, got %d", len(disks))
+	}
+	if disks[0].Path != "/mnt/cache/domains/haos/haos.qcow2.snap" {
+		t.Fatalf("expected running VM backup to use live XML disk path, got %q", disks[0].Path)
+	}
+}
+
+func TestSelectBackupDiskXMLUsesInactiveXMLForStoppedVMs(t *testing.T) {
+	t.Parallel()
+
+	liveXML := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2.snap"></source>
+      <target dev="hdc"></target>
+    </disk>
+  </devices>
+</domain>`
+	inactiveXML := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+      <target dev="hdc"></target>
+    </disk>
+  </devices>
+</domain>`
+
+	selected := selectBackupDiskXML(libvirt.DomainShutoff, liveXML, inactiveXML)
+	disks, _, err := parseDomainDisksWithTargets(selected)
+	if err != nil {
+		t.Fatalf("parseDomainDisksWithTargets() error = %v", err)
+	}
+	if len(disks) != 1 {
+		t.Fatalf("expected 1 disk, got %d", len(disks))
+	}
+	if disks[0].Path != "/mnt/cache/domains/haos/haos.qcow2" {
+		t.Fatalf("expected stopped VM backup to use inactive XML disk path, got %q", disks[0].Path)
 	}
 }
 
@@ -335,5 +403,83 @@ func TestBuildVMRestorePlanStripsLegacyBackingStore(t *testing.T) {
 
 	if len(plan.Disks) != 1 || plan.Disks[0].TargetPath != "/mnt/cache/domains/haos/haos.qcow2" {
 		t.Fatalf("unexpected restore plan after stripping backingStore: %+v", plan.Disks)
+	}
+}
+
+func TestBuildBackupXML(t *testing.T) {
+	t.Parallel()
+
+	xmlDesc, artifacts, err := buildBackupXML("/tmp/vault-backup", []domainDisk{
+		{Index: 0, Path: "/mnt/cache/domains/haos/haos.qcow2", Target: "vda"},
+		{Index: 1, Path: "/mnt/cache/domains/haos/data.img", Target: "vdb"},
+	})
+	if err != nil {
+		t.Fatalf("buildBackupXML() error = %v", err)
+	}
+
+	if len(artifacts) != 2 {
+		t.Fatalf("expected 2 artifacts, got %d", len(artifacts))
+	}
+
+	if artifacts[0].BackupFile != "vdisk0.qcow2" {
+		t.Fatalf("unexpected first backup file: %q", artifacts[0].BackupFile)
+	}
+
+	if artifacts[1].BackupFile != "vdisk1.img" {
+		t.Fatalf("unexpected second backup file: %q", artifacts[1].BackupFile)
+	}
+
+	if artifacts[0].TargetPath != filepath.Join("/tmp/vault-backup", "vdisk0.qcow2") {
+		t.Fatalf("unexpected first target path: %q", artifacts[0].TargetPath)
+	}
+
+	if !strings.Contains(xmlDesc, `<disk name="vda" backup="yes" type="file">`) {
+		t.Fatalf("expected backup XML to include vda disk entry: %s", xmlDesc)
+	}
+
+	if !strings.Contains(xmlDesc, `file="/tmp/vault-backup/vdisk0.qcow2"`) {
+		t.Fatalf("expected backup XML to include vdisk0 target path: %s", xmlDesc)
+	}
+
+	if !strings.Contains(xmlDesc, `<driver type="qcow2"></driver>`) {
+		t.Fatalf("expected backup XML to preserve qcow2 output type: %s", xmlDesc)
+	}
+
+	if !strings.Contains(xmlDesc, `<driver type="raw"></driver>`) {
+		t.Fatalf("expected backup XML to use raw output for non-qcow disks: %s", xmlDesc)
+	}
+}
+
+func TestVMEngineDoesNotShellOut(t *testing.T) {
+	t.Parallel()
+
+	files, err := filepath.Glob("vm*.go")
+	if err != nil {
+		t.Fatalf("glob vm*.go: %v", err)
+	}
+
+	forbidden := []string{
+		`exec.Command("virsh"`,
+		`exec.LookPath("virsh"`,
+		`qemu-img`,
+		`copyOrFlattenDisk`,
+	}
+
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+
+		content := string(data)
+		for _, needle := range forbidden {
+			if strings.Contains(content, needle) {
+				t.Fatalf("forbidden VM engine shell dependency %q found in %s", needle, file)
+			}
+		}
 	}
 }

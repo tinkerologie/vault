@@ -20,7 +20,7 @@ type Handler interface {
 
 ## Build Tags
 
-- `vm.go` and `fileutil.go`: `//go:build linux` (real libvirt + file operations)
+- `vm.go` and `fileutil.go`: `//go:build linux` (real Linux implementation + file operations)
 - `vm_stub.go`: `//go:build !linux` (stubs for macOS/Windows)
 - Always add a stub when creating Linux-only code
 
@@ -37,11 +37,12 @@ Progress reported via `ProgressFunc` callback.
 
 ## VM Handler
 
-Uses libvirt (`libvirt.org/go/libvirt`) on Linux only:
+Uses the pure-Go libvirt RPC client (`github.com/digitalocean/go-libvirt`) on Linux only:
 
 - Connects to `qemu:///system`
-- Copies disk images and NVRAM files
-- Uses `copyFileWithProgress` from `fileutil.go`
+- Uses libvirt backup jobs to emit standalone disk artifacts
+- Uses a temporary paused boot session for cold backups when the guest is shut off because libvirt backup jobs require an active domain
+- Restores disk images and NVRAM with `copyFileWithProgress` from `fileutil.go`
 
 ## Error Handling
 
