@@ -212,6 +212,7 @@ func (r *Runner) RunJob(jobID int64) {
 		"type":        "job_run_started",
 		"job_id":      jobID,
 		"run_id":      runID,
+		"run_type":    "backup",
 		"items_total": len(items),
 	})
 

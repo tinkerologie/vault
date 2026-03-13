@@ -35,7 +35,7 @@
 │   ├── engine/                 # Backup/restore logic
 │   │   ├── types.go            # BackupItem, BackupResult, Handler interface
 │   │   ├── container.go        # Docker SDK: stop→image→volumes→start
-│   │   ├── vm.go               # libvirt backup/restore (linux only)
+│   │   ├── vm.go               # libvirt RPC backup/restore via backup jobs (linux only)
 │   │   ├── vm_stub.go          # Stub for non-Linux builds
 │   │   └── fileutil.go         # File copy utilities (linux only)
 │   ├── notify/                 # Unraid notification integration
@@ -73,7 +73,7 @@ CLI (Cobra) → API Server (Chi + WebSocket Hub) → Handlers → DB / Storage /
 - **Handler layer** (`internal/api/handlers/`): CRUD for jobs and storage destinations. Each handler takes a `*db.DB`.
 - **Data layer** (`internal/db/`): SQLite with WAL mode and foreign keys. Repos handle all SQL.
 - **Storage layer** (`internal/storage/`): `Adapter` interface with factory pattern. Config stored as JSON blob in DB.
-- **Engine layer** (`internal/engine/`): `Handler` interface for backup/restore. Platform-specific via build tags.
+- **Engine layer** (`internal/engine/`): `Handler` interface for backup/restore. Container backups use the Docker SDK. VM backups use the pure-Go libvirt RPC client and backup jobs on Linux. Platform-specific via build tags.
 - **Scheduler** (`internal/scheduler/`): Cron scheduler loads jobs from DB. Supports Start/Stop/Reload.
 - **WebSocket** (`internal/ws/`): Hub with register/unregister/broadcast channels for real-time progress.
 
@@ -104,7 +104,7 @@ type Handler interface {
 
 ### Build-Tag Platform Isolation
 
-- `vm.go` and `fileutil.go`: `//go:build linux` — real libvirt and file operations
+- `vm.go` and `fileutil.go`: `//go:build linux` — real libvirt RPC and file operations
 - `vm_stub.go`: `//go:build !linux` — stubs for macOS/Windows development
 - Tests and local builds work on macOS without libvirt installed
 
@@ -127,7 +127,7 @@ WAL mode for concurrent reads. Foreign keys enabled via PRAGMA. Schema applied i
 ```bash
 make build               # Ansible: lint → test → web build → cross-compile Linux/amd64
 make deploy              # Ansible: deploy binary + assets to Unraid, start daemon
-make verify              # Ansible: run endpoint verification tests against Unraid
+make verify              # Ansible: run endpoint checks plus folder/VM smoke tests against Unraid
 make redeploy            # Ansible: full lifecycle (uninstall → build → deploy → verify)
 ```
 

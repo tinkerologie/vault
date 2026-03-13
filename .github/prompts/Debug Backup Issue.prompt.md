@@ -50,7 +50,7 @@ curl -X POST http://localhost:28085/api/v1/storage/1/test
 
 - **Storage issue?** Test the adapter's `TestConnection()` and `Write()` independently
 - **Docker issue?** Check Docker socket access: `docker ps`
-- **Libvirt issue?** Check libvirt connection: `virsh list --all`
+- **Libvirt issue?** The daemon uses the go-libvirt RPC client, but `virsh` is still useful as a host-side libvirt diagnostic: `virsh list --all`
 - **DB issue?** Check for WAL file locks, busy timeout
 
 ## Step 6: Fix and Test

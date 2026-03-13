@@ -43,6 +43,6 @@ make test                      # Run unit tests
 make pre-commit-run            # Lint + security checks
 make build                     # Ansible: lint → test → cross-compile
 make deploy                    # Ansible: deploy to Unraid
-make verify                    # Ansible: endpoint verification tests
+make verify                    # Ansible: endpoint checks plus folder/VM smoke tests
 make redeploy                  # Ansible: full lifecycle
 ```

@@ -359,11 +359,12 @@
       {@const overallPct = progress.overallTotal > 0 ? Math.round(((progress.overallDone + progress.overallFailed) / progress.overallTotal) * 100) : 0}
       {@const elapsedStr = progress.elapsedSec >= 3600 ? `${Math.floor(progress.elapsedSec / 3600)}h ${Math.floor((progress.elapsedSec % 3600) / 60)}m` : progress.elapsedSec >= 60 ? `${Math.floor(progress.elapsedSec / 60)}m ${progress.elapsedSec % 60}s` : `${progress.elapsedSec}s`}
       {@const progressItems = Object.entries(progress.itemProgress)}
+      {@const activeRunLabel = progress.activeRun.run_type === 'restore' ? 'Restore in Progress' : 'Backup in Progress'}
       <div class="bg-surface-2 border border-vault/30 rounded-xl mb-8 overflow-hidden">
         <div class="px-5 py-4 border-b border-border flex items-center justify-between">
           <div class="flex items-center gap-3">
             <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse"></div>
-            <h2 class="text-base font-semibold text-text">Backup in Progress</h2>
+            <h2 class="text-base font-semibold text-text">{activeRunLabel}</h2>
             <span class="text-xs px-2.5 py-1 rounded-full bg-vault/15 text-vault font-medium">
               {progress.activeRun.job_name}
             </span>
@@ -437,7 +438,9 @@
             </div>
           {/each}
           {#if progressItems.length === 0}
-            <p class="text-sm text-text-muted text-center py-2">Preparing backup...</p>
+            <p class="text-sm text-text-muted text-center py-2">
+              {progress.activeRun.run_type === 'restore' ? 'Preparing restore...' : 'Preparing backup...'}
+            </p>
           {/if}
         </div>
       </div>

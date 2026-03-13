@@ -3,7 +3,7 @@
 import { formatBytes } from './utils.js'
 
 // Global progress state — survives component mount/unmount cycles.
-let activeRun = $state(null) // { job_id, run_id, job_name, started_at }
+let activeRun = $state(null) // { job_id, run_id, job_name, started_at, run_type }
 let itemProgress = $state({}) // { item_name: { percent, message, item_type, status } }
 let overallDone = $state(0)
 let overallFailed = $state(0)
@@ -39,6 +39,7 @@ export function restoreFromStatus(status) {
     run_id: status.run_id,
     job_name: status.job_name || `Job #${status.job_id}`,
     started_at: status.started_at ? Date.parse(status.started_at) : Date.now(),
+    run_type: status.run_type || 'backup',
   }
   overallDone = status.items_done || 0
   overallFailed = status.items_failed || 0
@@ -64,6 +65,11 @@ export function syncFromStatus(status) {
   if (!activeRun || activeRun.run_id !== status.run_id) {
     restoreFromStatus(status)
     return
+  }
+
+  activeRun = {
+    ...activeRun,
+    run_type: status.run_type || activeRun.run_type || 'backup',
   }
 
   overallDone = status.items_done || 0
@@ -95,9 +101,17 @@ export function handleProgressMessage(msg, jobNameResolver) {
   // (e.g. page was reloaded mid-backup), synthesize the run from message data.
   if (!activeRun && msg.job_id && msg.run_id &&
       (msg.type === 'item_backup_start' || msg.type === 'backup_progress' ||
-       msg.type === 'item_backup_done' || msg.type === 'item_backup_failed')) {
+       msg.type === 'item_backup_done' || msg.type === 'item_backup_failed' ||
+       msg.type === 'restore_progress' || msg.type === 'item_restore_done' ||
+       msg.type === 'item_restore_failed')) {
     const jName = jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
-    activeRun = { job_id: msg.job_id, run_id: msg.run_id, job_name: jName, started_at: Date.now() }
+    activeRun = {
+      job_id: msg.job_id,
+      run_id: msg.run_id,
+      job_name: jName,
+      started_at: Date.now(),
+      run_type: msg.run_type || (msg.type.startsWith('restore') || msg.type.includes('_restore_') ? 'restore' : 'backup'),
+    }
     overallTotal = msg.items_total || 0
     clearInterval(_elapsedInterval)
     _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
@@ -106,7 +120,13 @@ export function handleProgressMessage(msg, jobNameResolver) {
   switch (msg.type) {
     case 'job_run_started': {
       const jName = jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
-      activeRun = { job_id: msg.job_id, run_id: msg.run_id, job_name: jName, started_at: Date.now() }
+      activeRun = {
+        job_id: msg.job_id,
+        run_id: msg.run_id,
+        job_name: jName,
+        started_at: Date.now(),
+        run_type: msg.run_type || 'backup',
+      }
       itemProgress = {}
       overallDone = 0
       overallFailed = 0
