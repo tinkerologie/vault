@@ -491,11 +491,9 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 			return libvirt.Domain{}, nil, fmt.Errorf("forcing domain stop for cold backup: %w", err)
 		}
 
-		stateAfterDestroy, err := h.waitForLibvirtDomainShutOff(dom, name, 30*time.Second)
-		if err != nil {
+		if _, err := h.waitForLibvirtDomainShutOff(dom, name, 30*time.Second); err != nil {
 			return libvirt.Domain{}, nil, err
 		}
-		state = stateAfterDestroy
 	}
 
 	progress(name, 24, "starting paused backup session")

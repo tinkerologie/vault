@@ -1,11 +1,11 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
     <!ENTITY name      "vault">
-    <!ENTITY author    "ruaan-deysel">
+    <!ENTITY author    "Ruaan Deysel">
     <!ENTITY version   "2026.03.00">
     <!ENTITY launch    "Settings/Vault">
-    <!ENTITY gitURL    "https://github.com/&author;/&name;">
-    <!ENTITY pluginURL "https://raw.githubusercontent.com/&author;/&name;/main/plugin/vault.plg">
+    <!ENTITY gitURL    "https://github.com/ruaan-deysel/&name;">
+    <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/&name;/main/plugin/vault.plg">
     <!ENTITY bundle    "&name;-&version;.tgz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
     <!ENTITY md5         "28a7a618ddfb5b591259f9f3075b1072">
