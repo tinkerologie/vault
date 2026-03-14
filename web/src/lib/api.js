@@ -1,5 +1,6 @@
 import { getApiKey } from './auth.svelte.js'
-import { buildApiRequest } from './runtime-config.js'
+
+const BASE = '/api/v1'
 
 /** @type {boolean} */
 let _isReplica = false
@@ -11,13 +12,14 @@ export function isReplicaMode() { return _isReplica }
 export function setReplicaMode(val) { _isReplica = val }
 
 async function request(method, path, body = null) {
-  const headers = {}
+  const headers = { 'Content-Type': 'application/json' }
   const key = getApiKey()
   if (key) {
     headers['Authorization'] = `Bearer ${key}`
   }
-  const { url, options } = buildApiRequest(method, path, { body, headers })
-  const res = await fetch(url, options)
+  const opts = { method, headers }
+  if (body !== null) opts.body = JSON.stringify(body)
+  const res = await fetch(BASE + path, opts)
   if (res.status === 204) return null
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
@@ -77,6 +79,7 @@ export const api = {
   getEncryptionStatus: () => request('GET', '/settings/encryption'),
   setEncryption: (passphrase) => request('POST', '/settings/encryption', { passphrase }),
   verifyEncryption: (passphrase) => request('POST', '/settings/encryption/verify', { passphrase }),
+  getEncryptionPassphrase: () => request('GET', '/settings/encryption/passphrase'),
 
   // Staging
   getStagingInfo: () => request('GET', '/settings/staging'),

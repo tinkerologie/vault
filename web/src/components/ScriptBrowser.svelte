@@ -1,7 +1,8 @@
 <script>
   import { api } from '../lib/api.js'
 
-  let { value = $bindable(''), label = 'Script', placeholder = '/path/to/script.sh', inputId = 'script-browser-input' } = $props()
+  let { value = $bindable(''), label = 'Script', placeholder = '/path/to/script.sh' } = $props()
+  let inputId = $derived(`script-browser-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)
 
   let open = $state(false)
   let entries = $state([])

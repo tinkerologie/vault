@@ -10,7 +10,6 @@ integrated web UI.
 
 - Docker container backup and restore with image, config, and appdata handling
 - VM backup and restore with snapshot and cold modes
-  Cold VM backups use libvirt backup jobs and, when the guest is shut off, a temporary paused boot session so the original power state is preserved after backup.
 - Folder and plugin backup support
 - Full, incremental, and differential backup chains
 - Local, SFTP, SMB, and NFS storage backends
@@ -48,7 +47,7 @@ make lint                # Run golangci-lint
 make security-check      # Run gosec, govulncheck, and go mod verify
 make pre-commit-run      # Run the full local quality gate
 make deploy              # Deploy to the configured Unraid server
-make verify              # Verify live REST, WebSocket, MCP, folder smoke, and VM backup smoke when a VM is available
+make verify              # Verify live REST, WebSocket, and MCP after deploy
 make redeploy            # Full lifecycle: uninstall -> build -> deploy -> verify
 ```
 
@@ -58,29 +57,6 @@ The production binary is built with `CGO_ENABLED=0` and uses
 ## REST API
 
 Base URL: `http://<host>:24085/api/v1`
-
-### Authentication
-
-The built-in web UI does not require an API key — same-origin browser requests
-are allowed through automatically. API keys are intended for **third-party
-integrations** such as Home Assistant, external scripts, or AI assistants.
-
-Generate a key from the Settings → Security page in the web UI. The
-`POST /api/v1/settings/api-key/generate` endpoint exists for browser UI
-bootstrap and is blocked for external clients until a key is configured.
-Present the key using `Authorization: Bearer <key>` or the
-`X-API-Key` header.
-
-Key rotation (`POST /api-key/rotate`) and revocation (`DELETE /api-key`) are
-accessible from the web UI without a key but are blocked for external clients
-until a key is configured.
-
-### Encryption passphrases
-
-When you set or change an encryption passphrase the web UI shows it **once**
-and offers an emergency-kit download. The passphrase is **not retrievable after
-that point** — there is no read-back endpoint. Store the emergency kit in a safe
-location before dismissing the one-time reveal panel.
 
 ### Core and Auth
 
@@ -127,22 +103,23 @@ location before dismissing the one-time reveal panel.
 
 ### Settings
 
-| Method | Endpoint                      | Description                                            |
-| ------ | ----------------------------- | ------------------------------------------------------ |
-| GET    | `/settings`                   | List settings                                          |
-| PUT    | `/settings`                   | Update settings                                        |
-| GET    | `/settings/encryption`        | Encryption status                                      |
-| POST   | `/settings/encryption`        | Set encryption passphrase                              |
-| POST   | `/settings/encryption/verify` | Verify encryption passphrase                           |
-| GET    | `/settings/api-key`           | API key status                                         |
-| POST   | `/settings/api-key/generate`  | Generate the first API key (browser UI bootstrap only) |
-| POST   | `/settings/api-key/rotate`    | Rotate the API key (browser or API key required)       |
-| DELETE | `/settings/api-key`           | Revoke the API key (browser or API key required)       |
-| GET    | `/settings/staging`           | Staging directory info                                 |
-| PUT    | `/settings/staging`           | Override the staging directory                         |
-| GET    | `/settings/database`          | Database snapshot settings                             |
-| PUT    | `/settings/database`          | Update database snapshot settings                      |
-| POST   | `/settings/discord/test`      | Test the Discord webhook                               |
+| Method | Endpoint                          | Description                       |
+| ------ | --------------------------------- | --------------------------------- |
+| GET    | `/settings`                       | List settings                     |
+| PUT    | `/settings`                       | Update settings                   |
+| GET    | `/settings/encryption`            | Encryption status                 |
+| POST   | `/settings/encryption`            | Set encryption passphrase         |
+| POST   | `/settings/encryption/verify`     | Verify encryption passphrase      |
+| GET    | `/settings/encryption/passphrase` | Read the configured passphrase    |
+| GET    | `/settings/api-key`               | API key status                    |
+| POST   | `/settings/api-key/generate`      | Generate the first API key        |
+| POST   | `/settings/api-key/rotate`        | Rotate the API key                |
+| DELETE | `/settings/api-key`               | Revoke the API key                |
+| GET    | `/settings/staging`               | Staging directory info            |
+| PUT    | `/settings/staging`               | Override the staging directory    |
+| GET    | `/settings/database`              | Database snapshot settings        |
+| PUT    | `/settings/database`              | Update database snapshot settings |
+| POST   | `/settings/discord/test`          | Test the Discord webhook          |
 
 ### Discovery, Activity, Replication, and Recovery
 
