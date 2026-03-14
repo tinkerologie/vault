@@ -95,12 +95,40 @@ jobs:
           echo "Package created: $PACKAGE_FILE"
           ls -lh "$PACKAGE_FILE"
 
+      - name: Extract release notes from CHANGELOG
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NOTES_FILE="build/RELEASE_NOTES_BASE.md"
+
+          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            awk -v version="$VERSION" '
+              $0 ~ "^## \\[" version "\\]" { capture = 1; next }
+              capture && $0 ~ "^## \\[" { exit }
+              capture { print }
+            ' CHANGELOG.md > "$NOTES_FILE"
+
+            python3 -c 'from pathlib import Path; import sys; path = Path(sys.argv[1]); text = path.read_text().strip(); path.write_text((text + "\\n") if text else "")' "$NOTES_FILE"
+
+            if [ ! -s "$NOTES_FILE" ]; then
+              echo "No release notes content found for $VERSION in CHANGELOG.md"
+              printf "See [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md) for details.\n" "${{ github.repository }}" > "$NOTES_FILE"
+            fi
+          else
+            echo "Version $VERSION not found in CHANGELOG.md"
+            printf "See [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md) for details.\n" "${{ github.repository }}" > "$NOTES_FILE"
+          fi
+
+          cp "$NOTES_FILE" build/RELEASE_NOTES.md
+
+          echo "Release notes body:"
+          cat build/RELEASE_NOTES.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: v${{ steps.version.outputs.version }}
-          generate_release_notes: true
+          body_path: build/RELEASE_NOTES.md
           files: |
             build/vault-${{ steps.version.outputs.version }}.tgz
           prerelease: ${{ steps.version.outputs.prerelease }}
@@ -149,6 +177,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ steps.version.outputs.tag }}" build/MD5SUM --clobber --repo "${{ github.repository }}"
+
+      - name: Refresh release body with GitHub-hosted MD5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          {
+            cat build/RELEASE_NOTES_BASE.md
+            echo
+            echo "---"
+            echo
+            echo "**MD5 Checksum:**"
+            echo '```'
+            echo "${{ steps.checksum.outputs.md5 }}  vault-${VERSION}.tgz"
+            echo '```'
+          } > build/RELEASE_NOTES.md
+
+          gh release edit "${{ steps.version.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --notes-file build/RELEASE_NOTES.md
 
       - name: Update PLG file with MD5 hash
         run: |

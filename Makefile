@@ -70,10 +70,12 @@ package: release
 	@mkdir -p $(BUILD_DIR)/pkg/usr/local/sbin
 	@mkdir -p $(BUILD_DIR)/pkg/etc/rc.d
 	@mkdir -p $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)
+	@mkdir -p $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui
 	cp $(BUILD_DIR)/$(BINARY)-linux-amd64 $(BUILD_DIR)/pkg/usr/local/sbin/$(BINARY)
 	cp plugin/rc.vault $(BUILD_DIR)/pkg/etc/rc.d/rc.vault
 	cp -r plugin/pages/*.page $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cp -r plugin/pages/include $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
+	cp -r web/dist/. $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui/
 	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -czf ../$(BINARY)-$(VERSION).tgz usr/ etc/
 	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).tgz"
