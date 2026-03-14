@@ -99,8 +99,6 @@ func (s *Scheduler) Reload() error {
 	if err := s.loadReplicationSources(); err != nil {
 		log.Printf("Warning: failed to reload replication sources: %v", err)
 	}
-
-	log.Printf("Scheduler reloaded with %d jobs, %d replication sources", len(s.entries), len(s.replEntries))
 	return nil
 }
 

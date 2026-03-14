@@ -2,19 +2,93 @@ package api
 
 import (
 	"crypto/subtle"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5/middleware"
 )
 
-// maxRequestBodySize is the default maximum request body size (1 MB).
-const maxRequestBodySize int64 = 1 << 20
+const (
+	// maxRequestBodySize is the default maximum request body size (1 MB).
+	maxRequestBodySize int64 = 1 << 20
+
+	// slowRequestLogThreshold preserves a small amount of request visibility
+	// without logging every successful poll and asset fetch.
+	slowRequestLogThreshold = 2 * time.Second
+)
 
 const (
 	trustedProxyHeader = "X-Vault-Proxy"
 	trustedProxyValue  = "unraid-plugin-proxy"
 )
+
+// QuietRequestLogger only logs requests that are slow or unsuccessful.
+func QuietRequestLogger(next http.Handler) http.Handler {
+	return newQuietRequestLogger(log.Default(), slowRequestLogThreshold)(next)
+}
+
+func newQuietRequestLogger(logger *log.Logger, slowThreshold time.Duration) func(http.Handler) http.Handler {
+	if logger == nil {
+		logger = log.Default()
+	}
+	if slowThreshold <= 0 {
+		slowThreshold = slowRequestLogThreshold
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			next.ServeHTTP(ww, r)
+
+			duration := time.Since(start)
+			status := ww.Status()
+			if status == 0 {
+				status = http.StatusOK
+			}
+
+			if status < http.StatusBadRequest && duration < slowThreshold {
+				return
+			}
+
+			logger.Printf(
+				"api: %s %s status=%d bytes=%d duration=%s remote=%s",
+				r.Method,
+				requestPath(r),
+				status,
+				ww.BytesWritten(),
+				duration.Round(time.Millisecond),
+				remoteAddrHost(r.RemoteAddr),
+			)
+		})
+	}
+}
+
+func requestPath(r *http.Request) string {
+	if r.URL == nil || r.URL.Path == "" {
+		return "/"
+	}
+
+	return r.URL.Path
+}
+
+func remoteAddrHost(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err == nil {
+		addr = host
+	}
+
+	addr = strings.Trim(addr, "[]")
+	if addr == "" {
+		return "-"
+	}
+
+	return addr
+}
 
 // KeyResolver returns the current API key. If it returns an empty string,
 // authentication is not required.

@@ -99,6 +99,9 @@
                 if (vm_backup_smoke_inactive_candidates | length) > 0
                 else 'snapshot'
               }}
+
+        - name: Resolve selected VM backup smoke mode
+          ansible.builtin.set_fact:
             vm_backup_smoke_mode: >-
               {{
                 vm_backup_smoke_requested_mode

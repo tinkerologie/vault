@@ -78,8 +78,6 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 	sm.mu.Lock()
 	sm.lastSnapshot = time.Now()
 	sm.mu.Unlock()
-
-	log.Printf("snapshot saved to %s", sm.snapshotPath)
 	return nil
 }
 
@@ -121,8 +119,6 @@ func (sm *SnapshotManager) RestoreFromSnapshot() error {
 	sm.mu.Lock()
 	sm.lastSnapshot = time.Now()
 	sm.mu.Unlock()
-
-	log.Printf("snapshot restored from %s", sm.snapshotPath)
 	return nil
 }
 

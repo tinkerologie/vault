@@ -73,7 +73,6 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 			if err := os.MkdirAll(stageBase, 0750); err == nil {
 				dir, err := os.MkdirTemp(stageBase, pattern)
 				if err == nil {
-					log.Printf("tempdir: using override staging dir %s", dir)
 					return dir, cleanupFunc(dir, stageBase), nil
 				}
 			}
@@ -91,7 +90,6 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 		if err := os.MkdirAll(stageBase, 0750); err == nil {
 			dir, err := os.MkdirTemp(stageBase, pattern)
 			if err == nil {
-				log.Printf("tempdir: using cache staging dir %s", dir)
 				return dir, cleanupFunc(dir, stageBase), nil
 			}
 		}
@@ -107,7 +105,6 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 			if err := os.MkdirAll(stageBase, 0750); err == nil {
 				dir, err := os.MkdirTemp(stageBase, pattern)
 				if err == nil {
-					log.Printf("tempdir: using local storage staging dir %s", dir)
 					return dir, cleanupFunc(dir, stageBase), nil
 				}
 			}
@@ -119,7 +116,6 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 	if err != nil {
 		return "", nil, fmt.Errorf("creating temp dir: %w", err)
 	}
-	log.Printf("tempdir: using system temp dir %s", dir)
 	return dir, func() {
 		if err := os.RemoveAll(dir); err != nil {
 			log.Printf("tempdir: warning: failed to remove %s: %v", dir, err)

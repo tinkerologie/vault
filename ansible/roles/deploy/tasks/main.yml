@@ -169,6 +169,7 @@
         DB={{ db_path }}
         CONFIG={{ config_dir }}/vault.cfg
         LOG={{ log_path }}
+        MAX_LOG_SIZE=$((256 * 1024))
 
         # Read config (PORT, BIND_ADDRESS, SERVICE).
         BIND_ADDRESS={{ bind_address }}
@@ -186,13 +187,37 @@
         fi
         ADDR="${LISTEN_HOST}:$PORT"
 
+        trim_log() {
+          if [ ! -f "$LOG" ]; then
+            return
+          fi
+
+          local size
+          size=$(wc -c < "$LOG" 2>/dev/null || echo 0)
+          if [ "$size" -le "$MAX_LOG_SIZE" ]; then
+            return
+          fi
+
+          local tmp="${LOG}.tmp"
+          if tail -c "$MAX_LOG_SIZE" "$LOG" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$LOG"
+            echo "Trimmed Vault log to ${MAX_LOG_SIZE} bytes"
+            return
+          fi
+
+          rm -f "$tmp"
+        }
+
         start() {
             if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
                 echo "Vault daemon is already running"
                 return 1
             fi
           echo "Starting Vault daemon on $ADDR..."
-            nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
+          mkdir -p "$(dirname "$LOG")"
+          touch "$LOG"
+          trim_log
+          nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
             echo $! > "$PIDFILE"
           sleep 1
           if ! kill -0 $(cat "$PIDFILE") 2>/dev/null; then

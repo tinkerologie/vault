@@ -15,7 +15,7 @@ import (
 
 func (s *Server) setupRoutes() *chi.Mux {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	r.Use(QuietRequestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Heartbeat("/ping"))
 	r.Use(BodySizeLimit(maxRequestBodySize))
