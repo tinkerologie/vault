@@ -34,6 +34,15 @@ make build-local
 
 The REST API will be available at `http://localhost:24085/api/v1`.
 
+## Support and Feedback
+
+- Bug reports: [open a bug report](https://github.com/ruaan-deysel/vault/issues/new?template=01-bug-report.yml)
+- Enhancement requests: [request an improvement](https://github.com/ruaan-deysel/vault/issues/new?template=02-enhancement-request.yml)
+- Questions and support: [use GitHub Discussions](https://github.com/ruaan-deysel/vault/discussions/categories/q-a)
+
+Bug reports and enhancement requests are automatically labeled for triage when they are opened. Questions
+and troubleshooting help belong in Discussions so the issue tracker stays focused on actionable product work.
+
 ## Build, Test, and Verify
 
 ```bash

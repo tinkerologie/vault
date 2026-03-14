@@ -9,7 +9,7 @@
     <!ENTITY bundle    "&name;-&version;.tgz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
     <!ENTITY md5         "8fef59ffee81dae86527e54c4780e85c">
-    <!ENTITY support   "&gitURL;/issues">
+    <!ENTITY support   "&gitURL;/discussions/categories/q-a">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
         launch="&launch;" pluginURL="&pluginURL;" icon="shield"

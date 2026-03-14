@@ -15,7 +15,7 @@
     </Requires>
     <MinVer>7.2.0</MinVer>
     <Project>https://github.com/ruaan-deysel/vault</Project>
-    <Support>https://github.com/ruaan-deysel/vault/issues</Support>
+    <Support>https://github.com/ruaan-deysel/vault/discussions/categories/q-a</Support>
     <Icon>https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/icon.png</Icon>
     <License>MIT License - Copyright 2026 Ruaan Deysel</License>
 </Containers>

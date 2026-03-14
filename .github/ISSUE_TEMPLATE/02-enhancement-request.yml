@@ -1,0 +1,72 @@
+name: Enhancement request
+description: Request a new capability or an improvement to an existing workflow.
+title: "[Enhancement]: "
+labels:
+  - enhancement
+  - "status: needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing an enhancement idea.
+
+        Use this form for concrete product improvements you want tracked. For support questions or
+        open-ended troubleshooting, please use GitHub Discussions instead.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of Vault would this improve most directly?
+      options:
+        - API and WebSocket
+        - Backup engine
+        - Storage backend
+        - Database
+        - Scheduler
+        - Web UI
+        - Unraid plugin
+        - MCP
+        - Replication
+        - Documentation
+        - Deployment / CI / Ansible
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the current limitation, friction, or missing capability.
+      placeholder: Explain the user problem first, not just the proposed fix.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+      description: Describe the outcome or workflow that would solve the problem.
+      placeholder: Describe the improvement as concretely as you can.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Share workarounds or other approaches you already considered.
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add examples, mockups, related issues, or operational context.
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues and discussions before opening this enhancement request.
+          required: true
+        - label: This is a product improvement request, not a support question.
+          required: true

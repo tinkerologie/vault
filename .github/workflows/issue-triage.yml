@@ -1,0 +1,122 @@
+name: Issue Triage
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Apply tracking labels
+        uses: actions/github-script@v8
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const body = process.env.ISSUE_BODY || "";
+            const currentLabels = issue.labels.map((label) => label.name);
+            const trackedTypeLabels = ["bug", "enhancement"];
+            const trackedStatusLabels = [
+              "status: needs-triage",
+              "status: needs-info",
+              "status: ready",
+              "status: blocked",
+            ];
+            const trackedAreaLabels = [
+              "area: api",
+              "area: engine",
+              "area: storage",
+              "area: db",
+              "area: scheduler",
+              "area: web",
+              "area: plugin",
+              "area: mcp",
+              "area: replication",
+              "area: docs",
+              "area: infra",
+            ];
+            const areaMap = new Map([
+              ["API and WebSocket", "area: api"],
+              ["Backup engine", "area: engine"],
+              ["Storage backend", "area: storage"],
+              ["Database", "area: db"],
+              ["Scheduler", "area: scheduler"],
+              ["Web UI", "area: web"],
+              ["Unraid plugin", "area: plugin"],
+              ["MCP", "area: mcp"],
+              ["Replication", "area: replication"],
+              ["Documentation", "area: docs"],
+              ["Deployment / CI / Ansible", "area: infra"],
+            ]);
+
+            const isTrackedIssue = currentLabels.some((label) => trackedTypeLabels.includes(label));
+            if (!isTrackedIssue) {
+              core.info("Skipping non-tracked issue type.");
+              return;
+            }
+
+            const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const readSection = (heading) => {
+              const pattern = new RegExp(
+                `### ${escapeRegex(heading)}\\r?\\n\\r?\\n([\\s\\S]*?)(?=\\r?\\n### |$)`
+              );
+              const match = body.match(pattern);
+              return match ? match[1].trim() : "";
+            };
+
+            const labelsToAdd = new Set();
+            const hasTrackedStatus = currentLabels.some((label) => trackedStatusLabels.includes(label));
+            if (!hasTrackedStatus) {
+              labelsToAdd.add("status: needs-triage");
+            }
+
+            const selectedArea = readSection("Affected area");
+            const derivedAreaLabel = areaMap.get(selectedArea);
+
+            if (derivedAreaLabel) {
+              for (const label of trackedAreaLabels) {
+                if (currentLabels.includes(label) && label !== derivedAreaLabel) {
+                  try {
+                    await github.rest.issues.removeLabel({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: issue.number,
+                      name: label,
+                    });
+                  } catch (error) {
+                    if (error.status !== 404) {
+                      throw error;
+                    }
+                  }
+                }
+              }
+
+              if (!currentLabels.includes(derivedAreaLabel)) {
+                labelsToAdd.add(derivedAreaLabel);
+              }
+            } else {
+              core.info("No managed area label could be derived from the issue body.");
+            }
+
+            if (labelsToAdd.size === 0) {
+              core.info("No labels needed.");
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: Array.from(labelsToAdd),
+            });

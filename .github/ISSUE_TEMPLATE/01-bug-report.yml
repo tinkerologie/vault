@@ -1,0 +1,119 @@
+name: Bug report
+description: Report a reproducible bug or regression in Vault.
+title: "[Bug]: "
+labels:
+  - bug
+  - "status: needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+
+        Use this form for product defects and regressions. For setup questions or troubleshooting help,
+        please use GitHub Discussions instead.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of Vault is affected most directly?
+      options:
+        - API and WebSocket
+        - Backup engine
+        - Storage backend
+        - Database
+        - Scheduler
+        - Web UI
+        - Unraid plugin
+        - MCP
+        - Replication
+        - Documentation
+        - Deployment / CI / Ansible
+    validations:
+      required: true
+  - type: dropdown
+    id: backup-target
+    attributes:
+      label: Related backup target
+      description: If this bug is tied to a specific backup target, choose it.
+      options:
+        - Docker containers
+        - Virtual machines
+        - Folders
+        - Plugins
+        - Not specific / not sure
+    validations:
+      required: true
+  - type: input
+    id: vault-version
+    attributes:
+      label: Vault version
+      description: What Vault version are you running?
+      placeholder: "2026.03.00"
+    validations:
+      required: true
+  - type: input
+    id: unraid-version
+    attributes:
+      label: Unraid version
+      description: What Unraid version are you running?
+      placeholder: "7.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: storage-backend
+    attributes:
+      label: Storage backend
+      description: Which storage backend is involved, if any?
+      options:
+        - Local
+        - SFTP
+        - SMB
+        - NFS
+        - Not applicable / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug, including what you expected to happen.
+      placeholder: Tell us the failure mode, the expected behavior, and what changed.
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide a minimal, repeatable sequence.
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. Run ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: relevant-logs
+    attributes:
+      label: Relevant log output
+      description: Paste the relevant logs, stack traces, or API responses.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add screenshots, links, or anything else that helps narrow the issue.
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues and discussions before opening this bug report.
+          required: true
+        - label: I included enough detail for someone else to reproduce the issue.
+          required: true
