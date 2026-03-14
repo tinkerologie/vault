@@ -70,7 +70,22 @@ echo "Vault plugin installed successfully"
 /etc/rc.d/rc.vault stop 2>/dev/null
 
 # Remove installed package files
-removepkg vault-&version; 2>/dev/null
+PACKAGE=""
+for pkg in /var/log/packages/vault-*; do
+    [ -e "$pkg" ] || continue
+    PACKAGE="$(basename "$pkg")"
+done
+
+if [ -z "$PACKAGE" ]; then
+    for pkg in /boot/config/plugins/vault/vault-*.tgz; do
+        [ -e "$pkg" ] || continue
+        PACKAGE="$(basename "$pkg" .tgz)"
+    done
+fi
+
+if [ -n "$PACKAGE" ]; then
+    removepkg "$PACKAGE" 2>/dev/null || true
+fi
 
 # Clean up
 rm -f /usr/local/sbin/vault
