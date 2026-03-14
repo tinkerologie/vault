@@ -107,7 +107,7 @@ jobs:
               capture { print }
             ' CHANGELOG.md > "$NOTES_FILE"
 
-            python3 -c 'from pathlib import Path; import sys; path = Path(sys.argv[1]); text = path.read_text().strip(); path.write_text((text + "\\n") if text else "")' "$NOTES_FILE"
+            python3 -c 'from pathlib import Path; import sys; path = Path(sys.argv[1]); text = path.read_text().strip(); path.write_text((text + "\n") if text else "")' "$NOTES_FILE"
 
             if [ ! -s "$NOTES_FILE" ]; then
               echo "No release notes content found for $VERSION in CHANGELOG.md"
