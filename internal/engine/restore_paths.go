@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ruaandeysel/vault/internal/safepath"
 )
@@ -16,7 +19,21 @@ func normalizeRestorePath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid restore path %q: %w", path, err)
 	}
-	return normalizedPath, nil
+
+	resolvedPath, err := resolveRestorePath(normalizedPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid restore path %q: %w", path, err)
+	}
+
+	allowed, err := restorePathWithinAllowedRoots(resolvedPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid restore path %q: %w", path, err)
+	}
+	if !allowed {
+		return "", fmt.Errorf("invalid restore path %q: path must stay within approved roots", path)
+	}
+
+	return resolvedPath, nil
 }
 
 func normalizeRestoreComponent(name string) (string, error) {
@@ -66,4 +83,57 @@ func normalizeVMRestorePlan(plan *vmRestorePlan) error {
 	}
 
 	return nil
+}
+
+func resolveRestorePath(path string) (string, error) {
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("resolving absolute path: %w", err)
+	}
+
+	resolvedPath, err := evalRestoreSymlinks(absPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving symlinks: %w", err)
+	}
+
+	return filepath.Clean(resolvedPath), nil
+}
+
+func evalRestoreSymlinks(path string) (string, error) {
+	cleanPath := filepath.Clean(path)
+	resolvedPath, err := filepath.EvalSymlinks(cleanPath)
+	if err == nil {
+		return resolvedPath, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	parent := filepath.Dir(cleanPath)
+	if parent == cleanPath {
+		return "", err
+	}
+
+	resolvedParent, err := evalRestoreSymlinks(parent)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(resolvedParent, filepath.Base(cleanPath)), nil
+}
+
+func restorePathWithinAllowedRoots(path string) (bool, error) {
+	cleanPath := filepath.Clean(path)
+	for _, root := range restoreAllowedRoots {
+		resolvedRoot, err := resolveRestorePath(filepath.Clean(root))
+		if err != nil {
+			return false, fmt.Errorf("resolving restore root %q: %w", root, err)
+		}
+
+		if cleanPath == resolvedRoot || strings.HasPrefix(cleanPath, resolvedRoot+string(filepath.Separator)) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

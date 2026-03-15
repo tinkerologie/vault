@@ -157,6 +157,36 @@ func TestBuildVMRestorePlanRejectsUnsafeRestoreDestination(t *testing.T) {
 	}
 }
 
+func TestBuildVMRestorePlanRejectsSymlinkedRestoreDestinationEscape(t *testing.T) {
+	t.Parallel()
+
+	xmlDesc := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+      <target dev="vda"></target>
+    </disk>
+  </devices>
+</domain>`
+
+	allowedDir, err := os.MkdirTemp("/tmp", "vault-vm-restore-")
+	if err != nil {
+		t.Fatalf("MkdirTemp(/tmp) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(allowedDir)
+	})
+
+	symlinkPath := filepath.Join(allowedDir, "escape")
+	if err := os.Symlink("/dev", symlinkPath); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := buildVMRestorePlan([]byte(xmlDesc), symlinkPath); err == nil {
+		t.Fatal("buildVMRestorePlan() should reject symlinked restore destinations that escape allowed roots")
+	}
+}
+
 func TestVMBackupMetadataStartAfterRestore(t *testing.T) {
 	t.Parallel()
 
@@ -463,6 +493,11 @@ func TestBuildVMRestorePlanRewritesRestoreDestination(t *testing.T) {
 </domain>`
 
 	restoreDest := "/tmp/vault-restore/haos"
+	normalizedRestoreDest, err := normalizeRestorePath(restoreDest)
+	if err != nil {
+		t.Fatalf("normalizeRestorePath() error = %v", err)
+	}
+
 	plan, err := buildVMRestorePlan([]byte(xmlDesc), restoreDest)
 	if err != nil {
 		t.Fatalf("buildVMRestorePlan() error = %v", err)
@@ -472,15 +507,15 @@ func TestBuildVMRestorePlanRewritesRestoreDestination(t *testing.T) {
 		t.Fatalf("expected 2 disks, got %d", len(plan.Disks))
 	}
 
-	if plan.Disks[0].TargetPath != filepath.Join(restoreDest, "haos.qcow2") {
+	if plan.Disks[0].TargetPath != filepath.Join(normalizedRestoreDest, "haos.qcow2") {
 		t.Fatalf("unexpected first target path: %q", plan.Disks[0].TargetPath)
 	}
 
-	if plan.Disks[1].TargetPath != filepath.Join(restoreDest, "data.img") {
+	if plan.Disks[1].TargetPath != filepath.Join(normalizedRestoreDest, "data.img") {
 		t.Fatalf("unexpected second target path: %q", plan.Disks[1].TargetPath)
 	}
 
-	if plan.NVRAMTargetPath != filepath.Join(restoreDest, "Home_Assistant_VARS.fd") {
+	if plan.NVRAMTargetPath != filepath.Join(normalizedRestoreDest, "Home_Assistant_VARS.fd") {
 		t.Fatalf("unexpected NVRAM target path: %q", plan.NVRAMTargetPath)
 	}
 
@@ -488,11 +523,11 @@ func TestBuildVMRestorePlanRewritesRestoreDestination(t *testing.T) {
 		t.Fatalf("expected disk source path to be rewritten: %s", plan.DomainXML)
 	}
 
-	if !strings.Contains(plan.DomainXML, filepath.Join(restoreDest, "haos.qcow2")) {
+	if !strings.Contains(plan.DomainXML, filepath.Join(normalizedRestoreDest, "haos.qcow2")) {
 		t.Fatalf("expected rewritten disk path in XML: %s", plan.DomainXML)
 	}
 
-	if !strings.Contains(plan.DomainXML, filepath.Join(restoreDest, "Home_Assistant_VARS.fd")) {
+	if !strings.Contains(plan.DomainXML, filepath.Join(normalizedRestoreDest, "Home_Assistant_VARS.fd")) {
 		t.Fatalf("expected rewritten NVRAM path in XML: %s", plan.DomainXML)
 	}
 }

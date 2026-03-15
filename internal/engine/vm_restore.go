@@ -63,25 +63,9 @@ func buildVMRestorePlan(xmlData []byte, restoreDest string) (*vmRestorePlan, err
 	}
 
 	if restoreDest != "" {
-		if !filepath.IsAbs(restoreDest) {
-			return nil, fmt.Errorf("restore destination %q must be absolute", restoreDest)
-		}
-
-		resolvedRestoreDest, err := filepath.Abs(restoreDest)
+		resolvedRestoreDest, err := normalizeRestorePath(restoreDest)
 		if err != nil {
-			return nil, fmt.Errorf("resolving restore destination %q: %w", restoreDest, err)
-		}
-
-		allowed := false
-		for _, root := range restoreAllowedRoots {
-			cleanRoot := filepath.Clean(root)
-			if resolvedRestoreDest == cleanRoot || strings.HasPrefix(resolvedRestoreDest, cleanRoot+string(filepath.Separator)) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return nil, fmt.Errorf("restore destination %q is outside allowed restore roots", restoreDest)
+			return nil, err
 		}
 
 		restoreDest = resolvedRestoreDest

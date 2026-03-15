@@ -74,6 +74,10 @@ func (h *VMHandler) waitForVMGuestAgent(dom libvirt.Domain, name string, timeout
 }
 
 func (h *VMHandler) resolveVMReadyEndpoint(dom libvirt.Domain, config vmRestoreVerifyConfig) (string, error) {
+	if config.TCPPort < 1 || config.TCPPort > 65535 {
+		return "", fmt.Errorf("tcp restore verify mode requires a port between 1 and 65535")
+	}
+
 	host := config.TCPHost
 	if host == "" {
 		resolvedHost, err := h.detectVMReadyHost(dom)

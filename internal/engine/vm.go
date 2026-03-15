@@ -291,23 +291,9 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 			continue // skip if backup file doesn't exist
 		}
 
-		if !filepath.IsAbs(disk.TargetPath) {
-			return fmt.Errorf("disk target path %q must be absolute", disk.TargetPath)
-		}
-		targetPath, err := filepath.Abs(disk.TargetPath)
+		targetPath, err := normalizeRestorePath(disk.TargetPath)
 		if err != nil {
-			return fmt.Errorf("resolving disk target path %q: %w", disk.TargetPath, err)
-		}
-		targetAllowed := false
-		for _, root := range restoreAllowedRoots {
-			cleanRoot := filepath.Clean(root)
-			if targetPath == cleanRoot || strings.HasPrefix(targetPath, cleanRoot+string(filepath.Separator)) {
-				targetAllowed = true
-				break
-			}
-		}
-		if !targetAllowed {
-			return fmt.Errorf("disk target path %q is outside allowed restore roots", disk.TargetPath)
+			return fmt.Errorf("validating disk target path %q: %w", disk.TargetPath, err)
 		}
 
 		progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d", i+1, totalDisks))
@@ -325,23 +311,9 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 	if plan.NVRAMBackupFile != "" {
 		nvramSrc := filepath.Join(sourceDir, plan.NVRAMBackupFile)
 		if _, err := os.Stat(nvramSrc); err == nil {
-			if !filepath.IsAbs(plan.NVRAMTargetPath) {
-				return fmt.Errorf("NVRAM target path %q must be absolute", plan.NVRAMTargetPath)
-			}
-			nvramTargetPath, err := filepath.Abs(plan.NVRAMTargetPath)
+			nvramTargetPath, err := normalizeRestorePath(plan.NVRAMTargetPath)
 			if err != nil {
-				return fmt.Errorf("resolving NVRAM target path %q: %w", plan.NVRAMTargetPath, err)
-			}
-			nvramAllowed := false
-			for _, root := range restoreAllowedRoots {
-				cleanRoot := filepath.Clean(root)
-				if nvramTargetPath == cleanRoot || strings.HasPrefix(nvramTargetPath, cleanRoot+string(filepath.Separator)) {
-					nvramAllowed = true
-					break
-				}
-			}
-			if !nvramAllowed {
-				return fmt.Errorf("NVRAM target path %q is outside allowed restore roots", plan.NVRAMTargetPath)
+				return fmt.Errorf("validating NVRAM target path %q: %w", plan.NVRAMTargetPath, err)
 			}
 
 			progress(item.Name, 80, "restoring NVRAM")
@@ -362,15 +334,30 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 	}
 
 	if startAfterRestore {
+		startedRestoreDomain := false
+		cleanupRestoreStartFailure := func(restoreErr error) error {
+			if !startedRestoreDomain {
+				return restoreErr
+			}
+
+			cleanupErr := h.stopStartedRestoreDomain(dom, item.Name)
+			if cleanupErr != nil {
+				return fmt.Errorf("%w; cleanup started restored VM: %v", restoreErr, cleanupErr)
+			}
+
+			return restoreErr
+		}
+
 		progress(item.Name, 95, "starting restored VM")
 		if err := h.conn.DomainCreate(dom); err != nil {
 			return fmt.Errorf("starting restored VM: %w", err)
 		}
+		startedRestoreDomain = true
 		if _, err := h.waitForLibvirtDomainRunning(dom, item.Name, 2*time.Minute); err != nil {
-			return fmt.Errorf("verifying restored VM is running: %w", err)
+			return cleanupRestoreStartFailure(fmt.Errorf("verifying restored VM is running: %w", err))
 		}
 		if err := h.verifyRestoredVMReady(dom, item.Name, verifyConfig, progress); err != nil {
-			return fmt.Errorf("verifying restored VM readiness: %w", err)
+			return cleanupRestoreStartFailure(fmt.Errorf("verifying restored VM readiness: %w", err))
 		}
 		progress(item.Name, 99, "verified restored VM running")
 	}
@@ -433,6 +420,36 @@ func (h *VMHandler) reconcileExistingDomainForRestore(name string, progress Prog
 
 	if err := h.libvirtUndefineDomain(dom); err != nil {
 		return fmt.Errorf("undefining existing domain %s: %w", name, err)
+	}
+
+	return nil
+}
+
+func (h *VMHandler) stopStartedRestoreDomain(dom libvirt.Domain, name string) error {
+	shutdownErr := h.conn.DomainShutdownFlags(dom, libvirt.DomainShutdownDefault)
+	if shutdownErr == nil {
+		if _, err := h.waitForLibvirtDomainShutOff(dom, name, 30*time.Second); err == nil {
+			return nil
+		} else {
+			shutdownErr = err
+		}
+	} else if isLibvirtNoDomainError(shutdownErr) {
+		return nil
+	}
+
+	destroyErr := h.conn.DomainDestroy(dom)
+	if destroyErr != nil && !isLibvirtNoDomainError(destroyErr) {
+		if shutdownErr != nil {
+			return fmt.Errorf("shutdown failed: %v; destroy failed: %w", shutdownErr, destroyErr)
+		}
+		return fmt.Errorf("destroy failed: %w", destroyErr)
+	}
+
+	if _, err := h.waitForLibvirtDomainShutOff(dom, name, 30*time.Second); err != nil && !isLibvirtNoDomainError(err) {
+		if shutdownErr != nil {
+			return fmt.Errorf("shutdown failed: %v; post-destroy wait failed: %w", shutdownErr, err)
+		}
+		return fmt.Errorf("post-destroy wait failed: %w", err)
 	}
 
 	return nil

@@ -1,9 +1,18 @@
 package engine
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestNormalizeRestorePath(t *testing.T) {
 	t.Parallel()
+
+	tmpExpected, err := filepath.EvalSymlinks("/tmp")
+	if err != nil {
+		t.Fatalf("EvalSymlinks(/tmp) error = %v", err)
+	}
 
 	tests := []struct {
 		name    string
@@ -11,7 +20,7 @@ func TestNormalizeRestorePath(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "tmp allowed", input: "/tmp/vault-restore", want: "/tmp/vault-restore"},
+		{name: "tmp allowed", input: "/tmp/vault-restore", want: filepath.Join(tmpExpected, "vault-restore")},
 		{name: "mnt allowed", input: "/mnt/cache/vault", want: "/mnt/cache/vault"},
 		{name: "dev rejected", input: "/dev/null", wantErr: true},
 		{name: "relative rejected", input: "tmp/vault", wantErr: true},
@@ -29,6 +38,27 @@ func TestNormalizeRestorePath(t *testing.T) {
 				t.Fatalf("normalizeRestorePath() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeRestorePathRejectsSymlinkEscape(t *testing.T) {
+	t.Parallel()
+
+	allowedDir, err := os.MkdirTemp("/tmp", "vault-restore-")
+	if err != nil {
+		t.Fatalf("MkdirTemp(/tmp) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(allowedDir)
+	})
+
+	symlinkPath := filepath.Join(allowedDir, "devlink")
+	if err := os.Symlink("/dev", symlinkPath); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := normalizeRestorePath(filepath.Join(symlinkPath, "null")); err == nil {
+		t.Fatal("normalizeRestorePath() should reject symlink traversal outside allowed roots")
 	}
 }
 

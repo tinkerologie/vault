@@ -126,9 +126,6 @@ func normalizeVMRestoreVerifyConfig(config vmRestoreVerifyConfig) (vmRestoreVeri
 	if config.TimeoutSeconds <= 0 {
 		config.TimeoutSeconds = defaultVMRestoreVerifyTimeoutSecs
 	}
-	if config.TimeoutSeconds < 1 {
-		return vmRestoreVerifyConfig{}, fmt.Errorf("restore verify timeout must be at least 1 second")
-	}
 
 	config.TCPHost = strings.TrimSpace(config.TCPHost)
 	if config.Mode == vmRestoreVerifyModeTCP {
