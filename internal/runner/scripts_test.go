@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+func writeExecutableScript(path string, contents string) error {
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		return err
+	}
+
+	return os.Chmod(path, 0755)
+}
+
 func TestRunScript(t *testing.T) {
 	t.Parallel()
 
@@ -63,7 +71,7 @@ func TestRunScript(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		script := filepath.Join(dir, "test.sh")
-		if err := os.WriteFile(script, []byte("#!/bin/sh\necho hello"), 0755); err != nil {
+		if err := writeExecutableScript(script, "#!/bin/sh\necho hello\n"); err != nil {
 			t.Fatal(err)
 		}
 		out, err := runScript(script, 5*time.Second)
@@ -79,7 +87,7 @@ func TestRunScript(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		script := filepath.Join(dir, "fail.sh")
-		if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1"), 0755); err != nil {
+		if err := writeExecutableScript(script, "#!/bin/sh\nexit 1\n"); err != nil {
 			t.Fatal(err)
 		}
 		_, err := runScript(script, 5*time.Second)
