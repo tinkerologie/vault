@@ -31,17 +31,20 @@ import (
 // It is returned by Runner.Status() so the API can inform late-joining
 // WebSocket clients or freshly loaded dashboards.
 type RunStatus struct {
-	Active      bool         `json:"active"`
-	JobID       int64        `json:"job_id,omitempty"`
-	RunID       int64        `json:"run_id,omitempty"`
-	JobName     string       `json:"job_name,omitempty"`
-	RunType     string       `json:"run_type,omitempty"`
-	ItemsTotal  int          `json:"items_total,omitempty"`
-	ItemsDone   int          `json:"items_done,omitempty"`
-	ItemsFailed int          `json:"items_failed,omitempty"`
-	StartedAt   string       `json:"started_at,omitempty"`
-	CurrentItem string       `json:"current_item,omitempty"`
-	Queue       []QueueEntry `json:"queue,omitempty"`
+	Active             bool         `json:"active"`
+	JobID              int64        `json:"job_id,omitempty"`
+	RunID              int64        `json:"run_id,omitempty"`
+	JobName            string       `json:"job_name,omitempty"`
+	RunType            string       `json:"run_type,omitempty"`
+	ItemsTotal         int          `json:"items_total,omitempty"`
+	ItemsDone          int          `json:"items_done,omitempty"`
+	ItemsFailed        int          `json:"items_failed,omitempty"`
+	StartedAt          string       `json:"started_at,omitempty"`
+	CurrentItem        string       `json:"current_item,omitempty"`
+	CurrentItemType    string       `json:"current_item_type,omitempty"`
+	CurrentItemPercent int          `json:"current_item_percent,omitempty"`
+	CurrentItemMessage string       `json:"current_item_message,omitempty"`
+	Queue              []QueueEntry `json:"queue,omitempty"`
 }
 
 // QueueEntry represents a job waiting to run.
@@ -49,6 +52,16 @@ type QueueEntry struct {
 	JobID    int64  `json:"job_id"`
 	JobName  string `json:"job_name"`
 	QueuedAt string `json:"queued_at"`
+}
+
+type restoreProgressReporter struct {
+	JobID       int64
+	RunID       int64
+	ItemName    string
+	ItemType    string
+	ItemsDone   int
+	ItemsFailed int
+	ItemsTotal  int
 }
 
 // Runner executes backup and restore operations for jobs.
@@ -109,8 +122,85 @@ func (r *Runner) updateRunProgress(done, failed int, currentItem string) {
 		r.currentRun.ItemsDone = done
 		r.currentRun.ItemsFailed = failed
 		r.currentRun.CurrentItem = currentItem
+		if currentItem == "" {
+			r.currentRun.CurrentItemType = ""
+			r.currentRun.CurrentItemPercent = 0
+			r.currentRun.CurrentItemMessage = ""
+		}
 	}
 	r.statusMu.Unlock()
+}
+
+func (r *Runner) updateCurrentItemProgress(itemType string, percent int, message string) {
+	r.statusMu.Lock()
+	if r.currentRun != nil {
+		r.currentRun.CurrentItemType = itemType
+		r.currentRun.CurrentItemPercent = percent
+		r.currentRun.CurrentItemMessage = message
+	}
+	r.statusMu.Unlock()
+}
+
+func (r *Runner) reportRestoreProgress(reporter restoreProgressReporter, percent int, message string) {
+	if reporter.JobID == 0 && reporter.RunID == 0 && reporter.ItemName == "" {
+		return
+	}
+
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+
+	r.updateCurrentItemProgress(reporter.ItemType, percent, message)
+	r.broadcast(map[string]any{
+		"type":         "restore_progress",
+		"job_id":       reporter.JobID,
+		"run_id":       reporter.RunID,
+		"item":         reporter.ItemName,
+		"item_type":    reporter.ItemType,
+		"items_done":   reporter.ItemsDone,
+		"items_failed": reporter.ItemsFailed,
+		"items_total":  reporter.ItemsTotal,
+		"percent":      percent,
+		"message":      message,
+	})
+}
+
+func scaleRestorePhaseProgress(phaseStart, phaseEnd int, completed, total int64) int {
+	if phaseEnd <= phaseStart {
+		return phaseEnd
+	}
+	if total <= 0 {
+		return phaseEnd
+	}
+	if completed < 0 {
+		completed = 0
+	}
+	if completed > total {
+		completed = total
+	}
+
+	span := phaseEnd - phaseStart
+	progress := phaseStart + int((completed*int64(span))/total)
+	if completed > 0 && progress == phaseStart {
+		return phaseStart + 1
+	}
+	return progress
+}
+
+type countingReader struct {
+	reader io.Reader
+	onRead func(int64)
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 && r.onRead != nil {
+		r.onRead(int64(n))
+	}
+	return n, err
 }
 
 // SetSnapshotManager sets the snapshot manager used to persist the database
@@ -212,6 +302,7 @@ func (r *Runner) RunJob(jobID int64) {
 		"type":        "job_run_started",
 		"job_id":      jobID,
 		"run_id":      runID,
+		"job_name":    job.Name,
 		"run_type":    "backup",
 		"items_total": len(items),
 	})
@@ -394,6 +485,7 @@ func (r *Runner) RunJob(jobID int64) {
 		})
 
 		r.updateRunProgress(itemsDone, itemsFailed, item.ItemName)
+		r.updateCurrentItemProgress(item.ItemType, 0, "Starting...")
 
 		result, checksums, backupErr := r.backupItem(backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression)
 		if backupErr != nil {
@@ -687,6 +779,7 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 	}
 
 	progress := func(name string, pct int, msg string) {
+		r.updateCurrentItemProgress(item.Type, pct, msg)
 		r.broadcast(map[string]any{
 			"type":      "backup_progress",
 			"item":      name,
@@ -811,6 +904,11 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	jobName := fmt.Sprintf("Job #%d", restorePoint.JobID)
+	if job, err := r.db.GetJob(restorePoint.JobID); err == nil {
+		jobName = job.Name
+	}
+
 	run := db.JobRun{
 		JobID:      restorePoint.JobID,
 		Status:     "running",
@@ -834,6 +932,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		"type":        "job_run_started",
 		"job_id":      restorePoint.JobID,
 		"run_id":      runID,
+		"job_name":    jobName,
 		"run_type":    "restore",
 		"items_total": len(targets),
 	})
@@ -842,6 +941,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		Active:     true,
 		JobID:      restorePoint.JobID,
 		RunID:      runID,
+		JobName:    jobName,
 		RunType:    "restore",
 		ItemsTotal: len(targets),
 		StartedAt:  time.Now().Format(time.RFC3339),
@@ -882,8 +982,31 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	)
 
 	for _, t := range targets {
+		reporter := restoreProgressReporter{
+			JobID:       restorePoint.JobID,
+			RunID:       runID,
+			ItemName:    t.Name,
+			ItemType:    t.Type,
+			ItemsDone:   itemsDone,
+			ItemsFailed: itemsFailed,
+			ItemsTotal:  len(targets),
+		}
+
+		r.broadcast(map[string]any{
+			"type":         "item_restore_start",
+			"job_id":       restorePoint.JobID,
+			"run_id":       runID,
+			"item_name":    t.Name,
+			"item_type":    t.Type,
+			"items_done":   itemsDone,
+			"items_failed": itemsFailed,
+			"items_total":  len(targets),
+		})
+		r.updateRunProgress(itemsDone, itemsFailed, t.Name)
+		r.reportRestoreProgress(reporter, 0, "Starting...")
+
 		start := time.Now()
-		restoreErr := r.RestoreItem(restorePoint, t.Name, t.Type, destination, passphrase)
+		restoreErr := r.restoreItemWithReporter(restorePoint, t.Name, t.Type, destination, passphrase, reporter)
 		elapsed := time.Since(start)
 
 		result := map[string]any{
@@ -924,6 +1047,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 
 		itemResults = append(itemResults, result)
 		_ = r.db.UpdateJobRunProgress(runID, itemsDone, itemsFailed, 0)
+		r.updateRunProgress(itemsDone, itemsFailed, "")
 	}
 
 	// Finalise the run.
@@ -979,6 +1103,10 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 // For incremental/differential restore points, the full chain is restored
 // in order (base full → incremental/differential overlays).
 func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string) error {
+	return r.restoreItemWithReporter(restorePoint, itemName, itemType, destination, passphrase, restoreProgressReporter{})
+}
+
+func (r *Runner) restoreItemWithReporter(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, reporter restoreProgressReporter) error {
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
 		chain, err := r.buildRestoreChain(restorePoint)
@@ -986,18 +1114,18 @@ func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, d
 			return fmt.Errorf("building restore chain: %w", err)
 		}
 		if usesMergedRestoreChain(itemType) {
-			return r.restoreMergedChain(chain, itemName, itemType, destination, passphrase)
+			return r.restoreMergedChain(chain, itemName, itemType, destination, passphrase, reporter)
 		}
 		for i, rp := range chain {
 			log.Printf("runner: restoring chain step %d/%d (type=%s, id=%d)",
 				i+1, len(chain), rp.BackupType, rp.ID)
-			if err := r.restoreSinglePoint(rp, itemName, itemType, destination, passphrase); err != nil {
+			if err := r.restoreSinglePoint(rp, itemName, itemType, destination, passphrase, reporter); err != nil {
 				return fmt.Errorf("restoring chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
 		}
 		return nil
 	}
-	return r.restoreSinglePoint(restorePoint, itemName, itemType, destination, passphrase)
+	return r.restoreSinglePoint(restorePoint, itemName, itemType, destination, passphrase, reporter)
 }
 
 func usesMergedRestoreChain(itemType string) bool {
@@ -1009,7 +1137,7 @@ func usesMergedRestoreChain(itemType string) bool {
 	}
 }
 
-func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType, destination, passphrase string) error {
+func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType, destination, passphrase string, reporter restoreProgressReporter) error {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
@@ -1019,16 +1147,18 @@ func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType,
 
 	for i, rp := range chain {
 		log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
-		if err := r.stageRestorePointItem(rp, itemName, tmpDir, passphrase); err != nil {
+		phaseStart := (i * 40) / len(chain)
+		phaseEnd := ((i + 1) * 40) / len(chain)
+		if err := r.stageRestorePointItem(rp, itemName, tmpDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
 			return fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
 		}
 	}
 
-	return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir)
+	return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, reporter, 40, 100)
 }
 
 // restoreSinglePoint restores a single restore point (without chain logic).
-func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string) error {
+func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, reporter restoreProgressReporter) error {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
@@ -1036,14 +1166,14 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 	}
 	defer cleanup()
 
-	if err := r.stageRestorePointItem(restorePoint, itemName, tmpDir, passphrase); err != nil {
+	if err := r.stageRestorePointItem(restorePoint, itemName, tmpDir, passphrase, 0, 40, reporter); err != nil {
 		return err
 	}
 
-	return r.restoreStagedItem(restorePoint.JobID, itemName, itemType, destination, tmpDir)
+	return r.restoreStagedItem(restorePoint.JobID, itemName, itemType, destination, tmpDir, reporter, 40, 100)
 }
 
-func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, tmpDir, passphrase string) error {
+func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter) error {
 	job, err := r.db.GetJob(restorePoint.JobID)
 	if err != nil {
 		return fmt.Errorf("getting job: %w", err)
@@ -1070,10 +1200,28 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 		return fmt.Errorf("listing restore files: %w", err)
 	}
 
+	restoreFiles := make([]storage.FileInfo, 0, len(files))
+	var totalBytes int64
 	for _, fi := range files {
 		if fi.IsDir {
 			continue
 		}
+		restoreFiles = append(restoreFiles, fi)
+		if fi.Size > 0 {
+			totalBytes += fi.Size
+		}
+	}
+
+	if len(restoreFiles) == 0 {
+		r.reportRestoreProgress(reporter, phaseEnd, "Restore data ready")
+		return nil
+	}
+
+	r.reportRestoreProgress(reporter, phaseStart, "Preparing restore data")
+
+	var downloadedBytes int64
+
+	for _, fi := range restoreFiles {
 		reader, err := adapter.Read(fi.Path)
 		if err != nil {
 			return fmt.Errorf("reading %s from storage: %w", fi.Path, err)
@@ -1081,7 +1229,17 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 
 		// Compute SHA-256 on the raw storage content for checksum verification.
 		storageHasher := sha256.New()
-		hashingReader := io.TeeReader(reader, storageHasher)
+		var fileBytes int64
+		hashingReader := io.TeeReader(&countingReader{
+			reader: reader,
+			onRead: func(n int64) {
+				fileBytes += n
+				if totalBytes > 0 {
+					pct := scaleRestorePhaseProgress(phaseStart, phaseEnd, downloadedBytes+fileBytes, totalBytes)
+					r.reportRestoreProgress(reporter, pct, fmt.Sprintf("Downloading %s", filepath.Base(fi.Path)))
+				}
+			},
+		}, storageHasher)
 
 		// Decrypt .age files if a passphrase is provided.
 		dataReader := hashingReader
@@ -1120,6 +1278,11 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 		_ = closeDecompress()
 		out.Close()
 		reader.Close()
+		downloadedBytes += fileBytes
+		if totalBytes > 0 {
+			pct := scaleRestorePhaseProgress(phaseStart, phaseEnd, downloadedBytes, totalBytes)
+			r.reportRestoreProgress(reporter, pct, fmt.Sprintf("Prepared %s", filepath.Base(localPath)))
+		}
 
 		// Verify checksum if available.
 		storageName := filepath.Base(fi.Path)
@@ -1131,10 +1294,12 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 		}
 	}
 
+	r.reportRestoreProgress(reporter, phaseEnd, "Restore data ready")
+
 	return nil
 }
 
-func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination, tmpDir string) error {
+func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination, tmpDir string, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
 	var handler engine.Handler
 	var err error
 	switch itemType {
@@ -1154,13 +1319,9 @@ func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination,
 	}
 
 	progress := func(name string, pct int, msg string) {
-		r.broadcast(map[string]any{
-			"type":      "restore_progress",
-			"item":      name,
-			"item_type": itemType,
-			"percent":   pct,
-			"message":   msg,
-		})
+		scaledPct := phaseStart + ((pct * (phaseEnd - phaseStart)) / 100)
+		reporter.ItemName = name
+		r.reportRestoreProgress(reporter, scaledPct, msg)
 	}
 
 	backupItem := engine.BackupItem{

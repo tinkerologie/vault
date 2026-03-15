@@ -54,6 +54,7 @@ async function pollRunnerStatus() {
         type: 'job_run_started',
         job_id: snapshot.job_id,
         run_id: snapshot.run_id,
+        job_name: snapshot.job_name,
         run_type: snapshot.run_type,
         items_total: snapshot.items_total,
       })

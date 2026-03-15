@@ -13,6 +13,10 @@ let elapsedSec = $state(0)
 let jobQueue = $state([])
 let _elapsedInterval = null
 
+function defaultProgressMessage(runType) {
+  return runType === 'restore' ? 'Preparing restore...' : 'In progress...'
+}
+
 export function getProgress() {
   return {
     get activeRun() { return activeRun },
@@ -47,7 +51,14 @@ export function restoreFromStatus(status) {
   jobQueue = status.queue || []
   itemProgress = {}
   if (status.current_item) {
-    itemProgress = { [status.current_item]: { percent: 0, message: 'In progress...', status: 'running' } }
+    itemProgress = {
+      [status.current_item]: {
+        percent: status.current_item_percent || 0,
+        message: status.current_item_message || defaultProgressMessage(status.run_type),
+        item_type: status.current_item_type,
+        status: 'running',
+      },
+    }
   }
   // Resume elapsed timer from the real start time.
   const startMs = status.started_at ? new Date(status.started_at).getTime() : Date.now()
@@ -69,6 +80,7 @@ export function syncFromStatus(status) {
 
   activeRun = {
     ...activeRun,
+    job_name: status.job_name || activeRun.job_name,
     run_type: status.run_type || activeRun.run_type || 'backup',
   }
 
@@ -83,8 +95,10 @@ export function syncFromStatus(status) {
       ...itemProgress,
       [status.current_item]: {
         ...existing,
+        percent: status.current_item_percent ?? existing.percent ?? 0,
+        item_type: status.current_item_type || existing.item_type,
         status: 'running',
-        message: existing.message || 'In progress...',
+        message: status.current_item_message || existing.message || defaultProgressMessage(status.run_type),
       },
     }
   }
@@ -104,7 +118,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
        msg.type === 'item_backup_done' || msg.type === 'item_backup_failed' ||
        msg.type === 'restore_progress' || msg.type === 'item_restore_done' ||
        msg.type === 'item_restore_failed')) {
-    const jName = jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
+    const jName = msg.job_name || activeRun?.job_name || jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
     activeRun = {
       job_id: msg.job_id,
       run_id: msg.run_id,
@@ -119,7 +133,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
 
   switch (msg.type) {
     case 'job_run_started': {
-      const jName = jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
+      const jName = msg.job_name || activeRun?.job_name || jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
       activeRun = {
         job_id: msg.job_id,
         run_id: msg.run_id,
@@ -144,7 +158,20 @@ export function handleProgressMessage(msg, jobNameResolver) {
       phaseMessage = `Restarting ${msg.count} containers...`
       return true
     }
+    case 'phase_message': {
+      phaseMessage = msg.message || null
+      return true
+    }
     case 'item_backup_start': {
+      phaseMessage = null
+      if (msg.items_total) overallTotal = msg.items_total
+      itemProgress = {
+        ...itemProgress,
+        [msg.item_name]: { percent: 0, message: 'Starting...', item_type: msg.item_type, status: 'running' },
+      }
+      return true
+    }
+    case 'item_restore_start': {
       phaseMessage = null
       if (msg.items_total) overallTotal = msg.items_total
       itemProgress = {
@@ -163,6 +190,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       return true
     }
     case 'item_backup_done': {
+      phaseMessage = null
       const prev = itemProgress[msg.item_name] || {}
       itemProgress = {
         ...itemProgress,
@@ -173,6 +201,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       return true
     }
     case 'item_backup_failed': {
+      phaseMessage = null
       const prev2 = itemProgress[msg.item_name] || {}
       itemProgress = {
         ...itemProgress,
@@ -184,6 +213,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       return true
     }
     case 'item_restore_done': {
+      phaseMessage = null
       const prev3 = itemProgress[msg.item_name] || {}
       itemProgress = {
         ...itemProgress,
@@ -194,6 +224,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       return true
     }
     case 'item_restore_failed': {
+      phaseMessage = null
       const prev4 = itemProgress[msg.item_name] || {}
       itemProgress = {
         ...itemProgress,

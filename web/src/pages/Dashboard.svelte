@@ -356,9 +356,10 @@
 
     <!-- Active Backup/Restore Progress -->
     {#if progress.activeRun}
-      {@const overallPct = progress.overallTotal > 0 ? Math.round(((progress.overallDone + progress.overallFailed) / progress.overallTotal) * 100) : 0}
-      {@const elapsedStr = progress.elapsedSec >= 3600 ? `${Math.floor(progress.elapsedSec / 3600)}h ${Math.floor((progress.elapsedSec % 3600) / 60)}m` : progress.elapsedSec >= 60 ? `${Math.floor(progress.elapsedSec / 60)}m ${progress.elapsedSec % 60}s` : `${progress.elapsedSec}s`}
       {@const progressItems = Object.entries(progress.itemProgress)}
+      {@const activeItemPct = progressItems.reduce((maxPct, [, info]) => info.status === 'running' ? Math.max(maxPct, info.percent || 0) : maxPct, 0)}
+      {@const overallPct = progress.overallTotal > 0 ? Math.min(100, Math.round((((progress.overallDone + progress.overallFailed) + (activeItemPct / 100)) / progress.overallTotal) * 100)) : activeItemPct}
+      {@const elapsedStr = progress.elapsedSec >= 3600 ? `${Math.floor(progress.elapsedSec / 3600)}h ${Math.floor((progress.elapsedSec % 3600) / 60)}m` : progress.elapsedSec >= 60 ? `${Math.floor(progress.elapsedSec / 60)}m ${progress.elapsedSec % 60}s` : `${progress.elapsedSec}s`}
       {@const activeRunLabel = progress.activeRun.run_type === 'restore' ? 'Restore in Progress' : 'Backup in Progress'}
       <div class="bg-surface-2 border border-vault/30 rounded-xl mb-8 overflow-hidden">
         <div class="px-5 py-4 border-b border-border flex items-center justify-between">
