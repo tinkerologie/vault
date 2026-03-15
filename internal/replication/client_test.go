@@ -20,7 +20,10 @@ func TestTestConnection(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "test-key")
+	c, err := NewClient(srv.URL, "test-key")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
 	health, err := c.TestConnection()
 	if err != nil {
 		t.Fatalf("TestConnection() error = %v", err)
@@ -43,7 +46,10 @@ func TestListJobs(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "")
+	c, err := NewClient(srv.URL, "")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
 	got, err := c.ListJobs()
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
@@ -68,7 +74,10 @@ func TestListRestorePoints(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "")
+	c, err := NewClient(srv.URL, "")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
 	got, err := c.ListRestorePoints(1)
 	if err != nil {
 		t.Fatalf("ListRestorePoints() error = %v", err)
@@ -93,7 +102,10 @@ func TestDownloadFile(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "")
+	c, err := NewClient(srv.URL, "")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
 	rc, err := c.DownloadFile(1, "job-1/backup.tar.zst")
 	if err != nil {
 		t.Fatalf("DownloadFile() error = %v", err)
@@ -108,8 +120,11 @@ func TestDownloadFile(t *testing.T) {
 }
 
 func TestConnectionError(t *testing.T) {
-	c := NewClient("http://127.0.0.1:1", "key")
-	_, err := c.TestConnection()
+	c, err := NewClient("http://127.0.0.1:1", "key")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	_, err = c.TestConnection()
 	if err == nil {
 		t.Error("expected error for unreachable server")
 	}
@@ -122,9 +137,29 @@ func TestNon200Response(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "bad-key")
-	_, err := c.ListJobs()
+	c, err := NewClient(srv.URL, "bad-key")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	_, err = c.ListJobs()
 	if err == nil {
 		t.Error("expected error for 401 response")
+	}
+}
+
+func TestNormalizeBaseURLRejectsUnsafeURLs(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{
+		"https://vault.example.com/api/v1",
+		"https://vault.example.com?foo=bar",
+		"https://user:pass@vault.example.com",
+		"ftp://vault.example.com",
+	}
+
+	for _, input := range tests {
+		if _, err := NormalizeBaseURL(input); err == nil {
+			t.Fatalf("NormalizeBaseURL(%q) should fail", input)
+		}
 	}
 }

@@ -3,9 +3,10 @@ package handlers
 import (
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ruaandeysel/vault/internal/safepath"
 )
 
 // BrowseHandler serves filesystem directory listings for the path browser UI.
@@ -32,9 +33,6 @@ var unraidRoots = []dirEntry{
 	{Name: "Remote Mounts", Path: "/mnt/remotes", IsDir: true},
 }
 
-// allowedPrefixes are the filesystem prefixes allowed for browsing.
-var allowedPrefixes = []string{"/mnt", "/boot"}
-
 // List returns subdirectories of a given path. Only paths under /mnt/ are allowed.
 // When no path query param is provided, it returns Unraid well-known roots.
 //
@@ -52,28 +50,20 @@ func (h *BrowseHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Security: only allow browsing under allowed prefixes.
-	clean := filepath.Clean(qpath)
-	allowed := false
-	for _, prefix := range allowedPrefixes {
-		if strings.HasPrefix(clean, prefix) {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
+	normalizedPath, err := normalizeBrowsePath(qpath)
+	if err != nil {
 		respondError(w, http.StatusForbidden, "browsing is restricted to /mnt/ and /boot/")
 		return
 	}
 
-	entries, err := h.listEntries(clean, r.URL.Query().Get("files") == "true")
+	entries, err := h.listEntries(normalizedPath, r.URL.Query().Get("files") == "true")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{
-		"path":    clean,
+		"path":    normalizedPath,
 		"entries": entries,
 	})
 }
@@ -146,16 +136,20 @@ func (h *BrowseHandler) listEntries(path string, includeFiles bool) ([]dirEntry,
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
+		entryPath, err := safepath.JoinUnderBase(path, e.Name(), false)
+		if err != nil {
+			continue
+		}
 		if e.IsDir() {
 			result = append(result, dirEntry{
 				Name:  e.Name(),
-				Path:  filepath.Join(path, e.Name()),
+				Path:  entryPath,
 				IsDir: true,
 			})
 		} else if includeFiles {
 			result = append(result, dirEntry{
 				Name:  e.Name(),
-				Path:  filepath.Join(path, e.Name()),
+				Path:  entryPath,
 				IsDir: false,
 			})
 		}

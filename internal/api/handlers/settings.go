@@ -92,15 +92,17 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 	}
 
 	if req.SnapshotPath != "" {
-		if !filepath.IsAbs(req.SnapshotPath) {
-			respondError(w, http.StatusBadRequest, "path must be absolute")
+		normalizedPath, err := normalizeConfigurablePath(req.SnapshotPath)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		dir := filepath.Dir(req.SnapshotPath)
+		dir := filepath.Dir(normalizedPath)
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			respondError(w, http.StatusBadRequest, "parent directory does not exist")
 			return
 		}
+		req.SnapshotPath = normalizedPath
 	}
 
 	if err := h.db.SetSetting("snapshot_path_override", req.SnapshotPath); err != nil {
@@ -422,14 +424,16 @@ func (h *SettingsHandler) SetStagingOverride(w http.ResponseWriter, r *http.Requ
 	}
 
 	if req.Override != "" {
-		if !filepath.IsAbs(req.Override) {
-			respondError(w, http.StatusBadRequest, "path must be absolute")
+		normalizedPath, err := normalizeConfigurablePath(req.Override)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if fi, err := os.Stat(req.Override); err != nil || !fi.IsDir() {
+		if fi, err := os.Stat(normalizedPath); err != nil || !fi.IsDir() {
 			respondError(w, http.StatusBadRequest, "path does not exist or is not a directory")
 			return
 		}
+		req.Override = normalizedPath
 	}
 
 	if err := h.db.SetSetting("staging_dir_override", req.Override); err != nil {

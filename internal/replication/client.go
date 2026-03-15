@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -18,14 +19,51 @@ type Client struct {
 
 // NewClient creates a replication client for the given remote Vault URL.
 // The apiKey is sent as an X-API-Key header for authentication.
-func NewClient(baseURL, apiKey string) *Client {
+func NewClient(baseURL, apiKey string) (*Client, error) {
+	normalizedBaseURL, err := NormalizeBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Client{
-		baseURL: baseURL,
+		baseURL: normalizedBaseURL,
 		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Minute,
 		},
+	}, nil
+}
+
+// NormalizeBaseURL validates and canonicalizes a remote Vault base URL.
+func NormalizeBaseURL(baseURL string) (string, error) {
+	trimmed := strings.TrimSpace(baseURL)
+	if trimmed == "" {
+		return "", fmt.Errorf("url is required")
 	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("parse url: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("url scheme must be http or https")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("url must not include user credentials")
+	}
+	if parsed.Host == "" || parsed.Hostname() == "" {
+		return "", fmt.Errorf("url host is required")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("url must not include query strings or fragments")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", fmt.Errorf("url path must be empty")
+	}
+
+	parsed.Path = ""
+	parsed.RawPath = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 // RemoteJob mirrors the fields of db.Job that we need for replication.
@@ -178,5 +216,5 @@ func (c *Client) doRequestWithParams(method, path string, params map[string]stri
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)
 	}
-	return c.httpClient.Do(req) // #nosec G704 -- baseURL is admin-configured, not user-tainted //nolint:gosec
+	return c.httpClient.Do(req)
 }

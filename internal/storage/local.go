@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/ruaandeysel/vault/internal/safepath"
 )
 
 type LocalAdapter struct {
@@ -15,12 +17,19 @@ func NewLocalAdapter(basePath string) *LocalAdapter {
 	return &LocalAdapter{basePath: basePath}
 }
 
-func (l *LocalAdapter) fullPath(path string) string {
-	return filepath.Join(l.basePath, filepath.Clean(path))
+func (l *LocalAdapter) fullPath(path string, allowRoot bool) (string, error) {
+	fullPath, err := safepath.JoinUnderBase(l.basePath, path, allowRoot)
+	if err != nil {
+		return "", fmt.Errorf("invalid path %q: %w", path, err)
+	}
+	return fullPath, nil
 }
 
 func (l *LocalAdapter) Write(path string, reader io.Reader) error {
-	full := l.fullPath(path)
+	full, err := l.fullPath(path, false)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
 		return fmt.Errorf("create directories: %w", err)
 	}
@@ -36,15 +45,26 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 }
 
 func (l *LocalAdapter) Read(path string) (io.ReadCloser, error) {
-	return os.Open(l.fullPath(path))
+	fullPath, err := l.fullPath(path, false)
+	if err != nil {
+		return nil, err
+	}
+	return os.Open(fullPath)
 }
 
 func (l *LocalAdapter) Delete(path string) error {
-	return os.Remove(l.fullPath(path))
+	fullPath, err := l.fullPath(path, false)
+	if err != nil {
+		return err
+	}
+	return os.Remove(fullPath)
 }
 
 func (l *LocalAdapter) List(prefix string) ([]FileInfo, error) {
-	dir := l.fullPath(prefix)
+	dir, err := l.fullPath(prefix, true)
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -66,7 +86,11 @@ func (l *LocalAdapter) List(prefix string) ([]FileInfo, error) {
 }
 
 func (l *LocalAdapter) Stat(path string) (FileInfo, error) {
-	info, err := os.Stat(l.fullPath(path))
+	fullPath, err := l.fullPath(path, false)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	info, err := os.Stat(fullPath)
 	if err != nil {
 		return FileInfo{}, err
 	}

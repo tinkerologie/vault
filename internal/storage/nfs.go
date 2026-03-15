@@ -5,9 +5,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/ruaandeysel/vault/internal/safepath"
 )
 
 // NFSConfig holds configuration for an NFS storage adapter.
@@ -77,7 +78,12 @@ func (n *NFSAdapter) mount() error {
 
 	basePath := dir
 	if n.config.BasePath != "" {
-		basePath = filepath.Join(dir, n.config.BasePath)
+		basePath, err = safepath.JoinUnderBase(dir, n.config.BasePath, true)
+		if err != nil {
+			_ = exec.Command("umount", dir).Run()
+			_ = os.Remove(dir)
+			return fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err)
+		}
 	}
 
 	n.mountDir = dir

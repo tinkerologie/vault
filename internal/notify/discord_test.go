@@ -9,6 +9,10 @@ import (
 )
 
 func TestSendDiscord_Success(t *testing.T) {
+	previousBaseURL := discordAPIBaseURL
+	discordAPIBaseURL = ""
+	t.Cleanup(func() { discordAPIBaseURL = previousBaseURL })
+
 	var received DiscordPayload
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -24,6 +28,7 @@ func TestSendDiscord_Success(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
+	discordAPIBaseURL = srv.URL
 
 	embed := DiscordEmbed{
 		Title:       "✅ Backup Completed",
@@ -35,7 +40,7 @@ func TestSendDiscord_Success(t *testing.T) {
 		},
 	}
 
-	if err := SendDiscord(srv.URL, embed); err != nil {
+	if err := SendDiscord("https://discord.example/api/webhooks/123/token", embed); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(received.Embeds) != 1 {
@@ -53,12 +58,17 @@ func TestSendDiscord_Success(t *testing.T) {
 }
 
 func TestSendDiscord_ErrorStatus(t *testing.T) {
+	previousBaseURL := discordAPIBaseURL
+	discordAPIBaseURL = ""
+	t.Cleanup(func() { discordAPIBaseURL = previousBaseURL })
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer srv.Close()
+	discordAPIBaseURL = srv.URL
 
-	err := SendDiscord(srv.URL, DiscordEmbed{Title: "test"})
+	err := SendDiscord("https://discord.example/api/webhooks/123/token", DiscordEmbed{Title: "test"})
 	if err == nil {
 		t.Fatal("expected error for 400 status")
 	}
@@ -67,5 +77,14 @@ func TestSendDiscord_ErrorStatus(t *testing.T) {
 func TestSendDiscord_EmptyURL(t *testing.T) {
 	if err := SendDiscord("", DiscordEmbed{Title: "test"}); err != nil {
 		t.Fatalf("empty URL should be a no-op, got: %v", err)
+	}
+}
+
+func TestSendDiscord_RejectsNonDiscordHost(t *testing.T) {
+	t.Parallel()
+
+	err := SendDiscord("https://example.com/api/webhooks/123/token", DiscordEmbed{Title: "test"})
+	if err == nil {
+		t.Fatal("expected error for non-Discord host")
 	}
 }

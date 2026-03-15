@@ -26,9 +26,14 @@ func copyFileWithProgress(src, dst string, onProgress func(bytesCopied int64)) e
 		return fmt.Errorf("stat source %s: %w", src, err)
 	}
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+	normalizedDst, err := normalizeRestorePath(dst)
 	if err != nil {
-		return fmt.Errorf("creating dest %s: %w", dst, err)
+		return err
+	}
+
+	out, err := os.OpenFile(normalizedDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return fmt.Errorf("creating dest %s: %w", normalizedDst, err)
 	}
 	defer func() {
 		if cerr := out.Close(); cerr != nil && err == nil {
@@ -42,7 +47,7 @@ func copyFileWithProgress(src, dst string, onProgress func(bytesCopied int64)) e
 		n, readErr := in.Read(buf)
 		if n > 0 {
 			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
-				return fmt.Errorf("writing to %s: %w", dst, writeErr)
+				return fmt.Errorf("writing to %s: %w", normalizedDst, writeErr)
 			}
 			copied += int64(n)
 			if onProgress != nil {

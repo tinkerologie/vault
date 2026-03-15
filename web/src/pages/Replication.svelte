@@ -86,7 +86,12 @@
     modalTestResult = null
     try {
       const result = await api.testReplicationURL(form.url, form.api_key || '')
-      modalTestResult = { success: true, version: result.version, warning: result.warning }
+      modalTestResult = {
+        success: true,
+        version: result.version,
+        warning: result.warning,
+        message: result.message,
+      }
     } catch (e) {
       modalTestResult = { success: false, error: e.message }
     } finally {
@@ -392,9 +397,9 @@
         {#if modalTestResult}
           <span class="text-xs {modalTestResult.success ? (modalTestResult.warning ? 'text-warning' : 'text-success') : 'text-danger'}">
             {#if modalTestResult.success && modalTestResult.warning}
-              ⚠ Connected (v{modalTestResult.version}) — {modalTestResult.warning}
+              ⚠ {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')} — {modalTestResult.warning}
             {:else if modalTestResult.success}
-              ✓ Connected (v{modalTestResult.version})
+              ✓ {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')}
             {:else}
               ✗ {modalTestResult.error}
             {/if}

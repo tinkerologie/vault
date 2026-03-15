@@ -1,7 +1,10 @@
 package engine
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,6 +49,36 @@ func TestTarAndUntarRoundtrip(t *testing.T) {
 	}
 	if string(data) != "vault backup" {
 		t.Errorf("data = %q, want %q", string(data), "vault backup")
+	}
+}
+
+func TestUntarDirectoryRejectsTraversal(t *testing.T) {
+	t.Parallel()
+
+	archivePath := filepath.Join(t.TempDir(), "bad.tar.gz")
+	file, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	defer file.Close()
+
+	gzw := gzip.NewWriter(file)
+	tw := tar.NewWriter(gzw)
+	if err := tw.WriteHeader(&tar.Header{Name: "../evil.txt", Mode: 0o644, Size: int64(len("oops"))}); err != nil {
+		t.Fatalf("WriteHeader() error = %v", err)
+	}
+	if _, err := io.WriteString(tw, "oops"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close error = %v", err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatalf("gzip close error = %v", err)
+	}
+
+	if err := untarDirectory(archivePath, t.TempDir()); err == nil {
+		t.Fatal("untarDirectory() should reject traversal archive entries")
 	}
 }
 

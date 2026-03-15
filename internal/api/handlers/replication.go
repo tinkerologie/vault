@@ -71,6 +71,12 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "storage_dest_id is required")
 		return
 	}
+	normalizedURL, err := replication.NormalizeBaseURL(src.URL)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+		return
+	}
+	src.URL = normalizedURL
 
 	// Seal the API key before storing (empty key = no auth needed on remote).
 	if src.APIKey != "" {
@@ -116,6 +122,13 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	src.ID = id
+
+	normalizedURL, err := replication.NormalizeBaseURL(src.URL)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+		return
+	}
+	src.URL = normalizedURL
 
 	// If API key is the redacted placeholder, keep the existing one.
 	// Empty string means "no API key" (clear it). Any other value = new key.
@@ -183,7 +196,11 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	client := replication.NewClient(src.URL, apiKey)
+	client, err := replication.NewClient(src.URL, apiKey)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+		return
+	}
 	if _, err := client.TestConnection(); err != nil {
 		respondError(w, http.StatusBadGateway, err.Error())
 		return
@@ -191,7 +208,7 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// TestURL tests connectivity to a remote Vault URL without requiring a saved source.
+// TestURL validates and normalizes a remote Vault URL before it is saved.
 // Accepts JSON body: {"url": "http://...", "api_key": "optional"}.
 func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -207,23 +224,16 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := replication.NewClient(req.URL, req.APIKey)
-	health, err := client.TestConnection()
+	normalizedURL, err := replication.NormalizeBaseURL(req.URL)
 	if err != nil {
-		respondError(w, http.StatusBadGateway, err.Error())
+		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
 		return
 	}
-
-	// Also check an authenticated endpoint to verify the API key works.
-	// ListJobs requires auth — if it fails, connection works but auth doesn't.
-	result := map[string]string{
+	respondJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
-		"version": health.Version,
-	}
-	if _, err := client.ListJobs(); err != nil {
-		result["warning"] = "Connected but API key may be required or invalid for sync operations"
-	}
-	respondJSON(w, http.StatusOK, result)
+		"url":     normalizedURL,
+		"message": "URL format is valid. Save the source and use Test Connection to verify remote reachability.",
+	})
 }
 
 // SyncNow triggers an immediate sync for a replication source.

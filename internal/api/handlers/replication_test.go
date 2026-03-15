@@ -169,3 +169,41 @@ func TestReplicationHandlerValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestReplicationHandlerTestURLValidatesFormatOnly(t *testing.T) {
+	t.Parallel()
+
+	h, _ := setupReplicationTest(t)
+	body := `{"url":"https://vault.example.com:24085"}`
+	req := httptest.NewRequest(http.MethodPost, "/replication/test-url", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.TestURL(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("TestURL: got %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["url"] != "https://vault.example.com:24085" {
+		t.Fatalf("normalized url = %q", resp["url"])
+	}
+}
+
+func TestReplicationHandlerCreateRejectsURLWithPath(t *testing.T) {
+	t.Parallel()
+
+	h, _ := setupReplicationTest(t)
+	body := `{"name":"prod","url":"https://vault.example.com/api/v1","api_key":"k","storage_dest_id":1}`
+	req := httptest.NewRequest(http.MethodPost, "/replication", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Create(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Create: got %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}

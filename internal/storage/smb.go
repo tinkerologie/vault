@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/cloudsoda/go-smb2"
+	"github.com/ruaandeysel/vault/internal/safepath"
 )
 
 type SMBConfig struct {
@@ -53,8 +54,12 @@ func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, error) {
 	return share, session, nil
 }
 
-func (s *SMBAdapter) fullPath(path string) string {
-	return filepath.Join(s.config.BasePath, filepath.Clean(path))
+func (s *SMBAdapter) fullPath(path string, allowRoot bool) (string, error) {
+	fullPath, err := safepath.JoinUnderBase(s.config.BasePath, path, allowRoot)
+	if err != nil {
+		return "", fmt.Errorf("invalid path %q: %w", path, err)
+	}
+	return fullPath, nil
 }
 
 func (s *SMBAdapter) Write(path string, reader io.Reader) error {
@@ -65,7 +70,10 @@ func (s *SMBAdapter) Write(path string, reader io.Reader) error {
 	defer session.Logoff()
 	defer share.Umount()
 
-	full := s.fullPath(path)
+	full, err := s.fullPath(path, false)
+	if err != nil {
+		return err
+	}
 	share.MkdirAll(filepath.Dir(full), 0755)
 
 	f, err := share.Create(full)
@@ -84,7 +92,13 @@ func (s *SMBAdapter) Read(path string) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	f, err := share.Open(s.fullPath(path))
+	fullPath, err := s.fullPath(path, false)
+	if err != nil {
+		share.Umount()
+		session.Logoff()
+		return nil, err
+	}
+	f, err := share.Open(fullPath)
 	if err != nil {
 		share.Umount()
 		session.Logoff()
@@ -113,7 +127,11 @@ func (s *SMBAdapter) Delete(path string) error {
 	}
 	defer session.Logoff()
 	defer share.Umount()
-	return share.Remove(s.fullPath(path))
+	fullPath, err := s.fullPath(path, false)
+	if err != nil {
+		return err
+	}
+	return share.Remove(fullPath)
 }
 
 func (s *SMBAdapter) List(prefix string) ([]FileInfo, error) {
@@ -124,7 +142,11 @@ func (s *SMBAdapter) List(prefix string) ([]FileInfo, error) {
 	defer session.Logoff()
 	defer share.Umount()
 
-	entries, err := share.ReadDir(s.fullPath(prefix))
+	fullPath, err := s.fullPath(prefix, true)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := share.ReadDir(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +171,11 @@ func (s *SMBAdapter) Stat(path string) (FileInfo, error) {
 	defer session.Logoff()
 	defer share.Umount()
 
-	info, err := share.Stat(s.fullPath(path))
+	fullPath, err := s.fullPath(path, false)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	info, err := share.Stat(fullPath)
 	if err != nil {
 		return FileInfo{}, err
 	}

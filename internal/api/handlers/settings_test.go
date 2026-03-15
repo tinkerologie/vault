@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -270,7 +272,7 @@ func TestSetStagingOverride_NonexistentPath(t *testing.T) {
 	t.Parallel()
 	h := newTestSettingsHandler(t)
 
-	body := `{"override": "/nonexistent/path/that/does/not/exist"}`
+	body := `{"override": "/tmp/nonexistent/path/that/does/not/exist"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.SetStagingOverride(w, req)
@@ -284,8 +286,11 @@ func TestSetStagingOverride_ValidPath(t *testing.T) {
 	t.Parallel()
 	h := newTestSettingsHandler(t)
 
-	// Use the system temp dir as a known valid absolute directory.
-	tmpDir := t.TempDir()
+	tmpDir, err := os.MkdirTemp("/tmp", "vault-staging-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	body := `{"override": "` + tmpDir + `"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -312,7 +317,11 @@ func TestSetStagingOverride_ClearOverride(t *testing.T) {
 	h := newTestSettingsHandler(t)
 
 	// First set an override.
-	tmpDir := t.TempDir()
+	tmpDir, err := os.MkdirTemp("/tmp", "vault-staging-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	body := `{"override": "` + tmpDir + `"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/staging", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -357,5 +366,45 @@ func TestGenerateAPIKey_Format(t *testing.T) {
 	// 6 ("vault_") + base64url(32 bytes) ≈ 43 chars → total ~49.
 	if len(key) < 40 {
 		t.Errorf("key too short: %d chars", len(key))
+	}
+}
+
+func TestSetSnapshotPath_ValidPath(t *testing.T) {
+	t.Parallel()
+
+	h := newTestSettingsHandler(t)
+	snapshotDir, err := os.MkdirTemp("/tmp", "vault-snapshot-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(snapshotDir) })
+
+	snapshotPath := filepath.Join(snapshotDir, "vault.db")
+	body := `{"snapshot_path": "` + snapshotPath + `"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/database", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetSnapshotPath(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	stored, _ := h.db.GetSetting("snapshot_path_override", "")
+	if stored != snapshotPath {
+		t.Fatalf("snapshot_path_override = %q, want %q", stored, snapshotPath)
+	}
+}
+
+func TestSetSnapshotPath_RejectsOutsideRoots(t *testing.T) {
+	t.Parallel()
+
+	h := newTestSettingsHandler(t)
+	body := `{"snapshot_path": "/var/lib/vault/vault.db"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/database", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetSnapshotPath(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
 }

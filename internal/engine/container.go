@@ -450,6 +450,13 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 
 	// Check for alternate restore destination.
 	restoreDest, _ := item.Settings["restore_destination"].(string)
+	if restoreDest != "" {
+		normalizedRestoreDest, err := normalizeRestorePath(restoreDest)
+		if err != nil {
+			return err
+		}
+		restoreDest = normalizedRestoreDest
+	}
 
 	// Step 3: Restore volumes.
 	// Load the volumes manifest (if present) to know which were skipped.
@@ -477,8 +484,17 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 
 		targetPath := mount.Source
 		if restoreDest != "" {
-			targetPath = filepath.Join(restoreDest, filepath.Base(mount.Source))
+			volumeName, err := normalizeRestoreComponent(filepath.Base(mount.Source))
+			if err != nil {
+				return err
+			}
+			targetPath = filepath.Join(restoreDest, volumeName)
 		}
+		normalizedTargetPath, err := normalizeRestorePath(targetPath)
+		if err != nil {
+			return err
+		}
+		targetPath = normalizedTargetPath
 
 		if err := os.MkdirAll(targetPath, 0755); err != nil {
 			return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
@@ -494,6 +510,11 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 	if containerName == "" {
 		containerName = item.Name
 	}
+	safeContainerName, err := normalizeRestoreComponent(containerName)
+	if err != nil {
+		return err
+	}
+	containerName = safeContainerName
 
 	// Remove existing container with the same name if present.
 	if existing, err := h.cli.ContainerInspect(ctx, containerName); err == nil {
@@ -524,7 +545,11 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 		for _, bind := range binds {
 			parts := strings.SplitN(bind, ":", 2)
 			if len(parts) == 2 {
-				newSource := filepath.Join(restoreDest, filepath.Base(parts[0]))
+				sourceName, err := normalizeRestoreComponent(filepath.Base(parts[0]))
+				if err != nil {
+					return err
+				}
+				newSource := filepath.Join(restoreDest, sourceName)
 				rewritten = append(rewritten, newSource+":"+parts[1])
 			} else {
 				rewritten = append(rewritten, bind)
@@ -818,11 +843,9 @@ func untarDirectory(srcPath, destDir string) error {
 			return fmt.Errorf("reading tar entry: %w", err)
 		}
 
-		target := filepath.Join(destDir, header.Name)
-
-		// Guard against zip-slip.
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in archive: %s", header.Name)
+		target, err := joinArchiveTarget(destDir, header.Name)
+		if err != nil {
+			return fmt.Errorf("illegal file path in archive: %s: %w", header.Name, err)
 		}
 
 		switch header.Typeflag {

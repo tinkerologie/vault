@@ -245,9 +245,19 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 	}
 
 	restoreDest, _ := item.Settings["restore_destination"].(string)
+	if restoreDest != "" {
+		normalizedRestoreDest, err := normalizeRestorePath(restoreDest)
+		if err != nil {
+			return err
+		}
+		restoreDest = normalizedRestoreDest
+	}
 	plan, err := buildVMRestorePlan(xmlData, restoreDest)
 	if err != nil {
 		return fmt.Errorf("building restore plan: %w", err)
+	}
+	if err := normalizeVMRestorePlan(plan); err != nil {
+		return fmt.Errorf("validating restore plan: %w", err)
 	}
 
 	if err := h.reconcileExistingDomainForRestore(item.Name, progress); err != nil {

@@ -125,6 +125,12 @@ func (h *FolderHandler) Restore(item BackupItem, sourceDir string, progress Prog
 		return fmt.Errorf("cannot determine restore path: no path in settings or metadata")
 	}
 
+	normalizedDestPath, err := normalizeRestorePath(destPath)
+	if err != nil {
+		return err
+	}
+	destPath = normalizedDestPath
+
 	progress(item.Name, 30, "restoring to "+destPath)
 
 	archivePath := filepath.Join(sourceDir, "data.tar.gz")

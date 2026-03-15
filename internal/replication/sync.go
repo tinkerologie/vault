@@ -74,7 +74,13 @@ func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (*SyncResult,
 			apiKey = unsealed
 		}
 	}
-	client := NewClient(src.URL, apiKey)
+	client, err := NewClient(src.URL, apiKey)
+	if err != nil {
+		errMsg := fmt.Sprintf("normalize source url %q: %v", src.Name, err)
+		s.updateSyncStatus(sourceID, "failed", err.Error())
+		s.logSyncError(sourceID, src.Name, errMsg)
+		return nil, fmt.Errorf("normalize source url %q: %w", src.Name, err)
+	}
 
 	// Verify connectivity first.
 	if _, err := client.TestConnection(); err != nil {

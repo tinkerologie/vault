@@ -142,6 +142,12 @@ func (h *PluginHandler) Restore(item BackupItem, sourceDir string, progress Prog
 		}
 	}
 
+	safePluginName, err := normalizeRestoreComponent(pluginName)
+	if err != nil {
+		return err
+	}
+	pluginName = safePluginName
+
 	// Step 1: Restore the .plg file.
 	progress(item.Name, 30, "restoring plugin file")
 	plgSrc := filepath.Join(sourceDir, pluginName+".plg")

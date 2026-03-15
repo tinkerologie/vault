@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/pkg/sftp"
+	"github.com/ruaandeysel/vault/internal/safepath"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -74,8 +75,12 @@ func (s *SFTPAdapter) connect() (*sftp.Client, error) {
 	return client, nil
 }
 
-func (s *SFTPAdapter) fullPath(path string) string {
-	return filepath.Join(s.config.BasePath, filepath.Clean(path))
+func (s *SFTPAdapter) fullPath(path string, allowRoot bool) (string, error) {
+	fullPath, err := safepath.JoinUnderBase(s.config.BasePath, path, allowRoot)
+	if err != nil {
+		return "", fmt.Errorf("invalid path %q: %w", path, err)
+	}
+	return fullPath, nil
 }
 
 // hostKeyCallback returns the appropriate SSH host key callback based on config.
@@ -114,7 +119,10 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) error {
 	}
 	defer client.Close()
 
-	full := s.fullPath(path)
+	full, err := s.fullPath(path, false)
+	if err != nil {
+		return err
+	}
 	if err := client.MkdirAll(filepath.Dir(full)); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
@@ -135,7 +143,12 @@ func (s *SFTPAdapter) Read(path string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	// Note: caller must close the returned ReadCloser. We wrap to also close the sftp client.
-	f, err := client.Open(s.fullPath(path))
+	fullPath, err := s.fullPath(path, false)
+	if err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	f, err := client.Open(fullPath)
 	if err != nil {
 		_ = client.Close()
 		return nil, err
@@ -160,7 +173,11 @@ func (s *SFTPAdapter) Delete(path string) error {
 		return err
 	}
 	defer client.Close()
-	return client.Remove(s.fullPath(path))
+	fullPath, err := s.fullPath(path, false)
+	if err != nil {
+		return err
+	}
+	return client.Remove(fullPath)
 }
 
 func (s *SFTPAdapter) List(prefix string) ([]FileInfo, error) {
@@ -170,7 +187,11 @@ func (s *SFTPAdapter) List(prefix string) ([]FileInfo, error) {
 	}
 	defer client.Close()
 
-	entries, err := client.ReadDir(s.fullPath(prefix))
+	fullPath, err := s.fullPath(prefix, true)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := client.ReadDir(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +215,11 @@ func (s *SFTPAdapter) Stat(path string) (FileInfo, error) {
 	}
 	defer client.Close()
 
-	info, err := client.Stat(s.fullPath(path))
+	fullPath, err := s.fullPath(path, false)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	info, err := client.Stat(fullPath)
 	if err != nil {
 		return FileInfo{}, err
 	}
