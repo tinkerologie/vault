@@ -3,19 +3,18 @@
     <Plugin>True</Plugin>
     <PluginURL>https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg</PluginURL>
     <PluginAuthor>Ruaan Deysel</PluginAuthor>
-    <Beta>false</Beta>
-    <Category>Tools:System Backup:</Category>
-    <Date>2026-03-13</Date>
+    <Beta>False</Beta>
+    <Category>Tools:System:</Category>
     <Name>Vault</Name>
     <Description>
         Backup and restore plugin for Unraid. Back up and restore Docker containers (images, config, appdata) and virtual machines (live snapshots, cold backups) with full, incremental, and differential backup types. Supports local, SMB, NFS and SFTP storage destinations. Features job scheduling, retention policies, real-time progress monitoring, and a web-based management UI.
     </Description>
     <Requires>
-        **No external plugin dependencies** - Vault runs as a self-contained Go daemon with a built-in web UI.
+        No external plugin dependencies. Vault runs as a self-contained Go daemon with a built-in web UI.
     </Requires>
-    <MinVer>7.2.0</MinVer>
+    <MinVer>7.0</MinVer>
     <Project>https://github.com/ruaan-deysel/vault</Project>
-    <Support>https://github.com/ruaan-deysel/vault/discussions/categories/q-a</Support>
+    <Support>https://forums.unraid.net/topic/196675-plugin-unraid-management-agent</Support>
     <Icon>https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/icon.png</Icon>
     <License>MIT License - Copyright 2026 Ruaan Deysel</License>
 </Containers>

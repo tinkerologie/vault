@@ -6,6 +6,14 @@ Vault backs up Docker containers, libvirt VMs, folders, and plugins to pluggable
 It ships with a REST API, a Streamable HTTP and stdio MCP server, WebSocket progress events, and an
 integrated web UI.
 
+## Manual Install
+
+Install the plugin in Unraid by pasting this URL into Plugins -> Install Plugin:
+
+```text
+https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
+```
+
 ## Features
 
 - Docker container backup and restore with image, config, and appdata handling
@@ -38,10 +46,10 @@ The REST API will be available at `http://localhost:24085/api/v1`.
 
 - Bug reports: [open a bug report](https://github.com/ruaan-deysel/vault/issues/new?template=01-bug-report.yml)
 - Enhancement requests: [request an improvement](https://github.com/ruaan-deysel/vault/issues/new?template=02-enhancement-request.yml)
-- Questions and support: [use GitHub Discussions](https://github.com/ruaan-deysel/vault/discussions/categories/q-a)
+- Questions and support: [use the Unraid forum support thread](https://forums.unraid.net/topic/196675-plugin-unraid-management-agent)
 
 Bug reports and enhancement requests are automatically labeled for triage when they are opened. Questions
-and troubleshooting help belong in Discussions so the issue tracker stays focused on actionable product work.
+and troubleshooting help belong in the support thread so the issue tracker stays focused on actionable product work.
 
 ## Build, Test, and Verify
 
@@ -194,11 +202,7 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 
 ### Unraid Plugin
 
-Install via the Unraid Community Applications store or manually with the plugin URL:
-
-```text
-https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
-```
+Install via the Unraid Community Applications store, or use the manual install URL from the top of this README.
 
 The daemon runs at `/usr/local/sbin/vault` with the database at
 `/boot/config/plugins/vault/vault.db`.
