@@ -22,6 +22,33 @@
     const d = formatDurationFromDates(run.started_at, run.completed_at)
     return d === '—' ? '' : d
   }
+
+  function activityDotClass(run) {
+    const status = run.status?.toLowerCase()
+    if (status === 'success' || status === 'completed') return 'bg-success'
+    if (status === 'running') return 'bg-info animate-pulse'
+    if (status === 'partial') return 'bg-warning'
+    return 'bg-danger'
+  }
+
+  function activityStatusLabel(run) {
+    if (run.run_type !== 'restore') return run.status
+
+    const status = run.status?.toLowerCase()
+    if (status === 'success' || status === 'completed') return 'restored'
+    if (status === 'running') return 'running'
+    return run.status
+  }
+
+  function activityStatusClass(run) {
+    if (run.run_type !== 'restore') return statusBadge(run.status)
+
+    const status = run.status?.toLowerCase()
+    if (status === 'success' || status === 'completed') return 'badge badge-success'
+    if (status === 'running') return 'badge badge-info'
+    if (status === 'partial') return 'badge badge-warning'
+    return statusBadge(run.status)
+  }
 </script>
 
 <div class="bg-surface-2 border border-border rounded-xl">
@@ -41,7 +68,7 @@
             <div class="px-5 py-3 flex items-start gap-3">
               <!-- Timeline dot -->
               <div class="mt-1.5 shrink-0">
-                <div class="w-2.5 h-2.5 rounded-full {run.status === 'success' || run.status === 'completed' ? 'bg-success' : run.status === 'running' ? 'bg-info animate-pulse' : 'bg-danger'}"></div>
+                <div class="w-2.5 h-2.5 rounded-full {activityDotClass(run)}"></div>
               </div>
               <!-- Content -->
               <div class="flex-1 min-w-0">
@@ -51,11 +78,7 @@
                       <svg class="w-3.5 h-3.5 text-info shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
                     {/if}
                     <span class="text-sm font-medium text-text truncate">{run.jobName || 'Job'}</span>
-                    {#if run.run_type === 'restore'}
-                      <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 badge badge-info">restored</span>
-                    {:else}
-                      <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 {statusBadge(run.status)}">{run.status}</span>
-                    {/if}
+                    <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 {activityStatusClass(run)}">{activityStatusLabel(run)}</span>
                   </div>
                   <span class="text-xs text-text-dim shrink-0">{relTime(run.started_at)}</span>
                 </div>
