@@ -262,6 +262,7 @@
           ansible.builtin.assert:
             that:
               - "'domain.xml' in vm_backup_smoke_files.stdout"
+              - "'vm_meta.json' in vm_backup_smoke_files.stdout"
               - "'vdisk' in vm_backup_smoke_files.stdout"
             success_msg: "VM backup smoke artifacts found on storage path"
             fail_msg: "VM backup smoke artifacts missing: {{ vm_backup_smoke_files.stdout }}"

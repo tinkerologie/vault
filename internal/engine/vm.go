@@ -139,6 +139,13 @@ func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFun
 	}
 	result.Files = append(result.Files, backupFileInfo(xmlPath))
 
+	progress(item.Name, 18, "saving VM metadata")
+	metadataPath, err := writeVMBackupMetadata(destDir, domainStateString(stateValue), item.Settings)
+	if err != nil {
+		return nil, fmt.Errorf("writing VM metadata: %w", err)
+	}
+	result.Files = append(result.Files, backupFileInfo(metadataPath))
+
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	copyDisks := disks
 	if hasChangedSince {
@@ -244,6 +251,16 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 		return fmt.Errorf("reading domain XML: %w", err)
 	}
 
+	startAfterRestore := false
+	verifyConfig := vmRestoreVerifyConfig{Mode: vmRestoreVerifyModeRunning}
+	metadata, err := readVMRestoreMetadata(sourceDir)
+	if err == nil {
+		startAfterRestore = metadata.startAfterRestore()
+		verifyConfig = metadata.RestoreVerify
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading VM metadata: %w", err)
+	}
+
 	restoreDest, _ := item.Settings["restore_destination"].(string)
 	if restoreDest != "" {
 		normalizedRestoreDest, err := normalizeRestorePath(restoreDest)
@@ -274,14 +291,33 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 			continue // skip if backup file doesn't exist
 		}
 
-		progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d", i+1, totalDisks))
-		if err := os.MkdirAll(filepath.Dir(disk.TargetPath), 0755); err != nil {
-			return fmt.Errorf("creating dir for disk %s: %w", disk.TargetPath, err)
+		if !filepath.IsAbs(disk.TargetPath) {
+			return fmt.Errorf("disk target path %q must be absolute", disk.TargetPath)
 		}
-		if err := copyFileWithProgress(srcFile, disk.TargetPath, func(copied int64) {
+		targetPath, err := filepath.Abs(disk.TargetPath)
+		if err != nil {
+			return fmt.Errorf("resolving disk target path %q: %w", disk.TargetPath, err)
+		}
+		targetAllowed := false
+		for _, root := range restoreAllowedRoots {
+			cleanRoot := filepath.Clean(root)
+			if targetPath == cleanRoot || strings.HasPrefix(targetPath, cleanRoot+string(filepath.Separator)) {
+				targetAllowed = true
+				break
+			}
+		}
+		if !targetAllowed {
+			return fmt.Errorf("disk target path %q is outside allowed restore roots", disk.TargetPath)
+		}
+
+		progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d", i+1, totalDisks))
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("creating dir for disk %s: %w", targetPath, err)
+		}
+		if err := copyFileWithProgress(srcFile, targetPath, func(copied int64) {
 			progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d: %d bytes", i+1, totalDisks, copied))
 		}); err != nil {
-			return fmt.Errorf("restoring disk %s: %w", disk.TargetPath, err)
+			return fmt.Errorf("restoring disk %s: %w", targetPath, err)
 		}
 	}
 
@@ -289,11 +325,30 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 	if plan.NVRAMBackupFile != "" {
 		nvramSrc := filepath.Join(sourceDir, plan.NVRAMBackupFile)
 		if _, err := os.Stat(nvramSrc); err == nil {
+			if !filepath.IsAbs(plan.NVRAMTargetPath) {
+				return fmt.Errorf("NVRAM target path %q must be absolute", plan.NVRAMTargetPath)
+			}
+			nvramTargetPath, err := filepath.Abs(plan.NVRAMTargetPath)
+			if err != nil {
+				return fmt.Errorf("resolving NVRAM target path %q: %w", plan.NVRAMTargetPath, err)
+			}
+			nvramAllowed := false
+			for _, root := range restoreAllowedRoots {
+				cleanRoot := filepath.Clean(root)
+				if nvramTargetPath == cleanRoot || strings.HasPrefix(nvramTargetPath, cleanRoot+string(filepath.Separator)) {
+					nvramAllowed = true
+					break
+				}
+			}
+			if !nvramAllowed {
+				return fmt.Errorf("NVRAM target path %q is outside allowed restore roots", plan.NVRAMTargetPath)
+			}
+
 			progress(item.Name, 80, "restoring NVRAM")
-			if err := os.MkdirAll(filepath.Dir(plan.NVRAMTargetPath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(nvramTargetPath), 0755); err != nil {
 				return fmt.Errorf("creating NVRAM dir: %w", err)
 			}
-			if err := copyFile(nvramSrc, plan.NVRAMTargetPath); err != nil {
+			if err := copyFile(nvramSrc, nvramTargetPath); err != nil {
 				return fmt.Errorf("restoring NVRAM: %w", err)
 			}
 		}
@@ -305,7 +360,20 @@ func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress Progress
 	if err != nil {
 		return fmt.Errorf("defining domain: %w", err)
 	}
-	_ = dom
+
+	if startAfterRestore {
+		progress(item.Name, 95, "starting restored VM")
+		if err := h.conn.DomainCreate(dom); err != nil {
+			return fmt.Errorf("starting restored VM: %w", err)
+		}
+		if _, err := h.waitForLibvirtDomainRunning(dom, item.Name, 2*time.Minute); err != nil {
+			return fmt.Errorf("verifying restored VM is running: %w", err)
+		}
+		if err := h.verifyRestoredVMReady(dom, item.Name, verifyConfig, progress); err != nil {
+			return fmt.Errorf("verifying restored VM readiness: %w", err)
+		}
+		progress(item.Name, 99, "verified restored VM running")
+	}
 
 	progress(item.Name, 100, "restore complete")
 	return nil
@@ -383,6 +451,26 @@ func (h *VMHandler) waitForLibvirtDomainShutOff(dom libvirt.Domain, name string,
 		}
 		if time.Now().After(deadline) {
 			return stateValue, fmt.Errorf("waiting for domain %s to shut off: timed out with state %s", name, domainStateString(stateValue))
+		}
+
+		time.Sleep(vmShutdownPollInterval)
+	}
+}
+
+func (h *VMHandler) waitForLibvirtDomainRunning(dom libvirt.Domain, name string, timeout time.Duration) (libvirt.DomainState, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		state, _, err := h.conn.DomainGetState(dom, 0)
+		if err != nil {
+			return libvirt.DomainNostate, fmt.Errorf("getting domain state: %w", err)
+		}
+
+		stateValue := libvirt.DomainState(state)
+		if stateValue == libvirt.DomainRunning {
+			return stateValue, nil
+		}
+		if time.Now().After(deadline) {
+			return stateValue, fmt.Errorf("waiting for domain %s to reach running state: timed out with state %s", name, domainStateString(stateValue))
 		}
 
 		time.Sleep(vmShutdownPollInterval)

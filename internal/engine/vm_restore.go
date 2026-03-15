@@ -21,6 +21,16 @@ var (
 	_ vmRestoreDisk
 	_ vmRestorePlan
 	_ = buildVMRestorePlan
+	_ = vmMetadataFileName
+	_ vmBackupMetadata
+	_ vmRestoreVerifyConfig
+	_ = writeVMBackupMetadata
+	_ = readVMRestoreMetadata
+	_ = vmBackupMetadata.startAfterRestore
+	_ = vmRestoreVerifyConfigFromSettings
+	_ = normalizeVMRestoreVerifyConfig
+	_ = vmRestoreVerifyTimeout
+	_ = pickVMReadyAddressFromInterfaces
 )
 
 type vmRestoreDisk struct {
@@ -50,6 +60,31 @@ func buildVMRestorePlan(xmlData []byte, restoreDest string) (*vmRestorePlan, err
 	plan := &vmRestorePlan{
 		DomainXML: sanitizedXML,
 		Disks:     make([]vmRestoreDisk, 0, len(disks)),
+	}
+
+	if restoreDest != "" {
+		if !filepath.IsAbs(restoreDest) {
+			return nil, fmt.Errorf("restore destination %q must be absolute", restoreDest)
+		}
+
+		resolvedRestoreDest, err := filepath.Abs(restoreDest)
+		if err != nil {
+			return nil, fmt.Errorf("resolving restore destination %q: %w", restoreDest, err)
+		}
+
+		allowed := false
+		for _, root := range restoreAllowedRoots {
+			cleanRoot := filepath.Clean(root)
+			if resolvedRestoreDest == cleanRoot || strings.HasPrefix(resolvedRestoreDest, cleanRoot+string(filepath.Separator)) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, fmt.Errorf("restore destination %q is outside allowed restore roots", restoreDest)
+		}
+
+		restoreDest = resolvedRestoreDest
 	}
 
 	for _, disk := range disks {

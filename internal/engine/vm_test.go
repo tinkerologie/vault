@@ -140,6 +140,165 @@ func TestParseDomainDisksWithTargets(t *testing.T) {
 	}
 }
 
+func TestBuildVMRestorePlanRejectsUnsafeRestoreDestination(t *testing.T) {
+	t.Parallel()
+
+	xmlDesc := `<domain>
+  <devices>
+    <disk type="file" device="disk">
+      <source file="/mnt/cache/domains/haos/haos.qcow2"></source>
+      <target dev="vda"></target>
+    </disk>
+  </devices>
+</domain>`
+
+	if _, err := buildVMRestorePlan([]byte(xmlDesc), "/dev/shm/haos"); err == nil {
+		t.Fatal("buildVMRestorePlan() should reject restore destinations outside allowed roots")
+	}
+}
+
+func TestVMBackupMetadataStartAfterRestore(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	metadataPath, err := writeVMBackupMetadata(dir, "running", nil)
+	if err != nil {
+		t.Fatalf("writeVMBackupMetadata() error = %v", err)
+	}
+	if filepath.Base(metadataPath) != vmMetadataFileName {
+		t.Fatalf("metadata file = %q, want %q", filepath.Base(metadataPath), vmMetadataFileName)
+	}
+
+	metadata, err := readVMRestoreMetadata(dir)
+	if err != nil {
+		t.Fatalf("readVMRestoreMetadata() error = %v", err)
+	}
+	if metadata.State != "running" {
+		t.Fatalf("metadata.State = %q, want %q", metadata.State, "running")
+	}
+	if !metadata.startAfterRestore() {
+		t.Fatal("metadata.startAfterRestore() should be true for running VMs")
+	}
+	if metadata.RestoreVerify.Mode != vmRestoreVerifyModeRunning {
+		t.Fatalf("metadata.RestoreVerify.Mode = %q, want %q", metadata.RestoreVerify.Mode, vmRestoreVerifyModeRunning)
+	}
+
+	stoppedPath, err := writeVMBackupMetadata(dir, "shut off", nil)
+	if err != nil {
+		t.Fatalf("writeVMBackupMetadata(stopped) error = %v", err)
+	}
+	if stoppedPath != metadataPath {
+		t.Fatalf("metadata path changed between writes: %q vs %q", stoppedPath, metadataPath)
+	}
+
+	metadata, err = readVMRestoreMetadata(dir)
+	if err != nil {
+		t.Fatalf("readVMRestoreMetadata(stopped) error = %v", err)
+	}
+	if metadata.startAfterRestore() {
+		t.Fatal("metadata.startAfterRestore() should be false for non-running VMs")
+	}
+}
+
+func TestVMRestoreVerifyConfigFromSettings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		settings map[string]any
+		want     vmRestoreVerifyConfig
+		wantErr  bool
+	}{
+		{
+			name:     "defaults to running",
+			settings: map[string]any{},
+			want: vmRestoreVerifyConfig{
+				Mode:           vmRestoreVerifyModeRunning,
+				TimeoutSeconds: defaultVMRestoreVerifyTimeoutSecs,
+			},
+		},
+		{
+			name: "guest agent with custom timeout",
+			settings: map[string]any{
+				"restore_verify_mode":            "guest_agent",
+				"restore_verify_timeout_seconds": 180,
+			},
+			want: vmRestoreVerifyConfig{
+				Mode:           vmRestoreVerifyModeGuestAgent,
+				TimeoutSeconds: 180,
+			},
+		},
+		{
+			name: "tcp with auto detected host",
+			settings: map[string]any{
+				"restore_verify_mode":     "tcp",
+				"restore_verify_tcp_port": float64(8123),
+			},
+			want: vmRestoreVerifyConfig{
+				Mode:           vmRestoreVerifyModeTCP,
+				TimeoutSeconds: defaultVMRestoreVerifyTimeoutSecs,
+				TCPPort:        8123,
+			},
+		},
+		{
+			name: "tcp with explicit host",
+			settings: map[string]any{
+				"restore_verify_mode":            "tcp",
+				"restore_verify_timeout_seconds": "90",
+				"restore_verify_tcp_host":        "ha.local",
+				"restore_verify_tcp_port":        "8123",
+			},
+			want: vmRestoreVerifyConfig{
+				Mode:           vmRestoreVerifyModeTCP,
+				TimeoutSeconds: 90,
+				TCPHost:        "ha.local",
+				TCPPort:        8123,
+			},
+		},
+		{
+			name: "rejects tcp without port",
+			settings: map[string]any{
+				"restore_verify_mode": "tcp",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := vmRestoreVerifyConfigFromSettings(tt.settings)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("vmRestoreVerifyConfigFromSettings() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("vmRestoreVerifyConfigFromSettings() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPickVMReadyAddressFromInterfaces(t *testing.T) {
+	t.Parallel()
+
+	ifaces := []libvirt.DomainInterface{
+		{
+			Name: "eth0",
+			Addrs: []libvirt.DomainIPAddr{
+				{Type: int32(libvirt.IPAddrTypeIpv6), Addr: "fe80::1", Prefix: 64},
+				{Type: int32(libvirt.IPAddrTypeIpv4), Addr: "192.168.20.50", Prefix: 24},
+			},
+		},
+	}
+
+	got := pickVMReadyAddressFromInterfaces(ifaces)
+	if got != "192.168.20.50" {
+		t.Fatalf("pickVMReadyAddressFromInterfaces() = %q, want %q", got, "192.168.20.50")
+	}
+}
+
 func TestBuildSnapshotXMLUsesDiskTargets(t *testing.T) {
 	t.Parallel()
 

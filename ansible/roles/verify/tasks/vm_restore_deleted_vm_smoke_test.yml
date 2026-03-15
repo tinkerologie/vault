@@ -123,17 +123,6 @@
         success_msg: "Deleted-VM restore completed successfully"
         fail_msg: "Deleted-VM restore failed: {{ (vm_deleted_restore_runs[0].log if (vm_deleted_restore_runs | length > 0) else 'no restore history available') }}"
 
-    - name: Start recreated VM with virsh
-      ansible.builtin.raw: "virsh start '{{ verify_vm_restore_item_name }}'"
-      register: vm_deleted_start
-      failed_when: >-
-        vm_deleted_start.rc != 0 and
-        'already active' not in (vm_deleted_start.stdout | lower) and
-        'already active' not in (vm_deleted_start.stderr | lower)
-      changed_when: >-
-        'started' in (vm_deleted_start.stdout | lower) or
-        'started' in (vm_deleted_start.stderr | lower)
-
     - name: Wait for recreated VM to report running
       ansible.builtin.raw: "virsh domstate '{{ verify_vm_restore_item_name }}'"
       register: vm_deleted_state

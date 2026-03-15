@@ -51,6 +51,24 @@
 
     - name: Test MCP streamable HTTP endpoint
       ansible.builtin.include_tasks: mcp.yml
+
+    - name: Test VM backup smoke path when requested
+      ansible.builtin.include_tasks: vm_backup_smoke_test.yml
+      when:
+        - verify_vm_backup_item_name is defined or verify_vm_backup_mode is defined
+
+    - name: Test VM restore smoke path when requested
+      ansible.builtin.include_tasks: vm_restore_smoke_test.yml
+      when:
+        - verify_vm_restore_job_id is defined
+        - verify_vm_restore_item_name is defined
+
+    - name: Test deleted-VM restore smoke path when requested
+      ansible.builtin.include_tasks: vm_restore_deleted_vm_smoke_test.yml
+      when:
+        - verify_vm_restore_delete_and_restore | default(false) | bool
+        - verify_vm_restore_job_id is defined
+        - verify_vm_restore_item_name is defined
   always:
     - name: Stop SSH tunnel to local-only Vault daemon
       delegate_to: localhost

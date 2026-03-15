@@ -74,17 +74,6 @@
         success_msg: "VM smoke restore completed successfully"
         fail_msg: "VM smoke restore failed: {{ (vm_smoke_restore_runs[0].log if (vm_smoke_restore_runs | length > 0) else 'no restore history available') }}"
 
-    - name: Start restored VM with virsh
-      ansible.builtin.raw: "virsh start '{{ verify_vm_restore_item_name }}'"
-      register: vm_smoke_start
-      failed_when: >-
-        vm_smoke_start.rc != 0 and
-        'already active' not in (vm_smoke_start.stdout | lower) and
-        'already active' not in (vm_smoke_start.stderr | lower)
-      changed_when: >-
-        'started' in (vm_smoke_start.stdout | lower) or
-        'started' in (vm_smoke_start.stderr | lower)
-
     - name: Wait for restored VM to report running
       ansible.builtin.raw: "virsh domstate '{{ verify_vm_restore_item_name }}'"
       register: vm_smoke_state

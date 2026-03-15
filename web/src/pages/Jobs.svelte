@@ -121,6 +121,98 @@
     }
   }
 
+  const vmRestoreVerifyModes = [
+    {
+      value: 'running',
+      label: 'Running State Only',
+      description: 'Finish restore once libvirt reports the guest is running again.',
+    },
+    {
+      value: 'guest_agent',
+      label: 'QEMU Guest Agent',
+      description: 'Wait for the guest agent to answer after the VM starts. Best when qemu-guest-agent is installed.',
+    },
+    {
+      value: 'tcp',
+      label: 'TCP Service',
+      description: 'Wait for a TCP service such as SSH or Home Assistant to accept connections.',
+    },
+  ]
+
+  function parseItemSettings(item) {
+    if (!item?.settings) return {}
+    if (typeof item.settings === 'object') return item.settings
+    try {
+      return JSON.parse(item.settings)
+    } catch {
+      return {}
+    }
+  }
+
+  function getVMRestoreVerifySettings(item) {
+    const settings = parseItemSettings(item)
+    return {
+      mode: settings.restore_verify_mode || 'running',
+      timeout: settings.restore_verify_timeout_seconds || 120,
+      host: settings.restore_verify_tcp_host || '',
+      port: settings.restore_verify_tcp_port ? String(settings.restore_verify_tcp_port) : '',
+    }
+  }
+
+  function updateVMRestoreVerifySetting(itemName, key, rawValue) {
+    form = {
+      ...form,
+      items: form.items.map((item) => {
+        if (item.item_type !== 'vm' || item.item_name !== itemName) return item
+
+        const settings = { ...parseItemSettings(item) }
+        const value = rawValue == null ? '' : rawValue
+
+        if (key === 'restore_verify_mode') {
+          if (!value || value === 'running') {
+            delete settings.restore_verify_mode
+            delete settings.restore_verify_timeout_seconds
+            delete settings.restore_verify_tcp_host
+            delete settings.restore_verify_tcp_port
+          } else {
+            settings.restore_verify_mode = value
+          }
+        } else if (key === 'restore_verify_timeout_seconds') {
+          if (value === '') delete settings.restore_verify_timeout_seconds
+          else settings.restore_verify_timeout_seconds = Number.parseInt(value, 10)
+        } else if (key === 'restore_verify_tcp_port') {
+          if (value === '') delete settings.restore_verify_tcp_port
+          else settings.restore_verify_tcp_port = Number.parseInt(value, 10)
+        } else if (key === 'restore_verify_tcp_host') {
+          if (!String(value).trim()) delete settings.restore_verify_tcp_host
+          else settings.restore_verify_tcp_host = String(value).trim()
+        }
+
+        return { ...item, settings: JSON.stringify(settings) }
+      }),
+    }
+  }
+
+  function getVMRestoreVerifyError(item) {
+    const verify = getVMRestoreVerifySettings(item)
+    if (!['running', 'guest_agent', 'tcp'].includes(verify.mode)) {
+      return `${item.item_name}: unsupported VM restore verification mode`
+    }
+    if (verify.mode !== 'running') {
+      const timeout = Number.parseInt(String(verify.timeout), 10)
+      if (!Number.isInteger(timeout) || timeout < 1) {
+        return `${item.item_name}: verification timeout must be at least 1 second`
+      }
+    }
+    if (verify.mode === 'tcp') {
+      const port = Number.parseInt(String(verify.port), 10)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return `${item.item_name}: TCP readiness requires a port between 1 and 65535`
+      }
+    }
+    return ''
+  }
+
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
@@ -266,7 +358,13 @@
         notify_on: fullJob.notify_on || 'failure',
         verify_backup: fullJob.verify_backup ?? true,
         enabled: false,
-        items: (data.items || []).map(i => ({ item_type: i.item_type, item_name: i.item_name })),
+        items: (data.items || []).map(i => ({
+          item_type: i.item_type,
+          item_name: i.item_name,
+          item_id: i.item_id,
+          settings: i.settings,
+          sort_order: i.sort_order,
+        })),
       }
       editing = null
       step = 3
@@ -314,7 +412,7 @@
   let canNext = $derived.by(() => {
     if (step === 1) return form.name.trim().length > 0 && form.items.length > 0
     if (step === 2) return form.storage_dest_id > 0
-    return true
+    return vmRestoreVerifyErrors.length === 0
   })
 
   let stepHint = $derived.by(() => {
@@ -323,6 +421,7 @@
       if (form.items.length === 0) return 'Select at least one item to back up'
     }
     if (step === 2 && form.storage_dest_id === 0) return 'Select a storage destination'
+    if (step === 3 && vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
     return ''
   })
 
@@ -330,6 +429,8 @@
   let hasVMs = $derived(form.items.some(i => i.item_type === 'vm'))
   let hasFolders = $derived(form.items.some(i => i.item_type === 'folder'))
   let hasPlugins = $derived(form.items.some(i => i.item_type === 'plugin'))
+  let selectedVMItems = $derived(form.items.filter(i => i.item_type === 'vm'))
+  let vmRestoreVerifyErrors = $derived(selectedVMItems.map(getVMRestoreVerifyError).filter(Boolean))
 
   // describeSchedule and relTimeUntil imported from utils.js
 </script>
@@ -733,6 +834,91 @@
           </div>
         </details>
 
+        {#if hasVMs}
+          <details class="group" open>
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              VM Restore Verification
+            </summary>
+            <div class="space-y-4 mt-3 pl-6">
+              <p class="text-xs text-text-dim">Applies only when a VM was running at backup time and Vault auto-starts it after restore.</p>
+              {#each selectedVMItems as vmItem (vmItem.item_name)}
+                {@const verify = getVMRestoreVerifySettings(vmItem)}
+                {@const verifyIdBase = `vm-restore-verify-${vmItem.sort_order ?? 0}`}
+                <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-4">
+                  <div>
+                    <p class="text-sm font-medium text-text">{vmItem.item_name}</p>
+                    <p class="text-xs text-text-dim mt-0.5">Choose how Vault decides the VM is really ready after it starts.</p>
+                  </div>
+
+                  <div>
+                    <label for={`${verifyIdBase}-mode`} class="block text-xs font-medium text-text-muted mb-1.5">Readiness Check</label>
+                    <select
+                      id={`${verifyIdBase}-mode`}
+                      value={verify.mode}
+                      onchange={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_mode', e.currentTarget.value)}
+                      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+                    >
+                      {#each vmRestoreVerifyModes as mode (mode.value)}
+                        <option value={mode.value}>{mode.label}</option>
+                      {/each}
+                    </select>
+                    <p class="text-xs text-text-dim mt-1">{vmRestoreVerifyModes.find((mode) => mode.value === verify.mode)?.description}</p>
+                  </div>
+
+                  {#if verify.mode !== 'running'}
+                    <div class="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label for={`${verifyIdBase}-timeout`} class="block text-xs font-medium text-text-muted mb-1.5">Timeout</label>
+                        <div class="flex items-center gap-2">
+                          <input
+                            id={`${verifyIdBase}-timeout`}
+                            type="number"
+                            min="1"
+                            value={verify.timeout}
+                            oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_timeout_seconds', e.currentTarget.value)}
+                            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+                          />
+                          <span class="text-xs text-text-dim shrink-0">seconds</span>
+                        </div>
+                      </div>
+
+                      {#if verify.mode === 'tcp'}
+                        <div>
+                          <label for={`${verifyIdBase}-port`} class="block text-xs font-medium text-text-muted mb-1.5">TCP Port</label>
+                          <input
+                            id={`${verifyIdBase}-port`}
+                            type="number"
+                            min="1"
+                            max="65535"
+                            value={verify.port}
+                            oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_tcp_port', e.currentTarget.value)}
+                            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+                            placeholder="8123"
+                          />
+                        </div>
+
+                        <div class="sm:col-span-2">
+                          <label for={`${verifyIdBase}-host`} class="block text-xs font-medium text-text-muted mb-1.5">Host <span class="text-text-dim">(optional)</span></label>
+                          <input
+                            id={`${verifyIdBase}-host`}
+                            type="text"
+                            value={verify.host}
+                            oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_tcp_host', e.currentTarget.value)}
+                            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+                            placeholder="Auto-detect from libvirt"
+                          />
+                          <p class="text-xs text-text-dim mt-1">Leave blank to let Vault ask libvirt for the guest address. Set an explicit host when the VM uses a fixed address or libvirt cannot report it.</p>
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </details>
+        {/if}
+
         <!-- Enabled toggle -->
         <div class="flex items-center gap-3">
           <label class="relative inline-flex items-center cursor-pointer">
@@ -776,7 +962,7 @@
         {:else}
           <button
             type="button"
-            disabled={saving}
+            disabled={saving || !canNext}
             onclick={() => saveJob(true)}
             class="px-4 py-2 text-sm font-medium text-vault border border-vault/50 hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
           >
@@ -784,7 +970,7 @@
           </button>
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || !canNext}
             class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40"
           >
             {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Create Job'}{/if}

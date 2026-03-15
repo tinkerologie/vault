@@ -364,6 +364,10 @@ func (r *Runner) RunJob(jobID int64) {
 
 		// VM items need the backup mode (snapshot or cold).
 		if item.ItemType == "vm" {
+			for key, value := range settings {
+				backupItem.Settings[key] = value
+			}
+			backupItem.Settings["id"] = itemID
 			backupItem.Settings["backup_mode"] = job.VMMode
 		}
 
