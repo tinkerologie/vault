@@ -56,6 +56,15 @@ ansible-playbook -i inventory.yml ansible.yml --tags deploy --skip-tags tests
 ansible-playbook -i inventory.yml ansible.yml --tags uninstall -e create_backup=true
 ```
 
+Standard uninstall removes Vault-managed traces, including the binary, UI assets,
+service script, database, config, logs, hybrid database artifacts, and stale
+staging directories. Backup data stored in configured storage destinations is
+preserved.
+
+If you run uninstall with `create_backup=true`, Ansible saves a copy of the
+Vault config directory before cleanup. That mode intentionally leaves the backup
+copy behind.
+
 ## VM Backup Smoke Selection
 
 The verify role can auto-discover a VM backup candidate, but it also supports

@@ -6,19 +6,34 @@
     <!ENTITY launch    "Settings/Vault">
     <!ENTITY gitURL    "https://github.com/ruaan-deysel/&name;">
     <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/&name;/main/plugin/vault.plg">
-    <!ENTITY bundle    "&name;-&version;.tgz">
+    <!ENTITY bundle    "&name;-&version;.txz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
-    <!ENTITY md5         "8fef59ffee81dae86527e54c4780e85c">
+    <!ENTITY sha256      "0624f44d09032013a781779afa54ce03a5bf96c09bbac2fec6043ceb5ab47859">
     <!ENTITY support   "https://forums.unraid.net/topic/196675-plugin-unraid-management-agent">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
         launch="&launch;" pluginURL="&pluginURL;" icon="shield"
-        min="7.0" support="&support;">
+        min="7.0" support="&support;"
+        project="&gitURL;"
+        readme="&gitURL;#readme">
 
 <CHANGES><![CDATA[
 See full changelog at:
 https://github.com/ruaan-deysel/vault/blob/main/CHANGELOG.md
 ]]></CHANGES>
+
+<!-- Prepare persistent plugin storage and prune stale cached bundles -->
+<FILE Run="/bin/bash">
+    <INLINE><![CDATA[
+PLUGIN_DIR="/boot/config/plugins/vault"
+CURRENT_BUNDLE="&bundle;"
+
+mkdir -p "$PLUGIN_DIR"
+
+find "$PLUGIN_DIR" -maxdepth 1 -type f \( -name 'vault-*.txz' -o -name 'vault-*.tgz' \) \
+    ! -name "$CURRENT_BUNDLE" -delete 2>/dev/null || true
+]]></INLINE>
+</FILE>
 
 <!-- Require Unraid 7.0 or later -->
 <FILE Run="/bin/bash">
@@ -34,7 +49,7 @@ fi
 <!-- Download and install the bundle -->
 <FILE Name="/boot/config/plugins/&name;/&bundle;" Run="upgradepkg --install-new">
     <URL>&bundleURL;</URL>
-    <MD5>&md5;</MD5>
+    <SHA256>&sha256;</SHA256>
 </FILE>
 
 <!-- Post-install: create default config and start daemon -->
@@ -66,6 +81,10 @@ echo "Vault plugin installed successfully"
 <!-- Removal script -->
 <FILE Run="/bin/bash" Method="remove">
     <INLINE><![CDATA[
+DAEMON="/usr/local/sbin/vault"
+CONFIG_DIR="/boot/config/plugins/vault"
+DB="${CONFIG_DIR}/vault.db"
+
 # Stop daemon
 /etc/rc.d/rc.vault stop 2>/dev/null
 
@@ -77,22 +96,40 @@ for pkg in /var/log/packages/vault-*; do
 done
 
 if [ -z "$PACKAGE" ]; then
-    for pkg in /boot/config/plugins/vault/vault-*.tgz; do
+    for pkg in /boot/config/plugins/vault/vault-*.txz /boot/config/plugins/vault/vault-*.tgz; do
         [ -e "$pkg" ] || continue
-        PACKAGE="$(basename "$pkg" .tgz)"
+        case "$pkg" in
+            *.txz) PACKAGE="$(basename "$pkg" .txz)" ;;
+            *.tgz) PACKAGE="$(basename "$pkg" .tgz)" ;;
+        esac
     done
+fi
+
+if [ -x "$DAEMON" ]; then
+    "$DAEMON" cleanup-uninstall \
+        --db="$DB" \
+        --config-dir="$CONFIG_DIR" \
+        --binary-path="$DAEMON" \
+        --rc-script="/etc/rc.d/rc.vault" \
+        --plugin-dir="/usr/local/emhttp/plugins/vault" \
+        --log-path="/var/log/vault.log" \
+        --pid-file="/var/run/vault.pid" \
+        --hybrid-working-dir="/var/local/vault" \
+        --snapshot-path="/mnt/cache/.vault/vault.db" \
+        || echo "Vault uninstall cleanup reported a warning; continuing with package removal"
 fi
 
 if [ -n "$PACKAGE" ]; then
     removepkg "$PACKAGE" 2>/dev/null || true
 fi
 
-# Clean up
-rm -f /usr/local/sbin/vault
+# Fallback cleanup if the binary was already missing.
+rm -f "$DAEMON"
 rm -f /etc/rc.d/rc.vault
 rm -rf /usr/local/emhttp/plugins/vault
 rm -f /var/log/vault.log
 rm -f /var/run/vault.pid
+rm -rf /boot/config/plugins/vault/*.txz
 rm -rf /boot/config/plugins/vault/*.tgz
 
 echo "Vault plugin removed"

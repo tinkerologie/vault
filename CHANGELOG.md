@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - MCP health output now includes version and mode, aligned with the REST `/health` response
 - README refreshed to document the current REST API, MCP transports, and tool coverage
 - `make verify` now exercises MCP streamable HTTP via the official Go SDK client
+- Release packaging now targets `.txz` bundles with SHA256 verification and release automation updates the PLG checksum accordingly
+- The PLG now advertises `project` and `readme` metadata and prunes stale cached plugin bundles during install
 
 ### Fixed in Unreleased
 

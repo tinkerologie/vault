@@ -85,7 +85,7 @@ jobs:
           echo "Building release package..."
           make package
 
-          PACKAGE_FILE="build/vault-${{ steps.version.outputs.version }}.tgz"
+          PACKAGE_FILE="build/vault-${{ steps.version.outputs.version }}.txz"
           if [ ! -f "$PACKAGE_FILE" ]; then
             echo "ERROR: Package file not found: $PACKAGE_FILE"
             ls -la build/
@@ -130,19 +130,19 @@ jobs:
           name: v${{ steps.version.outputs.version }}
           body_path: build/RELEASE_NOTES.md
           files: |
-            build/vault-${{ steps.version.outputs.version }}.tgz
+            build/vault-${{ steps.version.outputs.version }}.txz
           prerelease: ${{ steps.version.outputs.prerelease }}
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Calculate GitHub-hosted MD5 checksum
+      - name: Calculate GitHub-hosted SHA256 checksum
         id: checksum
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
-          ASSET="vault-${VERSION}.tgz"
+          ASSET="vault-${VERSION}.txz"
           PACKAGE_FILE="/tmp/${ASSET}"
 
           rm -f "$PACKAGE_FILE"
@@ -161,24 +161,20 @@ jobs:
             sleep 5
           done
 
-          if command -v md5sum &> /dev/null; then
-            MD5=$(md5sum "$PACKAGE_FILE" | awk '{print $1}')
-          else
-            MD5=$(md5 -q "$PACKAGE_FILE")
-          fi
+          SHA256=$(sha256sum "$PACKAGE_FILE" | awk '{print $1}')
 
-          echo "md5=$MD5" >> $GITHUB_OUTPUT
-          echo "GitHub-hosted MD5 checksum: $MD5"
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "GitHub-hosted SHA256 checksum: $SHA256"
 
-          printf "%s\n" "$MD5" > build/MD5SUM
+          printf "%s\n" "$SHA256" > build/SHA256SUM
 
-      - name: Upload MD5 checksum asset
+      - name: Upload SHA256 checksum asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ steps.version.outputs.tag }}" build/MD5SUM --clobber --repo "${{ github.repository }}"
+          gh release upload "${{ steps.version.outputs.tag }}" build/SHA256SUM --clobber --repo "${{ github.repository }}"
 
-      - name: Refresh release body with GitHub-hosted MD5
+      - name: Refresh release body with GitHub-hosted SHA256
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -189,9 +185,9 @@ jobs:
             echo
             echo "---"
             echo
-            echo "**MD5 Checksum:**"
+            echo "**SHA256 Checksum:**"
             echo '```'
-            echo "${{ steps.checksum.outputs.md5 }}  vault-${VERSION}.tgz"
+            echo "${{ steps.checksum.outputs.sha256 }}  vault-${VERSION}.txz"
             echo '```'
           } > build/RELEASE_NOTES.md
 
@@ -199,16 +195,28 @@ jobs:
             --repo "${{ github.repository }}" \
             --notes-file build/RELEASE_NOTES.md
 
-      - name: Update PLG file with MD5 hash
+      - name: Update PLG file for txz and SHA256
         run: |
-          MD5="${{ steps.checksum.outputs.md5 }}"
-          VERSION="${{ steps.version.outputs.version }}"
+          SHA256="${{ steps.checksum.outputs.sha256 }}"
+          export SHA256
 
-          echo "Updating PLG file with MD5: $MD5"
-          sed -i "s/<!ENTITY md5.*\".*\">/<!ENTITY md5         \"$MD5\">/" plugin/vault.plg
+          echo "Updating PLG file with SHA256: $SHA256"
+          python3 <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          path = Path("plugin/vault.plg")
+          text = path.read_text()
+          text = re.sub(r'<!ENTITY bundle\s+".*?">', '    <!ENTITY bundle    "&name;-&version;.txz">', text)
+          text = re.sub(r'<!ENTITY (?:md5|sha256)\s+".*?">', '    <!ENTITY sha256      "{}">'.format(os.environ["SHA256"]), text)
+          text = re.sub(r'<(?:MD5|SHA256)>&(?:md5|sha256);</(?:MD5|SHA256)>', '    <SHA256>&sha256;</SHA256>', text)
+          path.write_text(text)
+          PY
 
           echo "Updated PLG file"
-          grep "ENTITY md5" plugin/vault.plg
+          grep "ENTITY bundle" plugin/vault.plg
+          grep "ENTITY sha256" plugin/vault.plg
 
       - name: Commit and push PLG updates
         run: |
@@ -222,11 +230,23 @@ jobs:
             git checkout main
             git pull origin main
 
-            MD5="${{ steps.checksum.outputs.md5 }}"
-            sed -i "s/<!ENTITY md5.*\".*\">/<!ENTITY md5         \"$MD5\">/" plugin/vault.plg
+            SHA256="${{ steps.checksum.outputs.sha256 }}"
+            export SHA256
+            python3 <<'PY'
+            from pathlib import Path
+            import os
+            import re
+
+            path = Path("plugin/vault.plg")
+            text = path.read_text()
+            text = re.sub(r'<!ENTITY bundle\s+".*?">', '    <!ENTITY bundle    "&name;-&version;.txz">', text)
+            text = re.sub(r'<!ENTITY (?:md5|sha256)\s+".*?">', '    <!ENTITY sha256      "{}">'.format(os.environ["SHA256"]), text)
+            text = re.sub(r'<(?:MD5|SHA256)>&(?:md5|sha256);</(?:MD5|SHA256)>', '    <SHA256>&sha256;</SHA256>', text)
+            path.write_text(text)
+            PY
 
             git add plugin/vault.plg
-            git commit -m "chore: update PLG MD5 hash for v${{ steps.version.outputs.version }} [skip ci]"
+            git commit -m "chore: update PLG SHA256 hash for v${{ steps.version.outputs.version }} [skip ci]"
             git push origin main
             echo "Committed and pushed PLG updates"
           fi
@@ -235,6 +255,6 @@ jobs:
         run: |
           echo "## v${{ steps.version.outputs.version }} Released!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Package:** vault-${{ steps.version.outputs.version }}.tgz" >> $GITHUB_STEP_SUMMARY
-          echo "**GitHub-hosted MD5:** ${{ steps.checksum.outputs.md5 }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** vault-${{ steps.version.outputs.version }}.txz" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub-hosted SHA256:** ${{ steps.checksum.outputs.sha256 }}" >> $GITHUB_STEP_SUMMARY
           echo "**URL:** https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY

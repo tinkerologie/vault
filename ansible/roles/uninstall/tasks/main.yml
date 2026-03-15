@@ -61,7 +61,22 @@
   when: create_backup
   changed_when: true
 
-- name: Remove Vault files and directories
+- name: Run centralized Vault uninstall cleanup
+  ansible.builtin.raw: >
+    {{ binary_path }} cleanup-uninstall
+    --db={{ db_path }}
+    --config-dir={{ config_dir }}
+    --binary-path={{ binary_path }}
+    --rc-script={{ rc_script }}
+    --plugin-dir={{ plugin_dir }}
+    --log-path={{ log_path }}
+    --pid-file={{ pid_file }}
+    --hybrid-working-dir=/var/local/vault
+    --snapshot-path=/mnt/cache/.vault/vault.db
+  when: "'EXISTS' in plugin_check.stdout"
+  changed_when: true
+
+- name: Remove Vault files and directories (fallback)
   ansible.builtin.raw: |
     rm -f {{ binary_path }}
     rm -f {{ rc_script }}
@@ -70,9 +85,11 @@
     rm -f {{ log_path }}
   changed_when: true
 
-- name: Remove config directory
+- name: Remove config directory when backup copy was requested
   ansible.builtin.raw: "rm -rf {{ config_dir }}"
-  when: not create_backup
+  when:
+    - not create_backup
+    - "'EXISTS' not in plugin_check.stdout"
   changed_when: true
 
 - name: Verify plugin directory removed
@@ -98,5 +115,7 @@
       Plugin dir:  {{ plugin_dir }} removed ✓
       RC script:   {{ rc_script }} removed ✓
       Log file:    {{ log_path }} removed ✓
+      Database:    {{ db_path }} removed ✓
       API:         unreachable ✓
+      Backups:     preserved at configured storage destinations ✓
       ══════════════════════════════════════

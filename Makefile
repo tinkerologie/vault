@@ -77,8 +77,8 @@ package: release
 	cp -r plugin/pages/include $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cp -r web/dist/. $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui/
 	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
-	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -czf ../$(BINARY)-$(VERSION).tgz usr/ etc/
-	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).tgz"
+	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/
+	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"
 
 lint:
 	golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...

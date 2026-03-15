@@ -207,6 +207,9 @@ Install via the Unraid Community Applications store, or use the manual install U
 The daemon runs at `/usr/local/sbin/vault` with the database at
 `/boot/config/plugins/vault/vault.db`.
 
+Uninstall removes Vault-managed runtime and configuration traces, including the database,
+while preserving backup data stored in configured storage destinations.
+
 Service management:
 
 ```bash
