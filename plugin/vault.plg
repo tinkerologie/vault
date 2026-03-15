@@ -8,7 +8,7 @@
     <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/&name;/main/plugin/vault.plg">
     <!ENTITY bundle    "&name;-&version;.tgz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
-    <!ENTITY md5         "8fef59ffee81dae86527e54c4780e85c">
+    <!ENTITY md5         "d2f03cdb841a60db9718cd73f8c776e9">
     <!ENTITY support   "https://forums.unraid.net/topic/196675-plugin-unraid-management-agent">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
