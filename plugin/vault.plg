@@ -86,7 +86,19 @@ CONFIG_DIR="/boot/config/plugins/vault"
 DB="${CONFIG_DIR}/vault.db"
 
 # Stop daemon
-/etc/rc.d/rc.vault stop 2>/dev/null
+/etc/rc.d/rc.vault stop 2>/dev/null || true
+
+# Wait for the daemon to finish any final snapshot flush before cleanup.
+attempts=20
+while pidof vault >/dev/null 2>&1 && [ "$attempts" -gt 0 ]; do
+    sleep 1
+    attempts=$((attempts - 1))
+done
+
+if pidof vault >/dev/null 2>&1; then
+    killall -9 vault 2>/dev/null || true
+    sleep 1
+fi
 
 # Remove installed package files
 PACKAGE=""

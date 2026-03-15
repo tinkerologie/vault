@@ -43,6 +43,41 @@ trim_log() {
 	rm -f "$tmp"
 }
 
+resolve_pid() {
+    local pid=""
+
+    if [ -f "$PIDFILE" ]; then
+        pid=$(cat "$PIDFILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            printf '%s\n' "$pid"
+            return 0
+        fi
+    fi
+
+    pid=$(pidof vault 2>/dev/null | awk '{print $1}')
+    if [ -n "$pid" ]; then
+        printf '%s\n' "$pid"
+        return 0
+    fi
+
+    return 1
+}
+
+wait_for_stop() {
+    local pid="$1"
+    local attempts=15
+
+    while [ "$attempts" -gt 0 ]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        attempts=$((attempts - 1))
+    done
+
+    return 1
+}
+
 start() {
     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
         echo "Vault daemon is already running"
@@ -64,14 +99,28 @@ start() {
 }
 
 stop() {
-    if [ -f "$PIDFILE" ]; then
-        echo "Stopping Vault daemon..."
-        kill "$(cat "$PIDFILE")" 2>/dev/null
+    local pid=""
+
+    if ! pid=$(resolve_pid); then
         rm -f "$PIDFILE"
-        echo "Vault daemon stopped"
-    else
         echo "Vault daemon is not running"
+        return 0
     fi
+
+    echo "Stopping Vault daemon..."
+    kill "$pid" 2>/dev/null || true
+
+    if ! wait_for_stop "$pid"; then
+        echo "Vault daemon did not stop gracefully; forcing shutdown..."
+        kill -9 "$pid" 2>/dev/null || true
+        if ! wait_for_stop "$pid"; then
+            echo "Vault daemon could not be stopped"
+            return 1
+        fi
+    fi
+
+    rm -f "$PIDFILE"
+    echo "Vault daemon stopped"
 }
 
 status() {
