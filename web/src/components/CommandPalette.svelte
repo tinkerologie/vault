@@ -112,7 +112,7 @@
 
 {#if show}
   <div
-    class="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm"
+    class="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm animate-backdrop"
     onclick={(e) => { if (e.target === e.currentTarget) onclose() }}
     onkeydown={handleKeydown}
     role="dialog"
@@ -120,7 +120,7 @@
     aria-label="Command palette"
     tabindex="-1"
   >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden animate-panel-up">
       <!-- Search input -->
       <div class="flex items-center gap-3 px-4 py-3 border-b border-border">
         <svg class="w-5 h-5 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">

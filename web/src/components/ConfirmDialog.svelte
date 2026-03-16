@@ -29,7 +29,7 @@
 
 {#if show}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
     onclick={handleBackdrop}
     onkeydown={handleKey}
     role="dialog"
@@ -38,7 +38,7 @@
     aria-describedby="confirm-message"
     tabindex="-1"
   >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">
       <h2 id="confirm-title" class="text-lg font-semibold text-text">{title}</h2>
       <p id="confirm-message" class="text-sm text-text-muted mt-2">{message}</p>
       <div class="flex justify-end gap-3 mt-6">

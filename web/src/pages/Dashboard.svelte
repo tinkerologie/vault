@@ -282,7 +282,7 @@
     {/if}
 
     <!-- Stats Grid -->
-    <div class="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory lg:grid lg:grid-cols-5 lg:overflow-visible lg:pb-0 mb-8">
+    <div class="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory lg:grid lg:grid-cols-5 lg:overflow-visible lg:pb-0 mb-8 stagger">
       <div class="bg-surface-2 border border-border rounded-xl p-5 snap-start min-w-[140px] flex-shrink-0 lg:min-w-0 lg:flex-shrink">
         <div class="flex items-center justify-between">
           <div>
@@ -389,7 +389,7 @@
             <span class="text-xs text-text-dim font-mono">{overallPct}%</span>
           </div>
           <div class="w-full h-2.5 bg-surface-4 rounded-full overflow-hidden">
-            <div class="h-full rounded-full bg-vault transition-all duration-300 ease-out" style="width: {overallPct}%"></div>
+            <div class="h-full rounded-full transition-all duration-300 ease-out {overallPct < 100 ? 'shimmer-bar' : 'bg-vault'}" style="width: {overallPct}%"></div>
           </div>
         </div>
 
@@ -406,7 +406,7 @@
             <div class="flex items-center gap-3">
               <!-- Status icon -->
               <div class="w-5 h-5 flex items-center justify-center shrink-0">
-                {#if info.status === 'done'}
+                {#if info.status === 'done' || (info.percent >= 100 && info.status !== 'failed')}
                   <svg class="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
                 {:else if info.status === 'failed'}
                   <svg class="w-4 h-4 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -427,7 +427,7 @@
                 <div class="flex items-center gap-2 mt-1">
                   <div class="flex-1 h-1.5 bg-surface-4 rounded-full overflow-hidden">
                     <div
-                      class="h-full rounded-full transition-all duration-300 ease-out {info.status === 'done' ? 'bg-success' : info.status === 'failed' ? 'bg-danger' : 'bg-vault'}"
+                      class="h-full rounded-full transition-all duration-300 ease-out {info.status === 'done' || (info.percent >= 100 && info.status !== 'failed') ? 'bg-success' : info.status === 'failed' ? 'bg-danger' : 'bg-vault'}"
                       style="width: {info.percent}%"
                     ></div>
                   </div>

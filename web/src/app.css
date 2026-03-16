@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
 @import 'tailwindcss';
 
 /* Vault theme — amber accent, light/dark support */
@@ -49,6 +50,138 @@
   --color-info: #3b82f6;
 }
 
+/* ═══════════════════════════════════════════════
+   1-BIT — Monochrome Terminal
+   ═══════════════════════════════════════════════ */
+
+/* 1-Bit Light: white bg, black text */
+.theme-1bit {
+  --color-vault: #000000;
+  --color-vault-dark: #333333;
+  --color-surface: #ffffff;
+  --color-surface-2: #ffffff;
+  --color-surface-3: #e0e0e0;
+  --color-surface-4: #c0c0c0;
+  --color-surface-5: #a0a0a0;
+  --color-border: #000000;
+  --color-border-hover: #444444;
+  --color-text: #000000;
+  --color-text-muted: #333333;
+  --color-text-dim: #666666;
+  --color-success: #000000;
+  --color-danger: #000000;
+  --color-warning: #000000;
+  --color-info: #000000;
+}
+
+/* 1-Bit Dark: black bg, white text */
+.theme-1bit.dark {
+  --color-vault: #ffffff;
+  --color-vault-dark: #cccccc;
+  --color-surface: #000000;
+  --color-surface-2: #000000;
+  --color-surface-3: #1a1a1a;
+  --color-surface-4: #333333;
+  --color-surface-5: #4d4d4d;
+  --color-border: #ffffff;
+  --color-border-hover: #cccccc;
+  --color-text: #ffffff;
+  --color-text-muted: #cccccc;
+  --color-text-dim: #888888;
+  --color-success: #ffffff;
+  --color-danger: #ffffff;
+  --color-warning: #ffffff;
+  --color-info: #ffffff;
+}
+
+/* ═══════════════════════════════════════════════
+   8-BIT — NES / Game Boy Pixel
+   ═══════════════════════════════════════════════ */
+
+/* 8-Bit Light: warm parchment + NES palette */
+.theme-8bit {
+  --color-vault: #e4003a;
+  --color-vault-dark: #c00030;
+  --color-surface: #f5e6c8;
+  --color-surface-2: #eedcb0;
+  --color-surface-3: #e2cea0;
+  --color-surface-4: #d4bd88;
+  --color-surface-5: #c0a870;
+  --color-border: #6b4226;
+  --color-border-hover: #8b5a30;
+  --color-text: #3c2415;
+  --color-text-muted: #5c3d28;
+  --color-text-dim: #8a6b50;
+  --color-success: #209028;
+  --color-danger: #e4003a;
+  --color-warning: #f8b800;
+  --color-info: #0070ec;
+}
+
+/* 8-Bit Dark: deep navy + neon accents */
+.theme-8bit.dark {
+  --color-vault: #f8b800;
+  --color-vault-dark: #d09800;
+  --color-surface: #0f0f23;
+  --color-surface-2: #181830;
+  --color-surface-3: #22223a;
+  --color-surface-4: #2e2e48;
+  --color-surface-5: #3a3a58;
+  --color-border: #4a4a6a;
+  --color-border-hover: #6a6a8a;
+  --color-text: #e0d4b8;
+  --color-text-muted: #b0a490;
+  --color-text-dim: #706858;
+  --color-success: #40e848;
+  --color-danger: #ff3860;
+  --color-warning: #f8b800;
+  --color-info: #43b5e0;
+}
+
+/* ═══════════════════════════════════════════════
+   16-BIT — SNES / Sega Genesis RPG
+   ═══════════════════════════════════════════════ */
+
+/* 16-Bit Light: warm parchment + deep blue RPG windows */
+.theme-16bit {
+  --color-vault: #2038a0;
+  --color-vault-dark: #182880;
+  --color-surface: #e8e0d0;
+  --color-surface-2: #ddd5c5;
+  --color-surface-3: #d0c8b8;
+  --color-surface-4: #c0b8a8;
+  --color-surface-5: #b0a898;
+  --color-border: #2038a0;
+  --color-border-hover: #3050c0;
+  --color-text: #2a2040;
+  --color-text-muted: #484060;
+  --color-text-dim: #706888;
+  --color-success: #208830;
+  --color-danger: #c83030;
+  --color-warning: #d8a020;
+  --color-info: #38a8d8;
+}
+
+/* 16-Bit Dark: midnight + vibrant RPG neon */
+.theme-16bit.dark {
+  --color-vault: #6070d0;
+  --color-vault-dark: #4858b0;
+  --color-surface: #10102a;
+  --color-surface-2: #181838;
+  --color-surface-3: #202048;
+  --color-surface-4: #282858;
+  --color-surface-5: #303068;
+  --color-border: #4848a0;
+  --color-border-hover: #6060c0;
+  --color-text: #d0d0e8;
+  --color-text-muted: #a0a0c0;
+  --color-text-dim: #686888;
+  --color-success: #40d848;
+  --color-danger: #e04848;
+  --color-warning: #f0c830;
+  --color-info: #38d8f0;
+}
+
 html {
   background-color: var(--color-surface);
   color: var(--color-text);
@@ -60,6 +193,279 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
+}
+
+/* ═══════════════════════════════════════════════
+   SHARED BASE — all themed styles
+   ═══════════════════════════════════════════════ */
+
+.theme-1bit,
+.theme-8bit,
+.theme-16bit {
+  /* Square corners everywhere */
+  & [class*="rounded"] { border-radius: 0 !important; }
+  & [class*="rounded-full"] { border-radius: 0 !important; }
+
+  /* Crisp SVG */
+  & svg { shape-rendering: crispEdges; }
+
+  /* Square focus ring */
+  & *:focus-visible {
+    outline: 2px solid var(--color-vault);
+    outline-offset: 0;
+    border-radius: 0;
+  }
+
+  /* Cards — solid borders, no shadow */
+  & .bg-surface-2 {
+    border: 1px solid var(--color-border);
+    box-shadow: none;
+  }
+
+  /* Status dots are squares */
+  & .badge { border-radius: 0; border: 1px solid currentColor; }
+
+  /* Square scrollbar */
+  & ::-webkit-scrollbar { width: 8px; height: 8px; }
+  & ::-webkit-scrollbar-track { background: var(--color-surface); border-left: 1px solid var(--color-border); }
+  & ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 0; }
+  & ::-webkit-scrollbar-thumb:hover { background: var(--color-border-hover); }
+
+  /* Square toggles and progress */
+  & [role="switch"] { border-radius: 0 !important; }
+  & [role="progressbar"] { border-radius: 0 !important; border: 1px solid var(--color-border); }
+
+  /* Buttons — square, bordered */
+  & .btn {
+    border-radius: 0;
+    border: 1px solid var(--color-border);
+    box-shadow: none;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: background-color 0.1s, color 0.1s;
+  }
+  & .btn:hover {
+    background-color: var(--color-border);
+    color: var(--color-surface);
+    text-shadow: none;
+    transform: none;
+    box-shadow: none;
+  }
+  & .btn:active { filter: brightness(0.8); transform: none; box-shadow: none; }
+  & .btn-primary {
+    background-color: var(--color-vault);
+    color: var(--color-surface);
+    text-shadow: none;
+    border-color: var(--color-vault);
+  }
+  & .btn-primary:hover {
+    background-color: var(--color-vault-dark);
+    border-color: var(--color-vault-dark);
+  }
+
+  /* Sidebar */
+  & aside {
+    border-right: 1px solid var(--color-border) !important;
+    box-shadow: none !important;
+  }
+  & aside nav button {
+    border-radius: 0 !important;
+    border: none;
+    transition: none;
+  }
+  & aside nav button:hover {
+    background-color: var(--color-border) !important;
+    color: var(--color-surface) !important;
+    text-shadow: none !important;
+  }
+  & aside nav button[class*="bg-vault"] {
+    background-color: var(--color-vault) !important;
+    color: var(--color-surface) !important;
+    text-shadow: none !important;
+  }
+
+  /* Tables */
+  & table { border: 1px solid var(--color-border); }
+  & th, & td { border: 1px solid var(--color-border); padding: 4px 8px; }
+  & th { text-transform: uppercase; letter-spacing: 1px; background-color: var(--color-surface-2); }
+
+  /* Inputs */
+  & input, & select, & textarea {
+    border-radius: 0 !important;
+    border: 1px solid var(--color-border) !important;
+    background-color: var(--color-surface) !important;
+    color: var(--color-text);
+    caret-color: var(--color-vault);
+  }
+  & input:focus, & select:focus, & textarea:focus {
+    box-shadow: inset 0 0 0 1px var(--color-vault) !important;
+  }
+
+  /* Mobile nav */
+  & nav[aria-label="Mobile navigation"] {
+    border-top: 1px solid var(--color-border) !important;
+    box-shadow: none !important;
+  }
+
+  /* Main content border */
+  & main { border-left: 1px solid var(--color-border); }
+}
+
+/* ═══════════════════════════════════════════════
+   1-BIT specific — system monospace, zero effects
+   ═══════════════════════════════════════════════ */
+
+.theme-1bit,
+.theme-1bit body {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+}
+
+/* 1-bit dark: vault is white, so text on vault-bg must be black */
+.theme-1bit.dark .bg-vault { color: #000000 !important; }
+/* Monospace chars are wider than proportional — tighten buttons to keep layouts consistent */
+.theme-1bit button { letter-spacing: -0.5px; font-size: 0.8125rem; }
+.theme-1bit aside nav button { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
+.theme-1bit th, .theme-1bit td { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
+.theme-1bit input, .theme-1bit select, .theme-1bit textarea {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace !important;
+}
+.theme-1bit nav[aria-label="Mobile navigation"] button {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+}
+
+/* ═══════════════════════════════════════════════
+   8-BIT specific — Press Start 2P + VT323, pixel borders
+   ═══════════════════════════════════════════════ */
+
+.theme-8bit,
+.theme-8bit body {
+  font-family: 'VT323', 'Courier New', monospace;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Pixel font on headings — scale down because Press Start 2P runs large */
+.theme-8bit h1,
+.theme-8bit h2,
+.theme-8bit h3 {
+  font-family: 'Press Start 2P', monospace;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 0.7em;
+  line-height: 1.8;
+}
+
+.theme-8bit .btn {
+  font-family: 'VT323', monospace;
+  letter-spacing: 2px;
+}
+.theme-8bit .badge {
+  font-family: 'VT323', monospace;
+  letter-spacing: 1px;
+  padding: 1px 8px;
+}
+.theme-8bit aside nav button {
+  font-family: 'VT323', monospace;
+  letter-spacing: 1px;
+}
+.theme-8bit th, .theme-8bit td { font-family: 'VT323', monospace; }
+.theme-8bit input, .theme-8bit select, .theme-8bit textarea {
+  font-family: 'VT323', monospace !important;
+}
+.theme-8bit nav[aria-label="Mobile navigation"] button {
+  font-family: 'VT323', monospace;
+}
+
+/* Pixel border on cards via box-shadow */
+.theme-8bit .bg-surface-2 {
+  border: 2px solid var(--color-border);
+  box-shadow:
+    inset 2px 2px 0 var(--color-surface-3),
+    inset -2px -2px 0 var(--color-surface-4);
+}
+
+/* Chunky 2px border on buttons */
+.theme-8bit .btn { border-width: 2px; }
+
+/* ═══════════════════════════════════════════════
+   16-BIT specific — SNES/Genesis RPG dialogs
+   ═══════════════════════════════════════════════ */
+
+.theme-16bit,
+.theme-16bit body {
+  font-family: 'VT323', 'Courier New', monospace;
+}
+
+/* Pixel font on headings */
+.theme-16bit h1,
+.theme-16bit h2,
+.theme-16bit h3 {
+  font-family: 'Press Start 2P', monospace;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 0.7em;
+  line-height: 1.8;
+}
+
+.theme-16bit .btn {
+  font-family: 'VT323', monospace;
+  letter-spacing: 2px;
+}
+.theme-16bit .badge {
+  font-family: 'VT323', monospace;
+  letter-spacing: 1px;
+  padding: 1px 8px;
+}
+.theme-16bit aside nav button {
+  font-family: 'VT323', monospace;
+  letter-spacing: 1px;
+}
+.theme-16bit th, .theme-16bit td { font-family: 'VT323', monospace; }
+.theme-16bit input, .theme-16bit select, .theme-16bit textarea {
+  font-family: 'VT323', monospace !important;
+}
+.theme-16bit nav[aria-label="Mobile navigation"] button {
+  font-family: 'VT323', monospace;
+}
+
+/* RPG dialog box panels — double border with inner highlight */
+.theme-16bit .bg-surface-2 {
+  border: 3px solid var(--color-border);
+  box-shadow:
+    inset 0 0 0 1px var(--color-border-hover),
+    inset 0 0 0 2px var(--color-surface);
+}
+
+/* RPG panel title bar — gradient header */
+.theme-16bit .bg-surface-2 > :first-child {
+  border-bottom: 2px solid var(--color-border);
+  background: linear-gradient(180deg, var(--color-surface-3) 0%, var(--color-surface-2) 100%);
+}
+
+/* Faint scanlines (period-accurate: consoles played on CRT TVs) */
+.theme-16bit::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.03) 3px,
+    rgba(0, 0, 0, 0.03) 6px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* RPG-style nav highlight — cursor-like active state */
+.theme-16bit aside nav button:hover {
+  background: linear-gradient(90deg, var(--color-vault) 0%, transparent 100%) !important;
+  color: var(--color-text) !important;
+}
+.theme-16bit aside nav button[class*="bg-vault"] {
+  background: linear-gradient(90deg, var(--color-vault) 0%, var(--color-vault-dark) 100%) !important;
+  color: #ffffff !important;
 }
 
 /* Scrollbar */
@@ -118,4 +524,92 @@ body {
 }
 .badge-neutral {
   @apply bg-surface-3 text-text-muted;
+}
+
+/* ═══════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════ */
+
+/* Page fade-up on route change */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-fade-up {
+  animation: fade-up 0.25s ease-out backwards;
+}
+
+/* Modal backdrop fade */
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-backdrop {
+  animation: backdrop-in 0.2s ease-out both;
+}
+
+/* Modal panel slide-up */
+@keyframes panel-up {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.animate-panel-up {
+  animation: panel-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Stagger children — each child delays by its index */
+.stagger > * { opacity: 0; animation: fade-up 0.3s ease-out both; }
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 50ms; }
+.stagger > *:nth-child(3) { animation-delay: 100ms; }
+.stagger > *:nth-child(4) { animation-delay: 150ms; }
+.stagger > *:nth-child(5) { animation-delay: 200ms; }
+.stagger > *:nth-child(6) { animation-delay: 250ms; }
+.stagger > *:nth-child(7) { animation-delay: 300ms; }
+.stagger > *:nth-child(8) { animation-delay: 350ms; }
+.stagger > *:nth-child(9) { animation-delay: 400ms; }
+.stagger > *:nth-child(10) { animation-delay: 450ms; }
+
+/* Progress bar shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer-bar {
+  background: linear-gradient(90deg, var(--color-vault) 25%, var(--color-vault-light, #f0b429) 50%, var(--color-vault) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Sidebar nav active pill slide */
+@keyframes nav-pill {
+  from { opacity: 0; transform: scaleX(0.92); }
+  to { opacity: 1; transform: none; }
+}
+.nav-active {
+  animation: nav-pill 0.2s ease-out both;
+}
+
+/* Toast slide-out (for dismissal) */
+@keyframes slide-out {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0; }
+}
+.animate-slide-out {
+  animation: slide-out 0.2s ease-in both;
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-backdrop,
+  .animate-panel-up,
+  .stagger > *,
+  .shimmer-bar,
+  .nav-active,
+  .animate-slide-out {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }

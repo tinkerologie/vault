@@ -103,6 +103,18 @@ export function syncFromStatus(status) {
     }
   }
 
+  // Mark non-current items that reached 100% as done (proxy polling doesn't
+  // receive item_backup_done / item_restore_done WebSocket events).
+  const updated = { ...itemProgress }
+  let changed = false
+  for (const [name, info] of Object.entries(updated)) {
+    if (name !== status.current_item && info.status === 'running' && info.percent >= 100) {
+      updated[name] = { ...info, status: 'done', message: info.message || 'backup complete' }
+      changed = true
+    }
+  }
+  if (changed) itemProgress = updated
+
   const startMs = status.started_at ? new Date(status.started_at).getTime() : Date.now()
   elapsedSec = Math.max(0, Math.round((Date.now() - startMs) / 1000))
 }
@@ -183,9 +195,11 @@ export function handleProgressMessage(msg, jobNameResolver) {
     case 'backup_progress':
     case 'restore_progress': {
       const existing = itemProgress[msg.item] || {}
+      // Don't revert a terminal status (done/failed) back to running.
+      const keepStatus = existing.status === 'done' || existing.status === 'failed'
       itemProgress = {
         ...itemProgress,
-        [msg.item]: { ...existing, percent: msg.percent, message: msg.message, item_type: msg.item_type || existing.item_type, status: 'running' },
+        [msg.item]: { ...existing, percent: msg.percent, message: msg.message, item_type: msg.item_type || existing.item_type, status: keepStatus ? existing.status : 'running' },
       }
       return true
     }

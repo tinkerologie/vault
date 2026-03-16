@@ -46,7 +46,7 @@ The REST API will be available at `http://localhost:24085/api/v1`.
 
 - Bug reports: [open a bug report](https://github.com/ruaan-deysel/vault/issues/new?template=01-bug-report.yml)
 - Enhancement requests: [request an improvement](https://github.com/ruaan-deysel/vault/issues/new?template=02-enhancement-request.yml)
-- Questions and support: [use the Unraid forum support thread](https://forums.unraid.net/topic/196675-plugin-unraid-management-agent)
+- Questions and support: [use the Unraid forum support thread](https://forums.unraid.net/topic/197786-plugin-vault-backup-manager)
 
 Bug reports and enhancement requests are automatically labeled for triage when they are opened. Questions
 and troubleshooting help belong in the support thread so the issue tracker stays focused on actionable product work.

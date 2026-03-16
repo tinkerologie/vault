@@ -9,7 +9,7 @@
     <!ENTITY bundle    "&name;-&version;.txz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
     <!ENTITY sha256      "524759d9fc8540f179df09dbd2e31455b7278bf10f170403fa6824dd56c783c8">
-    <!ENTITY support   "https://forums.unraid.net/topic/196675-plugin-unraid-management-agent">
+    <!ENTITY support   "https://forums.unraid.net/topic/197786-plugin-vault-backup-manager">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
         launch="&launch;" pluginURL="&pluginURL;" icon="shield"

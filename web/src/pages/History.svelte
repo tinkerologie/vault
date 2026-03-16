@@ -154,7 +154,7 @@
     </div>
   {:else}
     <!-- Stats bar -->
-    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6 stagger">
       <div class="bg-surface-2 border border-border rounded-xl p-3 text-center">
         <p class="text-lg font-bold text-text">{stats.total}</p>
         <p class="text-xs text-text-muted">Total Runs</p>

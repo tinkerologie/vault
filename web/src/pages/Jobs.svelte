@@ -464,7 +464,7 @@
   {:else if jobs.length === 0}
     <EmptyState icon="📋" title="No backup jobs" subtitle="Step 1: Set up a job" description="Create your first backup job to get started." actionLabel="Create Job" onaction={() => openCreate()} />
   {:else}
-    <div class="space-y-3">
+    <div class="space-y-3 stagger">
       {#each jobs as job (job.id)}
         <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 transition-colors {selectedJobs.has(job.id) ? 'ring-1 ring-vault/40' : ''}">
           <div class="flex items-start justify-between">
@@ -984,12 +984,12 @@
 
 {#if confirmDelete.show}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
     onclick={(e) => { if (e.target === e.currentTarget) confirmDelete = { show: false, id: 0, name: '', deleteFiles: false } }}
     onkeydown={(e) => { if (e.key === 'Escape') confirmDelete = { show: false, id: 0, name: '', deleteFiles: false } }}
     role="dialog" aria-modal="true" aria-labelledby="delete-title" tabindex="-1"
   >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">
       <h2 id="delete-title" class="text-lg font-semibold text-text">Delete Job</h2>
       <p class="text-sm text-text-muted mt-2">Are you sure you want to delete <strong class="text-text">{confirmDelete.name}</strong>?</p>
 

@@ -3,7 +3,7 @@
   import { api } from '../lib/api.js'
   import { formatBytes } from '../lib/utils.js'
   import { getWsStatus, connectWs, disconnectWs } from '../lib/ws.svelte.js'
-  import { getTheme, setTheme } from '../lib/theme.svelte.js'
+  import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Spinner from '../components/Spinner.svelte'
@@ -421,23 +421,48 @@
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Appearance</h2>
         </div>
-        <div class="px-5 py-4">
-          <p class="text-sm text-text-muted mb-3">Choose how Vault looks. Select a theme or follow your system preference.</p>
-          <div class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-xs">
-            {#each [
-              { value: 'light', label: 'Light', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
-              { value: 'system', label: 'System', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
-              { value: 'dark', label: 'Dark', icon: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z' },
-            ] as opt (opt.value)}
-              <button
-                type="button"
-                onclick={() => setTheme(/** @type {'light'|'dark'|'system'} */ (opt.value))}
-                class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getTheme() === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
-              >
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
-                {opt.label}
-              </button>
-            {/each}
+        <div class="px-5 py-4 space-y-4">
+          <!-- Theme Style -->
+          <div>
+            <p class="text-sm text-text-muted mb-2">Theme style</p>
+            <div class="grid grid-cols-4 gap-1 bg-surface-3 rounded-lg p-1 max-w-sm">
+              {#each [
+                { value: 'default', label: 'Default', icon: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01' },
+                { value: '1bit', label: '1-Bit', icon: 'M8 9l4-4 4 4m0 6l-4 4-4-4' },
+                { value: '8bit', label: '8-Bit', icon: 'M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5' },
+                { value: '16bit', label: '16-Bit', icon: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z' },
+              ] as opt (opt.value)}
+                <button
+                  type="button"
+                  onclick={() => setStyle(/** @type {'default'|'1bit'|'8bit'|'16bit'} */ (opt.value))}
+                  class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getStyle() === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
+                >
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
+                  {opt.label}
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Color Mode -->
+          <div>
+            <p class="text-sm text-text-muted mb-2">Color mode</p>
+            <div class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-xs">
+              {#each [
+                { value: 'light', label: 'Light', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
+                { value: 'system', label: 'System', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
+                { value: 'dark', label: 'Dark', icon: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z' },
+              ] as opt (opt.value)}
+                <button
+                  type="button"
+                  onclick={() => setMode(/** @type {'light'|'system'|'dark'} */ (opt.value))}
+                  class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getMode() === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
+                >
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
+                  {opt.label}
+                </button>
+              {/each}
+            </div>
           </div>
         </div>
       </div>

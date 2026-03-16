@@ -45,7 +45,7 @@
 
 {#if show}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
     onclick={handleBackdrop}
     onkeydown={handleKey}
     role="dialog"
@@ -53,7 +53,7 @@
     aria-labelledby="modal-title"
     tabindex="-1"
   >
-    <div bind:this={dialogEl} class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col">
+    <div bind:this={dialogEl} class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col animate-panel-up">
       <div class="flex items-center justify-between px-6 py-4 border-b border-border">
         <h2 id="modal-title" class="text-lg font-semibold text-text">{title}</h2>
         <button onclick={onclose} class="text-text-muted hover:text-text transition-colors p-1 rounded-lg hover:bg-surface-3" aria-label="Close">

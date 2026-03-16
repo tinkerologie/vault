@@ -270,7 +270,7 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 stagger">
       {#each destinations as dest (dest.id)}
         {@const cfg = parseConfig(dest.config)}
         {@const tr = testResults.get(dest.id)}
@@ -481,12 +481,12 @@
 <!-- Enhanced Delete Dialog -->
 {#if confirmDelete.show}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
     onclick={(e) => { if (e.target === e.currentTarget) confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
     onkeydown={(e) => { if (e.key === 'Escape') confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
     role="dialog" aria-modal="true" aria-labelledby="del-storage-title" tabindex="-1"
   >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">
       <h2 id="del-storage-title" class="text-lg font-semibold text-text">Delete Storage</h2>
       <p class="text-sm text-text-muted mt-2">Are you sure you want to delete <strong class="text-text">{confirmDelete.name}</strong>?</p>
 

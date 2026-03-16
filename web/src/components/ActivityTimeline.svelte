@@ -49,6 +49,17 @@
     if (status === 'partial') return 'badge badge-warning'
     return statusBadge(run.status)
   }
+
+  /** Parse run.log JSON into item array, returns [] on failure */
+  function getRunItems(run) {
+    if (!run.log) return []
+    try {
+      const items = JSON.parse(run.log)
+      return Array.isArray(items) ? items : []
+    } catch {
+      return []
+    }
+  }
 </script>
 
 <div class="bg-surface-2 border border-border rounded-xl">
@@ -65,6 +76,7 @@
             <span class="text-xs font-medium text-text-dim uppercase tracking-wide">{label}</span>
           </div>
           {#each groupRuns as run (run.id)}
+            {@const items = getRunItems(run)}
             <div class="px-5 py-3 flex items-start gap-3">
               <!-- Timeline dot -->
               <div class="mt-1.5 shrink-0">
@@ -82,6 +94,21 @@
                   </div>
                   <span class="text-xs text-text-dim shrink-0">{relTime(run.started_at)}</span>
                 </div>
+                <!-- Per-item breakdown -->
+                {#if items.length > 0}
+                  <div class="flex flex-wrap gap-1.5 mt-1.5">
+                    {#each items as item (item.name)}
+                      <span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">
+                        {#if item.status === 'ok'}
+                          <svg class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                        {:else}
+                          <svg class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                        {/if}
+                        {item.name}
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
                 <div class="flex items-center gap-3 mt-1 text-xs text-text-dim">
                   {#if durationStr(run)}
                     <span>{durationStr(run)}</span>
