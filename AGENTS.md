@@ -12,7 +12,7 @@
 | **Target**   | Linux/amd64 (Unraid OS)                                         |
 | **Type**     | Third-party community plugin (backup/restore daemon)            |
 | **Purpose**  | REST API + WebSocket for Docker container and libvirt VM backup |
-| **Repo**     | `github.com/ruaandeysel/vault`                                  |
+| **Repo**     | `github.com/ruaan-deysel/vault`                                 |
 
 ## Project Structure
 
