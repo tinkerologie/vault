@@ -201,15 +201,11 @@ jobs:
           export SHA256
 
           echo "Updating PLG file with SHA256: $SHA256"
-          python3 <<'PY'
-          from pathlib import Path
-          import os
-          import re
-
-          path = Path("plugin/vault.plg")
-          text = path.read_text()
+          python3 - <<'PY'
+          from pathlib import Path; import os, re
+          path = Path("plugin/vault.plg"); text = path.read_text()
           text = re.sub(r'<!ENTITY bundle\s+".*?">', '    <!ENTITY bundle    "&name;-&version;.txz">', text)
-          text = re.sub(r'<!ENTITY (?:md5|sha256)\s+".*?">', '    <!ENTITY sha256      "{}">'.format(os.environ["SHA256"]), text)
+          text = re.sub(r'<!ENTITY (?:md5|sha256)\s+".*?">', '    <!ENTITY sha256      "{}">' .format(os.environ["SHA256"]), text)
           text = re.sub(r'<(?:MD5|SHA256)>&(?:md5|sha256);</(?:MD5|SHA256)>', '    <SHA256>&sha256;</SHA256>', text)
           path.write_text(text)
           PY
@@ -232,18 +228,14 @@ jobs:
 
             SHA256="${{ steps.checksum.outputs.sha256 }}"
             export SHA256
-            python3 <<'PY'
-            from pathlib import Path
-            import os
-            import re
-
-            path = Path("plugin/vault.plg")
-            text = path.read_text()
-            text = re.sub(r'<!ENTITY bundle\s+".*?">', '    <!ENTITY bundle    "&name;-&version;.txz">', text)
-            text = re.sub(r'<!ENTITY (?:md5|sha256)\s+".*?">', '    <!ENTITY sha256      "{}">'.format(os.environ["SHA256"]), text)
-            text = re.sub(r'<(?:MD5|SHA256)>&(?:md5|sha256);</(?:MD5|SHA256)>', '    <SHA256>&sha256;</SHA256>', text)
-            path.write_text(text)
-            PY
+          python3 <<'PY'
+          from pathlib import Path; import os, re
+          path = Path("plugin/vault.plg"); text = path.read_text()
+          text = re.sub(r'<!ENTITY bundle\s+".*?">', '    <!ENTITY bundle    "&name;-&version;.txz">', text)
+          text = re.sub(r'<!ENTITY (?:md5|sha256)\s+".*?">', '    <!ENTITY sha256      "{}">' .format(os.environ["SHA256"]), text)
+          text = re.sub(r'<(?:MD5|SHA256)>&(?:md5|sha256);</(?:MD5|SHA256)>', '    <SHA256>&sha256;</SHA256>', text)
+          path.write_text(text)
+          PY
 
             git add plugin/vault.plg
             git commit -m "chore: update PLG SHA256 hash for v${{ steps.version.outputs.version }} [skip ci]"
