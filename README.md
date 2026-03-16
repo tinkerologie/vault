@@ -4,7 +4,7 @@
 [![Build & Test](https://github.com/ruaan-deysel/vault/actions/workflows/build.yml/badge.svg)](https://github.com/ruaan-deysel/vault/actions/workflows/build.yml)
 [![Latest Release](https://img.shields.io/github/v/release/ruaan-deysel/vault?sort=date&label=release)](https://github.com/ruaan-deysel/vault/releases/latest)
 [![Go Version](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](https://go.dev/)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ruaandeysel/vault)](https://goreportcard.com/report/github.com/ruaandeysel/vault)
+[![Svelte](https://img.shields.io/badge/svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
 [![License](https://img.shields.io/github/license/ruaan-deysel/vault)](https://github.com/ruaan-deysel/vault/blob/main/LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/ruaan-deysel/vault)](https://github.com/ruaan-deysel/vault/issues)
 [![GitHub Stars](https://img.shields.io/github/stars/ruaan-deysel/vault?style=flat)](https://github.com/ruaan-deysel/vault/stargazers)
