@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/cloudsoda/go-smb2"
-	"github.com/ruaandeysel/vault/internal/safepath"
+	"github.com/ruaan-deysel/vault/internal/safepath"
 )
 
 type SMBConfig struct {

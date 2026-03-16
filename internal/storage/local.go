@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ruaandeysel/vault/internal/safepath"
+	"github.com/ruaan-deysel/vault/internal/safepath"
 )
 
 type LocalAdapter struct {

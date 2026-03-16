@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/runner"
-	"github.com/ruaandeysel/vault/internal/ws"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/ruaan-deysel/vault/internal/ws"
 )
 
 // setupTest creates a test MCPServer with an in-memory DB and connects a client.

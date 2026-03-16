@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ruaandeysel/vault/internal/crypto"
-	"github.com/ruaandeysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 func testDB(t *testing.T) *db.DB {

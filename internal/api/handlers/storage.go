@@ -9,9 +9,9 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/runner"
-	"github.com/ruaandeysel/vault/internal/storage"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 type StorageHandler struct {

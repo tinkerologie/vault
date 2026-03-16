@@ -3,7 +3,7 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/ruaandeysel/vault/internal/engine"
+	"github.com/ruaan-deysel/vault/internal/engine"
 )
 
 // DiscoverHandler exposes container and VM discovery via the engine.

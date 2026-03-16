@@ -6,10 +6,10 @@ import (
 	"log"
 	"strings"
 
-	"github.com/ruaandeysel/vault/internal/crypto"
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/storage"
-	"github.com/ruaandeysel/vault/internal/ws"
+	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/ruaan-deysel/vault/internal/ws"
 )
 
 // ProgressFunc reports sync progress on a scale of 0.0 to 1.0.

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/storage"
-	"github.com/ruaandeysel/vault/internal/ws"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/ruaan-deysel/vault/internal/ws"
 )
 
 func TestStageRestorePointItemOverlaysChainFiles(t *testing.T) {

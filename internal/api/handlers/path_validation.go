@@ -1,6 +1,6 @@
 package handlers
 
-import "github.com/ruaandeysel/vault/internal/safepath"
+import "github.com/ruaan-deysel/vault/internal/safepath"
 
 var browseAllowedRoots = []string{"/mnt", "/boot"}
 

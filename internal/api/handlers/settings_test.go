@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaandeysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // newTestSettingsHandler creates a SettingsHandler backed by an in-memory DB

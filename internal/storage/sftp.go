@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/pkg/sftp"
-	"github.com/ruaandeysel/vault/internal/safepath"
+	"github.com/ruaan-deysel/vault/internal/safepath"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )

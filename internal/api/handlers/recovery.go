@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ruaandeysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // RecoveryHandler serves the disaster recovery plan.

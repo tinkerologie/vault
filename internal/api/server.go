@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ruaandeysel/vault/internal/api/handlers"
-	"github.com/ruaandeysel/vault/internal/crypto"
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/replication"
-	"github.com/ruaandeysel/vault/internal/runner"
-	"github.com/ruaandeysel/vault/internal/ws"
+	"github.com/ruaan-deysel/vault/internal/api/handlers"
+	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/replication"
+	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/ruaan-deysel/vault/internal/ws"
 )
 
 // ServerConfig holds configuration options for the API server.

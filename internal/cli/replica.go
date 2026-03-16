@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/ruaandeysel/vault/internal/api"
-	"github.com/ruaandeysel/vault/internal/crypto"
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/replication"
-	"github.com/ruaandeysel/vault/internal/scheduler"
+	"github.com/ruaan-deysel/vault/internal/api"
+	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/replication"
+	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/spf13/cobra"
 )
 

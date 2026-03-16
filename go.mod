@@ -1,4 +1,4 @@
-module github.com/ruaandeysel/vault
+module github.com/ruaan-deysel/vault
 
 go 1.26.0
 

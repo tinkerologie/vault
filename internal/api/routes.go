@@ -8,9 +8,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/ruaandeysel/vault/internal/api/handlers"
-	mcpserver "github.com/ruaandeysel/vault/internal/mcp"
-	"github.com/ruaandeysel/vault/web"
+	"github.com/ruaan-deysel/vault/internal/api/handlers"
+	mcpserver "github.com/ruaan-deysel/vault/internal/mcp"
+	"github.com/ruaan-deysel/vault/web"
 )
 
 func (s *Server) setupRoutes() *chi.Mux {

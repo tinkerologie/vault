@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaandeysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 func TestAnnotateRestorePointsMarksBrokenChain(t *testing.T) {

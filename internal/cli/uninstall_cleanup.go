@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/tempdir"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/tempdir"
 	"github.com/spf13/cobra"
 )
 

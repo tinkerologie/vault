@@ -6,10 +6,10 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/ruaandeysel/vault/internal/db"
-	mcpserver "github.com/ruaandeysel/vault/internal/mcp"
-	"github.com/ruaandeysel/vault/internal/runner"
-	"github.com/ruaandeysel/vault/internal/ws"
+	"github.com/ruaan-deysel/vault/internal/db"
+	mcpserver "github.com/ruaan-deysel/vault/internal/mcp"
+	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/ruaan-deysel/vault/internal/ws"
 	"github.com/spf13/cobra"
 )
 

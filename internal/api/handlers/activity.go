@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/ruaandeysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // ActivityHandler serves activity log endpoints.

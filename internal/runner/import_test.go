@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/storage"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 func setupTestRunner(t *testing.T) (*Runner, *db.DB, string) {

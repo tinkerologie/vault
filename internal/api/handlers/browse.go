@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ruaandeysel/vault/internal/safepath"
+	"github.com/ruaan-deysel/vault/internal/safepath"
 )
 
 // BrowseHandler serves filesystem directory listings for the path browser UI.

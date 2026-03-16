@@ -12,10 +12,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ruaandeysel/vault/internal/db"
-	"github.com/ruaandeysel/vault/internal/engine"
-	"github.com/ruaandeysel/vault/internal/runner"
-	"github.com/ruaandeysel/vault/internal/storage"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 // MCPServer wraps the MCP server with access to Vault's database and runner.

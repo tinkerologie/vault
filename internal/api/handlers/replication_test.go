@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ruaandeysel/vault/internal/crypto"
-	"github.com/ruaandeysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // setupReplicationTest creates a test DB, server key, and handler.
