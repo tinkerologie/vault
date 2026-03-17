@@ -87,7 +87,7 @@
                 <div class="flex items-center justify-between gap-2">
                   <div class="flex items-center gap-2 min-w-0">
                     {#if run.run_type === 'restore'}
-                      <svg class="w-3.5 h-3.5 text-info shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
+                      <svg aria-hidden="true" class="w-3.5 h-3.5 text-info shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
                     {/if}
                     <span class="text-sm font-medium text-text truncate">{run.jobName || 'Job'}</span>
                     <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 {activityStatusClass(run)}">{activityStatusLabel(run)}</span>
@@ -100,9 +100,9 @@
                     {#each items as item (item.name)}
                       <span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">
                         {#if item.status === 'ok'}
-                          <svg class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                          <svg aria-hidden="true" class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
                         {:else}
-                          <svg class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                          <svg aria-hidden="true" class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
                         {/if}
                         {item.name}
                       </span>

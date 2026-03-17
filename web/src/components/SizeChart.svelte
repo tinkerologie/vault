@@ -71,13 +71,13 @@
       {#if trend}
         <div class="flex items-center gap-1.5 text-xs">
           {#if trend.direction === 'up'}
-            <svg class="w-3.5 h-3.5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+            <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
             <span class="text-warning">+{trend.pct}%</span>
           {:else if trend.direction === 'down'}
-            <svg class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            <svg aria-hidden="true" class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
             <span class="text-success">{trend.pct}%</span>
           {:else}
-            <svg class="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14"/></svg>
+            <svg aria-hidden="true" class="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14"/></svg>
             <span class="text-text-muted">Stable</span>
           {/if}
         </div>
@@ -87,7 +87,7 @@
     <div class="relative"
       onmouseleave={() => hoveredIndex = -1}
       role="img" aria-label="Backup size trend chart">
-      <svg viewBox="0 0 {width} {height}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+      <svg aria-hidden="true" viewBox="0 0 {width} {height}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">
         <g transform="translate({padding.left},{padding.top})">
           <!-- Horizontal grid lines -->
           {#each [0, 0.25, 0.5, 0.75, 1] as frac (frac)}

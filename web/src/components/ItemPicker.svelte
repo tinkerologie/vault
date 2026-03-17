@@ -310,7 +310,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path
                       stroke-linecap="round"
                       stroke-linejoin="round"
@@ -367,7 +367,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path
                       stroke-linecap="round"
                       stroke-linejoin="round"
@@ -415,7 +415,7 @@
           onclick={() => (showAddFolder = !showAddFolder)}
           class="text-xs text-vault hover:text-vault/80 transition-colors flex items-center gap-1"
         >
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Add Custom Folder
         </button>
       </div>
@@ -446,7 +446,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
                   >
                 {/if}
@@ -492,7 +492,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
                   >
                 {/if}
@@ -533,7 +533,7 @@
               ondragend={() => (dragIndex = -1)}
               role="listitem"
             >
-              <svg class="w-4 h-4 text-text-dim cursor-grab shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 text-text-dim cursor-grab shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg>
               <span class="text-xs px-1.5 py-0.5 rounded bg-surface-4 text-text-dim shrink-0">{item.item_type}</span>
               <span class="text-text truncate">{item.item_name}</span>
               <div class="ml-auto flex items-center gap-1 shrink-0">
@@ -544,7 +544,7 @@
                   class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
                   aria-label="Move up"
                 >
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
                 </button>
                 <button
                   type="button"
@@ -553,7 +553,7 @@
                   class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
                   aria-label="Move down"
                 >
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
               </div>
             </div>

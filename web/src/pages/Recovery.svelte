@@ -85,7 +85,7 @@
     <div class="bg-surface-2 border border-border rounded-xl p-6 mb-8">
       <div class="flex items-center gap-6">
         <div class="relative w-20 h-20 shrink-0">
-          <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90">
+          <svg aria-hidden="true" viewBox="0 0 100 100" class="w-full h-full -rotate-90">
             <circle cx="50" cy="50" r="40" fill="none" stroke="var(--color-border)" stroke-width="8" />
             <circle cx="50" cy="50" r="40" fill="none"
               stroke={readinessPct >= 80 ? 'var(--color-success)' : readinessPct >= 50 ? 'var(--color-warning)' : 'var(--color-danger)'}
@@ -149,7 +149,7 @@
             {#if step.total_size}
               <span class="text-xs text-text-dim shrink-0">{formatBytes(step.total_size)}</span>
             {/if}
-            <svg class="w-4 h-4 text-text-muted transition-transform shrink-0 {expandedSteps.has(step.step) ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            <svg aria-hidden="true" class="w-4 h-4 text-text-muted transition-transform shrink-0 {expandedSteps.has(step.step) ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </div>
           {#if expandedSteps.has(step.step) && step.items?.length > 0}
             <div class="px-5 pb-4 border-t border-border pt-3">

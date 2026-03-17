@@ -23,6 +23,8 @@ let mediaQuery = null
 const STYLE_CLASSES = ['theme-1bit', 'theme-8bit', 'theme-16bit']
 const VALID_STYLES = /** @type {const} */ (['default', '1bit', '8bit', '16bit'])
 const VALID_MODES = /** @type {const} */ (['light', 'system', 'dark'])
+const RETRO_FONT_ID = 'vault-retro-fonts'
+const RETRO_STYLES = /** @type {const} */ (['8bit', '16bit'])
 
 function applyTheme() {
   const prefersDark = mediaQuery?.matches ?? true
@@ -38,6 +40,19 @@ function applyTheme() {
   }
   if (style !== 'default') {
     document.documentElement.classList.add(`theme-${style}`)
+  }
+
+  // Lazy-load retro fonts only when 8bit/16bit theme is active
+  const needsRetroFonts = RETRO_STYLES.includes(/** @type {any} */ (style))
+  const existing = document.getElementById(RETRO_FONT_ID)
+  if (needsRetroFonts && !existing) {
+    const link = document.createElement('link')
+    link.id = RETRO_FONT_ID
+    link.rel = 'stylesheet'
+    link.href = 'https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap'
+    document.head.appendChild(link)
+  } else if (!needsRetroFonts && existing) {
+    existing.remove()
   }
 }
 

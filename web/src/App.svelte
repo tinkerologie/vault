@@ -1,7 +1,7 @@
 <script>
   import { getRoute, navigate } from './lib/router.svelte.js'
   import { connectWs, getWsStatus } from './lib/ws.svelte.js'
-  import { initTheme, getStyle, setStyle, getMode, setMode, getIsDark, getIsThemed } from './lib/theme.svelte.js'
+  import { initTheme, getMode, setMode, getIsDark, getIsThemed } from './lib/theme.svelte.js'
   import { checkAuthStatus } from './lib/auth.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
   import { getLiveMode, isProxyMode } from './lib/runtime-config.js'
@@ -109,6 +109,8 @@
 
 <CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
 
+<a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-white focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
+
 <div class="flex h-screen bg-surface">
   {#if !ready}
     <div class="flex-1 flex items-center justify-center"><Spinner text="Connecting..." /></div>
@@ -121,7 +123,7 @@
         <span class="text-text font-mono text-sm tracking-widest">┌─ VAULT ─┐</span>
       {:else}
         <div class="w-8 h-8 bg-vault rounded-lg flex items-center justify-center shrink-0">
-          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         </div>
         <div>
           <span class="text-lg font-bold text-text tracking-tight">VAULT</span>
@@ -136,7 +138,7 @@
         <button onclick={() => go(item.path)}
           class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left
             {isActive(item.path) ? 'bg-vault/10 text-vault nav-active' : 'text-text-muted hover:text-text hover:bg-surface-3'}">
-          <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
+          <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
           {item.label}
         </button>
       {/each}
@@ -155,11 +157,11 @@
         aria-label="Toggle theme"
       >
         {#if getIsThemed()}
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
         {:else if getIsDark()}
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
         {:else}
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
         {/if}
       </button>
     </div>
@@ -175,12 +177,12 @@
     <div class="flex items-center justify-between px-4 py-3">
       <div class="flex items-center gap-2">
         <div class="w-7 h-7 bg-vault rounded-lg flex items-center justify-center">
-          <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         </div>
         <span class="text-base font-bold text-text">VAULT</span>
       </div>
       <button onclick={() => mobileMenuOpen = !mobileMenuOpen} class="text-text-muted p-1" aria-label="Toggle menu">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={mobileMenuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'}/></svg>
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={mobileMenuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'}/></svg>
       </button>
     </div>
     {#if mobileMenuOpen}
@@ -189,7 +191,7 @@
           <button onclick={() => go(item.path)}
             class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left
               {isActive(item.path) ? 'bg-vault/10 text-vault nav-active' : 'text-text-muted'}">
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
             {item.label}
           </button>
         {/each}
@@ -198,7 +200,7 @@
   </div>
 
   <!-- Main content -->
-  <main class="flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0">
+  <main id="main-content" class="flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0">
     {#key getRoute()}
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fade-up">
       {#if getRoute() === '/'}
@@ -235,7 +237,7 @@
           {isActive(item.path) ? 'text-vault' : 'text-text-muted'}"
         aria-label={item.label}
       >
-        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" d={item.icon} />
         </svg>
         <span>{item.label}</span>

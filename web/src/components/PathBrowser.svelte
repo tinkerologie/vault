@@ -62,7 +62,7 @@
       class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text hover:bg-surface-2 transition-colors"
       aria-label="Browse directories"
     >
-      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+      <svg aria-hidden="true" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
     </button>
   </div>
 
@@ -73,7 +73,7 @@
         <div class="flex items-center justify-between px-5 py-3 border-b border-border">
           <h3 class="text-base font-semibold text-text">Browse Server</h3>
           <button onclick={() => open = false} class="text-text-muted hover:text-text p-1" aria-label="Close">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
 
@@ -105,7 +105,7 @@
                   onclick={() => selectDir(entry)}
                   class="w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-surface-3 transition-colors group"
                 >
-                  <svg class="w-5 h-5 text-vault/70 group-hover:text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                  <svg aria-hidden="true" class="w-5 h-5 text-vault/70 group-hover:text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                   <div class="min-w-0">
                     <div class="text-sm text-text group-hover:text-vault truncate">{entry.name}</div>
                     <div class="text-xs text-text-dim truncate">{entry.path}</div>

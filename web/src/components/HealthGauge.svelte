@@ -14,7 +14,7 @@
 
 <div class="flex items-center gap-6 bg-surface-2 border border-border rounded-xl p-6 mb-8">
   <div class="relative w-28 h-28 shrink-0">
-    <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90">
+    <svg aria-hidden="true" viewBox="0 0 100 100" class="w-full h-full -rotate-90">
       <circle cx="50" cy="50" r="45" fill="none" stroke="var(--color-border)" stroke-width="8" />
       <circle cx="50" cy="50" r="45" fill="none" stroke={color}
         stroke-width="8" stroke-linecap="round"

@@ -256,7 +256,7 @@
       <p class="text-sm text-text-muted mt-1">Configure where your backups are stored</p>
     </div>
     <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
-      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
       Add Storage
     </button>
   </div>
@@ -266,7 +266,7 @@
   {:else if destinations.length === 0}
     <EmptyState title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel="Add Storage" onaction={() => openCreate()}>
       {#snippet iconSlot()}
-        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons.local}/></svg>
+        <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons.local}/></svg>
       {/snippet}
     </EmptyState>
   {:else}
@@ -275,29 +275,29 @@
         {@const cfg = parseConfig(dest.config)}
         {@const tr = testResults.get(dest.id)}
         {@const jobCount = depCounts.get(dest.id) || 0}
-        <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 transition-colors">
+        <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 hover:shadow-sm transition-all">
           <div class="flex items-start justify-between mb-3">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-lg bg-surface-3 flex items-center justify-center">
-                <svg class="w-5 h-5 {storageColors[dest.type] || 'text-text-muted'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg aria-hidden="true" class="w-5 h-5 {storageColors[dest.type] || 'text-text-muted'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons[dest.type] || storageIcons.local}/>
                 </svg>
               </div>
               <div>
-                <h3 class="text-sm font-semibold text-text">{dest.name}</h3>
+                <h2 class="text-sm font-semibold text-text">{dest.name}</h2>
                 <span class="text-xs text-text-dim uppercase">{dest.type}</span>
               </div>
             </div>
             <div class="flex items-center gap-1">
               <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
-                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                 Import
               </button>
               <button onclick={() => openEdit(dest)} class="p-1.5 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit storage">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
               </button>
               <button onclick={() => deleteStorage(dest.id, dest.name)} class="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete storage">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
             </div>
           </div>
@@ -539,7 +539,7 @@
   {:else if scannedBackups.length === 0}
     <EmptyState title="No backups found" description="No backup manifests were found on this storage destination.">
       {#snippet iconSlot()}
-        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
       {/snippet}
     </EmptyState>
     <div class="flex justify-end mt-4">
@@ -586,7 +586,7 @@
       {#if scannedBackups.length > 0}
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
             Restore Full Database
           </summary>
           <div class="mt-3 pl-6 space-y-2">

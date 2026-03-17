@@ -149,7 +149,7 @@
     <Skeleton variant="table" count={5} />
   {:else if error}
     <div class="bg-danger/10 border border-danger/30 text-danger rounded-xl p-4 flex items-center gap-3">
-      <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       <span class="text-sm">{error}</span>
     </div>
   {:else}
@@ -181,7 +181,7 @@
     <div class="flex flex-wrap items-center gap-3 mb-6">
       <!-- Search -->
       <div class="relative flex-1 min-w-[200px] max-w-sm">
-        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg aria-hidden="true" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
         <input type="text" bind:value={searchQuery} placeholder="Search runs..."
@@ -228,7 +228,7 @@
             <!-- Date header -->
             <div class="flex items-center gap-3 mb-3">
               <div class="w-2 h-2 rounded-full bg-vault"></div>
-              <h3 class="text-sm font-semibold text-text">{dateLabel}</h3>
+              <h2 class="text-sm font-semibold text-text">{dateLabel}</h2>
               <div class="flex-1 h-px bg-border"></div>
               <span class="text-xs text-text-dim">{runs.length} run{runs.length !== 1 ? 's' : ''}</span>
             </div>
@@ -248,7 +248,7 @@
                   <div class="flex items-start justify-between gap-3">
                     <div class="flex items-center gap-3 min-w-0 flex-1">
                       <!-- Status icon -->
-                      <svg class="w-5 h-5 shrink-0 {icon.cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg aria-hidden="true" class="w-5 h-5 shrink-0 {icon.cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={icon.d}/>
                       </svg>
                       <div class="min-w-0 flex-1">
@@ -288,7 +288,7 @@
                       </div>
                     </div>
                     {#if hasLogDetails(run)}
-                      <svg class="w-4 h-4 text-text-dim shrink-0 transition-transform {expandedRunIds.has(run.id) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg aria-hidden="true" class="w-4 h-4 text-text-dim shrink-0 transition-transform {expandedRunIds.has(run.id) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                       </svg>
                     {/if}
@@ -304,9 +304,9 @@
                           {#each items as item (item.name)}
                             <div class="flex items-center gap-2 text-sm">
                               {#if item.status === 'ok'}
-                                <svg class="w-4 h-4 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                <svg aria-hidden="true" class="w-4 h-4 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                               {:else}
-                                <svg class="w-4 h-4 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                <svg aria-hidden="true" class="w-4 h-4 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                               {/if}
                               <span class="font-medium text-text">{item.name}</span>
                               {#if item.size_bytes}

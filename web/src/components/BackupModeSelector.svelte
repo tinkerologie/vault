@@ -71,7 +71,7 @@
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                <svg aria-hidden="true" class="w-4 h-4 text-text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                   ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={mode.icon} /></svg
                 >
                 <span class="text-sm font-medium text-text">{mode.label}</span>
@@ -107,7 +107,7 @@
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                <svg aria-hidden="true" class="w-4 h-4 text-text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                   ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={mode.icon} /></svg
                 >
                 <span class="text-sm font-medium text-text">{mode.label}</span>

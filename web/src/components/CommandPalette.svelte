@@ -123,7 +123,7 @@
     <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden animate-panel-up">
       <!-- Search input -->
       <div class="flex items-center gap-3 px-4 py-3 border-b border-border">
-        <svg class="w-5 h-5 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg aria-hidden="true" class="w-5 h-5 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
         <input
@@ -151,7 +151,7 @@
               onmouseenter={() => selectedIndex = i}
               onclick={() => executeCommand(cmd)}
             >
-              <svg class="w-4 h-4 shrink-0 {i === selectedIndex ? 'text-vault' : 'text-text-dim'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg aria-hidden="true" class="w-4 h-4 shrink-0 {i === selectedIndex ? 'text-vault' : 'text-text-dim'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={cmd.icon}/>
               </svg>
               <span class="text-sm flex-1 truncate">{cmd.label}</span>
