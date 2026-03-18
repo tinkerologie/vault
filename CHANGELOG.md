@@ -6,12 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Added in Unreleased
+## [2026.03.01] - 2026-03-18
+
+### Added
 
 - MCP tools for plugin discovery and runner status
 - Restore-point chain health annotations in the API and MCP restore-point listings
 
-### Changed in Unreleased
+### Changed
 
 - MCP health output now includes version and mode, aligned with the REST `/health` response
 - README refreshed to document the current REST API, MCP transports, and tool coverage
@@ -19,10 +21,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Release packaging now targets `.txz` bundles with SHA256 verification and release automation updates the PLG checksum accordingly
 - The PLG now advertises `project` and `readme` metadata and prunes stale cached plugin bundles during install
 
-### Fixed in Unreleased
+### Fixed
 
 - Restore-point docs now reflect chain health and retention-preserved parents
 - Repository URLs now point at `ruaan-deysel/vault`
+- UI Fixes
 
 ## [2026.03.00] - 2026-03-02
 
