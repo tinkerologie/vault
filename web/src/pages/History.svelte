@@ -216,7 +216,11 @@
     </div>
 
     {#if filteredRuns.length === 0}
-      <EmptyState icon="📜" title="No matching runs" description="Try adjusting your filters or search query." />
+      <EmptyState title="No matching runs" description="Try adjusting your filters or search query.">
+        {#snippet iconSlot()}
+          <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        {/snippet}
+      </EmptyState>
     {:else}
       <!-- Size trend chart -->
       <SizeChart runs={filteredRuns} />

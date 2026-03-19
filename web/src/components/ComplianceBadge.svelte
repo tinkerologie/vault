@@ -59,14 +59,14 @@
     </div>
     <div class="flex items-center gap-3">
       <div class="flex gap-2">
-        <span class="text-xs {copies >= 3 ? 'text-success' : 'text-text-dim'}">
-          {copies >= 3 ? '✓' : '✗'} 3 copies
+        <span class="text-xs {copies >= 3 ? 'text-success' : 'text-text-dim'} inline-flex items-center gap-1">
+          {#if copies >= 3}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>{/if} 3 copies
         </span>
-        <span class="text-xs {media >= 2 ? 'text-success' : 'text-text-dim'}">
-          {media >= 2 ? '✓' : '✗'} 2 media
+        <span class="text-xs {media >= 2 ? 'text-success' : 'text-text-dim'} inline-flex items-center gap-1">
+          {#if media >= 2}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>{/if} 2 media
         </span>
-        <span class="text-xs {offsite >= 1 ? 'text-success' : 'text-text-dim'}">
-          {offsite >= 1 ? '✓' : '✗'} 1 offsite
+        <span class="text-xs {offsite >= 1 ? 'text-success' : 'text-text-dim'} inline-flex items-center gap-1">
+          {#if offsite >= 1}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>{/if} 1 offsite
         </span>
       </div>
       <svg aria-hidden="true" class="w-4 h-4 text-text-muted transition-transform {expanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>

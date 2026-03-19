@@ -42,4 +42,9 @@
   .animate-slide-in {
     animation: slide-in 0.3s ease-out;
   }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-slide-in {
+      animation: none;
+    }
+  }
 </style>

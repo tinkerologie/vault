@@ -1,4 +1,6 @@
 <script>
+  import { onMount } from 'svelte'
+
   let {
     show = false,
     title = 'Confirm',
@@ -10,13 +12,41 @@
     oncancel = () => {},
   } = $props()
 
+  let dialogEl = $state(null)
+
   function handleBackdrop(e) {
     if (e.target === e.currentTarget) oncancel()
   }
 
   function handleKey(e) {
     if (e.key === 'Escape') oncancel()
+    if (e.key === 'Tab' && dialogEl) {
+      const focusable = dialogEl.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
   }
+
+  $effect(() => {
+    if (show && dialogEl) {
+      requestAnimationFrame(() => {
+        const first = dialogEl.querySelector(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+        if (first) first.focus()
+      })
+    }
+  })
 
   const variants = {
     danger: 'bg-danger text-white hover:bg-danger/90',
@@ -38,7 +68,7 @@
     aria-describedby="confirm-message"
     tabindex="-1"
   >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">
+    <div bind:this={dialogEl} class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">
       <h2 id="confirm-title" class="text-lg font-semibold text-text">{title}</h2>
       <p id="confirm-message" class="text-sm text-text-muted mt-2">{message}</p>
       <div class="flex justify-end gap-3 mt-6">

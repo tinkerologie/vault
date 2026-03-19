@@ -292,7 +292,7 @@
                   <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                   Testing...
                 {:else if testResult?.id === src.id}
-                  {testResult.success ? '✓ Connected' : '✗ Failed'}
+                  {#if testResult.success}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> Connected{:else}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> Failed{/if}
                 {:else}
                   <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                   Test
@@ -397,11 +397,11 @@
         {#if modalTestResult}
           <span class="text-xs {modalTestResult.success ? (modalTestResult.warning ? 'text-warning' : 'text-success') : 'text-danger'}">
             {#if modalTestResult.success && modalTestResult.warning}
-              ⚠ {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')} — {modalTestResult.warning}
+              <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')} — {modalTestResult.warning}
             {:else if modalTestResult.success}
-              ✓ {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')}
+              <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')}
             {:else}
-              ✗ {modalTestResult.error}
+              <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> {modalTestResult.error}
             {/if}
           </span>
         {/if}

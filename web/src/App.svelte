@@ -181,7 +181,7 @@
         </div>
         <span class="text-base font-bold text-text">VAULT</span>
       </div>
-      <button onclick={() => mobileMenuOpen = !mobileMenuOpen} class="text-text-muted p-1" aria-label="Toggle menu">
+      <button onclick={() => mobileMenuOpen = !mobileMenuOpen} class="text-text-muted p-2 -mr-2 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Toggle menu">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={mobileMenuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'}/></svg>
       </button>
     </div>
@@ -229,11 +229,11 @@
   </main>
 
   <!-- Mobile bottom navigation -->
-  <nav class="fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-border flex justify-around py-2 z-40 lg:hidden" aria-label="Mobile navigation">
+  <nav class="fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-border flex justify-around py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] z-40 lg:hidden" aria-label="Mobile navigation">
     {#each mobileNav as item (item.path)}
       <button
         onclick={() => go(item.path)}
-        class="flex flex-col items-center gap-0.5 px-3 py-1 text-xs transition-colors
+        class="flex flex-col items-center gap-0.5 px-3 py-2 min-w-[44px] min-h-[44px] text-xs transition-colors
           {isActive(item.path) ? 'text-vault' : 'text-text-muted'}"
         aria-label={item.label}
       >

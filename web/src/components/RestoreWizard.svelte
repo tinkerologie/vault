@@ -276,7 +276,7 @@
       <Spinner text="Loading backed-up items..." />
     {:else if allItems.length === 0}
       <div class="text-center py-12">
-        <p class="text-4xl mb-3">📦</p>
+        <div class="mb-3 opacity-30"><svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></div>
         <p class="text-sm text-text-muted">No backed-up items found. Run a backup first.</p>
       </div>
     {:else}
@@ -371,7 +371,7 @@
       <Spinner text="Loading restore points..." />
     {:else if restorePoints.length === 0}
       <div class="text-center py-12">
-        <p class="text-4xl mb-3">🕐</p>
+        <div class="mb-3 opacity-30"><svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
         <p class="text-sm text-text-muted">No restore points found for the selected items.</p>
       </div>
     {:else}

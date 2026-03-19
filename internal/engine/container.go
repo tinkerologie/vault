@@ -47,6 +47,7 @@ type volumeManifestEntry struct {
 	BackedUp    bool   `json:"backed_up"`
 	SkipReason  string `json:"skip_reason,omitempty"`
 	Archive     string `json:"archive,omitempty"`
+	IsFile      bool   `json:"is_file,omitempty"`
 }
 
 // devicePrefixes are virtual / system filesystem paths that must never be
@@ -268,9 +269,24 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 
 			archiveName := fmt.Sprintf("volume_%d.tar.gz", i)
 			volDest := filepath.Join(destDir, archiveName)
-			if err := tarDirectory(mount.Source, volDest); err != nil {
-				return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+
+			// Detect file-based bind mounts (e.g. Tailscale hook files).
+			srcInfo, err := os.Lstat(mount.Source)
+			if err != nil {
+				return fmt.Errorf("stat volume %s: %w", mount.Source, err)
 			}
+
+			if srcInfo.IsDir() {
+				if err := tarDirectory(mount.Source, volDest); err != nil {
+					return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+				}
+			} else {
+				if err := tarFile(mount.Source, volDest); err != nil {
+					return fmt.Errorf("archiving volume file %s: %w", mount.Source, err)
+				}
+				entry.IsFile = true
+			}
+
 			result.Files = append(result.Files, backupFileInfo(volDest))
 			entry.BackedUp = true
 			entry.Archive = archiveName
@@ -496,11 +512,29 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 		}
 		targetPath = normalizedTargetPath
 
-		if err := os.MkdirAll(targetPath, 0755); err != nil {
-			return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
+		// Check manifest to determine if this was a file-based mount.
+		isFileMount := false
+		for _, me := range savedManifest {
+			if me.Index == i && me.IsFile {
+				isFileMount = true
+				break
+			}
 		}
-		if err := untarDirectory(volArchive, targetPath); err != nil {
-			return fmt.Errorf("restoring volume %s: %w", targetPath, err)
+
+		if isFileMount {
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+				return fmt.Errorf("creating parent dir for %s: %w", targetPath, err)
+			}
+			if err := untarFile(volArchive, targetPath); err != nil {
+				return fmt.Errorf("restoring volume file %s: %w", targetPath, err)
+			}
+		} else {
+			if err := os.MkdirAll(targetPath, 0755); err != nil {
+				return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
+			}
+			if err := untarDirectory(volArchive, targetPath); err != nil {
+				return fmt.Errorf("restoring volume %s: %w", targetPath, err)
+			}
 		}
 	}
 
@@ -633,6 +667,89 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 
 	progress(item.Name, 100, "restore complete")
 	return nil
+}
+
+// tarFile creates a gzip-compressed tar archive containing a single file.
+// Used for file-based bind mounts (e.g. Tailscale container hook).
+func tarFile(srcPath, destPath string) error {
+	info, err := os.Stat(srcPath)
+	if err != nil {
+		return fmt.Errorf("stat source file: %w", err)
+	}
+
+	outFile, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("creating archive file: %w", err)
+	}
+	defer outFile.Close()
+
+	gw := gzip.NewWriter(outFile)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return fmt.Errorf("creating tar header: %w", err)
+	}
+	header.Name = filepath.Base(srcPath)
+
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("writing tar header: %w", err)
+	}
+
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("opening source file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(tw, io.LimitReader(f, header.Size)); err != nil {
+		return fmt.Errorf("writing file to tar: %w", err)
+	}
+
+	return nil
+}
+
+// untarFile extracts the first regular file from a gzip-compressed tar archive
+// and writes it to destPath. Used for restoring file-based bind mounts.
+func untarFile(srcPath, destPath string) error {
+	inFile, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("opening archive: %w", err)
+	}
+	defer inFile.Close()
+
+	gr, err := gzip.NewReader(inFile)
+	if err != nil {
+		return fmt.Errorf("creating gzip reader: %w", err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			return fmt.Errorf("no regular file found in archive")
+		}
+		if err != nil {
+			return fmt.Errorf("reading tar entry: %w", err)
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+		if err != nil {
+			return fmt.Errorf("creating file %s: %w", destPath, err)
+		}
+		if _, err := io.Copy(f, tr); err != nil {
+			f.Close()
+			return fmt.Errorf("writing file %s: %w", destPath, err)
+		}
+		return f.Close()
+	}
 }
 
 // tarDirectory creates a gzip-compressed tar archive of srcDir at destPath.

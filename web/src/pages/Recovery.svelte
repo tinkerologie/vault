@@ -62,9 +62,9 @@
   }
 
   function statusIcon(status) {
-    if (status === 'ready') return '✓'
-    if (status === 'warning') return '⚠'
-    return '✗'
+    if (status === 'ready') return 'check'
+    if (status === 'warning') return 'warning'
+    return 'cross'
   }
 </script>
 
@@ -142,7 +142,7 @@
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <h3 class="text-sm font-semibold text-text">{step.title}</h3>
-                <span class="text-xs {statusColor(step.status)}">{statusIcon(step.status)}</span>
+                <span class="text-xs {statusColor(step.status)}">{#if statusIcon(step.status) === 'check'}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else if statusIcon(step.status) === 'warning'}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>{:else}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>{/if}</span>
               </div>
               <p class="text-xs text-text-muted mt-0.5">{step.description}</p>
             </div>

@@ -336,7 +336,7 @@
               {#if testing === dest.id}
                 Testing...
               {:else if tr}
-                {tr.success ? '✓ Connected' : '✗ Failed'}
+                {#if tr.success}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> Connected{:else}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> Failed{/if}
               {:else}
                 Test
               {/if}
@@ -492,7 +492,7 @@
 
       {#if confirmDelete.jobCount > 0}
         <div class="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
-          <p class="text-sm text-warning font-medium">⚠️ {confirmDelete.jobCount} job{confirmDelete.jobCount !== 1 ? 's' : ''} use{confirmDelete.jobCount === 1 ? 's' : ''} this storage</p>
+          <p class="text-sm text-warning font-medium flex items-center gap-1.5"><svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {confirmDelete.jobCount} job{confirmDelete.jobCount !== 1 ? 's' : ''} use{confirmDelete.jobCount === 1 ? 's' : ''} this storage</p>
           <p class="text-xs text-text-dim mt-1">Those jobs will no longer have a storage destination and will fail to run.</p>
         </div>
       {/if}
@@ -573,7 +573,7 @@
               <div class="flex flex-wrap gap-x-3 mt-1 text-xs text-text-dim">
                 <span>{backup.backup_type || 'full'}</span>
                 <span>{backup.compression || 'none'}</span>
-                {#if backup.encryption && backup.encryption !== 'none'}<span>🔒 {backup.encryption}</span>{/if}
+                {#if backup.encryption && backup.encryption !== 'none'}<span class="inline-flex items-center gap-1"><svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg> {backup.encryption}</span>{/if}
                 {#if backup.created_at}<span>{new Date(backup.created_at).toLocaleString()}</span>{/if}
               </div>
               <p class="text-xs text-text-dim mt-0.5 truncate font-mono">{backup.storage_path}</p>

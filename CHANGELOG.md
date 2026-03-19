@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.03.02] - 2026-03-19
+
+### Added
+
+- Cleaned up documentation.
+
+### Fixed
+
+- Tailscale enabled containers backups failing.
+- UI/UX fixes and polish.
+
 ## [2026.03.01] - 2026-03-18
 
 ### Added

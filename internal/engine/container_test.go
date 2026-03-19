@@ -199,3 +199,94 @@ func TestRunWithRestartSkipsRestartWhenNotNeeded(t *testing.T) {
 		t.Fatal("expected restart to be skipped")
 	}
 }
+
+func TestTarFileAndUntarFileRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	// Create a source file to archive.
+	srcDir := t.TempDir()
+	srcFile := filepath.Join(srcDir, "hook_file")
+	content := []byte("tailscale container hook content")
+	if err := os.WriteFile(srcFile, content, 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	// Archive the single file.
+	tarPath := filepath.Join(t.TempDir(), "volume.tar.gz")
+	if err := tarFile(srcFile, tarPath); err != nil {
+		t.Fatalf("tarFile() error = %v", err)
+	}
+
+	info, err := os.Stat(tarPath)
+	if err != nil {
+		t.Fatalf("tar file not created: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("tar file is empty")
+	}
+
+	// Verify the archive contains exactly one file with the correct name.
+	f, err := os.Open(tarPath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer f.Close()
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gzip.NewReader() error = %v", err)
+	}
+	defer gr.Close()
+	tr := tar.NewReader(gr)
+	header, err := tr.Next()
+	if err != nil {
+		t.Fatalf("tar.Next() error = %v", err)
+	}
+	if header.Name != "hook_file" {
+		t.Errorf("tar entry name = %q, want %q", header.Name, "hook_file")
+	}
+	if _, err := tr.Next(); err != io.EOF {
+		t.Error("expected exactly one entry in tar archive")
+	}
+
+	// Restore the file.
+	restorePath := filepath.Join(t.TempDir(), "restored_hook")
+	if err := untarFile(tarPath, restorePath); err != nil {
+		t.Fatalf("untarFile() error = %v", err)
+	}
+
+	restored, err := os.ReadFile(restorePath)
+	if err != nil {
+		t.Fatalf("restored file not found: %v", err)
+	}
+	if string(restored) != string(content) {
+		t.Errorf("restored content = %q, want %q", string(restored), string(content))
+	}
+}
+
+func TestTarFilePreservesPermissions(t *testing.T) {
+	t.Parallel()
+
+	srcDir := t.TempDir()
+	srcFile := filepath.Join(srcDir, "executable")
+	if err := os.WriteFile(srcFile, []byte("#!/bin/sh"), 0755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	tarPath := filepath.Join(t.TempDir(), "exec.tar.gz")
+	if err := tarFile(srcFile, tarPath); err != nil {
+		t.Fatalf("tarFile() error = %v", err)
+	}
+
+	restorePath := filepath.Join(t.TempDir(), "restored_exec")
+	if err := untarFile(tarPath, restorePath); err != nil {
+		t.Fatalf("untarFile() error = %v", err)
+	}
+
+	info, err := os.Stat(restorePath)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if info.Mode().Perm()&0111 == 0 {
+		t.Errorf("expected executable permission bits, got %v", info.Mode().Perm())
+	}
+}

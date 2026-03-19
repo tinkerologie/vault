@@ -37,10 +37,11 @@ body:
       label: Related backup target
       description: If this bug is tied to a specific backup target, choose it.
       options:
-        - Docker containers
-        - Virtual machines
-        - Folders
-        - Plugins
+        - Container backups
+        - VM backups
+        - Folder and file backups
+        - Plugin backups
+        - Flash backup
         - Not specific / not sure
     validations:
       required: true
