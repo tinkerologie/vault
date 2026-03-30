@@ -10,7 +10,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/klauspost/compress v1.18.4
-	github.com/modelcontextprotocol/go-sdk v1.4.0
+	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/pkg/sftp v1.13.10
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
@@ -56,7 +56,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/segmentio/encoding v0.5.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
