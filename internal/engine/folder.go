@@ -73,11 +73,11 @@ func (h *FolderHandler) Backup(item BackupItem, destDir string, progress Progres
 
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
-		if err := tarDirectoryFiltered(srcPath, archivePath, changedSince); err != nil {
+		if err := tarDirectoryFiltered(srcPath, archivePath, changedSince, nil); err != nil {
 			return nil, fmt.Errorf("archiving changed files in %s: %w", srcPath, err)
 		}
 	} else {
-		if err := tarDirectory(srcPath, archivePath); err != nil {
+		if err := tarDirectory(srcPath, archivePath, nil); err != nil {
 			return nil, fmt.Errorf("archiving %s: %w", srcPath, err)
 		}
 	}

@@ -120,6 +120,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 				r.Get("/plugins", discoverH.ListPlugins)
 			}
 
+			presetsH := handlers.NewPresetsHandler()
+			r.Get("/presets/exclusions", presetsH.GetExclusions)
+
 			replH := handlers.NewReplicationHandler(s.db, s.Syncer, s.config.ServerKey, func() error {
 				if s.schedReload != nil {
 					return s.schedReload()

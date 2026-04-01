@@ -98,7 +98,7 @@ func (h *PluginHandler) Backup(item BackupItem, destDir string, progress Progres
 	configDir := filepath.Join(pluginsDir, pluginName)
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
 		archivePath := filepath.Join(destDir, "config.tar.gz")
-		if err := tarDirectory(configDir, archivePath); err != nil {
+		if err := tarDirectory(configDir, archivePath, nil); err != nil {
 			return nil, fmt.Errorf("archiving plugin config: %w", err)
 		}
 		result.Files = append(result.Files, backupFileInfo(archivePath))

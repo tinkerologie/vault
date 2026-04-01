@@ -41,13 +41,14 @@ var appdataPrefixes = []string{
 
 // volumeManifestEntry describes a single bind mount for the volumes.json manifest.
 type volumeManifestEntry struct {
-	Index       int    `json:"index"`
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
-	BackedUp    bool   `json:"backed_up"`
-	SkipReason  string `json:"skip_reason,omitempty"`
-	Archive     string `json:"archive,omitempty"`
-	IsFile      bool   `json:"is_file,omitempty"`
+	Index         int      `json:"index"`
+	Source        string   `json:"source"`
+	Destination   string   `json:"destination"`
+	BackedUp      bool     `json:"backed_up"`
+	SkipReason    string   `json:"skip_reason,omitempty"`
+	Archive       string   `json:"archive,omitempty"`
+	IsFile        bool     `json:"is_file,omitempty"`
+	ExcludedPaths []string `json:"excluded_paths,omitempty"`
 }
 
 // devicePrefixes are virtual / system filesystem paths that must never be
@@ -102,6 +103,84 @@ func shouldSkipVolume(source string) (bool, string) {
 
 	// Everything else (e.g. /tmp or custom paths) — back up.
 	return false, ""
+}
+
+// isGlobPattern returns true if the pattern contains glob metacharacters.
+func isGlobPattern(pattern string) bool {
+	return strings.ContainsAny(pattern, "*?[")
+}
+
+// shouldExcludePath returns true if relPath should be excluded based on the
+// given exclusion patterns. Patterns without glob characters use prefix
+// matching; patterns with glob characters use filepath.Match against both
+// the full relative path and the base filename.
+func shouldExcludePath(relPath string, exclusions []string) bool {
+	if len(exclusions) == 0 || relPath == "" || relPath == "." {
+		return false
+	}
+
+	for _, pattern := range exclusions {
+		pattern = strings.TrimPrefix(pattern, "/")
+		pattern = strings.TrimSuffix(pattern, "/")
+		if pattern == "" {
+			continue
+		}
+
+		if isGlobPattern(pattern) {
+			// Match against full relative path.
+			if matched, _ := filepath.Match(pattern, relPath); matched {
+				return true
+			}
+			// Match against just the filename (so *.log works at any depth).
+			if matched, _ := filepath.Match(pattern, filepath.Base(relPath)); matched {
+				return true
+			}
+		} else {
+			// Prefix match for directory exclusions.
+			if relPath == pattern || strings.HasPrefix(relPath, pattern+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// mapExclusionsToVolume converts container-side exclusion paths into paths
+// relative to a specific volume's mount destination. Glob patterns pass
+// through unchanged since they apply to all volumes.
+func mapExclusionsToVolume(exclusions []string, mountDestination string) []string {
+	if len(exclusions) == 0 {
+		return nil
+	}
+
+	mountDest := filepath.Clean(mountDestination)
+	prefix := mountDest + "/"
+	if mountDest == "/" {
+		prefix = "/"
+	}
+	var mapped []string
+
+	for _, excl := range exclusions {
+		if isGlobPattern(excl) {
+			mapped = append(mapped, excl)
+			continue
+		}
+
+		cleanExcl := filepath.Clean(excl)
+		if cleanExcl == mountDest {
+			mapped = append(mapped, ".")
+			continue
+		}
+
+		if strings.HasPrefix(cleanExcl, prefix) {
+			rel := strings.TrimPrefix(cleanExcl, prefix)
+			if rel != "" {
+				mapped = append(mapped, rel)
+			}
+		}
+	}
+
+	return mapped
 }
 
 // ContainerHandler implements Handler for Docker containers.
@@ -194,6 +273,19 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 	wasRunning := inspect.State.Running
 	noStop, _ := item.Settings["no_stop"].(bool)
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
+
+	// Extract path exclusions from item settings.
+	var exclusions []string
+	if ep, ok := item.Settings["exclude_paths"]; ok {
+		if epSlice, ok := ep.([]any); ok {
+			for _, v := range epSlice {
+				if s, ok := v.(string); ok && s != "" {
+					exclusions = append(exclusions, s)
+				}
+			}
+		}
+	}
+
 	if wasRunning && !noStop {
 		progress(item.Name, 20, "stopping container")
 		if err := h.cli.ContainerStop(ctx, containerID, container.StopOptions{}); err != nil {
@@ -277,8 +369,20 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 			}
 
 			if srcInfo.IsDir() {
-				if err := tarDirectory(mount.Source, volDest); err != nil {
-					return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
+
+				if hasChangedSince {
+					if err := tarDirectoryFiltered(mount.Source, volDest, changedSince, volExclusions); err != nil {
+						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+					}
+				} else {
+					if err := tarDirectory(mount.Source, volDest, volExclusions); err != nil {
+						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+					}
+				}
+
+				if len(volExclusions) > 0 {
+					entry.ExcludedPaths = volExclusions
 				}
 			} else {
 				if err := tarFile(mount.Source, volDest); err != nil {
@@ -753,7 +857,7 @@ func untarFile(srcPath, destPath string) error {
 }
 
 // tarDirectory creates a gzip-compressed tar archive of srcDir at destPath.
-func tarDirectory(srcDir, destPath string) error {
+func tarDirectory(srcDir, destPath string, exclusions []string) error {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -785,6 +889,14 @@ func tarDirectory(srcDir, destPath string) error {
 			return err
 		}
 		if rel == "." {
+			return nil
+		}
+
+		// Check exclusions before processing the entry.
+		if shouldExcludePath(rel, exclusions) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -846,7 +958,7 @@ func tarDirectory(srcDir, destPath string) error {
 // including only files whose modification time is after changedSince. Directory
 // entries are always included to preserve structure. This is used for
 // incremental and differential backups.
-func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time) error {
+func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time, exclusions []string) error {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -876,6 +988,14 @@ func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time) error
 			return err
 		}
 		if rel == "." {
+			return nil
+		}
+
+		// Check exclusions before processing the entry.
+		if shouldExcludePath(rel, exclusions) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 

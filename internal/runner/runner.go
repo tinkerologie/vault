@@ -451,6 +451,9 @@ func (r *Runner) RunJob(jobID int64) {
 			if job.ContainerMode == "stop_all" {
 				backupItem.Settings["no_stop"] = true
 			}
+			if ep, ok := settings["exclude_paths"]; ok {
+				backupItem.Settings["exclude_paths"] = ep
+			}
 		}
 
 		// VM items need the backup mode (snapshot or cold).

@@ -213,6 +213,29 @@
     return ''
   }
 
+  function getContainerExclusionPaths(item) {
+    const settings = parseItemSettings(item)
+    return Array.isArray(settings.exclude_paths) ? settings.exclude_paths : []
+  }
+
+  function updateContainerExclusionPaths(itemName, paths) {
+    form = {
+      ...form,
+      items: form.items.map((item) => {
+        if (item.item_type !== 'container' || item.item_name !== itemName) return item
+
+        const settings = { ...parseItemSettings(item) }
+        if (paths.length === 0) {
+          delete settings.exclude_paths
+        } else {
+          settings.exclude_paths = paths
+        }
+
+        return { ...item, settings: JSON.stringify(settings) }
+      }),
+    }
+  }
+
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
@@ -430,7 +453,44 @@
   let hasFolders = $derived(form.items.some(i => i.item_type === 'folder'))
   let hasPlugins = $derived(form.items.some(i => i.item_type === 'plugin'))
   let selectedVMItems = $derived(form.items.filter(i => i.item_type === 'vm'))
+  let selectedContainerItems = $derived(form.items.filter(i => i.item_type === 'container'))
   let vmRestoreVerifyErrors = $derived(selectedVMItems.map(getVMRestoreVerifyError).filter(Boolean))
+
+  let containerPresets = $state({})
+  let presetsAbortController = null
+
+  async function fetchContainerPresets(items) {
+    if (presetsAbortController) {
+      presetsAbortController.abort()
+    }
+    presetsAbortController = new AbortController()
+    const signal = presetsAbortController.signal
+
+    const newPresets = {}
+    for (const item of items) {
+      const settings = parseItemSettings(item)
+      const image = settings.image || ''
+      if (!image) continue
+      try {
+        const res = await fetch(`/api/v1/presets/exclusions?image=${encodeURIComponent(image)}`, { signal })
+        if (!res.ok) continue
+        const data = await res.json()
+        if (data.paths && data.paths.length > 0) {
+          newPresets[item.item_name] = data.paths
+        }
+      } catch {
+        // Silently ignore preset fetch failures and aborts.
+      }
+    }
+    if (signal.aborted) return
+    containerPresets = newPresets
+  }
+
+  $effect(() => {
+    if (selectedContainerItems.length > 0) {
+      fetchContainerPresets(selectedContainerItems)
+    }
+  })
 
   // describeSchedule and relTimeUntil imported from utils.js
 </script>
@@ -917,6 +977,56 @@
                       {/if}
                     </div>
                   {/if}
+                </div>
+              {/each}
+            </div>
+          </details>
+        {/if}
+
+        {#if hasContainers}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Container Path Exclusions
+            </summary>
+            <div class="space-y-4 mt-3 pl-6">
+              <p class="text-xs text-text-dim">Exclude paths from container backups to skip cache, logs, and other non-critical data. Use container-side paths (e.g., /config/Cache) or glob patterns (e.g., *.log). One per line.</p>
+              {#each selectedContainerItems as cItem (cItem.item_name)}
+                {@const currentExclusions = getContainerExclusionPaths(cItem)}
+                {@const preset = containerPresets[cItem.item_name]}
+                {@const allPresetLoaded = preset ? preset.every(p => currentExclusions.includes(p)) : false}
+                <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3">
+                  <div class="flex items-center justify-between">
+                    <p class="text-sm font-medium text-text">{cItem.item_name}</p>
+                    {#if currentExclusions.length > 0}
+                      <span class="text-xs text-text-dim">{currentExclusions.length} path{currentExclusions.length !== 1 ? 's' : ''} excluded</span>
+                    {/if}
+                  </div>
+
+                  {#if preset}
+                    <button
+                      type="button"
+                      disabled={allPresetLoaded}
+                      onclick={() => {
+                        const merged = [...new Set([...currentExclusions, ...preset])]
+                        updateContainerExclusionPaths(cItem.item_name, merged)
+                      }}
+                      class="text-xs px-3 py-1.5 rounded-lg border transition-colors {allPresetLoaded ? 'border-green-500/30 text-green-400 bg-green-500/10 cursor-default' : 'border-vault/30 text-vault hover:bg-vault/10 cursor-pointer'}"
+                    >
+                      {allPresetLoaded ? 'Recommended exclusions loaded' : 'Load recommended exclusions'}
+                    </button>
+                  {/if}
+
+                  <textarea
+                    value={currentExclusions.join('\n')}
+                    oninput={(e) => {
+                      const paths = e.currentTarget.value.split('\n').map(p => p.trim()).filter(Boolean)
+                      updateContainerExclusionPaths(cItem.item_name, paths)
+                    }}
+                    placeholder={"/config/Cache\n*.log"}
+                    rows="4"
+                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-dim/50"
+                  ></textarea>
                 </div>
               {/each}
             </div>
