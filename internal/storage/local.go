@@ -30,7 +30,7 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0750); err != nil {
 		return fmt.Errorf("create directories: %w", err)
 	}
 	f, err := os.Create(full)
@@ -111,7 +111,7 @@ func (l *LocalAdapter) TestConnection() error {
 		return fmt.Errorf("%s is not a directory", l.basePath)
 	}
 	testFile := filepath.Join(l.basePath, ".vault_test")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+	if err := os.WriteFile(testFile, []byte("test"), 0600); err != nil {
 		return fmt.Errorf("not writable: %w", err)
 	}
 	_ = os.Remove(testFile)

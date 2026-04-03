@@ -165,7 +165,7 @@ func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, 
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("download file %q: status %d: %s", filePath, resp.StatusCode, body)
 	}
 	return resp.Body, nil

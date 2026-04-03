@@ -47,7 +47,7 @@ func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, error) {
 
 	share, err := session.Mount(s.config.Share)
 	if err != nil {
-		session.Logoff()
+		_ = session.Logoff()
 		return nil, nil, fmt.Errorf("mount share: %w", err)
 	}
 
@@ -96,14 +96,14 @@ func (s *SMBAdapter) Read(path string) (io.ReadCloser, error) {
 
 	fullPath, err := s.fullPath(path, false)
 	if err != nil {
-		share.Umount()
-		session.Logoff()
+		_ = share.Umount()
+		_ = session.Logoff()
 		return nil, err
 	}
 	f, err := share.Open(fullPath)
 	if err != nil {
-		share.Umount()
-		session.Logoff()
+		_ = share.Umount()
+		_ = session.Logoff()
 		return nil, err
 	}
 	return &smbReadCloser{file: f, share: share, session: session}, nil
@@ -117,8 +117,8 @@ type smbReadCloser struct {
 
 func (r *smbReadCloser) Read(p []byte) (int, error) { return r.file.Read(p) }
 func (r *smbReadCloser) Close() error {
-	r.file.Close()
-	r.share.Umount()
+	_ = r.file.Close()
+	_ = r.share.Umount()
 	return r.session.Logoff()
 }
 

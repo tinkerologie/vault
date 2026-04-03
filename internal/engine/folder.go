@@ -54,7 +54,7 @@ func (h *FolderHandler) Backup(item BackupItem, destDir string, progress Progres
 		return nil, fmt.Errorf("source path not accessible: %w", err)
 	}
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0750); err != nil {
 		return nil, fmt.Errorf("creating dest dir: %w", err)
 	}
 
@@ -86,7 +86,7 @@ func (h *FolderHandler) Backup(item BackupItem, destDir string, progress Progres
 	// Store source path metadata so restore knows the original location.
 	metaPath := filepath.Join(destDir, "folder_meta.json")
 	metaJSON := fmt.Sprintf(`{"path":%q,"name":%q}`, srcPath, item.Name)
-	if err := os.WriteFile(metaPath, []byte(metaJSON), 0644); err != nil {
+	if err := os.WriteFile(metaPath, []byte(metaJSON), 0600); err != nil {
 		return nil, fmt.Errorf("writing folder metadata: %w", err)
 	}
 	result.Files = append(result.Files, backupFileInfo(metaPath))
@@ -138,7 +138,7 @@ func (h *FolderHandler) Restore(item BackupItem, sourceDir string, progress Prog
 		return fmt.Errorf("backup archive not found: %w", err)
 	}
 
-	if err := os.MkdirAll(destPath, 0755); err != nil {
+	if err := os.MkdirAll(destPath, 0750); err != nil {
 		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
 	}
 

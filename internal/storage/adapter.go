@@ -25,6 +25,6 @@ type Adapter interface {
 // Safe to call on any Adapter; adapters without resources are no-ops.
 func CloseAdapter(a Adapter) {
 	if closer, ok := a.(io.Closer); ok {
-		closer.Close()
+		_ = closer.Close()
 	}
 }

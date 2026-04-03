@@ -45,7 +45,7 @@ func (sm *SnapshotManager) LastSnapshot() time.Time {
 // SaveSnapshot copies the working DB to the snapshot path using the SQLite
 // backup API.
 func (sm *SnapshotManager) SaveSnapshot() error {
-	if err := os.MkdirAll(filepath.Dir(sm.snapshotPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(sm.snapshotPath), 0o750); err != nil {
 		return fmt.Errorf("create snapshot directory: %w", err)
 	}
 

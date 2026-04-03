@@ -37,7 +37,7 @@ func EncryptReader(passphrase string, src io.Reader) (io.Reader, error) {
 			pw.CloseWithError(fmt.Errorf("finalizing encryption: %w", err))
 			return
 		}
-		pw.Close()
+		_ = pw.Close()
 	}()
 
 	return pr, nil

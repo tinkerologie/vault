@@ -353,10 +353,10 @@ func (s *Syncer) downloadDir(client *Client, storageID int64, dirPath string, lo
 		}
 
 		if err := localAdapter.Write(f.Path, rc); err != nil {
-			rc.Close()
+			_ = rc.Close()
 			return totalBytes, fmt.Errorf("write %q: %w", f.Path, err)
 		}
-		rc.Close()
+		_ = rc.Close()
 		totalBytes += f.Size
 	}
 	return totalBytes, nil

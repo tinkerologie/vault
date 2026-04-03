@@ -829,7 +829,7 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 			pr, pw := io.Pipe()
 			cw, closeFn, ext, compErr := compressWriter(pw, compression)
 			if compErr != nil {
-				f.Close()
+				_ = f.Close()
 				return nil, nil, fmt.Errorf("compressing %s: %w", entry.Name(), compErr)
 			}
 			storageName += ext
@@ -841,7 +841,7 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 				} else if closeErr != nil {
 					pw.CloseWithError(closeErr)
 				} else {
-					pw.Close()
+					_ = pw.Close()
 				}
 			}()
 			reader = pr
@@ -850,7 +850,7 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 		if passphrase != "" {
 			encrypted, encErr := crypto.EncryptReader(passphrase, reader)
 			if encErr != nil {
-				f.Close()
+				_ = f.Close()
 				return nil, nil, fmt.Errorf("encrypting %s: %w", entry.Name(), encErr)
 			}
 			reader = encrypted
@@ -862,10 +862,10 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 
 		destPath := filepath.Join(storagePath, storageName)
 		if writeErr := adapter.Write(destPath, tee); writeErr != nil {
-			f.Close()
+			_ = f.Close()
 			return nil, nil, fmt.Errorf("writing %s to storage: %w", storageName, writeErr)
 		}
-		f.Close()
+		_ = f.Close()
 
 		checksums[storageName] = hex.EncodeToString(hasher.Sum(nil))
 	}
@@ -880,10 +880,10 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 			}
 			verifyHasher := sha256.New()
 			if _, err := io.Copy(verifyHasher, reader); err != nil {
-				reader.Close()
+				_ = reader.Close()
 				return nil, nil, fmt.Errorf("verification hash %s: %w", fileName, err)
 			}
-			reader.Close()
+			_ = reader.Close()
 			actualHash := hex.EncodeToString(verifyHasher.Sum(nil))
 			if actualHash != expectedHash {
 				return nil, nil, fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash)
@@ -1250,7 +1250,7 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 		if strings.HasSuffix(localName, ".age") && passphrase != "" {
 			decrypted, decErr := crypto.DecryptReader(passphrase, hashingReader)
 			if decErr != nil {
-				reader.Close()
+				_ = reader.Close()
 				return fmt.Errorf("decrypting %s: %w", fi.Path, decErr)
 			}
 			dataReader = decrypted
@@ -1260,7 +1260,7 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 		// Decompress the transport layer using the job's configured compression.
 		decompressed, closeDecompress, restoredName, decmpErr := decompressStoredReader(dataReader, localName, job.Compression)
 		if decmpErr != nil {
-			reader.Close()
+			_ = reader.Close()
 			return fmt.Errorf("decompressing %s: %w", fi.Path, decmpErr)
 		}
 		dataReader = decompressed
@@ -1269,18 +1269,18 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 		localPath := filepath.Join(tmpDir, localName)
 		out, err := os.Create(localPath)
 		if err != nil {
-			reader.Close()
+			_ = reader.Close()
 			return fmt.Errorf("creating local file %s: %w", localPath, err)
 		}
 		if _, copyErr := io.Copy(out, dataReader); copyErr != nil {
 			_ = closeDecompress()
-			out.Close()
-			reader.Close()
+			_ = out.Close()
+			_ = reader.Close()
 			return fmt.Errorf("downloading %s: %w", fi.Path, copyErr)
 		}
 		_ = closeDecompress()
-		out.Close()
-		reader.Close()
+		_ = out.Close()
+		_ = reader.Close()
 		downloadedBytes += fileBytes
 		if totalBytes > 0 {
 			pct := scaleRestorePhaseProgress(phaseStart, phaseEnd, downloadedBytes, totalBytes)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,20 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 )
+
+// maxExtractSize is the maximum size for a single file extracted from a tar
+// archive, used to prevent decompression bombs. 50 GiB accommodates container
+// images and volume data.
+const maxExtractSize = 50 << 30 // 50 GiB
+
+// safeFileMode converts a tar header mode (int64) to os.FileMode, clamping to
+// the valid permission‐bit range to prevent integer overflow (gosec G115).
+func safeFileMode(mode int64) os.FileMode {
+	if mode < 0 || mode > math.MaxUint32 {
+		return 0o644
+	}
+	return os.FileMode(mode) & 0o7777
+}
 
 // skipPrefixes are Unraid paths that contain large shared data (media,
 // downloads, ISOs, etc.) and must NOT be backed up as container volumes.
@@ -240,7 +255,7 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 		return nil, fmt.Errorf("container id not found in settings")
 	}
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0750); err != nil {
 		return nil, fmt.Errorf("creating dest dir: %w", err)
 	}
 
@@ -264,7 +279,7 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 	if err != nil {
 		return nil, fmt.Errorf("marshalling config: %w", err)
 	}
-	if err := os.WriteFile(configPath, configData, 0644); err != nil {
+	if err := os.WriteFile(configPath, configData, 0600); err != nil {
 		return nil, fmt.Errorf("writing config: %w", err)
 	}
 	result.Files = append(result.Files, backupFileInfo(configPath))
@@ -401,7 +416,7 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 		if len(manifest) > 0 {
 			manifestData, _ := json.MarshalIndent(manifest, "", "  ")
 			manifestPath := filepath.Join(destDir, "volumes.json")
-			if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
+			if err := os.WriteFile(manifestPath, manifestData, 0600); err != nil {
 				log.Printf("engine: warning: failed to write volumes manifest: %v", err)
 			}
 		}
@@ -423,7 +438,7 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 			if includeTemplate {
 				progress(item.Name, 85, "saving template")
 				destTemplate := filepath.Join(destDir, "template.xml")
-				if writeErr := os.WriteFile(destTemplate, data, 0644); writeErr != nil {
+				if writeErr := os.WriteFile(destTemplate, data, 0600); writeErr != nil {
 					return fmt.Errorf("writing template xml: %w", writeErr)
 				}
 				result.Files = append(result.Files, backupFileInfo(destTemplate))
@@ -493,7 +508,7 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 	}
 	// Drain the response body to ensure the daemon completes the load.
 	_, _ = io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Step 2: Read full container config.
 	progress(item.Name, 15, "reading config")
@@ -626,14 +641,14 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 		}
 
 		if isFileMount {
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", targetPath, err)
 			}
 			if err := untarFile(volArchive, targetPath); err != nil {
 				return fmt.Errorf("restoring volume file %s: %w", targetPath, err)
 			}
 		} else {
-			if err := os.MkdirAll(targetPath, 0755); err != nil {
+			if err := os.MkdirAll(targetPath, 0750); err != nil {
 				return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
 			}
 			if err := untarDirectory(volArchive, targetPath); err != nil {
@@ -755,9 +770,9 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 	progress(item.Name, 80, "restoring template")
 	templateSrc := filepath.Join(sourceDir, "template.xml")
 	if data, readErr := os.ReadFile(templateSrc); readErr == nil {
-		templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml")
-		if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0755); mkErr == nil {
-			_ = os.WriteFile(templateDest, data, 0644)
+		templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") //nolint:gosec // path is constructed from trusted container name
+		if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
+			_ = os.WriteFile(templateDest, data, 0600) //nolint:gosec // best-effort restore of template
 		}
 	}
 
@@ -844,12 +859,12 @@ func untarFile(srcPath, destPath string) error {
 			continue
 		}
 
-		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode))
 		if err != nil {
 			return fmt.Errorf("creating file %s: %w", destPath, err)
 		}
-		if _, err := io.Copy(f, tr); err != nil {
-			f.Close()
+		if _, err := io.CopyN(f, tr, maxExtractSize); err != nil && !errors.Is(err, io.EOF) {
+			_ = f.Close()
 			return fmt.Errorf("writing file %s: %w", destPath, err)
 		}
 		return f.Close()
@@ -1087,22 +1102,22 @@ func untarDirectory(srcPath, destDir string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(header.Mode)); err != nil {
+			if err := os.MkdirAll(target, safeFileMode(header.Mode)); err != nil {
 				return fmt.Errorf("creating directory %s: %w", target, err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode))
 			if err != nil {
 				return fmt.Errorf("creating file %s: %w", target, err)
 			}
-			if _, err := io.Copy(f, tr); err != nil {
-				f.Close()
+			if _, err := io.CopyN(f, tr, maxExtractSize); err != nil && !errors.Is(err, io.EOF) {
+				_ = f.Close()
 				return fmt.Errorf("writing file %s: %w", target, err)
 			}
-			f.Close()
+			_ = f.Close()
 		}
 	}
 	return nil

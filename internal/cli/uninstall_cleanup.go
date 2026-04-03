@@ -162,7 +162,7 @@ func discoverUninstallCleanupState(cfg uninstallCleanupConfig) (uninstallCleanup
 
 		dests, listErr := database.ListStorageDestinations()
 		if listErr != nil {
-			database.Close()
+			_ = database.Close()
 			warnings = append(warnings, fmt.Sprintf("list storage destinations from %s: %v", candidate, listErr))
 			continue
 		}

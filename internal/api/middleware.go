@@ -175,7 +175,7 @@ func ReadOnlyGuard(next http.Handler) http.Handler {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"this is a read-only replica"}`)) //nolint:errcheck
+			_, _ = w.Write([]byte(`{"error":"this is a read-only replica"}`))
 			return
 		}
 		next.ServeHTTP(w, r)

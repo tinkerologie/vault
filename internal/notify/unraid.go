@@ -35,7 +35,7 @@ func Send(event, subject, description string, importance Importance) error {
 		return fmt.Errorf("checking notify helper: %w", err)
 	}
 
-	cmd := exec.Command(notifyScriptPath,
+	cmd := exec.Command(notifyScriptPath, //nolint:gosec // notifyScriptPath is a compile-time constant
 		"-e", event,
 		"-s", subject,
 		"-d", description,

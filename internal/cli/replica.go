@@ -41,7 +41,7 @@ disaster recovery.`,
 		}
 
 		// Ensure the database directory exists.
-		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 			return fmt.Errorf("creating database directory: %w", err)
 		}
 

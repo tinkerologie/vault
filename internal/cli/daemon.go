@@ -50,7 +50,7 @@ var daemonCmd = &cobra.Command{
 		if info, err := os.Stat("/mnt/cache"); err == nil && info.IsDir() {
 			hybridMode = true
 			workingDir := "/var/local/vault"
-			if err := os.MkdirAll(workingDir, 0o755); err != nil {
+			if err := os.MkdirAll(workingDir, 0o750); err != nil {
 				return fmt.Errorf("creating hybrid working directory: %w", err)
 			}
 			actualDBPath = filepath.Join(workingDir, "vault.db")
@@ -61,7 +61,7 @@ var daemonCmd = &cobra.Command{
 			if _, usbErr := os.Stat(dbPath); usbErr == nil {
 				if _, snapErr := os.Stat(snapshotPath); os.IsNotExist(snapErr) {
 					log.Printf("Migrating USB database %s → snapshot %s", dbPath, snapshotPath)
-					if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o755); err != nil {
+					if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o750); err != nil {
 						return fmt.Errorf("creating snapshot directory: %w", err)
 					}
 					// Use SQLite backup API via a temporary open to migrate safely.
@@ -71,10 +71,10 @@ var daemonCmd = &cobra.Command{
 					}
 					migrator := db.NewSnapshotManager(tmpDB, snapshotPath)
 					if err := migrator.SaveSnapshot(); err != nil {
-						tmpDB.Close()
+						_ = tmpDB.Close()
 						return fmt.Errorf("migrating USB database to snapshot: %w", err)
 					}
-					tmpDB.Close()
+					_ = tmpDB.Close()
 
 					// Remove USB DB to prevent re-migration on next startup.
 					// The data is safely on the cache drive now.
@@ -84,7 +84,7 @@ var daemonCmd = &cobra.Command{
 						log.Printf("USB database migrated and removed: %s", dbPath)
 					}
 					// Clean up any leftover .migrated file from older versions.
-					os.Remove(dbPath + ".migrated")
+					_ = os.Remove(dbPath + ".migrated")
 				}
 			}
 
@@ -106,7 +106,7 @@ var daemonCmd = &cobra.Command{
 			if err := snapshotMgr.RestoreFromSnapshot(); err != nil {
 				return fmt.Errorf("restoring snapshot: %w", err)
 			}
-			database.Close()
+			_ = database.Close()
 			database, err = db.Open(actualDBPath)
 			if err != nil {
 				return fmt.Errorf("re-opening database after snapshot restore: %w", err)
@@ -115,7 +115,7 @@ var daemonCmd = &cobra.Command{
 			if override, err := database.GetSetting("snapshot_path_override", ""); err == nil && override != "" {
 				snapshotPath = override
 				log.Printf("Using custom snapshot path: %s", snapshotPath)
-				if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o755); err != nil {
+				if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o750); err != nil {
 					log.Printf("Warning: failed to create custom snapshot directory: %v", err)
 				}
 			}

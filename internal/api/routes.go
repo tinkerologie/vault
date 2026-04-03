@@ -167,7 +167,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// Try to serve the file directly (css, js, images, etc.).
 		if path != "" {
 			if f, err := distFS.Open(path); err == nil {
-				f.Close()
+				_ = f.Close()
 				fileServer.ServeHTTP(w, r)
 				return
 			}

@@ -41,6 +41,12 @@ func NewNFSAdapter(config NFSConfig) (*NFSAdapter, error) {
 	if config.Export == "" {
 		return nil, fmt.Errorf("nfs: export is required")
 	}
+	// Reject shell metacharacters in mount arguments to prevent command injection.
+	for _, s := range []string{config.Host, config.Export, config.Version, config.Options} {
+		if strings.ContainsAny(s, ";|&$`\\\"'(){}[]<>!\n\r") {
+			return nil, fmt.Errorf("nfs: config contains invalid characters")
+		}
+	}
 	if config.Version == "" {
 		config.Version = "4"
 	}
@@ -71,7 +77,7 @@ func (n *NFSAdapter) mount() error {
 	args = append(args, "-o", strings.Join(opts, ","))
 	args = append(args, source, dir)
 
-	if out, err := exec.Command("mount", args...).CombinedOutput(); err != nil {
+	if out, err := exec.Command("mount", args...).CombinedOutput(); err != nil { //nolint:gosec // args validated in NewNFSAdapter
 		_ = os.Remove(dir)
 		return fmt.Errorf("nfs: mount %s failed: %w\n%s", source, err, strings.TrimSpace(string(out)))
 	}
@@ -80,7 +86,7 @@ func (n *NFSAdapter) mount() error {
 	if n.config.BasePath != "" {
 		basePath, err = safepath.JoinUnderBase(dir, n.config.BasePath, true)
 		if err != nil {
-			_ = exec.Command("umount", dir).Run()
+			_ = exec.Command("umount", dir).Run() //nolint:gosec // dir is vault-controlled temp dir
 			_ = os.Remove(dir)
 			return fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err)
 		}
@@ -99,7 +105,7 @@ func (n *NFSAdapter) unmount() {
 	if !n.mounted {
 		return
 	}
-	_ = exec.Command("umount", n.mountDir).Run()
+	_ = exec.Command("umount", n.mountDir).Run() //nolint:gosec // mountDir is vault-controlled temp dir
 	_ = os.Remove(n.mountDir)
 	n.mounted = false
 	n.local = nil

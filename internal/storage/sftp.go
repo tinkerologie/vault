@@ -163,7 +163,7 @@ type sftpReadCloser struct {
 
 func (r *sftpReadCloser) Read(p []byte) (int, error) { return r.file.Read(p) }
 func (r *sftpReadCloser) Close() error {
-	r.file.Close()
+	_ = r.file.Close()
 	return r.client.Close()
 }
 

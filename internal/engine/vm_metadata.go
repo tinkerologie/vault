@@ -48,7 +48,7 @@ func writeVMBackupMetadata(destDir, state string, settings map[string]any) (stri
 	}
 
 	metadataPath := filepath.Join(destDir, vmMetadataFileName)
-	if err := os.WriteFile(metadataPath, data, 0o644); err != nil {
+	if err := os.WriteFile(metadataPath, data, 0o600); err != nil {
 		return "", fmt.Errorf("write vm metadata: %w", err)
 	}
 
