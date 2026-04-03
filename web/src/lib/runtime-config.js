@@ -7,6 +7,7 @@ const defaultConfig = Object.freeze({
   proxyPath: '',
   csrfToken: '',
   liveMode: 'websocket',
+  timeFormat: 'auto',
 })
 
 export function getRuntimeConfig() {
@@ -32,6 +33,23 @@ export function getDaemonBindAddress() {
 
 export function getDaemonPort() {
   return getRuntimeConfig().daemonPort || defaultConfig.daemonPort
+}
+
+export function getTimeFormat() {
+  return getRuntimeConfig().timeFormat || defaultConfig.timeFormat
+}
+
+/**
+ * Returns the hour12 option for Intl/toLocale* calls:
+ * - true  → force 12-hour (AM/PM)
+ * - false → force 24-hour
+ * - undefined → let the browser locale decide
+ */
+export function getHour12() {
+  const fmt = getTimeFormat()
+  if (fmt === '12h') return true
+  if (fmt === '24h') return false
+  return undefined
 }
 
 export function buildApiRequest(method, path, { body = null, headers = {} } = {}) {

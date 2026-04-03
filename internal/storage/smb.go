@@ -74,7 +74,9 @@ func (s *SMBAdapter) Write(path string, reader io.Reader) error {
 	if err != nil {
 		return err
 	}
-	share.MkdirAll(filepath.Dir(full), 0755)
+	if err := share.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
 
 	f, err := share.Create(full)
 	if err != nil {

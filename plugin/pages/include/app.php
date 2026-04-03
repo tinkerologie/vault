@@ -31,6 +31,7 @@ $runtimeConfig = [
     'daemonPort' => vault_get_port(),
     'liveMode' => 'poll',
     'csrfToken' => $var['csrf_token'] ?? '',
+    'timeFormat' => vault_detect_time_format(),
 ];
 
 $inject = '<script>window.__VAULT_RUNTIME_CONFIG__=' . json_encode(

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.04.00] - 2026-04-15
+
+### Added
+
+- Monthly and yearly scheduling now support "First day of month" and "Last day of month" options in the schedule builder UI; last-day jobs use a daily-check pattern on the backend with an `isLastDayOfMonth()` guard so they fire correctly on months of any length (closes #15)
+- Unraid display time format is now detected from `dynamix.cfg` and injected into the runtime config, allowing the UI to honour the user's 12-hour or 24-hour preference
+- `getTimeFormat()` and `getHour12()` helpers added to `runtime-config.js` for locale-aware time rendering
+- `formatDate()` utility now used consistently for all date/time display in the Storage and Settings pages
+
+### Fixed
+
+- SMB adapter `Write()` now propagates `MkdirAll` errors instead of silently ignoring them
+- `ItemPicker` selected-items map wrapped in `$state()` to ensure Svelte 5 reactive tracking
+- Storage form "Save" button now guards against double-submission with a `saving` flag and shows a "Saving…" state while the request is in flight
+
 ## [2026.03.02] - 2026-03-19
 
 ### Added

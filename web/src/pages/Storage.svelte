@@ -15,6 +15,7 @@
   let showModal = $state(false)
   let editing = $state(null)
   let testing = $state(null)
+  let saving = $state(false)
   let testResults = $state(new SvelteMap())
   let toast = $state({ message: '', type: 'info', key: 0 })
   let confirmDelete = $state({ show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 })
@@ -90,6 +91,8 @@
   }
 
   async function saveStorage() {
+    if (saving) return
+    saving = true
     try {
       const payload = {
         name: form.name,
@@ -107,6 +110,8 @@
       await loadData()
     } catch (e) {
       showToast(e.message, 'error')
+    } finally {
+      saving = false
     }
   }
 
@@ -471,8 +476,8 @@
       <button type="button" onclick={() => showModal = false} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
         Cancel
       </button>
-      <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors">
-        {editing ? 'Save Changes' : 'Add Storage'}
+      <button type="submit" disabled={saving} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+        {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Add Storage'}{/if}
       </button>
     </div>
   </form>
@@ -574,7 +579,7 @@
                 <span>{backup.backup_type || 'full'}</span>
                 <span>{backup.compression || 'none'}</span>
                 {#if backup.encryption && backup.encryption !== 'none'}<span class="inline-flex items-center gap-1"><svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg> {backup.encryption}</span>{/if}
-                {#if backup.created_at}<span>{new Date(backup.created_at).toLocaleString()}</span>{/if}
+                {#if backup.created_at}<span>{formatDate(backup.created_at)}</span>{/if}
               </div>
               <p class="text-xs text-text-dim mt-0.5 truncate font-mono">{backup.storage_path}</p>
             </div>
@@ -599,7 +604,7 @@
                   class="w-full text-left px-3 py-2 text-xs rounded-lg border border-border hover:border-warning/50 hover:bg-warning/5 transition-colors"
                 >
                   <span class="font-medium text-text">{backup.job_name}</span>
-                  <span class="text-text-dim ml-2">{backup.created_at ? new Date(backup.created_at).toLocaleString() : backup.storage_path}</span>
+                  <span class="text-text-dim ml-2">{backup.created_at ? formatDate(backup.created_at) : backup.storage_path}</span>
                 </button>
               {/each}
             </div>

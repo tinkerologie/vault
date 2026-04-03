@@ -1,4 +1,6 @@
 <script>
+  import { formatClockTime } from '../lib/utils.js'
+
   let { value = $bindable('0 2 * * *'), onchange = () => {} } = $props()
 
   // Parse current cron into structured state
@@ -6,7 +8,8 @@
   let hour = $state(2)
   let minute = $state(0)
   let weekday = $state(0) // 0=Sun
-  let monthday = $state(1)
+  /** @type {number | string} */
+  let monthday = $state(1) // numeric day or 'L' for last day
   let month = $state(1) // 1=Jan for yearly
   let weekdays = $state([1, 2, 3, 4, 5]) // Mon-Fri default for daily
 
@@ -21,13 +24,11 @@
   const dayNamesFull = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
-  // Generate 30-min time slots in 12h format
+  // Generate 30-min time slots with locale-aware labels
   const timeSlots = []
   for (let h = 0; h < 24; h++) {
     for (const m of [0, 30]) {
-      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
-      const ampm = h < 12 ? 'AM' : 'PM'
-      const label = `${h12}:${m.toString().padStart(2, '0')} ${ampm}`
+      const label = formatClockTime(h, m)
       timeSlots.push({ label, hour: h, minute: m })
     }
   }
@@ -53,9 +54,11 @@
     } else if (frequency === 'weekly') {
       cron = `${min} ${h} * * ${weekday}`
     } else if (frequency === 'monthly') {
-      cron = `${min} ${h} ${monthday} * *`
+      const dom = monthday === 'L' ? 'L' : monthday
+      cron = `${min} ${h} ${dom} * *`
     } else if (frequency === 'yearly') {
-      cron = `${min} ${h} ${monthday} ${month} *`
+      const dom = monthday === 'L' ? 'L' : monthday
+      cron = `${min} ${h} ${dom} ${month} *`
     } else {
       cron = `${min} ${h} * * *`
     }
@@ -89,11 +92,11 @@
       // Yearly: specific month and day
       frequency = 'yearly'
       month = parseInt(mon) || 1
-      monthday = parseInt(dom) || 1
+      monthday = dom === 'L' ? 'L' : (parseInt(dom) || 1)
     } else if (dom !== '*' && dow === '*') {
       // Monthly: specific day of month
       frequency = 'monthly'
-      monthday = parseInt(dom) || 1
+      monthday = dom === 'L' ? 'L' : (parseInt(dom) || 1)
     } else if (dow !== '*' && dom === '*') {
       const dowParts = dow.split(',').map(Number)
       if (dowParts.length === 1) {
@@ -126,15 +129,9 @@
     buildCron()
   }
 
-  function formatTime(h, m) {
-    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
-    const ampm = h < 12 ? 'AM' : 'PM'
-    return `${h12}:${m.toString().padStart(2, '0')} ${ampm}`
-  }
-
   // Human-readable description
   let description = $derived.by(() => {
-    const time = formatTime(hour, minute)
+    const time = formatClockTime(hour, minute)
     if (frequency === 'daily') {
       if (weekdays.length === 7 || weekdays.length === 0) return `Every day at ${time}`
       if (weekdays.length === 5 && [1,2,3,4,5].every(d => weekdays.includes(d))) return `Every weekday at ${time}`
@@ -142,8 +139,14 @@
       return `Every ${weekdays.sort().map(d => dayNames[d]).join(', ')} at ${time}`
     }
     if (frequency === 'weekly') return `Every ${dayNamesFull[weekday]} at ${time}`
-    if (frequency === 'monthly') return `Monthly on the ${ordinal(monthday)} at ${time}`
-    if (frequency === 'yearly') return `Yearly on ${monthNames[month - 1]} ${ordinal(monthday)} at ${time}`
+    if (frequency === 'monthly') {
+      if (monthday === 'L') return `Monthly on the last day at ${time}`
+      return `Monthly on the ${ordinal(monthday)} at ${time}`
+    }
+    if (frequency === 'yearly') {
+      if (monthday === 'L') return `Yearly on the last day of ${monthNames[month - 1]} at ${time}`
+      return `Yearly on ${monthNames[month - 1]} ${ordinal(monthday)} at ${time}`
+    }
     return ''
   })
 
@@ -152,6 +155,12 @@
     const v = n % 100
     return n + (s[(v - 20) % 10] || s[v] || s[0])
   }
+
+  function daysInMonth(m) {
+    return new Date(2024, m, 0).getDate()
+  }
+
+  let yearlyDayCount = $derived(daysInMonth(month))
 </script>
 
 <div class="space-y-4">
@@ -223,6 +232,8 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-monthday">Day of Month</label>
         <select id="sched-monthday" bind:value={monthday} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
+          <option value={1}>First day of month</option>
+          <option value="L">Last day of month</option>
           {#each Array(28) as _s, d (d)}
             <option value={d + 1}>{d + 1}</option>
           {/each}
@@ -242,7 +253,7 @@
     <div class="grid grid-cols-3 gap-4">
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-month">Month</label>
-        <select id="sched-month" bind:value={month} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
+        <select id="sched-month" bind:value={month} onchange={() => { if (typeof monthday === 'number' && monthday > daysInMonth(month)) monthday = daysInMonth(month); buildCron() }} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
           {#each monthNames as name, i (i)}
             <option value={i + 1}>{name}</option>
           {/each}
@@ -251,7 +262,9 @@
       <div>
         <label class="block text-xs font-medium text-text-muted mb-1" for="sched-monthday-y">Day</label>
         <select id="sched-monthday-y" bind:value={monthday} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
-          {#each Array(28) as _s, d (d)}
+          <option value={1}>First day</option>
+          <option value="L">Last day</option>
+          {#each Array(yearlyDayCount) as _s, d (d)}
             <option value={d + 1}>{d + 1}</option>
           {/each}
         </select>

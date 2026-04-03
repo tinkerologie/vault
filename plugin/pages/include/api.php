@@ -43,6 +43,23 @@ function vault_is_wildcard_bind_address($bind = null) {
     return $normalized === '0.0.0.0' || $normalized === '::';
 }
 
+function vault_detect_time_format() {
+    $cfg = '/boot/config/plugins/dynamix/dynamix.cfg';
+    if (!file_exists($cfg)) {
+        return 'auto';
+    }
+    $ini = @parse_ini_file($cfg, true);
+    if (!is_array($ini) || !isset($ini['display']['time'])) {
+        return 'auto';
+    }
+    $fmt = (string) $ini['display']['time'];
+    // PHP date() uppercase H or G indicate 24-hour format
+    if (preg_match('/[HG]/', $fmt)) {
+        return '24h';
+    }
+    return '12h';
+}
+
 function vault_http_host($host) {
     $host = trim((string) $host);
     if ($host === '') {

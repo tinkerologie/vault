@@ -2,7 +2,9 @@ package scheduler
 
 import (
 	"log"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/ruaan-deysel/vault/internal/db"
@@ -21,6 +23,7 @@ type Scheduler struct {
 	runner            JobRunner
 	replicationRunner ReplicationRunner
 	entries           map[int64]cron.EntryID
+	lastDayEntries    map[int64]cron.EntryID // daily-trigger entries for L (last day) schedules
 	replEntries       map[int64]cron.EntryID
 	mu                sync.Mutex
 }
@@ -28,11 +31,12 @@ type Scheduler struct {
 // New creates a Scheduler for backup jobs.
 func New(database *db.DB, runner JobRunner) *Scheduler {
 	return &Scheduler{
-		cron:        cron.New(),
-		db:          database,
-		runner:      runner,
-		entries:     make(map[int64]cron.EntryID),
-		replEntries: make(map[int64]cron.EntryID),
+		cron:           cron.New(),
+		db:             database,
+		runner:         runner,
+		entries:        make(map[int64]cron.EntryID),
+		lastDayEntries: make(map[int64]cron.EntryID),
+		replEntries:    make(map[int64]cron.EntryID),
 	}
 }
 
@@ -78,6 +82,12 @@ func (s *Scheduler) Reload() error {
 		delete(s.entries, jobID)
 	}
 
+	// Remove all existing last-day entries.
+	for jobID, entryID := range s.lastDayEntries {
+		s.cron.Remove(entryID)
+		delete(s.lastDayEntries, jobID)
+	}
+
 	// Remove all existing replication entries.
 	for srcID, entryID := range s.replEntries {
 		s.cron.Remove(entryID)
@@ -104,6 +114,22 @@ func (s *Scheduler) Reload() error {
 
 func (s *Scheduler) addJob(job db.Job) {
 	jobID := job.ID
+
+	// Check for L (last day of month) in the day-of-month field.
+	if schedule, ok := parseLastDaySchedule(job.Schedule); ok {
+		entryID, err := s.cron.AddFunc(schedule, func() {
+			if isLastDayOfMonth(time.Now()) {
+				s.runner(jobID)
+			}
+		})
+		if err != nil {
+			log.Printf("Failed to schedule last-day job %d (%s): %v", job.ID, job.Name, err)
+			return
+		}
+		s.lastDayEntries[job.ID] = entryID
+		return
+	}
+
 	entryID, err := s.cron.AddFunc(job.Schedule, func() {
 		s.runner(jobID)
 	})
@@ -112,6 +138,27 @@ func (s *Scheduler) addJob(job db.Job) {
 		return
 	}
 	s.entries[job.ID] = entryID
+}
+
+// parseLastDaySchedule checks if a cron string contains L in the day-of-month
+// field and returns a daily equivalent schedule (e.g. "0 2 L * *" → "0 2 * * *").
+func parseLastDaySchedule(schedule string) (string, bool) {
+	fields := strings.Fields(schedule)
+	if len(fields) != 5 {
+		return "", false
+	}
+	if fields[2] != "L" {
+		return "", false
+	}
+	// Replace L with * to create a daily trigger at the same time.
+	fields[2] = "*"
+	return strings.Join(fields, " "), true
+}
+
+// isLastDayOfMonth reports whether t falls on the last day of its month.
+func isLastDayOfMonth(t time.Time) bool {
+	tomorrow := t.AddDate(0, 0, 1)
+	return tomorrow.Month() != t.Month()
 }
 
 // loadReplicationSources loads enabled replication sources into the cron scheduler.
@@ -147,7 +194,12 @@ func (s *Scheduler) addReplicationSource(src db.ReplicationSource) {
 func (s *Scheduler) NextRun(jobID int64) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Check standard entries first, then last-day entries.
 	entryID, ok := s.entries[jobID]
+	if !ok {
+		entryID, ok = s.lastDayEntries[jobID]
+	}
 	if !ok {
 		return "", false
 	}

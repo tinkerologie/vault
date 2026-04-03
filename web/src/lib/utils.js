@@ -1,5 +1,7 @@
 /** Shared utility functions */
 
+import { getHour12 } from './runtime-config.js'
+
 export function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B'
   const k = 1024
@@ -12,13 +14,32 @@ export function formatDate(str) {
   if (!str) return '—'
   const d = new Date(str)
   if (isNaN(d.getTime())) return '—'
-  return d.toLocaleDateString('en-US', {
+  const hour12 = getHour12()
+  return d.toLocaleString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    ...(hour12 !== undefined && { hour12 }),
   })
+}
+
+/** Format hour + minute into a clock time string respecting the configured time format */
+export function formatClockTime(h, m) {
+  const hour12 = getHour12()
+  if (hour12 === false) {
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+  if (hour12 === true) {
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+    const ampm = h < 12 ? 'AM' : 'PM'
+    return `${h12}:${String(m).padStart(2, '0')} ${ampm}`
+  }
+  // auto: use browser locale
+  const d = new Date()
+  d.setHours(h, m, 0, 0)
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
 export function relTime(str) {
@@ -78,9 +99,20 @@ export function describeSchedule(cron) {
   if (!cron) return 'Manual only'
   const parts = cron.trim().split(/\s+/)
   if (parts.length !== 5) return cron
-  const [min, hr, dom, , dow] = parts
-  const time = `${hr.padStart(2, '0')}:${min.padStart(2, '0')}`
-  if (dom !== '*' && dow === '*') return `Monthly on ${ordinal(parseInt(dom))} at ${time}`
+  const [min, hr, dom, mon, dow] = parts
+  const hrNum = parseInt(hr, 10)
+  const minNum = parseInt(min, 10)
+  if (isNaN(hrNum) || isNaN(minNum)) return cron
+  const time = formatClockTime(hrNum, minNum)
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+  if (mon !== '*' && dom !== '*') {
+    if (dom === 'L') return `Yearly on last day of ${monthNames[parseInt(mon, 10) - 1]} at ${time}`
+    return `Yearly on ${monthNames[parseInt(mon, 10) - 1]} ${ordinal(parseInt(dom, 10))} at ${time}`
+  }
+  if (dom !== '*' && dow === '*') {
+    if (dom === 'L') return `Monthly on last day at ${time}`
+    return `Monthly on ${ordinal(parseInt(dom, 10))} at ${time}`
+  }
   if (dow !== '*' && dom === '*') {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     const dowParts = dow.split(',')

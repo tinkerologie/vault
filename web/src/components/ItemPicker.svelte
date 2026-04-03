@@ -24,7 +24,7 @@
   let customFolderPath = $state('')
 
   // Selected items tracked as map: "type:name" -> item
-  let selected = new SvelteMap()
+  let selected = $state(new SvelteMap())
 
   // Drag state for reorder
   let dragIndex = $state(-1)

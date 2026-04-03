@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { api } from '../lib/api.js'
-  import { formatBytes } from '../lib/utils.js'
+  import { formatBytes, formatDate } from '../lib/utils.js'
   import { getWsStatus, connectWs, disconnectWs } from '../lib/ws.svelte.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
   import Toast from '../components/Toast.svelte'
@@ -1082,7 +1082,7 @@
           {#if snapDate.getFullYear() > 1970}
           <div class="px-5 py-3 flex items-center justify-between">
             <span class="text-sm text-text-muted">Last snapshot</span>
-            <span class="text-sm text-text">{snapDate.toLocaleString()}</span>
+            <span class="text-sm text-text">{formatDate(databaseInfo.last_snapshot)}</span>
           </div>
           {/if}
           {/if}

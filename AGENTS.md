@@ -3,6 +3,23 @@
 > Single source of truth for all AI coding assistants working on this project.
 > Individual tool files (CLAUDE.md, GEMINI.md, copilot-instructions.md, .cursorrules) point here.
 
+## Role-Specific Agent Instructions
+
+Before starting work, read the relevant agent file(s) in `.github/agents/` that match your current task:
+
+| File                                | When to read                         |
+| ----------------------------------- | ------------------------------------ |
+| `api-architect.agent.md`            | Designing or modifying API endpoints |
+| `debug.agent.md`                    | Debugging issues                     |
+| `devops-expert.agent.md`            | Build, deploy, CI/CD, infrastructure |
+| `gem-documentation-writer.agent.md` | Writing documentation                |
+| `github-actions-expert.agent.md`    | GitHub Actions workflows             |
+| `plan.agent.md`                     | Planning features or refactors       |
+| `playwright-tester.agent.md`        | Writing or running E2E tests         |
+| `qa-subagent.agent.md`              | Quality assurance and testing        |
+| `refine-issue.agent.md`             | Refining issues or requirements      |
+| `se-security-reviewer.agent.md`     | Security review of code changes      |
+
 ## Project Identity
 
 | Key          | Value                                                           |
@@ -52,6 +69,7 @@
 ├── ansible/                    # Deployment automation
 ├── docs/plans/                 # Design docs and implementation plans
 ├── .github/
+│   ├── agents/                 # Role-specific agent instructions (.agent.md)
 │   ├── instructions/           # Path-specific AI instructions (applyTo globs)
 │   ├── prompts/                # Reusable task prompts for common workflows
 │   └── workflows/              # CI/CD (build.yml, release.yml)
