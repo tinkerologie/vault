@@ -995,6 +995,12 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 			return tw.WriteHeader(header)
 		}
 
+		// Skip special file types that tar cannot archive (sockets, devices, pipes).
+		if info.Mode()&(os.ModeSocket|os.ModeCharDevice|os.ModeDevice|os.ModeNamedPipe) != 0 {
+			log.Printf("engine: skipping special file %s (mode %s)", rel, info.Mode().String())
+			return nil
+		}
+
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return fmt.Errorf("creating tar header for %s: %w", rel, err)
@@ -1096,6 +1102,12 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 				ModTime:  info.ModTime(),
 			}
 			return tw.WriteHeader(header)
+		}
+
+		// Skip special file types that tar cannot archive (sockets, devices, pipes).
+		if info.Mode()&(os.ModeSocket|os.ModeCharDevice|os.ModeDevice|os.ModeNamedPipe) != 0 {
+			log.Printf("engine: skipping special file %s (mode %s)", rel, info.Mode().String())
+			return nil
 		}
 
 		// Always include directories; filter regular files by mod time.

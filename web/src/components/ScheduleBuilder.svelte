@@ -234,7 +234,7 @@
         <select id="sched-monthday" bind:value={monthday} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
           <option value={1}>First day of month</option>
           <option value="L">Last day of month</option>
-          {#each Array(27) as _s, d (d)}
+          {#each Array(30) as _s, d (d)}
             <option value={d + 2}>{d + 2}</option>
           {/each}
         </select>
