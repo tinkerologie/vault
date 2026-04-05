@@ -3,6 +3,7 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { navigate } from '../lib/router.svelte.js'
   import { api } from '../lib/api.js'
+  import { buildApiRequest } from '../lib/runtime-config.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { describeSchedule, relTimeUntil } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
@@ -473,7 +474,8 @@
       const image = settings.image || ''
       if (!image) continue
       try {
-        const res = await fetch(`/api/v1/presets/exclusions?image=${encodeURIComponent(image)}`, { signal })
+        const { url, options } = buildApiRequest('GET', `/presets/exclusions?image=${encodeURIComponent(image)}`)
+        const res = await fetch(url, { ...options, signal })
         if (!res.ok) continue
         const data = await res.json()
         if (data.paths && data.paths.length > 0) {
