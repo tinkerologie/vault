@@ -820,7 +820,7 @@
               {#if hasVMs && (hasFolders || hasFlash || hasPlugins)}, {/if}
               {#if hasFolders}{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length} folder{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length !== 1 ? 's' : ''}{/if}
               {#if hasFolders && (hasFlash || hasPlugins)}, {/if}
-              {#if hasFlash}1 flash drive{/if}
+              {#if hasFlash}{@const flashDriveCount = form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset === 'flash').length}{flashDriveCount} flash drive{flashDriveCount !== 1 ? 's' : ''}{/if}
               {#if hasFlash && hasPlugins}, {/if}
               {#if hasPlugins}{form.items.filter(i => i.item_type === 'plugin').length} plugin{form.items.filter(i => i.item_type === 'plugin').length !== 1 ? 's' : ''}{/if}
             </span>

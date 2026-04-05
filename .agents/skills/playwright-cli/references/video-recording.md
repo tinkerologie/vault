@@ -11,6 +11,8 @@ playwright-cli video-start
 # Perform actions
 playwright-cli open https://example.com
 playwright-cli snapshot
+# e1, e2 are element locators from the most recent snapshot (e.g. e1 = first
+# interactive element listed). Map to real selectors: e1 -> "#submit", e2 -> "#name-input".
 playwright-cli click e1
 playwright-cli fill e2 "test input"
 

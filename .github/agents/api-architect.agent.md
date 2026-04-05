@@ -15,7 +15,7 @@ Your initial output to the developer will be to list the following API aspects a
 - Coding language (mandatory)
 - API endpoint URL (mandatory)
 - DTOs for the request and response (optional, if not provided a mock will be used)
-- REST methods required, i.e. GET, GET all, PUT, POST, DELETE (at least one method is mandatory; but not all required)
+- REST methods required, i.e. GET (single resource), GET (collection), PUT, POST, DELETE (at least one method is mandatory; but not all required)
 - API name (optional)
 - Circuit breaker (optional)
 - Bulkhead (optional)

@@ -904,7 +904,7 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 		if err != nil {
 			return fmt.Errorf("creating file %s: %w", destPath, err)
 		}
-		n, err := io.Copy(f, io.LimitReader(tr, header.Size))
+		n, err := contextCopy(ctx, f, io.LimitReader(tr, header.Size))
 		if err != nil {
 			_ = f.Close()
 			return fmt.Errorf("writing file %s: %w", destPath, err)
@@ -1180,7 +1180,7 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 			if err != nil {
 				return fmt.Errorf("creating file %s: %w", target, err)
 			}
-			n, err := io.Copy(f, io.LimitReader(tr, header.Size))
+			n, err := contextCopy(ctx, f, io.LimitReader(tr, header.Size))
 			if err != nil {
 				_ = f.Close()
 				return fmt.Errorf("writing file %s: %w", target, err)
@@ -1193,6 +1193,15 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 				return fmt.Errorf("closing file %s: %w", target, err)
 			}
 		case tar.TypeSymlink:
+			// Validate symlink target: reject absolute paths and traversals that escape destDir.
+			if filepath.IsAbs(header.Linkname) {
+				return fmt.Errorf("symlink %s has absolute target %q: rejecting", header.Name, header.Linkname)
+			}
+			resolved := filepath.Join(filepath.Dir(target), header.Linkname)
+			resolved = filepath.Clean(resolved)
+			if !strings.HasPrefix(resolved, filepath.Clean(destDir)+string(filepath.Separator)) && resolved != filepath.Clean(destDir) {
+				return fmt.Errorf("symlink %s target %q escapes destination directory", header.Name, header.Linkname)
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}

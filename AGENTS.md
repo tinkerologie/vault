@@ -261,21 +261,21 @@ make test-coverage                           # Coverage report
 go test ./internal/db/... -run TestJobCreate -v  # Single test
 ```
 
-## Mandatory Post-Change Workflow
+## Recommended Post-Change Workflow
 
-> **CRITICAL — This is NOT optional. Every AI agent MUST execute this workflow automatically after ANY code change.** Do not wait for the user to ask. This applies to bug fixes, features, refactors, config changes — any change that affects the built binary or web UI.
+> Agents and developers should follow this workflow for changes intended for integration or release. It does not apply to documentation-only changes or local WIP commits.
 
-### Steps (execute in order)
+### Steps (recommended order)
 
 1. **Build & Test:** Run `make build` (Ansible: lint → test → web build → cross-compile). Fix any failures before proceeding.
-2. **Deploy:** Run `make deploy` (deploys binary + assets to Unraid, starts daemon).
+2. **Deploy:** Ask the user for confirmation and verify deployment credentials before running `make deploy` (deploys binary + assets to Unraid, starts daemon).
 3. **Verify API:** Run `make verify` (endpoint checks + folder/VM smoke tests against Unraid). Fix any failures before proceeding.
-4. **Verify UI:** Use Playwright or browser MCP tools to navigate every affected page on `http://<unraid-server>:24085`. Take snapshots to confirm the UI renders correctly. Never skip this step.
+4. **Verify UI:** Use Playwright, browser MCP tools, or manual testing to navigate affected pages on `http://<unraid-server>:24085`. Take snapshots to confirm the UI renders correctly.
 5. **Update CHANGELOG.md:** Add entries under the `## [Unreleased]` section using [Keep a Changelog](https://keepachangelog.com/) format (`### Added`, `### Fixed`, `### Changed`, `### Removed`). Reference issue numbers where applicable.
 
-**Shortcut:** `make redeploy` (uninstall → build → deploy → verify) replaces steps 1–3, but you still MUST do steps 4 and 5.
+**Shortcut:** `make redeploy` (uninstall → build → deploy → verify) replaces steps 1–3, but steps 4 and 5 are still recommended.
 
-**Only skip when:** Changes are limited to documentation files (`.md`), comments, or files that do not affect the built binary or web UI.
+**Skip when:** Changes are limited to documentation files (`.md`), comments, or files that do not affect the built binary or web UI.
 
 ## Anti-Patterns (DO NOT)
 
@@ -286,8 +286,8 @@ go test ./internal/db/... -run TestJobCreate -v  # Single test
 - **DO NOT** commit secrets, credentials, or `ansible/inventory.yml`
 - **DO NOT** use `gorilla/mux` — this project uses Chi v5
 - **DO NOT** add libvirt code without build tags (breaks macOS builds)
-- **DO NOT** consider a code change complete without running the full post-change workflow (build → deploy → verify API → verify UI → update CHANGELOG)
-- **DO NOT** skip Playwright/browser UI verification after deploying changes
+- **DO NOT** consider changes ready for integration without running the verification workflow
+- **DO NOT** skip UI verification before marking changes as complete (use Playwright/browser tools or manual testing)
 
 ## Key Dependencies
 

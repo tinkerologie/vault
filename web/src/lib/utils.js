@@ -111,11 +111,15 @@ export function describeSchedule(cron) {
       return `Yearly at ${time}`
     }
     if (dom === 'L') return `Yearly on last day of ${monthNames[monNum - 1]} at ${time}`
-    return `Yearly on ${monthNames[monNum - 1]} ${ordinal(parseInt(dom, 10))} at ${time}`
+    const domNum = parseInt(dom, 10)
+    if (!Number.isInteger(domNum) || domNum < 1 || domNum > 31) return `Yearly at ${time}`
+    return `Yearly on ${monthNames[monNum - 1]} ${ordinal(domNum)} at ${time}`
   }
   if (dom !== '*' && dow === '*') {
     if (dom === 'L') return `Monthly on last day at ${time}`
-    return `Monthly on ${ordinal(parseInt(dom, 10))} at ${time}`
+    const domNum = parseInt(dom, 10)
+    if (!Number.isInteger(domNum) || domNum < 1 || domNum > 31) return `Monthly at ${time}`
+    return `Monthly on ${ordinal(domNum)} at ${time}`
   }
   if (dow !== '*' && dom === '*') {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']

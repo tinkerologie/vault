@@ -97,7 +97,7 @@ var daemonCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer database.Close()
+		defer func() { database.Close() }()
 
 		// In hybrid mode, restore the latest snapshot into the working DB,
 		// then close and re-open so schema migrations run on the restored data.

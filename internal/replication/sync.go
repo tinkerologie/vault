@@ -356,7 +356,9 @@ func (s *Syncer) downloadDir(client *Client, storageID int64, dirPath string, lo
 			_ = rc.Close()
 			return totalBytes, fmt.Errorf("write %q: %w", f.Path, err)
 		}
-		_ = rc.Close()
+		if err := rc.Close(); err != nil {
+			return totalBytes, fmt.Errorf("closing download stream for %q: %w", f.Path, err)
+		}
 		totalBytes += f.Size
 	}
 	return totalBytes, nil

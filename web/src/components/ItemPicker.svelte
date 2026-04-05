@@ -270,7 +270,7 @@
           {/if}
         </button>
       {/if}
-      {#if flashCount > 0}
+      {#if flashItems.length > 0}
         <button
           type="button"
           onclick={() => (activeTab = 'flash')}

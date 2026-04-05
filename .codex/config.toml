@@ -3,9 +3,12 @@ inherit = "core"
 
 [shell_environment_policy.set]
 CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = "75"
-CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"
-CLAUDE_CODE_MAX_FILE_READ_TOKENS = "100000"
-CLAUDE_CODE_TERMINAL_OUTPUT_MAX_LENGTH = "150000"
-DISABLE_BUG_COMMAND = "1"
+# Experimental: agent teams feature (disabled by default; set to "1" in dev/QA profiles)
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "0"
+# Max tokens for file reads and terminal output (tune per-deployment if needed)
+CLAUDE_CODE_MAX_FILE_READ_TOKENS = "20000"
+CLAUDE_CODE_TERMINAL_OUTPUT_MAX_LENGTH = "50000"
+# Bug reporting: both enabled for consistent error collection and user feedback
+DISABLE_BUG_COMMAND = "0"
 DISABLE_ERROR_REPORTING = "0"
 DISABLE_TELEMETRY = "1"

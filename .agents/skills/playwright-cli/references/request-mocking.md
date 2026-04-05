@@ -81,7 +81,7 @@ playwright-cli run-code "async page => {
 playwright-cli run-code "async page => {
   await page.route('**/api/slow', async route => {
     await new Promise(r => setTimeout(r, 3000));
-    route.fulfill({ body: JSON.stringify({ data: 'loaded' }) });
+    await route.fulfill({ body: JSON.stringify({ data: 'loaded' }) });
   });
 }"
 ```

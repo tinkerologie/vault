@@ -253,7 +253,7 @@ playwright-cli open https://app.example.com/dashboard
 ```bash
 # Set up authentication state
 playwright-cli open https://example.com
-playwright-cli run-code "() => { document.cookie = 'session=abc123'; localStorage.setItem('user', 'john'); }"
+playwright-cli run-code "async page => { await page.evaluate(() => { document.cookie = 'session=abc123'; localStorage.setItem('user', 'john'); }); }"
 
 # Save state to file
 playwright-cli state-save my-session.json
