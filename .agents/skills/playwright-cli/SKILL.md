@@ -39,6 +39,8 @@ playwright-cli fill e5 "user@example.com"
 playwright-cli drag e2 e8
 playwright-cli hover e4
 playwright-cli select e9 "option-value"
+# Upload opens the OS file chooser for the focused file input.
+# No element ref is accepted by this command.
 playwright-cli upload ./document.pdf
 playwright-cli check e12
 playwright-cli uncheck e12
@@ -52,6 +54,9 @@ playwright-cli dialog-dismiss
 playwright-cli resize 1920 1080
 playwright-cli close
 ```
+
+Upload syntax: `playwright-cli upload <file>`.
+Example: `playwright-cli upload ./document.pdf`.
 
 ### Navigation
 

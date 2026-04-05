@@ -270,20 +270,22 @@
           {/if}
         </button>
       {/if}
-      <button
-        type="button"
-        onclick={() => (activeTab = 'flash')}
-        class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'flash'
-          ? 'border-vault text-vault'
-          : 'border-transparent text-text-muted hover:text-text'}"
-      >
-        Flash Drive
-        {#if flashCount > 0}
-          <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
-            >{flashCount}</span
-          >
-        {/if}
-      </button>
+      {#if flashCount > 0}
+        <button
+          type="button"
+          onclick={() => (activeTab = 'flash')}
+          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'flash'
+            ? 'border-vault text-vault'
+            : 'border-transparent text-text-muted hover:text-text'}"
+        >
+          Flash Drive
+          {#if flashCount > 0}
+            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+              >{flashCount}</span
+            >
+          {/if}
+        </button>
+      {/if}
       {#if pluginsAvailable}
         <button
           type="button"

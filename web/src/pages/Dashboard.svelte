@@ -197,13 +197,17 @@
   const healthSummaryText = $derived.by(() => {
     if (!healthSummary) return ''
     const s = healthSummary
+    const healthScore = totalProtected === 0 && totalItems === 0
+      ? 100
+      : Math.round((totalProtected / totalItems) * 100)
+    const unprotectedCount = Math.max(0, totalItems - totalProtected)
     const suffix = excludedCategories.length > 0 ? ` · ${excludedCategories.join(', ')} excluded` : ''
-    if (s.health_score >= 80) return 'All backups healthy' + suffix
+    if (healthScore >= 80) return 'All backups healthy' + suffix
     const issues = []
-    if (s.total_items - s.protected_items > 0) issues.push(`${s.total_items - s.protected_items} items unprotected`)
+    if (unprotectedCount > 0) issues.push(`${unprotectedCount} items unprotected`)
     if (s.recent_failed > 0) issues.push(`${s.recent_failed} recent failures`)
     if (issues.length === 0) return 'Backups operational' + suffix
-    if (s.health_score < 50) return 'Attention needed — ' + issues.join(', ') + suffix
+    if (healthScore < 50) return 'Attention needed — ' + issues.join(', ') + suffix
     return issues.join(', ') + suffix
   })
 </script>

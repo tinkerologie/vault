@@ -642,14 +642,14 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", targetPath, err)
 			}
-			if err := untarFile(volArchive, targetPath); err != nil {
+			if err := untarFile(ctx, volArchive, targetPath); err != nil {
 				return fmt.Errorf("restoring volume file %s: %w", targetPath, err)
 			}
 		} else {
 			if err := os.MkdirAll(targetPath, 0750); err != nil {
 				return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
 			}
-			if err := untarDirectory(volArchive, targetPath); err != nil {
+			if err := untarDirectory(ctx, volArchive, targetPath); err != nil {
 				return fmt.Errorf("restoring volume %s: %w", targetPath, err)
 			}
 		}
@@ -864,7 +864,7 @@ func tarFile(ctx context.Context, srcPath, destPath string) error {
 
 // untarFile extracts the first regular file from a gzip-compressed tar archive
 // and writes it to destPath. Used for restoring file-based bind mounts.
-func untarFile(srcPath, destPath string) error {
+func untarFile(ctx context.Context, srcPath, destPath string) error {
 	inFile, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("opening archive: %w", err)
@@ -879,6 +879,10 @@ func untarFile(srcPath, destPath string) error {
 
 	tr := tar.NewReader(gr)
 	for {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+
 		header, err := tr.Next()
 		if err == io.EOF {
 			return fmt.Errorf("no regular file found in archive")
@@ -889,16 +893,30 @@ func untarFile(srcPath, destPath string) error {
 		if header.Typeflag != tar.TypeReg {
 			continue
 		}
+		if header.Size < 0 {
+			return fmt.Errorf("invalid file size %d for %s", header.Size, header.Name)
+		}
+		if header.Size > maxExtractSize {
+			return fmt.Errorf("file %s exceeds max extract size (%d > %d)", header.Name, header.Size, maxExtractSize)
+		}
 
 		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode))
 		if err != nil {
 			return fmt.Errorf("creating file %s: %w", destPath, err)
 		}
-		if _, err := io.CopyN(f, tr, maxExtractSize); err != nil && !errors.Is(err, io.EOF) {
+		n, err := io.Copy(f, io.LimitReader(tr, header.Size))
+		if err != nil {
 			_ = f.Close()
 			return fmt.Errorf("writing file %s: %w", destPath, err)
 		}
-		return f.Close()
+		if n != header.Size {
+			_ = f.Close()
+			return fmt.Errorf("writing file %s: expected %d bytes, wrote %d", destPath, header.Size, n)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("closing file %s: %w", destPath, err)
+		}
+		return nil
 	}
 }
 
@@ -1111,7 +1129,7 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 }
 
 // untarDirectory extracts a gzip-compressed tar archive from srcPath into destDir.
-func untarDirectory(srcPath, destDir string) error {
+func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 	inFile, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("opening archive: %w", err)
@@ -1126,6 +1144,10 @@ func untarDirectory(srcPath, destDir string) error {
 
 	tr := tar.NewReader(gr)
 	for {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+
 		header, err := tr.Next()
 		if err == io.EOF {
 			break
@@ -1145,6 +1167,12 @@ func untarDirectory(srcPath, destDir string) error {
 				return fmt.Errorf("creating directory %s: %w", target, err)
 			}
 		case tar.TypeReg:
+			if header.Size < 0 {
+				return fmt.Errorf("invalid file size %d for %s", header.Size, header.Name)
+			}
+			if header.Size > maxExtractSize {
+				return fmt.Errorf("file %s exceeds max extract size (%d > %d)", header.Name, header.Size, maxExtractSize)
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
@@ -1152,11 +1180,38 @@ func untarDirectory(srcPath, destDir string) error {
 			if err != nil {
 				return fmt.Errorf("creating file %s: %w", target, err)
 			}
-			if _, err := io.CopyN(f, tr, maxExtractSize); err != nil && !errors.Is(err, io.EOF) {
+			n, err := io.Copy(f, io.LimitReader(tr, header.Size))
+			if err != nil {
 				_ = f.Close()
 				return fmt.Errorf("writing file %s: %w", target, err)
 			}
-			_ = f.Close()
+			if n != header.Size {
+				_ = f.Close()
+				return fmt.Errorf("writing file %s: expected %d bytes, wrote %d", target, header.Size, n)
+			}
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("closing file %s: %w", target, err)
+			}
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
+				return fmt.Errorf("creating parent dir for %s: %w", target, err)
+			}
+			if err := os.Symlink(header.Linkname, target); err != nil {
+				return fmt.Errorf("creating symlink %s -> %s: %w", target, header.Linkname, err)
+			}
+		case tar.TypeLink:
+			linkTarget, err := joinArchiveTarget(destDir, header.Linkname)
+			if err != nil {
+				return fmt.Errorf("illegal hard link target in archive: %s: %w", header.Linkname, err)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
+				return fmt.Errorf("creating parent dir for %s: %w", target, err)
+			}
+			if err := os.Link(linkTarget, target); err != nil {
+				return fmt.Errorf("creating hard link %s -> %s: %w", target, linkTarget, err)
+			}
+		default:
+			continue
 		}
 	}
 	return nil

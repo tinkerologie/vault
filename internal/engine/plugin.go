@@ -127,7 +127,7 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 // Restore extracts the plugin's .plg file and config directory back to
 // /boot/config/plugins/. The plugin will be recognized on next Unraid boot
 // or when the Plugins page is refreshed.
-func (h *PluginHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
+func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 10, "reading metadata")
 
 	pluginName := item.Name
@@ -169,7 +169,7 @@ func (h *PluginHandler) Restore(_ context.Context, item BackupItem, sourceDir st
 		if err := os.MkdirAll(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
-		if err := untarDirectory(configArchive, configDir); err != nil {
+		if err := untarDirectory(ctx, configArchive, configDir); err != nil {
 			return fmt.Errorf("restoring plugin config: %w", err)
 		}
 	}

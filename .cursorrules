@@ -19,7 +19,7 @@ Read `AGENTS.md` in the project root for comprehensive instructions.
 
 > **CRITICAL — Execute automatically after EVERY code change. Do not wait for the user to ask.**
 
-1. `make build` → 2. `make deploy` → 3. `make verify` → 4. Playwright UI verification on `http://192.168.20.21:24085` → 5. Update `CHANGELOG.md` under `## [Unreleased]`
+1. `make build` → 2. `make deploy` → 3. `make verify` → 4. Playwright UI verification on `http://<unraid-server>:24085` (set the real host in local, untracked config/env) → 5. Update `CHANGELOG.md` under `## [Unreleased]`
 
 **Only skip for:** doc-only changes that don't affect the binary or web UI.
 

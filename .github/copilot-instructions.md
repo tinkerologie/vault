@@ -42,7 +42,7 @@ Task-oriented step-by-step guides in `.github/prompts/`:
 1. **Build & Test:** `make build` — fix failures before proceeding
 2. **Deploy:** `make deploy` — deploy to Unraid
 3. **Verify API:** `make verify` — endpoint + smoke tests
-4. **Verify UI:** Use Playwright or browser tools to navigate affected pages on `http://192.168.20.21:24085`, take snapshots to confirm correctness
+4. **Verify UI:** Use Playwright or browser tools to navigate affected pages on `http://<unraid-server>:24085` (from local env/config), take snapshots to confirm correctness
 5. **Update CHANGELOG.md:** Add entries under `## [Unreleased]` using [Keep a Changelog](https://keepachangelog.com/) format. Reference issue numbers where applicable.
 
 **Shortcut:** `make redeploy` replaces steps 1–3, but steps 4 and 5 are still required.

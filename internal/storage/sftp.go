@@ -3,6 +3,7 @@ package storage
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -163,8 +164,15 @@ type sftpReadCloser struct {
 
 func (r *sftpReadCloser) Read(p []byte) (int, error) { return r.file.Read(p) }
 func (r *sftpReadCloser) Close() error {
-	_ = r.file.Close()
-	return r.client.Close()
+	fileErr := r.file.Close()
+	clientErr := r.client.Close()
+	if fileErr != nil && clientErr != nil {
+		return errors.Join(fileErr, clientErr)
+	}
+	if fileErr != nil {
+		return fileErr
+	}
+	return clientErr
 }
 
 func (s *SFTPAdapter) Delete(path string) error {

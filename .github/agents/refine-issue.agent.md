@@ -23,7 +23,7 @@ When activated, this mode allows GitHub Copilot to analyze an existing issue and
 - Acceptance criteria in a testable format
 - Technical considerations and dependencies
 - Potential edge cases and risks
-- Expected NFR (Non-Functional Requirements)
+- Expected NFRs (Non-Functional Requirements)
 
 ## Steps to Run
 

@@ -90,7 +90,8 @@
   })
 
   async function toggleNotifications() {
-    const newVal = settings.notifications_enabled === 'true' ? 'false' : 'true'
+    const isEnabled = settings.notifications_enabled !== 'false'
+    const newVal = isEnabled ? 'false' : 'true'
     saving = true
     try {
       settings = await api.updateSettings({ notifications_enabled: newVal })
@@ -103,7 +104,8 @@
   }
 
   async function toggleBackupTarget(key) {
-    const newVal = settings[key] === 'true' ? 'false' : 'true'
+    const isEnabled = settings[key] !== 'false'
+    const newVal = isEnabled ? 'false' : 'true'
     saving = true
     try {
       settings = await api.updateSettings({ [key]: newVal })

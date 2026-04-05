@@ -98,7 +98,7 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 }
 
 // Restore extracts the backup archive to its original path or an override destination.
-func (h *FolderHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
+func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 10, "reading metadata")
 
 	// Check for restore destination override first.
@@ -143,7 +143,7 @@ func (h *FolderHandler) Restore(_ context.Context, item BackupItem, sourceDir st
 		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
 	}
 
-	if err := untarDirectory(archivePath, destPath); err != nil {
+	if err := untarDirectory(ctx, archivePath, destPath); err != nil {
 		return fmt.Errorf("extracting to %s: %w", destPath, err)
 	}
 

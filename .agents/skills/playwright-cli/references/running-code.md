@@ -181,7 +181,7 @@ playwright-cli run-code "async page => {
     return {
       userAgent: navigator.userAgent,
       language: navigator.language,
-      cookiesEnabled: navigator.cookieEnabled
+      cookieEnabled: navigator.cookieEnabled
     };
   });
 }"

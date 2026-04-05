@@ -270,7 +270,7 @@ go test ./internal/db/... -run TestJobCreate -v  # Single test
 1. **Build & Test:** Run `make build` (Ansible: lint → test → web build → cross-compile). Fix any failures before proceeding.
 2. **Deploy:** Run `make deploy` (deploys binary + assets to Unraid, starts daemon).
 3. **Verify API:** Run `make verify` (endpoint checks + folder/VM smoke tests against Unraid). Fix any failures before proceeding.
-4. **Verify UI:** Use Playwright or browser MCP tools to navigate every affected page on `http://192.168.20.21:24085`. Take snapshots to confirm the UI renders correctly. Never skip this step.
+4. **Verify UI:** Use Playwright or browser MCP tools to navigate every affected page on `http://<unraid-server>:24085`. Take snapshots to confirm the UI renders correctly. Never skip this step.
 5. **Update CHANGELOG.md:** Add entries under the `## [Unreleased]` section using [Keep a Changelog](https://keepachangelog.com/) format (`### Added`, `### Fixed`, `### Changed`, `### Removed`). Reference issue numbers where applicable.
 
 **Shortcut:** `make redeploy` (uninstall → build → deploy → verify) replaces steps 1–3, but you still MUST do steps 4 and 5.

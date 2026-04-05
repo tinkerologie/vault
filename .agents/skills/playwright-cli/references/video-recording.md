@@ -24,7 +24,7 @@ playwright-cli video-stop demo.webm
 
 ```bash
 # Include context in filename
-playwright-cli video-stop recordings/login-flow-2024-01-15.webm
+playwright-cli video-stop recordings/login-flow-YYYY-MM-DD.webm
 playwright-cli video-stop recordings/checkout-test-run-42.webm
 ```
 

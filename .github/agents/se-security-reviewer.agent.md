@@ -104,7 +104,7 @@ return llm.complete(prompt, max_tokens=500)
 response = llm.complete(f"Context: {sensitive_data}")
 
 # SECURE
-sanitized_context = remove_pii(context)
+sanitized_context = remove_pii(sensitive_data)
 response = llm.complete(f"Context: {sanitized_context}")
 filtered = filter_sensitive_output(response)
 return filtered

@@ -234,8 +234,8 @@
         <select id="sched-monthday" bind:value={monthday} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
           <option value={1}>First day of month</option>
           <option value="L">Last day of month</option>
-          {#each Array(28) as _s, d (d)}
-            <option value={d + 1}>{d + 1}</option>
+          {#each Array(27) as _s, d (d)}
+            <option value={d + 2}>{d + 2}</option>
           {/each}
         </select>
       </div>
@@ -264,8 +264,8 @@
         <select id="sched-monthday-y" bind:value={monthday} onchange={buildCron} class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text">
           <option value={1}>First day</option>
           <option value="L">Last day</option>
-          {#each Array(yearlyDayCount) as _s, d (d)}
-            <option value={d + 1}>{d + 1}</option>
+          {#each Array(Math.max(0, yearlyDayCount - 1)) as _s, d (d)}
+            <option value={d + 2}>{d + 2}</option>
           {/each}
         </select>
       </div>

@@ -41,7 +41,7 @@ func TestTarAndUntarRoundtrip(t *testing.T) {
 	}
 
 	restored := t.TempDir()
-	if err := untarDirectory(tarPath, restored); err != nil {
+	if err := untarDirectory(context.Background(), tarPath, restored); err != nil {
 		t.Fatalf("untarDirectory() error = %v", err)
 	}
 
@@ -79,7 +79,7 @@ func TestUntarDirectoryRejectsTraversal(t *testing.T) {
 		t.Fatalf("gzip close error = %v", err)
 	}
 
-	if err := untarDirectory(archivePath, t.TempDir()); err == nil {
+	if err := untarDirectory(context.Background(), archivePath, t.TempDir()); err == nil {
 		t.Fatal("untarDirectory() should reject traversal archive entries")
 	}
 }
@@ -252,7 +252,7 @@ func TestTarFileAndUntarFileRoundtrip(t *testing.T) {
 
 	// Restore the file.
 	restorePath := filepath.Join(t.TempDir(), "restored_hook")
-	if err := untarFile(tarPath, restorePath); err != nil {
+	if err := untarFile(context.Background(), tarPath, restorePath); err != nil {
 		t.Fatalf("untarFile() error = %v", err)
 	}
 
@@ -328,7 +328,7 @@ func TestTarFilePreservesPermissions(t *testing.T) {
 	}
 
 	restorePath := filepath.Join(t.TempDir(), "restored_exec")
-	if err := untarFile(tarPath, restorePath); err != nil {
+	if err := untarFile(context.Background(), tarPath, restorePath); err != nil {
 		t.Fatalf("untarFile() error = %v", err)
 	}
 

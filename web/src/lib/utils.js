@@ -106,8 +106,12 @@ export function describeSchedule(cron) {
   const time = formatClockTime(hrNum, minNum)
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
   if (mon !== '*' && dom !== '*') {
-    if (dom === 'L') return `Yearly on last day of ${monthNames[parseInt(mon, 10) - 1]} at ${time}`
-    return `Yearly on ${monthNames[parseInt(mon, 10) - 1]} ${ordinal(parseInt(dom, 10))} at ${time}`
+    const monNum = parseInt(mon, 10)
+    if (!Number.isInteger(monNum) || monNum < 1 || monNum > 12) {
+      return `Yearly at ${time}`
+    }
+    if (dom === 'L') return `Yearly on last day of ${monthNames[monNum - 1]} at ${time}`
+    return `Yearly on ${monthNames[monNum - 1]} ${ordinal(parseInt(dom, 10))} at ${time}`
   }
   if (dom !== '*' && dow === '*') {
     if (dom === 'L') return `Monthly on last day at ${time}`
