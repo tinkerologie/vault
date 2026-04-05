@@ -82,10 +82,15 @@
 
   function openEdit(dest) {
     editing = dest
+    const cfg = parseConfig(dest.config)
+    // Migrate legacy "path" → "base_path" for SFTP/SMB configs.
+    if ((dest.type === 'sftp' || dest.type === 'smb') && cfg.base_path === undefined) {
+      cfg.base_path = cfg.path ?? ''
+    }
     form = {
       name: dest.name,
       type: dest.type,
-      config: parseConfig(dest.config),
+      config: cfg,
     }
     showModal = true
   }
