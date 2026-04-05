@@ -63,17 +63,6 @@ function vault_detect_time_format() {
     }
     if ($fmt === '') {
         return 'auto';
-    }l back to [notify][time].
-    // Unraid 7.x stores the user-facing time format in [notify][time]
-    // while [display][date] uses strftime-style "%c" (locale-dependent).
-    $fmt = '';
-    if (isset($ini['display']['time'])) {
-        $fmt = (string) $ini['display']['time'];
-    } elseif (isset($ini['notify']['time'])) {
-        $fmt = (string) $ini['notify']['time'];
-    }
-    if ($fmt === '') {
-        return 'auto';
     }
     // PHP date() uppercase H or G indicate 24-hour format
     if (preg_match('/[HG]/', $fmt)) {
