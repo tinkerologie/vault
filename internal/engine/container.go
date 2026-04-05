@@ -246,8 +246,7 @@ func (h *ContainerHandler) ListItems() ([]BackupItem, error) {
 //  3. Saves the container image as image.tar.
 //  4. Tars each bind mount volume to volume_N.tar.gz.
 //  5. Restarts the container if it was stopped.
-func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
-	ctx := context.Background()
+func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	result := &BackupResult{ItemName: item.Name}
 
 	containerID, _ := item.Settings["id"].(string)
@@ -387,11 +386,11 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
 
 				if hasChangedSince {
-					if err := tarDirectoryFiltered(mount.Source, volDest, changedSince, volExclusions); err != nil {
+					if err := tarDirectoryFiltered(ctx, mount.Source, volDest, changedSince, volExclusions); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				} else {
-					if err := tarDirectory(mount.Source, volDest, volExclusions); err != nil {
+					if err := tarDirectory(ctx, mount.Source, volDest, volExclusions); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				}
@@ -400,7 +399,7 @@ func (h *ContainerHandler) Backup(item BackupItem, destDir string, progress Prog
 					entry.ExcludedPaths = volExclusions
 				}
 			} else {
-				if err := tarFile(mount.Source, volDest); err != nil {
+				if err := tarFile(ctx, mount.Source, volDest); err != nil {
 					return fmt.Errorf("archiving volume file %s: %w", mount.Source, err)
 				}
 				entry.IsFile = true
@@ -490,8 +489,7 @@ func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, 
 //
 // If item.Settings["restore_destination"] is set, volumes are extracted
 // under that base directory instead of their original paths.
-func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress ProgressFunc) error {
-	ctx := context.Background()
+func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 
 	// Step 1: Load image.
 	progress(item.Name, 5, "loading image")
@@ -788,9 +786,42 @@ func (h *ContainerHandler) Restore(item BackupItem, sourceDir string, progress P
 	return nil
 }
 
+// contextCopy copies from src to dst, checking for context cancellation
+// periodically (every 32 KiB). This prevents a single large file from
+// blocking cancellation indefinitely.
+func contextCopy(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	buf := make([]byte, 32*1024)
+	var written int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
+		nr, readErr := src.Read(buf)
+		if nr > 0 {
+			nw, writeErr := dst.Write(buf[:nr])
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if writeErr != nil {
+				return written, writeErr
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return written, nil
+			}
+			return written, readErr
+		}
+	}
+}
+
 // tarFile creates a gzip-compressed tar archive containing a single file.
 // Used for file-based bind mounts (e.g. Tailscale container hook).
-func tarFile(srcPath, destPath string) error {
+func tarFile(ctx context.Context, srcPath, destPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	info, err := os.Stat(srcPath)
 	if err != nil {
 		return fmt.Errorf("stat source file: %w", err)
@@ -824,7 +855,7 @@ func tarFile(srcPath, destPath string) error {
 	}
 	defer f.Close()
 
-	if _, err := io.Copy(tw, io.LimitReader(f, header.Size)); err != nil {
+	if _, err := contextCopy(ctx, tw, io.LimitReader(f, header.Size)); err != nil {
 		return fmt.Errorf("writing file to tar: %w", err)
 	}
 
@@ -872,7 +903,7 @@ func untarFile(srcPath, destPath string) error {
 }
 
 // tarDirectory creates a gzip-compressed tar archive of srcDir at destPath.
-func tarDirectory(srcDir, destPath string, exclusions []string) error {
+func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []string) error {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -892,6 +923,10 @@ func tarDirectory(srcDir, destPath string, exclusions []string) error {
 	defer tw.Close()
 
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+
 		if err != nil {
 			// Skip broken symlinks and inaccessible files instead of
 			// aborting the entire backup.
@@ -962,7 +997,7 @@ func tarDirectory(srcDir, destPath string, exclusions []string) error {
 
 		// Use LimitReader to avoid "write too long" if the file grows
 		// between stat and copy.
-		if _, err := io.Copy(tw, io.LimitReader(f, header.Size)); err != nil {
+		if _, err := contextCopy(ctx, tw, io.LimitReader(f, header.Size)); err != nil {
 			return fmt.Errorf("writing file %s to tar: %w", rel, err)
 		}
 		return nil
@@ -973,7 +1008,7 @@ func tarDirectory(srcDir, destPath string, exclusions []string) error {
 // including only files whose modification time is after changedSince. Directory
 // entries are always included to preserve structure. This is used for
 // incremental and differential backups.
-func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time, exclusions []string) error {
+func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string) error {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -993,6 +1028,10 @@ func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time, exclu
 	defer tw.Close()
 
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+
 		if err != nil {
 			log.Printf("engine: skipping inaccessible path %s: %v", path, err)
 			return nil
@@ -1064,7 +1103,7 @@ func tarDirectoryFiltered(srcDir, destPath string, changedSince time.Time, exclu
 		}
 		defer f.Close()
 
-		if _, err := io.Copy(tw, io.LimitReader(f, header.Size)); err != nil {
+		if _, err := contextCopy(ctx, tw, io.LimitReader(f, header.Size)); err != nil {
 			return fmt.Errorf("writing file %s to tar: %w", rel, err)
 		}
 		return nil

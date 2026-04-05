@@ -195,6 +195,21 @@ func (h *JobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Cancel requests cancellation of a currently running job.
+//
+//	POST /api/v1/jobs/{id}/cancel
+func (h *JobHandler) Cancel(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err := h.runner.CancelJob(id); err != nil {
+		respondError(w, http.StatusConflict, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusAccepted, map[string]any{
+		"message": "cancellation requested",
+		"job_id":  id,
+	})
+}
+
 // RunnerStatus returns the current state of the backup/restore runner.
 //
 //	GET /api/v1/runner/status

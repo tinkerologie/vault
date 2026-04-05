@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -41,7 +42,7 @@ func (h *FolderHandler) ListItems() ([]BackupItem, error) {
 // Backup creates a tar.gz archive of the configured path.
 // If item.Settings["changed_since"] is set (RFC3339 timestamp), only files
 // modified after that time are included (for incremental/differential backups).
-func (h *FolderHandler) Backup(item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
+func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	result := &BackupResult{ItemName: item.Name}
 
 	srcPath, _ := item.Settings["path"].(string)
@@ -73,11 +74,11 @@ func (h *FolderHandler) Backup(item BackupItem, destDir string, progress Progres
 
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
-		if err := tarDirectoryFiltered(srcPath, archivePath, changedSince, nil); err != nil {
+		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, nil); err != nil {
 			return nil, fmt.Errorf("archiving changed files in %s: %w", srcPath, err)
 		}
 	} else {
-		if err := tarDirectory(srcPath, archivePath, nil); err != nil {
+		if err := tarDirectory(ctx, srcPath, archivePath, nil); err != nil {
 			return nil, fmt.Errorf("archiving %s: %w", srcPath, err)
 		}
 	}
@@ -97,7 +98,7 @@ func (h *FolderHandler) Backup(item BackupItem, destDir string, progress Progres
 }
 
 // Restore extracts the backup archive to its original path or an override destination.
-func (h *FolderHandler) Restore(item BackupItem, sourceDir string, progress ProgressFunc) error {
+func (h *FolderHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 10, "reading metadata")
 
 	// Check for restore destination override first.

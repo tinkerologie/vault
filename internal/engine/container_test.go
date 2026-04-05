@@ -3,6 +3,7 @@ package engine
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -18,7 +19,7 @@ func TestTarDirectory(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "subdir", "file2.txt"), []byte("world"), 0644)
 
 	dst := filepath.Join(t.TempDir(), "test.tar.gz")
-	if err := tarDirectory(src, dst, nil); err != nil {
+	if err := tarDirectory(context.Background(), src, dst, nil); err != nil {
 		t.Fatalf("tarDirectory() error = %v", err)
 	}
 	info, err := os.Stat(dst)
@@ -35,7 +36,7 @@ func TestTarAndUntarRoundtrip(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "data.txt"), []byte("vault backup"), 0644)
 
 	tarPath := filepath.Join(t.TempDir(), "backup.tar.gz")
-	if err := tarDirectory(src, tarPath, nil); err != nil {
+	if err := tarDirectory(context.Background(), src, tarPath, nil); err != nil {
 		t.Fatalf("tarDirectory() error = %v", err)
 	}
 
@@ -214,7 +215,7 @@ func TestTarFileAndUntarFileRoundtrip(t *testing.T) {
 
 	// Archive the single file.
 	tarPath := filepath.Join(t.TempDir(), "volume.tar.gz")
-	if err := tarFile(srcFile, tarPath); err != nil {
+	if err := tarFile(context.Background(), srcFile, tarPath); err != nil {
 		t.Fatalf("tarFile() error = %v", err)
 	}
 
@@ -322,7 +323,7 @@ func TestTarFilePreservesPermissions(t *testing.T) {
 	}
 
 	tarPath := filepath.Join(t.TempDir(), "exec.tar.gz")
-	if err := tarFile(srcFile, tarPath); err != nil {
+	if err := tarFile(context.Background(), srcFile, tarPath); err != nil {
 		t.Fatalf("tarFile() error = %v", err)
 	}
 
@@ -421,7 +422,7 @@ func TestTarDirectoryWithExclusions(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "debug.log"), []byte("debug"), 0644)
 
 	dst := filepath.Join(t.TempDir(), "test.tar.gz")
-	if err := tarDirectory(src, dst, []string{"Cache", "*.log"}); err != nil {
+	if err := tarDirectory(context.Background(), src, dst, []string{"Cache", "*.log"}); err != nil {
 		t.Fatalf("tarDirectory() error = %v", err)
 	}
 
@@ -452,7 +453,7 @@ func TestTarDirectoryNilExclusions(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "file.txt"), []byte("data"), 0644)
 
 	dst := filepath.Join(t.TempDir(), "test.tar.gz")
-	if err := tarDirectory(src, dst, nil); err != nil {
+	if err := tarDirectory(context.Background(), src, dst, nil); err != nil {
 		t.Fatalf("tarDirectory() with nil exclusions error = %v", err)
 	}
 

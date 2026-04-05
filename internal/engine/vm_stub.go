@@ -2,7 +2,10 @@
 
 package engine
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // VMHandler is a stub for non-Linux platforms where libvirt is not available.
 type VMHandler struct{}
@@ -18,11 +21,11 @@ func (h *VMHandler) ListItems() ([]BackupItem, error) {
 }
 
 // Backup is not supported on this platform.
-func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
+func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	return nil, fmt.Errorf("VM backup handler is not supported on this platform")
 }
 
 // Restore is not supported on this platform.
-func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress ProgressFunc) error {
+func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	return fmt.Errorf("VM backup handler is not supported on this platform")
 }

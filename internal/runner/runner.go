@@ -4,6 +4,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -44,6 +45,7 @@ type RunStatus struct {
 	CurrentItemType    string       `json:"current_item_type,omitempty"`
 	CurrentItemPercent int          `json:"current_item_percent,omitempty"`
 	CurrentItemMessage string       `json:"current_item_message,omitempty"`
+	Cancelling         bool         `json:"cancelling,omitempty"`
 	Queue              []QueueEntry `json:"queue,omitempty"`
 }
 
@@ -75,6 +77,15 @@ type Runner struct {
 	// statusMu protects the live run status fields below.
 	statusMu   sync.RWMutex
 	currentRun *RunStatus
+
+	// cancelMu protects the active cancellation function.
+	cancelMu        sync.Mutex
+	cancelFn        context.CancelFunc
+	cancellingJobID int64
+
+	// lastProgress tracks the last progress update time for stall detection.
+	lastProgressMu sync.Mutex
+	lastProgress   time.Time
 
 	// queueMu protects the pending job queue.
 	queueMu sync.Mutex
@@ -108,6 +119,49 @@ func (r *Runner) Status() RunStatus {
 	r.queueMu.Unlock()
 
 	return s
+}
+
+// CancelJob cancels the currently running job if it matches the given ID.
+// Returns an error if no job is running or the running job has a different ID.
+func (r *Runner) CancelJob(jobID int64) error {
+	r.statusMu.RLock()
+	active := r.currentRun != nil && r.currentRun.Active
+	var runningID int64
+	if r.currentRun != nil {
+		runningID = r.currentRun.JobID
+	}
+	r.statusMu.RUnlock()
+
+	if !active {
+		return fmt.Errorf("no job is currently running")
+	}
+	if runningID != jobID {
+		return fmt.Errorf("job %d is not running (running: %d)", jobID, runningID)
+	}
+
+	r.cancelMu.Lock()
+	fn := r.cancelFn
+	r.cancelMu.Unlock()
+
+	if fn == nil {
+		return fmt.Errorf("job %d cannot be cancelled", jobID)
+	}
+
+	log.Printf("runner: cancelling job %d", jobID)
+	fn()
+
+	r.statusMu.Lock()
+	if r.currentRun != nil {
+		r.currentRun.Cancelling = true
+	}
+	r.statusMu.Unlock()
+
+	r.broadcast(map[string]any{
+		"type":   "job_cancelling",
+		"job_id": jobID,
+	})
+
+	return nil
 }
 
 func (r *Runner) setRunStatus(s *RunStatus) {
@@ -279,6 +333,25 @@ func (r *Runner) RunJob(jobID int64) {
 	}
 	run.ID = runID
 
+	// Create a cancellable context with a 4-hour timeout.
+	// The cancel function is stored so CancelJob() can trigger it.
+	const jobTimeout = 4 * time.Hour
+	ctx, cancel := context.WithTimeout(context.Background(), jobTimeout)
+	defer cancel()
+
+	r.cancelMu.Lock()
+	r.cancelFn = cancel
+	r.cancellingJobID = jobID
+	r.cancelMu.Unlock()
+
+	// Clear the cancel function when we're done.
+	defer func() {
+		r.cancelMu.Lock()
+		r.cancelFn = nil
+		r.cancellingJobID = 0
+		r.cancelMu.Unlock()
+	}()
+
 	// Recover from panics so the run is marked failed instead of staying "running" forever.
 	defer func() {
 		r.setRunStatus(nil)
@@ -316,6 +389,39 @@ func (r *Runner) RunJob(jobID int64) {
 		ItemsTotal: len(items),
 		StartedAt:  time.Now().Format(time.RFC3339),
 	})
+
+	// Initialize progress tracking for stall detection.
+	r.lastProgressMu.Lock()
+	r.lastProgress = time.Now()
+	r.lastProgressMu.Unlock()
+
+	// Start a stall detector goroutine. It warns when no progress is received
+	// for stallWarnInterval, and cancels the job after stallCancelTimeout.
+	const stallWarnInterval = 30 * time.Minute
+	const stallCancelTimeout = 2 * time.Hour
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				r.lastProgressMu.Lock()
+				idle := time.Since(r.lastProgress)
+				r.lastProgressMu.Unlock()
+
+				if idle >= stallCancelTimeout {
+					log.Printf("runner: job %d stalled for %v — cancelling", jobID, idle.Truncate(time.Minute))
+					cancel()
+					return
+				}
+				if idle >= stallWarnInterval {
+					log.Printf("runner: WARNING job %d no progress for %v", jobID, idle.Truncate(time.Minute))
+				}
+			}
+		}
+	}()
 
 	r.logActivity("info", "backup", fmt.Sprintf("Backup started: %s", job.Name),
 		structuredDetails(map[string]any{
@@ -426,6 +532,12 @@ func (r *Runner) RunJob(jobID int64) {
 	}
 
 	for _, item := range items {
+		// Check for cancellation between items.
+		if ctx.Err() != nil {
+			log.Printf("runner: job %d cancelled between items", jobID)
+			break
+		}
+
 		var settings map[string]any
 		if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
 			settings = make(map[string]any)
@@ -490,8 +602,13 @@ func (r *Runner) RunJob(jobID int64) {
 		r.updateRunProgress(itemsDone, itemsFailed, item.ItemName)
 		r.updateCurrentItemProgress(item.ItemType, 0, "Starting...")
 
-		result, checksums, backupErr := r.backupItem(backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression)
+		result, checksums, backupErr := r.backupItem(ctx, backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression)
 		if backupErr != nil {
+			// If the context was cancelled, stop processing remaining items.
+			if ctx.Err() != nil {
+				log.Printf("runner: job %d item %s cancelled: %v", jobID, item.ItemName, backupErr)
+				break
+			}
 			itemsFailed++
 			failedNames = append(failedNames, item.ItemName)
 			itemResults = append(itemResults, map[string]any{
@@ -632,7 +749,16 @@ func (r *Runner) RunJob(jobID int64) {
 	}
 
 	status := "completed"
-	if itemsFailed > 0 && itemsDone == 0 {
+	if ctx.Err() != nil {
+		status = "cancelled"
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("runner: job %d timed out after %v", jobID, time.Since(jobStart).Truncate(time.Second))
+			run.Log = fmt.Sprintf("Job timed out after %v", time.Since(jobStart).Truncate(time.Second))
+		} else {
+			log.Printf("runner: job %d was cancelled after %v", jobID, time.Since(jobStart).Truncate(time.Second))
+			run.Log = "Job was cancelled by user"
+		}
+	} else if itemsFailed > 0 && itemsDone == 0 {
 		status = "failed"
 	} else if itemsFailed > 0 {
 		status = "partial"
@@ -756,7 +882,7 @@ func (r *Runner) RunJob(jobID int64) {
 // writing output to a local temp dir and then to the storage adapter.
 // If verify is true, it reads each file back and validates SHA-256 checksums.
 // If passphrase is non-empty, each file is encrypted with age before uploading.
-func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string) (*engine.BackupResult, map[string]string, error) {
+func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string) (*engine.BackupResult, map[string]string, error) {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
 	tmpDir, cleanup, err := tempdir.CreateBackupDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config}, stageOverride)
 	if err != nil {
@@ -782,6 +908,10 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 	}
 
 	progress := func(name string, pct int, msg string) {
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
+
 		r.updateCurrentItemProgress(item.Type, pct, msg)
 		r.broadcast(map[string]any{
 			"type":      "backup_progress",
@@ -792,7 +922,7 @@ func (r *Runner) backupItem(item engine.BackupItem, dest db.StorageDestination, 
 		})
 	}
 
-	result, err := handler.Backup(item, tmpDir, progress)
+	result, err := handler.Backup(ctx, item, tmpDir, progress)
 	if err != nil {
 		return nil, nil, fmt.Errorf("backup %s: %w", item.Name, err)
 	}
@@ -1354,7 +1484,7 @@ func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination,
 		backupItem.Settings["restore_destination"] = destination
 	}
 
-	restoreErr := handler.Restore(backupItem, tmpDir, progress)
+	restoreErr := handler.Restore(context.Background(), backupItem, tmpDir, progress)
 	r.sendRestoreNotification(itemName, itemType, restoreErr)
 	return restoreErr
 }
@@ -1576,6 +1706,8 @@ func logLevelForStatus(status string) string {
 		return "warning"
 	case "failed":
 		return "error"
+	case "cancelled":
+		return "warning"
 	default:
 		return "info"
 	}

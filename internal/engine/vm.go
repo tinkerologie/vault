@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -62,7 +63,7 @@ func (h *VMHandler) ListItems() ([]BackupItem, error) {
 }
 
 // Backup performs a backup of a virtual machine to destDir.
-func (h *VMHandler) Backup(item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
+func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	result := &BackupResult{ItemName: item.Name}
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -242,7 +243,7 @@ func (h *VMHandler) backupDisks(dom libvirt.Domain, name string, disks []domainD
 // If item.Settings["restore_destination"] is set, disk images and NVRAM
 // are restored under that base directory instead of their original paths,
 // and the domain XML is rewritten to reference the new locations.
-func (h *VMHandler) Restore(item BackupItem, sourceDir string, progress ProgressFunc) error {
+func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 5, "reading domain XML")
 
 	xmlPath := filepath.Join(sourceDir, "domain.xml")

@@ -1,5 +1,7 @@
 package engine
 
+import "context"
+
 type BackupItem struct {
 	Name     string         `json:"name"`
 	Type     string         `json:"type"` // "container", "vm", or "folder"
@@ -21,7 +23,7 @@ type BackupFile struct {
 type ProgressFunc func(item string, percent int, message string)
 
 type Handler interface {
-	Backup(item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
-	Restore(item BackupItem, source string, progress ProgressFunc) error
+	Backup(ctx context.Context, item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
+	Restore(ctx context.Context, item BackupItem, source string, progress ProgressFunc) error
 	ListItems() ([]BackupItem, error)
 }

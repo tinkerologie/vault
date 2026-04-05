@@ -2,7 +2,10 @@
 
 package engine
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // PluginHandler is a stub for non-Linux platforms where Unraid plugins
 // are not available.
@@ -19,11 +22,11 @@ func (h *PluginHandler) ListItems() ([]BackupItem, error) {
 }
 
 // Backup is not supported on this platform.
-func (h *PluginHandler) Backup(item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
+func (h *PluginHandler) Backup(_ context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	return nil, fmt.Errorf("plugin backup handler is not supported on this platform")
 }
 
 // Restore is not supported on this platform.
-func (h *PluginHandler) Restore(item BackupItem, sourceDir string, progress ProgressFunc) error {
+func (h *PluginHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	return fmt.Errorf("plugin backup handler is not supported on this platform")
 }

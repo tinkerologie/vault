@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -65,7 +66,7 @@ func (h *PluginHandler) ListItems() ([]BackupItem, error) {
 
 // Backup creates a tar.gz archive containing the plugin's .plg file and its
 // configuration directory (if it exists).
-func (h *PluginHandler) Backup(item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
+func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	result := &BackupResult{ItemName: item.Name}
 
 	pluginName, _ := item.Settings["id"].(string)
@@ -98,7 +99,7 @@ func (h *PluginHandler) Backup(item BackupItem, destDir string, progress Progres
 	configDir := filepath.Join(pluginsDir, pluginName)
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
 		archivePath := filepath.Join(destDir, "config.tar.gz")
-		if err := tarDirectory(configDir, archivePath, nil); err != nil {
+		if err := tarDirectory(ctx, configDir, archivePath, nil); err != nil {
 			return nil, fmt.Errorf("archiving plugin config: %w", err)
 		}
 		result.Files = append(result.Files, backupFileInfo(archivePath))
@@ -126,7 +127,7 @@ func (h *PluginHandler) Backup(item BackupItem, destDir string, progress Progres
 // Restore extracts the plugin's .plg file and config directory back to
 // /boot/config/plugins/. The plugin will be recognized on next Unraid boot
 // or when the Plugins page is refreshed.
-func (h *PluginHandler) Restore(item BackupItem, sourceDir string, progress ProgressFunc) error {
+func (h *PluginHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 10, "reading metadata")
 
 	pluginName := item.Name

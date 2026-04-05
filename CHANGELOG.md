@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- Cancel API endpoint `POST /api/v1/jobs/{id}/cancel` to abort a running backup job (closes #28)
+- Cancellable context propagated through the entire backup pipeline: Runner → engine handlers → tar/copy I/O operations
+- 4-hour job timeout with automatic cancellation via `context.WithTimeout`
+- Stall detection: warns after 30 minutes of no progress, auto-cancels after 2 hours of inactivity
+- `cancelling` field added to runner status for real-time UI feedback
+- `job_cancelling` WebSocket event broadcast when cancellation is requested
+- "cancelled" job run status with descriptive log messages (user-initiated vs timeout)
+- Context-aware `contextCopy` helper that checks for cancellation every 32 KiB during file I/O
+- `ctx.Err()` checks in `filepath.Walk` callbacks to abort directory traversal on cancellation
 - Backup target category toggles in Settings → General: independently enable/disable tracking for Containers, Virtual Machines, and Flash Drive; disabled categories are excluded from protection status on the Dashboard and readiness metrics on the Recovery page (closes #20)
 - Three new settings keys (`container_backup_enabled`, `vm_backup_enabled`, `flash_backup_enabled`) with `"true"` defaults in the settings API
 - Monthly and yearly scheduling now support "First day of month" and "Last day of month" options in the schedule builder UI; last-day jobs use a daily-check pattern on the backend with an `isLastDayOfMonth()` guard so they fire correctly on months of any length (closes #15)
@@ -17,9 +26,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Stuck backup jobs can no longer run indefinitely — timeout and stall detection ensure jobs are always bounded (closes #28)
 - SMB adapter `Write()` now propagates `MkdirAll` errors instead of silently ignoring them
 - `ItemPicker` selected-items map wrapped in `$state()` to ensure Svelte 5 reactive tracking
 - Storage form "Save" button now guards against double-submission with a `saving` flag and shows a "Saving…" state while the request is in flight
+
+### Changed
+
+- `engine.Handler` interface now accepts `context.Context` as the first parameter for `Backup()` and `Restore()`
+- All engine handlers (Container, VM, Folder, Plugin) updated to accept and propagate context
+- `Runner.backupItem()` now receives and passes context to engine handlers
 
 ## [2026.03.02] - 2026-03-19
 
