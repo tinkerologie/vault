@@ -1,0 +1,51 @@
+version: 2
+
+updates:
+  # Go modules
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps(go):"
+    labels:
+      - dependencies
+      - go
+    open-pull-requests-limit: 10
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # npm — web UI (Svelte)
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps(npm):"
+    labels:
+      - dependencies
+      - javascript
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps(actions):"
+    labels:
+      - dependencies
+      - github-actions
+    open-pull-requests-limit: 5

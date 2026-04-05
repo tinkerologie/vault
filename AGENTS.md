@@ -261,6 +261,22 @@ make test-coverage                           # Coverage report
 go test ./internal/db/... -run TestJobCreate -v  # Single test
 ```
 
+## Mandatory Post-Change Workflow
+
+> **CRITICAL — This is NOT optional. Every AI agent MUST execute this workflow automatically after ANY code change.** Do not wait for the user to ask. This applies to bug fixes, features, refactors, config changes — any change that affects the built binary or web UI.
+
+### Steps (execute in order)
+
+1. **Build & Test:** Run `make build` (Ansible: lint → test → web build → cross-compile). Fix any failures before proceeding.
+2. **Deploy:** Run `make deploy` (deploys binary + assets to Unraid, starts daemon).
+3. **Verify API:** Run `make verify` (endpoint checks + folder/VM smoke tests against Unraid). Fix any failures before proceeding.
+4. **Verify UI:** Use Playwright or browser MCP tools to navigate every affected page on `http://192.168.20.21:24085`. Take snapshots to confirm the UI renders correctly. Never skip this step.
+5. **Update CHANGELOG.md:** Add entries under the `## [Unreleased]` section using [Keep a Changelog](https://keepachangelog.com/) format (`### Added`, `### Fixed`, `### Changed`, `### Removed`). Reference issue numbers where applicable.
+
+**Shortcut:** `make redeploy` (uninstall → build → deploy → verify) replaces steps 1–3, but you still MUST do steps 4 and 5.
+
+**Only skip when:** Changes are limited to documentation files (`.md`), comments, or files that do not affect the built binary or web UI.
+
 ## Anti-Patterns (DO NOT)
 
 - **DO NOT** use CGO — binary must be pure Go (CGO_ENABLED=0)
@@ -270,6 +286,8 @@ go test ./internal/db/... -run TestJobCreate -v  # Single test
 - **DO NOT** commit secrets, credentials, or `ansible/inventory.yml`
 - **DO NOT** use `gorilla/mux` — this project uses Chi v5
 - **DO NOT** add libvirt code without build tags (breaks macOS builds)
+- **DO NOT** consider a code change complete without running the full post-change workflow (build → deploy → verify API → verify UI → update CHANGELOG)
+- **DO NOT** skip Playwright/browser UI verification after deploying changes
 
 ## Key Dependencies
 

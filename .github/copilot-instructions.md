@@ -35,6 +35,20 @@ Task-oriented step-by-step guides in `.github/prompts/`:
 - `Add Scheduler Job Type.prompt.md` — Adding a new job type
 - `Debug Backup Issue.prompt.md` — Debugging backup/restore failures
 
+## Mandatory Post-Change Workflow
+
+> **CRITICAL — Execute automatically after EVERY code change. Do not wait for the user to ask.**
+
+1. **Build & Test:** `make build` — fix failures before proceeding
+2. **Deploy:** `make deploy` — deploy to Unraid
+3. **Verify API:** `make verify` — endpoint + smoke tests
+4. **Verify UI:** Use Playwright or browser tools to navigate affected pages on `http://192.168.20.21:24085`, take snapshots to confirm correctness
+5. **Update CHANGELOG.md:** Add entries under `## [Unreleased]` using [Keep a Changelog](https://keepachangelog.com/) format. Reference issue numbers where applicable.
+
+**Shortcut:** `make redeploy` replaces steps 1–3, but steps 4 and 5 are still required.
+
+**Only skip when:** Changes are limited to documentation files, comments, or files that don't affect the binary or web UI.
+
 ## Quick Commands
 
 ```bash

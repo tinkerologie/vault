@@ -15,10 +15,23 @@ Read `AGENTS.md` in the project root for comprehensive instructions.
 - **Pre-commit:** Run `make pre-commit-run` before committing
 - **Commits:** Follow Conventional Commits: `feat(scope):`, `fix(scope):`, `docs(scope):`
 
+## Mandatory Post-Change Workflow
+
+> **CRITICAL — Execute automatically after EVERY code change. Do not wait for the user to ask.**
+
+1. `make build` → 2. `make deploy` → 3. `make verify` → 4. Playwright UI verification on `http://192.168.20.21:24085` → 5. Update `CHANGELOG.md` under `## [Unreleased]`
+
+**Only skip for:** doc-only changes that don't affect the binary or web UI.
+
+See `AGENTS.md` for full details.
+
 ## Commands
 
 ```bash
 make test && make lint        # Test and lint
 make pre-commit-run           # Full pre-commit checks
+make build                    # Ansible: lint → test → cross-compile
 make deploy                   # Deploy to Unraid (Ansible)
+make verify                   # Endpoint + smoke tests
+make redeploy                 # Full lifecycle (uninstall → build → deploy → verify)
 ```
