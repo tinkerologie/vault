@@ -1,8 +1,11 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -163,6 +166,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 		panic("failed to create sub filesystem for web dist: " + err.Error())
 	}
 	fileServer := http.FileServer(http.FS(distFS))
+
+	// Prepare runtime config injection so the SPA respects Unraid settings
+	// (e.g., 12h / 24h time format) even when accessed directly on the daemon port.
+	injectedIndex := buildInjectedIndex(distFS)
+
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		// Try to serve the file directly (css, js, images, etc.).
@@ -173,9 +181,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 				return
 			}
 		}
-		// Fall back to index.html for SPA client-side routing.
-		r.URL.Path = "/"
-		fileServer.ServeHTTP(w, r)
+		// Fall back to injected index.html for SPA client-side routing.
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(injectedIndex)
 	})
 
 	return r
@@ -204,4 +213,84 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, _ *http.Request) {
 		"auth_required":    required,
 		"ui_auth_required": false,
 	})
+}
+
+// buildInjectedIndex reads index.html from the embedded SPA filesystem and
+// injects a runtime config script tag so the SPA can detect Unraid settings
+// (e.g., time format) even when accessed directly on the daemon port.
+func buildInjectedIndex(distFS fs.FS) []byte {
+	raw, err := fs.ReadFile(distFS, "index.html")
+	if err != nil {
+		return raw // serve as-is if read fails
+	}
+
+	cfg := map[string]string{
+		"mode":       "direct",
+		"timeFormat": detectUnraidTimeFormat(),
+	}
+	cfgJSON, err := json.Marshal(cfg)
+	if err != nil {
+		return raw
+	}
+	script := fmt.Sprintf("<script>window.__VAULT_RUNTIME_CONFIG__=%s;</script>", cfgJSON)
+
+	html := strings.Replace(string(raw), "</head>", script+"\n</head>", 1)
+	return []byte(html)
+}
+
+// detectUnraidTimeFormat reads Unraid's display time preference from
+// /boot/config/plugins/dynamix/dynamix.cfg. Returns "24h", "12h", or "auto".
+func detectUnraidTimeFormat() string {
+	const cfgPath = "/boot/config/plugins/dynamix/dynamix.cfg"
+	return detectTimeFormatFromPath(cfgPath)
+}
+
+// detectTimeFormatFromPath reads a dynamix.cfg INI file and returns the time
+// format preference. Extracted for testability.
+func detectTimeFormatFromPath(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "auto"
+	}
+	return parseTimeFormatINI(string(data))
+}
+
+// parseTimeFormatINI parses Unraid dynamix.cfg INI content and returns the
+// time format: "24h", "12h", or "auto" if not determinable.
+// It checks [display][time] first, then falls back to [notify][time].
+// Unraid 7.x stores the user-facing time format in [notify][time] while
+// [display][date] uses strftime-style "%c" (locale-dependent).
+func parseTimeFormatINI(content string) string {
+	sections := map[string]map[string]string{}
+	currentSection := ""
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			currentSection = line[1 : len(line)-1]
+			if sections[currentSection] == nil {
+				sections[currentSection] = map[string]string{}
+			}
+			continue
+		}
+		if currentSection != "" {
+			if k, v, ok := strings.Cut(line, "="); ok {
+				sections[currentSection][strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
+			}
+		}
+	}
+
+	// Check [display][time] first, then fall back to [notify][time].
+	timeFmt := sections["display"]["time"]
+	if timeFmt == "" {
+		timeFmt = sections["notify"]["time"]
+	}
+	if timeFmt == "" {
+		return "auto"
+	}
+
+	// PHP date format: H or G = 24-hour clock.
+	if strings.ContainsAny(timeFmt, "HG") {
+		return "24h"
+	}
+	return "12h"
 }

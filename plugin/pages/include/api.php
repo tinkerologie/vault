@@ -49,10 +49,32 @@ function vault_detect_time_format() {
         return 'auto';
     }
     $ini = @parse_ini_file($cfg, true);
-    if (!is_array($ini) || !isset($ini['display']['time'])) {
+    if (!is_array($ini)) {
         return 'auto';
     }
-    $fmt = (string) $ini['display']['time'];
+    // Check [display][time] first, then fall back to [notify][time].
+    // Unraid 7.x stores the user-facing time format in [notify][time]
+    // while [display][date] uses strftime-style "%c" (locale-dependent).
+    $fmt = '';
+    if (isset($ini['display']['time'])) {
+        $fmt = (string) $ini['display']['time'];
+    } elseif (isset($ini['notify']['time'])) {
+        $fmt = (string) $ini['notify']['time'];
+    }
+    if ($fmt === '') {
+        return 'auto';
+    }l back to [notify][time].
+    // Unraid 7.x stores the user-facing time format in [notify][time]
+    // while [display][date] uses strftime-style "%c" (locale-dependent).
+    $fmt = '';
+    if (isset($ini['display']['time'])) {
+        $fmt = (string) $ini['display']['time'];
+    } elseif (isset($ini['notify']['time'])) {
+        $fmt = (string) $ini['notify']['time'];
+    }
+    if ($fmt === '') {
+        return 'auto';
+    }
     // PHP date() uppercase H or G indicate 24-hour format
     if (preg_match('/[HG]/', $fmt)) {
         return '24h';

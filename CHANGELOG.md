@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Three new settings keys (`container_backup_enabled`, `vm_backup_enabled`, `flash_backup_enabled`) with `"true"` defaults in the settings API
 - Monthly and yearly scheduling now support "First day of month" and "Last day of month" options in the schedule builder UI; last-day jobs use a daily-check pattern on the backend with an `isLastDayOfMonth()` guard so they fire correctly on months of any length (closes #15)
 - Unraid display time format is now detected from `dynamix.cfg` and injected into the runtime config, allowing the UI to honour the user's 12-hour or 24-hour preference
+- Go daemon (direct-access mode) now injects `window.__VAULT_RUNTIME_CONFIG__` into the SPA HTML, ensuring time format detection works when accessing Vault directly on port 24085 without the PHP proxy
 - `getTimeFormat()` and `getHour12()` helpers added to `runtime-config.js` for locale-aware time rendering
 - `formatDate()` utility now used consistently for all date/time display in the Storage and Settings pages
 
@@ -28,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Container path exclusion presets now load correctly when Vault runs behind the Unraid web proxy; `fetchContainerPresets()` uses `buildApiRequest()` instead of raw `fetch()` to route through the authenticated proxy endpoint (closes #11)
 - Stuck backup jobs can no longer run indefinitely — timeout and stall detection ensure jobs are always bounded (closes #28)
+- Time format detection now falls back to `[notify][time]` in `dynamix.cfg` when `[display][time]` is absent, fixing detection on Unraid 7.x where the time format preference is stored in the notification settings section
 - SMB and SFTP storage adapters now honour the "Path" field: frontend forms send `base_path` matching the backend struct, and adapters accept the legacy `path` JSON key as a fallback for backward compatibility (closes #25)
 - Job deletion with "Delete Backup Files" now properly removes empty directories after deleting their contents, fixing the issue where backup files and directories were left on Local and SMB storage (closes #26)
 - SMB adapter `Write()` now propagates `MkdirAll` errors instead of silently ignoring them
@@ -111,7 +113,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Full, incremental, and differential backup types
 - Job scheduling with retention policies
 - Web UI with Dashboard, Jobs, Restore, Storage, History, Settings
-
-[Unreleased]: https://github.com/ruaan-deysel/vault/compare/v2026.03.00...HEAD
-[2026.03.00]: https://github.com/ruaan-deysel/vault/releases/tag/v2026.03.00
-[0.1.0]: https://github.com/ruaan-deysel/vault/releases/tag/v0.1.0
