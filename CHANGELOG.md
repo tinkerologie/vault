@@ -30,7 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - SMB and SFTP storage adapters now honour the "Path" field: frontend forms send `base_path` matching the backend struct, and adapters accept the legacy `path` JSON key as a fallback for backward compatibility (closes #25)
 - Job deletion with "Delete Backup Files" now properly removes empty directories after deleting their contents, fixing the issue where backup files and directories were left on Local and SMB storage (closes #26)
 - SMB adapter `Write()` now propagates `MkdirAll` errors instead of silently ignoring them
-- `ItemPicker` selected-items map wrapped in `$state()` to ensure Svelte 5 reactive tracking
+- `ItemPicker` selected-items map wrapped in `$state()` to ensure Svelte 5 reactive tracking (closes #22)
+- Items deleted from Unraid (containers, VMs, folders, plugins) can now be removed from backup jobs via the new remove button in the Backup Order list; stale items that no longer exist on the system are visually flagged with a "Not found" warning indicator (closes #24)
 - Storage form "Save" button now guards against double-submission with a `saving` flag and shows a "Saving…" state while the request is in flight
 
 ### Changed

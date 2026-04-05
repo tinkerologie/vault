@@ -172,6 +172,11 @@
     emitChange()
   }
 
+  function removeItem(key) {
+    selected.delete(key)
+    emitChange()
+  }
+
   function emitChange() {
     const arr = Array.from(selected.values()).map((it, i) => ({ ...it, sort_order: i }))
     items = arr
@@ -206,6 +211,18 @@
   )
   let pluginCount = $derived(Array.from(selected.values()).filter((i) => i.item_type === 'plugin').length)
   let selectedArray = $derived(Array.from(selected.entries()))
+
+  // Set of all live inventory keys for stale detection
+  let inventoryKeys = $derived(new Set([
+    ...containers.map(c => `container:${c.name}`),
+    ...vms.map(v => `vm:${v.name}`),
+    ...folders.map(f => `folder:${f.name}`),
+    ...plugins.map(p => `plugin:${p.name}`),
+  ]))
+
+  function isStaleItem(key) {
+    return !inventoryKeys.has(key)
+  }
 </script>
 
 <div class="space-y-3">
@@ -609,13 +626,14 @@
     {/if}
 
     <!-- Selected Items Order -->
-    {#if selectedCount > 1}
+    {#if selectedCount > 0}
       <div class="mt-4 pt-3 border-t border-border">
-        <p class="text-xs font-medium text-text-muted mb-2">Backup Order (drag to reorder)</p>
+        <p class="text-xs font-medium text-text-muted mb-2">{selectedCount > 1 ? 'Backup Order (drag to reorder)' : 'Selected Items'}</p>
         <div class="space-y-1" role="list">
           {#each selectedArray as [key, item], idx (key)}
+            {@const stale = !loading && isStaleItem(key)}
             <div
-              class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-3/50 border border-border text-sm {dragIndex === idx ? 'opacity-50' : ''}"
+              class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-3/50 border text-sm {stale ? 'border-yellow-500/40' : 'border-border'} {dragIndex === idx ? 'opacity-50' : ''}"
               draggable="true"
               ondragstart={() => (dragIndex = idx)}
               ondragover={(e) => e.preventDefault()}
@@ -626,24 +644,41 @@
               <svg aria-hidden="true" class="w-4 h-4 text-text-dim cursor-grab shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg>
               <span class="text-xs px-1.5 py-0.5 rounded bg-surface-4 text-text-dim shrink-0">{item.item_type}</span>
               <span class="text-text truncate">{item.item_name}</span>
+              {#if stale}
+                <span class="flex items-center gap-1 text-xs text-yellow-400 shrink-0" title="This item no longer exists on the system">
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                  Not found
+                </span>
+              {/if}
               <div class="ml-auto flex items-center gap-1 shrink-0">
+                {#if selectedCount > 1}
+                  <button
+                    type="button"
+                    onclick={() => { if (idx > 0) moveItem(idx, idx - 1) }}
+                    disabled={idx === 0}
+                    class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
+                    aria-label="Move up"
+                  >
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => { if (idx < selectedArray.length - 1) moveItem(idx, idx + 1) }}
+                    disabled={idx === selectedArray.length - 1}
+                    class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
+                    aria-label="Move down"
+                  >
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                  </button>
+                {/if}
                 <button
                   type="button"
-                  onclick={() => { if (idx > 0) moveItem(idx, idx - 1) }}
-                  disabled={idx === 0}
-                  class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
-                  aria-label="Move up"
+                  onclick={() => removeItem(key)}
+                  class="p-0.5 text-text-dim hover:text-red-400 transition-colors"
+                  aria-label="Remove {item.item_name}"
+                  title="Remove from backup job"
                 >
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
-                </button>
-                <button
-                  type="button"
-                  onclick={() => { if (idx < selectedArray.length - 1) moveItem(idx, idx + 1) }}
-                  disabled={idx === selectedArray.length - 1}
-                  class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
-                  aria-label="Move down"
-                >
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
               </div>
             </div>
