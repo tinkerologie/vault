@@ -24,6 +24,7 @@ type SFTPConfig struct {
 	Password       string `json:"password"`
 	KeyFile        string `json:"key_file"`
 	BasePath       string `json:"base_path"`
+	Path           string `json:"path"`             // Deprecated alias for BasePath; kept for backward compatibility.
 	HostKey        string `json:"host_key"`         // SHA-256 fingerprint of host public key
 	KnownHostsFile string `json:"known_hosts_file"` // Path to OpenSSH known_hosts file
 }
@@ -35,6 +36,10 @@ type SFTPAdapter struct {
 func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
 	if config.Port == 0 {
 		config.Port = 22
+	}
+	// Backward compatibility: accept "path" as alias for "base_path".
+	if config.BasePath == "" && config.Path != "" {
+		config.BasePath = config.Path
 	}
 	return &SFTPAdapter{config: config}, nil
 }

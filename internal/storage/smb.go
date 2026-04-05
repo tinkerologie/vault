@@ -17,6 +17,7 @@ type SMBConfig struct {
 	Password string `json:"password"`
 	Share    string `json:"share"`
 	BasePath string `json:"base_path"`
+	Path     string `json:"path"` // Deprecated alias for BasePath; kept for backward compatibility.
 }
 
 type SMBAdapter struct {
@@ -26,6 +27,10 @@ type SMBAdapter struct {
 func NewSMBAdapter(config SMBConfig) (*SMBAdapter, error) {
 	if config.Port == 0 {
 		config.Port = 445
+	}
+	// Backward compatibility: accept "path" as alias for "base_path".
+	if config.BasePath == "" && config.Path != "" {
+		config.BasePath = config.Path
 	}
 	return &SMBAdapter{config: config}, nil
 }

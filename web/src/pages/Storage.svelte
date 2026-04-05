@@ -230,8 +230,8 @@
   function onTypeChange() {
     const defaults = {
       local: { path: '' },
-      sftp: { host: '', port: 22, user: '', password: '', path: '' },
-      smb: { host: '', share: '', user: '', password: '', path: '' },
+      sftp: { host: '', port: 22, user: '', password: '', base_path: '' },
+      smb: { host: '', share: '', user: '', password: '', base_path: '' },
       nfs: { host: '', export: '', base_path: '', version: '4', options: '' },
     }
     form.config = defaults[form.type] || {}
@@ -313,9 +313,10 @@
               <p>Path: {cfg.path || '—'}</p>
             {:else if dest.type === 'sftp'}
               <p>Host: {cfg.host || '—'}:{cfg.port || 22}</p>
-              <p>Path: {cfg.path || '/'}</p>
+              <p>Path: {cfg.base_path || cfg.path || '/'}</p>
             {:else if dest.type === 'smb'}
               <p>Share: \\{cfg.host || '—'}\{cfg.share || '—'}</p>
+              {#if cfg.base_path || cfg.path}<p>Path: {cfg.base_path || cfg.path}</p>{/if}
             {:else if dest.type === 'nfs'}
               <p class="text-xs text-text-muted truncate">{cfg.host}:{cfg.export}</p>
             {/if}
@@ -406,7 +407,7 @@
       </div>
       <div>
         <label for="cfg_spath" class="block text-sm font-medium text-text-muted mb-1.5">Remote Path</label>
-        <input id="cfg_spath" type="text" bind:value={form.config.path}
+        <input id="cfg_spath" type="text" bind:value={form.config.base_path}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="/backups/vault" />
       </div>
     {:else if form.type === 'smb'}
@@ -436,7 +437,7 @@
       </div>
       <div>
         <label for="cfg_smbpath" class="block text-sm font-medium text-text-muted mb-1.5">Path</label>
-        <input id="cfg_smbpath" type="text" bind:value={form.config.path}
+        <input id="cfg_smbpath" type="text" bind:value={form.config.base_path}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="vault" />
       </div>
     {:else if form.type === 'nfs'}

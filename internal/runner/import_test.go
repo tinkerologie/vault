@@ -450,13 +450,9 @@ func TestDeleteStorageDir(t *testing.T) {
 	adapter := storage.NewLocalAdapter(storageDir)
 	r.DeleteStorageDir(adapter, "test-job/run1")
 
-	// Verify files are gone.
-	entries, err := os.ReadDir(dir)
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("ReadDir error = %v", err)
-	}
-	if len(entries) != 0 {
-		t.Errorf("got %d remaining entries, want 0", len(entries))
+	// Verify the directory itself is removed (not just the files).
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("directory test-job/run1 should have been deleted")
 	}
 }
 
@@ -492,8 +488,15 @@ func TestCleanupJobStorage(t *testing.T) {
 		t.Fatalf("CleanupJobStorage error = %v", err)
 	}
 
-	// Verify the run directory files are gone.
+	// Verify the run directory and its files are gone.
 	if _, err := os.Stat(filepath.Join(runDir, "data.tar")); !os.IsNotExist(err) {
 		t.Error("data.tar should have been deleted")
+	}
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Error("run directory should have been deleted")
+	}
+	// Verify the top-level job directory is also removed.
+	if _, err := os.Stat(filepath.Join(storageDir, "cleanup-test")); !os.IsNotExist(err) {
+		t.Error("top-level job directory should have been deleted")
 	}
 }

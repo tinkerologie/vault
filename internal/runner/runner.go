@@ -1839,7 +1839,8 @@ func (r *Runner) deleteStorageDir(adapter storage.Adapter, prefix string) {
 	r.DeleteStorageDir(adapter, prefix)
 }
 
-// DeleteStorageDir recursively deletes all files under a storage path prefix.
+// DeleteStorageDir recursively deletes all files under a storage path prefix,
+// then removes the directory itself.
 func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) {
 	files, err := adapter.List(prefix)
 	if err != nil {
@@ -1855,6 +1856,11 @@ func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) {
 		if err := adapter.Delete(fi.Path); err != nil {
 			log.Printf("runner: failed to delete storage file %s: %v", fi.Path, err)
 		}
+	}
+
+	// Remove the now-empty directory itself.
+	if err := adapter.Delete(prefix); err != nil {
+		log.Printf("runner: failed to remove storage directory %s: %v", prefix, err)
 	}
 }
 
