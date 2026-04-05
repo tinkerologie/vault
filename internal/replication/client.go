@@ -13,13 +13,11 @@ import (
 // Client talks to a remote Vault API server.
 type Client struct {
 	baseURL    string
-	apiKey     string
 	httpClient *http.Client
 }
 
 // NewClient creates a replication client for the given remote Vault URL.
-// The apiKey is sent as an X-API-Key header for authentication.
-func NewClient(baseURL, apiKey string) (*Client, error) {
+func NewClient(baseURL string) (*Client, error) {
 	normalizedBaseURL, err := NormalizeBaseURL(baseURL)
 	if err != nil {
 		return nil, err
@@ -27,7 +25,6 @@ func NewClient(baseURL, apiKey string) (*Client, error) {
 
 	return &Client{
 		baseURL: normalizedBaseURL,
-		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Minute,
 		},
@@ -212,9 +209,6 @@ func (c *Client) doRequestWithParams(method, path string, params map[string]stri
 	req, err := http.NewRequest(method, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
-	}
-	if c.apiKey != "" {
-		req.Header.Set("X-API-Key", c.apiKey)
 	}
 	return c.httpClient.Do(req)
 }

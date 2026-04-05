@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/ruaan-deysel/vault/internal/api"
@@ -28,14 +26,8 @@ var daemonCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dbPath, _ := cmd.Flags().GetString("db")
 		addr, _ := cmd.Flags().GetString("addr")
-		apiKey, _ := cmd.Flags().GetString("api-key")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
-
-		// Environment variables override flags.
-		if envKey := os.Getenv("VAULT_API_KEY"); envKey != "" && apiKey == "" {
-			apiKey = envKey
-		}
 
 		// Hybrid mode detection: if a cache drive is available, use a RAM-backed
 		// working database with periodic snapshots to the cache drive. This
@@ -173,37 +165,9 @@ var daemonCmd = &cobra.Command{
 		}
 
 		log.Println("Starting Vault daemon...")
-		if apiKey != "" {
-			log.Println("API key authentication enabled")
-		}
-
-		// If an API key was provided via CLI/env var and the DB has no key yet,
-		// seed it into the database so it can be managed from the Settings UI.
-		if apiKey != "" && !database.HasAPIKey() {
-			sealed, sealErr := crypto.Seal(serverKey, apiKey)
-			if sealErr != nil {
-				return fmt.Errorf("sealing api key: %w", sealErr)
-			}
-			hash, hashErr := crypto.HashPassphrase(apiKey)
-			if hashErr != nil {
-				return fmt.Errorf("hashing api key: %w", hashErr)
-			}
-			if err := database.SetSetting("api_key_sealed", sealed); err != nil {
-				return fmt.Errorf("storing api key: %w", err)
-			}
-			if err := database.SetSetting("api_key_hash", hash); err != nil {
-				return fmt.Errorf("storing api key hash: %w", err)
-			}
-			log.Println("CLI API key seeded into database")
-		}
-
-		if err := validateListenAddress(addr, apiKey != "" || database.HasAPIKey()); err != nil {
-			return err
-		}
 
 		cfg := api.ServerConfig{
 			Addr:      addr,
-			APIKey:    apiKey,
 			TLSCert:   tlsCert,
 			TLSKey:    tlsKey,
 			ServerKey: serverKey,
@@ -262,47 +226,9 @@ var daemonCmd = &cobra.Command{
 	},
 }
 
-func validateListenAddress(addr string, hasAPIKey bool) error {
-	if isLoopbackListenAddress(addr) {
-		return nil
-	}
-	if hasAPIKey {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"non-loopback bind address %q requires an API key; generate one first while Vault is bound to 127.0.0.1",
-		addr,
-	)
-}
-
-func isLoopbackListenAddress(addr string) bool {
-	host := listenAddressHost(addr)
-	if host == "" {
-		return false
-	}
-
-	normalized := strings.Trim(strings.TrimSpace(host), "[]")
-	if strings.EqualFold(normalized, "localhost") {
-		return true
-	}
-
-	ip := net.ParseIP(normalized)
-	return ip != nil && ip.IsLoopback()
-}
-
-func listenAddressHost(addr string) string {
-	host, _, err := net.SplitHostPort(addr)
-	if err == nil {
-		return host
-	}
-	return addr
-}
-
 func init() {
 	daemonCmd.Flags().String("db", "/boot/config/plugins/vault/vault.db", "Database path")
 	daemonCmd.Flags().String("addr", ":24085", "API listen address")
-	daemonCmd.Flags().String("api-key", "", "API key for authentication (or set VAULT_API_KEY)")
 	daemonCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	daemonCmd.Flags().String("tls-key", "", "Path to TLS private key file")
 	rootCmd.AddCommand(daemonCmd)

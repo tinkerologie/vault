@@ -20,7 +20,6 @@ func TestReplicationSourceCRUD(t *testing.T) {
 	src := ReplicationSource{
 		Name:          "prod-server",
 		URL:           "http://192.168.1.10:24085",
-		APIKey:        "sealed-key-data",
 		StorageDestID: destID,
 		Schedule:      "0 */6 * * *",
 		Enabled:       true,

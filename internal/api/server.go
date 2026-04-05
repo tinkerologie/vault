@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
-	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/runner"
@@ -20,7 +18,6 @@ import (
 // ServerConfig holds configuration options for the API server.
 type ServerConfig struct {
 	Addr      string
-	APIKey    string
 	TLSCert   string
 	TLSKey    string
 	ServerKey []byte // AES-256 key for sealing secrets at rest.
@@ -41,12 +38,6 @@ type Server struct {
 	nextRunResolver func(jobID int64) (string, bool)
 
 	settingsHandler *handlers.SettingsHandler
-
-	// cachedKey holds the resolved API key (from DB or CLI fallback).
-	// Protected by keyMu; refreshed lazily by keyResolver().
-	cachedKey string
-	keyExpiry time.Time
-	keyMu     sync.Mutex
 }
 
 func NewServer(database *db.DB, cfg ServerConfig) *Server {
@@ -59,42 +50,6 @@ func NewServer(database *db.DB, cfg ServerConfig) *Server {
 	go s.hub.Run()
 	s.router = s.setupRoutes()
 	return s
-}
-
-// keyResolver returns a KeyResolver that checks the DB for an API key (cached
-// for 5 seconds) and falls back to the static config key.
-func (s *Server) keyResolver() KeyResolver {
-	const ttl = 5 * time.Second
-	return func() string {
-		s.keyMu.Lock()
-		defer s.keyMu.Unlock()
-
-		if time.Now().Before(s.keyExpiry) {
-			return s.cachedKey
-		}
-
-		// Try DB-stored key first.
-		sealed, _ := s.db.GetSetting("api_key_sealed", "")
-		if sealed != "" && len(s.config.ServerKey) > 0 {
-			if key, err := crypto.Unseal(s.config.ServerKey, sealed); err == nil {
-				s.cachedKey = key
-				s.keyExpiry = time.Now().Add(ttl)
-				return s.cachedKey
-			}
-		}
-
-		// Fall back to static CLI key.
-		s.cachedKey = s.config.APIKey
-		s.keyExpiry = time.Now().Add(ttl)
-		return s.cachedKey
-	}
-}
-
-// InvalidateKeyCache forces the next keyResolver call to re-read from the DB.
-func (s *Server) InvalidateKeyCache() {
-	s.keyMu.Lock()
-	s.keyExpiry = time.Time{}
-	s.keyMu.Unlock()
 }
 
 // ScheduleReloader is a function that reloads the scheduler after job changes.

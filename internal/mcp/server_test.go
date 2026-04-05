@@ -399,7 +399,6 @@ func TestReplicationTools(t *testing.T) {
 	id, err := database.CreateReplicationSource(db.ReplicationSource{
 		Name:          "Test Source",
 		URL:           "http://remote:24085",
-		APIKey:        "secret-key-123",
 		StorageDestID: storageID,
 		Schedule:      "0 * * * *",
 		Enabled:       true,
@@ -414,23 +413,9 @@ func TestReplicationTools(t *testing.T) {
 	if len(sources) != 1 {
 		t.Fatalf("list_replication count = %d, want 1", len(sources))
 	}
-	// Verify API key is redacted.
-	src := sources[0].(map[string]any)
-	if apiKey, ok := src["api_key"].(string); ok && apiKey != "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" {
-		t.Errorf("list_replication api_key = %q, want redacted", apiKey)
-	}
 
 	// get_replication
-	getResult := callTool(t, session, ctx, "get_replication", map[string]any{"id": float64(id)})
-	var getData map[string]any
-	if err := json.Unmarshal([]byte(getResult), &getData); err != nil {
-		t.Fatalf("unmarshal get_replication: %v", err)
-	}
-	if source, ok := getData["source"].(map[string]any); ok {
-		if apiKey, ok := source["api_key"].(string); ok && apiKey != "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" {
-			t.Errorf("get_replication api_key = %q, want redacted", apiKey)
-		}
-	}
+	callTool(t, session, ctx, "get_replication", map[string]any{"id": float64(id)})
 
 	// delete_replication
 	callTool(t, session, ctx, "delete_replication", map[string]any{"id": float64(id)})

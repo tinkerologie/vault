@@ -40,6 +40,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Container volume backups now skip Unix sockets, character/block devices, and named pipes instead of failing with "sockets not supported" errors; affected containers (e.g. those mounting `/var/run/docker.sock`) will complete successfully with a log entry for each skipped special file (closes #5)
 - Monthly schedule day picker now shows all 31 days instead of only days 1–28; previously `Array(27)` omitted days 29, 30, and 31 (closes #9)
 
+### Removed
+
+- API Access feature completely removed from Security settings — API key generation, rotation, revocation, and status endpoints are no longer available
+- `X-API-Key` authentication header and `APIKeyAuth` middleware removed; the daemon no longer requires or accepts API keys
+- API key field removed from Replication targets — remote sources connect without authentication
+- `--api-key` CLI flag and `VAULT_API_KEY` environment variable removed from `daemon` and `replica` commands
+- `/auth/status`, `/settings/api-key/generate`, `/settings/api-key/rotate`, `/settings/api-key/revoke`, `/settings/api-key` endpoints removed
+- `api_key` column removed from `replication_sources` database schema
+- `LoginPrompt.svelte` component deleted (unused)
+
 ### Changed
 
 - `engine.Handler` interface now accepts `context.Context` as the first parameter for `Backup()` and `Restore()`

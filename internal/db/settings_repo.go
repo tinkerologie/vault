@@ -19,12 +19,6 @@ func (d *DB) SetSetting(key, value string) error {
 	return err
 }
 
-// HasAPIKey returns whether an API key is configured in the database.
-func (d *DB) HasAPIKey() bool {
-	val, _ := d.GetSetting("api_key_hash", "")
-	return val != ""
-}
-
 // GetAllSettings returns all settings as a key-value map.
 func (d *DB) GetAllSettings() (map[string]string, error) {
 	rows, err := d.Query("SELECT key, value FROM settings")

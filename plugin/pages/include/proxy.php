@@ -37,12 +37,6 @@ if (!in_array($forwardMethod, ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
 }
 
 $forwardHeaders = ['Accept: application/json'];
-if (!empty($_SERVER['HTTP_AUTHORIZATION'])) {
-    $forwardHeaders[] = 'Authorization: ' . $_SERVER['HTTP_AUTHORIZATION'];
-}
-if (!empty($_SERVER['HTTP_X_API_KEY'])) {
-    $forwardHeaders[] = 'X-API-Key: ' . $_SERVER['HTTP_X_API_KEY'];
-}
 
 $result = vault_http_request($forwardMethod, $path, $payload, $forwardHeaders);
 if (!$result['ok']) {

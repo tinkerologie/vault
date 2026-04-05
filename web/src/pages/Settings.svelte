@@ -57,25 +57,16 @@
   let discordSaving = $state(false)
   let discordTesting = $state(false)
 
-  // API Key state
-  let apiKeyEnabled = $state(false)
-  let apiKeyPreview = $state('')
-  let apiKeySaving = $state(false)
-  let newlyGeneratedKey = $state('')
-  let confirmKeyRevoke = $state(false)
-
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
 
   onMount(async () => {
     try {
-      const [h, s, enc, keyStatus, staging, dbInfo] = await Promise.all([api.health(), api.getSettings(), api.getEncryptionStatus(), api.getApiKeyStatus(), api.getStagingInfo().catch(() => null), api.getDatabaseInfo().catch(() => null)])
+      const [h, s, enc, staging, dbInfo] = await Promise.all([api.health(), api.getSettings(), api.getEncryptionStatus(), api.getStagingInfo().catch(() => null), api.getDatabaseInfo().catch(() => null)])
       health = h
       settings = s || {}
       encryptionEnabled = enc?.encryption_enabled || false
-      apiKeyEnabled = keyStatus?.enabled || false
-      apiKeyPreview = keyStatus?.preview || ''
       stagingInfo = staging
       stagingOverrideInput = staging?.override || ''
       discordWebhookUrl = s?.discord_webhook_url || ''
@@ -343,63 +334,6 @@
   let vmBackupOn = $derived(settings.vm_backup_enabled !== 'false')
   let folderBackupOn = $derived(settings.folder_backup_enabled !== 'false')
   let flashBackupOn = $derived(settings.flash_backup_enabled !== 'false')
-
-  // --- API Key functions ---
-  async function generateApiKey() {
-    apiKeySaving = true
-    try {
-      const res = await api.generateApiKey()
-      newlyGeneratedKey = res.api_key
-      apiKeyEnabled = true
-      // Auto-store so the user doesn't get locked out.
-      const { setApiKey, checkAuthStatus } = await import('../lib/auth.svelte.js')
-      setApiKey(res.api_key)
-      await checkAuthStatus()
-      showToast('API key generated', 'success')
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      apiKeySaving = false
-    }
-  }
-
-  async function rotateApiKey() {
-    apiKeySaving = true
-    try {
-      const res = await api.rotateApiKey()
-      newlyGeneratedKey = res.api_key
-      // Update stored key so we stay authenticated.
-      const { setApiKey } = await import('../lib/auth.svelte.js')
-      setApiKey(res.api_key)
-      // Refresh preview.
-      const status = await api.getApiKeyStatus()
-      apiKeyPreview = status?.preview || ''
-      showToast('API key rotated. Update all clients with the new key.', 'success')
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      apiKeySaving = false
-    }
-  }
-
-  async function doRevokeApiKey() {
-    confirmKeyRevoke = false
-    apiKeySaving = true
-    try {
-      await api.revokeApiKey()
-      apiKeyEnabled = false
-      apiKeyPreview = ''
-      newlyGeneratedKey = ''
-      const { clearApiKey, checkAuthStatus } = await import('../lib/auth.svelte.js')
-      clearApiKey()
-      await checkAuthStatus()
-      showToast('API key revoked. Authentication disabled.', 'success')
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      apiKeySaving = false
-    }
-  }
 
   function copyToClipboard(text) {
     navigator.clipboard.writeText(text).then(() => {
@@ -789,82 +723,6 @@
         </div>
       </div>
 
-      <!-- API Access -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
-        <div class="px-5 py-4 border-b border-border flex items-center justify-between">
-          <div>
-            <h2 class="text-base font-semibold text-text">API Access</h2>
-            <p class="text-xs text-text-muted mt-0.5">Manage authentication for the REST API</p>
-          </div>
-          <span class="text-xs px-2 py-0.5 rounded-full font-medium {apiKeyEnabled ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'}">
-            {apiKeyEnabled ? 'Enabled' : 'Disabled'}
-          </span>
-        </div>
-        <div class="p-5 space-y-4">
-          {#if !apiKeyEnabled}
-            <!-- No key exists — bootstrap -->
-            <div class="space-y-3">
-              <p class="text-sm text-text-muted">No API key is configured. Generate one to secure access to the Vault API. The key will be shown once — copy it immediately.</p>
-              <button onclick={generateApiKey} disabled={apiKeySaving} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                {apiKeySaving ? 'Generating...' : 'Generate API Key'}
-              </button>
-            </div>
-          {:else}
-            <!-- Key exists -->
-            <div class="space-y-4">
-              {#if newlyGeneratedKey}
-                <!-- One-time display -->
-                <div class="bg-warning/10 border border-warning/30 rounded-lg p-4 space-y-2">
-                  <div class="flex items-center gap-2">
-                    <svg aria-hidden="true" class="w-4 h-4 text-warning flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
-                    <span class="text-sm font-medium text-warning">Save this key now — it won't be shown again</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <code class="flex-1 text-xs bg-surface px-3 py-2 rounded font-mono text-text break-all select-all">{newlyGeneratedKey}</code>
-                    <button onclick={() => copyToClipboard(newlyGeneratedKey)} class="flex-shrink-0 p-2 text-text-muted hover:text-text bg-surface rounded-lg transition-colors" aria-label="Copy key">
-                      <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                    </button>
-                  </div>
-                  <button onclick={() => newlyGeneratedKey = ''} class="text-xs text-text-dim hover:text-text-muted transition-colors">Dismiss</button>
-                </div>
-              {/if}
-
-              <!-- Status row -->
-              <div class="flex items-center justify-between py-2">
-                <div>
-                  <span class="text-sm text-text-muted">Current Key</span>
-                  {#if apiKeyPreview}
-                    <code class="ml-2 text-xs bg-surface-3 text-text-muted px-2 py-0.5 rounded font-mono">{apiKeyPreview}</code>
-                  {/if}
-                </div>
-              </div>
-
-              <!-- Rotate -->
-              <div class="flex items-center justify-between py-2 border-t border-border">
-                <div>
-                  <span class="text-sm text-text">Rotate Key</span>
-                  <p class="text-xs text-text-muted">Generate a new key. The old key is invalidated immediately.</p>
-                </div>
-                <button onclick={rotateApiKey} disabled={apiKeySaving} class="px-3 py-1.5 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {apiKeySaving ? 'Rotating...' : 'Rotate'}
-                </button>
-              </div>
-
-              <!-- Revoke -->
-              <div class="flex items-center justify-between py-2 border-t border-border">
-                <div>
-                  <span class="text-sm text-text">Revoke Key</span>
-                  <p class="text-xs text-text-muted">Remove the API key entirely. Authentication will be disabled.</p>
-                </div>
-                <button onclick={() => confirmKeyRevoke = true} disabled={apiKeySaving} class="px-3 py-1.5 text-sm font-medium rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  Revoke
-                </button>
-              </div>
-            </div>
-          {/if}
-        </div>
-      </div>
-
       {/if}
 
       <!-- === GENERAL TAB (cont.) === -->
@@ -1246,14 +1104,4 @@
   variant="danger"
   onconfirm={doRemoveEncryption}
   oncancel={() => { confirmEncRemoval = false }}
-/>
-
-<ConfirmDialog
-  show={confirmKeyRevoke}
-  title="Revoke API Key"
-  message="This will remove the API key and disable authentication. Anyone with network access will be able to use the API without a key."
-  confirmLabel="Revoke"
-  variant="danger"
-  onconfirm={doRevokeApiKey}
-  oncancel={() => { confirmKeyRevoke = false }}
 />

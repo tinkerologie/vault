@@ -107,7 +107,6 @@ The MCP surface is intentionally curated rather than a 1:1 mirror of every REST 
 The following operations are available via REST API only and are not exposed through MCP:
 
 - Settings management and encryption configuration
-- Auth bootstrap and API key management
 - Storage scan and import workflows
 - File downloads from storage
 - Replication create and sync flows

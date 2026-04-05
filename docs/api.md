@@ -4,13 +4,12 @@ Base URL: `http://<host>:24085/api/v1`
 
 The Vault daemon exposes a REST API for managing backups, storage destinations, and system settings. WebSocket events are available for real-time progress streaming.
 
-## Core and Auth
+## Core
 
 | Method | Endpoint          | Description                                            |
 | ------ | ----------------- | ------------------------------------------------------ |
 | GET    | `/health`         | Basic health, version, and mode                        |
 | GET    | `/health/summary` | Aggregated dashboard health metrics                    |
-| GET    | `/auth/status`    | Whether external API clients require an API key        |
 | GET    | `/ws`             | WebSocket event stream                                 |
 | GET    | `/runner/status`  | Current backup or restore state, including queued jobs |
 
@@ -57,10 +56,6 @@ The Vault daemon exposes a REST API for managing backups, storage destinations, 
 | POST   | `/settings/encryption`            | Set encryption passphrase         |
 | POST   | `/settings/encryption/verify`     | Verify encryption passphrase      |
 | GET    | `/settings/encryption/passphrase` | Read the configured passphrase    |
-| GET    | `/settings/api-key`               | API key status                    |
-| POST   | `/settings/api-key/generate`      | Generate the first API key        |
-| POST   | `/settings/api-key/rotate`        | Rotate the API key                |
-| DELETE | `/settings/api-key`               | Revoke the API key                |
 | GET    | `/settings/staging`               | Staging directory info            |
 | PUT    | `/settings/staging`               | Override the staging directory    |
 | GET    | `/settings/database`              | Database snapshot settings        |
@@ -69,24 +64,24 @@ The Vault daemon exposes a REST API for managing backups, storage destinations, 
 
 ## Discovery, Activity, Replication, and Recovery
 
-| Method | Endpoint                 | Description                        |
-| ------ | ------------------------ | ---------------------------------- |
-| GET    | `/browse`                | Browse filesystem paths            |
-| GET    | `/containers`            | Discover Docker containers         |
-| GET    | `/vms`                   | Discover VMs                       |
-| GET    | `/folders`               | Discover folder presets            |
-| GET    | `/plugins`               | Discover plugins                   |
-| GET    | `/activity`              | Activity log                       |
-| GET    | `/replication`           | List replication sources           |
-| POST   | `/replication`           | Create replication source          |
-| POST   | `/replication/test-url`  | Test a replication URL and API key |
-| GET    | `/replication/{id}`      | Get replication source             |
-| PUT    | `/replication/{id}`      | Update replication source          |
-| DELETE | `/replication/{id}`      | Delete replication source          |
-| POST   | `/replication/{id}/test` | Test replication connection        |
-| POST   | `/replication/{id}/sync` | Trigger replication immediately    |
-| GET    | `/replication/{id}/jobs` | List replicated jobs               |
-| GET    | `/recovery/plan`         | Recovery plan                      |
+| Method | Endpoint                 | Description                     |
+| ------ | ------------------------ | ------------------------------- |
+| GET    | `/browse`                | Browse filesystem paths         |
+| GET    | `/containers`            | Discover Docker containers      |
+| GET    | `/vms`                   | Discover VMs                    |
+| GET    | `/folders`               | Discover folder presets         |
+| GET    | `/plugins`               | Discover plugins                |
+| GET    | `/activity`              | Activity log                    |
+| GET    | `/replication`           | List replication sources        |
+| POST   | `/replication`           | Create replication source       |
+| POST   | `/replication/test-url`  | Test a replication URL          |
+| GET    | `/replication/{id}`      | Get replication source          |
+| PUT    | `/replication/{id}`      | Update replication source       |
+| DELETE | `/replication/{id}`      | Delete replication source       |
+| POST   | `/replication/{id}/test` | Test replication connection     |
+| POST   | `/replication/{id}/sync` | Trigger replication immediately |
+| GET    | `/replication/{id}/jobs` | List replicated jobs            |
+| GET    | `/recovery/plan`         | Recovery plan                   |
 
 ## WebSocket
 

@@ -12,15 +12,12 @@ func TestTestConnection(t *testing.T) {
 		if r.URL.Path != "/api/v1/health" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		if got := r.Header.Get("X-API-Key"); got != "test-key" {
-			t.Errorf("X-API-Key = %q, want %q", got, "test-key")
-		}
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "2026.1.0"})
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(srv.URL, "test-key")
+	c, err := NewClient(srv.URL)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -46,7 +43,7 @@ func TestListJobs(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(srv.URL, "")
+	c, err := NewClient(srv.URL)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -74,7 +71,7 @@ func TestListRestorePoints(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(srv.URL, "")
+	c, err := NewClient(srv.URL)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -102,7 +99,7 @@ func TestDownloadFile(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(srv.URL, "")
+	c, err := NewClient(srv.URL)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -120,7 +117,7 @@ func TestDownloadFile(t *testing.T) {
 }
 
 func TestConnectionError(t *testing.T) {
-	c, err := NewClient("http://127.0.0.1:1", "key")
+	c, err := NewClient("http://127.0.0.1:1")
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -137,7 +134,7 @@ func TestNon200Response(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(srv.URL, "bad-key")
+	c, err := NewClient(srv.URL)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}

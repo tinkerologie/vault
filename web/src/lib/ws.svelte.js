@@ -1,6 +1,5 @@
 /** WebSocket client with auto-reconnect */
 
-import { getApiKey } from './auth.svelte.js'
 import { buildApiRequest, getLiveMode } from './runtime-config.js'
 
 let ws = null
@@ -29,14 +28,8 @@ function emitMessage(msg) {
 async function pollRunnerStatus() {
   if (!pollEnabled) return
 
-  const headers = {}
-  const key = getApiKey()
-  if (key) {
-    headers['Authorization'] = `Bearer ${key}`
-  }
-
   try {
-    const { url, options } = buildApiRequest('GET', '/runner/status', { headers })
+    const { url, options } = buildApiRequest('GET', '/runner/status')
     const res = await fetch(url, options)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
@@ -101,10 +94,6 @@ export function connectWs() {
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   let url = `${proto}//${location.host}/api/v1/ws`
-  const key = getApiKey()
-  if (key) {
-    url += `?token=${encodeURIComponent(key)}`
-  }
 
   status = 'connecting'
   ws = new WebSocket(url)

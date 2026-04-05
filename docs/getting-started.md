@@ -56,7 +56,7 @@ The Recovery page provides a disaster recovery guide with step-by-step instructi
 
 ## Settings
 
-The Settings page provides configuration options for encryption, API keys, staging directory, database snapshots, Discord notifications, and theme selection.
+The Settings page provides configuration options for encryption, staging directory, database snapshots, Discord notifications, and theme selection.
 
 ![Settings page](screenshots/10-settings.png)
 

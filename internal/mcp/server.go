@@ -839,10 +839,6 @@ func (s *MCPServer) addListReplicationTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing replication sources: %w", err)
 		}
-		// Redact API keys.
-		for i := range sources {
-			sources[i].APIKey = "••••••••"
-		}
 		r, _ := textResult(sources)
 		return r, nil, nil
 	})
@@ -861,7 +857,6 @@ func (s *MCPServer) addGetReplicationTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("getting replication source %d: %w", input.ID, err)
 		}
-		src.APIKey = "••••••••"
 
 		// Include replicated jobs.
 		jobs, err := s.db.ListReplicatedJobs(input.ID)

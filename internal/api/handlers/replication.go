@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/replication"
 )
@@ -49,10 +48,6 @@ func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Redact API keys before sending to client.
-	for i := range sources {
-		sources[i].APIKey = "••••••••"
-	}
 	respondJSON(w, http.StatusOK, sources)
 }
 
@@ -78,23 +73,12 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	src.URL = normalizedURL
 
-	// Seal the API key before storing (empty key = no auth needed on remote).
-	if src.APIKey != "" {
-		sealed, err := crypto.Seal(h.serverKey, src.APIKey)
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "failed to seal api key")
-			return
-		}
-		src.APIKey = sealed
-	}
-
 	id, err := h.db.CreateReplicationSource(src)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	src.ID = id
-	src.APIKey = "••••••••"
 
 	h.reloadScheduler()
 	respondJSON(w, http.StatusCreated, src)
@@ -108,7 +92,6 @@ func (h *ReplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
-	src.APIKey = "••••••••"
 	respondJSON(w, http.StatusOK, src)
 }
 
@@ -130,31 +113,10 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	src.URL = normalizedURL
 
-	// If API key is the redacted placeholder, keep the existing one.
-	// Empty string means "no API key" (clear it). Any other value = new key.
-	if src.APIKey == "••••••••" {
-		existing, err := h.db.GetReplicationSource(id)
-		if err != nil {
-			respondError(w, http.StatusNotFound, "not found")
-			return
-		}
-		src.APIKey = existing.APIKey
-	} else if src.APIKey != "" {
-		// Seal the new API key.
-		sealed, err := crypto.Seal(h.serverKey, src.APIKey)
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "failed to seal api key")
-			return
-		}
-		src.APIKey = sealed
-	}
-	// else: empty string = no API key (for LAN setups without auth)
-
 	if err := h.db.UpdateReplicationSource(src); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	src.APIKey = "••••••••"
 
 	h.reloadScheduler()
 	respondJSON(w, http.StatusOK, src)
@@ -187,16 +149,7 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var apiKey string
-	if src.APIKey != "" {
-		apiKey, err = crypto.Unseal(h.serverKey, src.APIKey)
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "failed to unseal api key")
-			return
-		}
-	}
-
-	client, err := replication.NewClient(src.URL, apiKey)
+	client, err := replication.NewClient(src.URL)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
 		return
@@ -209,11 +162,10 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 }
 
 // TestURL validates and normalizes a remote Vault URL before it is saved.
-// Accepts JSON body: {"url": "http://...", "api_key": "optional"}.
+// Accepts JSON body: {"url": "http://..."}.
 func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		URL    string `json:"url"`
-		APIKey string `json:"api_key"`
+		URL string `json:"url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")

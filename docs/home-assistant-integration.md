@@ -13,7 +13,7 @@
 - [Services to Register](#services-to-register)
 - [Automation Examples](#automation-examples)
 - [Error Handling](#error-handling)
-- [Authentication](#authentication)
+- [TLS Support](#tls-support)
 
 ---
 
@@ -33,15 +33,11 @@ The HA integration should:
 **Direct LAN example:** `http://192.168.1.10:24085/api/v1`
 **WebSocket example:** `ws://192.168.1.10:24085/api/v1/ws`
 
-> **Connection model on Unraid:** Vault defaults to `BIND_ADDRESS=127.0.0.1`, which keeps the daemon local-only. The Unraid browser UI reaches it through an authenticated plugin proxy, but that proxy is browser-only and is not a supported endpoint for Home Assistant or other third-party integrations.
+> **Connection model on Unraid:** Vault defaults to `BIND_ADDRESS=127.0.0.1`, which keeps the daemon local-only. The Unraid browser UI reaches it through a plugin proxy, but that proxy is browser-only and is not a supported endpoint for Home Assistant or other third-party integrations.
 >
-> For direct Home Assistant access, change `BIND_ADDRESS` to a specific Unraid LAN IP or `0.0.0.0`, restart Vault, and configure an API key before exposing the API on the network.
+> For direct Home Assistant access, change `BIND_ADDRESS` to a specific Unraid LAN IP or `0.0.0.0` and restart Vault.
 >
 > If you keep the loopback-only default, Home Assistant must use some kind of forward or tunnel to reach the daemon.
->
-> **Authentication** is supported via API key (`--api-key` flag or `VAULT_API_KEY` env var). When configured, all API requests require a valid key via `Authorization: Bearer <key>`, `X-API-Key: <key>` header, or `?token=<key>` query parameter.
->
-> The `/api/v1/auth/status` endpoint returns `{"auth_required": true/false}` so the integration can detect whether authentication is needed.
 >
 > **Request body size limit:** 1 MB for all API endpoints.
 >
@@ -53,7 +49,7 @@ The HA integration should:
 
 ```text
 Home Assistant
-├── config_flow.py          # UI setup: base URL, API key
+├── config_flow.py          # UI setup: base URL
 ├── __init__.py             # Platform setup, coordinator
 ├── coordinator.py          # DataUpdateCoordinator (polls API)
 ├── sensor.py               # Sensors (job status, last run, size, etc.)
@@ -81,28 +77,16 @@ The integration should use HA's config flow UI:
 ### User Input
 
 - `base_url` (string, required): Vault API URL ending in `/api/v1`; use a direct LAN URL or a forwarded URL
-- `api_key` (string, optional): API key when Vault authentication is enabled
 - `verify_ssl` (bool, default `true`): verify the TLS certificate when using HTTPS
 
 ### Validation Step
 
 During config flow validation:
 
-1. Check if auth is required:
-
-```http
-GET {base_url}/auth/status
-```
-
-```json
-{ "auth_required": true }
-```
-
-1. Validate connectivity (include auth header if `auth_required` is `true`):
+1. Validate connectivity:
 
 ```http
 GET {base_url}/health
-Authorization: Bearer <api_key>
 ```
 
 Expected response:
@@ -112,7 +96,6 @@ Expected response:
 ```
 
 If this returns 200 with `status: "ok"`, config is valid. Store the `version` for display.
-If `auth_required` is `true` and no `api_key` was provided, prompt the user to enter one.
 
 ---
 
@@ -120,28 +103,6 @@ If `auth_required` is `true` and no `api_key` was provided, prompt the user to e
 
 All endpoints are under `{base_url}`.
 All responses are JSON. Errors return `{"error": "message"}`.
-
-**Authentication:** When API key auth is enabled, include one of:
-
-- `Authorization: Bearer <api_key>` header
-- `X-API-Key: <api_key>` header
-- `?token=<api_key>` query parameter
-
-Unauthenticated requests to protected endpoints return `401 Unauthorized`.
-
-**Public endpoints** (no auth required): `/health`, `/auth/status`, `/ping`.
-
-### Auth Status
-
-| Method | Path           | Description                         |
-| ------ | -------------- | ----------------------------------- |
-| GET    | `/auth/status` | Check if authentication is required |
-
-**Response:**
-
-```json
-{ "auth_required": true }
-```
 
 ### Health
 
@@ -436,10 +397,8 @@ Connect using a standard WebSocket client whenever the chosen API URL supports W
 
 If the chosen path does not support WebSockets, the integration should fall back to polling `GET {base_url}/runner/status` and `GET {base_url}/activity`.
 
-**Authentication:** If API key auth is enabled, pass the key as a query parameter:
-
 ```text
-ws://192.168.1.10:24085/api/v1/ws?token=<api_key>
+ws://192.168.1.10:24085/api/v1/ws
 ```
 
 **TLS:** Use `wss://` whenever the selected Home Assistant endpoint is HTTPS.
@@ -885,7 +844,7 @@ Common HTTP status codes:
 | 202  | Accepted (async operation started)                 |
 | 204  | Deleted (no content)                               |
 | 400  | Bad request (invalid JSON, missing required field) |
-| 401  | Unauthorized (missing or invalid API key)          |
+| 401  | Unauthorized                                       |
 | 404  | Not found (invalid job/storage/restore point ID)   |
 | 413  | Request body too large (>1 MB)                     |
 | 500  | Internal server error                              |
@@ -894,33 +853,13 @@ Common HTTP status codes:
 
 - If `/health` fails, mark all entities as unavailable
 - If a specific endpoint fails, only mark related entities as unavailable
-- If `401 Unauthorized` is returned, mark all entities as unavailable and trigger re-auth flow
+- If `401 Unauthorized` is returned, mark all entities as unavailable
 - Implement exponential backoff on repeated failures
 - Reconnect WebSocket with exponential backoff (start 5s, max 5m)
 
 ---
 
-## Authentication
-
-Vault supports optional API key authentication. When the daemon is started with `--api-key=<key>` (or `VAULT_API_KEY` env var), all API endpoints except `/health`, `/auth/status`, and `/ping` require a valid key.
-
-### Supported Auth Methods
-
-| Method              | Example                            |
-| ------------------- | ---------------------------------- |
-| Bearer token header | `Authorization: Bearer my-api-key` |
-| API key header      | `X-API-Key: my-api-key`            |
-| Query parameter     | `?token=my-api-key`                |
-
-### Integration Flow
-
-1. On setup, call `GET /api/v1/auth/status` to check if auth is required
-2. If `auth_required: true`, prompt the user for their API key in the config flow
-3. Store the API key in HA's config entry (encrypted by HA)
-4. Include the key in all subsequent API and WebSocket requests
-5. On `401` responses, mark entities as unavailable and prompt for re-authentication
-
-### TLS Support
+## TLS Support
 
 When the daemon is started with `--tls-cert` and `--tls-key`, it serves HTTPS. The integration should:
 
@@ -973,10 +912,8 @@ class VaultData:
 ```python
 import aiohttp
 
-async def websocket_listener(hass, ws_url, api_key=None):
+async def websocket_listener(hass, ws_url):
     url = ws_url.rstrip('/')
-    if api_key:
-        url += f"?token={api_key}"
     async with aiohttp.ClientSession() as session:
         async with session.ws_connect(url) as ws:
             async for msg in ws:

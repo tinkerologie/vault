@@ -6,7 +6,6 @@ import (
 	"log"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/storage"
 	"github.com/ruaan-deysel/vault/internal/ws"
@@ -67,14 +66,8 @@ func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (*SyncResult,
 		fmt.Sprintf("Replication sync started: %s", src.Name),
 		fmt.Sprintf(`{"source_id":%d}`, sourceID))
 
-	// Build the remote client. If the API key is sealed, unseal it.
-	apiKey := src.APIKey
-	if len(s.serverKey) > 0 {
-		if unsealed, err := crypto.Unseal(s.serverKey, src.APIKey); err == nil {
-			apiKey = unsealed
-		}
-	}
-	client, err := NewClient(src.URL, apiKey)
+	// Build the remote client.
+	client, err := NewClient(src.URL)
 	if err != nil {
 		errMsg := fmt.Sprintf("normalize source url %q: %v", src.Name, err)
 		s.updateSyncStatus(sourceID, "failed", err.Error())

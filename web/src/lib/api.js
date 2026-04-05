@@ -1,4 +1,3 @@
-import { getApiKey } from './auth.svelte.js'
 import { buildApiRequest } from './runtime-config.js'
 
 /** @type {boolean} */
@@ -11,12 +10,7 @@ export function isReplicaMode() { return _isReplica }
 export function setReplicaMode(val) { _isReplica = val }
 
 async function request(method, path, body = null) {
-  const headers = {}
-  const key = getApiKey()
-  if (key) {
-    headers['Authorization'] = `Bearer ${key}`
-  }
-  const { url, options } = buildApiRequest(method, path, { body, headers })
+  const { url, options } = buildApiRequest(method, path, { body })
   const res = await fetch(url, options)
   if (res.status === 204) return null
   const data = await res.json()
@@ -88,12 +82,6 @@ export const api = {
   // Discord
   testDiscordWebhook: (webhookUrl) => request('POST', '/settings/discord/test', { webhook_url: webhookUrl }),
 
-  // API Key
-  getApiKeyStatus: () => request('GET', '/settings/api-key'),
-  generateApiKey: () => request('POST', '/settings/api-key/generate'),
-  rotateApiKey: () => request('POST', '/settings/api-key/rotate'),
-  revokeApiKey: () => request('DELETE', '/settings/api-key'),
-
   // Activity Log
   getActivity: (limit = 100, category = '') =>
     request('GET', `/activity?limit=${limit}${category ? '&category=' + encodeURIComponent(category) : ''}`),
@@ -108,7 +96,7 @@ export const api = {
   updateReplicationSource: (id, data) => request('PUT', `/replication/${id}`, data),
   deleteReplicationSource: (id) => request('DELETE', `/replication/${id}`),
   testReplicationSource: (id) => request('POST', `/replication/${id}/test`),
-  testReplicationURL: (url, apiKey) => request('POST', '/replication/test-url', { url, api_key: apiKey }),
+  testReplicationURL: (url) => request('POST', '/replication/test-url', { url }),
   syncReplicationSource: (id) => request('POST', `/replication/${id}/sync`),
   listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
 }

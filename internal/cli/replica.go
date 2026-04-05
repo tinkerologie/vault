@@ -31,14 +31,8 @@ disaster recovery.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dbPath, _ := cmd.Flags().GetString("db")
 		addr, _ := cmd.Flags().GetString("addr")
-		apiKey, _ := cmd.Flags().GetString("api-key")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
-
-		// Environment variables override flags.
-		if envKey := os.Getenv("VAULT_API_KEY"); envKey != "" && apiKey == "" {
-			apiKey = envKey
-		}
 
 		// Ensure the database directory exists.
 		if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
@@ -67,32 +61,9 @@ disaster recovery.`,
 		}
 
 		log.Println("Starting Vault replica daemon (read-only mode)...")
-		if apiKey != "" {
-			log.Println("API key authentication enabled")
-		}
-
-		// Seed CLI API key into the database if needed.
-		if apiKey != "" && !database.HasAPIKey() {
-			sealed, sealErr := crypto.Seal(serverKey, apiKey)
-			if sealErr != nil {
-				return fmt.Errorf("sealing api key: %w", sealErr)
-			}
-			hash, hashErr := crypto.HashPassphrase(apiKey)
-			if hashErr != nil {
-				return fmt.Errorf("hashing api key: %w", hashErr)
-			}
-			if err := database.SetSetting("api_key_sealed", sealed); err != nil {
-				return fmt.Errorf("storing api key: %w", err)
-			}
-			if err := database.SetSetting("api_key_hash", hash); err != nil {
-				return fmt.Errorf("storing api key hash: %w", err)
-			}
-			log.Println("CLI API key seeded into database")
-		}
 
 		cfg := api.ServerConfig{
 			Addr:      addr,
-			APIKey:    apiKey,
 			TLSCert:   tlsCert,
 			TLSKey:    tlsKey,
 			ServerKey: serverKey,
@@ -140,7 +111,6 @@ disaster recovery.`,
 func init() {
 	replicaCmd.Flags().String("db", "/data/vault.db", "Database path")
 	replicaCmd.Flags().String("addr", ":24085", "API listen address")
-	replicaCmd.Flags().String("api-key", "", "API key for authentication (or set VAULT_API_KEY)")
 	replicaCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	replicaCmd.Flags().String("tls-key", "", "Path to TLS private key file")
 	rootCmd.AddCommand(replicaCmd)

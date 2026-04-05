@@ -2,7 +2,6 @@
   import { getRoute, navigate } from './lib/router.svelte.js'
   import { connectWs, getWsStatus } from './lib/ws.svelte.js'
   import { initTheme, getMode, setMode, getIsDark, getIsThemed } from './lib/theme.svelte.js'
-  import { checkAuthStatus } from './lib/auth.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
   import { getLiveMode, isProxyMode } from './lib/runtime-config.js'
   import { onMount } from 'svelte'
@@ -55,7 +54,6 @@
 
   onMount(async () => {
     initTheme()
-    await checkAuthStatus()
     // Detect replica mode from health endpoint.
     try {
       const health = await api.health()

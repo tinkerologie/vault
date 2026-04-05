@@ -83,7 +83,6 @@ CREATE TABLE IF NOT EXISTS replication_sources (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL UNIQUE,
 	url TEXT NOT NULL,
-	api_key TEXT NOT NULL DEFAULT '',
 	storage_dest_id INTEGER REFERENCES storage_destinations(id),
 	schedule TEXT DEFAULT '',
 	enabled INTEGER DEFAULT 1,

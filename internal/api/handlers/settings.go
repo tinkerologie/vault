@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	cryptorand "crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -19,7 +17,6 @@ import (
 type SettingsHandler struct {
 	db              *db.DB
 	serverKey       []byte // AES-256 key for sealing secrets at rest.
-	onKeyChange     func() // called after API key is changed to invalidate caches.
 	snapshotManager interface {
 		SnapshotPath() string
 		LastSnapshot() time.Time
@@ -29,11 +26,6 @@ type SettingsHandler struct {
 // NewSettingsHandler creates a new SettingsHandler.
 func NewSettingsHandler(database *db.DB, serverKey []byte) *SettingsHandler {
 	return &SettingsHandler{db: database, serverKey: serverKey}
-}
-
-// SetOnKeyChange sets a callback that is called after the API key changes.
-func (h *SettingsHandler) SetOnKeyChange(fn func()) {
-	h.onKeyChange = fn
 }
 
 // SetSnapshotManager sets the snapshot manager used by the database info endpoint.
@@ -149,8 +141,6 @@ var sensitiveSettingKeys = []string{
 	"encryption_passphrase",
 	"encryption_passphrase_hash",
 	"encryption_passphrase_sealed",
-	"api_key_hash",
-	"api_key_sealed",
 }
 
 // Update accepts a JSON object of key-value pairs and upserts them.
@@ -304,103 +294,6 @@ func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http
 	respondError(w, http.StatusNotFound, "encryption passphrase not configured")
 }
 
-// apiKeySize is the number of random bytes used to generate an API key.
-const apiKeySize = 32
-
-// generateAPIKey creates a cryptographically random API key string.
-func generateAPIKey() (string, error) {
-	b := make([]byte, apiKeySize)
-	if _, err := cryptorand.Read(b); err != nil {
-		return "", err
-	}
-	return "vault_" + base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// GetAPIKeyStatus returns whether an API key is configured.
-//
-//	GET /api/v1/settings/api-key
-func (h *SettingsHandler) GetAPIKeyStatus(w http.ResponseWriter, _ *http.Request) {
-	hasKey := h.db.HasAPIKey()
-	preview := ""
-	if hasKey {
-		sealed, _ := h.db.GetSetting("api_key_sealed", "")
-		if sealed != "" && len(h.serverKey) > 0 {
-			if key, err := crypto.Unseal(h.serverKey, sealed); err == nil && len(key) > 4 {
-				preview = key[:6] + "..." + key[len(key)-4:]
-			}
-		}
-	}
-	respondJSON(w, http.StatusOK, map[string]any{
-		"enabled": hasKey,
-		"preview": preview,
-	})
-}
-
-// GenerateAPIKey generates a new API key and stores it.
-// This endpoint is unauthenticated ONLY when no key exists (bootstrap).
-// If a key already exists, it requires authentication (use RotateAPIKey instead).
-//
-//	POST /api/v1/settings/api-key/generate
-func (h *SettingsHandler) GenerateAPIKey(w http.ResponseWriter, _ *http.Request) {
-	if h.db.HasAPIKey() {
-		respondError(w, http.StatusConflict, "API key already exists. Use rotate to change it.")
-		return
-	}
-
-	key, err := generateAPIKey()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "generating key: "+err.Error())
-		return
-	}
-
-	if err := h.storeAPIKey(key); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusCreated, map[string]string{
-		"api_key": key,
-		"message": "API key generated. Store it securely — it will not be shown again.",
-	})
-}
-
-// RotateAPIKey generates a new API key, replacing the old one.
-//
-//	POST /api/v1/settings/api-key/rotate
-func (h *SettingsHandler) RotateAPIKey(w http.ResponseWriter, _ *http.Request) {
-	key, err := generateAPIKey()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "generating key: "+err.Error())
-		return
-	}
-
-	if err := h.storeAPIKey(key); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{
-		"api_key": key,
-		"message": "API key rotated. Update all clients with the new key.",
-	})
-}
-
-// RevokeAPIKey removes the API key, disabling authentication.
-//
-//	DELETE /api/v1/settings/api-key
-func (h *SettingsHandler) RevokeAPIKey(w http.ResponseWriter, _ *http.Request) {
-	_ = h.db.SetSetting("api_key_hash", "")
-	_ = h.db.SetSetting("api_key_sealed", "")
-
-	if h.onKeyChange != nil {
-		h.onKeyChange()
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{
-		"message": "API key revoked. Authentication is now disabled.",
-	})
-}
-
 // GetStagingInfo returns info about the current staging directory.
 func (h *SettingsHandler) GetStagingInfo(w http.ResponseWriter, r *http.Request) {
 	override, _ := h.db.GetSetting("staging_dir_override", "")
@@ -447,34 +340,6 @@ func (h *SettingsHandler) SetStagingOverride(w http.ResponseWriter, r *http.Requ
 
 	// Return updated staging info.
 	h.GetStagingInfo(w, r)
-}
-
-// storeAPIKey hashes, seals, and persists the API key, then invalidates caches.
-func (h *SettingsHandler) storeAPIKey(key string) error {
-	hash, err := crypto.HashPassphrase(key)
-	if err != nil {
-		return err
-	}
-
-	if err := h.db.SetSetting("api_key_hash", hash); err != nil {
-		return err
-	}
-
-	if len(h.serverKey) > 0 {
-		sealed, err := crypto.Seal(h.serverKey, key)
-		if err != nil {
-			return err
-		}
-		if err := h.db.SetSetting("api_key_sealed", sealed); err != nil {
-			return err
-		}
-	}
-
-	if h.onKeyChange != nil {
-		h.onKeyChange()
-	}
-
-	return nil
 }
 
 // TestDiscordWebhook sends a test message to a Discord webhook URL.

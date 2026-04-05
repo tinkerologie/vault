@@ -35,7 +35,6 @@
     return {
       name: '',
       url: '',
-      api_key: '',
       storage_dest_id: 0,
       schedule: '0 3 * * *',
       enabled: true,
@@ -85,7 +84,7 @@
     modalTesting = true
     modalTestResult = null
     try {
-      const result = await api.testReplicationURL(form.url, form.api_key || '')
+      const result = await api.testReplicationURL(form.url)
       modalTestResult = {
         success: true,
         version: result.version,
@@ -111,7 +110,6 @@
     form = {
       name: src.name,
       url: src.url,
-      api_key: '', // don't prefill sealed key
       storage_dest_id: src.storage_dest_id,
       schedule: src.schedule || '0 3 * * *',
       enabled: src.enabled,
@@ -124,7 +122,6 @@
     try {
       const payload = { ...form }
       if (editing) {
-        // If api_key is empty, the backend keeps the existing one
         await api.updateReplicationSource(editing.id, payload)
         showToast('Target updated', 'success')
       } else {
@@ -371,15 +368,6 @@
         <input id="repl-url" type="url" required bind:value={form.url} placeholder="http://192.168.1.100:24085"
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
         <p class="text-xs text-text-dim mt-1">The base URL of the remote Vault server (include port)</p>
-      </div>
-
-      <div>
-        <label for="repl-key" class="block text-sm font-medium text-text mb-1">
-          API Key <span class="text-text-dim font-normal">(optional{editing ? ', blank keeps current' : ''})</span>
-        </label>
-        <input id="repl-key" type="password" bind:value={form.api_key} placeholder={editing ? '••••••••' : 'Leave blank if not required'}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
-        <p class="text-xs text-text-dim mt-1">Only needed if the remote server has API key authentication enabled</p>
       </div>
 
       <!-- Test Connection -->
