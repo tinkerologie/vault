@@ -86,10 +86,19 @@
     return vms.filter((v) => v.name.toLowerCase().includes(q))
   }
 
+  let customFolders = $derived(folders.filter(f => f.settings?.preset !== 'flash'))
+  let flashItems = $derived(folders.filter(f => f.settings?.preset === 'flash'))
+
   function filteredFolders() {
-    if (!search) return folders
+    if (!search) return customFolders
     const q = search.toLowerCase()
-    return folders.filter((f) => f.name.toLowerCase().includes(q) || (f.settings?.path || '').toLowerCase().includes(q))
+    return customFolders.filter((f) => f.name.toLowerCase().includes(q) || (f.settings?.path || '').toLowerCase().includes(q))
+  }
+
+  function filteredFlash() {
+    if (!search) return flashItems
+    const q = search.toLowerCase()
+    return flashItems.filter((f) => f.name.toLowerCase().includes(q))
   }
 
   function filteredPlugins() {
@@ -118,15 +127,27 @@
   }
 
   function selectAll(type) {
-    const list = type === 'container' ? filteredContainers() : type === 'vm' ? filteredVMs() : type === 'plugin' ? filteredPlugins() : filteredFolders()
-    const allSelected = list.every((it) => selected.has(`${type}:${it.name}`))
+    let list, itemType = type
+    if (type === 'flash') {
+      list = filteredFlash()
+      itemType = 'folder'
+    } else if (type === 'container') {
+      list = filteredContainers()
+    } else if (type === 'vm') {
+      list = filteredVMs()
+    } else if (type === 'plugin') {
+      list = filteredPlugins()
+    } else {
+      list = filteredFolders()
+    }
+    const allSelected = list.every((it) => selected.has(`${itemType}:${it.name}`))
     for (const it of list) {
-      const key = `${type}:${it.name}`
+      const key = `${itemType}:${it.name}`
       if (allSelected) {
         selected.delete(key)
       } else {
         selected.set(key, {
-          item_type: type,
+          item_type: itemType,
           item_name: it.name,
           item_id: it.settings?.id || it.name,
           settings: JSON.stringify(it.settings || {}),
@@ -173,7 +194,16 @@
     Array.from(selected.values()).filter((i) => i.item_type === 'container').length,
   )
   let vmCount = $derived(Array.from(selected.values()).filter((i) => i.item_type === 'vm').length)
-  let folderCount = $derived(Array.from(selected.values()).filter((i) => i.item_type === 'folder').length)
+  function safeParseSettings(s) {
+    if (!s) return {}
+    try { return JSON.parse(s) } catch { return {} }
+  }
+  let folderCount = $derived(
+    Array.from(selected.values()).filter((i) => i.item_type === 'folder' && safeParseSettings(i.settings).preset !== 'flash').length,
+  )
+  let flashCount = $derived(
+    Array.from(selected.values()).filter((i) => i.item_type === 'folder' && safeParseSettings(i.settings).preset === 'flash').length,
+  )
   let pluginCount = $derived(Array.from(selected.values()).filter((i) => i.item_type === 'plugin').length)
   let selectedArray = $derived(Array.from(selected.entries()))
 </script>
@@ -240,6 +270,20 @@
           {/if}
         </button>
       {/if}
+      <button
+        type="button"
+        onclick={() => (activeTab = 'flash')}
+        class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'flash'
+          ? 'border-vault text-vault'
+          : 'border-transparent text-text-muted hover:text-text'}"
+      >
+        Flash Drive
+        {#if flashCount > 0}
+          <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+            >{flashCount}</span
+          >
+        {/if}
+      </button>
       {#if pluginsAvailable}
         <button
           type="button"
@@ -277,7 +321,7 @@
       <input
         type="text"
         bind:value={search}
-        placeholder="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : 'folders'}..."
+        placeholder="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : activeTab === 'flash' ? 'flash drive' : 'folders'}..."
         class="w-full bg-surface-3 border border-border rounded-lg pl-10 pr-3 py-2 text-sm text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50"
       />
     </div>
@@ -466,6 +510,50 @@
           {search ? 'No folders match your search' : 'No preset folders found. Add a custom folder above.'}
         </p>
       {/if}
+    {:else if activeTab === 'flash'}
+      {@const filtered = filteredFlash()}
+      {#if filtered.length > 0}
+        <button
+          type="button"
+          onclick={() => selectAll('flash')}
+          class="text-xs text-vault hover:text-vault/80 transition-colors"
+        >
+          {filtered.every((f) => isSelected('folder', f.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
+        </button>
+        <div class="space-y-1 max-h-64 overflow-y-auto pr-1">
+          {#each filtered as flash (flash.name)}
+            {@const sel = isSelected('folder', flash.name)}
+            <button
+              type="button"
+              onclick={() => toggle('folder', flash)}
+              class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
+                ? 'border-vault/50 bg-vault/5'
+                : 'border-border hover:border-border-hover bg-surface-3/50'}"
+            >
+              <div
+                class="w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors {sel
+                  ? 'bg-vault border-vault'
+                  : 'border-border'}"
+              >
+                {#if sel}
+                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                  >
+                {/if}
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium text-text truncate">{flash.name}</div>
+                <div class="text-xs text-text-muted truncate">{flash.settings?.path || '/boot'}</div>
+              </div>
+              <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-amber-400">USB boot drive</span>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <p class="text-sm text-text-muted py-4 text-center">
+          {search ? 'No flash drive matches your search' : 'Flash drive not detected'}
+        </p>
+      {/if}
     {:else if activeTab === 'plugins' && pluginsAvailable}
       {@const filtered = filteredPlugins()}
       {#if filtered.length > 0}
@@ -514,7 +602,7 @@
       {/if}
     {:else}
       <p class="text-sm text-text-muted py-4 text-center">
-        {activeTab === 'containers' ? 'Docker is not available' : activeTab === 'vms' ? 'libvirt is not available' : activeTab === 'plugins' ? 'Plugins not available' : 'No folders available'}
+        {activeTab === 'containers' ? 'Docker is not available' : activeTab === 'vms' ? 'libvirt is not available' : activeTab === 'plugins' ? 'Plugins not available' : activeTab === 'flash' ? 'Flash drive not available' : 'No folders available'}
       </p>
     {/if}
 

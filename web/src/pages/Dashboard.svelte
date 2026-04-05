@@ -29,6 +29,8 @@
   let nextRuns = $state({})
   let healthSummary = $state(null)
   let replicationSources = $state([])
+  /** @type {Record<string, string>} */
+  let settings = $state({})
   let liveSpeed = $state(null)
   let liveCumulativeBytes = $state(0)
   let liveStartTime = $state(null)
@@ -79,7 +81,7 @@
 
   async function loadDashboard() {
     try {
-      const [h, j, s, cRes, vRes, fRes, nextRunsData, hSummary, replSources] = await Promise.all([
+      const [h, j, s, cRes, vRes, fRes, nextRunsData, hSummary, replSources, sett] = await Promise.all([
         api.health(),
         api.listJobs(),
         api.listStorage(),
@@ -89,6 +91,7 @@
         api.getNextRuns().catch(() => ({})),
         api.getHealthSummary().catch(() => null),
         api.listReplicationSources().catch(() => []),
+        api.getSettings().catch(() => ({})),
       ])
       health = h
       jobs = j || []
@@ -99,6 +102,7 @@
       nextRuns = nextRunsData || {}
       healthSummary = hSummary
       replicationSources = replSources || []
+      settings = sett || {}
 
       const enabledJobs = jobs.filter(j => j.enabled)
       if (enabledJobs.length > 0) {
@@ -146,14 +150,25 @@
   const enabledJobs = $derived(jobs.filter(j => j.enabled))
   // totalSize available if needed: recentRuns.reduce((sum, r) => sum + (r.size_bytes || 0), 0)
 
-  const protectedContainers = $derived(containers.filter(c => protectedItems.has(`container:${c.name}`)))
-  const unprotectedContainers = $derived(containers.filter(c => !protectedItems.has(`container:${c.name}`)))
-  const protectedVMs = $derived(vms.filter(v => protectedItems.has(`vm:${v.name}`)))
-  const unprotectedVMs = $derived(vms.filter(v => !protectedItems.has(`vm:${v.name}`)))
-  const protectedFolders = $derived(folders.filter(f => protectedItems.has(`folder:${f.name}`)))
+  const containerBackupOn = $derived(settings.container_backup_enabled !== 'false')
+  const vmBackupOn = $derived(settings.vm_backup_enabled !== 'false')
+  const folderBackupOn = $derived(settings.folder_backup_enabled !== 'false')
+  const flashBackupOn = $derived(settings.flash_backup_enabled !== 'false')
 
-  const totalItems = $derived(containers.length + vms.length + folders.length)
-  const totalProtected = $derived(protectedContainers.length + protectedVMs.length + protectedFolders.length)
+  const trackedContainers = $derived(containerBackupOn ? containers : [])
+  const trackedVMs = $derived(vmBackupOn ? vms : [])
+  const trackedFolders = $derived(folderBackupOn ? folders.filter(f => f.settings?.preset !== 'flash') : [])
+  const trackedFlash = $derived(flashBackupOn ? folders.filter(f => f.settings?.preset === 'flash') : [])
+
+  const protectedContainers = $derived(trackedContainers.filter(c => protectedItems.has(`container:${c.name}`)))
+  const unprotectedContainers = $derived(trackedContainers.filter(c => !protectedItems.has(`container:${c.name}`)))
+  const protectedVMs = $derived(trackedVMs.filter(v => protectedItems.has(`vm:${v.name}`)))
+  const unprotectedVMs = $derived(trackedVMs.filter(v => !protectedItems.has(`vm:${v.name}`)))
+  const protectedFolders = $derived(trackedFolders.filter(f => protectedItems.has(`folder:${f.name}`)))
+  const protectedFlash = $derived(trackedFlash.filter(f => protectedItems.has(`folder:${f.name}`)))
+
+  const totalItems = $derived(trackedContainers.length + trackedVMs.length + trackedFolders.length + trackedFlash.length)
+  const totalProtected = $derived(protectedContainers.length + protectedVMs.length + protectedFolders.length + protectedFlash.length)
   const protectionPct = $derived(totalItems > 0 ? Math.round((totalProtected / totalItems) * 100) : 0)
 
   const soonestNextRun = $derived.by(() => {
@@ -170,16 +185,26 @@
     return formatSpeed(totalBytes, totalSecs);
   })
 
+  const excludedCategories = $derived.by(() => {
+    const excluded = []
+    if (!containerBackupOn) excluded.push('Containers')
+    if (!vmBackupOn) excluded.push('VMs')
+    if (!folderBackupOn) excluded.push('Folders')
+    if (!flashBackupOn) excluded.push('Flash')
+    return excluded
+  })
+
   const healthSummaryText = $derived.by(() => {
     if (!healthSummary) return ''
     const s = healthSummary
-    if (s.health_score >= 80) return 'All backups healthy'
+    const suffix = excludedCategories.length > 0 ? ` · ${excludedCategories.join(', ')} excluded` : ''
+    if (s.health_score >= 80) return 'All backups healthy' + suffix
     const issues = []
     if (s.total_items - s.protected_items > 0) issues.push(`${s.total_items - s.protected_items} items unprotected`)
     if (s.recent_failed > 0) issues.push(`${s.recent_failed} recent failures`)
-    if (issues.length === 0) return 'Backups operational'
-    if (s.health_score < 50) return 'Attention needed — ' + issues.join(', ')
-    return issues.join(', ')
+    if (issues.length === 0) return 'Backups operational' + suffix
+    if (s.health_score < 50) return 'Attention needed — ' + issues.join(', ') + suffix
+    return issues.join(', ') + suffix
   })
 </script>
 
@@ -494,15 +519,15 @@
 
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <!-- Containers -->
-            {#if containers.length > 0}
+            {#if trackedContainers.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
                   <svg aria-hidden="true" class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
                   <h3 class="text-sm font-medium text-text">Containers</h3>
-                  <span class="text-xs text-text-dim ml-auto">{protectedContainers.length}/{containers.length}</span>
+                  <span class="text-xs text-text-dim ml-auto">{protectedContainers.length}/{trackedContainers.length}</span>
                 </div>
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
-                  {#each containers as c (c.name)}
+                  {#each trackedContainers as c (c.name)}
                     {@const isProtected = protectedItems.has(`container:${c.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
@@ -522,15 +547,15 @@
             {/if}
 
             <!-- VMs -->
-            {#if vms.length > 0}
+            {#if trackedVMs.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
                   <svg aria-hidden="true" class="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                   <h3 class="text-sm font-medium text-text">Virtual Machines</h3>
-                  <span class="text-xs text-text-dim ml-auto">{protectedVMs.length}/{vms.length}</span>
+                  <span class="text-xs text-text-dim ml-auto">{protectedVMs.length}/{trackedVMs.length}</span>
                 </div>
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
-                  {#each vms as v (v.name)}
+                  {#each trackedVMs as v (v.name)}
                     {@const isProtected = protectedItems.has(`vm:${v.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
@@ -550,22 +575,48 @@
             {/if}
 
             <!-- Folders -->
-            {#if folders.length > 0}
+            {#if trackedFolders.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
                   <svg aria-hidden="true" class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                   <h3 class="text-sm font-medium text-text">Folders</h3>
-                  <span class="text-xs text-text-dim ml-auto">{protectedFolders.length}/{folders.length}</span>
+                  <span class="text-xs text-text-dim ml-auto">{protectedFolders.length}/{trackedFolders.length}</span>
                 </div>
                 <div class="space-y-1.5 max-h-48 overflow-y-auto">
-                  {#each folders as f (f.name)}
+                  {#each trackedFolders as f (f.name)}
                     {@const isProtected = protectedItems.has(`folder:${f.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
                       <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
                       <span class="text-sm text-text truncate">{f.name}</span>
-                      {#if f.preset}
-                        <span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium shrink-0">{f.preset}</span>
+                      {#if isProtected}
+                        <button onclick={() => navigate(`/restore?type=folder&name=${encodeURIComponent(f.name)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {f.name}">
+                          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                        <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                      {:else}
+                        <span class="text-[11px] text-text-dim ml-auto">unprotected</span>
                       {/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- Flash Drive -->
+            {#if trackedFlash.length > 0}
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <svg aria-hidden="true" class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
+                  <h3 class="text-sm font-medium text-text">Flash Drive</h3>
+                  <span class="text-xs text-text-dim ml-auto">{protectedFlash.length}/{trackedFlash.length}</span>
+                </div>
+                <div class="space-y-1.5 max-h-48 overflow-y-auto">
+                  {#each trackedFlash as f (f.name)}
+                    {@const isProtected = protectedItems.has(`folder:${f.name}`)}
+                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
+                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
+                      <span class="text-sm text-text truncate">{f.name}</span>
+                      <span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium shrink-0">USB boot drive</span>
                       {#if isProtected}
                         <button onclick={() => navigate(`/restore?type=folder&name=${encodeURIComponent(f.name)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {f.name}">
                           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>

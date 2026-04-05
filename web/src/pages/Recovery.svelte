@@ -11,20 +11,27 @@
   let error = $state('')
   let containers = $state([])
   let vms = $state([])
+  let folders = $state([])
   let protectedItems = $state(new SvelteSet())
   let expandedSteps = $state(new SvelteSet())
+  /** @type {Record<string, string>} */
+  let settings = $state({})
 
   onMount(async () => {
     try {
-      const [p, cRes, vRes, jobs] = await Promise.all([
+      const [p, cRes, vRes, fRes, jobs, sett] = await Promise.all([
         api.getRecoveryPlan(),
         api.listContainers().catch(() => ({ items: [] })),
         api.listVMs().catch(() => ({ items: [] })),
+        api.listFolders().catch(() => ({ items: [] })),
         api.listJobs(),
+        api.getSettings().catch(() => ({})),
       ])
       plan = p
       containers = cRes.items || []
       vms = vRes.items || []
+      folders = fRes.items || []
+      settings = sett || {}
 
       // Compute protected items from enabled jobs.
       const enabledJobs = (jobs || []).filter(j => j.enabled)
@@ -46,10 +53,21 @@
     }
   })
 
-  let unprotectedContainers = $derived(containers.filter(c => !protectedItems.has(`container:${c.name}`)))
-  let unprotectedVMs = $derived(vms.filter(v => !protectedItems.has(`vm:${v.name}`)))
-  let totalUnprotected = $derived(unprotectedContainers.length + unprotectedVMs.length)
-  let totalItems = $derived(containers.length + vms.length)
+  let containerBackupOn = $derived(settings.container_backup_enabled !== 'false')
+  let vmBackupOn = $derived(settings.vm_backup_enabled !== 'false')
+  let folderBackupOn = $derived(settings.folder_backup_enabled !== 'false')
+  let flashBackupOn = $derived(settings.flash_backup_enabled !== 'false')
+
+  let unprotectedContainers = $derived(containerBackupOn ? containers.filter(c => !protectedItems.has(`container:${c.name}`)) : [])
+  let unprotectedVMs = $derived(vmBackupOn ? vms.filter(v => !protectedItems.has(`vm:${v.name}`)) : [])
+  let trackedFolders = $derived(folderBackupOn ? folders.filter(f => f.settings?.preset !== 'flash') : [])
+  let trackedFlash = $derived(flashBackupOn ? folders.filter(f => f.settings?.preset === 'flash') : [])
+  let unprotectedFolders = $derived(trackedFolders.filter(f => !protectedItems.has(`folder:${f.name}`)))
+  let unprotectedFlash = $derived(trackedFlash.filter(f => !protectedItems.has(`folder:${f.name}`)))
+  let totalUnprotected = $derived(unprotectedContainers.length + unprotectedVMs.length + unprotectedFolders.length + unprotectedFlash.length)
+  let trackedContainerCount = $derived(containerBackupOn ? containers.length : 0)
+  let trackedVMCount = $derived(vmBackupOn ? vms.length : 0)
+  let totalItems = $derived(trackedContainerCount + trackedVMCount + trackedFolders.length + trackedFlash.length)
   let readinessPct = $derived(totalItems > 0 ? Math.round(((totalItems - totalUnprotected) / totalItems) * 100) : 100)
 
   function toggleStep(step) {

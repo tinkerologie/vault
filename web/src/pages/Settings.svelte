@@ -102,6 +102,20 @@
     }
   }
 
+  async function toggleBackupTarget(key) {
+    const newVal = settings[key] === 'true' ? 'false' : 'true'
+    saving = true
+    try {
+      settings = await api.updateSettings({ [key]: newVal })
+      const labels = { container_backup_enabled: 'Containers', vm_backup_enabled: 'Virtual Machines', folder_backup_enabled: 'Folders & Files', flash_backup_enabled: 'Flash Drive' }
+      showToast(`${labels[key]} backup tracking ${newVal === 'true' ? 'enabled' : 'disabled'}`, 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      saving = false
+    }
+  }
+
   function reconnectWebSocket() {
     disconnectWs()
     setTimeout(connectWs, 100)
@@ -323,6 +337,10 @@
   }
 
   let notificationsOn = $derived(settings.notifications_enabled !== 'false')
+  let containerBackupOn = $derived(settings.container_backup_enabled !== 'false')
+  let vmBackupOn = $derived(settings.vm_backup_enabled !== 'false')
+  let folderBackupOn = $derived(settings.folder_backup_enabled !== 'false')
+  let flashBackupOn = $derived(settings.flash_backup_enabled !== 'false')
 
   // --- API Key functions ---
   async function generateApiKey() {
@@ -463,6 +481,88 @@
                 </button>
               {/each}
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backup Targets -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Backup Targets</h2>
+          <p class="text-xs text-text-muted mt-0.5">Choose which categories to track for protection status. Disabled categories won't count as unprotected on the Dashboard or Recovery pages.</p>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">Containers</p>
+              <p class="text-xs text-text-muted mt-0.5">Docker containers on this server</p>
+            </div>
+            <button
+              onclick={() => toggleBackupTarget('container_backup_enabled')}
+              disabled={saving}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={containerBackupOn}
+              aria-label="Toggle container backup tracking"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {containerBackupOn ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {containerBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">Virtual Machines</p>
+              <p class="text-xs text-text-muted mt-0.5">Libvirt VMs on this server</p>
+            </div>
+            <button
+              onclick={() => toggleBackupTarget('vm_backup_enabled')}
+              disabled={saving}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={vmBackupOn}
+              aria-label="Toggle VM backup tracking"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {vmBackupOn ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {vmBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">Folders & Files</p>
+              <p class="text-xs text-text-muted mt-0.5">Custom folder and file path backups</p>
+            </div>
+            <button
+              onclick={() => toggleBackupTarget('folder_backup_enabled')}
+              disabled={saving}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={folderBackupOn}
+              aria-label="Toggle folder backup tracking"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {folderBackupOn ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {folderBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">Flash Drive</p>
+              <p class="text-xs text-text-muted mt-0.5">Unraid USB boot drive backup</p>
+            </div>
+            <button
+              onclick={() => toggleBackupTarget('flash_backup_enabled')}
+              disabled={saving}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={flashBackupOn}
+              aria-label="Toggle flash drive backup tracking"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {flashBackupOn ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {flashBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
           </div>
         </div>
       </div>

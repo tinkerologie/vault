@@ -124,7 +124,11 @@ func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Provide defaults for known settings if not yet stored.
 	defaults := map[string]string{
-		"notifications_enabled": "true",
+		"notifications_enabled":    "true",
+		"container_backup_enabled": "true",
+		"vm_backup_enabled":        "true",
+		"folder_backup_enabled":    "true",
+		"flash_backup_enabled":     "true",
 	}
 	for k, v := range defaults {
 		if _, ok := settings[k]; !ok {

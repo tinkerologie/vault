@@ -450,7 +450,8 @@
 
   let hasContainers = $derived(form.items.some(i => i.item_type === 'container'))
   let hasVMs = $derived(form.items.some(i => i.item_type === 'vm'))
-  let hasFolders = $derived(form.items.some(i => i.item_type === 'folder'))
+  let hasFolders = $derived(form.items.some(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash'))
+  let hasFlash = $derived(form.items.some(i => i.item_type === 'folder' && parseItemSettings(i).preset === 'flash'))
   let hasPlugins = $derived(form.items.some(i => i.item_type === 'plugin'))
   let selectedVMItems = $derived(form.items.filter(i => i.item_type === 'vm'))
   let selectedContainerItems = $derived(form.items.filter(i => i.item_type === 'container'))
@@ -814,11 +815,13 @@
             <span class="text-text-muted">Items</span>
             <span class="text-text">
               {#if hasContainers}{form.items.filter(i => i.item_type === 'container').length} container{form.items.filter(i => i.item_type === 'container').length !== 1 ? 's' : ''}{/if}
-              {#if hasContainers && (hasVMs || hasFolders || hasPlugins)}, {/if}
+              {#if hasContainers && (hasVMs || hasFolders || hasFlash || hasPlugins)}, {/if}
               {#if hasVMs}{form.items.filter(i => i.item_type === 'vm').length} VM{form.items.filter(i => i.item_type === 'vm').length !== 1 ? 's' : ''}{/if}
-              {#if hasVMs && (hasFolders || hasPlugins)}, {/if}
-              {#if hasFolders}{form.items.filter(i => i.item_type === 'folder').length} folder{form.items.filter(i => i.item_type === 'folder').length !== 1 ? 's' : ''}{/if}
-              {#if hasFolders && hasPlugins}, {/if}
+              {#if hasVMs && (hasFolders || hasFlash || hasPlugins)}, {/if}
+              {#if hasFolders}{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length} folder{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length !== 1 ? 's' : ''}{/if}
+              {#if hasFolders && (hasFlash || hasPlugins)}, {/if}
+              {#if hasFlash}1 flash drive{/if}
+              {#if hasFlash && hasPlugins}, {/if}
               {#if hasPlugins}{form.items.filter(i => i.item_type === 'plugin').length} plugin{form.items.filter(i => i.item_type === 'plugin').length !== 1 ? 's' : ''}{/if}
             </span>
           </div>
