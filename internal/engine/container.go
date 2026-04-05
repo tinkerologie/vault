@@ -10,14 +10,15 @@ import (
 	"io"
 	"log"
 	"math"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // maxExtractSize is the maximum size for a single file extracted from a tar
@@ -206,7 +207,7 @@ type ContainerHandler struct {
 // NewContainerHandler creates a new ContainerHandler with a Docker client
 // configured from environment variables.
 func NewContainerHandler() (*ContainerHandler, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("creating docker client: %w", err)
 	}
@@ -216,13 +217,13 @@ func NewContainerHandler() (*ContainerHandler, error) {
 // ListItems enumerates all Docker containers as BackupItems.
 func (h *ContainerHandler) ListItems() ([]BackupItem, error) {
 	ctx := context.Background()
-	containers, err := h.cli.ContainerList(ctx, container.ListOptions{All: true})
+	listResult, err := h.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		return nil, fmt.Errorf("listing containers: %w", err)
 	}
 
-	items := make([]BackupItem, 0, len(containers))
-	for _, c := range containers {
+	items := make([]BackupItem, 0, len(listResult.Items))
+	for _, c := range listResult.Items {
 		name := c.ID[:12]
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
@@ -233,7 +234,7 @@ func (h *ContainerHandler) ListItems() ([]BackupItem, error) {
 			Settings: map[string]any{
 				"id":    c.ID,
 				"image": c.Image,
-				"state": c.State,
+				"state": string(c.State),
 			},
 		})
 	}
@@ -262,16 +263,17 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	// Resolve the container by name first — container IDs change when
 	// containers are recreated (updates, reboots, compose recreate).
 	progress(item.Name, 10, "inspecting container")
-	inspect, err := h.cli.ContainerInspect(ctx, containerID)
+	inspectResult, err := h.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		// Stored ID is stale — try resolving by container name instead.
-		inspect, err = h.cli.ContainerInspect(ctx, item.Name)
+		inspectResult, err = h.cli.ContainerInspect(ctx, item.Name, client.ContainerInspectOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("inspecting container: %w", err)
 		}
-		containerID = inspect.ID
+		containerID = inspectResult.Container.ID
 		log.Printf("[backup] container %q: resolved by name (ID changed from stored value to %s)", item.Name, containerID[:12])
 	}
+	inspect := inspectResult.Container
 
 	configPath := filepath.Join(destDir, "config.json")
 	configData, err := json.MarshalIndent(inspect, "", "  ")
@@ -302,7 +304,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 
 	if wasRunning && !noStop {
 		progress(item.Name, 20, "stopping container")
-		if err := h.cli.ContainerStop(ctx, containerID, container.StopOptions{}); err != nil {
+		if _, err := h.cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{}); err != nil {
 			return nil, fmt.Errorf("stopping container: %w", err)
 		}
 	}
@@ -446,7 +448,8 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 
 		return nil
 	}, func() error {
-		return h.cli.ContainerStart(ctx, containerID, container.StartOptions{})
+		_, err := h.cli.ContainerStart(ctx, containerID, client.ContainerStartOptions{})
+		return err
 	}); err != nil {
 		return nil, err
 	}
@@ -504,9 +507,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err != nil {
 		return fmt.Errorf("loading image: %w", err)
 	}
-	// Drain the response body to ensure the daemon completes the load.
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
+	// Drain the response to ensure the daemon completes the load.
+	_, _ = io.Copy(io.Discard, resp)
+	_ = resp.Close()
 
 	// Step 2: Read full container config.
 	progress(item.Name, 15, "reading config")
@@ -668,11 +671,12 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	containerName = safeContainerName
 
 	// Remove existing container with the same name if present.
-	if existing, err := h.cli.ContainerInspect(ctx, containerName); err == nil {
-		if existing.State.Running {
-			_ = h.cli.ContainerStop(ctx, existing.ID, container.StopOptions{})
+	if existResult, err := h.cli.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{}); err == nil {
+		existing := existResult.Container
+		if existing.State != nil && existing.State.Running {
+			_, _ = h.cli.ContainerStop(ctx, existing.ID, client.ContainerStopOptions{})
 		}
-		_ = h.cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true})
+		_, _ = h.cli.ContainerRemove(ctx, existing.ID, client.ContainerRemoveOptions{Force: true})
 	}
 
 	// Build container config.
@@ -721,7 +725,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		Privileged: inspect.HostConfig.Privileged,
 		CapAdd:     inspect.HostConfig.CapAdd,
 		CapDrop:    inspect.HostConfig.CapDrop,
-		DNS:        inspect.HostConfig.Dns,
+		DNS:        parseDNSAddrs(inspect.HostConfig.Dns),
 		DNSSearch:  inspect.HostConfig.DnsSearch,
 		ExtraHosts: inspect.HostConfig.ExtraHosts,
 		IpcMode:    container.IpcMode(inspect.HostConfig.IpcMode),
@@ -751,15 +755,22 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		for netName, netCfg := range inspect.NetworkSettings.Networks {
 			es := &network.EndpointSettings{}
 			if netCfg.IPAMConfig != nil && netCfg.IPAMConfig.IPv4Address != "" {
-				es.IPAMConfig = &network.EndpointIPAMConfig{
-					IPv4Address: netCfg.IPAMConfig.IPv4Address,
+				if addr, err := netip.ParseAddr(netCfg.IPAMConfig.IPv4Address); err == nil {
+					es.IPAMConfig = &network.EndpointIPAMConfig{
+						IPv4Address: addr,
+					}
 				}
 			}
 			networkConfig.EndpointsConfig[netName] = es
 		}
 	}
 
-	created, err := h.cli.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, containerName)
+	created, err := h.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:           containerConfig,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkConfig,
+		Name:             containerName,
+	})
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
@@ -777,7 +788,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Step 6: Start container if it was originally running.
 	if inspect.State.Running {
 		progress(item.Name, 90, "starting container")
-		if err := h.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+		if _, err := h.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 			return fmt.Errorf("starting restored container: %w", err)
 		}
 	}
@@ -1229,7 +1240,7 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 // StopContainers stops the given container IDs in order. It returns the IDs
 // that were actually stopped (i.e. were running) so the caller can restart them.
 func StopContainers(ids []string) ([]string, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("creating docker client: %w", err)
 	}
@@ -1238,14 +1249,14 @@ func StopContainers(ids []string) ([]string, error) {
 	ctx := context.Background()
 	var stopped []string
 	for _, id := range ids {
-		inspect, err := cli.ContainerInspect(ctx, id)
+		result, err := cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 		if err != nil {
 			return stopped, fmt.Errorf("inspecting container %s: %w", id, err)
 		}
-		if !inspect.State.Running {
+		if !result.Container.State.Running {
 			continue
 		}
-		if err := cli.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
+		if _, err := cli.ContainerStop(ctx, id, client.ContainerStopOptions{}); err != nil {
 			return stopped, fmt.Errorf("stopping container %s: %w", id, err)
 		}
 		stopped = append(stopped, id)
@@ -1256,7 +1267,7 @@ func StopContainers(ids []string) ([]string, error) {
 // StartContainers starts the given container IDs. Errors are logged but do not
 // abort the remaining starts so that as many containers as possible are restored.
 func StartContainers(ids []string) []error {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return []error{fmt.Errorf("creating docker client: %w", err)}
 	}
@@ -1265,7 +1276,7 @@ func StartContainers(ids []string) []error {
 	ctx := context.Background()
 	var errs []error
 	for _, id := range ids {
-		if err := cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+		if _, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 			errs = append(errs, fmt.Errorf("starting container %s: %w", id, err))
 		}
 	}
@@ -1284,7 +1295,7 @@ type HealthCheckResult struct {
 // if it is healthy. It checks Docker HEALTHCHECK status, running state, and
 // optionally exposed port connectivity. Timeout is per-container.
 func VerifyContainerHealth(containerID, containerName string, timeout time.Duration) (*HealthCheckResult, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("creating docker client: %w", err)
 	}
@@ -1307,12 +1318,12 @@ func VerifyContainerHealth(containerID, containerName string, timeout time.Durat
 				Message:       "Timed out waiting for healthy state",
 			}, nil
 		case <-ticker.C:
-			inspect, err := cli.ContainerInspect(ctx, containerID)
+			result, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 			if err != nil {
 				continue
 			}
 
-			state := inspect.State
+			state := result.Container.State
 			if state == nil {
 				continue
 			}
@@ -1370,4 +1381,19 @@ func backupFileInfo(path string) BackupFile {
 		return BackupFile{Name: filepath.Base(path)}
 	}
 	return BackupFile{Name: filepath.Base(path), Size: info.Size()}
+}
+
+// parseDNSAddrs converts DNS server strings from a saved config to netip.Addr
+// values expected by the Docker API. Invalid entries are silently skipped.
+func parseDNSAddrs(servers []string) []netip.Addr {
+	if len(servers) == 0 {
+		return nil
+	}
+	addrs := make([]netip.Addr, 0, len(servers))
+	for _, s := range servers {
+		if addr, err := netip.ParseAddr(s); err == nil {
+			addrs = append(addrs, addr)
+		}
+	}
+	return addrs
 }
