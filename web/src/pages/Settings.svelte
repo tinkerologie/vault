@@ -447,7 +447,7 @@
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Backup Targets</h2>
-          <p class="text-xs text-text-muted mt-0.5">Choose which categories to track for protection status. Disabled categories won't count as unprotected on the Dashboard or Recovery pages.</p>
+          <p class="text-xs text-text-muted mt-0.5">Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery.</p>
         </div>
         <div class="divide-y divide-border">
           <div class="px-5 py-4 flex items-center justify-between">
@@ -754,14 +754,15 @@
       {#if stagingInfo}
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">Staging Directory</h2>
+          <h2 class="text-base font-semibold text-text">Temporary Work Area</h2>
+          <p class="text-xs text-text-muted mt-0.5">Where Vault assembles backup files before transferring them to storage.</p>
         </div>
         <div class="p-5 space-y-4">
           <div>
             <p class="text-sm text-text font-mono">{stagingInfo.resolved_path}</p>
             <p class="text-xs text-text-muted mt-0.5">
-              {stagingInfo.source === 'override' ? 'Custom override' :
-               stagingInfo.source === 'cache' ? 'SSD Cache (automatic)' :
+              {stagingInfo.source === 'override' ? 'Custom location' :
+               stagingInfo.source === 'cache' ? 'Using SSD cache for fast backup processing' :
                stagingInfo.source === 'local-storage' ? 'Local storage fallback' :
                'System temp fallback'}
             </p>
@@ -781,7 +782,8 @@
           {/if}
 
           <div>
-            <span class="text-xs text-text-muted block mb-1.5">Custom Path (optional)</span>
+            <span class="text-xs text-text-muted block mb-1.5">Custom Location</span>
+            <p class="text-xs text-text-dim mb-2">Override the automatic location. Use this if you want backups to be assembled on a specific drive.</p>
             <PathBrowser bind:value={stagingOverrideInput} onselect={saveStagingOverride} />
             {#if stagingInfo.override}
               <button onclick={resetStagingOverride} disabled={stagingSaving} class="mt-2 text-xs text-vault hover:underline">
@@ -795,9 +797,10 @@
               <svg aria-hidden="true" class="w-3 h-3 transition-transform {cascadeExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
               </svg>
-              Cascade order
+              Fallback locations
             </button>
             {#if cascadeExpanded}
+              <p class="mt-1 text-xs text-text-dim">Vault tries each location in order and uses the first available one.</p>
               <div class="mt-2 space-y-1 text-xs text-text-muted">
                 {#each stagingInfo.cascade as item, i (i)}
                   <div class="flex items-center gap-2">
@@ -1034,14 +1037,14 @@
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Database Location</h2>
-          <p class="text-xs text-text-muted mt-0.5">Where Vault stores its database and how it protects the USB flash drive.</p>
+          <p class="text-xs text-text-muted mt-0.5">Vault's database tracks your jobs, schedules, and restore points. The storage mode determines where this data is written.</p>
         </div>
         <div class="divide-y divide-border">
           <div class="px-5 py-3 flex items-center justify-between">
             <span class="text-sm text-text-muted">Mode</span>
             <span class="text-sm font-medium text-text">
               {#if databaseInfo.mode === 'hybrid'}
-                Hybrid (RAM + SSD snapshots)
+                Hybrid — runs in memory for speed, saves to SSD periodically
               {:else if databaseInfo.mode === 'direct'}
                 Direct SSD
               {:else}
@@ -1050,12 +1053,12 @@
             </span>
           </div>
           <div class="px-5 py-3 flex items-center justify-between">
-            <span class="text-sm text-text-muted">Working</span>
+            <span class="text-sm text-text-muted" title="Where the database currently operates from. In hybrid mode this is in RAM.">Active database</span>
             <span class="text-sm font-mono text-text truncate ml-4">{databaseInfo.working_path}</span>
           </div>
           {#if databaseInfo.snapshot_path}
           <div class="px-5 py-3 flex items-center justify-between">
-            <span class="text-sm text-text-muted">Snapshot</span>
+            <span class="text-sm text-text-muted">Saved copy</span>
             <span class="text-sm font-mono text-text truncate ml-4">{databaseInfo.snapshot_path}</span>
           </div>
           {/if}
@@ -1063,21 +1066,22 @@
           {@const snapDate = new Date(databaseInfo.last_snapshot)}
           {#if snapDate.getFullYear() > 1970}
           <div class="px-5 py-3 flex items-center justify-between">
-            <span class="text-sm text-text-muted">Last snapshot</span>
+            <span class="text-sm text-text-muted">Last saved</span>
             <span class="text-sm text-text">{formatDate(databaseInfo.last_snapshot)}</span>
           </div>
           {/if}
           {/if}
           {#if databaseInfo.snapshot_size_bytes}
           <div class="px-5 py-3 flex items-center justify-between">
-            <span class="text-sm text-text-muted">Snapshot size</span>
+            <span class="text-sm text-text-muted">Saved copy size</span>
             <span class="text-sm text-text">{formatBytes(databaseInfo.snapshot_size_bytes)}</span>
           </div>
           {/if}
         </div>
         {#if databaseInfo.mode === 'hybrid'}
         <div class="px-5 py-4 border-t border-border">
-          <span class="text-xs text-text-muted block mb-1.5">Custom Snapshot Path (optional)</span>
+          <span class="text-xs text-text-muted block mb-1.5">Custom save location</span>
+          <p class="text-xs text-text-dim mb-2">Choose where the persistent database copy is stored. Defaults to SSD cache.</p>
           <PathBrowser bind:value={snapshotPathInput} onselect={saveSnapshotPath} />
           {#if databaseInfo.snapshot_path_override}
             <button onclick={resetSnapshotPath} disabled={snapshotPathSaving} class="mt-2 text-xs text-vault hover:underline">
@@ -1089,7 +1093,7 @@
         {/if}
         {#if databaseInfo.mode === 'legacy_usb'}
         <div class="px-5 py-3 bg-amber-500/10 border-t border-amber-500/20">
-          <p class="text-xs text-amber-400">No cache drive detected. Database writes go directly to the USB flash drive, which may reduce its lifespan.</p>
+          <p class="text-xs text-amber-400">No cache drive detected. Database writes go directly to the USB flash drive, which may reduce its lifespan. Add a cache drive to your server, or set a custom save location above to avoid writing to the USB drive.</p>
         </div>
         {/if}
       </div>
