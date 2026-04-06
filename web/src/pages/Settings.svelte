@@ -8,6 +8,7 @@
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Spinner from '../components/Spinner.svelte'
   import PathBrowser from '../components/PathBrowser.svelte'
+  import Tooltip from '../components/Tooltip.svelte'
 
   let loading = $state(true)
   let health = $state(null)
@@ -595,7 +596,7 @@
             </div>
           </div>
           <div class="px-5 py-4">
-            <label for="discord-notify" class="block text-sm font-medium text-text mb-1.5">Notify On</label>
+            <label for="discord-notify" class="block text-sm font-medium text-text mb-1.5">Notify On <Tooltip text="Controls which Discord alerts this webhook sends. This is independent of each job's own notification preference." /></label>
             <select
               id="discord-notify"
               bind:value={discordNotifyOn}
@@ -628,7 +629,7 @@
       <!-- Encryption -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">Encryption</h2>
+          <h2 class="text-base font-semibold text-text">Encryption <Tooltip text="Uses age encryption. Each job must opt in individually. The passphrase is irrecoverable if lost — store it safely." /></h2>
         </div>
         <div class="divide-y divide-border">
           {#if encryptionEnabled}
@@ -754,7 +755,7 @@
       {#if stagingInfo}
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">Temporary Work Area</h2>
+          <h2 class="text-base font-semibold text-text">Temporary Work Area <Tooltip text="The staging directory is where Vault temporarily assembles backup archives before sending them to the final storage destination." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Where Vault assembles backup files before transferring them to storage.</p>
         </div>
         <div class="p-5 space-y-4">
@@ -797,7 +798,7 @@
               <svg aria-hidden="true" class="w-3 h-3 transition-transform {cascadeExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
               </svg>
-              Fallback locations
+              Fallback locations <Tooltip text="Vault tries each location in order and uses the first one that is available and writable." />
             </button>
             {#if cascadeExpanded}
               <p class="mt-1 text-xs text-text-dim">Vault tries each location in order and uses the first available one.</p>
@@ -1041,7 +1042,7 @@
         </div>
         <div class="divide-y divide-border">
           <div class="px-5 py-3 flex items-center justify-between">
-            <span class="text-sm text-text-muted">Mode</span>
+            <span class="text-sm text-text-muted">Mode <Tooltip text="Hybrid: runs in RAM for speed, snapshots to SSD periodically. Direct SSD: writes every change to SSD. Legacy USB: writes to the USB flash drive (not recommended)." /></span>
             <span class="text-sm font-medium text-text">
               {#if databaseInfo.mode === 'hybrid'}
                 Hybrid — runs in memory for speed, saves to SSD periodically
@@ -1080,7 +1081,7 @@
         </div>
         {#if databaseInfo.mode === 'hybrid'}
         <div class="px-5 py-4 border-t border-border">
-          <span class="text-xs text-text-muted block mb-1.5">Custom save location</span>
+          <span class="text-xs text-text-muted block mb-1.5">Custom save location <Tooltip text="Overrides where the persistent database snapshot is saved. Requires a daemon restart to take effect." /></span>
           <p class="text-xs text-text-dim mb-2">Choose where the persistent database copy is stored. Defaults to SSD cache.</p>
           <PathBrowser bind:value={snapshotPathInput} onselect={saveSnapshotPath} />
           {#if databaseInfo.snapshot_path_override}

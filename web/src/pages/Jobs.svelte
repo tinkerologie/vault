@@ -14,6 +14,7 @@
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import BackupModeSelector from '../components/BackupModeSelector.svelte'
   import ScriptBrowser from '../components/ScriptBrowser.svelte'
+  import Tooltip from '../components/Tooltip.svelte'
 
   let loading = $state(true)
   let jobs = $state([])
@@ -701,7 +702,7 @@
     {#if step === 1}
       <div class="space-y-5">
         <div>
-          <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name</label>
+          <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name <Tooltip text="Used for display and log identification. No strict naming constraints." /></label>
           <input id="name" type="text" bind:value={form.name} required
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim focus:border-vault focus:ring-1 focus:ring-vault" placeholder="Daily Docker Backup" />
         </div>
@@ -849,7 +850,7 @@
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Retention Policy
+            Retention Policy <Tooltip text="'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply — whichever triggers first will prune old backups." />
           </summary>
           <div class="grid grid-cols-2 gap-4 mt-3 pl-6">
             <div>
@@ -875,7 +876,7 @@
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Scripts & Notifications
+            Scripts & Notifications <Tooltip text="Pre-backup scripts run before any containers are stopped. Post-backup scripts run after all items are backed up. Environment variables like VAULT_JOB_NAME and VAULT_STATUS are available." />
           </summary>
           <div class="space-y-4 mt-3 pl-6">
             <ScriptBrowser bind:value={form.pre_script} label="Pre-Backup Script" placeholder="/path/to/script.sh" />
@@ -887,7 +888,7 @@
         <details class="group" open>
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Backup Verification
+            Backup Verification <Tooltip text="Verifies archive integrity after each backup by reading back all data and checking SHA-256 checksums. Increases backup time but catches corruption early." />
           </summary>
           <div class="mt-3 pl-6">
             <div class="flex items-start gap-3">
@@ -907,7 +908,7 @@
           <details class="group" open>
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              VM Restore Verification
+              VM Restore Verification <Tooltip text="After restoring a VM that was running at backup time, Vault auto-starts it and checks that it came up successfully." />
             </summary>
             <div class="space-y-4 mt-3 pl-6">
               <p class="text-xs text-text-dim">Applies only when a VM was running at backup time and Vault auto-starts it after restore.</p>
@@ -921,7 +922,7 @@
                   </div>
 
                   <div>
-                    <label for={`${verifyIdBase}-mode`} class="block text-xs font-medium text-text-muted mb-1.5">Readiness Check</label>
+                    <label for={`${verifyIdBase}-mode`} class="block text-xs font-medium text-text-muted mb-1.5">Readiness Check <Tooltip text="Running State: quick check that the VM is powered on. QEMU Guest Agent: waits for the guest OS to respond. TCP Service: waits for a specific port to accept connections." /></label>
                     <select
                       id={`${verifyIdBase}-mode`}
                       value={verify.mode}

@@ -10,6 +10,7 @@
   import EmptyState from '../components/EmptyState.svelte'
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import Tooltip from '../components/Tooltip.svelte'
 
   let loading = $state(true)
   let sources = $state([])
@@ -408,7 +409,7 @@
       </div>
 
       <div>
-        <span class="block text-sm font-medium text-text mb-1">Sync Schedule</span>
+        <span class="block text-sm font-medium text-text mb-1">Sync Schedule <Tooltip text="Controls how frequently Vault pushes restore points to the remote replication target." /></span>
         <ScheduleBuilder bind:value={form.schedule} />
       </div>
 

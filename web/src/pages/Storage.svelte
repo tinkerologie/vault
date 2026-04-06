@@ -9,6 +9,7 @@
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import PathBrowser from '../components/PathBrowser.svelte'
+  import Tooltip from '../components/Tooltip.svelte'
 
   let loading = $state(true)
   let destinations = $state([])
@@ -463,7 +464,7 @@
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
         <div>
-          <label for="nfs_version" class="block text-sm font-medium text-text-muted mb-1.5">NFS Version</label>
+          <label for="nfs_version" class="block text-sm font-medium text-text-muted mb-1.5">NFS Version <Tooltip text="NFSv3: wider compatibility, simpler setup. NFSv4: better security and performance, but may require DNS and auth configuration." /></label>
           <select id="nfs_version" bind:value={form.config.version}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
             <option value="3">NFSv3</option>
@@ -471,7 +472,7 @@
           </select>
         </div>
         <div class="col-span-2">
-          <label for="nfs_options" class="block text-sm font-medium text-text-muted mb-1.5">Mount Options</label>
+          <label for="nfs_options" class="block text-sm font-medium text-text-muted mb-1.5">Mount Options <Tooltip text="Optional NFS mount flags such as rw, sync, hard, soft, or nolock. Leave blank for sensible defaults." /></label>
           <input id="nfs_options" type="text" bind:value={form.config.options} placeholder="Optional: rw,sync"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
