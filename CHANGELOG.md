@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Google Drive storage adapter — replicate backups to Google Drive using OAuth2 with user-provided credentials (closes #19)
+- OAuth2 authentication flow for Google Drive with consent URL generation and token exchange endpoints (`POST /storage/gdrive/auth-url`, `POST /storage/gdrive/exchange-token`)
+- Google Drive option in the Storage page form with Client ID, Client Secret, Folder ID fields, and "Connect to Google" OAuth flow button
+- CSRF protection for Google Drive OAuth using cryptographically random state parameter
+
 ### Changed
 
 - Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)

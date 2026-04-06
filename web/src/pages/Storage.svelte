@@ -33,6 +33,9 @@
 
   let form = $state(defaultForm())
 
+  // Google Drive OAuth state
+  let gdriveConnecting = $state(false)
+
   function defaultForm() {
     return {
       name: '',
@@ -239,8 +242,53 @@
       sftp: { host: '', port: 22, user: '', password: '', base_path: '' },
       smb: { host: '', share: '', user: '', password: '', base_path: '' },
       nfs: { host: '', export: '', base_path: '', version: '4', options: '' },
+      gdrive: { client_id: '', client_secret: '', refresh_token: '', folder_id: '' },
     }
     form.config = defaults[form.type] || {}
+  }
+
+  async function connectGDrive() {
+    if (!form.config.client_id || !form.config.client_secret) {
+      showToast('Client ID and Client Secret are required', 'error')
+      return
+    }
+    gdriveConnecting = true
+    try {
+      const redirectUri = window.location.origin + '/api/v1/storage/gdrive/callback'
+      const result = await api.getGDriveAuthUrl(form.config.client_id, form.config.client_secret, redirectUri)
+      // Open consent URL in a popup.
+      const popup = window.open(result.url, 'gdrive-auth', 'width=600,height=700,scrollbars=yes')
+      // Poll for the popup closing or listen for a message from the callback page.
+      const code = await new Promise((resolve, reject) => {
+        // Listen for postMessage from the callback page.
+        function onMessage(event) {
+          if (event.data?.type === 'gdrive-auth-code') {
+            window.removeEventListener('message', onMessage)
+            clearInterval(pollTimer)
+            resolve(event.data.code)
+          }
+        }
+        window.addEventListener('message', onMessage)
+        // Also prompt user to paste the code if popup was blocked.
+        const pollTimer = setInterval(() => {
+          if (popup && popup.closed) {
+            clearInterval(pollTimer)
+            window.removeEventListener('message', onMessage)
+            // Ask user to paste the code manually.
+            const manualCode = prompt('If the popup closed without connecting, paste the authorization code here:')
+            if (manualCode) resolve(manualCode)
+            else reject(new Error('Authorization cancelled'))
+          }
+        }, 1000)
+      })
+      const tokenResult = await api.exchangeGDriveToken(form.config.client_id, form.config.client_secret, code, redirectUri)
+      form.config.refresh_token = tokenResult.refresh_token
+      showToast('Google Drive connected successfully!', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      gdriveConnecting = false
+    }
   }
 
   const storageIcons = {
@@ -248,6 +296,7 @@
     sftp: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
     smb: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
     nfs: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
+    gdrive: 'M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71L12 2z',
   }
 
   const storageColors = {
@@ -255,6 +304,7 @@
     sftp: 'text-emerald-400',
     smb: 'text-purple-400',
     nfs: 'text-amber-400',
+    gdrive: 'text-sky-400',
   }
 </script>
 
@@ -325,6 +375,9 @@
               {#if cfg.base_path || cfg.path}<p>Path: {cfg.base_path || cfg.path}</p>{/if}
             {:else if dest.type === 'nfs'}
               <p class="text-xs text-text-muted truncate">{cfg.host}:{cfg.export}</p>
+            {:else if dest.type === 'gdrive'}
+              <p>Folder: {cfg.folder_id || 'Root'}</p>
+              <p>Status: {cfg.refresh_token ? 'Connected' : 'Not connected'}</p>
             {/if}
           </div>
 
@@ -377,6 +430,7 @@
         <option value="sftp">SFTP</option>
         <option value="smb">SMB / CIFS</option>
         <option value="nfs">NFS</option>
+        <option value="gdrive">Google Drive</option>
       </select>
     </div>
 
@@ -476,6 +530,46 @@
           <input id="nfs_options" type="text" bind:value={form.config.options} placeholder="Optional: rw,sync"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
+      </div>
+    {:else if form.type === 'gdrive'}
+      <div class="space-y-3">
+        <div>
+          <label for="cfg_clientid" class="block text-sm font-medium text-text-muted mb-1.5">Client ID</label>
+          <input id="cfg_clientid" type="text" bind:value={form.config.client_id}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="your-app.apps.googleusercontent.com" />
+        </div>
+        <div>
+          <label for="cfg_clientsecret" class="block text-sm font-medium text-text-muted mb-1.5">Client Secret</label>
+          <input id="cfg_clientsecret" type="password" bind:value={form.config.client_secret}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+        <div>
+          <label for="cfg_folderid" class="block text-sm font-medium text-text-muted mb-1.5">Folder ID <span class="text-text-dim font-normal">(optional, blank for root)</span></label>
+          <input id="cfg_folderid" type="text" bind:value={form.config.folder_id}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="Google Drive folder ID" />
+        </div>
+        <div class="flex items-center gap-3 pt-2">
+          {#if form.config.refresh_token}
+            <div class="flex items-center gap-2 text-sm text-success">
+              <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              Connected to Google Drive
+            </div>
+            <button type="button" onclick={() => { form.config.refresh_token = ''; }}
+              class="text-xs text-text-muted hover:text-danger transition-colors">Disconnect</button>
+          {:else}
+            <button type="button" onclick={connectGDrive} disabled={gdriveConnecting}
+              class="px-4 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-2">
+              {#if gdriveConnecting}
+                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                Connecting...
+              {:else}
+                Connect to Google
+              {/if}
+            </button>
+            <span class="text-xs text-text-dim">Not connected</span>
+          {/if}
+        </div>
+        <p class="text-xs text-text-dim mt-1">Create OAuth credentials in the <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" class="text-vault hover:underline">Google Cloud Console</a>. Enable the Google Drive API and add your redirect URI.</p>
       </div>
     {/if}
 

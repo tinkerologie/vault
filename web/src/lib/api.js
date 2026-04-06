@@ -114,4 +114,10 @@ export const api = {
   testReplicationURL: (url) => request('POST', '/replication/test-url', { url }),
   syncReplicationSource: (id) => request('POST', `/replication/${id}/sync`),
   listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
+
+  // Google Drive OAuth
+  getGDriveAuthUrl: (clientId, clientSecret, redirectUri) =>
+    request('POST', '/storage/gdrive/auth-url', { client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri }),
+  exchangeGDriveToken: (clientId, clientSecret, code, redirectUri) =>
+    request('POST', '/storage/gdrive/exchange-token', { client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri }),
 }

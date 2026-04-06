@@ -393,6 +393,8 @@ var sensitiveConfigKeys = map[string]bool{
 	"secret_access_key": true,
 	"passphrase":        true,
 	"key_file":          true,
+	"refresh_token":     true,
+	"client_secret":     true,
 }
 
 // redactConfig parses a JSON config string and replaces sensitive field

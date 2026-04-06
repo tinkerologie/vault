@@ -53,6 +53,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/{id}/jobs", storageH.DependentJobs)
 			r.Get("/{id}/list", storageH.ListFiles)
 			r.Get("/{id}/files", storageH.DownloadFile)
+			// Google Drive OAuth flow.
+			r.Post("/gdrive/auth-url", storageH.GDriveAuthURL)
+			r.Post("/gdrive/exchange-token", storageH.GDriveExchangeToken)
 		})
 
 		jobH := handlers.NewJobHandler(s.db, s.runner, func() error {
