@@ -116,8 +116,16 @@ export const api = {
   listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
 
   // Google Drive OAuth
-  getGDriveAuthUrl: (clientId, clientSecret, redirectUri) =>
-    request('POST', '/storage/gdrive/auth-url', { client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri }),
-  exchangeGDriveToken: (clientId, clientSecret, code, redirectUri) =>
-    request('POST', '/storage/gdrive/exchange-token', { client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri }),
+  getGDriveStatus: () => request('GET', '/replication/gdrive/status'),
+  getGDriveAuthUrl: (redirectUri, clientId = '', clientSecret = '') =>
+    request('POST', '/replication/gdrive/auth-url', { client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri }),
+  exchangeGDriveToken: (code, redirectUri, clientId = '', clientSecret = '') =>
+    request('POST', '/replication/gdrive/exchange-token', { client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri }),
+
+  // OneDrive OAuth
+  getOneDriveStatus: () => request('GET', '/replication/onedrive/status'),
+  getOneDriveAuthUrl: (redirectUri, clientId = '', clientSecret = '') =>
+    request('POST', '/replication/onedrive/auth-url', { client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri }),
+  exchangeOneDriveToken: (code, redirectUri, clientId = '', clientSecret = '') =>
+    request('POST', '/replication/onedrive/exchange-token', { client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri }),
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -28,9 +29,21 @@ type GDriveAdapter struct {
 }
 
 // NewGDriveAdapter creates a new Google Drive adapter.
+// client_id and client_secret can be empty when VAULT_GDRIVE_CLIENT_ID and
+// VAULT_GDRIVE_CLIENT_SECRET environment variables are set.
 func NewGDriveAdapter(cfg GDriveConfig) (*GDriveAdapter, error) {
-	if cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.RefreshToken == "" {
-		return nil, fmt.Errorf("client_id, client_secret, and refresh_token are required")
+	// Resolve credentials from env vars if not provided in config.
+	if cfg.ClientID == "" {
+		cfg.ClientID = os.Getenv("VAULT_GDRIVE_CLIENT_ID")
+	}
+	if cfg.ClientSecret == "" {
+		cfg.ClientSecret = os.Getenv("VAULT_GDRIVE_CLIENT_SECRET")
+	}
+	if cfg.ClientID == "" || cfg.ClientSecret == "" {
+		return nil, fmt.Errorf("google drive credentials not available: set VAULT_GDRIVE_CLIENT_ID and VAULT_GDRIVE_CLIENT_SECRET environment variables, or provide client_id and client_secret in the storage configuration")
+	}
+	if cfg.RefreshToken == "" {
+		return nil, fmt.Errorf("refresh_token is required; connect to Google Drive via the UI to obtain one")
 	}
 	return &GDriveAdapter{config: cfg}, nil
 }

@@ -133,8 +133,9 @@ func TestReplicationHandlerValidation(t *testing.T) {
 		want int
 	}{
 		{"missing name", `{"url":"http://x","storage_dest_id":1}`, http.StatusBadRequest},
-		{"missing url", `{"name":"n","storage_dest_id":1}`, http.StatusBadRequest},
-		{"missing storage_dest_id", `{"name":"n","url":"http://x"}`, http.StatusBadRequest},
+		{"missing url for remote_vault", `{"name":"n","type":"remote_vault"}`, http.StatusBadRequest},
+		{"missing config for gdrive", `{"name":"n","type":"gdrive"}`, http.StatusBadRequest},
+		{"invalid type", `{"name":"n","type":"invalid"}`, http.StatusBadRequest},
 		{"invalid json", `{broken`, http.StatusBadRequest},
 	}
 

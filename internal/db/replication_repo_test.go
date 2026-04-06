@@ -97,6 +97,74 @@ func TestReplicationSourceCRUD(t *testing.T) {
 	}
 }
 
+func TestReplicationSourceTypeAndConfig(t *testing.T) {
+	database := setupTestDB(t)
+
+	// Create a cloud replication target (no URL needed, uses config).
+	src := ReplicationSource{
+		Name:    "gdrive-backup",
+		Type:    "gdrive",
+		Config:  `{"refresh_token":"tok","folder_id":"abc123"}`,
+		Enabled: true,
+	}
+
+	id, err := database.CreateReplicationSource(src)
+	if err != nil {
+		t.Fatalf("CreateReplicationSource() error = %v", err)
+	}
+
+	got, err := database.GetReplicationSource(id)
+	if err != nil {
+		t.Fatalf("GetReplicationSource() error = %v", err)
+	}
+	if got.Type != "gdrive" {
+		t.Errorf("Type = %q, want %q", got.Type, "gdrive")
+	}
+	if got.Config != `{"refresh_token":"tok","folder_id":"abc123"}` {
+		t.Errorf("Config = %q, want json", got.Config)
+	}
+
+	// Verify defaults for existing remote_vault records (no type set).
+	rvSrc := ReplicationSource{
+		Name:    "remote-vault",
+		URL:     "http://10.0.0.1:24085",
+		Enabled: true,
+	}
+	rvID, err := database.CreateReplicationSource(rvSrc)
+	if err != nil {
+		t.Fatalf("CreateReplicationSource() error = %v", err)
+	}
+	rvGot, err := database.GetReplicationSource(rvID)
+	if err != nil {
+		t.Fatalf("GetReplicationSource() error = %v", err)
+	}
+	if rvGot.Type != "remote_vault" {
+		t.Errorf("default Type = %q, want %q", rvGot.Type, "remote_vault")
+	}
+	if rvGot.Config != "{}" {
+		t.Errorf("default Config = %q, want %q", rvGot.Config, "{}")
+	}
+
+	// List and verify types.
+	all, err := database.ListReplicationSources()
+	if err != nil {
+		t.Fatalf("ListReplicationSources() error = %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("len(sources) = %d, want 2", len(all))
+	}
+
+	// Update type/config.
+	got.Config = `{"refresh_token":"new","folder_id":"xyz"}`
+	if err := database.UpdateReplicationSource(got); err != nil {
+		t.Fatalf("UpdateReplicationSource() error = %v", err)
+	}
+	updated, _ := database.GetReplicationSource(id)
+	if updated.Config != `{"refresh_token":"new","folder_id":"xyz"}` {
+		t.Errorf("Config after update = %q", updated.Config)
+	}
+}
+
 func TestReplicatedJobs(t *testing.T) {
 	database := setupTestDB(t)
 

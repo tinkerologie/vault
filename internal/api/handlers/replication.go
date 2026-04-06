@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/replication"
+	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 // SyncerProvider returns the replication syncer (resolved lazily).
@@ -58,20 +59,37 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if src.Name == "" || src.URL == "" {
-		respondError(w, http.StatusBadRequest, "name and url are required")
+	if src.Name == "" {
+		respondError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if src.StorageDestID == 0 {
-		respondError(w, http.StatusBadRequest, "storage_dest_id is required")
+	// Default type to remote_vault if not provided.
+	if src.Type == "" {
+		src.Type = "remote_vault"
+	}
+
+	switch src.Type {
+	case "remote_vault":
+		if src.URL == "" {
+			respondError(w, http.StatusBadRequest, "url is required for remote_vault targets")
+			return
+		}
+		normalizedURL, err := replication.NormalizeBaseURL(src.URL)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+			return
+		}
+		src.URL = normalizedURL
+	case "gdrive", "onedrive":
+		if src.Config == "" || src.Config == "{}" {
+			respondError(w, http.StatusBadRequest, "config is required for cloud targets")
+			return
+		}
+		src.StorageDestID = 0
+	default:
+		respondError(w, http.StatusBadRequest, "invalid type: must be remote_vault, gdrive, or onedrive")
 		return
 	}
-	normalizedURL, err := replication.NormalizeBaseURL(src.URL)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
-		return
-	}
-	src.URL = normalizedURL
 
 	id, err := h.db.CreateReplicationSource(src)
 	if err != nil {
@@ -106,12 +124,23 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	src.ID = id
 
-	normalizedURL, err := replication.NormalizeBaseURL(src.URL)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
-		return
+	if src.Type == "" {
+		src.Type = "remote_vault"
 	}
-	src.URL = normalizedURL
+
+	switch src.Type {
+	case "remote_vault":
+		if src.URL != "" {
+			normalizedURL, err := replication.NormalizeBaseURL(src.URL)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+				return
+			}
+			src.URL = normalizedURL
+		}
+	case "gdrive", "onedrive":
+		src.StorageDestID = 0
+	}
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
@@ -140,7 +169,7 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// TestConnection tests connectivity to a remote Vault source.
+// TestConnection tests connectivity to a replication target.
 func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	src, err := h.db.GetReplicationSource(id)
@@ -149,16 +178,30 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	client, err := replication.NewClient(src.URL)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
-		return
+	switch src.Type {
+	case "gdrive", "onedrive":
+		adapter, adapterErr := storage.NewAdapter(src.Type, src.Config)
+		if adapterErr != nil {
+			respondError(w, http.StatusBadRequest, "invalid config: "+adapterErr.Error())
+			return
+		}
+		if connErr := adapter.TestConnection(); connErr != nil {
+			respondError(w, http.StatusBadGateway, connErr.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	default: // remote_vault
+		client, clientErr := replication.NewClient(src.URL)
+		if clientErr != nil {
+			respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
+			return
+		}
+		if _, connErr := client.TestConnection(); connErr != nil {
+			respondError(w, http.StatusBadGateway, connErr.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
-	if _, err := client.TestConnection(); err != nil {
-		respondError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // TestURL validates and normalizes a remote Vault URL before it is saved.

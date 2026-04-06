@@ -8,13 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- Google Drive storage adapter — replicate backups to Google Drive using OAuth2 with user-provided credentials (closes #19)
-- OAuth2 authentication flow for Google Drive with consent URL generation and token exchange endpoints (`POST /storage/gdrive/auth-url`, `POST /storage/gdrive/exchange-token`)
-- Google Drive option in the Storage page form with Client ID, Client Secret, Folder ID fields, and "Connect to Google" OAuth flow button
-- CSRF protection for Google Drive OAuth using cryptographically random state parameter
+- Cloud replication targets — Google Drive and OneDrive now available as replication target types alongside Remote Vault Server
+- Push-based cloud sync engine (`syncCloudPush`) that uploads local backup restore points to cloud storage adapters
+- Type-aware replication target creation and editing with conditional forms for each target type
+- `type` and `config` columns on `replication_sources` table to support different target types (remote_vault, gdrive, onedrive)
 
 ### Changed
 
+- Moved Google Drive and OneDrive from the Storage page to the Replication page — Storage now only handles local/network destinations (Local Path, SFTP, SMB, NFS)
+- OAuth endpoints for Google Drive and OneDrive moved from `/api/v1/storage/` to `/api/v1/replication/` (e.g. `/api/v1/replication/gdrive/status`)
+- OAuth handlers changed from `StorageHandler` to `ReplicationHandler` receiver
+- Replication "Add Target" modal now offers three target types: Remote Vault Server, Google Drive, and OneDrive
+- Removed "Local Storage Destination" field from Remote Vault replication targets — remote server uses its own configured storage path automatically
+- Replication target cards now display type-appropriate icons and labels (Google Drive, OneDrive, or server URL)
 - Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)
 - Replaced "SSD Cache (automatic)" label with "Using SSD cache for fast backup processing" and "Custom override" with "Custom location"
 - Renamed "Custom Path (optional)" to "Custom Location" with description: "Override the automatic location. Use this if you want backups to be assembled on a specific drive."

@@ -4,10 +4,23 @@ import "database/sql"
 
 // CreateReplicationSource inserts a new replication source and returns its ID.
 func (d *DB) CreateReplicationSource(src ReplicationSource) (int64, error) {
+	// Use NULL for storage_dest_id when 0 to satisfy the FK constraint.
+	var destID any
+	if src.StorageDestID != 0 {
+		destID = src.StorageDestID
+	}
+	typ := src.Type
+	if typ == "" {
+		typ = "remote_vault"
+	}
+	cfg := src.Config
+	if cfg == "" {
+		cfg = "{}"
+	}
 	res, err := d.Exec(
-		`INSERT INTO replication_sources (name, url, storage_dest_id, schedule, enabled)
-		VALUES (?, ?, ?, ?, ?)`,
-		src.Name, src.URL, src.StorageDestID, src.Schedule, src.Enabled,
+		`INSERT INTO replication_sources (name, type, url, config, storage_dest_id, schedule, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		src.Name, typ, src.URL, cfg, destID, src.Schedule, src.Enabled,
 	)
 	if err != nil {
 		return 0, err
@@ -19,10 +32,11 @@ func (d *DB) CreateReplicationSource(src ReplicationSource) (int64, error) {
 func (d *DB) GetReplicationSource(id int64) (ReplicationSource, error) {
 	var src ReplicationSource
 	err := d.QueryRow(
-		`SELECT id, name, url, storage_dest_id, schedule, enabled,
+		`SELECT id, name, COALESCE(type, 'remote_vault'), url, COALESCE(config, '{}'),
+			COALESCE(storage_dest_id, 0), schedule, enabled,
 			last_sync_at, last_sync_status, last_sync_error, created_at, updated_at
 		FROM replication_sources WHERE id = ?`, id,
-	).Scan(&src.ID, &src.Name, &src.URL, &src.StorageDestID,
+	).Scan(&src.ID, &src.Name, &src.Type, &src.URL, &src.Config, &src.StorageDestID,
 		&src.Schedule, &src.Enabled, &src.LastSyncAt, &src.LastSyncStatus,
 		&src.LastSyncError, &src.CreatedAt, &src.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -34,7 +48,8 @@ func (d *DB) GetReplicationSource(id int64) (ReplicationSource, error) {
 // ListReplicationSources returns all replication sources ordered by name.
 func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 	rows, err := d.Query(
-		`SELECT id, name, url, storage_dest_id, schedule, enabled,
+		`SELECT id, name, COALESCE(type, 'remote_vault'), url, COALESCE(config, '{}'),
+			COALESCE(storage_dest_id, 0), schedule, enabled,
 			last_sync_at, last_sync_status, last_sync_error, created_at, updated_at
 		FROM replication_sources ORDER BY name`)
 	if err != nil {
@@ -44,7 +59,7 @@ func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 	var sources []ReplicationSource
 	for rows.Next() {
 		var src ReplicationSource
-		if err := rows.Scan(&src.ID, &src.Name, &src.URL, &src.StorageDestID,
+		if err := rows.Scan(&src.ID, &src.Name, &src.Type, &src.URL, &src.Config, &src.StorageDestID,
 			&src.Schedule, &src.Enabled, &src.LastSyncAt, &src.LastSyncStatus,
 			&src.LastSyncError, &src.CreatedAt, &src.UpdatedAt); err != nil {
 			return nil, err
@@ -56,10 +71,14 @@ func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 
 // UpdateReplicationSource updates an existing replication source.
 func (d *DB) UpdateReplicationSource(src ReplicationSource) error {
+	var destID any
+	if src.StorageDestID != 0 {
+		destID = src.StorageDestID
+	}
 	_, err := d.Exec(
-		`UPDATE replication_sources SET name=?, url=?, storage_dest_id=?,
+		`UPDATE replication_sources SET name=?, type=?, url=?, config=?, storage_dest_id=?,
 		schedule=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		src.Name, src.URL, src.StorageDestID,
+		src.Name, src.Type, src.URL, src.Config, destID,
 		src.Schedule, src.Enabled, src.ID,
 	)
 	return err

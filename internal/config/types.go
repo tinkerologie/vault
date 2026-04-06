@@ -40,9 +40,10 @@ const (
 type StorageType string
 
 const (
-	StorageLocal  StorageType = "local"
-	StorageSMB    StorageType = "smb"
-	StorageNFS    StorageType = "nfs"
-	StorageSFTP   StorageType = "sftp"
-	StorageGDrive StorageType = "gdrive"
+	StorageLocal    StorageType = "local"
+	StorageSMB      StorageType = "smb"
+	StorageNFS      StorageType = "nfs"
+	StorageSFTP     StorageType = "sftp"
+	StorageGDrive   StorageType = "gdrive"
+	StorageOneDrive StorageType = "onedrive"
 )
