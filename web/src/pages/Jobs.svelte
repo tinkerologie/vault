@@ -455,6 +455,7 @@
   let hasFolders = $derived(form.items.some(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash'))
   let hasFlash = $derived(form.items.some(i => i.item_type === 'folder' && parseItemSettings(i).preset === 'flash'))
   let hasPlugins = $derived(form.items.some(i => i.item_type === 'plugin'))
+  let hasZFS = $derived(form.items.some(i => i.item_type === 'zfs'))
   let selectedVMItems = $derived(form.items.filter(i => i.item_type === 'vm'))
   let selectedContainerItems = $derived(form.items.filter(i => i.item_type === 'container'))
   let vmRestoreVerifyErrors = $derived(selectedVMItems.map(getVMRestoreVerifyError).filter(Boolean))
@@ -818,14 +819,16 @@
             <span class="text-text-muted">Items</span>
             <span class="text-text">
               {#if hasContainers}{form.items.filter(i => i.item_type === 'container').length} container{form.items.filter(i => i.item_type === 'container').length !== 1 ? 's' : ''}{/if}
-              {#if hasContainers && (hasVMs || hasFolders || hasFlash || hasPlugins)}, {/if}
+              {#if hasContainers && (hasVMs || hasFolders || hasFlash || hasPlugins || hasZFS)}, {/if}
               {#if hasVMs}{form.items.filter(i => i.item_type === 'vm').length} VM{form.items.filter(i => i.item_type === 'vm').length !== 1 ? 's' : ''}{/if}
-              {#if hasVMs && (hasFolders || hasFlash || hasPlugins)}, {/if}
+              {#if hasVMs && (hasFolders || hasFlash || hasPlugins || hasZFS)}, {/if}
               {#if hasFolders}{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length} folder{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length !== 1 ? 's' : ''}{/if}
-              {#if hasFolders && (hasFlash || hasPlugins)}, {/if}
+              {#if hasFolders && (hasFlash || hasPlugins || hasZFS)}, {/if}
               {#if hasFlash}{@const flashDriveCount = form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset === 'flash').length}{flashDriveCount} flash drive{flashDriveCount !== 1 ? 's' : ''}{/if}
-              {#if hasFlash && hasPlugins}, {/if}
+              {#if hasFlash && (hasPlugins || hasZFS)}, {/if}
               {#if hasPlugins}{form.items.filter(i => i.item_type === 'plugin').length} plugin{form.items.filter(i => i.item_type === 'plugin').length !== 1 ? 's' : ''}{/if}
+              {#if hasPlugins && hasZFS}, {/if}
+              {#if hasZFS}{form.items.filter(i => i.item_type === 'zfs').length} ZFS dataset{form.items.filter(i => i.item_type === 'zfs').length !== 1 ? 's' : ''}{/if}
             </span>
           </div>
           <div class="flex justify-between">

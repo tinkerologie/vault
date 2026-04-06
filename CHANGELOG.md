@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- ZFS dataset backup and restore engine using pure-Go `gzfs` library — supports full and incremental ZFS send/receive streams with progress tracking (closes #4)
+- ZFS dataset discovery endpoint `GET /api/v1/zfs` lists ZFS filesystems and volumes available for backup
+- ZFS Datasets tab in the job creation item picker with dataset type badges (Filesystem/Volume), mountpoint, and used-space indicators
+- ZFS dataset count displayed in the job summary card alongside containers, VMs, folders, and plugins
+- `zfs_meta.json` sidecar written alongside each ZFS send stream to record dataset name, snapshot, pool, and backup type for reliable restore
+- Automatic cleanup of old vault-created ZFS snapshots after successful backup, keeping only the latest
+- Snapshot cleanup on send failure to prevent orphaned ZFS snapshots
+
 - Cloud replication targets — Google Drive and OneDrive now available as replication target types alongside Remote Vault Server
 - Push-based cloud sync engine (`syncCloudPush`) that uploads local backup restore points to cloud storage adapters
 - Type-aware replication target creation and editing with conditional forms for each target type

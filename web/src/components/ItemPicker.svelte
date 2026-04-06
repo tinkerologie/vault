@@ -12,10 +12,12 @@
   let vms = $state([])
   let folders = $state([])
   let plugins = $state([])
+  let zfsDatasets = $state([])
   let containersAvailable = $state(false)
   let vmsAvailable = $state(false)
   let foldersAvailable = $state(false)
   let pluginsAvailable = $state(false)
+  let zfsAvailable = $state(false)
   let loading = $state(true)
   let error = $state('')
   let search = $state('')
@@ -44,11 +46,12 @@
     loading = true
     error = ''
     try {
-      const [cRes, vRes, fRes, pluginRes] = await Promise.all([
+      const [cRes, vRes, fRes, pluginRes, zfsRes] = await Promise.all([
         api.listContainers(),
         api.listVMs(),
         api.listFolders().catch(() => ({ items: [], available: true })),
         api.listPlugins().catch(() => ({ items: [], available: false })),
+        api.listZFSDatasets().catch(() => ({ items: [], available: false })),
       ])
       containers = cRes.items || []
       containersAvailable = cRes.available
@@ -58,6 +61,8 @@
       foldersAvailable = true
       plugins = pluginRes.items || []
       pluginsAvailable = pluginRes.available
+      zfsDatasets = zfsRes.items || []
+      zfsAvailable = zfsRes.available
       if (!containersAvailable && vmsAvailable) activeTab = 'vms'
       else if (!containersAvailable && !vmsAvailable) activeTab = 'folders'
     } catch (e) {
@@ -107,6 +112,12 @@
     return plugins.filter((p) => p.name.toLowerCase().includes(q))
   }
 
+  function filteredZFS() {
+    if (!search) return zfsDatasets
+    const q = search.toLowerCase()
+    return zfsDatasets.filter((d) => d.name.toLowerCase().includes(q))
+  }
+
   function isSelected(type, name) {
     return selected.has(`${type}:${name}`)
   }
@@ -137,6 +148,8 @@
       list = filteredVMs()
     } else if (type === 'plugin') {
       list = filteredPlugins()
+    } else if (type === 'zfs') {
+      list = filteredZFS()
     } else {
       list = filteredFolders()
     }
@@ -210,6 +223,7 @@
     Array.from(selected.values()).filter((i) => i.item_type === 'folder' && safeParseSettings(i.settings).preset === 'flash').length,
   )
   let pluginCount = $derived(Array.from(selected.values()).filter((i) => i.item_type === 'plugin').length)
+  let zfsCount = $derived(Array.from(selected.values()).filter((i) => i.item_type === 'zfs').length)
   let selectedArray = $derived(Array.from(selected.entries()))
 
   // Set of all live inventory keys for stale detection
@@ -218,6 +232,7 @@
     ...vms.map(v => `vm:${v.name}`),
     ...folders.map(f => `folder:${f.name}`),
     ...plugins.map(p => `plugin:${p.name}`),
+    ...zfsDatasets.map(d => `zfs:${d.name}`),
   ]))
 
   function isStaleItem(key) {
@@ -319,6 +334,22 @@
           {/if}
         </button>
       {/if}
+      {#if zfsAvailable}
+        <button
+          type="button"
+          onclick={() => (activeTab = 'zfs')}
+          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'zfs'
+            ? 'border-vault text-vault'
+            : 'border-transparent text-text-muted hover:text-text'}"
+        >
+          ZFS Datasets
+          {#if zfsCount > 0}
+            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+              >{zfsCount}</span
+            >
+          {/if}
+        </button>
+      {/if}
       <div class="flex-1"></div>
       <span class="text-xs text-text-muted pr-2">{selectedCount} selected</span>
     </div>
@@ -340,7 +371,7 @@
       <input
         type="text"
         bind:value={search}
-        placeholder="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : activeTab === 'flash' ? 'flash drive' : 'folders'}..."
+        placeholder="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : activeTab === 'flash' ? 'flash drive' : activeTab === 'zfs' ? 'ZFS datasets' : 'folders'}..."
         class="w-full bg-surface-3 border border-border rounded-lg pl-10 pr-3 py-2 text-sm text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50"
       />
     </div>
@@ -619,9 +650,62 @@
           {search ? 'No plugins match your search' : 'No plugins found'}
         </p>
       {/if}
+    {:else if activeTab === 'zfs' && zfsAvailable}
+      {@const filtered = filteredZFS()}
+      {#if filtered.length > 0}
+        <button
+          type="button"
+          onclick={() => selectAll('zfs')}
+          class="text-xs text-vault hover:text-vault/80 transition-colors"
+        >
+          {filtered.every((d) => isSelected('zfs', d.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
+        </button>
+        <div class="space-y-1 max-h-64 overflow-y-auto pr-1">
+          {#each filtered as dataset (dataset.name)}
+            {@const sel = isSelected('zfs', dataset.name)}
+            <button
+              type="button"
+              onclick={() => toggle('zfs', dataset)}
+              class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
+                ? 'border-vault/50 bg-vault/5'
+                : 'border-border hover:border-border-hover bg-surface-3/50'}"
+            >
+              <div
+                class="w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors {sel
+                  ? 'bg-vault border-vault'
+                  : 'border-border'}"
+              >
+                {#if sel}
+                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                  >
+                {/if}
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium text-text truncate">{dataset.name}</div>
+                <div class="text-xs text-text-muted truncate">
+                  {dataset.settings?.type === 'volume' ? 'ZFS Volume' : 'ZFS Filesystem'}
+                  {#if dataset.settings?.mountpoint}
+                    — {dataset.settings.mountpoint}
+                  {/if}
+                </div>
+              </div>
+              {#if dataset.settings?.used}
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-blue-400">
+                  {dataset.settings.used}
+                </span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <p class="text-sm text-text-muted py-4 text-center">
+          {search ? 'No ZFS datasets match your search' : 'No ZFS datasets found'}
+        </p>
+      {/if}
     {:else}
       <p class="text-sm text-text-muted py-4 text-center">
-        {activeTab === 'containers' ? 'Docker is not available' : activeTab === 'vms' ? 'libvirt is not available' : activeTab === 'plugins' ? 'Plugins not available' : activeTab === 'flash' ? 'Flash drive not available' : 'No folders available'}
+        {activeTab === 'containers' ? 'Docker is not available' : activeTab === 'vms' ? 'libvirt is not available' : activeTab === 'plugins' ? 'Plugins not available' : activeTab === 'flash' ? 'Flash drive not available' : activeTab === 'zfs' ? 'ZFS is not available' : 'No folders available'}
       </p>
     {/if}
 

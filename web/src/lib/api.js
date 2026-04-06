@@ -64,6 +64,7 @@ export const api = {
   listVMs: () => request('GET', '/vms'),
   listFolders: () => request('GET', '/folders'),
   listPlugins: () => request('GET', '/plugins'),
+  listZFSDatasets: () => request('GET', '/zfs'),
 
   // Settings
   getSettings: () => request('GET', '/settings'),

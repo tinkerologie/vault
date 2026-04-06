@@ -594,6 +594,24 @@ func (r *Runner) RunJob(jobID int64) {
 			backupItem.Settings["preset"] = settings["preset"]
 		}
 
+		// ZFS items need the dataset and related metadata from settings.
+		if item.ItemType == "zfs" {
+			for key, value := range settings {
+				backupItem.Settings[key] = value
+			}
+			backupItem.Settings["backup_type"] = btResult.BackupType
+			// For incremental ZFS backups, read the parent snapshot from the
+			// previous restore point's zfs_meta.json sidecar.
+			if btResult.ParentRP != nil && btResult.BackupType != "full" {
+				var parentMeta map[string]any
+				if json.Unmarshal([]byte(btResult.ParentRP.Metadata), &parentMeta) == nil {
+					if ps, ok := parentMeta["zfs_snapshot"].(string); ok && ps != "" {
+						backupItem.Settings["parent_snapshot"] = ps
+					}
+				}
+			}
+		}
+
 		itemPath := filepath.Join(basePath, item.ItemName)
 
 		r.broadcast(map[string]any{
@@ -652,6 +670,13 @@ func (r *Runner) RunJob(jobID int64) {
 			}
 			if job.VerifyBackup {
 				resEntry["verified"] = true
+			}
+			// For ZFS items, capture the snapshot name from the backup settings
+			// so it can be referenced by future incremental backups.
+			if item.ItemType == "zfs" {
+				if snap, ok := backupItem.Settings["dataset"].(string); ok {
+					resEntry["zfs_dataset"] = snap
+				}
 			}
 			itemResults = append(itemResults, resEntry)
 
@@ -939,6 +964,8 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 		handler, err = engine.NewFolderHandler()
 	case "plugin":
 		handler, err = engine.NewPluginHandler()
+	case "zfs":
+		handler, err = engine.NewZFSHandler()
 	default:
 		return nil, nil, fmt.Errorf("unknown item type: %s", item.Type)
 	}
@@ -1488,6 +1515,8 @@ func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination,
 		handler, err = engine.NewFolderHandler()
 	case "plugin":
 		handler, err = engine.NewPluginHandler()
+	case "zfs":
+		handler, err = engine.NewZFSHandler()
 	default:
 		return fmt.Errorf("unknown item type: %s", itemType)
 	}

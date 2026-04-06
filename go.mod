@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	filippo.io/age v1.3.1
+	github.com/alchemillahq/gzfs v0.0.0-20260216150206-c9a969c4aa1c
 	github.com/cloudsoda/go-smb2 v0.0.0-20260401042019-a9059825d591
 	github.com/coder/websocket v1.8.14
 	github.com/digitalocean/go-libvirt v0.0.0-20260217163227-273eaa321819

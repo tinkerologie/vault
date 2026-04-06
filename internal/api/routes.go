@@ -118,6 +118,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/vms", discoverH.ListVMs)
 			r.Get("/folders", discoverH.ListFolders)
 			r.Get("/plugins", discoverH.ListPlugins)
+			r.Get("/zfs", discoverH.ListZFSDatasets)
 		}
 
 		presetsH := handlers.NewPresetsHandler()

@@ -136,3 +136,34 @@ func (h *DiscoverHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 		"available": true,
 	})
 }
+
+// ListZFSDatasets returns all ZFS datasets discoverable by the engine.
+//
+//	GET /api/v1/zfs
+func (h *DiscoverHandler) ListZFSDatasets(w http.ResponseWriter, r *http.Request) {
+	handler, err := engine.NewZFSHandler() //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
+	if err != nil {                        //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
+		// ZFS not available — return empty list gracefully.
+		respondJSON(w, http.StatusOK, map[string]any{
+			"items":     []engine.BackupItem{},
+			"available": false,
+			"error":     err.Error(),
+		})
+		return
+	}
+
+	items, err := handler.ListItems() //nolint:staticcheck // platform-dependent
+	if err != nil {                   //nolint:staticcheck // platform-dependent: stub always returns error on non-Linux
+		respondJSON(w, http.StatusOK, map[string]any{
+			"items":     []engine.BackupItem{},
+			"available": false,
+			"error":     err.Error(),
+		})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"items":     items,
+		"available": true,
+	})
+}
