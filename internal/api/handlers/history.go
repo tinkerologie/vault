@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/ruaan-deysel/vault/internal/db"
@@ -23,7 +24,8 @@ func NewHistoryHandler(database *db.DB) *HistoryHandler {
 func (h *HistoryHandler) Purge(w http.ResponseWriter, _ *http.Request) {
 	count, err := h.db.PurgeJobRuns()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		log.Printf("ERROR purging job runs: %v", err)
+		respondError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	h.db.LogActivity("info", "system", "Job run history purged", fmt.Sprintf(`{"deleted_count":%d}`, count))

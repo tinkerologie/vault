@@ -139,6 +139,7 @@
       confirmPurge = false
       await loadData()
     } catch (e) {
+      confirmPurge = false
       error = e.message || 'Failed to purge history'
     } finally {
       purging = false

@@ -167,6 +167,7 @@
       confirmPurge = false
       await loadLogs()
     } catch (e) {
+      confirmPurge = false
       error = e.message || 'Failed to purge logs'
     } finally {
       purging = false

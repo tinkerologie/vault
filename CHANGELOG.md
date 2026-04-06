@@ -10,8 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Purge activity logs: `DELETE /api/v1/activity` endpoint and "Purge" button on the Logs page with confirmation dialog to permanently delete all activity log entries (closes #32)
 - Purge job run history: `DELETE /api/v1/history` endpoint and "Purge" button on the History page with confirmation dialog to permanently delete all job run records (closes #32)
-- `PurgeJobRuns()` database method for bulk deletion of job run history
-- History purge actions are logged in the activity log with the count of deleted records
+- `PurgeJobRuns()` database method for bulk deletion of job run history; activity log purge reuses `DeleteOldActivityLogs(0)` to clear all entries
+- Job run history purge actions are logged in the activity log with the count of deleted records
 - Cancel API endpoint `POST /api/v1/jobs/{id}/cancel` to abort a running backup job (closes #28)
 - Cancellable context propagated through the entire backup pipeline: Runner → engine handlers → tar/copy I/O operations
 - 4-hour job timeout with automatic cancellation via `context.WithTimeout`
