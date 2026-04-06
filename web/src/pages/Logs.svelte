@@ -53,6 +53,7 @@
     { value: '', label: 'All' },
     { value: 'backup', label: 'Backup' },
     { value: 'restore', label: 'Restore' },
+    { value: 'health', label: 'Health' },
     { value: 'system', label: 'System' },
   ]
 
@@ -111,6 +112,7 @@
     switch (cat) {
       case 'backup': return 'bg-vault/15 text-vault'
       case 'restore': return 'bg-blue-500/15 text-blue-400'
+      case 'health': return 'bg-green-500/15 text-green-400'
       case 'system': return 'bg-purple-500/15 text-purple-400'
       default: return 'bg-surface-4 text-text-dim'
     }
@@ -129,6 +131,11 @@
   function formatDetailValue(key, value) {
     if (key === 'size_bytes') return formatBytes(value)
     if (key === 'duration_seconds') return `${value}s`
+    if (key === 'duration_ms') return `${value}ms`
+    if (key === 'backup_type') return String(value).charAt(0).toUpperCase() + String(value).slice(1)
+    if (key === 'containers_checked') return `${value} checked`
+    if (key === 'containers_healthy') return `${value} healthy`
+    if (key === 'containers_unhealthy') return `${value} unhealthy`
     if (Array.isArray(value)) return value.length ? value.join(', ') : '—'
     return String(value)
   }
@@ -289,11 +296,21 @@
                     {#if expandedIds.has(entry.id)}
                       <div class="mt-2 flex flex-wrap gap-1.5">
                         {#each Object.entries(parsed) as [key, value] (key)}
-                          {#if Array.isArray(value) && value.length > 0}
+                          {#if key === 'summary' && value && typeof value === 'object' && !Array.isArray(value)}
+                            {#each Object.entries(value) as [sk, sv] (sk)}
+                              <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-surface-4 text-text-dim">
+                                <span class="text-text-dim/70">{detailLabel(sk)}:</span> {formatDetailValue(sk, sv)}
+                              </span>
+                            {/each}
+                          {:else if key === 'results' && Array.isArray(value)}
+                            <!-- Skip results array in badge view — summary covers it -->
+                          {:else if value === null || value === undefined}
+                            <!-- Skip null values -->
+                          {:else if Array.isArray(value) && value.length > 0}
                             <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-danger/10 text-danger font-medium">
                               {detailLabel(key)}: {value.join(', ')}
                             </span>
-                          {:else if !Array.isArray(value)}
+                          {:else if !Array.isArray(value) && (typeof value !== 'object' || value === null)}
                             <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-surface-4 text-text-dim">
                               <span class="text-text-dim/70">{detailLabel(key)}:</span> {formatDetailValue(key, value)}
                             </span>

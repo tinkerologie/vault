@@ -423,11 +423,18 @@ func (r *Runner) RunJob(jobID int64) {
 		}
 	}()
 
+	startedDetails := map[string]any{
+		"job_id": jobID, "run_id": runID, "items": len(items),
+		"items_list":  jobItemNames(items),
+		"job_name":    job.Name,
+		"backup_type": btResult.BackupType,
+		"destination": dest.Name,
+	}
+	if job.Schedule != "" {
+		startedDetails["schedule"] = job.Schedule
+	}
 	r.logActivity("info", "backup", fmt.Sprintf("Backup started: %s", job.Name),
-		structuredDetails(map[string]any{
-			"job_id": jobID, "run_id": runID, "items": len(items),
-			"items_list": jobItemNames(items),
-		}))
+		structuredDetails(startedDetails))
 
 	timestamp := time.Now().Format("2006-01-02_150405")
 	basePath := fmt.Sprintf("%s/%d_%s", job.Name, runID, timestamp)
@@ -682,6 +689,20 @@ func (r *Runner) RunJob(jobID int64) {
 						"message":     result.Message,
 						"duration_ms": result.Duration.Milliseconds(),
 					})
+					hcLevel := "info"
+					if result.Status != "healthy" {
+						hcLevel = "warn"
+					}
+					r.logActivity(hcLevel, "health",
+						fmt.Sprintf("Health check: %s", result.ContainerName),
+						structuredDetails(map[string]any{
+							"job_id":         jobID,
+							"run_id":         runID,
+							"container_name": result.ContainerName,
+							"status":         result.Status,
+							"message":        result.Message,
+							"duration_ms":    result.Duration.Milliseconds(),
+						}))
 				}(item.ItemID, item.ItemName)
 			}
 		}
@@ -742,9 +763,24 @@ func (r *Runner) RunJob(jobID int64) {
 			})
 		}
 		if len(healthResults) > 0 {
+			healthy := 0
+			for _, hr := range healthResults {
+				if hr["status"] == "healthy" {
+					healthy++
+				}
+			}
 			r.logActivity("info", "health",
 				fmt.Sprintf("Health check: %s", job.Name),
-				structuredDetails(healthResults))
+				structuredDetails(map[string]any{
+					"summary": map[string]any{
+						"job_id":               jobID,
+						"run_id":               runID,
+						"containers_checked":   len(healthResults),
+						"containers_healthy":   healthy,
+						"containers_unhealthy": len(healthResults) - healthy,
+					},
+					"results": healthResults,
+				}))
 		}
 	}
 
@@ -869,7 +905,10 @@ func (r *Runner) RunJob(jobID int64) {
 	r.logActivity(logLevelForStatus(status), "backup",
 		fmt.Sprintf("Backup %s: %s", status, job.Name),
 		structuredDetails(map[string]any{
-			"run_id": runID, "done": itemsDone, "failed": itemsFailed,
+			"job_id": jobID, "job_name": job.Name,
+			"run_id": runID, "backup_type": btResult.BackupType,
+			"destination": dest.Name,
+			"items_done":  itemsDone, "items_failed": itemsFailed,
 			"size_bytes": totalSize, "duration_seconds": int(time.Since(jobStart).Seconds()),
 			"failed_items": failedNames,
 		}))
@@ -1070,6 +1109,8 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		"items_total": len(targets),
 	})
 
+	restoreStart := time.Now()
+
 	r.setRunStatus(&RunStatus{
 		Active:     true,
 		JobID:      restorePoint.JobID,
@@ -1077,7 +1118,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		JobName:    jobName,
 		RunType:    "restore",
 		ItemsTotal: len(targets),
-		StartedAt:  time.Now().Format(time.RFC3339),
+		StartedAt:  restoreStart.Format(time.RFC3339),
 	})
 
 	r.logActivity("info", "restore",
@@ -1222,11 +1263,14 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	}
 	r.logActivity(level, "restore", msg,
 		structuredDetails(map[string]any{
-			"job_id":       restorePoint.JobID,
-			"run_id":       runID,
-			"items_done":   itemsDone,
-			"items_failed": itemsFailed,
-			"items_total":  len(targets),
+			"job_id":           restorePoint.JobID,
+			"job_name":         jobName,
+			"run_id":           runID,
+			"items_done":       itemsDone,
+			"items_failed":     itemsFailed,
+			"items_total":      len(targets),
+			"size_bytes":       restorePoint.SizeBytes,
+			"duration_seconds": int(time.Since(restoreStart).Seconds()),
 		}))
 }
 
