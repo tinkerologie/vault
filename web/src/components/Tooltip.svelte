@@ -110,6 +110,16 @@
     }
   })
 
+  /** Teleport node to document.body so fixed positioning isn't broken by ancestor transforms/filters. */
+  function portal(node) {
+    document.body.appendChild(node)
+    return {
+      destroy() {
+        node.remove()
+      }
+    }
+  }
+
   $effect(() => {
     window.addEventListener('touchstart', onTouchStart, { once: true })
     return () => window.removeEventListener('touchstart', onTouchStart)
@@ -137,6 +147,7 @@
 
   {#if visible}
     <span
+      use:portal
       bind:this={tooltipEl}
       id={tooltipId}
       role="tooltip"
