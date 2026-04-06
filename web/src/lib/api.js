@@ -85,6 +85,10 @@ export const api = {
   // Activity Log
   getActivity: (limit = 100, category = '') =>
     request('GET', `/activity?limit=${limit}${category ? '&category=' + encodeURIComponent(category) : ''}`),
+  purgeActivity: () => request('DELETE', '/activity'),
+
+  // History
+  purgeHistory: () => request('DELETE', '/history'),
 
   // Recovery
   getRecoveryPlan: () => request('GET', '/recovery/plan'),

@@ -8,6 +8,7 @@
   import EmptyState from '../components/EmptyState.svelte'
   import SizeChart from '../components/SizeChart.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
+  import ConfirmDialog from '../components/ConfirmDialog.svelte'
 
   let loading = $state(true)
   let error = $state('')
@@ -20,6 +21,8 @@
   let pageSize = 20
   let visibleCount = $state(pageSize)
   let expandedRunIds = $state(new SvelteSet())
+  let confirmPurge = $state(false)
+  let purging = $state(false)
 
   onMount(() => {
     loadData()
@@ -129,6 +132,19 @@
     visibleCount += pageSize
   }
 
+  async function handlePurge() {
+    purging = true
+    try {
+      await api.purgeHistory()
+      confirmPurge = false
+      await loadData()
+    } catch (e) {
+      error = e.message || 'Failed to purge history'
+    } finally {
+      purging = false
+    }
+  }
+
   // Reset pagination when filters change
   $effect(() => {
     selectedJob; selectedRunType; selectedStatus; searchQuery;
@@ -142,6 +158,13 @@
     <div>
       <h1 class="text-2xl font-bold text-text">Backup & Restore History</h1>
       <p class="text-sm text-text-muted mt-1">View past backup and restore runs and their results</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick={() => confirmPurge = true} disabled={allRuns.length === 0}
+        class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-danger hover:bg-danger/10 transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Purge all history">
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        Purge
+      </button>
     </div>
   </div>
 
@@ -352,3 +375,13 @@
   {/if}
 </div>
 </PullToRefresh>
+
+<ConfirmDialog
+  show={confirmPurge}
+  title="Purge All History"
+  message="This will permanently delete all job run history records. This action cannot be undone."
+  confirmLabel={purging ? 'Purging...' : 'Purge All'}
+  variant="danger"
+  onconfirm={handlePurge}
+  oncancel={() => confirmPurge = false}
+/>

@@ -102,7 +102,13 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/browse", browseH.List)
 
 		activityH := handlers.NewActivityHandler(s.db)
-		r.Get("/activity", activityH.List)
+		r.Route("/activity", func(r chi.Router) {
+			r.Get("/", activityH.List)
+			r.Delete("/", activityH.Purge)
+		})
+
+		historyH := handlers.NewHistoryHandler(s.db)
+		r.Delete("/history", historyH.Purge)
 
 		// Discovery endpoints are only relevant in daemon mode.
 		if !s.config.ReadOnly {

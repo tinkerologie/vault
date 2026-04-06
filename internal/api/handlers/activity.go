@@ -39,3 +39,14 @@ func (h *ActivityHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	respondJSON(w, http.StatusOK, entries)
 }
+
+// Purge deletes all activity log entries.
+//
+//	DELETE /api/v1/activity
+func (h *ActivityHandler) Purge(w http.ResponseWriter, _ *http.Request) {
+	if err := h.db.DeleteOldActivityLogs(0); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

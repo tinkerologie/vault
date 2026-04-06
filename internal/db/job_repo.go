@@ -196,6 +196,15 @@ func (d *DB) DeleteOldFailedRuns(keepDays int) (int64, error) {
 	return res.RowsAffected()
 }
 
+// PurgeJobRuns deletes all job run records and returns the count of deleted rows.
+func (d *DB) PurgeJobRuns() (int64, error) {
+	res, err := d.Exec("DELETE FROM job_runs")
+	if err != nil {
+		return 0, fmt.Errorf("purging job runs: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 	rows, err := d.Query(
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
