@@ -82,6 +82,17 @@ export const api = {
   // Discord
   testDiscordWebhook: (webhookUrl) => request('POST', '/settings/discord/test', { webhook_url: webhookUrl }),
 
+  // Diagnostics
+  downloadDiagnostics: async () => {
+    const { url, options } = buildApiRequest('GET', '/settings/diagnostics', {})
+    const res = await fetch(url, options)
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || `HTTP ${res.status}`)
+    }
+    return res.blob()
+  },
+
   // Activity Log
   getActivity: (limit = 100, category = '') =>
     request('GET', `/activity?limit=${limit}${category ? '&category=' + encodeURIComponent(category) : ''}`),

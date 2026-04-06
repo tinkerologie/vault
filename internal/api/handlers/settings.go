@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +12,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/diagnostics"
 	"github.com/ruaan-deysel/vault/internal/notify"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
 )
@@ -21,6 +25,7 @@ type SettingsHandler struct {
 		SnapshotPath() string
 		LastSnapshot() time.Time
 	}
+	diagnosticsCollector *diagnostics.Collector
 }
 
 // NewSettingsHandler creates a new SettingsHandler.
@@ -34,6 +39,44 @@ func (h *SettingsHandler) SetSnapshotManager(sm interface {
 	LastSnapshot() time.Time
 }) {
 	h.snapshotManager = sm
+}
+
+// SetDiagnosticsCollector sets the diagnostics collector for the handler.
+func (h *SettingsHandler) SetDiagnosticsCollector(dc *diagnostics.Collector) {
+	h.diagnosticsCollector = dc
+}
+
+// GetDiagnostics generates and returns a diagnostic bundle as a ZIP file.
+//
+//	GET /api/v1/settings/diagnostics
+func (h *SettingsHandler) GetDiagnostics(w http.ResponseWriter, _ *http.Request) {
+	if h.diagnosticsCollector == nil {
+		respondError(w, http.StatusServiceUnavailable, "diagnostics not configured")
+		return
+	}
+
+	bundle, err := h.diagnosticsCollector.Collect()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("collecting diagnostics: %v", err))
+		return
+	}
+
+	zipReader, err := diagnostics.PackageAsZip(bundle)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("packaging diagnostics: %v", err))
+		return
+	}
+	if closer, ok := zipReader.(io.Closer); ok {
+		defer closer.Close()
+	}
+
+	date := time.Now().Format("2006-01-02")
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="vault-diagnostics-%s.zip"`, date))
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, zipReader); err != nil {
+		log.Printf("streaming diagnostics ZIP: %v", err)
+	}
 }
 
 // GetDatabaseInfo returns information about the database mode and location.

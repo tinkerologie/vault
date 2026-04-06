@@ -196,6 +196,31 @@ func (d *DB) DeleteOldFailedRuns(keepDays int) (int64, error) {
 	return res.RowsAffected()
 }
 
+// ListRecentRuns returns the most recent job runs across all jobs.
+func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
+	rows, err := d.Query(
+		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
+		items_total, items_done, items_failed, size_bytes,
+		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END
+		FROM job_runs ORDER BY started_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []JobRun
+	for rows.Next() {
+		var run JobRun
+		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
+			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
+			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
 // PurgeJobRuns deletes all job run records and returns the count of deleted rows.
 func (d *DB) PurgeJobRuns() (int64, error) {
 	res, err := d.Exec("DELETE FROM job_runs")

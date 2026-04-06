@@ -57,6 +57,9 @@
   let discordSaving = $state(false)
   let discordTesting = $state(false)
 
+  // Diagnostics state
+  let diagnosticsDownloading = $state(false)
+
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
@@ -271,6 +274,25 @@
       showToast('Emergency kit downloaded', 'success')
     } catch (e) {
       showToast(e.message, 'error')
+    }
+  }
+
+  async function downloadDiagnostics() {
+    diagnosticsDownloading = true
+    try {
+      const blob = await api.downloadDiagnostics()
+      const date = new Date().toISOString().split('T')[0]
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `vault-diagnostics-${date}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      showToast('Diagnostics bundle downloaded', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      diagnosticsDownloading = false
     }
   }
 
@@ -1072,6 +1094,33 @@
         {/if}
       </div>
       {/if}
+
+      <!-- Diagnostics -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Diagnostics</h2>
+        </div>
+        <div class="p-5 space-y-3">
+          <p class="text-sm text-text-muted leading-relaxed">
+            Download a diagnostics bundle containing system information, job configurations, recent run history, and activity logs. Sensitive data such as passwords and API keys are automatically redacted.
+          </p>
+          <button
+            onclick={downloadDiagnostics}
+            disabled={diagnosticsDownloading}
+            class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {#if diagnosticsDownloading}
+              <Spinner size="sm" />
+              Generating...
+            {:else}
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Download diagnostics bundle
+            {/if}
+          </button>
+        </div>
+      </div>
 
       <!-- About -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">

@@ -14,6 +14,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/api"
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/diagnostics"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
@@ -181,6 +182,23 @@ var daemonCmd = &cobra.Command{
 			srv.Runner().SetSnapshotManager(snapshotMgr)
 			srv.SettingsHandler().SetSnapshotManager(snapshotMgr)
 		}
+
+		// Register the diagnostics collector.
+		diagCollector := diagnostics.NewCollector(database, func() diagnostics.RunnerStatus {
+			s := srv.Runner().Status()
+			return diagnostics.RunnerStatus{
+				Active:          s.Active,
+				JobID:           s.JobID,
+				JobName:         s.JobName,
+				RunType:         s.RunType,
+				ItemsTotal:      s.ItemsTotal,
+				ItemsDone:       s.ItemsDone,
+				ItemsFailed:     s.ItemsFailed,
+				CurrentItem:     s.CurrentItem,
+				CurrentItemType: s.CurrentItemType,
+			}
+		}, version)
+		srv.SettingsHandler().SetDiagnosticsCollector(diagCollector)
 
 		// Start the scheduler with the backup runner.
 		sched := scheduler.New(database, func(jobID int64) {

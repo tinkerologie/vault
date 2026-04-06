@@ -96,6 +96,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/discord/test", settingsH.TestDiscordWebhook)
 			r.Get("/database", settingsH.GetDatabaseInfo)
 			r.Put("/database", settingsH.SetSnapshotPath)
+			r.Get("/diagnostics", settingsH.GetDiagnostics)
 		})
 
 		browseH := handlers.NewBrowseHandler()

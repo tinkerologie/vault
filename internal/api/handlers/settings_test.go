@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/diagnostics"
 )
 
 // newTestSettingsHandler creates a SettingsHandler backed by an in-memory DB
@@ -209,5 +213,80 @@ func TestSetSnapshotPath_RejectsOutsideRoots(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestGetDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	h := newTestSettingsHandler(t)
+	statusFn := func() diagnostics.RunnerStatus {
+		return diagnostics.RunnerStatus{Active: false}
+	}
+	collector := diagnostics.NewCollector(h.db, statusFn, "test-version")
+	h.SetDiagnosticsCollector(collector)
+
+	req := httptest.NewRequest("GET", "/api/v1/settings/diagnostics", nil)
+	w := httptest.NewRecorder()
+	h.GetDiagnostics(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	if ct := resp.Header.Get("Content-Type"); ct != "application/zip" {
+		t.Errorf("Content-Type = %q, want application/zip", ct)
+	}
+
+	if cd := resp.Header.Get("Content-Disposition"); cd == "" {
+		t.Error("missing Content-Disposition header")
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("parsing zip: %v", err)
+	}
+
+	if len(zr.File) != 1 || zr.File[0].Name != "diagnostics.json" {
+		t.Fatalf("unexpected zip contents: got %d files", len(zr.File))
+	}
+
+	f, err := zr.File[0].Open()
+	if err != nil {
+		t.Fatalf("opening zip entry: %v", err)
+	}
+	defer f.Close()
+
+	var bundle diagnostics.DiagnosticBundle
+	if err := json.NewDecoder(f).Decode(&bundle); err != nil {
+		t.Fatalf("decoding diagnostics json: %v", err)
+	}
+
+	if bundle.System.Version != "test-version" {
+		t.Errorf("version = %q, want test-version", bundle.System.Version)
+	}
+}
+
+func TestGetDiagnosticsNotConfigured(t *testing.T) {
+	t.Parallel()
+
+	h := newTestSettingsHandler(t)
+	// Do NOT set a diagnostics collector.
+
+	req := httptest.NewRequest("GET", "/api/v1/settings/diagnostics", nil)
+	w := httptest.NewRecorder()
+	h.GetDiagnostics(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", w.Code)
 	}
 }
