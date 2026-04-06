@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - Contextual tooltips across Settings, Jobs, Storage, and Replication pages — reusable `Tooltip.svelte` component with hover/click-to-toggle, viewport-aware positioning, keyboard dismissal, and full ARIA accessibility (closes #34)
+
+### Fixed
+
+- Tooltip clipping when positioned near viewport edges — switched from `position: absolute` to `position: fixed` with JS-calculated viewport coordinates and horizontal clamping
 - Enriched activity logs with contextual details for troubleshooting: backup started/completed and restore completed entries now include job name, backup type, storage destination, duration, and size; per-item container health check results are logged individually under a new "health" category; stop_all health check summary includes aggregate counts (containers checked/healthy/unhealthy) (closes #30)
 - "Health" category filter on the Logs page to isolate container health check entries
 - Smart formatting for activity log detail badges: backup types are capitalised, durations show unit suffixes, byte sizes are human-readable (e.g. 2.2 GB), and null values are hidden

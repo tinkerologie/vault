@@ -2,6 +2,8 @@
   /**
    * Tooltip — contextual info icon with hover/click-triggered tooltip popup.
    *
+   * Uses fixed positioning so the popup is never clipped by parent overflow.
+   *
    * Props:
    * - text: string — tooltip content
    * - id: string (optional) — unique ID for aria-describedby linking
@@ -9,11 +11,17 @@
   let { text = '', id = undefined } = $props()
 
   let visible = $state(false)
-  let position = $state('above')  // 'above' | 'below'
+  let position = $state('above')
+  let popupStyle = $state('')
+  let arrowOffset = $state('50%')
   let triggerEl = $state(null)
   let tooltipEl = $state(null)
   let hoverTimeout = $state(null)
   let isTouch = $state(false)
+
+  const TOOLTIP_MAX_W = 260
+  const VIEWPORT_PAD = 8
+  const GAP = 8
 
   const _fallbackId = `tooltip-${crypto.randomUUID().slice(0, 8)}`
   let tooltipId = $derived(id ?? _fallbackId)
@@ -21,7 +29,25 @@
   function updatePosition() {
     if (!triggerEl) return
     const rect = triggerEl.getBoundingClientRect()
-    position = rect.top < 100 ? 'below' : 'above'
+    const vw = window.innerWidth
+
+    // Vertical: prefer above unless too close to top
+    position = rect.top < 80 ? 'below' : 'above'
+
+    // Horizontal: centre on trigger, then clamp to viewport
+    const centreX = rect.left + rect.width / 2
+    let left = centreX - TOOLTIP_MAX_W / 2
+    left = Math.max(VIEWPORT_PAD, Math.min(left, vw - TOOLTIP_MAX_W - VIEWPORT_PAD))
+
+    // Arrow tracks the trigger centre relative to the clamped popup
+    const arrowPx = Math.max(12, Math.min(centreX - left, TOOLTIP_MAX_W - 12))
+    arrowOffset = `${arrowPx}px`
+
+    const top = position === 'above'
+      ? rect.top - GAP
+      : rect.bottom + GAP
+
+    popupStyle = `left:${left}px;top:${top}px;`
   }
 
   function show() {
@@ -90,7 +116,7 @@
   })
 </script>
 
-<span class="inline-flex items-center relative" style="vertical-align: middle;">
+<span class="inline-flex items-center" style="vertical-align: middle;">
   <button
     bind:this={triggerEl}
     type="button"
@@ -115,6 +141,7 @@
       id={tooltipId}
       role="tooltip"
       class="tooltip-popup {position === 'above' ? 'tooltip-above' : 'tooltip-below'}"
+      style="{popupStyle} --arrow-offset: {arrowOffset};"
     >
       {text}
       <span class="tooltip-arrow {position === 'above' ? 'tooltip-arrow-down' : 'tooltip-arrow-up'}"></span>
@@ -146,9 +173,7 @@
   }
 
   .tooltip-popup {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
+    position: fixed;
     width: max-content;
     max-width: 260px;
     padding: 6px 10px;
@@ -159,20 +184,20 @@
     border: 1px solid var(--color-border);
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    z-index: 50;
+    z-index: 9999;
     pointer-events: none;
     animation: tooltip-in 0.15s ease-out;
   }
   .tooltip-above {
-    bottom: calc(100% + 8px);
+    transform: translateY(-100%);
   }
   .tooltip-below {
-    top: calc(100% + 8px);
+    transform: translateY(0);
   }
 
   .tooltip-arrow {
     position: absolute;
-    left: 50%;
+    left: var(--arrow-offset, 50%);
     transform: translateX(-50%);
     width: 0;
     height: 0;
@@ -189,8 +214,8 @@
   }
 
   @keyframes tooltip-in {
-    from { opacity: 0; transform: translateX(-50%) translateY(4px); }
-    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   .sr-only {
