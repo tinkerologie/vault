@@ -14,6 +14,7 @@
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import BackupModeSelector from '../components/BackupModeSelector.svelte'
   import ScriptBrowser from '../components/ScriptBrowser.svelte'
+  import TypePicker from '../components/TypePicker.svelte'
   import Tooltip from '../components/Tooltip.svelte'
 
   let loading = $state(true)
@@ -96,7 +97,7 @@
 
   // Wizard step
   let step = $state(1)
-  const totalSteps = 3
+  const totalSteps = 6
 
   // Form state
   let form = $state(defaultForm())
@@ -120,6 +121,7 @@
       encryption: 'none',
       storage_dest_id: 0,
       items: [],
+      selectedTypes: [],
     }
   }
 
@@ -140,6 +142,22 @@
       description: 'Wait for a TCP service such as SSH or Home Assistant to accept connections.',
     },
   ]
+
+  function deriveTypesFromItems(items) {
+    const types = new Set()
+    for (const item of items) {
+      if (item.item_type === 'container') types.add('containers')
+      else if (item.item_type === 'vm') types.add('vms')
+      else if (item.item_type === 'folder') {
+        const s = parseItemSettings(item)
+        if (s.preset === 'flash') types.add('flash')
+        else types.add('folders')
+      }
+      else if (item.item_type === 'plugin') types.add('plugins')
+      else if (item.item_type === 'zfs') types.add('zfs')
+    }
+    return [...types]
+  }
 
   function parseItemSettings(item) {
     if (!item?.settings) return {}
@@ -296,6 +314,7 @@
         encryption: data.job.encryption || 'none',
         storage_dest_id: data.job.storage_dest_id || 0,
         items: data.items || [],
+        selectedTypes: deriveTypesFromItems(data.items || []),
       }
       step = 1
       showModal = true
@@ -309,6 +328,7 @@
     try {
       const payload = { ...form }
       delete payload.vm_mode
+      delete payload.selectedTypes
       let jobId
       if (editing) {
         await api.updateJob(editing.id, payload)
@@ -435,19 +455,28 @@
 
   // Wizard validation
   let canNext = $derived.by(() => {
-    if (step === 1) return form.name.trim().length > 0 && form.items.length > 0
-    if (step === 2) return form.storage_dest_id > 0
-    return vmRestoreVerifyErrors.length === 0
+    if (step === 1) return form.selectedTypes.length > 0
+    if (step === 2) return form.items.length > 0
+    if (step === 3) return form.storage_dest_id > 0
+    if (step === 4) return form.name.trim().length > 0
+    if (step === 5) return vmRestoreVerifyErrors.length === 0
+    return true
   })
 
   let stepHint = $derived.by(() => {
-    if (step === 1) {
-      if (!form.name.trim()) return 'Enter a job name to continue'
-      if (form.items.length === 0) return 'Select at least one item to back up'
-    }
-    if (step === 2 && form.storage_dest_id === 0) return 'Select a storage destination'
-    if (step === 3 && vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
+    if (step === 1 && form.selectedTypes.length === 0) return 'Select at least one backup type'
+    if (step === 2 && form.items.length === 0) return 'Select at least one item to back up'
+    if (step === 3 && form.storage_dest_id === 0) return 'Select a storage destination'
+    if (step === 4 && !form.name.trim()) return 'Enter a job name to continue'
+    if (step === 5 && vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
     return ''
+  })
+
+  // Auto-suggest job name based on selected types
+  let suggestedName = $derived.by(() => {
+    if (form.selectedTypes.length === 0) return ''
+    const labels = { containers: 'Containers', vms: 'VMs', folders: 'Folders', flash: 'Flash', plugins: 'Plugins', zfs: 'ZFS' }
+    return form.selectedTypes.map(t => labels[t] || t).join(' + ') + ' Backup'
   })
 
   let hasContainers = $derived(form.items.some(i => i.item_type === 'container'))
@@ -676,8 +705,8 @@
 {/if}
 <Modal show={showModal} title={editing ? 'Edit Job' : 'Create Backup Job'} onclose={() => showModal = false}>
   <!-- Step indicator -->
-  <div class="flex items-center gap-2 mb-6">
-    {#each [{n:1, label:'Items'}, {n:2, label:'Schedule'}, {n:3, label:'Review'}] as s (s.n)}
+  <div class="flex items-center gap-1 sm:gap-2 mb-6">
+    {#each [{n:1, label:'Type'}, {n:2, label:'Items'}, {n:3, label:'Schedule'}, {n:4, label:'Details'}, {n:5, label:'Advanced'}, {n:6, label:'Review'}] as s (s.n)}
       <button
         type="button"
         onclick={() => { if (s.n < step || canNext) step = s.n }}
@@ -699,29 +728,22 @@
   </div>
 
   <form onsubmit={(e) => { e.preventDefault(); if (step < totalSteps) step++; else saveJob() }}>
-    <!-- Step 1: Name & Items -->
+    <!-- Step 1: Choose Backup Types -->
     {#if step === 1}
-      <div class="space-y-5">
-        <div>
-          <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name <Tooltip text="Used for display and log identification. No strict naming constraints." /></label>
-          <input id="name" type="text" bind:value={form.name} required
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim focus:border-vault focus:ring-1 focus:ring-vault" placeholder="Daily Docker Backup" />
-        </div>
-
-        <div>
-          <label for="desc" class="block text-sm font-medium text-text-muted mb-1.5">Description <span class="text-text-dim">(optional)</span></label>
-          <input id="desc" type="text" bind:value={form.description}
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="Back up all production containers" />
-        </div>
-
-        <div>
-          <span class="block text-sm font-medium text-text-muted mb-1.5">Select Items to Back Up</span>
-          <ItemPicker bind:items={form.items} />
-        </div>
+      <div class="space-y-4">
+        <p class="text-sm text-text-muted">What would you like to back up?</p>
+        <TypePicker bind:selectedTypes={form.selectedTypes} />
       </div>
 
-    <!-- Step 2: Schedule & Configuration -->
+    <!-- Step 2: Select Items -->
     {:else if step === 2}
+      <div class="space-y-4">
+        <p class="text-sm text-text-muted">Select the specific items to include in this backup job.</p>
+        <ItemPicker bind:items={form.items} allowedTypes={form.selectedTypes} />
+      </div>
+
+    <!-- Step 3: Schedule & Configuration -->
+    {:else if step === 3}
       <div class="space-y-5">
         <div>
           <span class="block text-sm font-medium text-text-muted mb-1.5">Schedule</span>
@@ -806,51 +828,36 @@
         </div>
       </div>
 
-    <!-- Step 3: Review & Advanced -->
-    {:else}
+    <!-- Step 4: Job Details -->
+    {:else if step === 4}
       <div class="space-y-5">
-        <!-- Summary card -->
-        <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3 text-sm">
-          <div class="flex justify-between">
-            <span class="text-text-muted">Job Name</span>
-            <span class="text-text font-medium">{form.name}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-muted">Items</span>
-            <span class="text-text">
-              {#if hasContainers}{form.items.filter(i => i.item_type === 'container').length} container{form.items.filter(i => i.item_type === 'container').length !== 1 ? 's' : ''}{/if}
-              {#if hasContainers && (hasVMs || hasFolders || hasFlash || hasPlugins || hasZFS)}, {/if}
-              {#if hasVMs}{form.items.filter(i => i.item_type === 'vm').length} VM{form.items.filter(i => i.item_type === 'vm').length !== 1 ? 's' : ''}{/if}
-              {#if hasVMs && (hasFolders || hasFlash || hasPlugins || hasZFS)}, {/if}
-              {#if hasFolders}{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length} folder{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length !== 1 ? 's' : ''}{/if}
-              {#if hasFolders && (hasFlash || hasPlugins || hasZFS)}, {/if}
-              {#if hasFlash}{@const flashDriveCount = form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset === 'flash').length}{flashDriveCount} flash drive{flashDriveCount !== 1 ? 's' : ''}{/if}
-              {#if hasFlash && (hasPlugins || hasZFS)}, {/if}
-              {#if hasPlugins}{form.items.filter(i => i.item_type === 'plugin').length} plugin{form.items.filter(i => i.item_type === 'plugin').length !== 1 ? 's' : ''}{/if}
-              {#if hasPlugins && hasZFS}, {/if}
-              {#if hasZFS}{form.items.filter(i => i.item_type === 'zfs').length} ZFS dataset{form.items.filter(i => i.item_type === 'zfs').length !== 1 ? 's' : ''}{/if}
-            </span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-muted">Schedule</span>
-            <span class="text-text">{describeSchedule(form.schedule)}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-muted">Storage</span>
-            <span class="text-text">{getStorageName(form.storage_dest_id)}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-muted">Compression</span>
-            <span class="text-text capitalize">{form.compression}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-muted">Encryption</span>
-            <span class="text-text capitalize">{form.encryption === 'age' ? 'Age (encrypted)' : 'None'}</span>
-          </div>
+        <div>
+          <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name <Tooltip text="Used for display and log identification. No strict naming constraints." /></label>
+          <input id="name" type="text" bind:value={form.name} required
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim focus:border-vault focus:ring-1 focus:ring-vault" placeholder="Daily Docker Backup" />
+          {#if suggestedName && !form.name.trim()}
+            <button
+              type="button"
+              onclick={() => form.name = suggestedName}
+              class="mt-1.5 text-xs text-vault hover:text-vault-dark transition-colors"
+            >
+              Suggestion: {suggestedName}
+            </button>
+          {/if}
         </div>
 
+        <div>
+          <label for="desc" class="block text-sm font-medium text-text-muted mb-1.5">Description <span class="text-text-dim">(optional)</span></label>
+          <input id="desc" type="text" bind:value={form.description}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="Back up all production containers" />
+        </div>
+      </div>
+
+    <!-- Step 5: Advanced Settings -->
+    {:else if step === 5}
+      <div class="space-y-5">
         <!-- Advanced: Retention -->
-        <details class="group">
+        <details class="group" open>
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
             Retention Policy <Tooltip text="'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply — whichever triggers first will prune old backups." />
@@ -1041,6 +1048,78 @@
             </div>
           </details>
         {/if}
+
+        {#if !hasVMs && !hasContainers}
+          <p class="text-sm text-text-dim italic">No additional advanced settings for the selected items.</p>
+        {/if}
+      </div>
+
+    <!-- Step 6: Review & Create -->
+    {:else}
+      <div class="space-y-5">
+        <!-- Summary card -->
+        <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3 text-sm">
+          <div class="flex justify-between">
+            <span class="text-text-muted">Job Name</span>
+            <span class="text-text font-medium">{form.name}</span>
+          </div>
+          {#if form.description}
+            <div class="flex justify-between">
+              <span class="text-text-muted">Description</span>
+              <span class="text-text">{form.description}</span>
+            </div>
+          {/if}
+          <div class="flex justify-between">
+            <span class="text-text-muted">Items</span>
+            <span class="text-text">
+              {#if hasContainers}{form.items.filter(i => i.item_type === 'container').length} container{form.items.filter(i => i.item_type === 'container').length !== 1 ? 's' : ''}{/if}
+              {#if hasContainers && (hasVMs || hasFolders || hasFlash || hasPlugins || hasZFS)}, {/if}
+              {#if hasVMs}{form.items.filter(i => i.item_type === 'vm').length} VM{form.items.filter(i => i.item_type === 'vm').length !== 1 ? 's' : ''}{/if}
+              {#if hasVMs && (hasFolders || hasFlash || hasPlugins || hasZFS)}, {/if}
+              {#if hasFolders}{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length} folder{form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset !== 'flash').length !== 1 ? 's' : ''}{/if}
+              {#if hasFolders && (hasFlash || hasPlugins || hasZFS)}, {/if}
+              {#if hasFlash}{@const flashDriveCount = form.items.filter(i => i.item_type === 'folder' && parseItemSettings(i).preset === 'flash').length}{flashDriveCount} flash drive{flashDriveCount !== 1 ? 's' : ''}{/if}
+              {#if hasFlash && (hasPlugins || hasZFS)}, {/if}
+              {#if hasPlugins}{form.items.filter(i => i.item_type === 'plugin').length} plugin{form.items.filter(i => i.item_type === 'plugin').length !== 1 ? 's' : ''}{/if}
+              {#if hasPlugins && hasZFS}, {/if}
+              {#if hasZFS}{form.items.filter(i => i.item_type === 'zfs').length} ZFS dataset{form.items.filter(i => i.item_type === 'zfs').length !== 1 ? 's' : ''}{/if}
+            </span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Schedule</span>
+            <span class="text-text">{describeSchedule(form.schedule)}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Storage</span>
+            <span class="text-text">{getStorageName(form.storage_dest_id)}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Backup Type</span>
+            <span class="text-text capitalize">{form.backup_type_chain}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Compression</span>
+            <span class="text-text capitalize">{form.compression}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Encryption</span>
+            <span class="text-text capitalize">{form.encryption === 'age' ? 'Age (encrypted)' : 'None'}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Retention</span>
+            <span class="text-text">{form.retention_count} backups / {form.retention_days} days</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Verification</span>
+            <span class="text-text">{form.verify_backup ? 'Enabled' : 'Disabled'}</span>
+          </div>
+          {#if form.pre_script || form.post_script}
+            <div class="flex justify-between">
+              <span class="text-text-muted">Scripts</span>
+              <span class="text-text">{[form.pre_script ? 'Pre' : '', form.post_script ? 'Post' : ''].filter(Boolean).join(' + ')}</span>
+            </div>
+          {/if}
+        </div>
 
         <!-- Enabled toggle -->
         <div class="flex items-center gap-3">

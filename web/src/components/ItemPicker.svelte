@@ -5,8 +5,8 @@
   import Spinner from './Spinner.svelte'
   import PathBrowser from './PathBrowser.svelte'
 
-  /** @type {{ items: Array<{item_type: string, item_name: string, item_id: string, settings: string, sort_order?: number}>, onchange?: (items: any[]) => void }} */
-  let { items = $bindable([]), onchange = () => {} } = $props()
+  /** @type {{ items: Array<{item_type: string, item_name: string, item_id: string, settings: string, sort_order?: number}>, allowedTypes?: string[], onchange?: (items: any[]) => void }} */
+  let { items = $bindable([]), allowedTypes = null, onchange = () => {} } = $props()
 
   let containers = $state([])
   let vms = $state([])
@@ -24,6 +24,18 @@
   let activeTab = $state('containers')
   let showAddFolder = $state(false)
   let customFolderPath = $state('')
+
+  // Map TypePicker IDs to ItemPicker tab IDs
+  const typeToTab = { containers: 'containers', vms: 'vms', folders: 'folders', flash: 'flash', plugins: 'plugins', zfs: 'zfs' }
+
+  // Determine which tabs to show based on allowedTypes
+  function isTabAllowed(tabId) {
+    if (!allowedTypes) return true
+    return allowedTypes.includes(tabId)
+  }
+
+  let singleTab = $derived(allowedTypes && allowedTypes.length === 1 ? allowedTypes[0] : null)
+
 
   // Selected items tracked as map: "type:name" -> item
   let selected = $state(new SvelteMap())
@@ -65,6 +77,11 @@
       zfsAvailable = zfsRes.available
       if (!containersAvailable && vmsAvailable) activeTab = 'vms'
       else if (!containersAvailable && !vmsAvailable) activeTab = 'folders'
+      // Set activeTab to first allowed type if filtering is active
+      if (allowedTypes && allowedTypes.length > 0) {
+        const firstAllowed = allowedTypes[0]
+        activeTab = firstAllowed
+      }
     } catch (e) {
       error = e.message
     } finally {
@@ -252,9 +269,10 @@
       <button onclick={discover} class="ml-2 underline hover:no-underline">Retry</button>
     </div>
   {:else}
-    <!-- Tabs -->
-    <div class="flex items-center gap-1 border-b border-border">
-      {#if containersAvailable}
+    <!-- Tabs (hidden when single type selected) -->
+    {#if !singleTab}
+    <div class="flex items-center gap-1 border-b border-border overflow-x-auto">
+      {#if containersAvailable && isTabAllowed('containers')}
         <button
           type="button"
           onclick={() => (activeTab = 'containers')}
@@ -270,7 +288,7 @@
           {/if}
         </button>
       {/if}
-      {#if vmsAvailable}
+      {#if vmsAvailable && isTabAllowed('vms')}
         <button
           type="button"
           onclick={() => (activeTab = 'vms')}
@@ -286,7 +304,7 @@
           {/if}
         </button>
       {/if}
-      {#if foldersAvailable}
+      {#if foldersAvailable && isTabAllowed('folders')}
         <button
           type="button"
           onclick={() => (activeTab = 'folders')}
@@ -302,7 +320,7 @@
           {/if}
         </button>
       {/if}
-      {#if flashItems.length > 0}
+      {#if flashItems.length > 0 && isTabAllowed('flash')}
         <button
           type="button"
           onclick={() => (activeTab = 'flash')}
@@ -318,7 +336,7 @@
           {/if}
         </button>
       {/if}
-      {#if pluginsAvailable}
+      {#if pluginsAvailable && isTabAllowed('plugins')}
         <button
           type="button"
           onclick={() => (activeTab = 'plugins')}
@@ -334,7 +352,7 @@
           {/if}
         </button>
       {/if}
-      {#if zfsAvailable}
+      {#if zfsAvailable && isTabAllowed('zfs')}
         <button
           type="button"
           onclick={() => (activeTab = 'zfs')}
@@ -353,6 +371,7 @@
       <div class="flex-1"></div>
       <span class="text-xs text-text-muted pr-2">{selectedCount} selected</span>
     </div>
+    {/if}
 
     <!-- Search -->
     <div class="relative">

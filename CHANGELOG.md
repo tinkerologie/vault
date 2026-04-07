@@ -8,56 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- ZFS dataset backup and restore engine using pure-Go `gzfs` library — supports full and incremental ZFS send/receive streams with progress tracking (closes #4)
-- ZFS dataset discovery endpoint `GET /api/v1/zfs` lists ZFS filesystems and volumes available for backup
-- ZFS Datasets tab in the job creation item picker with dataset type badges (Filesystem/Volume), mountpoint, and used-space indicators
-- ZFS dataset count displayed in the job summary card alongside containers, VMs, folders, and plugins
-- `zfs_meta.json` sidecar written alongside each ZFS send stream to record dataset name, snapshot, pool, and backup type for reliable restore
-- Automatic cleanup of old vault-created ZFS snapshots after successful backup, keeping only the latest
-- Snapshot cleanup on send failure to prevent orphaned ZFS snapshots
-
-- Cloud replication targets — Google Drive and OneDrive now available as replication target types alongside Remote Vault Server
-- Push-based cloud sync engine (`syncCloudPush`) that uploads local backup restore points to cloud storage adapters
-- Type-aware replication target creation and editing with conditional forms for each target type
-- `type` and `config` columns on `replication_sources` table to support different target types (remote_vault, gdrive, onedrive)
-
-### Changed
-
-- Moved Google Drive and OneDrive from the Storage page to the Replication page — Storage now only handles local/network destinations (Local Path, SFTP, SMB, NFS)
-- OAuth endpoints for Google Drive and OneDrive moved from `/api/v1/storage/` to `/api/v1/replication/` (e.g. `/api/v1/replication/gdrive/status`)
-- OAuth handlers changed from `StorageHandler` to `ReplicationHandler` receiver
-- Replication "Add Target" modal now offers three target types: Remote Vault Server, Google Drive, and OneDrive
-- Removed "Local Storage Destination" field from Remote Vault replication targets — remote server uses its own configured storage path automatically
-- Replication target cards now display type-appropriate icons and labels (Google Drive, OneDrive, or server URL)
-- Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)
-- Replaced "SSD Cache (automatic)" label with "Using SSD cache for fast backup processing" and "Custom override" with "Custom location"
-- Renamed "Custom Path (optional)" to "Custom Location" with description: "Override the automatic location. Use this if you want backups to be assembled on a specific drive."
-- Renamed "Cascade order" to "Fallback locations" with description: "Vault tries each location in order and uses the first available one."
-- Updated Database Location subtitle to explain that Vault's database tracks jobs, schedules, and restore points
-- Replaced "Hybrid (RAM + SSD snapshots)" with "Hybrid — runs in memory for speed, saves to SSD periodically"
-- Renamed "Working" to "Active database" with tooltip explaining hybrid mode operates from RAM
-- Renamed "Snapshot" to "Saved copy", "Last snapshot" to "Last saved", and "Snapshot size" to "Saved copy size"
-- Renamed "Custom Snapshot Path (optional)" to "Custom save location" with description: "Choose where the persistent database copy is stored. Defaults to SSD cache."
-- Enhanced USB warning to suggest adding a cache drive or setting a custom save location
-- Simplified Backup Targets subtitle to "Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery."
-
-### Added
-
-- Contextual tooltips across Settings, Jobs, Storage, and Replication pages — reusable `Tooltip.svelte` component with hover/click-to-toggle, viewport-aware positioning, keyboard dismissal, and full ARIA accessibility (closes #34)
-
-### Fixed
-
-- Tooltip clipping when positioned near viewport edges — switched from `position: absolute` to `position: fixed` with JS-calculated viewport coordinates and horizontal clamping
-- Enriched activity logs with contextual details for troubleshooting: backup started/completed and restore completed entries now include job name, backup type, storage destination, duration, and size; per-item container health check results are logged individually under a new "health" category; stop_all health check summary includes aggregate counts (containers checked/healthy/unhealthy) (closes #30)
-- "Health" category filter on the Logs page to isolate container health check entries
-- Smart formatting for activity log detail badges: backup types are capitalised, durations show unit suffixes, byte sizes are human-readable (e.g. 2.2 GB), and null values are hidden
-- Diagnostic bundle download: `GET /api/v1/settings/diagnostics` endpoint and "Download diagnostics bundle" button on the Settings page generates a ZIP containing system info, database details, storage destinations, job configurations, recent run history, and activity logs with a unique correlation ID for support workflows (closes #29)
-- `internal/diagnostics` package with collector, ZIP packager, and comprehensive redaction for sensitive data (passwords, API keys, tokens, webhook secrets, inline URL credentials)
-- `ListRecentRuns(limit)` database method for fetching recent job runs across all jobs
-- Purge activity logs: `DELETE /api/v1/activity` endpoint and "Purge" button on the Logs page with confirmation dialog to permanently delete all activity log entries (closes #32)
-- Purge job run history: `DELETE /api/v1/history` endpoint and "Purge" button on the History page with confirmation dialog to permanently delete all job run records (closes #32)
-- `PurgeJobRuns()` database method for bulk deletion of job run history; activity log purge reuses `DeleteOldActivityLogs(0)` to clear all entries
-- Job run history purge actions are logged in the activity log with the count of deleted records
+- Redesigned Create Backup Job wizard from 3 steps to a guided 6-step flow: Type → Items → Schedule → Details → Advanced → Review (closes #36)
+- New `TypePicker` component for Step 1: card-based multi-select grid with automatic item discovery, per-type color coding, and availability detection for Containers, VMs, Folders, Flash Drive, Plugins, and ZFS Datasets
+- `ItemPicker` now accepts an `allowedTypes` prop to filter visible tabs based on the types selected in Step 1; single-type selection hides the tab bar entirely
+- Auto-generated job name suggestions based on selected backup types (e.g. "Containers + VMs Backup")
+- Advanced settings (Step 5) grouped into collapsible accordion sections: Retention, Scripts, Verification, VM Restore Verify, and Container Exclusions — contextually shown based on selected types
 - Cancel API endpoint `POST /api/v1/jobs/{id}/cancel` to abort a running backup job (closes #28)
 - Cancellable context propagated through the entire backup pipeline: Runner → engine handlers → tar/copy I/O operations
 - 4-hour job timeout with automatic cancellation via `context.WithTimeout`
