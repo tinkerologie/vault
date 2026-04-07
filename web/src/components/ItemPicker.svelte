@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import Spinner from './Spinner.svelte'
@@ -36,6 +36,23 @@
 
   let singleTab = $derived(allowedTypes && allowedTypes.length === 1 ? allowedTypes[0] : null)
 
+  // Map allowedTypes IDs to item_type values used in the selected map
+  function itemTypeAllowed(item) {
+    if (item.item_type === 'container') return allowedTypes.includes('containers')
+    if (item.item_type === 'vm') return allowedTypes.includes('vms')
+    if (item.item_type === 'plugin') return allowedTypes.includes('plugins')
+    if (item.item_type === 'zfs') return allowedTypes.includes('zfs')
+    if (item.item_type === 'folder') {
+      const s = safeParseSettings(item.settings)
+      return s.preset === 'flash' ? allowedTypes.includes('flash') : allowedTypes.includes('folders')
+    }
+    return false
+  }
+
+  function safeParseSettings(s) {
+    if (!s) return {}
+    try { return JSON.parse(s) } catch { return {} }
+  }
 
   // Selected items tracked as map: "type:name" -> item
   let selected = $state(new SvelteMap())
@@ -43,15 +60,34 @@
   // Drag state for reorder
   let dragIndex = $state(-1)
 
-  // Initialize selected from prop
+  // Initialize selected from prop, filtering out items whose type is no longer allowed
   $effect(() => {
     if (items.length > 0 && selected.size === 0) {
       const m = new SvelteMap()
       for (const it of items) {
+        if (allowedTypes && !itemTypeAllowed(it)) continue
         m.set(`${it.item_type}:${it.item_name}`, it)
       }
       selected = m
+      // If some items were filtered, sync the bound items prop
+      if (m.size < items.length) emitChange()
     }
+  })
+
+  // Prune selected items when allowed types change while component is mounted
+  $effect(() => {
+    if (!allowedTypes) return
+    const allowed = [...allowedTypes]
+    untrack(() => {
+      let changed = false
+      for (const [key, item] of selected) {
+        if (!itemTypeAllowed(item)) {
+          selected.delete(key)
+          changed = true
+        }
+      }
+      if (changed) emitChange()
+    })
   })
 
   async function discover() {
@@ -229,10 +265,6 @@
     Array.from(selected.values()).filter((i) => i.item_type === 'container').length,
   )
   let vmCount = $derived(Array.from(selected.values()).filter((i) => i.item_type === 'vm').length)
-  function safeParseSettings(s) {
-    if (!s) return {}
-    try { return JSON.parse(s) } catch { return {} }
-  }
   let folderCount = $derived(
     Array.from(selected.values()).filter((i) => i.item_type === 'folder' && safeParseSettings(i.settings).preset !== 'flash').length,
   )

@@ -149,7 +149,7 @@
   </div>
 {:else}
   <div class="space-y-3">
-    <p class="text-sm text-text-muted">What would you like to back up? Select one or more types.</p>
+    <p class="text-sm text-text-muted">Select one or more backup types.</p>
     <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
       {#each backupTypes as type (type.id)}
         {@const sel = isSelected(type.id)}

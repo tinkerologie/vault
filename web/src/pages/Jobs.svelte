@@ -703,7 +703,7 @@
     </button>
   </div>
 {/if}
-<Modal show={showModal} title={editing ? 'Edit Job' : 'Create Backup Job'} onclose={() => showModal = false}>
+<Modal show={showModal} title={editing ? 'Edit Job' : 'Create Backup Job'} size="lg" onclose={() => showModal = false}>
   <!-- Step indicator -->
   <div class="flex items-center gap-1 sm:gap-2 mb-6">
     {#each [{n:1, label:'Type'}, {n:2, label:'Items'}, {n:3, label:'Schedule'}, {n:4, label:'Details'}, {n:5, label:'Advanced'}, {n:6, label:'Review'}] as s (s.n)}
@@ -731,7 +731,6 @@
     <!-- Step 1: Choose Backup Types -->
     {#if step === 1}
       <div class="space-y-4">
-        <p class="text-sm text-text-muted">What would you like to back up?</p>
         <TypePicker bind:selectedTypes={form.selectedTypes} />
       </div>
 

@@ -1,6 +1,8 @@
 <script>
-  /** @type {{ show: boolean, title?: string, onclose?: () => void, children?: import('svelte').Snippet }} */
-  let { show = false, title = '', onclose = () => {}, children } = $props()
+  /** @type {{ show: boolean, title?: string, size?: 'default' | 'lg', onclose?: () => void, children?: import('svelte').Snippet }} */
+  let { show = false, title = '', size = 'default', onclose = () => {}, children } = $props()
+
+  const sizeClass = { default: 'max-w-lg', lg: 'max-w-2xl' }
 
   let dialogEl = $state(null)
 
@@ -53,14 +55,14 @@
     aria-labelledby="modal-title"
     tabindex="-1"
   >
-    <div bind:this={dialogEl} class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col animate-panel-up">
+    <div bind:this={dialogEl} class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full {sizeClass[size]} mx-4 max-h-[90vh] flex flex-col animate-panel-up">
       <div class="flex items-center justify-between px-6 py-4 border-b border-border">
         <h2 id="modal-title" class="text-lg font-semibold text-text">{title}</h2>
         <button onclick={onclose} class="text-text-muted hover:text-text transition-colors p-1 rounded-lg hover:bg-surface-3" aria-label="Close">
           <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
-      <div class="px-6 py-4 overflow-y-auto flex-1">
+      <div class="px-6 py-4 overflow-y-auto overflow-x-hidden flex-1">
         {@render children()}
       </div>
     </div>
