@@ -1184,6 +1184,11 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 			return fmt.Errorf("illegal file path in archive: %s: %w", header.Name, err)
 		}
 
+		// Resolve previously-extracted symlinks to prevent path escape (CWE-22).
+		if err := resolveWithinBase(destDir, target); err != nil {
+			return fmt.Errorf("path escape in archive entry %s: %w", header.Name, err)
+		}
+
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, safeFileMode(header.Mode)); err != nil {
@@ -1216,14 +1221,9 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 				return fmt.Errorf("closing file %s: %w", target, err)
 			}
 		case tar.TypeSymlink:
-			// Validate symlink target: reject absolute paths and traversals that escape destDir.
-			if filepath.IsAbs(header.Linkname) {
-				return fmt.Errorf("symlink %s has absolute target %q: rejecting", header.Name, header.Linkname)
-			}
-			resolved := filepath.Join(filepath.Dir(target), header.Linkname)
-			resolved = filepath.Clean(resolved)
-			if !strings.HasPrefix(resolved, filepath.Clean(destDir)+string(filepath.Separator)) && resolved != filepath.Clean(destDir) {
-				return fmt.Errorf("symlink %s target %q escapes destination directory", header.Name, header.Linkname)
+			// Validate symlink target resolves within destDir after following existing symlinks.
+			if err := resolveSymlinkTarget(destDir, target, header.Linkname); err != nil {
+				return fmt.Errorf("unsafe symlink in archive: %w", err)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
@@ -1235,6 +1235,9 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 			linkTarget, err := joinArchiveTarget(destDir, header.Linkname)
 			if err != nil {
 				return fmt.Errorf("illegal hard link target in archive: %s: %w", header.Linkname, err)
+			}
+			if err := resolveWithinBase(destDir, linkTarget); err != nil {
+				return fmt.Errorf("path escape in hard link target %s: %w", header.Linkname, err)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
