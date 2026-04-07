@@ -92,6 +92,7 @@
       case 'container': return 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'
       case 'vm': return 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'
       case 'folder': return 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z'
+      case 'zfs': return 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4M4 12c0 2.21 3.582 4 8 4s8-1.79 8-4'
       default: return 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7'
     }
   }
@@ -101,6 +102,7 @@
       case 'container': return 'text-blue-400'
       case 'vm': return 'text-purple-400'
       case 'folder': return 'text-amber-400'
+      case 'zfs': return 'text-cyan-400'
       default: return 'text-text-muted'
     }
   }

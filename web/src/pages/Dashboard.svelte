@@ -43,13 +43,13 @@
 
   /** Human-readable item type label */
   function itemTypeLabel(type) {
-    const map = { container: 'Container', vm: 'VM', folder: 'Folder', plugin: 'Plugin' }
+    const map = { container: 'Container', vm: 'VM', folder: 'Folder', plugin: 'Plugin', zfs: 'ZFS Dataset' }
     return map[type] || type
   }
 
   /** Icon color for item type */
   function itemTypeColor(type) {
-    const map = { container: 'text-blue-400', vm: 'text-purple-400', folder: 'text-amber-400', plugin: 'text-emerald-400' }
+    const map = { container: 'text-blue-400', vm: 'text-purple-400', folder: 'text-amber-400', plugin: 'text-emerald-400', zfs: 'text-cyan-400' }
     return map[type] || 'text-text-muted'
   }
 
