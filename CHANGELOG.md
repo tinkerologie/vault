@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- Configuration persistence across Unraid server restarts: `SNAPSHOT_PATH` is now saved to `vault.cfg` on USB flash and read at startup before database restoration, resolving the chicken-and-egg problem where the snapshot path was only stored inside the database (Refs #48)
+- USB shadow backup: the daemon writes a throttled copy of the database to `/boot/config/plugins/vault/vault.db.backup` on USB flash as a last-resort fallback; forced on graceful shutdown
+- Immediate USB flash backup on configuration changes: any job, storage, settings, or replication mutation triggers an unthrottled `FlushToUSB` so the flash copy always has fresh data for reboot recovery
+- Fallback restoration chain at startup: tries configured snapshot path → default cache path → USB backup → fresh database, with detailed logging of which source was used
+- Cache mount detection at startup: distinguishes between `/mnt/cache` not existing, existing but unmounted, and mounted — logs warnings and falls back gracefully when cache is unavailable
+- Health endpoint (`GET /api/v1/health`) now includes `restoration_source`, `restoration_path`, `restoration_reason`, and `degraded` fields to report database restoration status
+- Database info endpoint (`GET /api/v1/settings/database`) now includes `restoration_source`, `restoration_reason`, and `degraded` fields
+- `internal/config/vaultcfg.go`: `ReadCfg`, `ReadCfgValue`, `WriteCfgValue` helpers for reading/writing the shell-sourceable `vault.cfg` INI file on USB flash
+- `internal/cli/restore.go`: `restoreWithFallback` implements the 4-level fallback chain; `validateConfiguredPaths` checks accessibility of user-configured paths at startup
 - ZFS dataset backup and restore engine using pure-Go `gzfs` library — supports full and incremental ZFS send/receive streams with progress tracking (Refs #4)
 - ZFS dataset discovery endpoint `GET /api/v1/zfs` lists ZFS filesystems and volumes available for backup
 - ZFS Datasets tab in the job creation item picker with dataset type badges (Filesystem/Volume), mountpoint, and used-space indicators
@@ -54,6 +63,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- `SnapshotManager` snapshot path is now mutable at runtime via `SetSnapshotPath()` — immediately saves a fresh snapshot at the new location when the user changes the database save location
+- `NewSnapshotManager` now accepts a separate `defaultPath` parameter so reset-to-default resolves correctly without relying on the database
+- Database Location UI: removed "Changes take effect on next daemon restart" text and updated tooltip to "Changes take effect immediately"
+- Runner now saves both the primary snapshot and USB shadow backup after each successful backup job (`SaveSnapshotAndUSBBackup`)
+- `SaveSnapshotAndUSBBackup` and `FlushToUSB` now attempt the USB backup even when the primary snapshot save fails, since the USB backup copies directly from the working in-memory DB
+- USB database file is preserved as `.backup` during hybrid mode migration instead of being deleted
 - Moved Google Drive and OneDrive from the Storage page to the Replication page — Storage now only handles local/network destinations (Local Path, SFTP, SMB, NFS)
 - OAuth endpoints for Google Drive and OneDrive moved from `/api/v1/storage/` to `/api/v1/replication/` (e.g. `/api/v1/replication/gdrive/status`)
 - OAuth handlers changed from `StorageHandler` to `ReplicationHandler` receiver
@@ -77,6 +92,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Database location changes now take effect immediately without requiring a daemon restart; previously, changing or resetting the custom snapshot path required a restart and could be silently reversed by stale data in the old snapshot (Refs #48)
+- Resetting the custom database location back to defaults no longer gets reversed on restart — removed the DB override sync-back that read stale `snapshot_path_override` from cached snapshots and overwrote vault.cfg; `vault.cfg` is now the sole authority for the snapshot path
+- Setting a custom snapshot path to a directory (e.g. `/mnt/garbage`) now automatically appends `/vault.db` instead of rejecting the input, so users can just pick a folder
+- Database Location UI: added an "Apply" button for manually typed paths and "Reset to default" link when a custom location is set
+- PathBrowser breadcrumb navigation: fixed duplicate `/mnt` segments in the breadcrumb trail; breadcrumbs now correctly show `/mnt`, `/mnt / cache`, `/mnt / cache / appdata`, etc. without repetition
 - Tooltip clipping when positioned near viewport edges — switched from `position: absolute` to `position: fixed` with JS-calculated viewport coordinates and horizontal clamping
 - Container path exclusion presets now load correctly when Vault runs behind the Unraid web proxy; `fetchContainerPresets()` uses `buildApiRequest()` instead of raw `fetch()` to route through the authenticated proxy endpoint (Refs #11)
 - Stuck backup jobs can no longer run indefinitely — timeout and stall detection ensure jobs are always bounded (Refs #28)

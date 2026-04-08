@@ -38,6 +38,10 @@ type Server struct {
 	nextRunResolver func(jobID int64) (string, bool)
 
 	settingsHandler *handlers.SettingsHandler
+
+	// configChangeHook is called after any handler mutates persistent
+	// configuration. It flushed the DB to USB flash.
+	configChangeHook handlers.ConfigChangeHook
 }
 
 func NewServer(database *db.DB, cfg ServerConfig) *Server {
@@ -64,6 +68,13 @@ func (s *Server) SetScheduleReloader(fn ScheduleReloader) {
 // SetNextRunResolver sets the function used by job handlers to look up next run times.
 func (s *Server) SetNextRunResolver(fn func(jobID int64) (string, bool)) {
 	s.nextRunResolver = fn
+}
+
+// SetConfigChangeHook registers a function called after any handler mutates
+// persistent configuration (jobs, storage, settings, replication). The hook
+// runs in a goroutine to avoid blocking the HTTP response.
+func (s *Server) SetConfigChangeHook(fn handlers.ConfigChangeHook) {
+	s.configChangeHook = fn
 }
 
 // Hub returns the WebSocket hub for external use (e.g., scheduler).

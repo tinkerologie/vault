@@ -24,8 +24,17 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(BodySizeLimit(maxRequestBodySize))
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// Wrap the config change hook to run asynchronously so it doesn't
+		// block HTTP responses. The hook flushes the DB to USB flash.
+		asyncHook := handlers.ConfigChangeHook(func() {
+			if s.configChangeHook != nil {
+				go s.configChangeHook()
+			}
+		})
+
 		// Settings handler is shared between public and authenticated routes.
 		settingsH := handlers.NewSettingsHandler(s.db, s.config.ServerKey)
+		settingsH.SetConfigChangeHook(asyncHook)
 		s.settingsHandler = settingsH
 
 		// Public endpoints.
@@ -38,6 +47,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/health/summary", healthH.Summary)
 
 		storageH := handlers.NewStorageHandler(s.db, s.runner)
+		storageH.SetConfigChangeHook(asyncHook)
 		r.Route("/storage", func(r chi.Router) {
 			// Storage CRUD is allowed in replica mode — replicas need
 			// storage destinations configured for replication targets.
@@ -61,6 +71,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			}
 			return nil
 		})
+		jobH.SetConfigChangeHook(asyncHook)
 		if s.nextRunResolver != nil {
 			jobH.SetNextRunResolver(s.nextRunResolver)
 		}
@@ -130,6 +141,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			}
 			return nil
 		})
+		replH.SetConfigChangeHook(asyncHook)
 		r.Route("/replication", func(r chi.Router) {
 			r.Get("/", replH.List)
 			r.Post("/", replH.Create)
@@ -201,11 +213,25 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	if s.config.ReadOnly {
 		mode = "replica"
 	}
-	respondJSON(w, http.StatusOK, map[string]string{
+	resp := map[string]any{
 		"status":  "ok",
 		"version": s.config.Version,
 		"mode":    mode,
-	})
+	}
+
+	// Include restoration info if available (hybrid mode).
+	if s.settingsHandler != nil {
+		if ri := s.settingsHandler.RestorationInfo(); ri != nil {
+			resp["restoration_source"] = ri.Source
+			resp["restoration_path"] = ri.Path
+			resp["restoration_reason"] = ri.Reason
+			if ri.Source == "usb_backup" || ri.Source == "fresh" {
+				resp["degraded"] = true
+			}
+		}
+	}
+
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // buildInjectedIndex reads index.html from the embedded SPA filesystem and

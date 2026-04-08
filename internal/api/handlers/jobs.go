@@ -19,10 +19,11 @@ type ScheduleReloader = func() error
 type NextRunResolver = func(jobID int64) (string, bool)
 
 type JobHandler struct {
-	db          *db.DB
-	runner      *runner.Runner
-	schedReload ScheduleReloader
-	nextRun     NextRunResolver
+	db             *db.DB
+	runner         *runner.Runner
+	schedReload    ScheduleReloader
+	nextRun        NextRunResolver
+	onConfigChange ConfigChangeHook
 }
 
 func NewJobHandler(database *db.DB, r *runner.Runner, reload ScheduleReloader) *JobHandler {
@@ -32,6 +33,19 @@ func NewJobHandler(database *db.DB, r *runner.Runner, reload ScheduleReloader) *
 // SetNextRunResolver sets the function used to look up the next scheduled run.
 func (h *JobHandler) SetNextRunResolver(fn NextRunResolver) {
 	h.nextRun = fn
+}
+
+// SetConfigChangeHook registers a function called after job mutations to flush
+// the database to USB flash.
+func (h *JobHandler) SetConfigChangeHook(fn ConfigChangeHook) {
+	h.onConfigChange = fn
+}
+
+// notifyConfigChange calls the config change hook if set.
+func (h *JobHandler) notifyConfigChange() {
+	if h.onConfigChange != nil {
+		h.onConfigChange()
+	}
 }
 
 // reloadScheduler triggers a scheduler reload, logging any errors.
@@ -76,6 +90,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.Job.ID = id
 	respondJSON(w, http.StatusCreated, req.Job)
 	h.reloadScheduler()
+	h.notifyConfigChange()
 }
 
 func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +134,7 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	respondJSON(w, http.StatusOK, req.Job)
 	h.reloadScheduler()
+	h.notifyConfigChange()
 }
 
 func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +154,7 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 	h.reloadScheduler()
+	h.notifyConfigChange()
 }
 
 func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {

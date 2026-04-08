@@ -61,6 +61,7 @@ if [ ! -f "$CONFIG" ]; then
     cat > "$CONFIG" <<'CFGEOF'
 PORT=24085
 BIND_ADDRESS=127.0.0.1
+# SNAPSHOT_PATH — Custom snapshot location (set by the daemon; do not edit manually)
 CFGEOF
 fi
 

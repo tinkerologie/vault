@@ -9,10 +9,12 @@
   let loading = $state(false)
   let breadcrumbs = $derived(
     currentPath
-      ? currentPath.split('/').filter(Boolean).map((seg, i, arr) => ({
-          name: seg,
-          path: '/' + arr.slice(0, i + 1).join('/'),
-        }))
+      ? currentPath.split('/').filter(Boolean)
+          .slice(1) // skip 'mnt' — already shown as the root breadcrumb
+          .map((seg, i, arr) => ({
+            name: seg,
+            path: '/mnt/' + arr.slice(0, i + 1).join('/'),
+          }))
       : []
   )
 

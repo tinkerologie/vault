@@ -19,3 +19,8 @@ func respondJSON(w http.ResponseWriter, status int, data any) {
 func respondError(w http.ResponseWriter, status int, msg string) {
 	respondJSON(w, status, map[string]string{"error": msg})
 }
+
+// ConfigChangeHook is called after a handler mutates persistent configuration
+// (jobs, storage destinations, settings). It triggers an immediate USB flash
+// backup so the flash copy always has fresh data.
+type ConfigChangeHook func()

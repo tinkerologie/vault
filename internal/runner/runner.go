@@ -885,9 +885,9 @@ func (r *Runner) RunJob(jobID int64) {
 		// Auto-backup the SQLite database to storage.
 		r.backupDatabase(dest, basePath)
 
-		// Persist database to cache drive after successful backup.
+		// Persist database to cache drive and USB backup after successful backup.
 		if r.snapshotManager != nil {
-			if err := r.snapshotManager.SaveSnapshot(); err != nil {
+			if err := r.snapshotManager.SaveSnapshotAndUSBBackup(); err != nil {
 				log.Printf("runner: snapshot save error: %v", err)
 			}
 		}

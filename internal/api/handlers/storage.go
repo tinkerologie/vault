@@ -15,12 +15,26 @@ import (
 )
 
 type StorageHandler struct {
-	db     *db.DB
-	runner *runner.Runner
+	db             *db.DB
+	runner         *runner.Runner
+	onConfigChange ConfigChangeHook
 }
 
 func NewStorageHandler(database *db.DB, r *runner.Runner) *StorageHandler {
 	return &StorageHandler{db: database, runner: r}
+}
+
+// SetConfigChangeHook registers a function called after storage mutations to
+// flush the database to USB flash.
+func (h *StorageHandler) SetConfigChangeHook(fn ConfigChangeHook) {
+	h.onConfigChange = fn
+}
+
+// notifyConfigChange calls the config change hook if set.
+func (h *StorageHandler) notifyConfigChange() {
+	if h.onConfigChange != nil {
+		h.onConfigChange()
+	}
 }
 
 func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +62,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	dest.ID = id
 	respondJSON(w, http.StatusCreated, dest)
+	h.notifyConfigChange()
 }
 
 func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +89,7 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, dest)
+	h.notifyConfigChange()
 }
 
 func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +124,7 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+	h.notifyConfigChange()
 }
 
 func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) {

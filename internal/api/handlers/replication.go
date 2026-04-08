@@ -17,10 +17,11 @@ type SyncerProvider = func() *replication.Syncer
 
 // ReplicationHandler handles CRUD and sync operations for replication sources.
 type ReplicationHandler struct {
-	db          *db.DB
-	getSyncer   SyncerProvider
-	serverKey   []byte
-	schedReload ScheduleReloader
+	db             *db.DB
+	getSyncer      SyncerProvider
+	serverKey      []byte
+	schedReload    ScheduleReloader
+	onConfigChange ConfigChangeHook
 }
 
 // NewReplicationHandler creates a new ReplicationHandler.
@@ -39,6 +40,19 @@ func (h *ReplicationHandler) reloadScheduler() {
 		if err := h.schedReload(); err != nil {
 			log.Printf("Warning: scheduler reload failed: %v", err)
 		}
+	}
+}
+
+// SetConfigChangeHook registers a function called after replication mutations
+// to flush the database to USB flash.
+func (h *ReplicationHandler) SetConfigChangeHook(fn ConfigChangeHook) {
+	h.onConfigChange = fn
+}
+
+// notifyConfigChange calls the config change hook if set.
+func (h *ReplicationHandler) notifyConfigChange() {
+	if h.onConfigChange != nil {
+		h.onConfigChange()
 	}
 }
 
@@ -99,6 +113,7 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	src.ID = id
 
 	h.reloadScheduler()
+	h.notifyConfigChange()
 	respondJSON(w, http.StatusCreated, src)
 }
 
@@ -148,6 +163,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.reloadScheduler()
+	h.notifyConfigChange()
 	respondJSON(w, http.StatusOK, src)
 }
 
@@ -166,6 +182,7 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.reloadScheduler()
+	h.notifyConfigChange()
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -15,24 +15,91 @@ import (
 // SnapshotManager handles SQLite backup/restore between the working database
 // and a persistent snapshot file on disk.
 type SnapshotManager struct {
-	db           *DB
-	snapshotPath string
-	lastSnapshot time.Time
-	mu           sync.Mutex
+	db                  *DB
+	snapshotPath        string
+	defaultSnapshotPath string // default path used when override is cleared.
+	usbBackupPath       string // USB flash shadow copy path (empty = disabled).
+	lastSnapshot        time.Time
+	lastUSBBackup       time.Time
+	usbMinInterval      time.Duration // minimum interval between USB writes.
+	restorationInfo     *RestorationInfo
+	mu                  sync.Mutex
+}
+
+// RestorationInfo records which source was used to restore the database at
+// startup. This is used by the health endpoint to report degraded state.
+type RestorationInfo struct {
+	Source string // "primary", "default_cache", "usb_backup", "fresh"
+	Path   string // filesystem path used for restoration
+	Reason string // human-readable explanation
 }
 
 // NewSnapshotManager creates a SnapshotManager that will save/restore snapshots
-// to/from the given path.
-func NewSnapshotManager(database *DB, snapshotPath string) *SnapshotManager {
+// to/from the given path. The defaultPath is used as the fallback when
+// SetSnapshotPath is called with an empty string.
+func NewSnapshotManager(database *DB, snapshotPath, defaultPath string) *SnapshotManager {
 	return &SnapshotManager{
-		db:           database,
-		snapshotPath: snapshotPath,
+		db:                  database,
+		snapshotPath:        snapshotPath,
+		defaultSnapshotPath: defaultPath,
+		usbMinInterval:      1 * time.Hour,
 	}
+}
+
+// SetUSBBackupPath enables the USB shadow backup at the given path.
+func (sm *SnapshotManager) SetUSBBackupPath(path string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.usbBackupPath = path
+}
+
+// SetRestorationInfo records which source was used for DB restoration.
+func (sm *SnapshotManager) SetRestorationInfo(info *RestorationInfo) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.restorationInfo = info
+}
+
+// RestorationSource returns the restoration info recorded at startup.
+func (sm *SnapshotManager) RestorationSource() *RestorationInfo {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return sm.restorationInfo
 }
 
 // SnapshotPath returns the persistent snapshot location.
 func (sm *SnapshotManager) SnapshotPath() string {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 	return sm.snapshotPath
+}
+
+// DefaultSnapshotPath returns the default snapshot path set at construction.
+func (sm *SnapshotManager) DefaultSnapshotPath() string {
+	return sm.defaultSnapshotPath
+}
+
+// SetSnapshotPath changes the snapshot path at runtime and immediately saves
+// a fresh snapshot at the new location. If newPath is empty, the default
+// snapshot path is used. This ensures the target location has up-to-date data.
+func (sm *SnapshotManager) SetSnapshotPath(newPath string) error {
+	if newPath == "" {
+		newPath = sm.defaultSnapshotPath
+	}
+
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o750); err != nil {
+		return fmt.Errorf("creating snapshot directory: %w", err)
+	}
+
+	sm.mu.Lock()
+	sm.snapshotPath = newPath
+	sm.mu.Unlock()
+
+	// Save a fresh snapshot to the new location so it is never stale.
+	if err := sm.SaveSnapshot(); err != nil {
+		return fmt.Errorf("saving initial snapshot at new path: %w", err)
+	}
+	return nil
 }
 
 // LastSnapshot returns the time of the last successful snapshot (mutex-protected).
@@ -122,7 +189,122 @@ func (sm *SnapshotManager) RestoreFromSnapshot() error {
 	return nil
 }
 
-// Close performs a final snapshot save as a flush.
+// FlushToUSB saves the primary snapshot and immediately forces a USB shadow
+// copy regardless of the throttle interval. Call this after configuration
+// changes (job/storage/settings CRUD) so the USB flash always has fresh data.
+// The USB backup is attempted even if the primary snapshot fails, since the
+// USB backup copies directly from the working in-memory DB.
+func (sm *SnapshotManager) FlushToUSB() error {
+	snapErr := sm.SaveSnapshot()
+	sm.saveUSBBackup(true)
+	return snapErr
+}
+
+// Close performs a final snapshot save as a flush, including a USB backup.
 func (sm *SnapshotManager) Close() error {
-	return sm.SaveSnapshot()
+	return sm.FlushToUSB()
+}
+
+// SaveSnapshotAndUSBBackup saves the primary snapshot and, if enough time has
+// passed, also writes a throttled USB shadow copy.
+// The USB backup is attempted even if the primary snapshot fails.
+func (sm *SnapshotManager) SaveSnapshotAndUSBBackup() error {
+	snapErr := sm.SaveSnapshot()
+	sm.saveUSBBackup(false)
+	return snapErr
+}
+
+// saveUSBBackup writes a shadow copy of the working DB to USB flash.
+// If force is false, the write is throttled to usbMinInterval to reduce flash wear.
+func (sm *SnapshotManager) saveUSBBackup(force bool) {
+	sm.mu.Lock()
+	usbPath := sm.usbBackupPath
+	lastBackup := sm.lastUSBBackup
+	interval := sm.usbMinInterval
+	sm.mu.Unlock()
+
+	if usbPath == "" {
+		return
+	}
+
+	if !force && !lastBackup.IsZero() && time.Since(lastBackup) < interval {
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(usbPath), 0o750); err != nil {
+		log.Printf("Warning: failed to create USB backup directory: %v", err)
+		return
+	}
+
+	conn, err := sm.db.DB.Conn(context.Background())
+	if err != nil {
+		log.Printf("Warning: failed to acquire connection for USB backup: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	err = conn.Raw(func(driverConn any) error {
+		type backuper interface {
+			NewBackup(string) (*sqlite.Backup, error)
+		}
+		bck, err := driverConn.(backuper).NewBackup(usbPath)
+		if err != nil {
+			return err
+		}
+		for more := true; more; {
+			more, err = bck.Step(-1)
+			if err != nil {
+				return err
+			}
+		}
+		return bck.Finish()
+	})
+	if err != nil {
+		log.Printf("Warning: USB backup failed: %v", err)
+		return
+	}
+
+	sm.mu.Lock()
+	sm.lastUSBBackup = time.Now()
+	sm.mu.Unlock()
+	log.Printf("USB shadow backup saved to %s", usbPath)
+}
+
+// RestoreFromPath restores the database from the specified source path.
+// Returns an error if the file doesn't exist or restoration fails.
+func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {
+	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+		return fmt.Errorf("snapshot file does not exist: %s", sourcePath)
+	}
+
+	conn, err := sm.db.DB.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("acquire connection: %w", err)
+	}
+	defer conn.Close()
+
+	err = conn.Raw(func(driverConn any) error {
+		type restorer interface {
+			NewRestore(string) (*sqlite.Backup, error)
+		}
+		bck, err := driverConn.(restorer).NewRestore(sourcePath)
+		if err != nil {
+			return err
+		}
+		for more := true; more; {
+			more, err = bck.Step(-1)
+			if err != nil {
+				return err
+			}
+		}
+		return bck.Finish()
+	})
+	if err != nil {
+		return fmt.Errorf("restore from %s: %w", sourcePath, err)
+	}
+
+	sm.mu.Lock()
+	sm.lastSnapshot = time.Now()
+	sm.mu.Unlock()
+	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ruaan-deysel/vault/internal/config"
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/diagnostics"
@@ -23,9 +24,13 @@ type SettingsHandler struct {
 	serverKey       []byte // AES-256 key for sealing secrets at rest.
 	snapshotManager interface {
 		SnapshotPath() string
+		DefaultSnapshotPath() string
+		SetSnapshotPath(string) error
 		LastSnapshot() time.Time
+		RestorationSource() *db.RestorationInfo
 	}
 	diagnosticsCollector *diagnostics.Collector
+	onConfigChange       ConfigChangeHook
 }
 
 // NewSettingsHandler creates a new SettingsHandler.
@@ -36,9 +41,33 @@ func NewSettingsHandler(database *db.DB, serverKey []byte) *SettingsHandler {
 // SetSnapshotManager sets the snapshot manager used by the database info endpoint.
 func (h *SettingsHandler) SetSnapshotManager(sm interface {
 	SnapshotPath() string
+	DefaultSnapshotPath() string
+	SetSnapshotPath(string) error
 	LastSnapshot() time.Time
+	RestorationSource() *db.RestorationInfo
 }) {
 	h.snapshotManager = sm
+}
+
+// RestorationInfo returns the current restoration info, or nil if not available.
+func (h *SettingsHandler) RestorationInfo() *db.RestorationInfo {
+	if h.snapshotManager == nil {
+		return nil
+	}
+	return h.snapshotManager.RestorationSource()
+}
+
+// SetConfigChangeHook registers a function called after settings mutations to
+// flush the database to USB flash.
+func (h *SettingsHandler) SetConfigChangeHook(fn ConfigChangeHook) {
+	h.onConfigChange = fn
+}
+
+// notifyConfigChange calls the config change hook if set.
+func (h *SettingsHandler) notifyConfigChange() {
+	if h.onConfigChange != nil {
+		h.onConfigChange()
+	}
 }
 
 // SetDiagnosticsCollector sets the diagnostics collector for the handler.
@@ -108,13 +137,23 @@ func (h *SettingsHandler) GetDatabaseInfo(w http.ResponseWriter, _ *http.Request
 		if !lastSnap.IsZero() {
 			info["last_snapshot"] = lastSnap
 		}
+
+		// Include restoration info so the UI can display warnings.
+		if ri := h.snapshotManager.RestorationSource(); ri != nil {
+			info["restoration_source"] = ri.Source
+			info["restoration_reason"] = ri.Reason
+			if ri.Source == "usb_backup" || ri.Source == "fresh" {
+				info["degraded"] = true
+			}
+		}
 	}
 
 	respondJSON(w, http.StatusOK, info)
 }
 
 // SetSnapshotPath sets or clears the snapshot path override.
-// Changes take effect on next daemon restart.
+// Changes are applied immediately — a fresh snapshot is saved at the new
+// location so that the next daemon restart sees up-to-date data.
 //
 //	PUT /api/v1/settings/database
 func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +171,11 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// If the path points to an existing directory, automatically append
+		// the default database filename so the user can just pick a folder.
+		if fi, err := os.Stat(normalizedPath); err == nil && fi.IsDir() {
+			normalizedPath = filepath.Join(normalizedPath, "vault.db")
+		}
 		dir := filepath.Dir(normalizedPath)
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			respondError(w, http.StatusBadRequest, "parent directory does not exist")
@@ -145,6 +189,22 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Persist the effective snapshot path to vault.cfg on USB flash so that
+	// the daemon can read it before restoring the database on next reboot.
+	if err := config.WriteCfgValue(config.DefaultCfgPath, "SNAPSHOT_PATH", req.SnapshotPath); err != nil {
+		log.Printf("Warning: failed to persist SNAPSHOT_PATH to vault.cfg: %v", err)
+	}
+
+	// Apply the path change to the running snapshot manager immediately so
+	// that a fresh snapshot is written at the new location. This eliminates
+	// the stale-snapshot problem where the old location retains outdated data.
+	if h.snapshotManager != nil {
+		if err := h.snapshotManager.SetSnapshotPath(req.SnapshotPath); err != nil {
+			log.Printf("Warning: failed to apply snapshot path change at runtime: %v", err)
+		}
+	}
+
+	h.notifyConfigChange()
 	h.GetDatabaseInfo(w, r)
 }
 
@@ -202,6 +262,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return the full settings object.
+	h.notifyConfigChange()
 	h.List(w, r)
 }
 
@@ -382,6 +443,7 @@ func (h *SettingsHandler) SetStagingOverride(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Return updated staging info.
+	h.notifyConfigChange()
 	h.GetStagingInfo(w, r)
 }
 

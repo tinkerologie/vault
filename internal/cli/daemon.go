@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/ruaan-deysel/vault/internal/api"
+	"github.com/ruaan-deysel/vault/internal/config"
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/diagnostics"
@@ -30,9 +31,15 @@ var daemonCmd = &cobra.Command{
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
 
-		// Hybrid mode detection: if a cache drive is available, use a RAM-backed
+		// Hybrid mode detection: if a cache drive is mounted, use a RAM-backed
 		// working database with periodic snapshots to the cache drive. This
 		// avoids USB flash wear from SQLite WAL writes.
+		const (
+			defaultCachePath = "/mnt/cache"
+			defaultSnapPath  = "/mnt/cache/.vault/vault.db"
+			usbBackupPath    = "/boot/config/plugins/vault/vault.db.backup"
+		)
+
 		var (
 			hybridMode   bool
 			snapshotPath string
@@ -40,14 +47,36 @@ var daemonCmd = &cobra.Command{
 			actualDBPath = dbPath
 		)
 
-		if info, err := os.Stat("/mnt/cache"); err == nil && info.IsDir() {
+		// Determine the vault.cfg path (same directory as the DB flag).
+		cfgPath := filepath.Join(filepath.Dir(dbPath), "vault.cfg")
+
+		cacheState := checkCacheMount(defaultCachePath)
+		switch cacheState {
+		case cacheMounted:
 			hybridMode = true
+			log.Printf("Cache drive detected and mounted at %s", defaultCachePath)
+		case cacheEmptyNotMounted:
+			log.Printf("Warning: %s exists but appears unmounted — the array may not be started yet", defaultCachePath)
+			log.Println("Warning: falling back to USB-direct mode with degraded persistence")
+		case cacheNotExist:
+			log.Println("Warning: no cache drive detected at /mnt/cache — database writes go directly to USB flash (increased wear)")
+		}
+
+		if hybridMode {
 			workingDir := "/var/local/vault"
 			if err := os.MkdirAll(workingDir, 0o750); err != nil {
 				return fmt.Errorf("creating hybrid working directory: %w", err)
 			}
 			actualDBPath = filepath.Join(workingDir, "vault.db")
-			snapshotPath = "/mnt/cache/.vault/vault.db"
+
+			// Read the snapshot path from vault.cfg BEFORE any restoration.
+			// This resolves the chicken-and-egg problem where the snapshot_path_override
+			// setting is stored inside the database that hasn't been restored yet.
+			snapshotPath = defaultSnapPath
+			if cfgSnapPath := config.ReadCfgValue(cfgPath, "SNAPSHOT_PATH", ""); cfgSnapPath != "" {
+				snapshotPath = cfgSnapPath
+				log.Printf("Using snapshot path from vault.cfg: %s", snapshotPath)
+			}
 
 			// First-run migration: if the USB DB exists and no snapshot exists
 			// yet, copy the USB DB to the snapshot path so it becomes the seed.
@@ -57,33 +86,33 @@ var daemonCmd = &cobra.Command{
 					if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o750); err != nil {
 						return fmt.Errorf("creating snapshot directory: %w", err)
 					}
-					// Use SQLite backup API via a temporary open to migrate safely.
 					tmpDB, err := db.Open(dbPath)
 					if err != nil {
 						return fmt.Errorf("opening USB database for migration: %w", err)
 					}
-					migrator := db.NewSnapshotManager(tmpDB, snapshotPath)
+					migrator := db.NewSnapshotManager(tmpDB, snapshotPath, defaultSnapPath)
 					if err := migrator.SaveSnapshot(); err != nil {
 						_ = tmpDB.Close()
 						return fmt.Errorf("migrating USB database to snapshot: %w", err)
 					}
 					_ = tmpDB.Close()
 
-					// Remove USB DB to prevent re-migration on next startup.
-					// The data is safely on the cache drive now.
-					if err := os.Remove(dbPath); err != nil {
-						log.Printf("Warning: failed to remove migrated USB database: %v", err)
+					// Preserve the USB DB as a backup instead of deleting it.
+					// This provides a fallback if the cache drive is unavailable on next boot.
+					if err := os.Rename(dbPath, usbBackupPath); err != nil {
+						log.Printf("Warning: failed to preserve USB database as backup: %v", err)
+						// Fall back to removal if rename fails.
+						if rmErr := os.Remove(dbPath); rmErr != nil {
+							log.Printf("Warning: failed to remove migrated USB database: %v", rmErr)
+						}
 					} else {
-						log.Printf("USB database migrated and removed: %s", dbPath)
+						log.Printf("USB database migrated and preserved as backup: %s", usbBackupPath)
 					}
-					// Clean up any leftover .migrated file from older versions.
 					_ = os.Remove(dbPath + ".migrated")
 				}
 			}
 
 			log.Printf("Hybrid mode: working DB at %s, snapshots at %s", actualDBPath, snapshotPath)
-		} else {
-			log.Println("Warning: no cache drive detected at /mnt/cache — database writes go directly to USB flash (increased wear)")
 		}
 
 		database, err := db.Open(actualDBPath)
@@ -92,28 +121,29 @@ var daemonCmd = &cobra.Command{
 		}
 		defer func() { database.Close() }()
 
-		// In hybrid mode, restore the latest snapshot into the working DB,
-		// then close and re-open so schema migrations run on the restored data.
+		// In hybrid mode, attempt restoration using a fallback chain.
 		if hybridMode {
-			snapshotMgr = db.NewSnapshotManager(database, snapshotPath)
-			if err := snapshotMgr.RestoreFromSnapshot(); err != nil {
-				return fmt.Errorf("restoring snapshot: %w", err)
-			}
+			snapshotMgr = db.NewSnapshotManager(database, snapshotPath, defaultSnapPath)
+			restorationInfo := restoreWithFallback(snapshotMgr, snapshotPath, defaultSnapPath, usbBackupPath)
+			snapshotMgr.SetRestorationInfo(restorationInfo)
+			log.Printf("Database restoration: source=%s path=%s (%s)",
+				restorationInfo.Source, restorationInfo.Path, restorationInfo.Reason)
+
 			_ = database.Close()
 			database, err = db.Open(actualDBPath)
 			if err != nil {
 				return fmt.Errorf("re-opening database after snapshot restore: %w", err)
 			}
-			// Check for a user-configured snapshot path override.
-			if override, err := database.GetSetting("snapshot_path_override", ""); err == nil && override != "" {
-				snapshotPath = override
-				log.Printf("Using custom snapshot path: %s", snapshotPath)
-				if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o750); err != nil {
-					log.Printf("Warning: failed to create custom snapshot directory: %v", err)
-				}
-			}
-			// Re-create the snapshot manager with the fresh DB handle.
-			snapshotMgr = db.NewSnapshotManager(database, snapshotPath)
+
+			// Re-create the snapshot manager with the final DB handle.
+			// vault.cfg is the sole authority for the snapshot path — no
+			// sync-back from the restored DB's snapshot_path_override setting.
+			// The running SetSnapshotPath handler writes both DB and vault.cfg
+			// atomically and saves a fresh snapshot at the new location, so
+			// existing snapshots are always consistent with vault.cfg.
+			snapshotMgr = db.NewSnapshotManager(database, snapshotPath, defaultSnapPath)
+			snapshotMgr.SetUSBBackupPath(usbBackupPath)
+			snapshotMgr.SetRestorationInfo(restorationInfo)
 		}
 
 		// Prune activity log entries older than 90 days on startup.
@@ -181,7 +211,19 @@ var daemonCmd = &cobra.Command{
 		if hybridMode && snapshotMgr != nil {
 			srv.Runner().SetSnapshotManager(snapshotMgr)
 			srv.SettingsHandler().SetSnapshotManager(snapshotMgr)
+
+			// Flush the database to USB flash after any config mutation
+			// (job/storage/settings/replication CRUD) so the flash copy
+			// always has fresh data and survives reboots.
+			srv.SetConfigChangeHook(func() {
+				if err := snapshotMgr.FlushToUSB(); err != nil {
+					log.Printf("Warning: config change USB flush failed: %v", err)
+				}
+			})
 		}
+
+		// Validate configured paths on startup and log warnings.
+		validateConfiguredPaths(database)
 
 		// Register the diagnostics collector.
 		diagCollector := diagnostics.NewCollector(database, func() diagnostics.RunnerStatus {
