@@ -1,7 +1,7 @@
 <script>
   import { api } from '../lib/api.js'
 
-  let { value = $bindable(''), onselect = () => {} } = $props()
+  let { value = $bindable(''), onselect = () => {}, includeZfs = false } = $props()
 
   let open = $state(false)
   let entries = $state([])
@@ -10,10 +10,9 @@
   let breadcrumbs = $derived(
     currentPath
       ? currentPath.split('/').filter(Boolean)
-          .slice(1) // skip 'mnt' — already shown as the root breadcrumb
           .map((seg, i, arr) => ({
             name: seg,
-            path: '/mnt/' + arr.slice(0, i + 1).join('/'),
+            path: '/' + arr.slice(0, i + 1).join('/'),
           }))
       : []
   )
@@ -21,7 +20,7 @@
   async function browse(path = '') {
     loading = true
     try {
-      const res = await api.browse(path)
+      const res = await api.browse(path, { includeZfs })
       entries = res.entries || []
       currentPath = res.path || ''
     } catch {
@@ -81,7 +80,7 @@
 
         <!-- Breadcrumbs -->
         <div class="px-5 py-2 border-b border-border/50 flex items-center gap-1 text-xs text-text-muted overflow-x-auto">
-          <button onclick={() => goTo('')} class="hover:text-vault shrink-0">/mnt</button>
+          <button onclick={() => goTo('')} class="hover:text-vault shrink-0">/</button>
           {#each breadcrumbs as crumb (crumb.path)}
             <span class="text-text-dim">/</span>
             <button onclick={() => goTo(crumb.path)} class="hover:text-vault shrink-0">{crumb.name}</button>
@@ -91,7 +90,7 @@
         <!-- Current path -->
         <div class="px-5 py-2 bg-surface-3/50">
           <div class="text-xs text-text-dim">Selected path</div>
-          <div class="text-sm font-mono text-vault">{currentPath || '/mnt'}</div>
+          <div class="text-sm font-mono text-vault">{currentPath || '/'}</div>
         </div>
 
         <!-- Directory listing -->

@@ -12,10 +12,12 @@ import (
 	"syscall"
 
 	"github.com/ruaan-deysel/vault/internal/api"
+	"github.com/ruaan-deysel/vault/internal/api/handlers"
 	"github.com/ruaan-deysel/vault/internal/config"
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/diagnostics"
+	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
@@ -211,6 +213,29 @@ var daemonCmd = &cobra.Command{
 		}
 		srv := api.NewServer(database, cfg)
 
+		// Discover NVMe-backed ZFS pools and wire them into the staging
+		// cascade and browse handler for ZFS-aware path browsing.
+		zfsH, zfsErr := engine.NewZFSHandler()
+		if zfsErr == nil {
+			// Prepend NVMe pool mountpoints to the staging cascade so they
+			// are preferred over conventional Unraid pools.
+			if nvmePools, err := zfsH.ListNVMePools(); err == nil && len(nvmePools) > 0 {
+				var paths []string
+				for _, p := range nvmePools {
+					paths = append(paths, p.Mountpoint)
+					log.Printf("NVMe ZFS pool detected: %s → cache base %s", p.Name, p.Mountpoint)
+				}
+				tempdir.PrependCachePaths(paths)
+			} else if err != nil {
+				log.Printf("Warning: failed to discover NVMe ZFS pools: %v", err)
+			}
+
+			// Wire ZFS mountpoint discovery into the browse handler.
+			srv.BrowseHandler().SetZFSLister(&zfsBrowseAdapter{handler: zfsH})
+		} else {
+			log.Printf("Warning: ZFS support disabled: %v", zfsErr)
+		}
+
 		// Register the snapshot manager with the runner so it can save
 		// snapshots after each backup/restore operation.
 		if hybridMode && snapshotMgr != nil {
@@ -297,4 +322,22 @@ func init() {
 	daemonCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	daemonCmd.Flags().String("tls-key", "", "Path to TLS private key file")
 	rootCmd.AddCommand(daemonCmd)
+}
+
+// zfsBrowseAdapter bridges engine.ZFSHandler to the browse handler's
+// ZFSMountpointLister interface.
+type zfsBrowseAdapter struct {
+	handler *engine.ZFSHandler
+}
+
+func (a *zfsBrowseAdapter) ListZFSMountpoints() ([]handlers.ZFSMountInfo, error) {
+	pools, err := a.handler.ListZFSMountpoints()
+	if err != nil {
+		return nil, fmt.Errorf("listing ZFS mountpoints for browse: %w", err)
+	}
+	result := make([]handlers.ZFSMountInfo, len(pools))
+	for i, p := range pools {
+		result[i] = handlers.ZFSMountInfo{Name: p.Name, Mountpoint: p.Mountpoint}
+	}
+	return result, nil
 }

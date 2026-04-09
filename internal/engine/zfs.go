@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -377,4 +378,141 @@ func (cr *countingReader) Read(p []byte) (int, error) {
 		cr.progress(cr.name, pct, fmt.Sprintf("receiving: %d MB read", mb))
 	}
 	return n, err
+}
+
+// ZFSPoolInfo describes a ZFS zpool with its root dataset mountpoint.
+type ZFSPoolInfo struct {
+	Name       string `json:"name"`
+	Mountpoint string `json:"mountpoint"`
+}
+
+// ListNVMePools discovers ZFS zpools where every data vdev is backed by NVMe
+// devices. It returns only pools with valid, accessible mountpoints.
+func (h *ZFSHandler) ListNVMePools() ([]ZFSPoolInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pools, err := h.client.Zpool.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing zpools: %w", err)
+	}
+
+	var result []ZFSPoolInfo
+	for _, pool := range pools {
+		leaves := collectLeafVdevPaths(pool.Vdevs)
+		if len(leaves) == 0 {
+			continue
+		}
+		if !allNVMe(leaves) {
+			continue
+		}
+
+		mountpoint, err := h.poolMountpoint(ctx, pool.Name)
+		if err != nil {
+			log.Printf("zfs: skipping pool %s: %v", pool.Name, err)
+			continue
+		}
+		mountpoint = filepath.Clean(mountpoint)
+		if !isValidMountpoint(mountpoint) {
+			continue
+		}
+		if _, statErr := os.Stat(mountpoint); statErr != nil {
+			continue
+		}
+
+		result = append(result, ZFSPoolInfo{
+			Name:       pool.Name,
+			Mountpoint: mountpoint,
+		})
+	}
+
+	return result, nil
+}
+
+// ListZFSMountpoints returns mountpoints for all accessible ZFS pool root
+// datasets. Used by the browse API to discover ZFS locations for database or
+// staging configuration.
+func (h *ZFSHandler) ListZFSMountpoints() ([]ZFSPoolInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pools, err := h.client.Zpool.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing zpools: %w", err)
+	}
+
+	var result []ZFSPoolInfo
+	for _, pool := range pools {
+		mountpoint, err := h.poolMountpoint(ctx, pool.Name)
+		if err != nil {
+			continue
+		}
+		mountpoint = filepath.Clean(mountpoint)
+		if !isValidMountpoint(mountpoint) {
+			continue
+		}
+		if _, statErr := os.Stat(mountpoint); statErr != nil {
+			continue
+		}
+
+		result = append(result, ZFSPoolInfo{
+			Name:       pool.Name,
+			Mountpoint: mountpoint,
+		})
+	}
+
+	return result, nil
+}
+
+// poolMountpoint retrieves the mountpoint of a pool's root dataset.
+func (h *ZFSHandler) poolMountpoint(ctx context.Context, poolName string) (string, error) {
+	datasets, err := h.client.ZFS.ListByType(ctx, gzfs.DatasetTypeFilesystem, false, poolName)
+	if err != nil {
+		return "", fmt.Errorf("listing datasets for pool %s: %w", poolName, err)
+	}
+	for _, ds := range datasets {
+		if ds.Name == poolName {
+			return ds.Mountpoint, nil
+		}
+	}
+	return "", fmt.Errorf("root dataset for pool %s not found", poolName)
+}
+
+// collectLeafVdevPaths recursively traverses vdev trees and returns device
+// paths of leaf vdevs (those with no children).
+func collectLeafVdevPaths(vdevs map[string]*gzfs.ZPoolVDEV) []string {
+	var paths []string
+	for _, v := range vdevs {
+		if len(v.Vdevs) > 0 {
+			paths = append(paths, collectLeafVdevPaths(v.Vdevs)...)
+		} else if v.Path != "" {
+			paths = append(paths, v.Path)
+		}
+	}
+	return paths
+}
+
+// allNVMe returns true if every path contains "nvme" (case-insensitive).
+func allNVMe(paths []string) bool {
+	for _, p := range paths {
+		if !strings.Contains(strings.ToLower(p), "nvme") {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidMountpoint returns true if the mountpoint is a usable filesystem path.
+// The root filesystem ("/") is explicitly rejected to prevent broadening browse
+// access to the entire host.
+func isValidMountpoint(mp string) bool {
+	switch mp {
+	case "", "none", "-", "legacy":
+		return false
+	}
+	cleaned := filepath.Clean(mp)
+	if !filepath.IsAbs(cleaned) {
+		return false
+	}
+	return cleaned != string(filepath.Separator)
 }

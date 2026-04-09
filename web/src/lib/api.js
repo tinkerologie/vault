@@ -58,7 +58,13 @@ export const api = {
   getRunnerStatus: () => request('GET', '/runner/status'),
 
   // Discovery
-  browse: (path = '') => request('GET', `/browse${path ? '?path=' + encodeURIComponent(path) : ''}`),
+  browse: (path = '', { includeZfs = false } = {}) => {
+    const params = new URLSearchParams()
+    if (path) params.set('path', path)
+    if (includeZfs) params.set('include_zfs', 'true')
+    const qs = params.toString()
+    return request('GET', `/browse${qs ? '?' + qs : ''}`)
+  },
   browseFiles: (path = '') => request('GET', `/browse?files=true${path ? '&path=' + encodeURIComponent(path) : ''}`),
   listContainers: () => request('GET', '/containers'),
   listVMs: () => request('GET', '/vms'),

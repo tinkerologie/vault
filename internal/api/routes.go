@@ -111,6 +111,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		})
 
 		browseH := handlers.NewBrowseHandler()
+		s.browseHandler = browseH
 		r.Get("/browse", browseH.List)
 
 		activityH := handlers.NewActivityHandler(s.db)

@@ -38,6 +38,7 @@ type Server struct {
 	nextRunResolver func(jobID int64) (string, bool)
 
 	settingsHandler *handlers.SettingsHandler
+	browseHandler   *handlers.BrowseHandler
 
 	// configChangeHook is called after any handler mutates persistent
 	// configuration. It flushed the DB to USB flash.
@@ -100,6 +101,11 @@ func (s *Server) Syncer() *replication.Syncer {
 // SettingsHandler returns the settings handler for external configuration.
 func (s *Server) SettingsHandler() *handlers.SettingsHandler {
 	return s.settingsHandler
+}
+
+// BrowseHandler returns the browse handler for external configuration.
+func (s *Server) BrowseHandler() *handlers.BrowseHandler {
+	return s.browseHandler
 }
 
 func (s *Server) Start() error {

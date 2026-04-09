@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- ZFS zpool support for database location: the path browser now includes ZFS pool mountpoints when browsing for custom database snapshot locations via `include_zfs` query parameter (closes #50)
+- ZFS zpool support for temporary work area: NVMe-backed ZFS zpools are automatically detected at daemon startup and prepended to the staging cascade, giving them the highest priority for backup assembly (closes #51)
+- `ListNVMePools()` method on `ZFSHandler` to discover zpools composed entirely of NVMe devices
+- `ListZFSMountpoints()` method on `ZFSHandler` to enumerate all accessible ZFS dataset mountpoints
+- `PrependCachePaths()` function in `tempdir` package to inject high-priority staging paths at runtime
+- `BrowseHandler.SetZFSLister()` for pluggable ZFS mountpoint discovery in the browse API
+- Updated Settings page text to mention ZFS zpools as available locations for database and staging
 - `internal/unraid` package with `DiscoverPools()`, `PreferredPool()`, and `IsMountedPool()` for dynamic Unraid pool detection — replaces hardcoded `/mnt/cache` references across the codebase (closes #49)
 - Contextual tooltips across Settings, Jobs, Storage, and Replication pages — reusable `Tooltip.svelte` component with hover/click-to-toggle, viewport-aware positioning, keyboard dismissal, and full ARIA accessibility (closes #34)
 - Enriched activity logs with contextual details for troubleshooting: backup started/completed and restore completed entries now include job name, backup type, storage destination, duration, and size; per-item container health check results are logged individually under a new "health" category; stop_all health check summary includes aggregate counts (containers checked/healthy/unhealthy) (closes #30)
