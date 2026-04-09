@@ -7,17 +7,39 @@ CONFIG=/boot/config/plugins/vault/vault.cfg
 LOG=/var/log/vault.log
 MAX_LOG_SIZE=$((256 * 1024))
 
-# Read bind address, port, and snapshot path from config.
-# SNAPSHOT_PATH is set by the daemon when the user configures a custom snapshot
-# location. It is read at startup before the database is restored.
+# Read bind address and port from config without sourcing (prevents code injection).
 BIND_ADDRESS=127.0.0.1
 PORT=24085
 if [ -f "$CONFIG" ]; then
-    # shellcheck source=/dev/null
-    source "$CONFIG"
-    BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
-    PORT="${PORT:-24085}"
+    _val="$(grep -E '^BIND_ADDRESS=' "$CONFIG" | head -1 | sed "s/^BIND_ADDRESS=//; s/^[\"']//; s/[\"'].*//")"
+    [ -n "$_val" ] && BIND_ADDRESS="$_val"
+    _val="$(grep -E '^PORT=' "$CONFIG" | head -1 | sed "s/^PORT=//; s/^[\"']//; s/[\"'].*//")"
+    # Only accept numeric port values.
+    if [ -n "$_val" ] && echo "$_val" | grep -Eq '^[0-9]+$'; then
+        PORT="$_val"
+    fi
+    unset _val
 fi
+
+# Validate bind address: only allow 127.0.0.1, 0.0.0.0, or a valid local IP.
+validate_bind_address() {
+    local addr="$1"
+    case "$addr" in
+        127.0.0.1|0.0.0.0|::1|::) return 0 ;;
+    esac
+    # Check if the address is assigned to a local interface.
+    if ip addr show 2>/dev/null | grep -Fq "inet ${addr}/" || \
+       ip addr show 2>/dev/null | grep -Fq "inet6 ${addr}/"; then
+        return 0
+    fi
+    return 1
+}
+
+if ! validate_bind_address "$BIND_ADDRESS"; then
+    echo "Warning: bind address '$BIND_ADDRESS' is not a valid local address; falling back to 127.0.0.1"
+    BIND_ADDRESS=127.0.0.1
+fi
+
 LISTEN_HOST="$BIND_ADDRESS"
 if [[ "$LISTEN_HOST" == *:* && "$LISTEN_HOST" != \[* ]]; then
     LISTEN_HOST="[$LISTEN_HOST]"

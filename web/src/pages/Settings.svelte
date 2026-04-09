@@ -1081,21 +1081,21 @@
         </div>
         {#if databaseInfo.mode === 'hybrid'}
         <div class="px-5 py-4 border-t border-border">
-          <span class="text-xs text-text-muted block mb-1.5">Custom save location <Tooltip text="Overrides where the persistent database snapshot is saved. Changes take effect immediately. You can enter a directory — vault.db will be created inside it automatically." /></span>
+          <span class="text-xs text-text-muted block mb-1.5">Custom save location <Tooltip text="Overrides where the persistent database snapshot is saved." /></span>
           <p class="text-xs text-text-dim mb-2">Choose where the persistent database copy is stored. Defaults to SSD cache.</p>
-          <PathBrowser bind:value={snapshotPathInput} onselect={saveSnapshotPath} />
-          <div class="flex items-center gap-3 mt-2">
-            {#if snapshotPathInput && snapshotPathInput !== (databaseInfo.snapshot_path_override || '')}
-              <button onclick={saveSnapshotPath} disabled={snapshotPathSaving} class="text-xs font-medium text-vault hover:underline disabled:opacity-50">
-                {snapshotPathSaving ? 'Saving…' : 'Apply'}
-              </button>
-            {/if}
-            {#if databaseInfo.snapshot_path_override}
-              <button onclick={resetSnapshotPath} disabled={snapshotPathSaving} class="text-xs text-text-muted hover:text-vault hover:underline disabled:opacity-50">
-                Reset to default
-              </button>
-            {/if}
+          <div class="flex gap-2 items-end">
+            <div class="flex-1">
+              <PathBrowser bind:value={snapshotPathInput} onselect={saveSnapshotPath} />
+            </div>
+            <button onclick={saveSnapshotPath} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault/90 disabled:opacity-50 transition-colors shrink-0">
+              Apply
+            </button>
           </div>
+          {#if databaseInfo.snapshot_path_override}
+            <button onclick={resetSnapshotPath} disabled={snapshotPathSaving} class="mt-2 text-xs text-vault hover:underline">
+              Reset to default
+            </button>
+          {/if}
         </div>
         {/if}
         {#if databaseInfo.mode === 'legacy_usb'}

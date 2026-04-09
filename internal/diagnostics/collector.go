@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/unraid"
 )
 
 // RunnerStatus holds a snapshot of the runner state for diagnostics.
@@ -256,7 +257,7 @@ func (c *Collector) collectDatabaseInfo() DatabaseInfo {
 	// Detect hybrid mode by checking for a snapshot path setting.
 	if override, err := c.db.GetSetting("snapshot_path_override", ""); err == nil && override != "" {
 		info.Mode = "hybrid"
-	} else if _, err := os.Stat("/mnt/cache"); err == nil {
+	} else if pool := unraid.PreferredPool(); pool != "" && unraid.IsMountedPool(pool) {
 		info.Mode = "hybrid"
 	}
 

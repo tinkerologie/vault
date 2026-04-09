@@ -19,6 +19,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
+	"github.com/ruaan-deysel/vault/internal/unraid"
 	"github.com/spf13/cobra"
 )
 
@@ -31,35 +32,39 @@ var daemonCmd = &cobra.Command{
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
 
-		// Hybrid mode detection: if a cache drive is mounted, use a RAM-backed
-		// working database with periodic snapshots to the cache drive. This
+		// Hybrid mode detection: if a pool drive is mounted, use a RAM-backed
+		// working database with periodic snapshots to the pool drive. This
 		// avoids USB flash wear from SQLite WAL writes.
-		const (
-			defaultCachePath = "/mnt/cache"
-			defaultSnapPath  = "/mnt/cache/.vault/vault.db"
-			usbBackupPath    = "/boot/config/plugins/vault/vault.db.backup"
-		)
+		const usbBackupPath = "/boot/config/plugins/vault/vault.db.backup"
 
 		var (
-			hybridMode   bool
-			snapshotPath string
-			snapshotMgr  *db.SnapshotManager
-			actualDBPath = dbPath
+			hybridMode      bool
+			snapshotPath    string
+			snapshotMgr     *db.SnapshotManager
+			actualDBPath    = dbPath
+			detectedPool    string
+			defaultSnapPath string
 		)
 
 		// Determine the vault.cfg path (same directory as the DB flag).
 		cfgPath := filepath.Join(filepath.Dir(dbPath), "vault.cfg")
 
-		cacheState := checkCacheMount(defaultCachePath)
-		switch cacheState {
-		case cacheMounted:
-			hybridMode = true
-			log.Printf("Cache drive detected and mounted at %s", defaultCachePath)
-		case cacheEmptyNotMounted:
-			log.Printf("Warning: %s exists but appears unmounted — the array may not be started yet", defaultCachePath)
-			log.Println("Warning: falling back to USB-direct mode with degraded persistence")
-		case cacheNotExist:
-			log.Println("Warning: no cache drive detected at /mnt/cache — database writes go directly to USB flash (increased wear)")
+		detectedPool = unraid.PreferredPool()
+		if detectedPool != "" {
+			defaultSnapPath = filepath.Join(detectedPool, ".vault", "vault.db")
+			cacheState := checkCacheMount(detectedPool)
+			switch cacheState {
+			case cacheMounted:
+				hybridMode = true
+				log.Printf("Pool drive detected and mounted at %s", detectedPool)
+			case cacheEmptyNotMounted:
+				log.Printf("Warning: %s exists but appears unmounted — the array may not be started yet", detectedPool)
+				log.Println("Warning: falling back to USB-direct mode with degraded persistence")
+			case cacheNotExist:
+				log.Printf("Warning: pool %s not accessible — database writes go directly to USB flash (increased wear)", detectedPool)
+			}
+		} else {
+			log.Println("Warning: no pool drive detected — database writes go directly to USB flash (increased wear)")
 		}
 
 		if hybridMode {

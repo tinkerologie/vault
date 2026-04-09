@@ -16,16 +16,64 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+
+	"github.com/ruaan-deysel/vault/internal/unraid"
 )
 
 // StageDirName is the hidden directory name used for staging.
 const StageDirName = ".vault-stage"
 
-// CachePaths lists paths to try (in order) for fast SSD/NVMe-backed
-// temporary staging. The first writable path wins.
-var CachePaths = []string{
-	"/mnt/cache",
+// cachePaths returns pool paths to try (in order) for fast SSD/NVMe-backed
+// temporary staging. Uses dynamic pool discovery so mirrored or
+// non-standard pool names are included.
+//
+// Tests can override via SetCachePathsForTest.
+var (
+	cachePathsMu   sync.Mutex
+	cachePathsVal  []string
+	cachePathsDone bool
+	cachePathsTest []string // non-nil when overridden by tests
+)
+
+func cachePaths() []string {
+	cachePathsMu.Lock()
+	defer cachePathsMu.Unlock()
+
+	if cachePathsTest != nil {
+		return cachePathsTest
+	}
+
+	// Don't permanently cache an empty result — pools may not be
+	// mounted yet at early startup. Retry discovery on next call.
+	if !cachePathsDone {
+		cachePathsVal = unraid.DiscoverPools()
+		if len(cachePathsVal) > 0 {
+			cachePathsDone = true
+		}
+	}
+	return cachePathsVal
+}
+
+// SetCachePathsForTest overrides the cache paths used by this package.
+// Returns a cleanup function that restores the original behaviour.
+// This is intended for use in tests only.
+func SetCachePathsForTest(paths []string) func() {
+	cachePathsMu.Lock()
+	cachePathsTest = paths
+	cachePathsMu.Unlock()
+	return func() {
+		cachePathsMu.Lock()
+		cachePathsTest = nil
+		cachePathsMu.Unlock()
+	}
+}
+
+// GetCachePaths returns the current pool/cache paths used for staging.
+// This is intended for external callers that need the resolved list.
+func GetCachePaths() []string {
+	return cachePaths()
 }
 
 // StorageConfig is the minimal config subset needed to extract a local path.
@@ -81,7 +129,7 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 	}
 
 	// Try fast cache/SSD paths first.
-	for _, base := range CachePaths {
+	for _, base := range cachePaths() {
 		info, err := os.Stat(base)
 		if err != nil || !info.IsDir() {
 			continue
@@ -153,7 +201,7 @@ func CleanupStale(destinations []StorageConfig) {
 	seen := make(map[string]bool)
 
 	// Scan cache paths.
-	for _, base := range CachePaths {
+	for _, base := range cachePaths() {
 		stageBase := filepath.Join(base, StageDirName)
 		if seen[stageBase] {
 			continue
@@ -208,7 +256,7 @@ func cleanStageDir(stageBase string) {
 // cleanLegacyDirs removes leftover .vault-tmp directories from the old naming
 // scheme. Uses the same cache paths as the current implementation.
 func cleanLegacyDirs(seen map[string]bool) {
-	for _, base := range CachePaths {
+	for _, base := range cachePaths() {
 		legacyBase := filepath.Join(base, ".vault-tmp")
 		if seen[legacyBase] {
 			continue
@@ -224,7 +272,7 @@ func ResolveInfo(destinations []StorageConfig, override string) StagingInfo {
 	info := StagingInfo{Override: override}
 
 	// Build cascade list.
-	for _, base := range CachePaths {
+	for _, base := range cachePaths() {
 		stagePath := filepath.Join(base, StageDirName)
 		ci := CascadeItem{Path: stagePath, Source: "cache"}
 		if fi, err := os.Stat(base); err == nil && fi.IsDir() {

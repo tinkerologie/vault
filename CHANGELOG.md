@@ -8,43 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- Configuration persistence across Unraid server restarts: `SNAPSHOT_PATH` is now saved to `vault.cfg` on USB flash and read at startup before database restoration, resolving the chicken-and-egg problem where the snapshot path was only stored inside the database (Refs #48)
-- USB shadow backup: the daemon writes a throttled copy of the database to `/boot/config/plugins/vault/vault.db.backup` on USB flash as a last-resort fallback; forced on graceful shutdown
-- Immediate USB flash backup on configuration changes: any job, storage, settings, or replication mutation triggers an unthrottled `FlushToUSB` so the flash copy always has fresh data for reboot recovery
-- Fallback restoration chain at startup: tries configured snapshot path → default cache path → USB backup → fresh database, with detailed logging of which source was used
-- Cache mount detection at startup: distinguishes between `/mnt/cache` not existing, existing but unmounted, and mounted — logs warnings and falls back gracefully when cache is unavailable
-- Health endpoint (`GET /api/v1/health`) now includes `restoration_source`, `restoration_path`, `restoration_reason`, and `degraded` fields to report database restoration status
-- Database info endpoint (`GET /api/v1/settings/database`) now includes `restoration_source`, `restoration_reason`, and `degraded` fields
-- `internal/config/vaultcfg.go`: `ReadCfg`, `ReadCfgValue`, `WriteCfgValue` helpers for reading/writing the shell-sourceable `vault.cfg` INI file on USB flash
-- `internal/cli/restore.go`: `restoreWithFallback` implements the 4-level fallback chain; `validateConfiguredPaths` checks accessibility of user-configured paths at startup
-- ZFS dataset backup and restore engine using pure-Go `gzfs` library — supports full and incremental ZFS send/receive streams with progress tracking (Refs #4)
-- ZFS dataset discovery endpoint `GET /api/v1/zfs` lists ZFS filesystems and volumes available for backup
-- ZFS Datasets tab in the job creation item picker with dataset type badges (Filesystem/Volume), mountpoint, and used-space indicators
-- ZFS dataset count displayed in the job summary card alongside containers, VMs, folders, and plugins
-- `zfs_meta.json` sidecar written alongside each ZFS send stream to record dataset name, snapshot, pool, and backup type for reliable restore
-- Automatic cleanup of old vault-created ZFS snapshots after successful backup, keeping only the latest
-- Snapshot cleanup on send failure to prevent orphaned ZFS snapshots
-- Cloud replication targets — Google Drive and OneDrive now available as replication target types alongside Remote Vault Server
-- Push-based cloud sync engine (`syncCloudPush`) that uploads local backup restore points to cloud storage adapters
-- Type-aware replication target creation and editing with conditional forms for each target type
-- `type` and `config` columns on `replication_sources` table to support different target types (remote_vault, gdrive, onedrive)
-- Redesigned Create Backup Job wizard from 3 steps to a guided 6-step flow: Type → Items → Schedule → Details → Advanced → Review (closes #36)
-- New `TypePicker` component for Step 1: card-based multi-select grid with automatic item discovery, per-type color coding, and availability detection for Containers, VMs, Folders, Flash Drive, Plugins, and ZFS Datasets
-- `ItemPicker` now accepts an `allowedTypes` prop to filter visible tabs based on the types selected in Step 1; single-type selection hides the tab bar entirely
-- Auto-generated job name suggestions based on selected backup types (e.g. "Containers + VMs Backup")
-- Advanced settings (Step 5) grouped into collapsible accordion sections: Retention, Scripts, Verification, VM Restore Verify, and Container Exclusions — contextually shown based on selected types
-- Contextual tooltips across Settings, Jobs, Storage, and Replication pages — reusable `Tooltip.svelte` component with hover/click-to-toggle, viewport-aware positioning, keyboard dismissal, and full ARIA accessibility (Refs #34)
-- Enriched activity logs with contextual details for troubleshooting: backup started/completed and restore completed entries now include job name, backup type, storage destination, duration, and size; per-item container health check results are logged individually under a new "health" category; stop_all health check summary includes aggregate counts (containers checked/healthy/unhealthy) (Refs #30)
+- `internal/unraid` package with `DiscoverPools()`, `PreferredPool()`, and `IsMountedPool()` for dynamic Unraid pool detection — replaces hardcoded `/mnt/cache` references across the codebase (closes #49)
+- Contextual tooltips across Settings, Jobs, Storage, and Replication pages — reusable `Tooltip.svelte` component with hover/click-to-toggle, viewport-aware positioning, keyboard dismissal, and full ARIA accessibility (closes #34)
+- Enriched activity logs with contextual details for troubleshooting: backup started/completed and restore completed entries now include job name, backup type, storage destination, duration, and size; per-item container health check results are logged individually under a new "health" category; stop_all health check summary includes aggregate counts (containers checked/healthy/unhealthy) (closes #30)
 - "Health" category filter on the Logs page to isolate container health check entries
 - Smart formatting for activity log detail badges: backup types are capitalised, durations show unit suffixes, byte sizes are human-readable (e.g. 2.2 GB), and null values are hidden
-- Diagnostic bundle download: `GET /api/v1/settings/diagnostics` endpoint and "Download diagnostics bundle" button on the Settings page generates a ZIP containing system info, database details, storage destinations, job configurations, recent run history, and activity logs with a unique correlation ID for support workflows (Refs #29)
+- Diagnostic bundle download: `GET /api/v1/settings/diagnostics` endpoint and "Download diagnostics bundle" button on the Settings page generates a ZIP containing system info, database details, storage destinations, job configurations, recent run history, and activity logs with a unique correlation ID for support workflows (closes #29)
 - `internal/diagnostics` package with collector, ZIP packager, and comprehensive redaction for sensitive data (passwords, API keys, tokens, webhook secrets, inline URL credentials)
 - `ListRecentRuns(limit)` database method for fetching recent job runs across all jobs
-- Purge activity logs: `DELETE /api/v1/activity` endpoint and "Purge" button on the Logs page with confirmation dialog to permanently delete all activity log entries (Refs #32)
-- Purge job run history: `DELETE /api/v1/history` endpoint and "Purge" button on the History page with confirmation dialog to permanently delete all job run records (Refs #32)
+- Purge activity logs: `DELETE /api/v1/activity` endpoint and "Purge" button on the Logs page with confirmation dialog to permanently delete all activity log entries (closes #32)
+- Purge job run history: `DELETE /api/v1/history` endpoint and "Purge" button on the History page with confirmation dialog to permanently delete all job run records (closes #32)
 - `PurgeJobRuns()` database method for bulk deletion of job run history; activity log purge reuses `DeleteOldActivityLogs(0)` to clear all entries
 - Job run history purge actions are logged in the activity log with the count of deleted records
-- Cancel API endpoint `POST /api/v1/jobs/{id}/cancel` to abort a running backup job (Refs #28)
+- Cancel API endpoint `POST /api/v1/jobs/{id}/cancel` to abort a running backup job (closes #28)
 - Cancellable context propagated through the entire backup pipeline: Runner → engine handlers → tar/copy I/O operations
 - 4-hour job timeout with automatic cancellation via `context.WithTimeout`
 - Stall detection: warns after 30 minutes of no progress, auto-cancels after 2 hours of inactivity
@@ -53,29 +29,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - "cancelled" job run status with descriptive log messages (user-initiated vs timeout)
 - Context-aware `contextCopy` helper that checks for cancellation every 32 KiB during file I/O
 - `ctx.Err()` checks in `filepath.Walk` callbacks to abort directory traversal on cancellation
-- Backup target category toggles in Settings → General: independently enable/disable tracking for Containers, Virtual Machines, and Flash Drive; disabled categories are excluded from protection status on the Dashboard and readiness metrics on the Recovery page (Refs #20)
+- Backup target category toggles in Settings → General: independently enable/disable tracking for Containers, Virtual Machines, and Flash Drive; disabled categories are excluded from protection status on the Dashboard and readiness metrics on the Recovery page (closes #20)
 - Three new settings keys (`container_backup_enabled`, `vm_backup_enabled`, `flash_backup_enabled`) with `"true"` defaults in the settings API
-- Monthly and yearly scheduling now support "First day of month" and "Last day of month" options in the schedule builder UI; last-day jobs use a daily-check pattern on the backend with an `isLastDayOfMonth()` guard so they fire correctly on months of any length (Refs #15)
-- Unraid display time format is now detected from `dynamix.cfg` and injected into the runtime config, allowing the UI to honour the user's 12-hour or 24-hour preference (Refs #12)
+- Monthly and yearly scheduling now support "First day of month" and "Last day of month" options in the schedule builder UI; last-day jobs use a daily-check pattern on the backend with an `isLastDayOfMonth()` guard so they fire correctly on months of any length (closes #15)
+- Unraid display time format is now detected from `dynamix.cfg` and injected into the runtime config, allowing the UI to honour the user's 12-hour or 24-hour preference
 - Go daemon (direct-access mode) now injects `window.__VAULT_RUNTIME_CONFIG__` into the SPA HTML, ensuring time format detection works when accessing Vault directly on port 24085 without the PHP proxy
 - `getTimeFormat()` and `getHour12()` helpers added to `runtime-config.js` for locale-aware time rendering
 - `formatDate()` utility now used consistently for all date/time display in the Storage and Settings pages
 
+### Fixed
+
+- Mirrored SSD cache pools (e.g. `/mnt/cache2`, `/mnt/cache3`) not detected under Settings → Database Location and Temporary Work Area — pool discovery now scans `/mnt/` at runtime using exclusion-based filtering (closes #49)
+- Browse handler filesystem roots now dynamically discover all pool drives instead of relying on a hardcoded "Cache" entry
+- Path traversal vulnerability (CWE-22) in `SnapshotManager` — added `validateSnapshotPath` defense-in-depth validation to `SaveSnapshot`, `SetSnapshotPath`, `RestoreFromSnapshot`, `RestoreFromPath`, `SetUSBBackupPath`, and `saveUSBBackup` with `..` component rejection before `filepath.Clean` + `filepath.Abs` normalisation; uses `filepath.ToSlash` for cross-platform traversal detection (closes #27, closes #28)
+- Data race in `SaveSnapshot` reading `snapshotPath` without mutex protection — now reads the field under lock consistently with other accessors
+- Diagnostics collector hybrid-mode detection now checks that the preferred pool is mounted (matching daemon startup behaviour) instead of only checking directory existence
+- CSRF token validation added to `control.php` for state-changing actions (start, stop, restart, reset-config) — token sourced exclusively from POST
+- IPv6 loopback (`::1`) bind address now connects via `[::1]` instead of `127.0.0.1` in the PHP proxy, fixing connectivity when the daemon binds exclusively to IPv6
+- Bind-address validation in `apply.sh` and `rc.vault` now uses `grep -F` (fixed-string) to prevent regex wildcard matching of IPv4 dots, and `apply.sh` accepts IPv6 loopback/wildcard (`::1`, `::`)
+- `apply.sh` no longer sources the config file directly — safely extracts only the `BIND_ADDRESS` key via grep/sed to prevent arbitrary code execution from user-editable config
+- `apply.sh` now checks `sed -i` exit status and aborts with an error if the config update fails
+- INI sanitisation in `control.php` now strips backslashes in addition to quotes and newlines, preventing backslash-escape attacks on INI quoting
+- Tooltip clipping when positioned near viewport edges — switched from `position: absolute` to `position: fixed` with JS-calculated viewport coordinates and horizontal clamping
+- Container path exclusion presets now load correctly when Vault runs behind the Unraid web proxy; `fetchContainerPresets()` uses `buildApiRequest()` instead of raw `fetch()` to route through the authenticated proxy endpoint (closes #11)
+- Stuck backup jobs can no longer run indefinitely — timeout and stall detection ensure jobs are always bounded (closes #28)
+- Time format detection now falls back to `[notify][time]` in `dynamix.cfg` when `[display][time]` is absent, fixing detection on Unraid 7.x where the time format preference is stored in the notification settings section
+- Unraid Settings/Vault page was blank due to duplicated PHP code in `api.php` causing a syntax error; removed the corrupted duplicate block to restore the service control panel, Web UI button, and port/binding configuration
+- SMB and SFTP storage adapters now honour the "Path" field: frontend forms send `base_path` matching the backend struct, and adapters accept the legacy `path` JSON key as a fallback for backward compatibility (closes #25)
+- Job deletion with "Delete Backup Files" now properly removes empty directories after deleting their contents, fixing the issue where backup files and directories were left on Local and SMB storage (closes #26)
+- SMB adapter `Write()` now propagates `MkdirAll` errors instead of silently ignoring them
+- `ItemPicker` selected-items map wrapped in `$state()` to ensure Svelte 5 reactive tracking (closes #22)
+- Items deleted from Unraid (containers, VMs, folders, plugins) can now be removed from backup jobs via the new remove button in the Backup Order list; stale items that no longer exist on the system are visually flagged with a "Not found" warning indicator (closes #24)
+- Storage form "Save" button now guards against double-submission with a `saving` flag and shows a "Saving…" state while the request is in flight
+- Container volume backups now skip Unix sockets, character/block devices, and named pipes instead of failing with "sockets not supported" errors; affected containers (e.g. those mounting `/var/run/docker.sock`) will complete successfully with a log entry for each skipped special file (closes #5)
+- Monthly schedule day picker now shows all 31 days instead of only days 1–28; previously `Array(27)` omitted days 29, 30, and 31 (closes #9)
+
 ### Changed
 
-- `SnapshotManager` snapshot path is now mutable at runtime via `SetSnapshotPath()` — immediately saves a fresh snapshot at the new location when the user changes the database save location
-- `NewSnapshotManager` now accepts a separate `defaultPath` parameter so reset-to-default resolves correctly without relying on the database
-- Database Location UI: removed "Changes take effect on next daemon restart" text and updated tooltip to "Changes take effect immediately"
-- Runner now saves both the primary snapshot and USB shadow backup after each successful backup job (`SaveSnapshotAndUSBBackup`)
-- `SaveSnapshotAndUSBBackup` and `FlushToUSB` now attempt the USB backup even when the primary snapshot save fails, since the USB backup copies directly from the working in-memory DB
-- USB database file is preserved as `.backup` during hybrid mode migration instead of being deleted
-- Moved Google Drive and OneDrive from the Storage page to the Replication page — Storage now only handles local/network destinations (Local Path, SFTP, SMB, NFS)
-- OAuth endpoints for Google Drive and OneDrive moved from `/api/v1/storage/` to `/api/v1/replication/` (e.g. `/api/v1/replication/gdrive/status`)
-- OAuth handlers changed from `StorageHandler` to `ReplicationHandler` receiver
-- Replication "Add Target" modal now offers three target types: Remote Vault Server, Google Drive, and OneDrive
-- Removed "Local Storage Destination" field from Remote Vault replication targets — remote server uses its own configured storage path automatically
-- Replication target cards now display type-appropriate icons and labels (Google Drive, OneDrive, or server URL)
-- Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (Refs #13)
+- Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)
 - Replaced "SSD Cache (automatic)" label with "Using SSD cache for fast backup processing" and "Custom override" with "Custom location"
 - Renamed "Custom Path (optional)" to "Custom Location" with description: "Override the automatic location. Use this if you want backups to be assembled on a specific drive."
 - Renamed "Cascade order" to "Fallback locations" with description: "Vault tries each location in order and uses the first available one."
@@ -89,27 +80,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `engine.Handler` interface now accepts `context.Context` as the first parameter for `Backup()` and `Restore()`
 - All engine handlers (Container, VM, Folder, Plugin) updated to accept and propagate context
 - `Runner.backupItem()` now receives and passes context to engine handlers
-
-### Fixed
-
-- Database location changes now take effect immediately without requiring a daemon restart; previously, changing or resetting the custom snapshot path required a restart and could be silently reversed by stale data in the old snapshot (Refs #48)
-- Resetting the custom database location back to defaults no longer gets reversed on restart — removed the DB override sync-back that read stale `snapshot_path_override` from cached snapshots and overwrote vault.cfg; `vault.cfg` is now the sole authority for the snapshot path
-- Setting a custom snapshot path to a directory (e.g. `/mnt/garbage`) now automatically appends `/vault.db` instead of rejecting the input, so users can just pick a folder
-- Database Location UI: added an "Apply" button for manually typed paths and "Reset to default" link when a custom location is set
-- PathBrowser breadcrumb navigation: fixed duplicate `/mnt` segments in the breadcrumb trail; breadcrumbs now correctly show `/mnt`, `/mnt / cache`, `/mnt / cache / appdata`, etc. without repetition
-- Tooltip clipping when positioned near viewport edges — switched from `position: absolute` to `position: fixed` with JS-calculated viewport coordinates and horizontal clamping
-- Container path exclusion presets now load correctly when Vault runs behind the Unraid web proxy; `fetchContainerPresets()` uses `buildApiRequest()` instead of raw `fetch()` to route through the authenticated proxy endpoint (Refs #11)
-- Stuck backup jobs can no longer run indefinitely — timeout and stall detection ensure jobs are always bounded (Refs #28)
-- Time format detection now falls back to `[notify][time]` in `dynamix.cfg` when `[display][time]` is absent, fixing detection on Unraid 7.x where the time format preference is stored in the notification settings section
-- Unraid Settings/Vault page was blank due to duplicated PHP code in `api.php` causing a syntax error; removed the corrupted duplicate block to restore the service control panel, Web UI button, and port/binding configuration
-- SMB and SFTP storage adapters now honour the "Path" field: frontend forms send `base_path` matching the backend struct, and adapters accept the legacy `path` JSON key as a fallback for backward compatibility (Refs #25)
-- Job deletion with "Delete Backup Files" now properly removes empty directories after deleting their contents, fixing the issue where backup files and directories were left on Local and SMB storage (Refs #26)
-- SMB adapter `Write()` now propagates `MkdirAll` errors instead of silently ignoring them
-- `ItemPicker` selected-items map wrapped in `$state()` to ensure Svelte 5 reactive tracking (Refs #22)
-- Items deleted from Unraid (containers, VMs, folders, plugins) can now be removed from backup jobs via the new remove button in the Backup Order list; stale items that no longer exist on the system are visually flagged with a "Not found" warning indicator (Refs #24)
-- Container volume backups now skip Unix sockets, character/block devices, and named pipes instead of failing with "sockets not supported" errors; affected containers (e.g. those mounting `/var/run/docker.sock`) will complete successfully with a log entry for each skipped special file (Refs #5)
-- Monthly schedule day picker now shows all 31 days instead of only days 1–28; previously `Array(27)` omitted days 29, 30, and 31 (Refs #9)
-- Storage destination save dialog now has a `saving` guard to prevent double-click duplicate submissions, matching the pattern already used in Jobs (Refs #10)
 
 ### Removed
 

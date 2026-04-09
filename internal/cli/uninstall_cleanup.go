@@ -12,6 +12,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
+	"github.com/ruaan-deysel/vault/internal/unraid"
 	"github.com/spf13/cobra"
 )
 
@@ -53,7 +54,9 @@ var cleanupUninstallCmd = &cobra.Command{
 		cfg.LogPath, _ = cmd.Flags().GetString("log-path")
 		cfg.PIDFile, _ = cmd.Flags().GetString("pid-file")
 		cfg.HybridWorkingDir, _ = cmd.Flags().GetString("hybrid-working-dir")
-		cfg.DefaultSnapshotDB, _ = cmd.Flags().GetString("snapshot-path")
+		if cmd.Flags().Changed("snapshot-path") {
+			cfg.DefaultSnapshotDB, _ = cmd.Flags().GetString("snapshot-path")
+		}
 
 		return runUninstallCleanup(cfg)
 	},
@@ -73,8 +76,12 @@ func init() {
 }
 
 func defaultUninstallCleanupConfig() uninstallCleanupConfig {
-	cachePaths := make([]string, len(tempdir.CachePaths))
-	copy(cachePaths, tempdir.CachePaths)
+	paths := tempdir.GetCachePaths()
+
+	snapshotDB := "/mnt/cache/.vault/vault.db"
+	if pool := unraid.PreferredPool(); pool != "" {
+		snapshotDB = filepath.Join(pool, ".vault", "vault.db")
+	}
 
 	return uninstallCleanupConfig{
 		DBPath:            "/boot/config/plugins/vault/vault.db",
@@ -85,8 +92,8 @@ func defaultUninstallCleanupConfig() uninstallCleanupConfig {
 		LogPath:           "/var/log/vault.log",
 		PIDFile:           "/var/run/vault.pid",
 		HybridWorkingDir:  "/var/local/vault",
-		DefaultSnapshotDB: "/mnt/cache/.vault/vault.db",
-		CachePaths:        cachePaths,
+		DefaultSnapshotDB: snapshotDB,
+		CachePaths:        paths,
 	}
 }
 

@@ -85,10 +85,9 @@ func TestCreateBackupDirLocalStaging(t *testing.T) {
 		Config: `{"path":"` + localPath + `"}`,
 	}
 
-	// Override CachePaths so the cache cascade doesn't match.
-	origPaths := CachePaths
-	CachePaths = []string{"/nonexistent-cache-path"}
-	defer func() { CachePaths = origPaths }()
+	// Override cache paths so the cache cascade doesn't match.
+	restorePaths := SetCachePathsForTest([]string{"/nonexistent-cache-path"})
+	defer restorePaths()
 
 	dir, cleanup, err := CreateBackupDir(dest, "")
 	if err != nil {
@@ -197,10 +196,9 @@ func TestCleanupStale(t *testing.T) {
 	// Write files in one to verify RemoveAll works.
 	os.WriteFile(filepath.Join(stale1, "file.tar"), []byte("data"), 0644)
 
-	// Override CachePaths to avoid scanning real system paths.
-	origPaths := CachePaths
-	CachePaths = []string{"/nonexistent-cache-path"}
-	defer func() { CachePaths = origPaths }()
+	// Override cache paths to avoid scanning real system paths.
+	restorePaths := SetCachePathsForTest([]string{"/nonexistent-cache-path"})
+	defer restorePaths()
 
 	dests := []StorageConfig{
 		{Type: "local", Config: `{"path":"` + localPath + `"}`},
@@ -233,10 +231,9 @@ func TestCleanupStaleLegacy(t *testing.T) {
 	stale, _ := os.MkdirTemp(legacyBase, "backup-*")
 	os.WriteFile(filepath.Join(stale, "data.gz"), []byte("old"), 0644)
 
-	// Override CachePaths so it hits our tmpRoot.
-	origPaths := CachePaths
-	CachePaths = []string{tmpRoot}
-	defer func() { CachePaths = origPaths }()
+	// Override cache paths so it hits our tmpRoot.
+	restorePaths := SetCachePathsForTest([]string{tmpRoot})
+	defer restorePaths()
 
 	CleanupStale(nil)
 
@@ -247,9 +244,8 @@ func TestCleanupStaleLegacy(t *testing.T) {
 
 func TestCleanupStaleNoOp(t *testing.T) {
 	// Should not panic on empty input.
-	origPaths := CachePaths
-	CachePaths = []string{"/nonexistent-cache-path"}
-	defer func() { CachePaths = origPaths }()
+	restorePaths := SetCachePathsForTest([]string{"/nonexistent-cache-path"})
+	defer restorePaths()
 
 	CleanupStale(nil)
 	CleanupStale([]StorageConfig{})

@@ -3,10 +3,12 @@ package handlers
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/ruaan-deysel/vault/internal/unraid"
 )
 
 // BrowseHandler serves filesystem directory listings for the path browser UI.
@@ -25,10 +27,11 @@ type dirEntry struct {
 }
 
 // unraidRoots are the well-known Unraid mount points shown as top-level shortcuts.
+// Note: the "Cache" entry is intentionally omitted here — cache pools (including
+// mirrored and custom-named pools) are discovered dynamically below.
 var unraidRoots = []dirEntry{
 	{Name: "Flash Drive", Path: "/boot", IsDir: true},
 	{Name: "User Shares", Path: "/mnt/user", IsDir: true},
-	{Name: "Cache", Path: "/mnt/cache", IsDir: true},
 	{Name: "Unassigned Devices", Path: "/mnt/disks", IsDir: true},
 	{Name: "Remote Mounts", Path: "/mnt/remotes", IsDir: true},
 }
@@ -69,7 +72,7 @@ func (h *BrowseHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // discoverRoots returns Unraid well-known roots plus dynamically discovered
-// array disks (/mnt/disk1, /mnt/disk2, etc.) and cache pools.
+// array disks (/mnt/disk1, /mnt/disk2, etc.) and cache/pool drives.
 func (h *BrowseHandler) discoverRoots() []dirEntry {
 	roots := make([]dirEntry, 0, len(unraidRoots)+8)
 
@@ -77,6 +80,23 @@ func (h *BrowseHandler) discoverRoots() []dirEntry {
 	for _, r := range unraidRoots {
 		if info, err := os.Stat(r.Path); err == nil && info.IsDir() {
 			roots = append(roots, r)
+		}
+	}
+
+	// Discover pool drives via the shared utility.
+	pools := unraid.DiscoverPools()
+	for _, poolPath := range pools {
+		name := filepath.Base(poolPath)
+		label := "Cache"
+		if name != "cache" {
+			label = "Cache Pool (" + name + ")"
+		}
+		if info, err := os.Stat(poolPath); err == nil && info.IsDir() {
+			roots = append(roots, dirEntry{
+				Name:  label,
+				Path:  poolPath,
+				IsDir: true,
+			})
 		}
 	}
 
@@ -107,14 +127,6 @@ func (h *BrowseHandler) discoverRoots() []dirEntry {
 					IsDir: true,
 				})
 			}
-		}
-		// Match additional cache pools (cache2, cache3, etc.).
-		if strings.HasPrefix(name, "cache") && name != "cache" {
-			roots = append(roots, dirEntry{
-				Name:  "Cache Pool (" + name + ")",
-				Path:  "/mnt/" + name,
-				IsDir: true,
-			})
 		}
 	}
 
