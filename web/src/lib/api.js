@@ -112,7 +112,7 @@ export const api = {
   updateReplicationSource: (id, data) => request('PUT', `/replication/${id}`, data),
   deleteReplicationSource: (id) => request('DELETE', `/replication/${id}`),
   testReplicationSource: (id) => request('POST', `/replication/${id}/test`),
-  testReplicationURL: (url) => request('POST', '/replication/test-url', { url }),
+  testReplicationURL: (url, apiKey = '') => request('POST', '/replication/test-url', { url, api_key: apiKey }),
   syncReplicationSource: (id) => request('POST', `/replication/${id}/sync`),
   listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
 

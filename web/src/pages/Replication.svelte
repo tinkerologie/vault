@@ -110,7 +110,8 @@
     modalTesting = true
     modalTestResult = null
     try {
-      const result = await api.testReplicationURL(form.url)
+      const apiKey = cloudConfig.api_key || ''
+      const result = await api.testReplicationURL(form.url, apiKey)
       modalTestResult = {
         success: true,
         version: result.version,
@@ -575,6 +576,13 @@
           <input id="repl-url" type="url" required bind:value={form.url} placeholder="http://192.168.1.100:24085"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <p class="text-xs text-text-dim mt-1">The base URL of the remote Vault server (include port)</p>
+        </div>
+
+        <div>
+          <label for="repl-apikey" class="block text-sm font-medium text-text mb-1">Remote Vault API Key</label>
+          <input id="repl-apikey" type="password" value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder="Enter the remote server's API key"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+          <p class="text-xs text-text-dim mt-1">The shared API key configured on the remote Vault server for authentication</p>
         </div>
 
         <!-- Test Connection -->

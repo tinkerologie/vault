@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- Remote Vault API Key field on the Add/Edit Replication Target form — allows users to enter the shared API key for authenticating with a remote Vault server during replication sync
+- Replication sync and test-connection now use the configured API key (via `X-API-Key` header) when connecting to authenticated remote Vault instances
+- Test Connection in the replication modal now always performs a live connectivity check against the remote Vault server, verifying the URL is reachable and the server is healthy
+
 - API key management: generate, reveal, rotate, copy, and revoke a shared API key from Settings > Security for authenticating external integrations (Home Assistant, replication) — key is stored sealed (AES-256-GCM) and verified via bcrypt
 - Settings > Security > API Access card showing key status, reveal/copy, rotate, and revoke controls with confirmation dialog
 - `X-API-Key` header support in the replication client for authenticated cross-server sync

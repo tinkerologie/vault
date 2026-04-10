@@ -153,27 +153,61 @@ func TestReplicationHandlerValidation(t *testing.T) {
 	}
 }
 
-func TestReplicationHandlerTestURLValidatesFormatOnly(t *testing.T) {
+func TestReplicationHandlerTestURLConnectsToRemote(t *testing.T) {
 	t.Parallel()
-
 	h, _ := setupReplicationTest(t)
-	body := `{"url":"https://vault.example.com:24085"}`
-	req := httptest.NewRequest(http.MethodPost, "/replication/test-url", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.TestURL(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("TestURL: got %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	t.Run("success - reachable server", func(t *testing.T) {
+		t.Parallel()
+		// Simulate a remote Vault /api/v1/health endpoint.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/health" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","version":"2026.4.0"}`))
+		}))
+		defer srv.Close()
 
-	var resp map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["url"] != "https://vault.example.com:24085" {
-		t.Fatalf("normalized url = %q", resp["url"])
-	}
+		body := `{"url":"` + srv.URL + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/replication/test-url", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.TestURL(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("TestURL: got %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+		}
+		var resp map[string]string
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp["version"] != "2026.4.0" {
+			t.Errorf("version = %q, want %q", resp["version"], "2026.4.0")
+		}
+		if resp["message"] != "Connected successfully" {
+			t.Errorf("message = %q, want %q", resp["message"], "Connected successfully")
+		}
+	})
+
+	t.Run("failure - unreachable server", func(t *testing.T) {
+		t.Parallel()
+		// Use a closed server to guarantee connection refused.
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		closedURL := srv.URL
+		srv.Close()
+
+		body := `{"url":"` + closedURL + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/replication/test-url", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.TestURL(w, req)
+
+		if w.Code != http.StatusBadGateway {
+			t.Fatalf("TestURL: got %d, want %d; body: %s", w.Code, http.StatusBadGateway, w.Body.String())
+		}
+	})
 }
 
 func TestReplicationHandlerCreateRejectsURLWithPath(t *testing.T) {

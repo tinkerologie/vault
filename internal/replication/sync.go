@@ -74,12 +74,34 @@ func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (*SyncResult,
 	}
 }
 
+// remoteVaultConfig holds optional settings for remote_vault replication sources.
+type remoteVaultConfig struct {
+	APIKey string `json:"api_key"`
+}
+
 // syncRemoteVault performs a pull-based sync from a remote Vault instance.
 func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc) (*SyncResult, error) {
 	sourceID := src.ID
 
+	// Extract optional API key from config.
+	var cfg remoteVaultConfig
+	if src.Config != "" && src.Config != "{}" {
+		if err := json.Unmarshal([]byte(src.Config), &cfg); err != nil {
+			errMsg := fmt.Sprintf("invalid config JSON for source %q: %v", src.Name, err)
+			s.updateSyncStatus(sourceID, "failed", errMsg)
+			s.logSyncError(sourceID, src.Name, errMsg)
+			return nil, fmt.Errorf("unmarshal source config: %w", err)
+		}
+	}
+
 	// Build the remote client.
-	client, err := NewClient(src.URL)
+	var client *Client
+	var err error
+	if cfg.APIKey != "" {
+		client, err = NewClientWithAPIKey(src.URL, cfg.APIKey)
+	} else {
+		client, err = NewClient(src.URL)
+	}
 	if err != nil {
 		errMsg := fmt.Sprintf("normalize source url %q: %v", src.Name, err)
 		s.updateSyncStatus(sourceID, "failed", err.Error())

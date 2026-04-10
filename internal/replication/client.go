@@ -43,6 +43,12 @@ func NewClientWithAPIKey(baseURL, apiKey string) (*Client, error) {
 	return c, nil
 }
 
+// SetTimeout overrides the HTTP client timeout. Use a short duration for
+// connectivity checks so the caller doesn't block on slow DNS or TCP connects.
+func (c *Client) SetTimeout(d time.Duration) {
+	c.httpClient.Timeout = d
+}
+
 // NormalizeBaseURL validates and canonicalizes a remote Vault base URL.
 func NormalizeBaseURL(baseURL string) (string, error) {
 	trimmed := strings.TrimSpace(baseURL)
