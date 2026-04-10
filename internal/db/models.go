@@ -90,6 +90,7 @@ type ReplicationSource struct {
 	Type           string     `json:"type"`
 	URL            string     `json:"url"`
 	Config         string     `json:"config"`
+	APIKey         string     `json:"-"`
 	StorageDestID  int64      `json:"storage_dest_id"`
 	Schedule       string     `json:"schedule"`
 	Enabled        bool       `json:"enabled"`

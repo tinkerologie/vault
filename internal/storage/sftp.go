@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -98,7 +99,10 @@ func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
 		if err == nil {
 			return cb
 		}
-		// Fall through on error.
+		// Log the load error and fall through to the next option.
+		log.Printf("Warning: SFTP could not load known_hosts_file %q for host %s: %v. "+
+			"Falling back to insecure host key acceptance — configure a valid known_hosts_file or host_key to prevent MITM attacks.",
+			s.config.KnownHostsFile, s.config.Host, err)
 	}
 
 	// Option 2: Verify against a SHA-256 fingerprint of the host key.
@@ -115,6 +119,8 @@ func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
 	}
 
 	// Fallback: accept any key (backward compatibility with existing configs).
+	log.Printf("Warning: SFTP connection to %s has no host key verification configured. "+
+		"Set host_key or known_hosts_file in storage config to prevent MITM attacks.", s.config.Host)
 	return ssh.InsecureIgnoreHostKey() //nolint:gosec // user chose not to configure host key
 }
 

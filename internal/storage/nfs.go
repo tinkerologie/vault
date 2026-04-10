@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -105,8 +106,12 @@ func (n *NFSAdapter) unmount() {
 	if !n.mounted {
 		return
 	}
-	_ = exec.Command("umount", n.mountDir).Run() //nolint:gosec // mountDir is vault-controlled temp dir
-	_ = os.Remove(n.mountDir)
+	if err := exec.Command("umount", n.mountDir).Run(); err != nil { //nolint:gosec // mountDir is vault-controlled temp dir
+		log.Printf("Warning: nfs unmount %s failed: %v", n.mountDir, err)
+	}
+	if err := os.Remove(n.mountDir); err != nil && !os.IsNotExist(err) {
+		log.Printf("Warning: nfs cleanup %s failed: %v", n.mountDir, err)
+	}
 	n.mounted = false
 	n.local = nil
 }

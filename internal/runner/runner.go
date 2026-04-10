@@ -260,6 +260,8 @@ func (r *countingReader) Read(p []byte) (int, error) {
 // SetSnapshotManager sets the snapshot manager used to persist the database
 // to the cache drive after successful backup jobs.
 func (r *Runner) SetSnapshotManager(sm *db.SnapshotManager) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.snapshotManager = sm
 }
 
@@ -886,8 +888,11 @@ func (r *Runner) RunJob(jobID int64) {
 		r.backupDatabase(dest, basePath)
 
 		// Persist database to cache drive and USB backup after successful backup.
-		if r.snapshotManager != nil {
-			if err := r.snapshotManager.SaveSnapshotAndUSBBackup(); err != nil {
+		// r.mu is already held by RunJob (line 289), so access snapshotManager
+		// directly without re-locking.
+		sm := r.snapshotManager
+		if sm != nil {
+			if err := sm.SaveSnapshotAndUSBBackup(); err != nil {
 				log.Printf("runner: snapshot save error: %v", err)
 			}
 		}

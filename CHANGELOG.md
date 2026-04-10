@@ -6,8 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- API key authentication middleware with loopback exemption: non-localhost requests require a valid `X-API-Key` header when an API key is configured; localhost and Unraid PHP proxy connections are always exempt
+- API key middleware now fails closed on database errors instead of allowing unauthenticated access
+- OAuth callback routes (`/gdrive/callback`, `/onedrive/callback`) are exempt from API key authentication since browser redirects cannot carry custom headers
+- `ReplicationSource.APIKey` is no longer exposed in JSON API responses (`json:"-"`)
+- API key sealed value is written before the hash to prevent partial-failure lockout; hash write failure triggers rollback of the sealed value
+- `api_key_hash` and `api_key_sealed` are redacted from `GET /settings` responses alongside encryption settings
+- `GET /settings/api-key/reveal` response includes `Cache-Control: no-store` to prevent sensitive key caching
+- "Server key not configured" error responses on API key handlers now use generic 500 via `respondInternalError` instead of leaking internal state
+- Fixed `sync.Mutex` deadlock in runner: `RunJob` already holds `r.mu`, removed redundant lock around `snapshotManager` access in snapshot save
+- Clipboard copy in Settings UI now handles errors with an error toast instead of silently failing
+- Middleware test `SetSetting` calls now check for errors to prevent misleading test results
+- API error responses no longer leak internal error details to clients; all 500 responses now return a generic "internal server error" message while the real error is logged server-side (OWASP A09)
+- SMB storage adapter now enforces a 30-second dial timeout via `context.WithTimeout` to prevent indefinite connection hangs
+- SFTP adapter logs a warning when falling back to `InsecureIgnoreHostKey` due to missing host key verification configuration
+- OAuth callback templates (Google Drive, OneDrive) restrict `postMessage` target origin from wildcard `*` to `window.location.origin`
+- Runner `SetSnapshotManager` write is now protected by mutex to prevent a data race with concurrent job execution
+- SMB `smbReadCloser.Close()` now uses `errors.Join` to surface file/share/session close failures instead of silently discarding them
+- NFS adapter `unmount()` now logs errors from `umount` and temp directory removal instead of silently discarding them
+
 ### Added
 
+- API key management: generate, reveal, rotate, copy, and revoke a shared API key from Settings > Security for authenticating external integrations (Home Assistant, replication) — key is stored sealed (AES-256-GCM) and verified via bcrypt
+- Settings > Security > API Access card showing key status, reveal/copy, rotate, and revoke controls with confirmation dialog
+- `X-API-Key` header support in the replication client for authenticated cross-server sync
+- `api_key` column on `replication_sources` table for storing per-source API keys
 - ZFS zpool support for database location: the path browser now includes ZFS pool mountpoints when browsing for custom database snapshot locations via `include_zfs` query parameter (closes #50)
 - ZFS zpool support for temporary work area: NVMe-backed ZFS zpools are automatically detected at daemon startup and prepended to the staging cascade, giving them the highest priority for backup assembly (closes #51)
 - `ListNVMePools()` method on `ZFSHandler` to discover zpools composed entirely of NVMe devices

@@ -86,13 +86,13 @@ func (h *SettingsHandler) GetDiagnostics(w http.ResponseWriter, _ *http.Request)
 
 	bundle, err := h.diagnosticsCollector.Collect()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, fmt.Sprintf("collecting diagnostics: %v", err))
+		respondInternalError(w, fmt.Errorf("collecting diagnostics: %w", err))
 		return
 	}
 
 	zipReader, err := diagnostics.PackageAsZip(bundle)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, fmt.Sprintf("packaging diagnostics: %v", err))
+		respondInternalError(w, fmt.Errorf("packaging diagnostics: %w", err))
 		return
 	}
 	if closer, ok := zipReader.(io.Closer); ok {
@@ -185,7 +185,7 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.db.SetSetting("snapshot_path_override", req.SnapshotPath); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -213,7 +213,7 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.db.GetAllSettings()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -244,6 +244,8 @@ var sensitiveSettingKeys = []string{
 	"encryption_passphrase",
 	"encryption_passphrase_hash",
 	"encryption_passphrase_sealed",
+	"api_key_hash",
+	"api_key_sealed",
 }
 
 // Update accepts a JSON object of key-value pairs and upserts them.
@@ -256,7 +258,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	for k, v := range incoming {
 		if err := h.db.SetSetting(k, v); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondInternalError(w, err)
 			return
 		}
 	}
@@ -293,12 +295,12 @@ func (h *SettingsHandler) SetEncryption(w http.ResponseWriter, r *http.Request) 
 
 	hash, err := crypto.HashPassphrase(req.Passphrase)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
 	if err := h.db.SetSetting("encryption_passphrase_hash", hash); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -306,11 +308,11 @@ func (h *SettingsHandler) SetEncryption(w http.ResponseWriter, r *http.Request) 
 	if len(h.serverKey) > 0 {
 		sealed, sealErr := crypto.Seal(h.serverKey, req.Passphrase)
 		if sealErr != nil {
-			respondError(w, http.StatusInternalServerError, "sealing passphrase: "+sealErr.Error())
+			respondInternalError(w, fmt.Errorf("sealing passphrase: %w", sealErr))
 			return
 		}
 		if err := h.db.SetSetting("encryption_passphrase_sealed", sealed); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondInternalError(w, err)
 			return
 		}
 	}
@@ -375,13 +377,13 @@ func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http
 	sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", "")
 	if sealed != "" {
 		if len(h.serverKey) == 0 {
-			respondError(w, http.StatusInternalServerError, "server key is not configured")
+			respondInternalError(w, fmt.Errorf("server key is not configured"))
 			return
 		}
 
 		passphrase, err := crypto.Unseal(h.serverKey, sealed)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, "unsealing passphrase: "+err.Error())
+			respondInternalError(w, fmt.Errorf("unsealing passphrase: %w", err))
 			return
 		}
 
@@ -403,7 +405,7 @@ func (h *SettingsHandler) GetStagingInfo(w http.ResponseWriter, r *http.Request)
 	override, _ := h.db.GetSetting("staging_dir_override", "")
 	dests, err := h.db.ListStorageDestinations()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	configs := make([]tempdir.StorageConfig, len(dests))
@@ -438,7 +440,7 @@ func (h *SettingsHandler) SetStagingOverride(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.db.SetSetting("staging_dir_override", req.Override); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -476,4 +478,122 @@ func (h *SettingsHandler) TestDiscordWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Test notification sent"})
+}
+
+// GetAPIKeyStatus returns whether an API key has been configured.
+//
+//	GET /api/v1/settings/api-key
+func (h *SettingsHandler) GetAPIKeyStatus(w http.ResponseWriter, _ *http.Request) {
+	hash, _ := h.db.GetSetting("api_key_hash", "")
+	respondJSON(w, http.StatusOK, map[string]any{
+		"enabled": hash != "",
+	})
+}
+
+// GenerateAPIKey creates a new API key, stores it sealed + hashed, and
+// returns the plaintext key once. Subsequent reads use GetAPIKey.
+//
+//	POST /api/v1/settings/api-key/generate
+func (h *SettingsHandler) GenerateAPIKey(w http.ResponseWriter, _ *http.Request) {
+	key, err := crypto.GenerateAPIKey()
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("generating API key: %w", err))
+		return
+	}
+
+	hash, err := crypto.HashPassphrase(key)
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("hashing API key: %w", err))
+		return
+	}
+
+	if len(h.serverKey) == 0 {
+		respondInternalError(w, fmt.Errorf("server key is not configured"))
+		return
+	}
+
+	sealed, err := crypto.Seal(h.serverKey, key)
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("sealing API key: %w", err))
+		return
+	}
+
+	// Write sealed key first so that if the hash write fails no auth is
+	// enabled yet, avoiding a state where remote clients get locked out.
+	if err := h.db.SetSetting("api_key_sealed", sealed); err != nil {
+		respondInternalError(w, fmt.Errorf("storing sealed API key: %w", err))
+		return
+	}
+	if err := h.db.SetSetting("api_key_hash", hash); err != nil {
+		// Roll back the sealed value to avoid a dangling sealed key.
+		_ = h.db.SetSetting("api_key_sealed", "")
+		respondInternalError(w, fmt.Errorf("storing API key hash: %w", err))
+		return
+	}
+
+	h.notifyConfigChange()
+	respondJSON(w, http.StatusCreated, map[string]string{
+		"api_key": key,
+		"message": "API key generated — you can reveal it later from Settings › Security",
+	})
+}
+
+// GetAPIKey returns the stored API key by unsealing it. This allows the
+// user to view/copy the key from the Settings UI.
+//
+//	GET /api/v1/settings/api-key/reveal
+func (h *SettingsHandler) GetAPIKey(w http.ResponseWriter, _ *http.Request) {
+	sealed, _ := h.db.GetSetting("api_key_sealed", "")
+	if sealed == "" {
+		respondError(w, http.StatusNotFound, "no API key configured")
+		return
+	}
+
+	if len(h.serverKey) == 0 {
+		respondInternalError(w, fmt.Errorf("server key is not configured"))
+		return
+	}
+
+	key, err := crypto.Unseal(h.serverKey, sealed)
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("unsealing API key: %w", err))
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	respondJSON(w, http.StatusOK, map[string]string{"api_key": key})
+}
+
+// RotateAPIKey replaces the existing API key with a new random one.
+//
+//	POST /api/v1/settings/api-key/rotate
+func (h *SettingsHandler) RotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	// Verify an existing key is set.
+	hash, _ := h.db.GetSetting("api_key_hash", "")
+	if hash == "" {
+		respondError(w, http.StatusBadRequest, "no existing API key to rotate — generate one first")
+		return
+	}
+
+	// Generate handles all storage — reuse the handler.
+	h.GenerateAPIKey(w, r)
+}
+
+// RevokeAPIKey removes the stored API key, disabling authentication.
+//
+//	DELETE /api/v1/settings/api-key
+func (h *SettingsHandler) RevokeAPIKey(w http.ResponseWriter, _ *http.Request) {
+	if err := h.db.SetSetting("api_key_hash", ""); err != nil {
+		respondInternalError(w, fmt.Errorf("clearing API key hash: %w", err))
+		return
+	}
+	if err := h.db.SetSetting("api_key_sealed", ""); err != nil {
+		respondInternalError(w, fmt.Errorf("clearing sealed API key: %w", err))
+		return
+	}
+
+	h.notifyConfigChange()
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "API key revoked — authentication disabled",
+	})
 }

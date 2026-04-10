@@ -25,13 +25,13 @@ func NewRecoveryHandler(database *db.DB, version string) *RecoveryHandler {
 func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	jobs, err := h.db.ListJobs()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
 	storageDests, err := h.db.ListStorageDestinations()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 

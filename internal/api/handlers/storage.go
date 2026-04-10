@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -40,7 +41,7 @@ func (h *StorageHandler) notifyConfigChange() {
 func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
 	dests, err := h.db.ListStorageDestinations()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	for i := range dests {
@@ -57,7 +58,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.db.CreateStorageDestination(dest)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	dest.ID = id
@@ -85,7 +86,7 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	dest.ID = id
 	if err := h.db.UpdateStorageDestination(dest); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, dest)
@@ -98,7 +99,7 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Check for dependent jobs.
 	jobCount, err := h.db.CountJobsByStorageDestID(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	if jobCount > 0 && r.URL.Query().Get("force") != "true" {
@@ -120,7 +121,7 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteStorageDestination(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -160,7 +161,7 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 
 	manifests, err := h.runner.ScanStorageManifests(dest)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -203,7 +204,7 @@ func (h *StorageHandler) Import(w http.ResponseWriter, r *http.Request) {
 
 	imported, err := h.runner.ImportBackups(id, req.Backups)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -239,7 +240,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to create storage adapter: "+err.Error())
+		respondInternalError(w, fmt.Errorf("creating storage adapter: %w", err))
 		return
 	}
 
@@ -254,7 +255,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	// Write to a temporary file first.
 	tmpFile, err := os.CreateTemp("", "vault-restore-*.db")
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to create temp file: "+err.Error())
+		respondInternalError(w, fmt.Errorf("creating temp file: %w", err))
 		return
 	}
 	tmpPath := tmpFile.Name()
@@ -262,7 +263,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(tmpFile, rc); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		respondError(w, http.StatusInternalServerError, "failed to download database: "+err.Error())
+		respondInternalError(w, fmt.Errorf("downloading database: %w", err))
 		return
 	}
 	_ = tmpFile.Close()
@@ -290,7 +291,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	srcFile, err := os.Open(tmpPath)
 	if err != nil {
 		_ = os.Remove(tmpPath)
-		respondError(w, http.StatusInternalServerError, "failed to open restored database: "+err.Error())
+		respondInternalError(w, fmt.Errorf("opening restored database: %w", err))
 		return
 	}
 
@@ -298,7 +299,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_ = srcFile.Close()
 		_ = os.Remove(tmpPath)
-		respondError(w, http.StatusInternalServerError, "failed to replace database: "+err.Error())
+		respondInternalError(w, fmt.Errorf("replacing database: %w", err))
 		return
 	}
 
@@ -306,7 +307,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		_ = srcFile.Close()
 		_ = dstFile.Close()
 		_ = os.Remove(tmpPath)
-		respondError(w, http.StatusInternalServerError, "failed to write database: "+err.Error())
+		respondInternalError(w, fmt.Errorf("writing database: %w", err))
 		return
 	}
 	_ = srcFile.Close()
@@ -329,7 +330,7 @@ func (h *StorageHandler) DependentJobs(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	count, err := h.db.CountJobsByStorageDestID(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"job_count": count})
@@ -348,14 +349,14 @@ func (h *StorageHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "open storage: "+err.Error())
+		respondInternalError(w, fmt.Errorf("open storage: %w", err))
 		return
 	}
 
 	prefix := r.URL.Query().Get("prefix")
 	files, err := adapter.List(prefix)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "list files: "+err.Error())
+		respondInternalError(w, fmt.Errorf("list files: %w", err))
 		return
 	}
 	respondJSON(w, http.StatusOK, files)
@@ -380,7 +381,7 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "open storage: "+err.Error())
+		respondInternalError(w, fmt.Errorf("open storage: %w", err))
 		return
 	}
 

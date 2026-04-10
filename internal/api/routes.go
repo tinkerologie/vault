@@ -24,6 +24,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(BodySizeLimit(maxRequestBodySize))
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// API key auth — only affects non-loopback requests when an API key
+		// has been configured. Loopback/Unraid PHP proxy is always exempt.
+		r.Use(APIKeyAuth(s.db))
 		// Wrap the config change hook to run asynchronously so it doesn't
 		// block HTTP responses. The hook flushes the DB to USB flash.
 		asyncHook := handlers.ConfigChangeHook(func() {
@@ -108,6 +111,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/database", settingsH.GetDatabaseInfo)
 			r.Put("/database", settingsH.SetSnapshotPath)
 			r.Get("/diagnostics", settingsH.GetDiagnostics)
+			r.Get("/api-key", settingsH.GetAPIKeyStatus)
+			r.Get("/api-key/reveal", settingsH.GetAPIKey)
+			r.Post("/api-key/generate", settingsH.GenerateAPIKey)
+			r.Post("/api-key/rotate", settingsH.RotateAPIKey)
+			r.Delete("/api-key", settingsH.RevokeAPIKey)
 		})
 
 		browseH := handlers.NewBrowseHandler()

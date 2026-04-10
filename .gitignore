@@ -21,6 +21,10 @@ coverage.html
 # Dependencies
 vendor/
 
+# Python bytecode (from .claude skills)
+__pycache__/
+*.pyc
+
 # Ansible secrets (inventory contains server credentials)
 ansible/inventory.yml
 

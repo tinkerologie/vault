@@ -13,6 +13,7 @@ import (
 // Client talks to a remote Vault API server.
 type Client struct {
 	baseURL    string
+	apiKey     string
 	httpClient *http.Client
 }
 
@@ -29,6 +30,17 @@ func NewClient(baseURL string) (*Client, error) {
 			Timeout: 10 * time.Minute,
 		},
 	}, nil
+}
+
+// NewClientWithAPIKey creates a replication client that authenticates using
+// the given API key via the X-API-Key header.
+func NewClientWithAPIKey(baseURL, apiKey string) (*Client, error) {
+	c, err := NewClient(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	c.apiKey = apiKey
+	return c, nil
 }
 
 // NormalizeBaseURL validates and canonicalizes a remote Vault base URL.
@@ -209,6 +221,9 @@ func (c *Client) doRequestWithParams(method, path string, params map[string]stri
 	req, err := http.NewRequest(method, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
+	}
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
 	}
 	return c.httpClient.Do(req)
 }

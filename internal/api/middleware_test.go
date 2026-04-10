@@ -5,9 +5,13 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 func TestQuietRequestLogger(t *testing.T) {
@@ -95,6 +99,103 @@ func TestReadOnlyGuard(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/", nil)
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestAPIKeyAuth(t *testing.T) {
+	t.Parallel()
+
+	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+	middleware := APIKeyAuth(database)
+	handler := middleware(okHandler)
+
+	apiKey := "vault_testkey_abc123"
+	hash, err := crypto.HashPassphrase(apiKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		header     string
+		setupKey   bool
+		wantStatus int
+	}{
+		{
+			name:       "loopback exempt ipv4",
+			remoteAddr: "127.0.0.1:12345",
+			setupKey:   true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "loopback exempt ipv6",
+			remoteAddr: "[::1]:12345",
+			setupKey:   true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "no key configured passes through",
+			remoteAddr: "192.168.1.50:12345",
+			setupKey:   false,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "valid key from remote",
+			remoteAddr: "192.168.1.50:12345",
+			header:     apiKey,
+			setupKey:   true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "invalid key from remote",
+			remoteAddr: "192.168.1.50:12345",
+			header:     "vault_wrong_key",
+			setupKey:   true,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "missing key from remote",
+			remoteAddr: "192.168.1.50:12345",
+			header:     "",
+			setupKey:   true,
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset api_key_hash setting for each subtest.
+			if err := database.SetSetting("api_key_hash", ""); err != nil {
+				t.Fatalf("resetting api_key_hash: %v", err)
+			}
+			if tt.setupKey {
+				if err := database.SetSetting("api_key_hash", hash); err != nil {
+					t.Fatalf("setting api_key_hash: %v", err)
+				}
+			}
+
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.header != "" {
+				req.Header.Set("X-API-Key", tt.header)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
 			if w.Code != tt.wantStatus {
 				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
 			}

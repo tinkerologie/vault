@@ -21,7 +21,7 @@ func NewHealthHandler(database *db.DB) *HealthHandler {
 func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	jobs, err := h.db.ListJobs()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 

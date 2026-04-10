@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -60,7 +61,7 @@ func (h *JobHandler) reloadScheduler() {
 func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 	jobs, err := h.db.ListJobs()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, jobs)
@@ -77,13 +78,13 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.db.CreateJob(req.Job)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	for _, item := range req.Items {
 		item.JobID = id
 		if _, err := h.db.AddJobItem(item); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondInternalError(w, err)
 			return
 		}
 	}
@@ -116,18 +117,18 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Job.ID = id
 	if err := h.db.UpdateJob(req.Job); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	if req.Items != nil {
 		if err := h.db.DeleteJobItems(id); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondInternalError(w, err)
 			return
 		}
 		for _, item := range req.Items {
 			item.JobID = id
 			if _, err := h.db.AddJobItem(item); err != nil {
-				respondError(w, http.StatusInternalServerError, err.Error())
+				respondInternalError(w, err)
 				return
 			}
 		}
@@ -149,7 +150,7 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteJob(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -167,7 +168,7 @@ func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	runs, err := h.db.GetJobRuns(id, limit)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, runs)
@@ -181,12 +182,12 @@ func (h *JobHandler) GetRestorePoints(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	rps, err := h.db.ListRestorePoints(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, runner.AnnotateRestorePoints(job, rps))
@@ -259,7 +260,7 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	rps, err := h.db.ListRestorePoints(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -293,7 +294,7 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		// Look up job items to resolve types.
 		jobItems, itemsErr := h.db.GetJobItems(id)
 		if itemsErr != nil {
-			respondError(w, http.StatusInternalServerError, itemsErr.Error())
+			respondInternalError(w, fmt.Errorf("fetching job items: %w", itemsErr))
 			return
 		}
 		itemTypeMap := make(map[string]string, len(jobItems))
@@ -362,7 +363,7 @@ func (h *JobHandler) NextRun(w http.ResponseWriter, r *http.Request) {
 func (h *JobHandler) AllNextRuns(w http.ResponseWriter, r *http.Request) {
 	jobs, err := h.db.ListJobs()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	result := make(map[string]any)

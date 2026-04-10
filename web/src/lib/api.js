@@ -89,6 +89,13 @@ export const api = {
   // Discord
   testDiscordWebhook: (webhookUrl) => request('POST', '/settings/discord/test', { webhook_url: webhookUrl }),
 
+  // API Key
+  getAPIKeyStatus: () => request('GET', '/settings/api-key'),
+  generateAPIKey: () => request('POST', '/settings/api-key/generate'),
+  revealAPIKey: () => request('GET', '/settings/api-key/reveal'),
+  rotateAPIKey: () => request('POST', '/settings/api-key/rotate'),
+  revokeAPIKey: () => request('DELETE', '/settings/api-key'),
+
   // Diagnostics
   downloadDiagnostics: async () => {
     const { url, options } = buildApiRequest('GET', '/settings/diagnostics', {})

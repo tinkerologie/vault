@@ -61,16 +61,26 @@
   // Diagnostics state
   let diagnosticsDownloading = $state(false)
 
+  // API Key state
+  let apiKeyEnabled = $state(false)
+  let apiKeyRevealed = $state('')
+  let apiKeyShowing = $state(false)
+  let apiKeyLoading = $state(false)
+  let apiKeyGenerating = $state(false)
+  let apiKeyRevoking = $state(false)
+  let confirmApiKeyRevoke = $state(false)
+
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
 
   onMount(async () => {
     try {
-      const [h, s, enc, staging, dbInfo] = await Promise.all([api.health(), api.getSettings(), api.getEncryptionStatus(), api.getStagingInfo().catch(() => null), api.getDatabaseInfo().catch(() => null)])
+      const [h, s, enc, staging, dbInfo, apiKeyStatus] = await Promise.all([api.health(), api.getSettings(), api.getEncryptionStatus(), api.getStagingInfo().catch(() => null), api.getDatabaseInfo().catch(() => null), api.getAPIKeyStatus().catch(() => null)])
       health = h
       settings = s || {}
       encryptionEnabled = enc?.encryption_enabled || false
+      apiKeyEnabled = apiKeyStatus?.enabled || false
       stagingInfo = staging
       stagingOverrideInput = staging?.override || ''
       discordWebhookUrl = s?.discord_webhook_url || ''
@@ -349,6 +359,80 @@
       showToast(e.message, 'error')
     } finally {
       encSaving = false
+    }
+  }
+
+  async function generateApiKey() {
+    apiKeyGenerating = true
+    try {
+      const res = await api.generateAPIKey()
+      apiKeyEnabled = true
+      apiKeyRevealed = res.api_key
+      apiKeyShowing = true
+      showToast('API key generated — copy it now', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      apiKeyGenerating = false
+    }
+  }
+
+  async function toggleApiKeyReveal() {
+    if (apiKeyShowing) {
+      apiKeyShowing = false
+      apiKeyRevealed = ''
+      return
+    }
+    apiKeyLoading = true
+    try {
+      const res = await api.revealAPIKey()
+      apiKeyRevealed = res.api_key
+      apiKeyShowing = true
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      apiKeyLoading = false
+    }
+  }
+
+  async function rotateApiKey() {
+    apiKeyGenerating = true
+    try {
+      const res = await api.rotateAPIKey()
+      apiKeyRevealed = res.api_key
+      apiKeyShowing = true
+      showToast('API key rotated — copy the new key', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      apiKeyGenerating = false
+    }
+  }
+
+  async function revokeApiKey() {
+    confirmApiKeyRevoke = false
+    apiKeyRevoking = true
+    try {
+      await api.revokeAPIKey()
+      apiKeyEnabled = false
+      apiKeyRevealed = ''
+      apiKeyShowing = false
+      showToast('API key revoked — authentication disabled', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      apiKeyRevoking = false
+    }
+  }
+
+  async function copyApiKey() {
+    if (apiKeyRevealed) {
+      try {
+        await navigator.clipboard.writeText(apiKeyRevealed)
+        showToast('API key copied to clipboard', 'success')
+      } catch {
+        showToast('Failed to copy — clipboard access denied', 'error')
+      }
     }
   }
 
@@ -741,6 +825,89 @@
                   {encSaving ? 'Saving...' : 'Set Passphrase'}
                 </button>
               </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- API Access -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">API Access <Tooltip text="Generate an API key to authenticate external integrations (Home Assistant, replication) when Vault is exposed on the network. Not required when accessed via localhost." /></h2>
+        </div>
+        <div class="divide-y divide-border">
+          {#if apiKeyEnabled}
+            <!-- Status -->
+            <div class="px-5 py-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="inline-block w-2 h-2 rounded-full bg-success"></span>
+                <span class="text-sm font-medium text-text">API key active</span>
+              </div>
+              <p class="text-xs text-text-muted">External clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header when connecting from non-localhost addresses. Localhost connections are always exempt.</p>
+            </div>
+
+            <!-- Reveal key -->
+            <div class="px-5 py-4">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <p class="text-sm font-medium text-text">Show API key</p>
+                  <p class="text-xs text-text-muted mt-0.5">Reveal the key to copy it for external integrations.</p>
+                </div>
+                <button onclick={toggleApiKeyReveal} disabled={apiKeyLoading} class="text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
+                  {apiKeyLoading ? 'Loading...' : apiKeyShowing ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              {#if apiKeyShowing && apiKeyRevealed}
+                <div class="mt-3 flex items-center gap-2">
+                  <div class="flex-1 px-3 py-2.5 bg-surface border border-border rounded-lg">
+                    <code class="text-sm text-text break-all select-all">{apiKeyRevealed}</code>
+                  </div>
+                  <button onclick={copyApiKey} class="shrink-0 p-2 text-text-muted hover:text-text transition-colors" aria-label="Copy API key">
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  </button>
+                </div>
+              {/if}
+            </div>
+
+            <!-- Rotate key -->
+            <div class="px-5 py-4 flex items-center justify-between gap-4">
+              <div>
+                <p class="text-sm font-medium text-text">Rotate API key</p>
+                <p class="text-xs text-text-muted mt-0.5">Replace with a new key. Existing integrations will need the new key.</p>
+              </div>
+              <button onclick={rotateApiKey} disabled={apiKeyGenerating} class="text-sm font-medium text-warning hover:text-warning/80 transition-colors shrink-0 disabled:opacity-50">
+                {apiKeyGenerating ? 'Rotating...' : 'Rotate'}
+              </button>
+            </div>
+
+            <!-- Revoke key -->
+            <div class="px-5 py-3 flex justify-end">
+              {#if confirmApiKeyRevoke}
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-danger">Revoke key and disable authentication?</span>
+                  <button onclick={revokeApiKey} disabled={apiKeyRevoking} class="text-xs font-medium text-danger hover:text-danger/80 transition-colors disabled:opacity-50">
+                    {apiKeyRevoking ? 'Revoking...' : 'Yes, revoke'}
+                  </button>
+                  <button onclick={() => confirmApiKeyRevoke = false} class="text-xs text-text-muted hover:text-text transition-colors">
+                    Cancel
+                  </button>
+                </div>
+              {:else}
+                <button onclick={() => confirmApiKeyRevoke = true} disabled={apiKeyRevoking} class="text-xs text-text-dim hover:text-danger transition-colors disabled:opacity-50">
+                  Revoke API key
+                </button>
+              {/if}
+            </div>
+          {:else}
+            <div class="px-5 py-4">
+              <div class="flex items-center gap-2 mb-3">
+                <span class="inline-block w-2 h-2 rounded-full bg-text-dim"></span>
+                <span class="text-sm font-medium text-text">No API key configured</span>
+              </div>
+              <p class="text-xs text-text-muted mb-4">Generate an API key to protect the Vault API when it is exposed beyond localhost. API keys are required for third-party integrations (e.g. Home Assistant) and replication between Vault instances on different servers.</p>
+              <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                {apiKeyGenerating ? 'Generating...' : 'Generate API Key'}
+              </button>
             </div>
           {/if}
         </div>

@@ -31,7 +31,7 @@ func (h *ActivityHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.db.ListActivityLogs(limit, category)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	if entries == nil {
@@ -45,7 +45,7 @@ func (h *ActivityHandler) List(w http.ResponseWriter, r *http.Request) {
 //	DELETE /api/v1/activity
 func (h *ActivityHandler) Purge(w http.ResponseWriter, _ *http.Request) {
 	if err := h.db.DeleteOldActivityLogs(0); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -2,9 +2,11 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/cloudsoda/go-smb2"
 	"github.com/ruaan-deysel/vault/internal/safepath"
@@ -35,6 +37,9 @@ func NewSMBAdapter(config SMBConfig) (*SMBAdapter, error) {
 	return &SMBAdapter{config: config}, nil
 }
 
+// smbDialTimeout is the maximum time allowed for dialling the SMB session.
+const smbDialTimeout = 30 * time.Second
+
 func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, error) {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 
@@ -45,7 +50,10 @@ func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, error) {
 		},
 	}
 
-	session, err := d.Dial(context.Background(), addr)
+	ctx, cancel := context.WithTimeout(context.Background(), smbDialTimeout)
+	defer cancel()
+
+	session, err := d.Dial(ctx, addr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("smb dial: %w", err)
 	}
@@ -122,9 +130,17 @@ type smbReadCloser struct {
 
 func (r *smbReadCloser) Read(p []byte) (int, error) { return r.file.Read(p) }
 func (r *smbReadCloser) Close() error {
-	_ = r.file.Close()
-	_ = r.share.Umount()
-	return r.session.Logoff()
+	var errs []error
+	if err := r.file.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("close smb file: %w", err))
+	}
+	if err := r.share.Umount(); err != nil {
+		errs = append(errs, fmt.Errorf("umount smb share: %w", err))
+	}
+	if err := r.session.Logoff(); err != nil {
+		errs = append(errs, fmt.Errorf("logoff smb session: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 func (s *SMBAdapter) Delete(path string) error {

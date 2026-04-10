@@ -195,12 +195,12 @@ var onedriveCallbackTmpl = template.Must(template.New("onedrive-callback").Parse
 (function(){
 {{if .Success}}
   if(window.opener){
-    window.opener.postMessage({type:'onedrive-auth-code',code:{{.Code}}},'*');
+    window.opener.postMessage({type:'onedrive-auth-code',code:{{.Code}}},window.location.origin);
     setTimeout(function(){window.close()},2000);
   }
 {{else}}
   if(window.opener){
-    window.opener.postMessage({type:'onedrive-auth-error',error:{{.Error}}},'*');
+    window.opener.postMessage({type:'onedrive-auth-error',error:{{.Error}}},window.location.origin);
   }
   setTimeout(function(){window.close()},3000);
 {{end}}
