@@ -537,10 +537,12 @@
       <h1 class="text-2xl font-bold text-text">Backup Jobs</h1>
       <p class="text-sm text-text-muted mt-1">Manage your backup job configurations</p>
     </div>
-    <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
-      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-      New Job
-    </button>
+    {#if !loading && jobs.length > 0}
+      <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        New Job
+      </button>
+    {/if}
   </div>
 
   {#if !loading && jobs.length > 0}

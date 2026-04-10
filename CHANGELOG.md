@@ -8,14 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- API key authentication middleware with loopback exemption: non-localhost requests require a valid `X-API-Key` header when an API key is configured; localhost and Unraid PHP proxy connections are always exempt
-- API key middleware now fails closed on database errors instead of allowing unauthenticated access
-- OAuth callback routes (`/gdrive/callback`, `/onedrive/callback`) are exempt from API key authentication since browser redirects cannot carry custom headers
-- `ReplicationSource.APIKey` is no longer exposed in JSON API responses (`json:"-"`)
-- API key sealed value is written before the hash to prevent partial-failure lockout; hash write failure triggers rollback of the sealed value
-- `api_key_hash` and `api_key_sealed` are redacted from `GET /settings` responses alongside encryption settings
-- `GET /settings/api-key/reveal` response includes `Cache-Control: no-store` to prevent sensitive key caching
-- "Server key not configured" error responses on API key handlers now use generic 500 via `respondInternalError` instead of leaking internal state
+- Removed duplicate action buttons on Jobs, Storage, and Replication pages — top-right header button now only appears when items exist, eliminating redundancy with the empty-state center button
+- Fixed nil pointer dereference on startup: `BrowseHandler` was not assigned to the server struct in `setupRoutes`, causing a panic when `SetZFSLister` was called
 - Fixed `sync.Mutex` deadlock in runner: `RunJob` already holds `r.mu`, removed redundant lock around `snapshotManager` access in snapshot save
 - Clipboard copy in Settings UI now handles errors with an error toast instead of silently failing
 - Middleware test `SetSetting` calls now check for errors to prevent misleading test results

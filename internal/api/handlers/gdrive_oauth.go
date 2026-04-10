@@ -160,7 +160,15 @@ func (h *ReplicationHandler) GDriveCallback(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	data := gdriveCallbackData{Code: code, Error: errParam}
+	// Derive the expected origin from the request
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := r.Host
+	expectedOrigin := scheme + "://" + host
+
+	data := gdriveCallbackData{Code: code, Error: errParam, ExpectedOrigin: expectedOrigin}
 	if errParam != "" {
 		data.Success = false
 	} else if code == "" {
@@ -176,9 +184,10 @@ func (h *ReplicationHandler) GDriveCallback(w http.ResponseWriter, r *http.Reque
 }
 
 type gdriveCallbackData struct {
-	Success bool
-	Code    string
-	Error   string
+	Success        bool
+	Code           string
+	Error          string
+	ExpectedOrigin string
 }
 
 var gdriveCallbackTmpl = template.Must(template.New("gdrive-callback").Parse(`<!DOCTYPE html>
@@ -199,12 +208,12 @@ var gdriveCallbackTmpl = template.Must(template.New("gdrive-callback").Parse(`<!
 (function(){
 {{if .Success}}
   if(window.opener){
-    window.opener.postMessage({type:'gdrive-auth-code',code:{{.Code}}},window.location.origin);
+    window.opener.postMessage({type:'gdrive-auth-code',code:{{.Code}}},{{.ExpectedOrigin}});
     setTimeout(function(){window.close()},2000);
   }
 {{else}}
   if(window.opener){
-    window.opener.postMessage({type:'gdrive-auth-error',error:{{.Error}}},window.location.origin);
+    window.opener.postMessage({type:'gdrive-auth-error',error:{{.Error}}},{{.ExpectedOrigin}});
   }
   setTimeout(function(){window.close()},3000);
 {{end}}

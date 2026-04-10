@@ -79,13 +79,7 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 	sourceID := src.ID
 
 	// Build the remote client.
-	var client *Client
-	var err error
-	if src.APIKey != "" {
-		client, err = NewClientWithAPIKey(src.URL, src.APIKey)
-	} else {
-		client, err = NewClient(src.URL)
-	}
+	client, err := NewClient(src.URL)
 	if err != nil {
 		errMsg := fmt.Sprintf("normalize source url %q: %v", src.Name, err)
 		s.updateSyncStatus(sourceID, "failed", err.Error())

@@ -18,9 +18,9 @@ func (d *DB) CreateReplicationSource(src ReplicationSource) (int64, error) {
 		cfg = "{}"
 	}
 	res, err := d.Exec(
-		`INSERT INTO replication_sources (name, type, url, config, api_key, storage_dest_id, schedule, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		src.Name, typ, src.URL, cfg, src.APIKey, destID, src.Schedule, src.Enabled,
+		`INSERT INTO replication_sources (name, type, url, config, storage_dest_id, schedule, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		src.Name, typ, src.URL, cfg, destID, src.Schedule, src.Enabled,
 	)
 	if err != nil {
 		return 0, err
@@ -33,10 +33,10 @@ func (d *DB) GetReplicationSource(id int64) (ReplicationSource, error) {
 	var src ReplicationSource
 	err := d.QueryRow(
 		`SELECT id, name, COALESCE(type, 'remote_vault'), url, COALESCE(config, '{}'),
-			COALESCE(api_key, ''), COALESCE(storage_dest_id, 0), schedule, enabled,
+			COALESCE(storage_dest_id, 0), schedule, enabled,
 			last_sync_at, last_sync_status, last_sync_error, created_at, updated_at
 		FROM replication_sources WHERE id = ?`, id,
-	).Scan(&src.ID, &src.Name, &src.Type, &src.URL, &src.Config, &src.APIKey, &src.StorageDestID,
+	).Scan(&src.ID, &src.Name, &src.Type, &src.URL, &src.Config, &src.StorageDestID,
 		&src.Schedule, &src.Enabled, &src.LastSyncAt, &src.LastSyncStatus,
 		&src.LastSyncError, &src.CreatedAt, &src.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -49,7 +49,7 @@ func (d *DB) GetReplicationSource(id int64) (ReplicationSource, error) {
 func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 	rows, err := d.Query(
 		`SELECT id, name, COALESCE(type, 'remote_vault'), url, COALESCE(config, '{}'),
-			COALESCE(api_key, ''), COALESCE(storage_dest_id, 0), schedule, enabled,
+			COALESCE(storage_dest_id, 0), schedule, enabled,
 			last_sync_at, last_sync_status, last_sync_error, created_at, updated_at
 		FROM replication_sources ORDER BY name`)
 	if err != nil {
@@ -59,7 +59,7 @@ func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 	var sources []ReplicationSource
 	for rows.Next() {
 		var src ReplicationSource
-		if err := rows.Scan(&src.ID, &src.Name, &src.Type, &src.URL, &src.Config, &src.APIKey, &src.StorageDestID,
+		if err := rows.Scan(&src.ID, &src.Name, &src.Type, &src.URL, &src.Config, &src.StorageDestID,
 			&src.Schedule, &src.Enabled, &src.LastSyncAt, &src.LastSyncStatus,
 			&src.LastSyncError, &src.CreatedAt, &src.UpdatedAt); err != nil {
 			return nil, err
@@ -76,9 +76,9 @@ func (d *DB) UpdateReplicationSource(src ReplicationSource) error {
 		destID = src.StorageDestID
 	}
 	_, err := d.Exec(
-		`UPDATE replication_sources SET name=?, type=?, url=?, config=?, api_key=?, storage_dest_id=?,
+		`UPDATE replication_sources SET name=?, type=?, url=?, config=?, storage_dest_id=?,
 		schedule=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		src.Name, src.Type, src.URL, src.Config, src.APIKey, destID,
+		src.Name, src.Type, src.URL, src.Config, destID,
 		src.Schedule, src.Enabled, src.ID,
 	)
 	return err

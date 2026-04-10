@@ -263,6 +263,13 @@
       const popup = window.open(result.url, 'gdrive-auth', 'width=600,height=700,scrollbars=yes')
       const code = await new Promise((resolve, reject) => {
         function onMessage(event) {
+          // Validate origin and source before processing
+          if (event.origin !== window.location.origin) {
+            return
+          }
+          if (event.source !== popup) {
+            return
+          }
           if (event.data?.type === 'gdrive-auth-code') {
             window.removeEventListener('message', onMessage)
             clearInterval(pollTimer)
@@ -317,6 +324,13 @@
       const popup = window.open(result.url, 'onedrive-auth', 'width=600,height=700,scrollbars=yes')
       const code = await new Promise((resolve, reject) => {
         function onMessage(event) {
+          // Validate origin and source before processing
+          if (event.origin !== window.location.origin) {
+            return
+          }
+          if (event.source !== popup) {
+            return
+          }
           if (event.data?.type === 'onedrive-auth-code') {
             window.removeEventListener('message', onMessage)
             clearInterval(pollTimer)
@@ -383,10 +397,12 @@
       <h1 class="text-2xl font-bold text-text">Replication</h1>
       <p class="text-sm text-text-muted mt-1">Replicate backups to remote Vault servers or cloud storage for disaster recovery</p>
     </div>
-    <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
-      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-      Add Target
-    </button>
+    {#if sources.length > 0}
+      <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Add Target
+      </button>
+    {/if}
   </div>
 
   {#if loading}

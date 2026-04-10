@@ -58,13 +58,7 @@ export const api = {
   getRunnerStatus: () => request('GET', '/runner/status'),
 
   // Discovery
-  browse: (path = '', { includeZfs = false } = {}) => {
-    const params = new URLSearchParams()
-    if (path) params.set('path', path)
-    if (includeZfs) params.set('include_zfs', 'true')
-    const qs = params.toString()
-    return request('GET', `/browse${qs ? '?' + qs : ''}`)
-  },
+  browse: (path = '') => request('GET', `/browse${path ? '?path=' + encodeURIComponent(path) : ''}`),
   browseFiles: (path = '') => request('GET', `/browse?files=true${path ? '&path=' + encodeURIComponent(path) : ''}`),
   listContainers: () => request('GET', '/containers'),
   listVMs: () => request('GET', '/vms'),
@@ -88,13 +82,6 @@ export const api = {
 
   // Discord
   testDiscordWebhook: (webhookUrl) => request('POST', '/settings/discord/test', { webhook_url: webhookUrl }),
-
-  // API Key
-  getAPIKeyStatus: () => request('GET', '/settings/api-key'),
-  generateAPIKey: () => request('POST', '/settings/api-key/generate'),
-  revealAPIKey: () => request('GET', '/settings/api-key/reveal'),
-  rotateAPIKey: () => request('POST', '/settings/api-key/rotate'),
-  revokeAPIKey: () => request('DELETE', '/settings/api-key'),
 
   // Diagnostics
   downloadDiagnostics: async () => {
