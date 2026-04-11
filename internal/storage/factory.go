@@ -33,18 +33,6 @@ func NewAdapter(storageType, configJSON string) (Adapter, error) {
 			return nil, fmt.Errorf("parse nfs config: %w", err)
 		}
 		return NewNFSAdapter(cfg)
-	case "gdrive":
-		var cfg GDriveConfig
-		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
-			return nil, fmt.Errorf("parse gdrive config: %w", err)
-		}
-		return NewGDriveAdapter(cfg)
-	case "onedrive":
-		var cfg OneDriveConfig
-		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
-			return nil, fmt.Errorf("parse onedrive config: %w", err)
-		}
-		return NewOneDriveAdapter(cfg)
 	default:
 		return nil, fmt.Errorf("unknown storage type: %s", storageType)
 	}

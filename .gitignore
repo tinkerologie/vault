@@ -72,3 +72,4 @@ Thumbs.db
 .env.*
 
 node_modules/
+test-conn.yml

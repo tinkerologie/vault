@@ -82,8 +82,8 @@ type ActivityLogEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ReplicationSource represents a replication target (remote Vault, Google Drive,
-// or OneDrive) where local backups are pushed for disaster recovery.
+// ReplicationSource represents a replication target (remote Vault server)
+// where local backups are pushed for disaster recovery.
 type ReplicationSource struct {
 	ID             int64      `json:"id"`
 	Name           string     `json:"name"`

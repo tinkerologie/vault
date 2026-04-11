@@ -30,14 +30,6 @@
   let modalTestResult = $state(null)
   const liveMode = getLiveMode()
 
-  // Cloud OAuth state
-  let gdriveConnecting = $state(false)
-  let gdriveEmbeddedCreds = $state(false)
-  let gdriveShowAdvanced = $state(false)
-  let onedriveConnecting = $state(false)
-  let onedriveEmbeddedCreds = $state(false)
-  let onedriveShowAdvanced = $state(false)
-
   let form = $state(defaultForm())
 
   function defaultForm() {
@@ -129,8 +121,6 @@
     editing = null
     form = defaultForm()
     modalTestResult = null
-    gdriveShowAdvanced = false
-    onedriveShowAdvanced = false
     showModal = true
   }
 
@@ -146,10 +136,6 @@
       enabled: src.enabled,
     }
     modalTestResult = null
-    gdriveShowAdvanced = false
-    onedriveShowAdvanced = false
-    if (src.type === 'gdrive') checkGDriveStatus()
-    if (src.type === 'onedrive') checkOneDriveStatus()
     showModal = true
   }
 
@@ -237,148 +223,18 @@
     form.config = '{}'
     form.storage_dest_id = 0
     modalTestResult = null
-    if (form.type === 'gdrive') checkGDriveStatus()
-    if (form.type === 'onedrive') checkOneDriveStatus()
-  }
-
-  async function checkGDriveStatus() {
-    try {
-      const status = await api.getGDriveStatus()
-      gdriveEmbeddedCreds = status?.configured ?? false
-    } catch {
-      gdriveEmbeddedCreds = false
-    }
-  }
-
-  async function connectGDrive() {
-    if (!gdriveEmbeddedCreds && (!cloudConfig.client_id || !cloudConfig.client_secret)) {
-      showToast('Google Drive is not configured. Ask your Vault administrator to set VAULT_GDRIVE_CLIENT_ID and VAULT_GDRIVE_CLIENT_SECRET, or provide your own credentials under Advanced Settings.', 'error')
-      return
-    }
-    gdriveConnecting = true
-    try {
-      const redirectUri = window.location.origin + '/api/v1/replication/gdrive/callback'
-      const clientId = cloudConfig.client_id || ''
-      const clientSecret = cloudConfig.client_secret || ''
-      const result = await api.getGDriveAuthUrl(redirectUri, clientId, clientSecret)
-      const popup = window.open(result.url, 'gdrive-auth', 'width=600,height=700,scrollbars=yes')
-      const code = await new Promise((resolve, reject) => {
-        function onMessage(event) {
-          // Validate origin and source before processing
-          if (event.origin !== window.location.origin) {
-            return
-          }
-          if (event.source !== popup) {
-            return
-          }
-          if (event.data?.type === 'gdrive-auth-code') {
-            window.removeEventListener('message', onMessage)
-            clearInterval(pollTimer)
-            resolve(event.data.code)
-          } else if (event.data?.type === 'gdrive-auth-error') {
-            window.removeEventListener('message', onMessage)
-            clearInterval(pollTimer)
-            reject(new Error(event.data.error || 'Authorization failed'))
-          }
-        }
-        window.addEventListener('message', onMessage)
-        const pollTimer = setInterval(() => {
-          if (popup && popup.closed) {
-            clearInterval(pollTimer)
-            window.removeEventListener('message', onMessage)
-            const manualCode = prompt('If the popup closed without connecting, paste the authorization code here:')
-            if (manualCode) resolve(manualCode)
-            else reject(new Error('Authorization cancelled'))
-          }
-        }, 1000)
-      })
-      const tokenResult = await api.exchangeGDriveToken(code, redirectUri, clientId, clientSecret)
-      updateCloudConfig('refresh_token', tokenResult.refresh_token)
-      showToast('Google Drive connected successfully!', 'success')
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      gdriveConnecting = false
-    }
-  }
-
-  async function checkOneDriveStatus() {
-    try {
-      const status = await api.getOneDriveStatus()
-      onedriveEmbeddedCreds = status?.configured ?? false
-    } catch {
-      onedriveEmbeddedCreds = false
-    }
-  }
-
-  async function connectOneDrive() {
-    if (!onedriveEmbeddedCreds && (!cloudConfig.client_id || !cloudConfig.client_secret)) {
-      showToast('OneDrive is not configured. Ask your Vault administrator to set VAULT_ONEDRIVE_CLIENT_ID and VAULT_ONEDRIVE_CLIENT_SECRET, or provide your own credentials under Advanced Settings.', 'error')
-      return
-    }
-    onedriveConnecting = true
-    try {
-      const redirectUri = window.location.origin + '/api/v1/replication/onedrive/callback'
-      const clientId = cloudConfig.client_id || ''
-      const clientSecret = cloudConfig.client_secret || ''
-      const result = await api.getOneDriveAuthUrl(redirectUri, clientId, clientSecret)
-      const popup = window.open(result.url, 'onedrive-auth', 'width=600,height=700,scrollbars=yes')
-      const code = await new Promise((resolve, reject) => {
-        function onMessage(event) {
-          // Validate origin and source before processing
-          if (event.origin !== window.location.origin) {
-            return
-          }
-          if (event.source !== popup) {
-            return
-          }
-          if (event.data?.type === 'onedrive-auth-code') {
-            window.removeEventListener('message', onMessage)
-            clearInterval(pollTimer)
-            resolve(event.data.code)
-          } else if (event.data?.type === 'onedrive-auth-error') {
-            window.removeEventListener('message', onMessage)
-            clearInterval(pollTimer)
-            reject(new Error(event.data.error || 'Authorization failed'))
-          }
-        }
-        window.addEventListener('message', onMessage)
-        const pollTimer = setInterval(() => {
-          if (popup && popup.closed) {
-            clearInterval(pollTimer)
-            window.removeEventListener('message', onMessage)
-            const manualCode = prompt('If the popup closed without connecting, paste the authorization code here:')
-            if (manualCode) resolve(manualCode)
-            else reject(new Error('Authorization cancelled'))
-          }
-        }, 1000)
-      })
-      const tokenResult = await api.exchangeOneDriveToken(code, redirectUri, clientId, clientSecret)
-      updateCloudConfig('refresh_token', tokenResult.refresh_token)
-      showToast('OneDrive connected successfully!', 'success')
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      onedriveConnecting = false
-    }
   }
 
   const typeLabels = {
     remote_vault: 'Remote Vault',
-    gdrive: 'Google Drive',
-    onedrive: 'OneDrive',
   }
 
   const typeIcons = {
     remote_vault: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
-    gdrive: 'M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71L12 2z',
-    onedrive: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z',
   }
 
   const typeColors = {
     remote_vault: 'text-vault',
-    gdrive: 'text-sky-400',
-    onedrive: 'text-cyan-400',
   }
 
   function statusBadge(src) {
@@ -396,7 +252,7 @@
   <div class="flex items-center justify-between mb-6">
     <div>
       <h1 class="text-2xl font-bold text-text">Replication</h1>
-      <p class="text-sm text-text-muted mt-1">Replicate backups to remote Vault servers or cloud storage for disaster recovery</p>
+      <p class="text-sm text-text-muted mt-1">Replicate backups to remote Vault servers for disaster recovery</p>
     </div>
     {#if sources.length > 0}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
@@ -409,7 +265,7 @@
   {#if loading}
     <Spinner text="Loading replication targets..." />
   {:else if sources.length === 0}
-    <EmptyState title="No replication targets" description="Add a remote Vault server, Google Drive, or OneDrive target to replicate backups for disaster recovery." actionLabel="Add Target" onaction={() => openCreate()}>
+    <EmptyState title="No replication targets" description="Add a remote Vault server to replicate backups for disaster recovery." actionLabel="Add Target" onaction={() => openCreate()}>
       {#snippet iconSlot()}
         <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
       {/snippet}
@@ -428,13 +284,7 @@
                 <div>
                   <h2 class="font-semibold text-text">{src.name}</h2>
                   <p class="text-xs text-text-dim mt-0.5 font-mono">
-                    {#if src.type === 'gdrive'}
-                      Google Drive
-                    {:else if src.type === 'onedrive'}
-                      OneDrive
-                    {:else}
                       {src.url}
-                    {/if}
                   </p>
                 </div>
               </div>
@@ -564,8 +414,6 @@
         <select id="repl-type" bind:value={form.type} onchange={onTypeChange} disabled={!!editing}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault">
           <option value="remote_vault">Remote Vault Server</option>
-          <option value="gdrive">Google Drive</option>
-          <option value="onedrive">OneDrive</option>
         </select>
       </div>
 
@@ -610,121 +458,6 @@
           {/if}
         </div>
 
-      <!-- Google Drive Fields -->
-      {:else if form.type === 'gdrive'}
-        <div class="space-y-3">
-          <div class="flex items-center gap-3">
-            {#if cloudConfig.refresh_token}
-              <div class="flex items-center gap-2 text-sm text-success">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                Connected to Google Drive
-              </div>
-              <button type="button" onclick={() => { updateCloudConfig('refresh_token', ''); }}
-                class="text-xs text-text-muted hover:text-danger transition-colors">Disconnect</button>
-            {:else}
-              <button type="button" onclick={connectGDrive} disabled={gdriveConnecting}
-                class="px-4 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-2">
-                {#if gdriveConnecting}
-                  <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                  Connecting...
-                {:else}
-                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M13.8 12H3"/></svg>
-                  Sign in with Google
-                {/if}
-              </button>
-              {#if !gdriveEmbeddedCreds && !cloudConfig.client_id}
-                <span class="text-xs text-warning">Requires credentials — see Advanced Settings below</span>
-              {:else}
-                <span class="text-xs text-text-dim">Sign in to authorize Vault</span>
-              {/if}
-            {/if}
-          </div>
-          <div>
-            <label for="cfg_folderid" class="block text-sm font-medium text-text-muted mb-1.5">Folder ID <span class="text-text-dim font-normal">(optional, blank for root)</span></label>
-            <input id="cfg_folderid" type="text" value={cloudConfig.folder_id || ''} oninput={(e) => updateCloudConfig('folder_id', e.target.value)}
-              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="Google Drive folder ID" />
-          </div>
-          <div class="pt-2 border-t border-border">
-            <button type="button" onclick={() => { gdriveShowAdvanced = !gdriveShowAdvanced }}
-              class="text-xs text-text-muted hover:text-text flex items-center gap-1 transition-colors">
-              <svg class="w-3 h-3 transition-transform {gdriveShowAdvanced ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Advanced Settings
-            </button>
-            {#if gdriveShowAdvanced}
-              <div class="mt-3 space-y-3 pl-4 border-l-2 border-border">
-                <p class="text-xs text-text-dim">Provide your own OAuth credentials from the <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" class="text-vault hover:underline">Google Cloud Console</a>. Leave blank to use the server's built-in credentials.</p>
-                <div>
-                  <label for="cfg_clientid" class="block text-sm font-medium text-text-muted mb-1.5">Client ID</label>
-                  <input id="cfg_clientid" type="text" value={cloudConfig.client_id || ''} oninput={(e) => updateCloudConfig('client_id', e.target.value)}
-                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="your-app.apps.googleusercontent.com" />
-                </div>
-                <div>
-                  <label for="cfg_clientsecret" class="block text-sm font-medium text-text-muted mb-1.5">Client Secret</label>
-                  <input id="cfg_clientsecret" type="password" value={cloudConfig.client_secret || ''} oninput={(e) => updateCloudConfig('client_secret', e.target.value)}
-                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
-                </div>
-              </div>
-            {/if}
-          </div>
-        </div>
-
-      <!-- OneDrive Fields -->
-      {:else if form.type === 'onedrive'}
-        <div class="space-y-3">
-          <div class="flex items-center gap-3">
-            {#if cloudConfig.refresh_token}
-              <div class="flex items-center gap-2 text-sm text-success">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                Connected to OneDrive
-              </div>
-              <button type="button" onclick={() => { updateCloudConfig('refresh_token', ''); }}
-                class="text-xs text-text-muted hover:text-danger transition-colors">Disconnect</button>
-            {:else}
-              <button type="button" onclick={connectOneDrive} disabled={onedriveConnecting}
-                class="px-4 py-2 text-sm font-medium text-white bg-cyan-600 hover:bg-cyan-700 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-2">
-                {#if onedriveConnecting}
-                  <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                  Connecting...
-                {:else}
-                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M13.8 12H3"/></svg>
-                  Sign in with Microsoft
-                {/if}
-              </button>
-              {#if !onedriveEmbeddedCreds && !cloudConfig.client_id}
-                <span class="text-xs text-warning">Requires credentials — see Advanced Settings below</span>
-              {:else}
-                <span class="text-xs text-text-dim">Sign in to authorize Vault</span>
-              {/if}
-            {/if}
-          </div>
-          <div>
-            <label for="cfg_od_folderpath" class="block text-sm font-medium text-text-muted mb-1.5">Folder Path <span class="text-text-dim font-normal">(optional, blank for root)</span></label>
-            <input id="cfg_od_folderpath" type="text" value={cloudConfig.folder_path || ''} oninput={(e) => updateCloudConfig('folder_path', e.target.value)}
-              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="Vault/Backups" />
-          </div>
-          <div class="pt-2 border-t border-border">
-            <button type="button" onclick={() => { onedriveShowAdvanced = !onedriveShowAdvanced }}
-              class="text-xs text-text-muted hover:text-text flex items-center gap-1 transition-colors">
-              <svg class="w-3 h-3 transition-transform {onedriveShowAdvanced ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Advanced Settings
-            </button>
-            {#if onedriveShowAdvanced}
-              <div class="mt-3 space-y-3 pl-4 border-l-2 border-border">
-                <p class="text-xs text-text-dim">Provide your own OAuth credentials from the <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener noreferrer" class="text-vault hover:underline">Azure App Registrations</a>. Leave blank to use the server's built-in credentials.</p>
-                <div>
-                  <label for="cfg_od_clientid" class="block text-sm font-medium text-text-muted mb-1.5">Application (client) ID</label>
-                  <input id="cfg_od_clientid" type="text" value={cloudConfig.client_id || ''} oninput={(e) => updateCloudConfig('client_id', e.target.value)}
-                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-                </div>
-                <div>
-                  <label for="cfg_od_clientsecret" class="block text-sm font-medium text-text-muted mb-1.5">Client Secret</label>
-                  <input id="cfg_od_clientsecret" type="password" value={cloudConfig.client_secret || ''} oninput={(e) => updateCloudConfig('client_secret', e.target.value)}
-                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
-                </div>
-              </div>
-            {/if}
-          </div>
-        </div>
       {/if}
 
       <div>

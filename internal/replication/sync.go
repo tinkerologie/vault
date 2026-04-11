@@ -42,8 +42,7 @@ type SyncResult struct {
 }
 
 // SyncSource performs a sync operation for a replication source.
-// For remote_vault targets, it pulls backups from the remote Vault instance.
-// For gdrive/onedrive targets, it pushes local backups to cloud storage.
+// It pulls backups from the remote Vault instance.
 func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (*SyncResult, error) {
 	src, err := s.db.GetReplicationSource(sourceID)
 	if err != nil {
@@ -66,12 +65,7 @@ func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (*SyncResult,
 		fmt.Sprintf("Replication sync started: %s", src.Name),
 		fmt.Sprintf(`{"source_id":%d}`, sourceID))
 
-	switch src.Type {
-	case "gdrive", "onedrive":
-		return s.syncCloudPush(src, progress)
-	default:
-		return s.syncRemoteVault(src, progress)
-	}
+	return s.syncRemoteVault(src, progress)
 }
 
 // remoteVaultConfig holds optional settings for remote_vault replication sources.
@@ -193,158 +187,6 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 
 	s.completeSyncStatus(sourceID, src.Name, result, progress)
 	return result, nil
-}
-
-// syncCloudPush pushes local backups to a cloud storage target (GDrive/OneDrive).
-func (s *Syncer) syncCloudPush(src db.ReplicationSource, progress ProgressFunc) (*SyncResult, error) {
-	sourceID := src.ID
-
-	// Build the cloud storage adapter from the target config.
-	cloudAdapter, err := storage.NewAdapter(src.Type, src.Config)
-	if err != nil {
-		errMsg := fmt.Sprintf("open cloud storage: %v", err)
-		s.updateSyncStatus(sourceID, "failed", err.Error())
-		s.logSyncError(sourceID, src.Name, errMsg)
-		return nil, fmt.Errorf("open cloud storage: %w", err)
-	}
-
-	progress(0.05, "Connected to cloud storage, listing local jobs...")
-
-	// List all local non-replicated jobs (source_id == 0 means local).
-	localJobs, err := s.db.ListJobs()
-	if err != nil {
-		errMsg := fmt.Sprintf("list local jobs: %v", err)
-		s.updateSyncStatus(sourceID, "failed", err.Error())
-		s.logSyncError(sourceID, src.Name, errMsg)
-		return nil, fmt.Errorf("list local jobs: %w", err)
-	}
-
-	// Filter to only local (non-replicated) jobs.
-	var jobs []db.Job
-	for _, j := range localJobs {
-		if j.SourceID == 0 && j.Enabled {
-			jobs = append(jobs, j)
-		}
-	}
-
-	result := &SyncResult{}
-	totalJobs := len(jobs)
-	if totalJobs == 0 {
-		progress(1.0, "No local jobs to replicate")
-		s.updateSyncStatus(sourceID, "success", "")
-		return result, nil
-	}
-
-	for i, job := range jobs {
-		jobProgress := 0.1 + (0.85 * float64(i) / float64(totalJobs))
-		detail := fmt.Sprintf("Pushing job %d/%d: %s", i+1, totalJobs, job.Name)
-		progress(jobProgress, detail)
-
-		s.broadcast(map[string]any{
-			"type":        "replication_sync_progress",
-			"source_id":   sourceID,
-			"source_name": src.Name,
-			"progress":    jobProgress,
-			"detail":      detail,
-		})
-
-		newRPs, bytes, pushErr := s.pushJobToCloud(job, src, cloudAdapter)
-		if pushErr != nil {
-			log.Printf("replication: failed to push job %q to %q: %v", job.Name, src.Name, pushErr)
-			continue
-		}
-		if newRPs > 0 {
-			result.JobsSynced++
-		}
-		result.RestorePointsNew += newRPs
-		result.BytesTransferred += bytes
-	}
-
-	s.completeSyncStatus(sourceID, src.Name, result, progress)
-	return result, nil
-}
-
-// pushJobToCloud uploads restore points from a local job to a cloud storage adapter.
-func (s *Syncer) pushJobToCloud(
-	job db.Job,
-	src db.ReplicationSource,
-	cloudAdapter storage.Adapter,
-) (int, int64, error) {
-	// Get local restore points for this job.
-	localRPs, err := s.db.ListRestorePoints(job.ID)
-	if err != nil {
-		return 0, 0, fmt.Errorf("list restore points: %w", err)
-	}
-
-	if len(localRPs) == 0 {
-		return 0, 0, nil
-	}
-
-	// Get the local storage adapter to read backup files.
-	localDest, err := s.db.GetStorageDestination(job.StorageDestID)
-	if err != nil {
-		return 0, 0, fmt.Errorf("get local storage destination: %w", err)
-	}
-	localAdapter, err := storage.NewAdapter(localDest.Type, localDest.Config)
-	if err != nil {
-		return 0, 0, fmt.Errorf("open local storage: %w", err)
-	}
-
-	var newCount int
-	var totalBytes int64
-
-	for _, rp := range localRPs {
-		// Check if already uploaded by trying to stat the storage path on cloud.
-		if _, statErr := cloudAdapter.Stat(rp.StoragePath); statErr == nil {
-			continue // Already replicated.
-		}
-
-		// Upload files from local storage to cloud storage.
-		bytes, uploadErr := s.uploadDir(localAdapter, cloudAdapter, rp.StoragePath)
-		if uploadErr != nil {
-			log.Printf("replication: skipping restore point %q: %v", rp.StoragePath, uploadErr)
-			continue
-		}
-		newCount++
-		totalBytes += bytes
-	}
-
-	return newCount, totalBytes, nil
-}
-
-// uploadDir recursively copies files from a local storage adapter to a cloud adapter.
-func (s *Syncer) uploadDir(localAdapter, cloudAdapter storage.Adapter, dirPath string) (int64, error) {
-	files, err := localAdapter.List(dirPath)
-	if err != nil {
-		return 0, fmt.Errorf("list local files at %q: %w", dirPath, err)
-	}
-
-	var totalBytes int64
-	for _, f := range files {
-		if f.IsDir {
-			bytes, recurseErr := s.uploadDir(localAdapter, cloudAdapter, f.Path)
-			if recurseErr != nil {
-				return totalBytes, recurseErr
-			}
-			totalBytes += bytes
-			continue
-		}
-
-		rc, readErr := localAdapter.Read(f.Path)
-		if readErr != nil {
-			return totalBytes, fmt.Errorf("read %q: %w", f.Path, readErr)
-		}
-
-		if writeErr := cloudAdapter.Write(f.Path, rc); writeErr != nil {
-			_ = rc.Close()
-			return totalBytes, fmt.Errorf("write %q to cloud: %w", f.Path, writeErr)
-		}
-		if closeErr := rc.Close(); closeErr != nil {
-			return totalBytes, fmt.Errorf("closing read stream for %q: %w", f.Path, closeErr)
-		}
-		totalBytes += f.Size
-	}
-	return totalBytes, nil
 }
 
 // completeSyncStatus broadcasts sync completion and updates the DB status.

@@ -141,16 +141,6 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/{id}/test", replH.TestConnection)
 			r.Post("/{id}/sync", replH.SyncNow)
 			r.Get("/{id}/jobs", replH.ListReplicatedJobs)
-			// Google Drive OAuth flow.
-			r.Get("/gdrive/status", replH.GDriveStatus)
-			r.Post("/gdrive/auth-url", replH.GDriveAuthURL)
-			r.Post("/gdrive/exchange-token", replH.GDriveExchangeToken)
-			r.Get("/gdrive/callback", replH.GDriveCallback)
-			// OneDrive OAuth flow.
-			r.Get("/onedrive/status", replH.OneDriveStatus)
-			r.Post("/onedrive/auth-url", replH.OneDriveAuthURL)
-			r.Post("/onedrive/exchange-token", replH.OneDriveExchangeToken)
-			r.Get("/onedrive/callback", replH.OneDriveCallback)
 		})
 
 		recoveryH := handlers.NewRecoveryHandler(s.db, s.config.Version)

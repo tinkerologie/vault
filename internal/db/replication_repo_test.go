@@ -100,11 +100,12 @@ func TestReplicationSourceCRUD(t *testing.T) {
 func TestReplicationSourceTypeAndConfig(t *testing.T) {
 	database := setupTestDB(t)
 
-	// Create a cloud replication target (no URL needed, uses config).
+	// Create a replication target with config.
 	src := ReplicationSource{
-		Name:    "gdrive-backup",
-		Type:    "gdrive",
-		Config:  `{"refresh_token":"tok","folder_id":"abc123"}`,
+		Name:    "remote-backup",
+		Type:    "remote_vault",
+		URL:     "http://10.0.0.2:24085",
+		Config:  `{"api_key":"secret123"}`,
 		Enabled: true,
 	}
 
@@ -117,10 +118,10 @@ func TestReplicationSourceTypeAndConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReplicationSource() error = %v", err)
 	}
-	if got.Type != "gdrive" {
-		t.Errorf("Type = %q, want %q", got.Type, "gdrive")
+	if got.Type != "remote_vault" {
+		t.Errorf("Type = %q, want %q", got.Type, "remote_vault")
 	}
-	if got.Config != `{"refresh_token":"tok","folder_id":"abc123"}` {
+	if got.Config != `{"api_key":"secret123"}` {
 		t.Errorf("Config = %q, want json", got.Config)
 	}
 

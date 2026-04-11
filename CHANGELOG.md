@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Removed
+
+- Removed Google Drive and OneDrive replication support — only Remote Vault Server replication is now supported
+- Removed OAuth infrastructure (client credentials, build-time ldflags, callback handlers) for cloud storage providers
+
 ### Fixed
 
 - Removed duplicate action buttons on Jobs, Storage, and Replication pages — top-right header button now only appears when items exist, eliminating redundancy with the empty-state center button
@@ -16,7 +21,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - API error responses no longer leak internal error details to clients; all 500 responses now return a generic "internal server error" message while the real error is logged server-side (OWASP A09)
 - SMB storage adapter now enforces a 30-second dial timeout via `context.WithTimeout` to prevent indefinite connection hangs
 - SFTP adapter logs a warning when falling back to `InsecureIgnoreHostKey` due to missing host key verification configuration
-- OAuth callback templates (Google Drive, OneDrive) restrict `postMessage` target origin from wildcard `*` to `window.location.origin`
 - Runner `SetSnapshotManager` write is now protected by mutex to prevent a data race with concurrent job execution
 - SMB `smbReadCloser.Close()` now uses `errors.Join` to surface file/share/session close failures instead of silently discarding them
 - NFS adapter `unmount()` now logs errors from `umount` and temp directory removal instead of silently discarding them
