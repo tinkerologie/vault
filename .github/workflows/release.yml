@@ -11,13 +11,14 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   release:
     name: Build and Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CGO_ENABLED: "0"
 
@@ -40,9 +41,12 @@ jobs:
 
       - name: Extract version from tag
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag }}"
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
             VERSION=${TAG#v}
           else
             TAG=${GITHUB_REF#refs/tags/}
@@ -60,9 +64,10 @@ jobs:
           fi
 
       - name: Verify VERSION file matches tag
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '\n')
-          TAG_VERSION="${{ steps.version.outputs.version }}"
 
           if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
             echo "ERROR: VERSION file ($FILE_VERSION) does not match tag ($TAG_VERSION)"

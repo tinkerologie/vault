@@ -20,7 +20,7 @@ func TestLoadOrCreateServerKey(t *testing.T) {
 			t.Fatalf("key size = %d, want %d", len(key), ServerKeySize)
 		}
 		// Verify file was written.
-		data, err := os.ReadFile(keyPath)
+		data, err := os.ReadFile(keyPath) //nolint:gosec // test path from t.TempDir()
 		if err != nil {
 			t.Fatalf("reading key file: %v", err)
 		}

@@ -6,9 +6,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
+	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/storage"
@@ -26,7 +27,7 @@ func NewStorageHandler(database *db.DB, r *runner.Runner) *StorageHandler {
 func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
 	dests, err := h.db.ListStorageDestinations()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	for i := range dests {
@@ -43,7 +44,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.db.CreateStorageDestination(dest)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	dest.ID = id
@@ -51,7 +52,10 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	dest, err := h.db.GetStorageDestination(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "not found")
@@ -62,7 +66,10 @@ func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	var dest db.StorageDestination
 	if err := json.NewDecoder(r.Body).Decode(&dest); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
@@ -70,19 +77,22 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	dest.ID = id
 	if err := h.db.UpdateStorageDestination(dest); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, dest)
 }
 
 func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 
 	// Check for dependent jobs.
 	jobCount, err := h.db.CountJobsByStorageDestID(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	if jobCount > 0 && r.URL.Query().Get("force") != "true" {
@@ -104,14 +114,17 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteStorageDestination(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	dest, err := h.db.GetStorageDestination(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "not found")
@@ -134,7 +147,10 @@ func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) 
 //
 //	POST /api/v1/storage/{id}/scan
 func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	dest, err := h.db.GetStorageDestination(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "storage destination not found")
@@ -143,7 +159,7 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 
 	manifests, err := h.runner.ScanStorageManifests(dest)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -168,7 +184,10 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/storage/{id}/import
 func (h *StorageHandler) Import(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 
 	// Verify the storage destination exists.
 	if _, err := h.db.GetStorageDestination(id); err != nil {
@@ -186,7 +205,7 @@ func (h *StorageHandler) Import(w http.ResponseWriter, r *http.Request) {
 
 	imported, err := h.runner.ImportBackups(id, req.Backups)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -201,7 +220,10 @@ func (h *StorageHandler) Import(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/storage/{id}/restore-db
 func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	dest, err := h.db.GetStorageDestination(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "storage destination not found")
@@ -222,7 +244,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to create storage adapter: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -237,7 +259,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	// Write to a temporary file first.
 	tmpFile, err := os.CreateTemp("", "vault-restore-*.db")
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to create temp file: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	tmpPath := tmpFile.Name()
@@ -245,7 +267,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(tmpFile, rc); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		respondError(w, http.StatusInternalServerError, "failed to download database: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	_ = tmpFile.Close()
@@ -273,15 +295,15 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	srcFile, err := os.Open(tmpPath)
 	if err != nil {
 		_ = os.Remove(tmpPath)
-		respondError(w, http.StatusInternalServerError, "failed to open restored database: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
-	dstFile, err := os.Create(currentPath)
+	dstFile, err := os.Create(currentPath) //nolint:gosec // currentPath is from h.db.Path(), set at daemon startup — not user input
 	if err != nil {
 		_ = srcFile.Close()
 		_ = os.Remove(tmpPath)
-		respondError(w, http.StatusInternalServerError, "failed to replace database: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -289,7 +311,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		_ = srcFile.Close()
 		_ = dstFile.Close()
 		_ = os.Remove(tmpPath)
-		respondError(w, http.StatusInternalServerError, "failed to write database: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	_ = srcFile.Close()
@@ -309,10 +331,13 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/v1/storage/{id}/jobs
 func (h *StorageHandler) DependentJobs(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	count, err := h.db.CountJobsByStorageDestID(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"job_count": count})
@@ -322,7 +347,10 @@ func (h *StorageHandler) DependentJobs(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/v1/storage/{id}/list?prefix=some/path
 func (h *StorageHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	dest, err := h.db.GetStorageDestination(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "storage not found")
@@ -331,14 +359,14 @@ func (h *StorageHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "open storage: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
 	prefix := r.URL.Query().Get("prefix")
 	files, err := adapter.List(prefix)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "list files: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, files)
@@ -348,7 +376,10 @@ func (h *StorageHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/v1/storage/{id}/files?path=some/file.tar.zst
 func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	dest, err := h.db.GetStorageDestination(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "storage not found")
@@ -361,9 +392,16 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject path traversal attempts.
+	cleaned := path.Clean(filePath)
+	if cleaned != filePath || strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "..") {
+		respondError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "open storage: "+err.Error())
+		respondInternalError(w, err)
 		return
 	}
 

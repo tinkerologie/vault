@@ -182,21 +182,10 @@ func isLoopback(remoteAddr string) bool {
 	return ip.IsLoopback()
 }
 
-// oauthCallbackSuffixes are URL path suffixes that indicate an OAuth provider
-// redirect. These cannot carry API keys, so they must be exempt.
-var oauthCallbackSuffixes = []string{
-	"/gdrive/callback",
-	"/onedrive/callback",
-}
-
 // isOAuthCallback returns true when the request path ends with a known
-// OAuth callback suffix.
-func isOAuthCallback(path string) bool {
-	for _, suffix := range oauthCallbackSuffixes {
-		if strings.HasSuffix(path, suffix) {
-			return true
-		}
-	}
+// OAuth callback suffix. Currently unused — reserved for future OAuth
+// storage providers.
+func isOAuthCallback(_ string) bool {
 	return false
 }
 

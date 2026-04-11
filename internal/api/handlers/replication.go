@@ -4,13 +4,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/replication"
-	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 // testConnectionTimeout is the HTTP client timeout used for connectivity
@@ -52,7 +49,7 @@ func (h *ReplicationHandler) reloadScheduler() {
 func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 	sources, err := h.db.ListReplicationSources()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, sources)
@@ -93,7 +90,7 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, err := h.db.CreateReplicationSource(src)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	src.ID = id
@@ -104,7 +101,10 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get returns a single replication source.
 func (h *ReplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	src, err := h.db.GetReplicationSource(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "not found")
@@ -115,7 +115,10 @@ func (h *ReplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update modifies a replication source.
 func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 
 	var src db.ReplicationSource
 	if err := json.NewDecoder(r.Body).Decode(&src); err != nil {
@@ -141,7 +144,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -151,7 +154,10 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete removes a replication source and its replicated jobs.
 func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 
 	// Delete replicated jobs first.
 	if err := h.db.DeleteReplicatedJobs(id); err != nil {
@@ -159,7 +165,7 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteReplicationSource(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -169,53 +175,42 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // TestConnection tests connectivity to a replication target.
 func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	src, err := h.db.GetReplicationSource(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
 
-	switch src.Type {
-	case "gdrive", "onedrive":
-		adapter, adapterErr := storage.NewAdapter(src.Type, src.Config)
-		if adapterErr != nil {
-			respondError(w, http.StatusBadRequest, "invalid config: "+adapterErr.Error())
-			return
-		}
-		if connErr := adapter.TestConnection(); connErr != nil {
-			respondError(w, http.StatusBadGateway, connErr.Error())
-			return
-		}
-		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	default: // remote_vault
-		var cfg struct {
-			APIKey string `json:"api_key"`
-		}
-		if src.Config != "" && src.Config != "{}" {
-			if err := json.Unmarshal([]byte(src.Config), &cfg); err != nil {
-				respondError(w, http.StatusBadRequest, "invalid config JSON: "+err.Error())
-				return
-			}
-		}
-		var client *replication.Client
-		var clientErr error
-		if cfg.APIKey != "" {
-			client, clientErr = replication.NewClientWithAPIKey(src.URL, cfg.APIKey)
-		} else {
-			client, clientErr = replication.NewClient(src.URL)
-		}
-		if clientErr != nil {
-			respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
-			return
-		}
-		client.SetTimeout(testConnectionTimeout)
-		if _, connErr := client.TestConnection(); connErr != nil {
-			respondError(w, http.StatusBadGateway, connErr.Error())
-			return
-		}
-		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	var cfg struct {
+		APIKey string `json:"api_key"`
 	}
+	if src.Config != "" && src.Config != "{}" {
+		if err := json.Unmarshal([]byte(src.Config), &cfg); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid config JSON: "+err.Error())
+			return
+		}
+	}
+	var client *replication.Client
+	var clientErr error
+	if cfg.APIKey != "" {
+		client, clientErr = replication.NewClientWithAPIKey(src.URL, cfg.APIKey)
+	} else {
+		client, clientErr = replication.NewClient(src.URL)
+	}
+	if clientErr != nil {
+		respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
+		return
+	}
+	client.SetTimeout(testConnectionTimeout)
+	if _, connErr := client.TestConnection(); connErr != nil {
+		respondError(w, http.StatusBadGateway, connErr.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // TestURL validates a remote Vault URL and performs a live connectivity check
@@ -270,7 +265,10 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 
 // SyncNow triggers an immediate sync for a replication source.
 func (h *ReplicationHandler) SyncNow(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	syncer := h.getSyncer()
 	if syncer == nil {
 		respondError(w, http.StatusServiceUnavailable, "replication syncer not available")
@@ -280,7 +278,7 @@ func (h *ReplicationHandler) SyncNow(w http.ResponseWriter, r *http.Request) {
 	// Run sync in background, return immediately.
 	go func() {
 		if _, err := syncer.SyncSource(id, nil); err != nil {
-			log.Printf("Manual sync failed for source %d: %v", id, err)
+			log.Printf("Manual sync failed for source %d: %v", id, err) //nolint:gosec // G706: id is a validated int64, err is from internal syncer
 		}
 	}()
 
@@ -289,10 +287,13 @@ func (h *ReplicationHandler) SyncNow(w http.ResponseWriter, r *http.Request) {
 
 // ListReplicatedJobs returns jobs replicated from a specific source.
 func (h *ReplicationHandler) ListReplicatedJobs(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	jobs, err := h.db.ListReplicatedJobs(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, jobs)

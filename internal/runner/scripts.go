@@ -45,7 +45,7 @@ func runScript(script string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, script)
+	cmd := exec.CommandContext(ctx, script) //nolint:gosec // script path is validated (absolute, exists, executable) and admin-configured — no shell interpretation
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		return string(output), fmt.Errorf("script timed out after %s: %s", timeout, script)

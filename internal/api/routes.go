@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/go-chi/httprate"
 
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
 	mcpserver "github.com/ruaan-deysel/vault/internal/mcp"
@@ -22,8 +25,20 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Heartbeat("/ping"))
 	r.Use(BodySizeLimit(maxRequestBodySize))
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://*.myunraid.net", "http://localhost:*", "http://127.0.0.1:*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "X-API-Key"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// Enforce API key authentication for non-loopback requests.
+		// Loopback connections and the Unraid PHP proxy are exempt—
+		// auth only applies when the daemon is exposed on a LAN address.
+		r.Use(APIKeyAuth(s.db))
+
 		// Settings handler is shared between public and authenticated routes.
 		settingsH := handlers.NewSettingsHandler(s.db, s.config.ServerKey)
 		s.settingsHandler = settingsH
@@ -89,7 +104,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Put("/", settingsH.Update)
 			r.Get("/encryption", settingsH.GetEncryptionStatus)
 			r.Post("/encryption", settingsH.SetEncryption)
-			r.Post("/encryption/verify", settingsH.VerifyEncryption)
+			r.With(httprate.LimitByIP(10, time.Minute)).Post("/encryption/verify", settingsH.VerifyEncryption)
 			r.Get("/encryption/passphrase", settingsH.GetEncryptionPassphrase)
 			r.Get("/staging", settingsH.GetStagingInfo)
 			r.Put("/staging", settingsH.SetStagingOverride)
@@ -97,6 +112,13 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/database", settingsH.GetDatabaseInfo)
 			r.Put("/database", settingsH.SetSnapshotPath)
 			r.Get("/diagnostics", settingsH.GetDiagnostics)
+
+			// API key management.
+			r.Get("/api-key", settingsH.GetAPIKeyStatus)
+			r.With(httprate.LimitByIP(5, time.Minute)).Post("/api-key/generate", settingsH.GenerateAPIKey)
+			r.Get("/api-key/key", settingsH.GetAPIKey)
+			r.With(httprate.LimitByIP(5, time.Minute)).Post("/api-key/rotate", settingsH.RotateAPIKey)
+			r.Delete("/api-key", settingsH.RevokeAPIKey)
 		})
 
 		browseH := handlers.NewBrowseHandler()
@@ -232,7 +254,7 @@ func detectUnraidTimeFormat() string {
 // detectTimeFormatFromPath reads a dynamix.cfg INI file and returns the time
 // format preference. Extracted for testability.
 func detectTimeFormatFromPath(path string) string {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is a hardcoded constant from detectUnraidTimeFormat
 	if err != nil {
 		return "auto"
 	}

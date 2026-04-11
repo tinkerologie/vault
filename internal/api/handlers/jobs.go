@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/runner"
 )
@@ -95,7 +94,10 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	job, err := h.db.GetJob(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "not found")
@@ -106,7 +108,10 @@ func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	var req struct {
 		db.Job
 		Items []db.JobItem `json:"items"`
@@ -139,7 +144,10 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 
 	// Optionally delete backup files from storage.
 	if r.URL.Query().Get("deleteFiles") == "true" {
@@ -159,10 +167,17 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	const maxLimit = 1000
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			if parsed > maxLimit {
+				parsed = maxLimit
+			}
 			limit = parsed
 		}
 	}
@@ -175,7 +190,10 @@ func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *JobHandler) GetRestorePoints(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	job, err := h.db.GetJob(id)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -197,7 +215,10 @@ func (h *JobHandler) GetRestorePoints(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/jobs/{id}/run
 func (h *JobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	_, err := h.db.GetJob(id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "job not found")
@@ -217,7 +238,10 @@ func (h *JobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/jobs/{id}/cancel
 func (h *JobHandler) Cancel(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	if err := h.runner.CancelJob(id); err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return
@@ -257,7 +281,10 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the restore point in the database.
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	rps, err := h.db.ListRestorePoints(id)
 	if err != nil {
 		respondInternalError(w, err)
@@ -344,7 +371,10 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/v1/jobs/{id}/next-run
 func (h *JobHandler) NextRun(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
 	if h.nextRun == nil {
 		respondJSON(w, http.StatusOK, map[string]any{"scheduled": false})
 		return

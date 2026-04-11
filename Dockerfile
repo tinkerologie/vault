@@ -27,10 +27,17 @@ FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata
 
+RUN addgroup -S vault && adduser -S vault -G vault
+
 COPY --from=builder /app/vault /usr/local/bin/vault
+
+RUN chown vault:vault /usr/local/bin/vault
 
 EXPOSE 24085
 VOLUME /data
+RUN mkdir -p /data && chown vault:vault /data
+
+USER vault
 
 ENTRYPOINT ["vault", "replica"]
 CMD ["--db=/data/vault.db", "--addr=:24085"]

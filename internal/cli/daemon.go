@@ -202,6 +202,18 @@ var daemonCmd = &cobra.Command{
 			return fmt.Errorf("loading server key: %w", err)
 		}
 
+		// Migrate any legacy plaintext encryption passphrase to sealed form.
+		if plaintext, _ := database.GetSetting("encryption_passphrase", ""); plaintext != "" {
+			sealed, sealErr := crypto.Seal(serverKey, plaintext)
+			if sealErr != nil {
+				log.Printf("Warning: failed to seal legacy passphrase: %v", sealErr)
+			} else {
+				_ = database.SetSetting("encryption_passphrase_sealed", sealed)
+				_ = database.SetSetting("encryption_passphrase", "")
+				log.Println("Migrated legacy plaintext passphrase to sealed storage")
+			}
+		}
+
 		log.Println("Starting Vault daemon...")
 
 		cfg := api.ServerConfig{

@@ -110,10 +110,12 @@ func (s *Server) BrowseHandler() *handlers.BrowseHandler {
 
 func (s *Server) Start() error {
 	srv := &http.Server{
-		Addr:         s.config.Addr,
-		Handler:      s.router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Addr:              s.config.Addr,
+		Handler:           s.router,
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	if s.config.TLSCert != "" && s.config.TLSKey != "" {
 		log.Printf("Vault API server listening on %s (TLS)", s.config.Addr)
@@ -125,10 +127,12 @@ func (s *Server) Start() error {
 
 func (s *Server) StartWithContext(ctx context.Context) error {
 	srv := &http.Server{
-		Addr:         s.config.Addr,
-		Handler:      s.router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Addr:              s.config.Addr,
+		Handler:           s.router,
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- CORS middleware (`go-chi/cors`) restricting cross-origin requests to `*.myunraid.net`, `localhost`, and `127.0.0.1` origins only (OWASP A01)
+- IP-based rate limiting (`go-chi/httprate`) on auth-sensitive endpoints: encryption verify (10 req/min), API key generate/rotate (5 req/min) (OWASP A05/A07)
+- Auto-seal migration on daemon startup: legacy plaintext `encryption_passphrase` values are automatically sealed with the server key and the plaintext is cleared (OWASP A02)
+- `Cache-Control: no-store` header on `GET /api/v1/settings/encryption/passphrase` to prevent caching of sensitive passphrase responses (OWASP A02)
+
 ### Removed
 
 - Removed Google Drive and OneDrive replication support — only Remote Vault Server replication is now supported

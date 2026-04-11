@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -248,12 +249,29 @@ var sensitiveSettingKeys = []string{
 	"api_key_sealed",
 }
 
+// protectedSettingKeys are keys that cannot be modified via the generic Update
+// endpoint. They must be managed through their dedicated handlers.
+var protectedSettingKeys = map[string]bool{
+	"api_key_hash":                 true,
+	"api_key_sealed":               true,
+	"encryption_passphrase":        true,
+	"encryption_passphrase_hash":   true,
+	"encryption_passphrase_sealed": true,
+}
+
 // Update accepts a JSON object of key-value pairs and upserts them.
 func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var incoming map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+
+	for k := range incoming {
+		if protectedSettingKeys[k] {
+			respondError(w, http.StatusBadRequest, "cannot modify protected setting: "+k)
+			return
+		}
 	}
 
 	for k, v := range incoming {
@@ -290,6 +308,11 @@ func (h *SettingsHandler) SetEncryption(w http.ResponseWriter, r *http.Request) 
 			"encryption_enabled": false,
 			"message":            "encryption disabled",
 		})
+		return
+	}
+
+	if len(req.Passphrase) < 8 {
+		respondError(w, http.StatusBadRequest, "passphrase must be at least 8 characters")
 		return
 	}
 
@@ -374,6 +397,8 @@ func (h *SettingsHandler) GetEncryptionStatus(w http.ResponseWriter, _ *http.Req
 //
 //	GET /api/v1/settings/encryption/passphrase
 func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+
 	sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", "")
 	if sealed != "" {
 		if len(h.serverKey) == 0 {
@@ -462,6 +487,12 @@ func (h *SettingsHandler) TestDiscordWebhook(w http.ResponseWriter, r *http.Requ
 	}
 	if req.WebhookURL == "" {
 		respondError(w, http.StatusBadRequest, "webhook_url is required")
+		return
+	}
+
+	parsed, err := url.Parse(req.WebhookURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		respondError(w, http.StatusBadRequest, "webhook_url must use http or https scheme")
 		return
 	}
 
