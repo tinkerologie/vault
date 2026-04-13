@@ -15,9 +15,9 @@
     "@tailwindcss/vite": "^4.2.2",
     "eslint": "^10.2.0",
     "eslint-plugin-svelte": "^3.17.0",
-    "globals": "^17.4.0",
-    "svelte": "^5.55.1",
+    "globals": "^17.5.0",
+    "svelte": "^5.55.3",
     "tailwindcss": "^4.2.2",
-    "vite": "^8.0.5"
+    "vite": "^8.0.8"
   }
 }
