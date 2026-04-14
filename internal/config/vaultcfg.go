@@ -15,7 +15,7 @@ const DefaultCfgPath = "/boot/config/plugins/vault/vault.cfg"
 // Lines are expected in KEY=VALUE format (values optionally quoted).
 // Empty files or missing files return an empty map with no error.
 func ReadCfg(path string) (map[string]string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 — path is DefaultCfgPath constant or admin CLI flag
 	if os.IsNotExist(err) {
 		return map[string]string{}, nil
 	}
@@ -65,12 +65,12 @@ func ReadCfgValue(path, key, defaultVal string) string {
 // existing keys and comments. If the key already exists its value is replaced
 // in-place; otherwise it is appended.
 func WriteCfgValue(path, key, value string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
 	// Read existing content (may not exist yet).
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(path) // #nosec G304 — path is DefaultCfgPath constant or admin CLI flag
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading vault.cfg: %w", err)
 	}
@@ -99,5 +99,5 @@ func WriteCfgValue(path, key, value string) error {
 
 	// Ensure trailing newline.
 	out := strings.Join(lines, "\n") + "\n"
-	return os.WriteFile(path, []byte(out), 0o644)
+	return os.WriteFile(path, []byte(out), 0o600) // #nosec G703 — path is DefaultCfgPath constant or admin CLI flag
 }

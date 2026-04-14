@@ -1016,7 +1016,7 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 			continue
 		}
 		filePath := filepath.Join(tmpDir, entry.Name())
-		f, err := os.Open(filePath)
+		f, err := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entry.Name() from os.ReadDir
 		if err != nil {
 			return nil, nil, fmt.Errorf("opening backup file %s: %w", entry.Name(), err)
 		}
@@ -1473,7 +1473,7 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 		localName = restoredName
 
 		localPath := filepath.Join(tmpDir, localName)
-		out, err := os.Create(localPath)
+		out, err := os.Create(localPath) // #nosec G304 — tmpDir is vault-controlled; localName derived from storage entry name
 		if err != nil {
 			_ = reader.Close()
 			return fmt.Errorf("creating local file %s: %w", localPath, err)
@@ -1861,7 +1861,7 @@ func (r *Runner) backupDatabase(dest db.StorageDestination, basePath string) {
 		return
 	}
 
-	f, err := os.Open(dbPath)
+	f, err := os.Open(dbPath) // #nosec G304 — dbPath from r.db.Path(), set at daemon startup
 	if err != nil {
 		log.Printf("runner: failed to open database for backup: %v", err)
 		return

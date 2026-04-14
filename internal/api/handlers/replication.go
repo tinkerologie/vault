@@ -161,7 +161,7 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Delete replicated jobs first.
 	if err := h.db.DeleteReplicatedJobs(id); err != nil {
-		log.Printf("Warning: failed to delete replicated jobs for source %d: %v", id, err) //nolint:gosec // id is int64 from URL param
+		log.Printf("Warning: failed to delete replicated jobs for source %d: %v", id, err) // #nosec G706 //nolint:gosec // id is int64 from URL param
 	}
 
 	if err := h.db.DeleteReplicationSource(id); err != nil {
@@ -278,7 +278,7 @@ func (h *ReplicationHandler) SyncNow(w http.ResponseWriter, r *http.Request) {
 	// Run sync in background, return immediately.
 	go func() {
 		if _, err := syncer.SyncSource(id, nil); err != nil {
-			log.Printf("Manual sync failed for source %d: %v", id, err) //nolint:gosec // G706: id is a validated int64, err is from internal syncer
+			log.Printf("Manual sync failed for source %d: %v", id, err) // #nosec G706 //nolint:gosec // G706: id is a validated int64, err is from internal syncer
 		}
 	}()
 

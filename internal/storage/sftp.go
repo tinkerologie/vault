@@ -51,7 +51,7 @@ func (s *SFTPAdapter) connect() (*sftp.Client, error) {
 		authMethods = append(authMethods, ssh.Password(s.config.Password))
 	}
 	if s.config.KeyFile != "" {
-		key, err := os.ReadFile(s.config.KeyFile)
+		key, err := os.ReadFile(s.config.KeyFile) // #nosec G304 — KeyFile is admin-configured storage config
 		if err != nil {
 			return nil, fmt.Errorf("read key file: %w", err)
 		}
@@ -121,7 +121,7 @@ func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
 	// Fallback: accept any key (backward compatibility with existing configs).
 	log.Printf("Warning: SFTP connection to %s has no host key verification configured. "+
 		"Set host_key or known_hosts_file in storage config to prevent MITM attacks.", s.config.Host)
-	return ssh.InsecureIgnoreHostKey() //nolint:gosec // user chose not to configure host key
+		return ssh.InsecureIgnoreHostKey() // #nosec G106 //nolint:gosec // user chose not to configure host key
 }
 
 func (s *SFTPAdapter) Write(path string, reader io.Reader) error {

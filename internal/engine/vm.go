@@ -247,7 +247,7 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 	progress(item.Name, 5, "reading domain XML")
 
 	xmlPath := filepath.Join(sourceDir, "domain.xml")
-	xmlData, err := os.ReadFile(xmlPath)
+	xmlData, err := os.ReadFile(xmlPath) // #nosec G304 — xmlPath is sourceDir + fixed filename "domain.xml"
 	if err != nil {
 		return fmt.Errorf("reading domain XML: %w", err)
 	}

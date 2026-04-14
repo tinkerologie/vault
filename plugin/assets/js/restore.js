@@ -11,11 +11,27 @@ async function loadRestorePoints(jobId) {
     if (rps && rps.length > 0) {
         rps.forEach(function(rp) {
             const tr = document.createElement('tr');
-            tr.innerHTML =
-                '<td>' + rp.created_at + '</td>' +
-                '<td>' + rp.backup_type + '</td>' +
-                '<td>' + formatBytes(rp.size_bytes) + '</td>' +
-                '<td><button class="vault-btn vault-btn-sm vault-btn-primary" onclick="restoreFromPoint(' + rp.id + ')">Restore</button></td>';
+
+            const tdDate = document.createElement('td');
+            tdDate.textContent = rp.created_at;
+            tr.appendChild(tdDate);
+
+            const tdType = document.createElement('td');
+            tdType.textContent = rp.backup_type;
+            tr.appendChild(tdType);
+
+            const tdSize = document.createElement('td');
+            tdSize.textContent = formatBytes(rp.size_bytes);
+            tr.appendChild(tdSize);
+
+            const tdAction = document.createElement('td');
+            const btn = document.createElement('button');
+            btn.className = 'vault-btn vault-btn-sm vault-btn-primary';
+            btn.textContent = 'Restore';
+            btn.addEventListener('click', function() { restoreFromPoint(rp.id); });
+            tdAction.appendChild(btn);
+            tr.appendChild(tdAction);
+
             tbody.appendChild(tr);
         });
         document.getElementById('restorePointsTable').style.display = 'table';

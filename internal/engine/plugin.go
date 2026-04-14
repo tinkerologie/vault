@@ -74,6 +74,13 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 		pluginName = item.Name
 	}
 
+	// Validate plugin name to prevent path traversal (CWE-22).
+	safePluginName, err := normalizeRestoreComponent(pluginName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid plugin name: %w", err)
+	}
+	pluginName = safePluginName
+
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating dest dir: %w", err)
 	}
@@ -85,7 +92,7 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	if _, err := os.Stat(plgSrc); err != nil {
 		return nil, fmt.Errorf("plugin file not found: %w", err)
 	}
-	data, err := os.ReadFile(plgSrc)
+	data, err := os.ReadFile(plgSrc) // #nosec G304 — pluginName validated by normalizeRestoreComponent above
 	if err != nil {
 		return nil, fmt.Errorf("reading plugin file: %w", err)
 	}
@@ -134,7 +141,7 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 
 	// Try to read metadata for plugin name.
 	metaPath := filepath.Join(sourceDir, "plugin_meta.json")
-	if data, err := os.ReadFile(metaPath); err == nil {
+	if data, err := os.ReadFile(metaPath); err == nil { // #nosec G304 — metaPath is sourceDir (caller-controlled temp dir) + fixed filename
 		var meta struct {
 			Name string `json:"name"`
 		}
@@ -152,7 +159,7 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// Step 1: Restore the .plg file.
 	progress(item.Name, 30, "restoring plugin file")
 	plgSrc := filepath.Join(sourceDir, pluginName+".plg")
-	if data, err := os.ReadFile(plgSrc); err == nil {
+	if data, err := os.ReadFile(plgSrc); err == nil { // #nosec G304 — pluginName validated by normalizeRestoreComponent above
 		plgDst := filepath.Join(pluginsDir, pluginName+".plg")
 		if err := os.WriteFile(plgDst, data, 0644); err != nil {
 			return fmt.Errorf("writing plugin file: %w", err)
@@ -169,7 +176,7 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		if err := os.MkdirAll(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
-		if err := untarDirectory(ctx, configArchive, configDir); err != nil {
+		if err := untarDirectory(ctx, configArchive, configDir); err != nil { // untarDirectory has Zip Slip (CWE-22) protection via joinArchiveTarget + resolveWithinBase
 			return fmt.Errorf("restoring plugin config: %w", err)
 		}
 	}

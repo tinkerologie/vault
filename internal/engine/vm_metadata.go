@@ -57,7 +57,7 @@ func writeVMBackupMetadata(destDir, state string, settings map[string]any) (stri
 
 func readVMRestoreMetadata(sourceDir string) (vmBackupMetadata, error) {
 	metadataPath := filepath.Join(sourceDir, vmMetadataFileName)
-	data, err := os.ReadFile(metadataPath)
+	data, err := os.ReadFile(metadataPath) // #nosec G304 — metadataPath is sourceDir + fixed filename
 	if err != nil {
 		return vmBackupMetadata{}, err
 	}

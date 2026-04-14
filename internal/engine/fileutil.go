@@ -15,7 +15,7 @@ func copyFile(src, dst string) error {
 // copyFileWithProgress copies a file from src to dst, calling onProgress with
 // the number of bytes copied so far after each chunk.
 func copyFileWithProgress(src, dst string, onProgress func(bytesCopied int64)) error {
-	in, err := os.Open(src)
+	in, err := os.Open(src) // #nosec G304 — src paths come from libvirt domain XML (trusted system data)
 	if err != nil {
 		return fmt.Errorf("opening source %s: %w", src, err)
 	}
@@ -31,7 +31,7 @@ func copyFileWithProgress(src, dst string, onProgress func(bytesCopied int64)) e
 		return err
 	}
 
-	out, err := os.OpenFile(normalizedDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+	out, err := os.OpenFile(normalizedDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode()) // #nosec G304 — normalizedDst validated by normalizeRestorePath
 	if err != nil {
 		return fmt.Errorf("creating dest %s: %w", normalizedDst, err)
 	}

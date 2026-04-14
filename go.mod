@@ -1,6 +1,6 @@
 module github.com/ruaan-deysel/vault
 
-go 1.26.1
+go 1.26.2
 
 require (
 	filippo.io/age v1.3.1

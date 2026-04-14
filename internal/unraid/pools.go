@@ -116,7 +116,7 @@ func isMountedPoolFrom(infoPath, poolPath string) bool {
 		return false
 	}
 
-	f, err := os.Open(infoPath)
+	f, err := os.Open(infoPath) // #nosec G304 — infoPath is "/proc/self/mountinfo" (compile-time constant)
 	if err != nil {
 		return false
 	}

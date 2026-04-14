@@ -17,7 +17,7 @@ const ServerKeySize = 32
 // not exist, a new random 32-byte key is generated and written to keyPath
 // with mode 0600. The key is used to seal/unseal secrets stored in the DB.
 func LoadOrCreateServerKey(keyPath string) ([]byte, error) {
-	data, err := os.ReadFile(keyPath) //nolint:gosec // keyPath is from CLI flags at daemon startup — not user input
+	data, err := os.ReadFile(keyPath) // #nosec G304 //nolint:gosec // keyPath is from CLI flags at daemon startup — not user input
 	if err == nil {
 		if len(data) != ServerKeySize {
 			return nil, fmt.Errorf("server key at %s has unexpected size %d", keyPath, len(data))

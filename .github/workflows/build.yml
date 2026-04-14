@@ -33,7 +33,7 @@ jobs:
         run: cd web && npm ci && npm run build
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@0a35821d5c230e903fcfe077583637dea1b27b47 # v9.0.0
         with:
           version: latest
           args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0

@@ -145,7 +145,7 @@ func (h *ZFSHandler) Backup(ctx context.Context, item BackupItem, destDir string
 	progress(item.Name, 10, "sending ZFS stream")
 
 	sendPath := filepath.Join(destDir, zfsSendFile)
-	f, err := os.Create(sendPath)
+	f, err := os.Create(sendPath) // #nosec G304 — sendPath is destDir + fixed filename
 	if err != nil {
 		return nil, fmt.Errorf("creating send file: %w", err)
 	}
@@ -224,7 +224,7 @@ func (h *ZFSHandler) Restore(ctx context.Context, item BackupItem, sourceDir str
 	progress(item.Name, 5, "reading metadata")
 
 	metaPath := filepath.Join(sourceDir, zfsMetaFile)
-	metaBytes, err := os.ReadFile(metaPath)
+	metaBytes, err := os.ReadFile(metaPath) // #nosec G304 — metaPath is sourceDir + fixed filename
 	if err != nil {
 		return fmt.Errorf("reading zfs metadata: %w", err)
 	}
@@ -263,7 +263,7 @@ func (h *ZFSHandler) Restore(ctx context.Context, item BackupItem, sourceDir str
 	progress(item.Name, 10, "receiving ZFS stream")
 
 	sendPath := filepath.Join(sourceDir, zfsSendFile)
-	f, err := os.Open(sendPath)
+	f, err := os.Open(sendPath) // #nosec G304 — sendPath is sourceDir + fixed filename
 	if err != nil {
 		return fmt.Errorf("opening send file: %w", err)
 	}

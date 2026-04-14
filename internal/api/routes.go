@@ -254,7 +254,7 @@ func detectUnraidTimeFormat() string {
 // detectTimeFormatFromPath reads a dynamix.cfg INI file and returns the time
 // format preference. Extracted for testability.
 func detectTimeFormatFromPath(path string) string {
-	data, err := os.ReadFile(path) //nolint:gosec // path is a hardcoded constant from detectUnraidTimeFormat
+	data, err := os.ReadFile(path) // #nosec G304 //nolint:gosec // path is a hardcoded constant from detectUnraidTimeFormat
 	if err != nil {
 		return "auto"
 	}

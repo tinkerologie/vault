@@ -152,7 +152,7 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Optionally delete backup files from storage.
 	if r.URL.Query().Get("deleteFiles") == "true" {
 		if err := h.runner.CleanupJobStorage(id); err != nil {
-			log.Printf("Warning: failed to clean up storage for job %d: %s", id, err.Error()) //nolint:gosec // id is int64 from URL param
+			log.Printf("Warning: failed to clean up storage for job %d: %s", id, err.Error()) // #nosec G706 //nolint:gosec // id is int64 from URL param
 			// Continue with DB deletion even if storage cleanup fails.
 		}
 	}

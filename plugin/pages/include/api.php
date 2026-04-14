@@ -190,7 +190,7 @@ function vault_http_request($method, $path, $payload = null, $extraHeaders = [])
     $error = curl_error($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: 'application/json';
-    curl_close($ch);
+    unset($ch);
 
     return [
         'ok' => $error === '',

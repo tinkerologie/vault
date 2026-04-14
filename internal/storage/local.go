@@ -33,7 +33,7 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0750); err != nil {
 		return fmt.Errorf("create directories: %w", err)
 	}
-	f, err := os.Create(full)
+	f, err := os.Create(full) // #nosec G304 — full validated by safepath.JoinUnderBase in fullPath()
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
@@ -49,7 +49,7 @@ func (l *LocalAdapter) Read(path string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(fullPath)
+	return os.Open(fullPath) // #nosec G304 — fullPath validated by safepath.JoinUnderBase in fullPath()
 }
 
 func (l *LocalAdapter) Delete(path string) error {

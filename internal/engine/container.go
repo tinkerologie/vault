@@ -325,7 +325,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				return fmt.Errorf("saving image: %w", err)
 			}
 			imagePath := filepath.Join(destDir, "image.tar")
-			imgFile, err := os.Create(imagePath)
+			imgFile, err := os.Create(imagePath) // #nosec G304 — destDir is vault-controlled temp directory
 			if err != nil {
 				_ = imgReader.Close()
 				return fmt.Errorf("creating image file: %w", err)
@@ -427,7 +427,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// recognize and manage the container. Path pattern:
 		//   /boot/config/plugins/dockerMan/templates-user/my-<name>.xml
 		templatePath := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+item.Name+".xml")
-		if data, err := os.ReadFile(templatePath); err == nil {
+		if data, err := os.ReadFile(templatePath); err == nil { // #nosec G304 G703 — templatePath is fixed base dir + item.Name from Docker inspect
 			includeTemplate := true
 			if hasChangedSince {
 				changed, changeErr := pathChangedSince(templatePath, changedSince)
@@ -439,7 +439,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			if includeTemplate {
 				progress(item.Name, 85, "saving template")
 				destTemplate := filepath.Join(destDir, "template.xml")
-				if writeErr := os.WriteFile(destTemplate, data, 0600); writeErr != nil {
+				if writeErr := os.WriteFile(destTemplate, data, 0600); writeErr != nil { // #nosec G703 — data from Docker template, destTemplate is destDir + fixed filename
 					return fmt.Errorf("writing template xml: %w", writeErr)
 				}
 				result.Files = append(result.Files, backupFileInfo(destTemplate))
@@ -497,7 +497,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Step 1: Load image.
 	progress(item.Name, 5, "loading image")
 	imagePath := filepath.Join(sourceDir, "image.tar")
-	imgFile, err := os.Open(imagePath)
+	imgFile, err := os.Open(imagePath) // #nosec G304 — sourceDir is vault-controlled temp directory
 	if err != nil {
 		return fmt.Errorf("opening image file: %w", err)
 	}
@@ -514,7 +514,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Step 2: Read full container config.
 	progress(item.Name, 15, "reading config")
 	configPath := filepath.Join(sourceDir, "config.json")
-	configData, err := os.ReadFile(configPath)
+	configData, err := os.ReadFile(configPath) // #nosec G304 — sourceDir is vault-controlled temp directory
 	if err != nil {
 		return fmt.Errorf("reading config: %w", err)
 	}
@@ -598,7 +598,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Load the volumes manifest (if present) to know which were skipped.
 	progress(item.Name, 30, "restoring volumes")
 	var savedManifest []volumeManifestEntry
-	if mData, err := os.ReadFile(filepath.Join(sourceDir, "volumes.json")); err == nil {
+	if mData, err := os.ReadFile(filepath.Join(sourceDir, "volumes.json")); err == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
 		_ = json.Unmarshal(mData, &savedManifest)
 	}
 
@@ -778,10 +778,10 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Step 5: Restore Unraid template XML.
 	progress(item.Name, 80, "restoring template")
 	templateSrc := filepath.Join(sourceDir, "template.xml")
-	if data, readErr := os.ReadFile(templateSrc); readErr == nil {
-		templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") //nolint:gosec // path is constructed from trusted container name
+	if data, readErr := os.ReadFile(templateSrc); readErr == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
+		templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
 		if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
-			_ = os.WriteFile(templateDest, data, 0600) //nolint:gosec // best-effort restore of template
+			_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
 		}
 	}
 
@@ -838,7 +838,7 @@ func tarFile(ctx context.Context, srcPath, destPath string) error {
 		return fmt.Errorf("stat source file: %w", err)
 	}
 
-	outFile, err := os.Create(destPath)
+	outFile, err := os.Create(destPath) // #nosec G304 — destPath is destDir + fixed filename, caller-controlled
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
 	}
@@ -860,7 +860,7 @@ func tarFile(ctx context.Context, srcPath, destPath string) error {
 		return fmt.Errorf("writing tar header: %w", err)
 	}
 
-	f, err := os.Open(srcPath)
+	f, err := os.Open(srcPath) // #nosec G304 — srcPath is bind-mount path from Docker inspect
 	if err != nil {
 		return fmt.Errorf("opening source file: %w", err)
 	}
@@ -876,7 +876,7 @@ func tarFile(ctx context.Context, srcPath, destPath string) error {
 // untarFile extracts the first regular file from a gzip-compressed tar archive
 // and writes it to destPath. Used for restoring file-based bind mounts.
 func untarFile(ctx context.Context, srcPath, destPath string) error {
-	inFile, err := os.Open(srcPath)
+	inFile, err := os.Open(srcPath) // #nosec G304 — srcPath is sourceDir + fixed volume archive name
 	if err != nil {
 		return fmt.Errorf("opening archive: %w", err)
 	}
@@ -911,7 +911,7 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 			return fmt.Errorf("file %s exceeds max extract size (%d > %d)", header.Name, header.Size, maxExtractSize)
 		}
 
-		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode))
+		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode)) // #nosec G304 — destPath is restore destination from Docker container config
 		if err != nil {
 			return fmt.Errorf("creating file %s: %w", destPath, err)
 		}
@@ -939,7 +939,7 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 	}
 	defer root.Close()
 
-	outFile, err := os.Create(destPath)
+	outFile, err := os.Create(destPath) // #nosec G304 — destPath is destDir + fixed archive name, caller-controlled
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
 	}
@@ -1050,7 +1050,7 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 	}
 	defer root.Close()
 
-	outFile, err := os.Create(destPath)
+	outFile, err := os.Create(destPath) // #nosec G304 — destPath is destDir + fixed archive name, caller-controlled
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
 	}
@@ -1153,7 +1153,7 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 
 // untarDirectory extracts a gzip-compressed tar archive from srcPath into destDir.
 func untarDirectory(ctx context.Context, srcPath, destDir string) error {
-	inFile, err := os.Open(srcPath)
+	inFile, err := os.Open(srcPath) // #nosec G304 — srcPath is sourceDir + fixed archive name, caller-controlled
 	if err != nil {
 		return fmt.Errorf("opening archive: %w", err)
 	}
@@ -1204,7 +1204,7 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode))
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode)) // #nosec G304 — target validated by joinArchiveTarget + resolveWithinBase (Zip Slip protected)
 			if err != nil {
 				return fmt.Errorf("creating file %s: %w", target, err)
 			}
@@ -1228,7 +1228,7 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
-			if err := os.Symlink(header.Linkname, target); err != nil {
+			if err := os.Symlink(header.Linkname, target); err != nil { // #nosec G305 — target validated by joinArchiveTarget, linkname validated by resolveSymlinkTarget
 				return fmt.Errorf("creating symlink %s -> %s: %w", target, header.Linkname, err)
 			}
 		case tar.TypeLink:

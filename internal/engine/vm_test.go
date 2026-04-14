@@ -18,6 +18,9 @@ func TestVMBackupResultTypes(t *testing.T) {
 			{Name: "vdisk0.qcow2", Size: 10737418240},
 		},
 	}
+	if result.ItemName != "test-vm" {
+		t.Errorf("expected item name test-vm, got %s", result.ItemName)
+	}
 	if !result.Success {
 		t.Error("expected success")
 	}

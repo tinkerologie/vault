@@ -108,7 +108,7 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		dest, err := h.db.GetStorageDestination(id)
 		if err == nil {
 			if err := h.runner.CleanupStorageDestination(dest); err != nil {
-				log.Printf("Warning: failed to clean up files for storage %d: %s", id, err.Error()) //nolint:gosec // id is int64 from URL param
+				log.Printf("Warning: failed to clean up files for storage %d: %s", id, err.Error()) // #nosec G706 //nolint:gosec // id is int64 from URL param
 			}
 		}
 	}
@@ -292,14 +292,14 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	// Close current DB, swap files, re-open is handled by the caller
 	// (daemon restart). For now, copy the temp file over the current DB.
 	_ = h.db.Close()
-	srcFile, err := os.Open(tmpPath)
+	srcFile, err := os.Open(tmpPath) // #nosec G304 — tmpPath is os.CreateTemp result, vault-controlled
 	if err != nil {
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, err)
 		return
 	}
 
-	dstFile, err := os.Create(currentPath) //nolint:gosec // currentPath is from h.db.Path(), set at daemon startup — not user input
+	dstFile, err := os.Create(currentPath) // #nosec G304 //nolint:gosec // currentPath is from h.db.Path(), set at daemon startup — not user input
 	if err != nil {
 		_ = srcFile.Close()
 		_ = os.Remove(tmpPath)
@@ -420,7 +420,7 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, rc); err != nil {
-		log.Printf("Warning: error streaming file %q: %v", filePath, err) //nolint:gosec // filePath is admin-configured storage path
+		log.Printf("Warning: error streaming file %q: %v", filePath, err) // #nosec G706 //nolint:gosec // filePath is admin-configured storage path
 	}
 }
 

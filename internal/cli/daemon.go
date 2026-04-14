@@ -126,7 +126,7 @@ var daemonCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer func() { database.Close() }()
+		defer func() { _ = database.Close() }() // #nosec G104 — best-effort close at shutdown
 
 		// In hybrid mode, attempt restoration using a fallback chain.
 		if hybridMode {

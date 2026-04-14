@@ -112,7 +112,7 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// Try reading stored metadata if settings don't have the path.
 	if destPath == "" {
 		metaPath := filepath.Join(sourceDir, "folder_meta.json")
-		if data, err := os.ReadFile(metaPath); err == nil {
+		if data, err := os.ReadFile(metaPath); err == nil { // #nosec G304 — metaPath is sourceDir + fixed filename
 			var meta struct {
 				Path string `json:"path"`
 			}

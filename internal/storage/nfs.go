@@ -78,7 +78,7 @@ func (n *NFSAdapter) mount() error {
 	args = append(args, "-o", strings.Join(opts, ","))
 	args = append(args, source, dir)
 
-	if out, err := exec.Command("mount", args...).CombinedOutput(); err != nil { //nolint:gosec // args validated in NewNFSAdapter
+	if out, err := exec.Command("mount", args...).CombinedOutput(); err != nil { // #nosec G204 //nolint:gosec // args validated in NewNFSAdapter
 		_ = os.Remove(dir)
 		return fmt.Errorf("nfs: mount %s failed: %w\n%s", source, err, strings.TrimSpace(string(out)))
 	}
@@ -87,7 +87,7 @@ func (n *NFSAdapter) mount() error {
 	if n.config.BasePath != "" {
 		basePath, err = safepath.JoinUnderBase(dir, n.config.BasePath, true)
 		if err != nil {
-			_ = exec.Command("umount", dir).Run() //nolint:gosec // dir is vault-controlled temp dir
+			_ = exec.Command("umount", dir).Run() // #nosec G204 //nolint:gosec // dir is vault-controlled temp dir
 			_ = os.Remove(dir)
 			return fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err)
 		}
@@ -106,7 +106,7 @@ func (n *NFSAdapter) unmount() {
 	if !n.mounted {
 		return
 	}
-	if err := exec.Command("umount", n.mountDir).Run(); err != nil { //nolint:gosec // mountDir is vault-controlled temp dir
+	if err := exec.Command("umount", n.mountDir).Run(); err != nil { // #nosec G204 //nolint:gosec // mountDir is vault-controlled temp dir
 		log.Printf("Warning: nfs unmount %s failed: %v", n.mountDir, err)
 	}
 	if err := os.Remove(n.mountDir); err != nil && !os.IsNotExist(err) {

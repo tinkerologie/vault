@@ -44,8 +44,15 @@ if (!$result['ok']) {
 }
 
 http_response_code($result['status'] > 0 ? $result['status'] : 502);
+
+// Security headers to prevent XSS and MIME-type sniffing.
+header('X-Content-Type-Options: nosniff');
+
 if (!empty($result['content_type'])) {
     header('Content-Type: ' . $result['content_type']);
+} else {
+    // Default to JSON to prevent browser HTML interpretation.
+    header('Content-Type: application/json');
 }
 if (!empty($result['headers']['content-disposition'])) {
     header('Content-Disposition: ' . $result['headers']['content-disposition']);
