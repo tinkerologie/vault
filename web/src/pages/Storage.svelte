@@ -416,7 +416,7 @@
         </div>
       </div>
       <div>
-        <label for="cfg_spath" class="block text-sm font-medium text-text-muted mb-1.5">Remote Path</label>
+        <label for="cfg_spath" class="block text-sm font-medium text-text-muted mb-1.5">Remote Path <Tooltip text="Absolute path on the SFTP server where Vault will store backups. The directory must exist and the user must have write permission." /></label>
         <input id="cfg_spath" type="text" bind:value={form.config.base_path}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="/backups/vault" />
       </div>
@@ -428,7 +428,7 @@
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="192.168.1.100" />
         </div>
         <div>
-          <label for="cfg_share" class="block text-sm font-medium text-text-muted mb-1.5">Share</label>
+          <label for="cfg_share" class="block text-sm font-medium text-text-muted mb-1.5">Share <Tooltip text="The top-level SMB share name as configured on the server (e.g. Backups). Use the Path field below for a sub-folder within the share." /></label>
           <input id="cfg_share" type="text" bind:value={form.config.share}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="Backups" />
         </div>
@@ -458,12 +458,12 @@
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
         <div class="col-span-2">
-          <label for="nfs_export" class="block text-sm font-medium text-text-muted mb-1.5">Export Path</label>
+          <label for="nfs_export" class="block text-sm font-medium text-text-muted mb-1.5">Export Path <Tooltip text="The path the NFS server exports — matches the entry in /etc/exports on the server (e.g. /mnt/user/backups). This is what gets mounted, not a sub-path within it." /></label>
           <input id="nfs_export" type="text" bind:value={form.config.export} placeholder="/mnt/user/backups"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
         <div>
-          <label for="nfs_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path</label>
+          <label for="nfs_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional sub-directory within the mounted export where Vault will write its data. Leave blank to use the export root directly." /></label>
           <input id="nfs_base" type="text" bind:value={form.config.base_path} placeholder="vault"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>

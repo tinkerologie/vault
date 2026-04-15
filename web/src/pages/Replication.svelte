@@ -99,6 +99,10 @@
       modalTestResult = { success: false, error: 'Enter a URL first' }
       return
     }
+    if (!cloudConfig.api_key) {
+      modalTestResult = { success: false, error: 'Enter an API key — it is required to connect to the remote Vault server' }
+      return
+    }
     modalTesting = true
     modalTestResult = null
     try {
@@ -417,10 +421,16 @@
         </div>
 
         <div>
-          <label for="repl-apikey" class="block text-sm font-medium text-text mb-1">Remote Vault API Key</label>
-          <input id="repl-apikey" type="password" value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder="Enter the remote server's API key"
+          <label for="repl-apikey" class="block text-sm font-medium text-text mb-1">
+            Remote Vault API Key
+            <span class="text-danger ml-1" aria-hidden="true">*</span>
+          </label>
+          <input id="repl-apikey" type="password" required value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder="Enter the remote server's API key"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
-          <p class="text-xs text-text-dim mt-1">The shared API key configured on the remote Vault server for authentication</p>
+          <div class="mt-2 p-2.5 bg-warning/5 border border-warning/20 rounded-lg flex items-start gap-2">
+            <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            <p class="text-xs text-text-muted">An API key is required to authenticate with the remote Vault server. Generate one on the remote server under <strong class="text-text">Settings → API Access</strong>, then paste it here.</p>
+          </div>
         </div>
 
         <!-- Test Connection -->

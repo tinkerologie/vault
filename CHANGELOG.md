@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- Storage form: added tooltips on SFTP Remote Path, SMB Share, NFS Export Path, and NFS Base Path to clarify the distinction between fields that look similar (e.g. export vs sub-path within mount)
+- Replication target form: API key field is now required (marked with asterisk, form submit blocked without it); "Test Connection" is blocked if no API key is entered; warning callout directs users to generate a key on the remote server under Settings → API Access
 - Removed the "Target Type" dropdown from the Replication target form — only "Remote Vault Server" is supported
 - Removed the Fallback Locations collapsible section from the Temporary Work Area on the Settings page to reduce clutter
 - Removed the WebSocket status row and Reconnect button from Server Information on the Settings page
