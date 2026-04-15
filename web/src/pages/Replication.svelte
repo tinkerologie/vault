@@ -408,17 +408,7 @@
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
       </div>
 
-      <!-- Target Type Selector -->
-      <div>
-        <label for="repl-type" class="block text-sm font-medium text-text mb-1">Target Type</label>
-        <select id="repl-type" bind:value={form.type} onchange={onTypeChange} disabled={!!editing}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault">
-          <option value="remote_vault">Remote Vault Server</option>
-        </select>
-      </div>
-
       <!-- Remote Vault Fields -->
-      {#if form.type === 'remote_vault'}
         <div>
           <label for="repl-url" class="block text-sm font-medium text-text mb-1">Remote Vault URL</label>
           <input id="repl-url" type="url" required bind:value={form.url} placeholder="http://192.168.1.100:24085"
@@ -457,8 +447,6 @@
             </span>
           {/if}
         </div>
-
-      {/if}
 
       <div>
         <span class="block text-sm font-medium text-text mb-1">Sync Schedule <Tooltip text="Controls how frequently Vault syncs restore points to the replication target." /></span>

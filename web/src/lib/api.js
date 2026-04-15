@@ -36,7 +36,7 @@ export const api = {
     return request('DELETE', `/storage/${id}${qs ? '?' + qs : ''}`)
   },
   testStorage: (id) => request('POST', `/storage/${id}/test`),
-  scanStorage: (id) => request('POST', `/storage/${id}/scan`),
+  scanStorage: (id, path = '') => request('POST', `/storage/${id}/scan${path ? '?path=' + encodeURIComponent(path) : ''}`),
   importBackups: (id, backups) => request('POST', `/storage/${id}/import`, { backups }),
   restoreDB: (id, storagePath) => request('POST', `/storage/${id}/restore-db`, { storage_path: storagePath }),
   getDependentJobs: (id) => request('GET', `/storage/${id}/jobs`),
@@ -49,6 +49,7 @@ export const api = {
   deleteJob: (id, deleteFiles = false) => request('DELETE', `/jobs/${id}${deleteFiles ? '?deleteFiles=true' : ''}`),
   getJobHistory: (id, limit = 50) => request('GET', `/jobs/${id}/history?limit=${limit}`),
   getRestorePoints: (id) => request('GET', `/jobs/${id}/restore-points`),
+  deleteRestorePoint: (jobId, rpId) => request('DELETE', `/jobs/${jobId}/restore-points/${rpId}`),
   runJob: (id) => request('POST', `/jobs/${id}/run`),
   restoreJob: (id, data) => request('POST', `/jobs/${id}/restore`, data),
   getNextRuns: () => request('GET', '/jobs/next-runs'),
@@ -73,6 +74,11 @@ export const api = {
   setEncryption: (passphrase) => request('POST', '/settings/encryption', { passphrase }),
   verifyEncryption: (passphrase) => request('POST', '/settings/encryption/verify', { passphrase }),
   getEncryptionPassphrase: () => request('GET', '/settings/encryption/passphrase'),
+
+  // API Key
+  getAPIKeyStatus: () => request('GET', '/settings/api-key'),
+  generateAPIKey: () => request('POST', '/settings/api-key/generate'),
+  revokeAPIKey: () => request('DELETE', '/settings/api-key'),
 
   // Staging
   getStagingInfo: () => request('GET', '/settings/staging'),

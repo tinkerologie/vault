@@ -209,28 +209,36 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
         <input type="text" bind:value={searchQuery} placeholder="Search runs..."
+          aria-label="Search runs"
           class="w-full pl-9 pr-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
       </div>
 
       <!-- Status filter pills -->
-      {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running']] as [val, label] (val)}
-        <button type="button" onclick={() => selectedStatus = val}
-          class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {selectedStatus === val ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
-          {label}
-        </button>
-      {/each}
+      <div role="group" aria-label="Filter by status" class="flex items-center gap-2 flex-wrap">
+        {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running']] as [val, label] (val)}
+          <button type="button" onclick={() => selectedStatus = val}
+            aria-pressed={selectedStatus === val}
+            class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {selectedStatus === val ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
+            {label}
+          </button>
+        {/each}
+      </div>
 
       <!-- Run type filter -->
-      <div class="flex rounded-lg border border-border overflow-hidden text-xs">
+      <div role="group" aria-label="Filter by type" class="flex rounded-lg border border-border overflow-hidden text-xs">
         <button onclick={() => selectedRunType = 'all'}
-          class="px-3 py-1.5 transition-colors {selectedRunType === 'all' ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">All</button>
+          aria-pressed={selectedRunType === 'all'}
+          class="px-3 py-1.5 transition-colors {selectedRunType === 'all' ? 'bg-vault text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">All</button>
         <button onclick={() => selectedRunType = 'backup'}
-          class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'backup' ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Backups</button>
+          aria-pressed={selectedRunType === 'backup'}
+          class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'backup' ? 'bg-vault text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Backups</button>
         <button onclick={() => selectedRunType = 'restore'}
-          class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'restore' ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Restores</button>
+          aria-pressed={selectedRunType === 'restore'}
+          class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'restore' ? 'bg-vault text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Restores</button>
       </div>
 
       <select bind:value={selectedJob}
+        aria-label="Filter by job"
         class="px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text">
         <option value={0}>All Jobs</option>
         {#each jobs as job (job.id)}
@@ -286,7 +294,7 @@
                           {#if (run.run_type || 'backup') === 'restore'}
                             <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-500/15 text-purple-400">restore</span>
                           {:else}
-                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-accent/15 text-accent">backup</span>
+                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-vault/15 text-vault">backup</span>
                           {/if}
                           {#if run.backup_type}
                             <span class="text-xs text-text-dim capitalize">{run.backup_type}</span>

@@ -311,7 +311,8 @@
     {/if}
 
     <!-- Stats Grid -->
-    <div class="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory lg:grid lg:grid-cols-5 lg:overflow-visible lg:pb-0 mb-8 stagger" aria-live="polite">
+    <div class="relative mb-8">
+    <div class="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory lg:grid lg:grid-cols-5 lg:overflow-visible lg:pb-0 stagger" aria-live="polite">
       <div class="bg-surface-2 border border-border rounded-xl p-5 snap-start min-w-[140px] flex-shrink-0 lg:min-w-0 lg:flex-shrink">
         <div class="flex items-center justify-between">
           <div>
@@ -381,6 +382,9 @@
         </div>
         <p class="text-xs text-text-dim mt-2">{storage.map(s => s.type).filter((v,i,a) => a.indexOf(v) === i).join(', ') || '—'}</p>
       </button>
+    </div>
+    <!-- Scroll fade hint — only visible on mobile when cards overflow -->
+    <div class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-surface to-transparent lg:hidden"></div>
     </div>
 
     <!-- Active Backup/Restore Progress -->

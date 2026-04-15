@@ -26,6 +26,7 @@
   let showImport = $state(false)
   let importStorageId = $state(0)
   let importStorageName = $state('')
+  let importBasePath = $state('')
   let scanning = $state(false)
   let scannedBackups = $state([])
   let selectedBackups = $state(new SvelteSet())
@@ -146,6 +147,7 @@
   async function openImport(id, name) {
     importStorageId = id
     importStorageName = name
+    importBasePath = ''
     scannedBackups = []
     selectedBackups = new SvelteSet()
     showImport = true
@@ -155,7 +157,7 @@
   async function scanStorage() {
     scanning = true
     try {
-      const results = await api.scanStorage(importStorageId)
+      const results = await api.scanStorage(importStorageId, importBasePath)
       scannedBackups = results || []
       selectedBackups = new SvelteSet(scannedBackups.map((_b, i) => i))
     } catch (e) {
@@ -548,10 +550,38 @@
 
 <!-- Import Backups Modal -->
 <Modal show={showImport} title={`Import Backups — ${importStorageName}`} onclose={() => showImport = false}>
+  <!-- Subfolder field — always visible so users can rescan with a different path -->
+  <div class="mb-4">
+    <label for="import-base-path" class="block text-xs font-medium text-text-muted mb-1">
+      Subfolder <span class="font-normal text-text-dim">(optional — leave blank to scan the storage root)</span>
+    </label>
+    <div class="flex gap-2">
+      <input
+        id="import-base-path"
+        type="text"
+        bind:value={importBasePath}
+        placeholder="e.g. appdata-backups or appdata/ab_archives"
+        class="flex-1 px-3 py-2 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-dim focus:outline-none focus:border-vault"
+        onkeydown={(e) => e.key === 'Enter' && !scanning && scanStorage()}
+      />
+      <button
+        type="button"
+        onclick={scanStorage}
+        disabled={scanning}
+        class="px-3 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+      >
+        {scanning ? 'Scanning…' : 'Scan'}
+      </button>
+    </div>
+    <p class="text-xs text-text-dim mt-1">
+      If your AppData Backup plugin stores backups in a subfolder (the <em>Destination</em> field in its settings), enter that path here.
+    </p>
+  </div>
+
   {#if scanning}
     <Spinner text="Scanning storage for backups..." />
   {:else if scannedBackups.length === 0}
-    <EmptyState title="No backups found" description="No backup manifests were found on this storage destination.">
+    <EmptyState title="No backups found" description="No backup manifests were found. Try entering the subfolder where your AppData Backup archives are stored above.">
       {#snippet iconSlot()}
         <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
       {/snippet}

@@ -184,7 +184,12 @@
 html {
   background-color: var(--color-surface);
   color: var(--color-text);
-  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
 }
 
 body {

@@ -2,7 +2,6 @@
   import { onMount } from 'svelte'
   import { api } from '../lib/api.js'
   import { formatBytes, formatDate } from '../lib/utils.js'
-  import { getWsStatus, connectWs, disconnectWs } from '../lib/ws.svelte.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
@@ -45,7 +44,6 @@
   let stagingInfo = $state(null)
   let stagingOverrideInput = $state('')
   let stagingSaving = $state(false)
-  let cascadeExpanded = $state(false)
 
   // Database info state
   let databaseInfo = $state(null)
@@ -121,12 +119,6 @@
     } finally {
       saving = false
     }
-  }
-
-  function reconnectWebSocket() {
-    disconnectWs()
-    setTimeout(connectWs, 100)
-    showToast('Reconnecting WebSocket...', 'info')
   }
 
   async function saveDiscordSettings() {
@@ -952,7 +944,14 @@
           <div>
             <span class="text-xs text-text-muted block mb-1.5">Custom Location</span>
             <p class="text-xs text-text-dim mb-2">Override the automatic location. Use this if you want backups to be assembled on a specific drive. NVMe-backed ZFS pools are automatically prioritized when detected.</p>
-            <PathBrowser bind:value={stagingOverrideInput} onselect={saveStagingOverride} includeZfs={true} />
+            <div class="flex gap-2 items-end">
+              <div class="flex-1">
+                <PathBrowser bind:value={stagingOverrideInput} onselect={saveStagingOverride} includeZfs={true} />
+              </div>
+              <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault/90 disabled:opacity-50 transition-colors shrink-0">
+                Apply
+              </button>
+            </div>
             {#if stagingInfo.override}
               <button onclick={resetStagingOverride} disabled={stagingSaving} class="mt-2 text-xs text-vault hover:underline">
                 Reset to automatic
@@ -960,35 +959,7 @@
             {/if}
           </div>
 
-          <div>
-            <button onclick={() => cascadeExpanded = !cascadeExpanded} class="text-xs text-text-muted hover:text-text flex items-center gap-1">
-              <svg aria-hidden="true" class="w-3 h-3 transition-transform {cascadeExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-              </svg>
-              Fallback locations <Tooltip text="Vault tries each location in order and uses the first one that is available and writable." />
-            </button>
-            {#if cascadeExpanded}
-              <p class="mt-1 text-xs text-text-dim">Vault tries each location in order and uses the first available one.</p>
-              <div class="mt-2 space-y-1 text-xs text-text-muted">
-                {#each stagingInfo.cascade as item, i (i)}
-                  <div class="flex items-center gap-2">
-                    <span>{i + 1}.</span>
-                    <span class="font-mono">{item.path}</span>
-                    <span>({item.source})</span>
-                    {#if item.available}
-                      <svg aria-hidden="true" class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                      </svg>
-                    {:else}
-                      <svg aria-hidden="true" class="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                      </svg>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
+
         </div>
       </div>
       {/if}
@@ -1013,14 +984,7 @@
             <span class="text-sm text-text-muted">API Endpoint</span>
             <code class="text-xs bg-surface-3 text-text-muted px-2 py-1 rounded">{window.location.origin}/api/v1</code>
           </div>
-          <div class="px-5 py-3 flex items-center justify-between">
-            <span class="text-sm text-text-muted">WebSocket</span>
-            <div class="flex items-center gap-2">
-              <span class="w-2 h-2 rounded-full {getWsStatus() === 'connected' ? 'bg-success' : getWsStatus() === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger'}"></span>
-              <span class="text-sm text-text capitalize">{getWsStatus()}</span>
-              <button onclick={reconnectWebSocket} class="ml-2 text-xs text-vault hover:text-vault-dark transition-colors">Reconnect</button>
-            </div>
-          </div>
+
         </div>
       </div>
 
@@ -1314,6 +1278,11 @@
               class="text-sm text-vault hover:text-vault-dark transition-colors flex items-center gap-2">
               <svg aria-hidden="true" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
               GitHub Repository
+            </a>
+            <a href="https://github.com/sponsors/ruaan-deysel" target="_blank" rel="noopener"
+              class="text-sm text-vault hover:text-vault-dark transition-colors flex items-center gap-2">
+              <svg aria-hidden="true" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+              Sponsor
             </a>
           </div>
         </div>

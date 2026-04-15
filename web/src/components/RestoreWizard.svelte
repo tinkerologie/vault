@@ -20,6 +20,8 @@
   let restorePoints = $state([])
   let loadingPoints = $state(false)
   let typeFilter = $state('all')
+  let deletingRpId = $state(null)
+  let confirmDeleteRpId = $state(null)
 
   // Restore progress
   let restoring = $state(false)
@@ -249,6 +251,23 @@
     if (step === 3) { step = 2; selectedPoint = null }
     else if (step === 2) { step = 1; restorePoints = [] }
   }
+
+  async function deleteRestorePoint(rp) {
+    if (confirmDeleteRpId !== rp.id) {
+      confirmDeleteRpId = rp.id
+      return
+    }
+    confirmDeleteRpId = null
+    deletingRpId = rp.id
+    try {
+      await api.deleteRestorePoint(rp.job_id, rp.id)
+      restorePoints = restorePoints.filter(p => p.id !== rp.id)
+    } catch (e) {
+      console.error('Failed to delete restore point', e)
+    } finally {
+      deletingRpId = null
+    }
+  }
 </script>
 
 <div>
@@ -381,8 +400,11 @@
         {#each restorePoints as rp, i (rp.id)}
           {@const meta = parseMetadata(rp.metadata)}
           {@const isRecommended = i === 0 && (rp.status === 'completed' || rp.status === 'success')}
-          <button type="button" onclick={() => selectPoint(rp)}
-            class="w-full bg-surface-2 border rounded-xl p-4 text-left hover:shadow-sm transition-all
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div role="button" tabindex="0"
+            onclick={() => { confirmDeleteRpId = null; selectPoint(rp) }}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); confirmDeleteRpId = null; selectPoint(rp) } }}
+            class="w-full bg-surface-2 border rounded-xl p-4 text-left hover:shadow-sm transition-all cursor-pointer
               {isRecommended ? 'border-vault/40 hover:border-vault/60' : 'border-border hover:border-vault/30'}">
             <div class="flex items-center justify-between mb-2">
               <div class="flex items-center gap-2">
@@ -402,7 +424,23 @@
                   <span class="text-xs px-2 py-0.5 rounded-full bg-info/15 text-info font-medium">Verified</span>
                 {/if}
               </div>
-              <span class="text-xs text-text-dim">{relTime(rp.created_at)}</span>
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-text-dim">{relTime(rp.created_at)}</span>
+                <button
+                  type="button"
+                  onclick={(e) => { e.stopPropagation(); deleteRestorePoint(rp) }}
+                  disabled={deletingRpId === rp.id}
+                  title={confirmDeleteRpId === rp.id ? 'Click again to confirm' : 'Delete this backup'}
+                  aria-label="Delete restore point"
+                  class="p-1 rounded transition-colors {confirmDeleteRpId === rp.id ? 'text-danger hover:text-danger/80' : 'text-text-dim hover:text-danger'} disabled:opacity-40"
+                >
+                  {#if deletingRpId === rp.id}
+                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  {:else}
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  {/if}
+                </button>
+              </div>
             </div>
             <div class="flex items-center gap-4 text-xs text-text-dim">
               <span>{formatBytes(selectedRestoreSize(rp))}{selectedRestoreSize(rp) !== rp.size_bytes ? ' selected' : ''}</span>
@@ -420,7 +458,7 @@
             {#if rp.retention_preserved}
               <p class="mt-1 text-xs text-warning">{retentionPreservedMessage(rp)}</p>
             {/if}
-          </button>
+          </div>
         {/each}
       </div>
       <p class="text-xs text-text-dim mt-3 text-center">{restorePoints.length} restore point{restorePoints.length !== 1 ? 's' : ''}</p>

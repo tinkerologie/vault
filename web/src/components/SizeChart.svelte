@@ -48,15 +48,30 @@
     return `${lineSegments} L${x(dataPoints.length - 1)},${chartHeight} L${x(0)},${chartHeight} Z`
   })
 
-  // Trend indicator
+  // True when all visible data points belong to the same job — trend % is only
+  // meaningful in that case (comparing across different jobs gives nonsense numbers).
+  let isSingleJob = $derived(new Set(dataPoints.map(p => p.name).filter(Boolean)).size <= 1)
+
+  // Trend indicator — uses linear regression (least-squares) so a single outlier
+  // data point does not distort the result.
   let trend = $derived.by(() => {
     if (dataPoints.length < 2) return null
-    const recent = dataPoints.slice(-5)
-    const first = recent[0]?.size || 0
-    const last = recent[recent.length - 1]?.size || 0
-    if (first === 0) return null
-    const pct = ((last - first) / first) * 100
-    return { pct: Math.round(pct), direction: pct > 5 ? 'up' : pct < -5 ? 'down' : 'stable' }
+    const n = dataPoints.length
+    // Compute slope via least-squares on (index, size) pairs.
+    const sumX = (n * (n - 1)) / 2
+    const sumX2 = (n * (n - 1) * (2 * n - 1)) / 6
+    const sumY = dataPoints.reduce((s, p) => s + p.size, 0)
+    const sumXY = dataPoints.reduce((s, p, i) => s + i * p.size, 0)
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX)
+    const intercept = (sumY - slope * sumX) / n
+    const firstPred = intercept
+    const lastPred = intercept + slope * (n - 1)
+    if (firstPred <= 0) return null
+    const pct = ((lastPred - firstPred) / firstPred) * 100
+    const direction = pct > 5 ? 'up' : pct < -5 ? 'down' : 'stable'
+    // Only show a numeric percentage when all points are from the same job;
+    // for mixed jobs the percentage is misleading so show a label instead.
+    return { pct: Math.round(Math.abs(pct)), direction, showPct: isSingleJob }
   })
 
   function formatDateShort(d) {
@@ -72,10 +87,10 @@
         <div class="flex items-center gap-1.5 text-xs">
           {#if trend.direction === 'up'}
             <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
-            <span class="text-warning">+{trend.pct}%</span>
+            <span class="text-warning">{trend.showPct ? `+${trend.pct}%` : 'Growing'}</span>
           {:else if trend.direction === 'down'}
             <svg aria-hidden="true" class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-            <span class="text-success">{trend.pct}%</span>
+            <span class="text-success">{trend.showPct ? `-${trend.pct}%` : 'Shrinking'}</span>
           {:else}
             <svg aria-hidden="true" class="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14"/></svg>
             <span class="text-text-muted">Stable</span>

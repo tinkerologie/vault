@@ -91,6 +91,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Delete("/{id}", jobH.Delete)
 			r.Get("/{id}/history", jobH.GetHistory)
 			r.Get("/{id}/restore-points", jobH.GetRestorePoints)
+			r.Delete("/{id}/restore-points/{rpid}", jobH.DeleteRestorePoint)
 			r.Post("/{id}/run", jobH.RunNow)
 			r.Post("/{id}/cancel", jobH.Cancel)
 			r.Post("/{id}/restore", jobH.Restore)

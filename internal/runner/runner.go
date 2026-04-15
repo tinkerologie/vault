@@ -2108,7 +2108,10 @@ func (r *Runner) ScanAppdataBackups(dest db.StorageDestination, basePath string)
 			case strings.HasSuffix(fileName, ".tar.gz"):
 				jobName = strings.TrimSuffix(fileName, ".tar.gz")
 				compression = "gzip"
-			case strings.HasPrefix(fileName, "cube-") && strings.HasSuffix(fileName, ".zip"):
+			case strings.HasSuffix(fileName, ".zip"):
+				// Flash backups are ZIP files named <hostname>-<date>.zip.
+				// The hostname varies per system (cube, tower, unraid, etc.),
+				// so match any .zip file — container backups always use .tar.gz.
 				jobName = "flash-backup"
 				compression = "zip"
 			default:

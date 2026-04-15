@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- "Apply" button on the Temporary Work Area custom location input for consistency with the Database Location pattern
+- GitHub Sponsors link in the About Vault section on the Settings page
+
+### Changed
+
+- Removed the "Target Type" dropdown from the Replication target form — only "Remote Vault Server" is supported
+- Removed the Fallback Locations collapsible section from the Temporary Work Area on the Settings page to reduce clutter
+- Removed the WebSocket status row and Reconnect button from Server Information on the Settings page
+- Removed the WebSocket/Polling status indicator from the sidebar footer
+
+### Added
+
 - CORS middleware (`go-chi/cors`) restricting cross-origin requests to `*.myunraid.net`, `localhost`, and `127.0.0.1` origins only (OWASP A01)
 - IP-based rate limiting (`go-chi/httprate`) on auth-sensitive endpoints: encryption verify (10 req/min), API key generate/rotate (5 req/min) (OWASP A05/A07)
 - Auto-seal migration on daemon startup: legacy plaintext `encryption_passphrase` values are automatically sealed with the server key and the plaintext is cleared (OWASP A02)
@@ -20,6 +32,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Added per-restore-point deletion: each restore point in the Restore wizard now has a trash button (two-click confirm) that deletes both the backup files from storage and the database record — closes the user request for "delete a backup without deleting the job"
+- Added subfolder field to the Import Backups modal on the Storage page — lets users point the scanner at a specific subdirectory when their AppData Backup archives are not at the storage root (e.g. `appdata-backups/`)
+- Fixed AppData Backup flash-backup detection to match any `<hostname>-<date>.zip` file instead of only `cube-*.zip` — works for systems named tower, unraid, or any other hostname
+- Fixed Backup Size Trend chart showing wildly incorrect percentages (e.g. +1120%) when multiple jobs are visible — switched from last-point comparison to linear regression; mixed-job views now show a directional label (Growing/Shrinking/Stable) instead of a misleading number, while single-job filtered views still show the exact percentage
+- Verified sequential job execution: 3 jobs queued simultaneously (Jackett, Mosquitto/Tailscale, Fedora VM) all completed in sequence without stalling — the reported "stops after 2 backups" issue does not reproduce on the current codebase
+- Fixed missing `getAPIKeyStatus`, `generateAPIKey`, and `revokeAPIKey` methods in the API client (`api.js`), which caused a console error on every Settings page load and always showed "No API key configured" regardless of actual state
+- Fixed undefined `bg-accent`/`text-accent` Tailwind v4 tokens on the "backup" type badge in History run rows — replaced with `bg-vault/15 text-vault` so the badge is now visible in both light and dark modes
+- Added `aria-pressed` state to all filter/segmented-control buttons in History and Logs pages, and wrapped filter groups in `role="group"` with descriptive `aria-label` for screen-reader usability
+- Added `aria-current="page"` to sidebar navigation and mobile bottom-nav buttons so the active page is announced by screen readers
+- Added `aria-label` to the search input on the History page
+- Changed mobile bottom-nav "More" button icon from a gear to a three-dots ellipsis, matching the standard convention for overflow menus
+- Added an active indicator dot beneath the current page icon in the mobile bottom navigation bar
+- Scoped the `html` theme transition (`background-color`/`color`) inside `@media (prefers-reduced-motion: no-preference)` to respect the OS reduced-motion accessibility setting
+- Added scroll-fade gradient hint on mobile Dashboard stats row to indicate horizontal scrollability
+- Replaced non-standard checkbox in Logs page auto-scroll control with a proper `role="switch"` toggle button matching the design pattern used throughout the Settings page
 - Removed duplicate action buttons on Jobs, Storage, and Replication pages — top-right header button now only appears when items exist, eliminating redundancy with the empty-state center button
 - Fixed nil pointer dereference on startup: `BrowseHandler` was not assigned to the server struct in `setupRoutes`, causing a panic when `SetZFSLister` was called
 - Fixed `sync.Mutex` deadlock in runner: `RunJob` already holds `r.mu`, removed redundant lock around `snapshotManager` access in snapshot save

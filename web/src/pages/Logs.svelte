@@ -190,10 +190,18 @@
     </div>
     <div class="flex items-center gap-2">
       <!-- Auto-scroll toggle -->
-      <label class="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer" title="Auto-scroll to new entries">
-        <input type="checkbox" bind:checked={autoScroll} class="accent-vault w-3.5 h-3.5" />
+      <button
+        role="switch"
+        aria-checked={autoScroll}
+        onclick={() => autoScroll = !autoScroll}
+        class="flex items-center gap-2 text-xs text-text-muted hover:text-text transition-colors"
+        title="Auto-scroll to new entries"
+      >
+        <span class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors {autoScroll ? 'bg-vault' : 'bg-surface-4'}">
+          <span class="inline-block h-3 w-3 rounded-full bg-white shadow transition-transform {autoScroll ? 'translate-x-3.5' : 'translate-x-0.5'}"></span>
+        </span>
         Auto-scroll
-      </label>
+      </button>
       <!-- Export button -->
       <button onclick={exportLogs} disabled={filteredEntries.length === 0}
         class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Export logs">
@@ -215,29 +223,35 @@
 
   <!-- Filters -->
   <div class="flex flex-wrap items-center gap-2 mb-4">
-    {#each categories as cat (cat.value)}
-      <button
-        type="button"
-        onclick={() => (category = cat.value)}
-        class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {category === cat.value
-          ? 'bg-vault text-white'
-          : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}"
-      >
-        {cat.label}
-      </button>
-    {/each}
-    <div class="w-px h-5 bg-border"></div>
-    {#each levels as lev (lev.value)}
-      <button
-        type="button"
-        onclick={() => (levelFilter = lev.value)}
-        class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {levelFilter === lev.value
-          ? (lev.value === 'error' ? 'bg-danger text-white' : lev.value === 'warning' ? 'bg-warning text-white' : 'bg-vault text-white')
-          : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}"
-      >
-        {lev.label}
-      </button>
-    {/each}
+    <div role="group" aria-label="Filter by category" class="flex items-center gap-2 flex-wrap">
+      {#each categories as cat (cat.value)}
+        <button
+          type="button"
+          onclick={() => (category = cat.value)}
+          aria-pressed={category === cat.value}
+          class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {category === cat.value
+            ? 'bg-vault text-white'
+            : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}"
+        >
+          {cat.label}
+        </button>
+      {/each}
+    </div>
+    <div class="w-px h-5 bg-border" aria-hidden="true"></div>
+    <div role="group" aria-label="Filter by level" class="flex items-center gap-2 flex-wrap">
+      {#each levels as lev (lev.value)}
+        <button
+          type="button"
+          onclick={() => (levelFilter = lev.value)}
+          aria-pressed={levelFilter === lev.value}
+          class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {levelFilter === lev.value
+            ? (lev.value === 'error' ? 'bg-danger text-white' : lev.value === 'warning' ? 'bg-warning text-white' : 'bg-vault text-white')
+            : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}"
+        >
+          {lev.label}
+        </button>
+      {/each}
+    </div>
   </div>
 
   {#if loading}

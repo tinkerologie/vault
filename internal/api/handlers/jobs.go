@@ -10,6 +10,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 // ScheduleReloader is called after job CRUD to reload the cron scheduler.
@@ -209,6 +210,60 @@ func (h *JobHandler) GetRestorePoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, runner.AnnotateRestorePoints(job, rps))
+}
+
+// DeleteRestorePoint deletes a single restore point and its storage files.
+//
+//	DELETE /api/v1/jobs/{id}/restore-points/{rpid}
+func (h *JobHandler) DeleteRestorePoint(w http.ResponseWriter, r *http.Request) {
+	jobID, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	rpID, ok := parseID(w, r, "rpid")
+	if !ok {
+		return
+	}
+
+	rp, err := h.db.GetRestorePoint(rpID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "restore point not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
+	if rp.JobID != jobID {
+		respondError(w, http.StatusNotFound, "restore point not found")
+		return
+	}
+
+	// Delete the backup files from storage if a path is recorded.
+	if rp.StoragePath != "" {
+		job, err := h.db.GetJob(jobID)
+		if err == nil {
+			dest, err := h.db.GetStorageDestination(job.StorageDestID)
+			if err == nil {
+				adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+				if err == nil {
+					defer storage.CloseAdapter(adapter)
+					h.runner.DeleteStorageDir(adapter, rp.StoragePath)
+				} else {
+					log.Printf("handlers: failed to create adapter for restore point deletion (job %d, rp %d): %v", jobID, rpID, err) // #nosec G706 //nolint:gosec // jobID and rpID are int64 from URL params
+				}
+			}
+		}
+	}
+
+	if err := h.db.DeleteRestorePoint(rpID); err != nil {
+		respondInternalError(w, err)
+		return
+	}
+
+	h.db.LogActivity("info", "system", fmt.Sprintf("Restore point #%d deleted", rpID),
+		fmt.Sprintf(`{"restore_point_id":%d,"job_id":%d}`, rpID, jobID))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // RunNow triggers an immediate backup run for a job.

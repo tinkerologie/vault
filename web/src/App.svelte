@@ -73,19 +73,20 @@
   }
 
   const iconFor = (path) => allNav.find(n => n.path === path)?.icon
+  const moreIcon = 'M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z'
   const daemonMobileNav = [
     { path: '/', label: 'Home', icon: iconFor('/') },
     { path: '/jobs', label: 'Jobs', icon: iconFor('/jobs') },
     { path: '/history', label: 'History', icon: iconFor('/history') },
     { path: '/restore', label: 'Restore', icon: iconFor('/restore') },
-    { path: '/settings', label: 'More', icon: iconFor('/settings') },
+    { path: '/settings', label: 'More', icon: moreIcon },
   ]
   const replicaMobileNav = [
     { path: '/', label: 'Home', icon: iconFor('/') },
     { path: '/replication', label: 'Replication', icon: iconFor('/replication') },
     { path: '/history', label: 'History', icon: iconFor('/history') },
     { path: '/logs', label: 'Logs', icon: iconFor('/logs') },
-    { path: '/settings', label: 'More', icon: iconFor('/settings') },
+    { path: '/settings', label: 'More', icon: moreIcon },
   ]
   let mobileNav = $derived(replicaMode ? replicaMobileNav : daemonMobileNav)
 
@@ -134,6 +135,7 @@
     <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
       {#each nav as item (item.path)}
         <button onclick={() => go(item.path)}
+          aria-current={isActive(item.path) ? 'page' : undefined}
           class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left
             {isActive(item.path) ? 'bg-vault/10 text-vault nav-active' : 'text-text-muted hover:text-text hover:bg-surface-3'}">
           <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
@@ -142,12 +144,8 @@
       {/each}
     </nav>
 
-    <!-- WS status footer -->
-    <div class="px-6 py-4 border-t border-border flex items-center justify-between">
-      <div class="flex items-center gap-2 text-xs text-text-dim">
-        <span class="w-2 h-2 rounded-full shrink-0 {getWsStatus() === 'connected' ? 'bg-success' : getWsStatus() === 'polling' ? 'bg-info' : getWsStatus() === 'connecting' ? 'bg-warning animate-pulse' : 'bg-danger'}"></span>
-        {getWsStatus() === 'connected' ? 'Connected' : getWsStatus() === 'polling' ? 'Polling' : getWsStatus() === 'connecting' ? 'Connecting...' : 'Disconnected'}
-      </div>
+    <!-- Theme toggle footer -->
+    <div class="px-6 py-4 border-t border-border flex items-center justify-end">
       <button
         onclick={cycleTheme}
         class="p-1.5 rounded-lg text-text-dim hover:text-text hover:bg-surface-3 transition-colors"
@@ -163,11 +161,6 @@
         {/if}
       </button>
     </div>
-    {#if proxyMode && liveMode === 'poll'}
-      <div class="px-6 pb-4 text-[11px] text-text-dim">Polling via authenticated Unraid plugin proxy</div>
-    {:else if proxyMode}
-      <div class="px-6 pb-4 text-[11px] text-text-dim">Authenticated Unraid plugin proxy</div>
-    {/if}
   </aside>
 
   <!-- Mobile header -->
@@ -231,13 +224,19 @@
     {#each mobileNav as item (item.path)}
       <button
         onclick={() => go(item.path)}
+        aria-current={isActive(item.path) ? 'page' : undefined}
         class="flex flex-col items-center gap-0.5 px-3 py-2 min-w-[44px] min-h-[44px] text-xs transition-colors
           {isActive(item.path) ? 'text-vault' : 'text-text-muted'}"
         aria-label={item.label}
       >
-        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path stroke-linecap="round" stroke-linejoin="round" d={item.icon} />
-        </svg>
+        <div class="relative">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d={item.icon} />
+          </svg>
+          {#if isActive(item.path)}
+            <span class="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-vault"></span>
+          {/if}
+        </div>
         <span>{item.label}</span>
       </button>
     {/each}
