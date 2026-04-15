@@ -10,63 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - "Apply" button on the Temporary Work Area custom location input for consistency with the Database Location pattern
 - GitHub Sponsors link in the About Vault section on the Settings page
-
-### Changed
-
-- Storage form: added tooltips on SFTP Remote Path, SMB Share, NFS Export Path, and NFS Base Path to clarify the distinction between fields that look similar (e.g. export vs sub-path within mount)
-- Replication target form: API key field is now required (marked with asterisk, form submit blocked without it); "Test Connection" is blocked if no API key is entered; warning callout directs users to generate a key on the remote server under Settings → API Access
-- Removed the "Target Type" dropdown from the Replication target form — only "Remote Vault Server" is supported
-- Removed the Fallback Locations collapsible section from the Temporary Work Area on the Settings page to reduce clutter
-- Removed the WebSocket status row and Reconnect button from Server Information on the Settings page
-- Removed the WebSocket/Polling status indicator from the sidebar footer
-
-### Added
-
 - CORS middleware (`go-chi/cors`) restricting cross-origin requests to `*.myunraid.net`, `localhost`, and `127.0.0.1` origins only (OWASP A01)
 - IP-based rate limiting (`go-chi/httprate`) on auth-sensitive endpoints: encryption verify (10 req/min), API key generate/rotate (5 req/min) (OWASP A05/A07)
 - Auto-seal migration on daemon startup: legacy plaintext `encryption_passphrase` values are automatically sealed with the server key and the plaintext is cleared (OWASP A02)
 - `Cache-Control: no-store` header on `GET /api/v1/settings/encryption/passphrase` to prevent caching of sensitive passphrase responses (OWASP A02)
-
-### Removed
-
-- Removed Google Drive and OneDrive replication support — only Remote Vault Server replication is now supported
-- Removed OAuth infrastructure (client credentials, build-time ldflags, callback handlers) for cloud storage providers
-
-### Fixed
-
-- Added per-restore-point deletion: each restore point in the Restore wizard now has a trash button (two-click confirm) that deletes both the backup files from storage and the database record — closes the user request for "delete a backup without deleting the job"
-- Added subfolder field to the Import Backups modal on the Storage page — lets users point the scanner at a specific subdirectory when their AppData Backup archives are not at the storage root (e.g. `appdata-backups/`)
-- Fixed AppData Backup flash-backup detection to match any `<hostname>-<date>.zip` file instead of only `cube-*.zip` — works for systems named tower, unraid, or any other hostname
-- Fixed Backup Size Trend chart showing wildly incorrect percentages (e.g. +1120%) when multiple jobs are visible — switched from last-point comparison to linear regression; mixed-job views now show a directional label (Growing/Shrinking/Stable) instead of a misleading number, while single-job filtered views still show the exact percentage
-- Verified sequential job execution: 3 jobs queued simultaneously (Jackett, Mosquitto/Tailscale, Fedora VM) all completed in sequence without stalling — the reported "stops after 2 backups" issue does not reproduce on the current codebase
-- Fixed missing `getAPIKeyStatus`, `generateAPIKey`, and `revokeAPIKey` methods in the API client (`api.js`), which caused a console error on every Settings page load and always showed "No API key configured" regardless of actual state
-- Fixed undefined `bg-accent`/`text-accent` Tailwind v4 tokens on the "backup" type badge in History run rows — replaced with `bg-vault/15 text-vault` so the badge is now visible in both light and dark modes
-- Added `aria-pressed` state to all filter/segmented-control buttons in History and Logs pages, and wrapped filter groups in `role="group"` with descriptive `aria-label` for screen-reader usability
-- Added `aria-current="page"` to sidebar navigation and mobile bottom-nav buttons so the active page is announced by screen readers
-- Added `aria-label` to the search input on the History page
-- Changed mobile bottom-nav "More" button icon from a gear to a three-dots ellipsis, matching the standard convention for overflow menus
-- Added an active indicator dot beneath the current page icon in the mobile bottom navigation bar
-- Scoped the `html` theme transition (`background-color`/`color`) inside `@media (prefers-reduced-motion: no-preference)` to respect the OS reduced-motion accessibility setting
-- Added scroll-fade gradient hint on mobile Dashboard stats row to indicate horizontal scrollability
-- Replaced non-standard checkbox in Logs page auto-scroll control with a proper `role="switch"` toggle button matching the design pattern used throughout the Settings page
-- Removed duplicate action buttons on Jobs, Storage, and Replication pages — top-right header button now only appears when items exist, eliminating redundancy with the empty-state center button
-- Fixed nil pointer dereference on startup: `BrowseHandler` was not assigned to the server struct in `setupRoutes`, causing a panic when `SetZFSLister` was called
-- Fixed `sync.Mutex` deadlock in runner: `RunJob` already holds `r.mu`, removed redundant lock around `snapshotManager` access in snapshot save
-- Clipboard copy in Settings UI now handles errors with an error toast instead of silently failing
-- Middleware test `SetSetting` calls now check for errors to prevent misleading test results
-- API error responses no longer leak internal error details to clients; all 500 responses now return a generic "internal server error" message while the real error is logged server-side (OWASP A09)
-- SMB storage adapter now enforces a 30-second dial timeout via `context.WithTimeout` to prevent indefinite connection hangs
-- SFTP adapter logs a warning when falling back to `InsecureIgnoreHostKey` due to missing host key verification configuration
-- Runner `SetSnapshotManager` write is now protected by mutex to prevent a data race with concurrent job execution
-- SMB `smbReadCloser.Close()` now uses `errors.Join` to surface file/share/session close failures instead of silently discarding them
-- NFS adapter `unmount()` now logs errors from `umount` and temp directory removal instead of silently discarding them
-
-### Added
-
 - Remote Vault API Key field on the Add/Edit Replication Target form — allows users to enter the shared API key for authenticating with a remote Vault server during replication sync
 - Replication sync and test-connection now use the configured API key (via `X-API-Key` header) when connecting to authenticated remote Vault instances
 - Test Connection in the replication modal now always performs a live connectivity check against the remote Vault server, verifying the URL is reachable and the server is healthy
-
 - API key management: generate, reveal, rotate, copy, and revoke a shared API key from Settings > Security for authenticating external integrations (Home Assistant, replication) — key is stored sealed (AES-256-GCM) and verified via bcrypt
 - Settings > Security > API Access card showing key status, reveal/copy, rotate, and revoke controls with confirmation dialog
 - `X-API-Key` header support in the replication client for authenticated cross-server sync
@@ -107,8 +57,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `getTimeFormat()` and `getHour12()` helpers added to `runtime-config.js` for locale-aware time rendering
 - `formatDate()` utility now used consistently for all date/time display in the Storage and Settings pages
 
+### Changed
+
+- Storage form: added tooltips on SFTP Remote Path, SMB Share, NFS Export Path, and NFS Base Path to clarify the distinction between fields that look similar (e.g. export vs sub-path within mount)
+- Replication target form: API key field is now required (marked with asterisk, form submit blocked without it); "Test Connection" is blocked if no API key is entered; warning callout directs users to generate a key on the remote server under Settings → API Access
+- Removed the "Target Type" dropdown from the Replication target form — only "Remote Vault Server" is supported
+- Removed the Fallback Locations collapsible section from the Temporary Work Area on the Settings page to reduce clutter
+- Removed the WebSocket status row and Reconnect button from Server Information on the Settings page
+- Removed the WebSocket/Polling status indicator from the sidebar footer
+- Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)
+- Replaced "SSD Cache (automatic)" label with "Using SSD cache for fast backup processing" and "Custom override" with "Custom location"
+- Renamed "Custom Path (optional)" to "Custom Location" with description: "Override the automatic location. Use this if you want backups to be assembled on a specific drive."
+- Renamed "Cascade order" to "Fallback locations" with description: "Vault tries each location in order and uses the first available one."
+- Updated Database Location subtitle to explain that Vault's database tracks jobs, schedules, and restore points
+- Replaced "Hybrid (RAM + SSD snapshots)" with "Hybrid — runs in memory for speed, saves to SSD periodically"
+- Renamed "Working" to "Active database" with tooltip explaining hybrid mode operates from RAM
+- Renamed "Snapshot" to "Saved copy", "Last snapshot" to "Last saved", and "Snapshot size" to "Saved copy size"
+- Renamed "Custom Snapshot Path (optional)" to "Custom save location" with description: "Choose where the persistent database copy is stored. Defaults to SSD cache."
+- Enhanced USB warning to suggest adding a cache drive or setting a custom save location
+- Simplified Backup Targets subtitle to "Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery."
+- `engine.Handler` interface now accepts `context.Context` as the first parameter for `Backup()` and `Restore()`
+- All engine handlers (Container, VM, Folder, Plugin) updated to accept and propagate context
+- `Runner.backupItem()` now receives and passes context to engine handlers
+
+### Removed
+
+- Removed Google Drive and OneDrive replication support — only Remote Vault Server replication is now supported
+- Removed OAuth infrastructure (client credentials, build-time ldflags, callback handlers) for cloud storage providers
+
 ### Fixed
 
+- Added per-restore-point deletion: each restore point in the Restore wizard now has a trash button (two-click confirm) that deletes both the backup files from storage and the database record — closes the user request for "delete a backup without deleting the job"
+- Added subfolder field to the Import Backups modal on the Storage page — lets users point the scanner at a specific subdirectory when their AppData Backup archives are not at the storage root (e.g. `appdata-backups/`)
+- Fixed AppData Backup flash-backup detection to match any `<hostname>-<date>.zip` file instead of only `cube-*.zip` — works for systems named tower, unraid, or any other hostname
+- Fixed Backup Size Trend chart showing wildly incorrect percentages (e.g. +1120%) when multiple jobs are visible — switched from last-point comparison to linear regression; mixed-job views now show a directional label (Growing/Shrinking/Stable) instead of a misleading number, while single-job filtered views still show the exact percentage
+- Verified sequential job execution: 3 jobs queued simultaneously (Jackett, Mosquitto/Tailscale, Fedora VM) all completed in sequence without stalling — the reported "stops after 2 backups" issue does not reproduce on the current codebase
+- Fixed missing `getAPIKeyStatus`, `generateAPIKey`, and `revokeAPIKey` methods in the API client (`api.js`), which caused a console error on every Settings page load and always showed "No API key configured" regardless of actual state
+- Fixed undefined `bg-accent`/`text-accent` Tailwind v4 tokens on the "backup" type badge in History run rows — replaced with `bg-vault/15 text-vault` so the badge is now visible in both light and dark modes
+- Added `aria-pressed` state to all filter/segmented-control buttons in History and Logs pages, and wrapped filter groups in `role="group"` with descriptive `aria-label` for screen-reader usability
+- Added `aria-current="page"` to sidebar navigation and mobile bottom-nav buttons so the active page is announced by screen readers
+- Added `aria-label` to the search input on the History page
+- Changed mobile bottom-nav "More" button icon from a gear to a three-dots ellipsis, matching the standard convention for overflow menus
+- Added an active indicator dot beneath the current page icon in the mobile bottom navigation bar
+- Scoped the `html` theme transition (`background-color`/`color`) inside `@media (prefers-reduced-motion: no-preference)` to respect the OS reduced-motion accessibility setting
+- Added scroll-fade gradient hint on mobile Dashboard stats row to indicate horizontal scrollability
+- Replaced non-standard checkbox in Logs page auto-scroll control with a proper `role="switch"` toggle button matching the design pattern used throughout the Settings page
+- Removed duplicate action buttons on Jobs, Storage, and Replication pages — top-right header button now only appears when items exist, eliminating redundancy with the empty-state center button
+- Fixed nil pointer dereference on startup: `BrowseHandler` was not assigned to the server struct in `setupRoutes`, causing a panic when `SetZFSLister` was called
+- Fixed `sync.Mutex` deadlock in runner: `RunJob` already holds `r.mu`, removed redundant lock around `snapshotManager` access in snapshot save
+- Clipboard copy in Settings UI now handles errors with an error toast instead of silently failing
+- Middleware test `SetSetting` calls now check for errors to prevent misleading test results
+- API error responses no longer leak internal error details to clients; all 500 responses now return a generic "internal server error" message while the real error is logged server-side (OWASP A09)
+- SMB storage adapter now enforces a 30-second dial timeout via `context.WithTimeout` to prevent indefinite connection hangs
+- SFTP adapter logs a warning when falling back to `InsecureIgnoreHostKey` due to missing host key verification configuration
+- Runner `SetSnapshotManager` write is now protected by mutex to prevent a data race with concurrent job execution
+- SMB `smbReadCloser.Close()` now uses `errors.Join` to surface file/share/session close failures instead of silently discarding them
+- NFS adapter `unmount()` now logs errors from `umount` and temp directory removal instead of silently discarding them
 - Mirrored SSD cache pools (e.g. `/mnt/cache2`, `/mnt/cache3`) not detected under Settings → Database Location and Temporary Work Area — pool discovery now scans `/mnt/` at runtime using exclusion-based filtering (closes #49)
 - Browse handler filesystem roots now dynamically discover all pool drives instead of relying on a hardcoded "Cache" entry
 - Path traversal vulnerability (CWE-22) in `SnapshotManager` — added `validateSnapshotPath` defense-in-depth validation to `SaveSnapshot`, `SetSnapshotPath`, `RestoreFromSnapshot`, `RestoreFromPath`, `SetUSBBackupPath`, and `saveUSBBackup` with `..` component rejection before `filepath.Clean` + `filepath.Abs` normalisation; uses `filepath.ToSlash` for cross-platform traversal detection (closes #27, closes #28)
@@ -133,33 +137,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Storage form "Save" button now guards against double-submission with a `saving` flag and shows a "Saving…" state while the request is in flight
 - Container volume backups now skip Unix sockets, character/block devices, and named pipes instead of failing with "sockets not supported" errors; affected containers (e.g. those mounting `/var/run/docker.sock`) will complete successfully with a log entry for each skipped special file (closes #5)
 - Monthly schedule day picker now shows all 31 days instead of only days 1–28; previously `Array(27)` omitted days 29, 30, and 31 (closes #9)
-
-### Changed
-
-- Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)
-- Replaced "SSD Cache (automatic)" label with "Using SSD cache for fast backup processing" and "Custom override" with "Custom location"
-- Renamed "Custom Path (optional)" to "Custom Location" with description: "Override the automatic location. Use this if you want backups to be assembled on a specific drive."
-- Renamed "Cascade order" to "Fallback locations" with description: "Vault tries each location in order and uses the first available one."
-- Updated Database Location subtitle to explain that Vault's database tracks jobs, schedules, and restore points
-- Replaced "Hybrid (RAM + SSD snapshots)" with "Hybrid — runs in memory for speed, saves to SSD periodically"
-- Renamed "Working" to "Active database" with tooltip explaining hybrid mode operates from RAM
-- Renamed "Snapshot" to "Saved copy", "Last snapshot" to "Last saved", and "Snapshot size" to "Saved copy size"
-- Renamed "Custom Snapshot Path (optional)" to "Custom save location" with description: "Choose where the persistent database copy is stored. Defaults to SSD cache."
-- Enhanced USB warning to suggest adding a cache drive or setting a custom save location
-- Simplified Backup Targets subtitle to "Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery."
-- `engine.Handler` interface now accepts `context.Context` as the first parameter for `Backup()` and `Restore()`
-- All engine handlers (Container, VM, Folder, Plugin) updated to accept and propagate context
-- `Runner.backupItem()` now receives and passes context to engine handlers
-
-### Removed
-
-- API Access feature completely removed from Security settings — API key generation, rotation, revocation, and status endpoints are no longer available
-- `X-API-Key` authentication header and `APIKeyAuth` middleware removed; the daemon no longer requires or accepts API keys
-- API key field removed from Replication targets — remote sources connect without authentication
-- `--api-key` CLI flag and `VAULT_API_KEY` environment variable removed from `daemon` and `replica` commands
-- `/auth/status`, `/settings/api-key/generate`, `/settings/api-key/rotate`, `/settings/api-key/revoke`, `/settings/api-key` endpoints removed
-- `api_key` column removed from `replication_sources` database schema
-- `LoginPrompt.svelte` component deleted (unused)
 
 ## [2026.03.02] - 2026-03-19
 
