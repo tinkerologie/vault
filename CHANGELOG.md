@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.04.00] - 2026-04-16
+
 ### Added
 
 - "Apply" button on the Temporary Work Area custom location input for consistency with the Database Location pattern
@@ -87,6 +89,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Fixed job creation wizard step indicator scrolling out of view on tall steps (e.g. step 3 with many schedule and storage fields) — the step indicator is now pinned in a non-scrolling band below the modal title, always visible regardless of scroll position
+- Fixed path browser breadcrumbs showing double slashes (e.g. `//mnt` instead of `/mnt`) when browsing server paths for storage and database locations
 - Added per-restore-point deletion: each restore point in the Restore wizard now has a trash button (two-click confirm) that deletes both the backup files from storage and the database record — closes the user request for "delete a backup without deleting the job"
 - Added subfolder field to the Import Backups modal on the Storage page — lets users point the scanner at a specific subdirectory when their AppData Backup archives are not at the storage root (e.g. `appdata-backups/`)
 - Fixed AppData Backup flash-backup detection to match any `<hostname>-<date>.zip` file instead of only `cube-*.zip` — works for systems named tower, unraid, or any other hostname

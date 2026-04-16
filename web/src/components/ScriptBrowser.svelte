@@ -101,8 +101,8 @@
         <!-- Breadcrumbs -->
         <div class="px-5 py-2 border-b border-border/50 flex items-center gap-1 text-xs text-text-muted overflow-x-auto">
           <button onclick={() => goTo('')} class="hover:text-vault shrink-0">/</button>
-          {#each breadcrumbs as crumb (crumb.path)}
-            <span class="text-text-dim">/</span>
+          {#each breadcrumbs as crumb, i (crumb.path)}
+            {#if i > 0}<span class="text-text-dim">/</span>{/if}
             <button onclick={() => goTo(crumb.path)} class="hover:text-vault shrink-0">{crumb.name}</button>
           {/each}
         </div>

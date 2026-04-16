@@ -706,28 +706,30 @@
   </div>
 {/if}
 <Modal show={showModal} title={editing ? 'Edit Job' : 'Create Backup Job'} size="lg" onclose={() => showModal = false}>
-  <!-- Step indicator -->
-  <div class="flex items-center gap-1 sm:gap-2 mb-6">
-    {#each [{n:1, label:'Type'}, {n:2, label:'Items'}, {n:3, label:'Schedule'}, {n:4, label:'Details'}, {n:5, label:'Advanced'}, {n:6, label:'Review'}] as s (s.n)}
-      <button
-        type="button"
-        onclick={() => { if (s.n < step || canNext) step = s.n }}
-        class="flex items-center gap-2 {s.n === step ? '' : 'opacity-60'}"
-      >
-        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-white' : s.n === step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
-          {#if s.n < step}
-            <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
-          {:else}
-            {s.n}
-          {/if}
-        </div>
-        <span class="text-xs font-medium {s.n === step ? 'text-text' : 'text-text-muted'} hidden sm:inline">{s.label}</span>
-      </button>
-      {#if s.n < totalSteps}
-        <div class="flex-1 h-px {s.n < step ? 'bg-vault' : 'bg-border'}"></div>
-      {/if}
-    {/each}
-  </div>
+  {#snippet stepper()}
+    <!-- Step indicator — rendered outside the scrollable body so it stays always visible -->
+    <div class="flex items-center gap-1 sm:gap-2">
+      {#each [{n:1, label:'Type'}, {n:2, label:'Items'}, {n:3, label:'Schedule'}, {n:4, label:'Details'}, {n:5, label:'Advanced'}, {n:6, label:'Review'}] as s (s.n)}
+        <button
+          type="button"
+          onclick={() => { if (s.n < step || canNext) step = s.n }}
+          class="flex items-center gap-2 {s.n === step ? '' : 'opacity-60'}"
+        >
+          <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-white' : s.n === step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
+            {#if s.n < step}
+              <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            {:else}
+              {s.n}
+            {/if}
+          </div>
+          <span class="text-xs font-medium {s.n === step ? 'text-text' : 'text-text-muted'} hidden sm:inline">{s.label}</span>
+        </button>
+        {#if s.n < totalSteps}
+          <div class="flex-1 h-px {s.n < step ? 'bg-vault' : 'bg-border'}"></div>
+        {/if}
+      {/each}
+    </div>
+  {/snippet}
 
   <form onsubmit={(e) => { e.preventDefault(); if (step < totalSteps) step++; else saveJob() }}>
     <!-- Step 1: Choose Backup Types -->

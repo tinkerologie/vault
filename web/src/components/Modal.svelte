@@ -1,6 +1,6 @@
 <script>
-  /** @type {{ show: boolean, title?: string, size?: 'default' | 'lg', onclose?: () => void, children?: import('svelte').Snippet }} */
-  let { show = false, title = '', size = 'default', onclose = () => {}, children } = $props()
+  /** @type {{ show: boolean, title?: string, size?: 'default' | 'lg', onclose?: () => void, children?: import('svelte').Snippet, stepper?: import('svelte').Snippet }} */
+  let { show = false, title = '', size = 'default', onclose = () => {}, children, stepper } = $props()
 
   const sizeClass = { default: 'max-w-lg', lg: 'max-w-2xl' }
 
@@ -62,6 +62,11 @@
           <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
+      {#if stepper}
+        <div class="px-6 py-3 border-b border-border">
+          {@render stepper()}
+        </div>
+      {/if}
       <div class="px-6 py-4 overflow-y-auto overflow-x-hidden flex-1">
         {@render children()}
       </div>
