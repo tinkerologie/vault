@@ -33,6 +33,9 @@ ansible/inventory.yml
 .playwright-cli/
 *.auth-state.json
 
+# Stress testing artifacts
+scripts/stress/
+
 # Screenshots (review / verification)
 review-*.png
 *-screenshot*.png
