@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
     <!ENTITY name      "vault">
     <!ENTITY author    "Ruaan Deysel">
-    <!ENTITY version   "2026.03.02">
+    <!ENTITY version   "2026.04.00">
     <!ENTITY launch    "Settings/Vault">
     <!ENTITY gitURL    "https://github.com/ruaan-deysel/&name;">
     <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/&name;/main/plugin/vault.plg">
