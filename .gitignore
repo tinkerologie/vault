@@ -73,3 +73,4 @@ Thumbs.db
 
 node_modules/
 test-conn.yml
+.serena/

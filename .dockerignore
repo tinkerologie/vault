@@ -1,11 +1,42 @@
+# Version control and CI
 .git
 .github
-.claude
-.playwright-cli
+
+# AI / IDE config
+.agents/
+.ai-scratch/
+.claude/
+.codex/
+.cursorrules
+.serena/
+.vscode/
+AGENTS.md
+CLAUDE.md
+
+# Test and dev tooling
+.playwright/
+.playwright-cli/
+.pre-commit-config.yaml
+.golangci.yml
+.secrets.baseline
+engine.test
+scripts/
+
+# Build artifacts and binaries
 build/
+vault
+node_modules/
+
+# Deployment and docs (not needed in image)
 ansible/
 docs/
 plugin/
+
+# Sensitive / runtime files
 coverage.*
 *.db
 *.key
+*.env
+*.pem
+Dockerfile
+.dockerignore

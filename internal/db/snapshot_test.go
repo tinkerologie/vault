@@ -265,8 +265,13 @@ func TestFlushToUSB_SnapshotFails(t *testing.T) {
 	dir := t.TempDir()
 	d := setupTestDB(t)
 
-	// Use an invalid snapshot path so SaveSnapshot will fail.
-	snapshotPath := "/nonexistent/dir/snap.db"
+	// Use a path whose parent is a regular file so MkdirAll always fails,
+	// even when running as root (e.g. in Docker / CI).
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath := filepath.Join(blocker, "sub", "snap.db")
 	usbPath := filepath.Join(dir, "usb", "vault.db.backup")
 
 	sm := NewSnapshotManager(d, snapshotPath, snapshotPath)
