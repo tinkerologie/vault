@@ -30,6 +30,7 @@
   let scanning = $state(false)
   let scannedBackups = $state([])
   let selectedBackups = $state(new SvelteSet())
+  let vaultDBInfo = $state(null)
   let importing = $state(false)
 
   let form = $state(defaultForm())
@@ -150,6 +151,7 @@
     importBasePath = ''
     scannedBackups = []
     selectedBackups = new SvelteSet()
+    vaultDBInfo = null
     showImport = true
     await scanStorage()
   }
@@ -158,7 +160,8 @@
     scanning = true
     try {
       const results = await api.scanStorage(importStorageId, importBasePath)
-      scannedBackups = results || []
+      scannedBackups = results?.backups || []
+      vaultDBInfo = results?.vault_db || null
       selectedBackups = new SvelteSet(scannedBackups.map((_b, i) => i))
     } catch (e) {
       showToast(`Scan failed: ${e.message}`, 'error')
@@ -627,26 +630,22 @@
       </div>
 
       <!-- Restore DB option -->
-      {#if scannedBackups.length > 0}
+      {#if vaultDBInfo}
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
             Restore Full Database
           </summary>
           <div class="mt-3 pl-6 space-y-2">
-            <p class="text-xs text-text-dim">Each backup contains a snapshot of the Vault database. Restoring it will replace <strong>all</strong> current data (jobs, history, settings).</p>
-            <div class="max-h-40 overflow-y-auto space-y-1">
-              {#each scannedBackups as backup (backup.storage_path)}
-                <button
-                  type="button"
-                  onclick={() => doRestoreDB(backup.storage_path)}
-                  class="w-full text-left px-3 py-2 text-xs rounded-lg border border-border hover:border-warning/50 hover:bg-warning/5 transition-colors"
-                >
-                  <span class="font-medium text-text">{backup.job_name}</span>
-                  <span class="text-text-dim ml-2">{backup.created_at ? formatDate(backup.created_at) : backup.storage_path}</span>
-                </button>
-              {/each}
-            </div>
+            <p class="text-xs text-text-dim">Restoring the database will replace <strong>all</strong> current data (jobs, history, settings).</p>
+            <button
+              type="button"
+              onclick={() => doRestoreDB(vaultDBInfo.path)}
+              class="w-full text-left px-3 py-2 text-xs rounded-lg border border-border hover:border-warning/50 hover:bg-warning/5 transition-colors"
+            >
+              <span class="font-medium text-text">Vault Database</span>
+              <span class="text-text-dim ml-2">{vaultDBInfo.modified_at ? formatDate(vaultDBInfo.modified_at) : ''}</span>
+            </button>
           </div>
         </details>
       {/if}

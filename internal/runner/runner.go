@@ -884,8 +884,8 @@ func (r *Runner) RunJob(jobID int64) {
 		// Write manifest.json to storage for out-of-band recovery.
 		r.writeManifest(dest, basePath, job, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, timestamp)
 
-		// Auto-backup the SQLite database to storage.
-		r.backupDatabase(dest, basePath)
+		// Auto-backup the SQLite database to a centralized storage location.
+		r.backupDatabase(dest)
 
 		// Persist database to cache drive and USB backup after successful backup.
 		// r.mu is already held by RunJob (line 289), so access snapshotManager
@@ -1852,10 +1852,11 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 	}
 }
 
-// backupDatabase copies the SQLite database file to storage alongside the
-// backup data. This protects against database loss and enables disaster
-// recovery from storage alone.
-func (r *Runner) backupDatabase(dest db.StorageDestination, basePath string) {
+// backupDatabase copies the SQLite database file to a centralized location
+// in storage (_vault/vault.db). This protects against database loss and
+// enables disaster recovery from storage alone. A single copy is maintained
+// per storage destination, avoiding duplicate backups across job runs.
+func (r *Runner) backupDatabase(dest db.StorageDestination) {
 	dbPath := r.db.Path()
 	if dbPath == "" || dbPath == ":memory:" {
 		return
@@ -1875,7 +1876,7 @@ func (r *Runner) backupDatabase(dest db.StorageDestination, basePath string) {
 	}
 	defer storage.CloseAdapter(adapter)
 
-	destPath := filepath.Join(basePath, "vault.db")
+	const destPath = "_vault/vault.db"
 	if err := adapter.Write(destPath, f); err != nil {
 		log.Printf("runner: failed to backup database to %s: %v", destPath, err)
 	}

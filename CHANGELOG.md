@@ -81,6 +81,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `engine.Handler` interface now accepts `context.Context` as the first parameter for `Backup()` and `Restore()`
 - All engine handlers (Container, VM, Folder, Plugin) updated to accept and propagate context
 - `Runner.backupItem()` now receives and passes context to engine handlers
+- Vault database backup now writes to a centralized `_vault/vault.db` path at the storage root instead of inside each job run directory, eliminating duplicate database copies across backup jobs
+- Import Backups "Restore Full Database" section now shows a single "Vault Database" entry with the backup date instead of listing individual job names
 
 ### Removed
 

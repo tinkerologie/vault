@@ -175,7 +175,24 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		manifests = []map[string]any{}
 	}
 
-	respondJSON(w, http.StatusOK, manifests)
+	// Check for the centralized vault database backup at _vault/vault.db.
+	var vaultDB map[string]any
+	adapter, adapterErr := storage.NewAdapter(dest.Type, dest.Config)
+	if adapterErr == nil {
+		info, statErr := adapter.Stat("_vault/vault.db")
+		storage.CloseAdapter(adapter)
+		if statErr == nil {
+			vaultDB = map[string]any{
+				"path":        "_vault",
+				"modified_at": info.ModTime,
+			}
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"backups":  manifests,
+		"vault_db": vaultDB,
+	})
 }
 
 // Import creates job and restore point records from previously scanned
