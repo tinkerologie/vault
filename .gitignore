@@ -42,6 +42,7 @@ review-*.png
 
 # AI agent scratch
 .ai-scratch/
+.serena/
 
 # Local AI agent settings and notes
 .claude/
