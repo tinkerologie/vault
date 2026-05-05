@@ -1,7 +1,7 @@
 ---
 # Core API endpoint tests — run through an SSH tunnel to the local-only daemon.
 
-- name: Test core API endpoints
+- name: Test core API endpoints  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/{{ item.path }}"
@@ -19,7 +19,7 @@
   register: endpoint_results
   ignore_errors: true
 
-- name: Verify ping endpoint
+- name: Verify ping endpoint  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/ping"

@@ -224,7 +224,8 @@ func (c *Client) doRequestWithParams(method, path string, params map[string]stri
 		parsed.RawQuery = q.Encode()
 		u = parsed.String()
 	}
-	req, err := http.NewRequest(method, u, nil)
+	// aikido-ignore-next-line AIK_go_G107 -- u is built from c.baseURL (admin-configured replication source URL) joined with a fixed path; not request-time user input.
+	req, err := http.NewRequest(method, u, nil) // #nosec G107
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

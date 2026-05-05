@@ -518,19 +518,26 @@ def persist_design_system(design_system: dict, page: str = None, output_dir: str
 
     master_file = design_system_dir / "MASTER.md"
 
-    # Generate and write MASTER.md
+    # Generate and write MASTER.md. Resolve paths and assert they remain
+    # confined to base_dir so the SAST analyser can verify there is no path
+    # traversal / file-inclusion risk.
+    safe_base = base_dir.resolve()
+    safe_master = master_file.resolve()
+    if not str(safe_master).startswith(str(safe_base) + os.sep) and safe_master != safe_base:
+        raise ValueError(f"refusing to write outside base_dir: {safe_master}")
     master_content = format_master_md(design_system)
-    with open(master_file, 'w', encoding='utf-8') as f:
-        f.write(master_content)
-    created_files.append(str(master_file))
+    safe_master.write_text(master_content, encoding='utf-8')
+    created_files.append(str(safe_master))
 
     # If page is specified, create page override file with intelligent content
     if page:
         page_file = pages_dir / f"{page.lower().replace(' ', '-')}.md"
+        safe_page = page_file.resolve()
+        if not str(safe_page).startswith(str(safe_base) + os.sep):
+            raise ValueError(f"refusing to write outside base_dir: {safe_page}")
         page_content = format_page_override_md(design_system, page, page_query)
-        with open(page_file, 'w', encoding='utf-8') as f:
-            f.write(page_content)
-        created_files.append(str(page_file))
+        safe_page.write_text(page_content, encoding='utf-8')
+        created_files.append(str(safe_page))
 
     return {
         "status": "success",

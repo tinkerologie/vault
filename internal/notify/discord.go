@@ -127,7 +127,8 @@ func SendDiscord(webhookURL string, embed DiscordEmbed) error {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(normalizedWebhookURL, "application/json", bytes.NewReader(body))
+	// aikido-ignore-next-line AIK_go_G107 -- webhook URL is admin-configured and normalized to discord.com / discordapp.com via normalizeDiscordWebhookURL above; not user-controlled at request time.
+	resp, err := client.Post(normalizedWebhookURL, "application/json", bytes.NewReader(body)) // #nosec G107
 	if err != nil {
 		return fmt.Errorf("discord webhook: %w", err)
 	}

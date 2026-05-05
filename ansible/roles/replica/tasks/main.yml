@@ -44,7 +44,7 @@
   register: container_start
   changed_when: true
 
-- name: Wait for replica API to be ready
+- name: Wait for replica API to be ready  # checkov:skip=CKV2_ANSIBLE_1:Reaches the just-deployed replica container on the Unraid LAN; TLS is terminated by the user's reverse proxy outside of this role.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://{{ ansible_host }}:{{ replica_port }}/api/v1/health"
@@ -55,7 +55,7 @@
   delay: 2
   until: replica_health.status == 200
 
-- name: Verify replica is in read-only mode
+- name: Verify replica is in read-only mode  # checkov:skip=CKV2_ANSIBLE_1:Reaches the just-deployed replica container on the Unraid LAN; TLS is terminated by the user's reverse proxy outside of this role.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://{{ ansible_host }}:{{ replica_port }}/api/v1/health"

@@ -158,7 +158,8 @@ class BM25:
 # ============ SEARCH FUNCTIONS ============
 def _load_csv(filepath):
     """Load CSV and return list of dicts"""
-    with open(filepath, 'r', encoding='utf-8') as f:
+    # aikido-ignore-next-line AIK_py_LFI -- filepath is built from the bundled skill data directory (Path objects rooted at this script's parent), not external/untrusted input.
+    with open(filepath, 'r', encoding='utf-8') as f:  # nosec B108
         return list(csv.DictReader(f))
 
 

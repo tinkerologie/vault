@@ -45,7 +45,8 @@ func runScript(script string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, script) //nolint:gosec // script path is validated (absolute, exists, executable) and admin-configured — no shell interpretation
+	// aikido-ignore-next-line AIK_go_G204 -- script is admin-configured, validated as an absolute path to an existing executable file, and executed without a shell.
+	cmd := exec.CommandContext(ctx, script) // #nosec G204 //nolint:gosec // script path is validated (absolute, exists, executable) and admin-configured — no shell interpretation
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		return string(output), fmt.Errorf("script timed out after %s: %s", timeout, script)

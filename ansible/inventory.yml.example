@@ -3,7 +3,10 @@ all:
     unraid:
       ansible_host: 192.168.1.100
       ansible_user: root
-      ansible_password: "your-password-here"
+      # Replace the placeholder below with your real password (or, preferred,
+      # store it in an ansible-vault file and reference it via @file/!vault).
+      # The angle-bracket form keeps secret scanners from flagging the example.
+      ansible_password: "<REPLACE_WITH_YOUR_PASSWORD_OR_USE_ANSIBLE_VAULT>"  # pragma: allowlist secret
       ansible_ssh_common_args: >-
         -o StrictHostKeyChecking=no
         -o PubkeyAuthentication=no

@@ -35,12 +35,18 @@ func Send(event, subject, description string, importance Importance) error {
 		return fmt.Errorf("checking notify helper: %w", err)
 	}
 
-	cmd := exec.Command(notifyScriptPath, // #nosec G204 //nolint:gosec // notifyScriptPath is a compile-time constant
+	// notifyScriptPath is a compile-time constant pointing to the Unraid notify
+	// helper. The remaining values are passed as separate argv entries (no shell
+	// interpretation), so the script receives them verbatim and cannot expand
+	// any embedded shell metacharacters.
+	args := []string{
 		"-e", event,
 		"-s", subject,
 		"-d", description,
 		"-i", string(importance),
-	)
+	}
+	// aikido-ignore-next-line AIK_go_G204 -- argv-style invocation of a constant binary path; no shell.
+	cmd := exec.Command(notifyScriptPath, args...) // #nosec G204 //nolint:gosec // notifyScriptPath is a compile-time constant; args are argv entries
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("send notification: %w", err)
 	}
