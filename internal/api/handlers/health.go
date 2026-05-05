@@ -35,7 +35,12 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		totalItems += len(items)
-		if job.Enabled {
+		// An item is "protected" when it has at least one restore point on
+		// disk, regardless of whether the job's schedule is currently
+		// enabled. Disabling the schedule must not flip already-backed-up
+		// items back to unprotected.
+		rps, _ := h.db.ListRestorePoints(job.ID)
+		if len(rps) > 0 {
 			protectedItems += len(items)
 		}
 

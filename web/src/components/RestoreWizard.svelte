@@ -44,7 +44,7 @@
     loading = true
     try {
       const details = await Promise.all(
-        jobs.filter(j => j.enabled !== false).map(j => api.getJob(j.id).catch(() => null))
+        jobs.map(j => api.getJob(j.id).catch(() => null))
       )
       const itemMap = new SvelteMap()
       for (const detail of details) {

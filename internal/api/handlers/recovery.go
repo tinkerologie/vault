@@ -68,9 +68,10 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	folderItems := []stepItem{}
 
 	for _, job := range jobs {
-		if !job.Enabled {
-			continue
-		}
+		// Include all jobs regardless of schedule-enabled state: a disabled
+		// schedule does not mean past restore points should disappear from
+		// the recovery plan. We surface protection based on actual restore
+		// points, not on whether the next run is scheduled.
 		items, err := h.db.GetJobItems(job.ID)
 		if err != nil {
 			continue
