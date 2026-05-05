@@ -168,7 +168,9 @@ func (a *S3Adapter) Read(p string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := a.client.GetObject(context.Background(), &s3.GetObjectInput{
+	ctx, cancel := ctxOp()
+	defer cancel()
+	out, err := a.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(a.config.Bucket),
 		Key:    aws.String(key),
 	})
@@ -204,10 +206,11 @@ func (a *S3Adapter) List(prefix string) ([]FileInfo, error) {
 		key += "/"
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 	var (
 		out    []FileInfo
 		token  *string
-		ctx    = context.Background()
 		basePf = strings.TrimSuffix(strings.Trim(a.config.BasePath, "/")+"/", "/")
 	)
 	for {
