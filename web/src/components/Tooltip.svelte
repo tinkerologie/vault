@@ -23,7 +23,19 @@
   const VIEWPORT_PAD = 8
   const GAP = 8
 
-  const _fallbackId = `tooltip-${crypto.randomUUID().slice(0, 8)}`
+  // Generate a unique-enough id without requiring crypto.randomUUID, which is
+  // only available in secure contexts (HTTPS or localhost). Unraid serves the
+  // plugin over plain HTTP, so calling crypto.randomUUID() throws in Firefox
+  // and breaks any view that mounts new tooltips (e.g. job wizard steps).
+  // See: https://github.com/ruaan-deysel/vault/issues/67
+  function generateTooltipId() {
+    const rand =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().slice(0, 8)
+        : Math.random().toString(36).slice(2, 10)
+    return `tooltip-${rand}`
+  }
+  const _fallbackId = generateTooltipId()
   let tooltipId = $derived(id ?? _fallbackId)
 
   function updatePosition() {
