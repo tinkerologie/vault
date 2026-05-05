@@ -57,7 +57,7 @@ if ($action !== 'status' && $_SERVER['REQUEST_METHOD'] !== 'POST') {
 // build_response shapes the JSON envelope returned for service-control actions
 // so the frontend can distinguish a successful state change from a silent
 // failure (issue #71).
-function build_response($rc, array $out) {
+function build_response(int $rc, array $out) {
     $running = is_running();
     $output = trim(implode("\n", $out));
     $resp = [
