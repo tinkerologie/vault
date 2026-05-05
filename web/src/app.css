@@ -184,6 +184,14 @@
 html {
   background-color: var(--color-surface);
   color: var(--color-text);
+  /* Lock the document to the viewport height so the SPA's flex layout
+     (`<div class="flex h-screen">` + `<main class="overflow-y-auto">`)
+     is the *only* scroll surface. Without this, a `min-height: 100vh`
+     body could grow past the viewport on tall pages (e.g. Settings),
+     producing a second scrollbar and allowing the sidebar to scroll
+     out of view (issue #73). */
+  height: 100%;
+  overflow: hidden;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -196,7 +204,12 @@ body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
 }
 
 /* ═══════════════════════════════════════════════

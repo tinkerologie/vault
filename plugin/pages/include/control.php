@@ -6,10 +6,6 @@ require_once __DIR__ . '/api.php';
 
 header('Content-Type: application/json');
 
-// Load Unraid state for CSRF validation.
-$stateFile = '/var/local/emhttp/var.ini';
-$var = file_exists($stateFile) ? @parse_ini_file($stateFile) : [];
-
 $RC = '/etc/rc.d/rc.vault';
 $PIDFILE = '/var/run/vault.pid';
 $CONFIG = '/boot/config/plugins/vault/vault.cfg';
@@ -50,15 +46,13 @@ if ($action !== 'status' && $_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-// Validate CSRF token for state-changing actions (defense-in-depth).
-if ($action !== 'status') {
-    $csrf = $_POST['csrf_token'] ?? '';
-    if (!isset($var['csrf_token']) || $csrf !== $var['csrf_token']) {
-        http_response_code(403);
-        echo json_encode(['error' => 'Invalid CSRF token']);
-        exit;
-    }
-}
+// Note: Unraid's web framework (emhttp/nginx) validates the csrf_token POST
+// field at the gateway level for plugin pages and rejects requests with an
+// invalid token before forwarding them to PHP. On success it also strips the
+// csrf_token field from $_POST. Re-validating here would always fail (the
+// stripped field is no longer visible) and produce a spurious 403 (issue
+// observed when clicking Stop/Restart from Settings → Vault). The page-level
+// auth and the gateway CSRF check together protect this endpoint.
 
 // build_response shapes the JSON envelope returned for service-control actions
 // so the frontend can distinguish a successful state change from a silent
