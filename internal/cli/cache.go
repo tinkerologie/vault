@@ -2,6 +2,8 @@ package cli
 
 import (
 	"os"
+
+	"github.com/ruaan-deysel/vault/internal/unraid"
 )
 
 // cacheStatus describes the state of the /mnt/cache directory.
@@ -17,27 +19,22 @@ const (
 )
 
 // checkCacheMount determines the mount status of path (typically /mnt/cache).
-// It distinguishes between the directory not existing, existing but empty
-// (unmounted), and populated (mounted).
+// It distinguishes between the directory not existing, existing but
+// unmounted, and mounted. Mount status is verified against
+// /proc/self/mountinfo so empty-but-mounted pools are correctly detected.
 func checkCacheMount(path string) cacheStatus {
+	return checkCacheMountWith(path, unraid.IsMountedPool)
+}
+
+// checkCacheMountWith is the testable variant that accepts an injectable
+// mount-check function.
+func checkCacheMountWith(path string, isMounted func(string) bool) cacheStatus {
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
 		return cacheNotExist
 	}
-
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return cacheNotExist
-	}
-
-	// Filter out hidden dotfiles — an empty cache dir sometimes has
-	// .placeholder or similar. A truly mounted btrfs/xfs will have
-	// real directories like .vault, appdata, etc.
-	for _, e := range entries {
-		name := e.Name()
-		if name != "." && name != ".." {
-			return cacheMounted
-		}
+	if isMounted(path) {
+		return cacheMounted
 	}
 	return cacheEmptyNotMounted
 }

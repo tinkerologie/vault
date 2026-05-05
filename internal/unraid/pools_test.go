@@ -83,67 +83,6 @@ func TestDiscoverPoolsIn(t *testing.T) {
 	}
 }
 
-func TestPreferredPoolIn(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		setup func(root string)
-		want  string // expected basename, or "" for empty result
-	}{
-		{
-			name: "prefers cache when present",
-			setup: func(root string) {
-				for _, n := range []string{"nvme", "cache"} {
-					os.Mkdir(filepath.Join(root, n), 0o755)
-				}
-			},
-			want: "cache",
-		},
-		{
-			name: "falls back to first pool when no cache",
-			setup: func(root string) {
-				os.Mkdir(filepath.Join(root, "nvme"), 0o755)
-			},
-			want: "nvme",
-		},
-		{
-			name:  "returns empty when no pools",
-			setup: func(_ string) {},
-			want:  "",
-		},
-		{
-			name: "returns empty when only excluded dirs",
-			setup: func(root string) {
-				for _, n := range []string{"user", "disks", "disk1"} {
-					os.Mkdir(filepath.Join(root, n), 0o755)
-				}
-			},
-			want: "",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			tc.setup(root)
-
-			pool := preferredPoolIn(root)
-			if tc.want == "" {
-				if pool != "" {
-					t.Errorf("expected empty string, got %s", pool)
-				}
-				return
-			}
-			expected := filepath.Join(root, tc.want)
-			if pool != expected {
-				t.Errorf("expected %s, got %s", expected, pool)
-			}
-		})
-	}
-}
-
 func TestIsMountedPoolFrom(t *testing.T) {
 	t.Parallel()
 
@@ -186,4 +125,63 @@ func TestIsMountedPoolFromMissingFile(t *testing.T) {
 	if got {
 		t.Error("expected false for nonexistent mountinfo file")
 	}
+}
+
+func TestPreferredMountedPoolIn(t *testing.T) {
+	t.Parallel()
+
+	mountedSet := func(paths ...string) func(string) bool {
+		set := make(map[string]bool, len(paths))
+		for _, p := range paths {
+			set[p] = true
+		}
+		return func(p string) bool { return set[p] }
+	}
+
+	t.Run("prefers mounted cache over mounted nvme", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		for _, n := range []string{"cache", "nvme"} {
+			os.Mkdir(filepath.Join(root, n), 0o755)
+		}
+		cache := filepath.Join(root, "cache")
+		nvme := filepath.Join(root, "nvme")
+		got := preferredMountedPoolIn(root, mountedSet(cache, nvme))
+		if got != cache {
+			t.Errorf("got %s, want %s", got, cache)
+		}
+	})
+
+	t.Run("skips unmounted cache and picks mounted nvme", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		for _, n := range []string{"cache", "nvme"} {
+			os.Mkdir(filepath.Join(root, n), 0o755)
+		}
+		nvme := filepath.Join(root, "nvme")
+		got := preferredMountedPoolIn(root, mountedSet(nvme))
+		if got != nvme {
+			t.Errorf("got %s, want %s (unmounted /mnt/cache must not win — issue #69)", got, nvme)
+		}
+	})
+
+	t.Run("falls back to first discovered when none mounted", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		os.Mkdir(filepath.Join(root, "nvme"), 0o755)
+		nvme := filepath.Join(root, "nvme")
+		got := preferredMountedPoolIn(root, mountedSet())
+		if got != nvme {
+			t.Errorf("got %s, want %s", got, nvme)
+		}
+	})
+
+	t.Run("returns empty when no pools discovered", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		got := preferredMountedPoolIn(root, mountedSet())
+		if got != "" {
+			t.Errorf("got %s, want empty", got)
+		}
+	})
 }

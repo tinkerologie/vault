@@ -52,6 +52,18 @@ var daemonCmd = &cobra.Command{
 		cfgPath := filepath.Join(filepath.Dir(dbPath), "vault.cfg")
 
 		detectedPool = unraid.PreferredPool()
+		// Log all discovered pools and their mount status — helps diagnose
+		// "No cache drive detected" reports where a pool exists under
+		// /mnt/ but isn't mounted (issue #69).
+		if pools := unraid.DiscoverPools(); len(pools) > 0 {
+			for _, p := range pools {
+				if unraid.IsMountedPool(p) {
+					log.Printf("Discovered pool: %s (mounted)", p)
+				} else {
+					log.Printf("Discovered pool: %s (NOT mounted)", p)
+				}
+			}
+		}
 		if detectedPool != "" {
 			defaultSnapPath = filepath.Join(detectedPool, ".vault", "vault.db")
 			cacheState := checkCacheMount(detectedPool)

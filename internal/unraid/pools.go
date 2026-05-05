@@ -79,26 +79,37 @@ func discoverPoolsIn(root string) []string {
 }
 
 // PreferredPool returns the best pool path for database/staging use.
-// It prefers /mnt/cache if present, otherwise the first discovered pool.
+// It prefers the first pool that is actually mounted (verified via
+// /proc/self/mountinfo), with /mnt/cache taking priority among mounted
+// pools. If no discovered pool is reported as mounted (e.g. on non-Linux
+// hosts or in tests where /proc/self/mountinfo doesn't list /mnt/*),
+// it falls back to the first discovered pool so callers can still surface
+// a sensible default.
 // Returns an empty string if no pools are detected.
 func PreferredPool() string {
-	return preferredPoolIn(mntBase)
+	return preferredMountedPoolIn(mntBase, IsMountedPool)
 }
 
-// preferredPoolIn is the testable implementation that accepts a custom root.
-func preferredPoolIn(root string) string {
-	// Fast path: check for the standard cache pool.
-	cachePath := filepath.Join(root, "cache")
-	if info, err := os.Stat(cachePath); err == nil && info.IsDir() {
-		return cachePath
-	}
-
+// preferredMountedPoolIn is the testable implementation that accepts a
+// custom root and a mount-check function.
+func preferredMountedPoolIn(root string, isMounted func(string) bool) string {
 	pools := discoverPoolsIn(root)
-	if len(pools) > 0 {
-		return pools[0]
+	if len(pools) == 0 {
+		return ""
 	}
 
-	return ""
+	// Prefer the first pool that is actually mounted. discoverPoolsIn
+	// already sorts /mnt/cache first, so a mounted cache pool wins.
+	for _, p := range pools {
+		if isMounted(p) {
+			return p
+		}
+	}
+
+	// No verified mount — fall back to the first discovered pool. The
+	// caller (e.g. daemon startup) is expected to do its own mount check
+	// before relying on the path.
+	return pools[0]
 }
 
 // IsMountedPool reports whether poolPath is an active mount point by
