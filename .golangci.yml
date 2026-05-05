@@ -67,6 +67,11 @@ linters:
       - build
       - ansible
       - plugin
+      # Some npm packages (e.g. `flatted`) ship vendored Go inside their
+      # node_modules directory. Those files are not part of our module and
+      # should not be linted; without this, govet flags them on CI runners
+      # that have run `npm install` for the web frontend.
+      - web/node_modules
     rules:
       # Exclude deprecated Docker API warnings
       - linters:
