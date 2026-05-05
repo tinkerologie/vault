@@ -46,6 +46,7 @@ review-*.png
 # Local AI agent settings and notes
 .claude/
 CLAUDE.md
+.codex/
 
 # Local planning and private docs
 docs/plans/
