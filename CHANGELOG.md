@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - Plugin upgrades now stop the running Vault daemon before `upgradepkg --install-new` and restart it afterwards, so users get the new binary without needing to reboot Unraid. User configuration (`vault.cfg`), the database (`vault.db`), and sealed credentials under `/boot/config/plugins/vault/` are preserved across upgrades (closes #72)
+- Settings and configuration are no longer lost on plugin upgrade. In hybrid mode the daemon now refreshes the USB safety-net (`/boot/config/plugins/vault/vault.db.backup`) immediately after a successful restoration at startup, so the recovery chain (configured snapshot → default cache snapshot → USB backup) always has a current entry — even if a previous daemon shutdown was unclean. Combined with the graceful pre-upgrade stop, this guarantees a fresh-database fallback can no longer happen silently during an upgrade (closes #74)
 
 ## [2026.04.00] - 2026-04-16
 

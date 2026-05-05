@@ -151,6 +151,24 @@ var daemonCmd = &cobra.Command{
 			snapshotMgr = db.NewSnapshotManager(database, snapshotPath, defaultSnapPath)
 			snapshotMgr.SetUSBBackupPath(usbBackupPath)
 			snapshotMgr.SetRestorationInfo(restorationInfo)
+
+			// Refresh the USB safety-net immediately after a successful
+			// restoration. The USB backup is normally only written on
+			// graceful shutdown / config mutation; if a previous daemon was
+			// killed (e.g. an old plugin upgrade that didn't stop the
+			// service), the USB backup can be missing or stale. Forcing a
+			// flush here guarantees that even an unclean shutdown later
+			// leaves a current recovery point on the USB flash, so the next
+			// upgrade can never silently fall through to a fresh database
+			// (issue #74).
+			if restorationInfo != nil && restorationInfo.Source != "fresh" {
+				if err := snapshotMgr.FlushToUSB(); err != nil {
+					log.Printf("Warning: initial USB backup flush after restoration failed: %v", err)
+				} else {
+					log.Printf("Refreshed USB backup at %s after restoration from %s",
+						usbBackupPath, restorationInfo.Source)
+				}
+			}
 		}
 
 		// Prune activity log entries older than 90 days on startup.
