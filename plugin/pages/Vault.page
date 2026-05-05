@@ -86,6 +86,7 @@ $proxy_url = '/plugins/vault/include/app.php#/';
             <input type="button" id="vault-btn-restart" value="Restart" onclick="serviceControl('restart')" disabled>
         <?php endif; ?>
     </div>
+    <div id="vault-control-error" style="display: none; margin-top: 8px; color: var(--red-500, #c0392b); font-size: 0.9em;"></div>
 </div>
 
 <div class="title"><span class="left"><i class="title fa fa-wrench"></i>Configuration</span></div>
@@ -165,29 +166,23 @@ function serviceControl(action) {
     var statusText = document.getElementById('vault-status-text');
     var webui = document.getElementById('vault-webui');
     var version = document.getElementById('vault-version');
+    var errorEl = document.getElementById('vault-control-error');
 
-    btn.disabled = true;
-    if (restartBtn) restartBtn.disabled = true;
+    // Capture pre-action state so we can preserve it on failure rather than
+    // pretending the action succeeded (issue #71).
+    var wasRunning = statusText && statusText.classList.contains('running');
 
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', '/plugins/vault/include/control.php', true);
-    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    xhr.onreadystatechange = function() {
-        if (xhr.readyState !== 4) return;
-        btn.disabled = false;
-
-        var running = false;
-        if (xhr.status === 200) {
-            try {
-                var data = JSON.parse(xhr.responseText);
-                running = data.running;
-            } catch(e) {
-                running = (action === 'start' || action === 'restart');
-            }
-        } else {
-            running = (action === 'start' || action === 'restart');
-        }
-
+    function showError(msg) {
+        if (!errorEl) return;
+        errorEl.textContent = msg;
+        errorEl.style.display = 'block';
+    }
+    function clearError() {
+        if (!errorEl) return;
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
+    function applyRunningState(running) {
         if (running) {
             orb.className = 'fa fa-circle green-orb';
             statusText.textContent = 'RUNNING';
@@ -207,6 +202,70 @@ function serviceControl(action) {
             btn.onclick = function() { serviceControl('start'); };
             if (restartBtn) restartBtn.disabled = true;
         }
+    }
+    function pollStatus() {
+        // Re-query the daemon a moment later to confirm the action's real
+        // outcome — the immediate response can race the daemon shutdown/start.
+        var poll = new XMLHttpRequest();
+        poll.open('POST', '/plugins/vault/include/control.php', true);
+        poll.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        poll.onreadystatechange = function() {
+            if (poll.readyState !== 4) return;
+            if (poll.status === 200) {
+                try {
+                    var d = JSON.parse(poll.responseText);
+                    if (typeof d.running === 'boolean') applyRunningState(d.running);
+                } catch(e) { /* keep current state */ }
+            }
+            btn.disabled = false;
+            if (restartBtn) restartBtn.disabled = !(statusText && statusText.classList.contains('running'));
+        };
+        poll.send('action=status&csrf_token=' + encodeURIComponent(<?=json_encode($var['csrf_token'] ?? '')?>));
+    }
+
+    clearError();
+    btn.disabled = true;
+    if (restartBtn) restartBtn.disabled = true;
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/plugins/vault/include/control.php', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState !== 4) return;
+
+        // Conservative on failure: keep the pre-action state and surface an
+        // error rather than mis-reporting STOPPED when the daemon is still
+        // running (issue #71).
+        if (xhr.status !== 200) {
+            applyRunningState(wasRunning);
+            showError('Vault service control failed (HTTP ' + xhr.status + '). The daemon state is unchanged.');
+            btn.disabled = false;
+            if (restartBtn) restartBtn.disabled = !wasRunning;
+            return;
+        }
+
+        var data = null;
+        try {
+            data = JSON.parse(xhr.responseText);
+        } catch(e) {
+            applyRunningState(wasRunning);
+            showError('Unexpected response from Vault service control.');
+            btn.disabled = false;
+            if (restartBtn) restartBtn.disabled = !wasRunning;
+            return;
+        }
+
+        if (data && data.success === false) {
+            showError(data.error || 'Vault service control reported a failure.');
+        }
+
+        if (data && typeof data.running === 'boolean') {
+            applyRunningState(data.running);
+        }
+
+        // Confirm with a follow-up status query (~1.2s) — this is the
+        // ground-truth check used by the page-load path (/api/v1/health).
+        setTimeout(pollStatus, 1200);
     };
     xhr.send('action=' + action + '&csrf_token=' + encodeURIComponent(<?=json_encode($var['csrf_token'] ?? '')?>));
 }

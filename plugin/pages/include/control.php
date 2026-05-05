@@ -2,6 +2,8 @@
 // control.php — AJAX endpoint for Vault service start/stop/status.
 // Called by Vault.page JavaScript to manage the daemon without full page reload.
 
+require_once __DIR__ . '/api.php';
+
 header('Content-Type: application/json');
 
 // Load Unraid state for CSRF validation.
@@ -12,12 +14,31 @@ $RC = '/etc/rc.d/rc.vault';
 $PIDFILE = '/var/run/vault.pid';
 $CONFIG = '/boot/config/plugins/vault/vault.cfg';
 
+// is_running consults the daemon's /api/v1/health endpoint first — this is the
+// same authoritative check used at page load, so the post-action status agrees
+// with what the user sees on refresh. The PID file is only used as a fallback
+// when the health endpoint is unreachable (e.g. during shutdown), since a
+// stale or non-readable PID file can mis-report state (issue #71).
 function is_running() {
     global $PIDFILE;
+
+    if (function_exists('vault_get')) {
+        $health = @vault_get('/health');
+        if (is_array($health) && (($health['status'] ?? '') === 'ok')) {
+            return true;
+        }
+        // A definitive non-ok response means the daemon is not serving — fall
+        // through to the PID check only when the HTTP call itself failed
+        // (vault_get returns null on transport errors).
+        if (is_array($health)) {
+            return false;
+        }
+    }
+
     if (!file_exists($PIDFILE)) return false;
-    $pid = trim(file_get_contents($PIDFILE));
-    if (empty($pid)) return false;
-    return posix_kill((int)$pid, 0);
+    $pid = trim(@file_get_contents($PIDFILE));
+    if ($pid === '' || !ctype_digit($pid)) return false;
+    return @posix_kill((int) $pid, 0);
 }
 
 $action = $_POST['action'] ?? $_GET['action'] ?? 'status';
@@ -39,24 +60,46 @@ if ($action !== 'status') {
     }
 }
 
+// build_response shapes the JSON envelope returned for service-control actions
+// so the frontend can distinguish a successful state change from a silent
+// failure (issue #71).
+function build_response($rc, array $out) {
+    $running = is_running();
+    $output = trim(implode("\n", $out));
+    $resp = [
+        'running' => $running,
+        'success' => ($rc === 0),
+        'exit_code' => (int) $rc,
+    ];
+    if ($rc !== 0) {
+        $resp['error'] = $output !== '' ? $output : 'rc.vault exited with status ' . (int) $rc;
+    }
+    if ($output !== '') {
+        $resp['output'] = $output;
+    }
+    return $resp;
+}
+
 switch ($action) {
     case 'start':
+        $out = [];
         exec("$RC start 2>&1", $out, $rc);
-        // Brief wait for daemon to start.
         usleep(500000);
-        echo json_encode(['running' => is_running(), 'output' => implode("\n", $out)]);
+        echo json_encode(build_response($rc, $out));
         break;
 
     case 'stop':
+        $out = [];
         exec("$RC stop 2>&1", $out, $rc);
-        usleep(300000);
-        echo json_encode(['running' => is_running(), 'output' => implode("\n", $out)]);
+        usleep(500000);
+        echo json_encode(build_response($rc, $out));
         break;
 
     case 'restart':
+        $out = [];
         exec("$RC restart 2>&1", $out, $rc);
         usleep(500000);
-        echo json_encode(['running' => is_running(), 'output' => implode("\n", $out)]);
+        echo json_encode(build_response($rc, $out));
         break;
 
     case 'reset-config':
