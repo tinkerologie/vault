@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet, SvelteMap } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
-  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason } from '../lib/utils.js'
+  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -301,7 +301,7 @@
                           {/if}
                         </div>
                         <div class="flex items-center gap-4 mt-1.5 text-xs text-text-dim">
-                          <span>{relTime(run.started_at)}</span>
+                          <span title={relTime(run.started_at)}>{formatDate(run.started_at)}</span>
                           <span>{duration(run)}</span>
                           {#if run.items_total}
                             <span>

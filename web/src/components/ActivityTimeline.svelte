@@ -1,5 +1,5 @@
 <script>
-  import { statusBadge, relTime, formatBytes, formatSpeed, formatDurationFromDates, getFailureReason } from '../lib/utils.js'
+  import { statusBadge, relTime, formatBytes, formatSpeed, formatDurationFromDates, getFailureReason, formatDate } from '../lib/utils.js'
 
   let { runs = [], maxItems = 8 } = $props()
 
@@ -92,7 +92,7 @@
                     <span class="text-sm font-medium text-text truncate">{run.jobName || 'Job'}</span>
                     <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 {activityStatusClass(run)}">{activityStatusLabel(run)}</span>
                   </div>
-                  <span class="text-xs text-text-dim shrink-0">{relTime(run.started_at)}</span>
+                  <span class="text-xs text-text-dim shrink-0" title={relTime(run.started_at)}>{formatDate(run.started_at)}</span>
                 </div>
                 <!-- Per-item breakdown -->
                 {#if items.length > 0}

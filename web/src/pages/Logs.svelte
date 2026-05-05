@@ -282,7 +282,7 @@
                 <div class="flex items-center gap-2 mb-0.5">
                   <span class="text-xs px-1.5 py-0.5 rounded font-medium {levelColor(entry.level)}">{entry.level}</span>
                   <span class="text-xs px-1.5 py-0.5 rounded font-medium {categoryBadge(entry.category)}">{entry.category}</span>
-                  <span class="text-xs text-text-dim ml-auto shrink-0" title={formatDate(entry.created_at)}>{relTime(entry.created_at)}</span>
+                  <span class="text-xs text-text-dim ml-auto shrink-0" title={relTime(entry.created_at)}>{formatDate(entry.created_at)}</span>
                   <!-- Copy button -->
                   <button type="button" onclick={(e) => { e.stopPropagation(); copyEntry(entry) }}
                     class="opacity-0 group-hover:opacity-100 p-1 text-text-dim hover:text-text rounded transition-all" title="Copy entry">

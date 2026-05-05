@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- Restore wizard "Choose Version" step, the Restore page restore-point list, the Job History timeline, the Dashboard Recent Activity panel, and the Logs page now show **absolute timestamps** (e.g. `Apr 21, 2026, 21:22`) as the primary label on each row, with the relative form (`48m ago`, `2d ago`) preserved as a hover tooltip. This matches how Veeam, restic, and Time Machine present restore points and aligns with established UX guidance: when the user is matching a backup to a remembered point in time ("this was working fine until 17 April"), an absolute date is far easier to scan than mentally subtracting a relative offset (closes #81)
+
 ### Fixed
 
 - Pool drive detection no longer falsely reports "No cache drive detected" when `/mnt/cache` exists as an unmounted directory or when the user's pool is named something other than `cache`. `unraid.PreferredPool()` now consults `/proc/self/mountinfo` (via the existing `IsMountedPool()` helper) and returns the first **mounted** pool from discovery instead of returning `/mnt/cache` whenever the directory is present. `checkCacheMount()` likewise uses `IsMountedPool()` rather than the previous "directory non-empty = mounted" heuristic, so empty-but-mounted pools are correctly recognised as available for hybrid mode. Daemon startup also now logs every discovered pool with its mount status to make this diagnosable from `/var/log/syslog` (issue #69)
