@@ -33,6 +33,18 @@ func NewAdapter(storageType, configJSON string) (Adapter, error) {
 			return nil, fmt.Errorf("parse nfs config: %w", err)
 		}
 		return NewNFSAdapter(cfg)
+	case "webdav":
+		var cfg WebDAVConfig
+		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+			return nil, fmt.Errorf("parse webdav config: %w", err)
+		}
+		return NewWebDAVAdapter(cfg)
+	case "s3":
+		var cfg S3Config
+		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+			return nil, fmt.Errorf("parse s3 config: %w", err)
+		}
+		return NewS3Adapter(cfg)
 	default:
 		return nil, fmt.Errorf("unknown storage type: %s", storageType)
 	}

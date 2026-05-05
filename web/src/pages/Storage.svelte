@@ -238,14 +238,23 @@
     }
   }
 
-  function onTypeChange() {
+  function onTypeChange(event) {
+    const nextType = event?.currentTarget?.value || form.type
     const defaults = {
       local: { path: '' },
       sftp: { host: '', port: 22, user: '', password: '', base_path: '' },
       smb: { host: '', share: '', user: '', password: '', base_path: '' },
       nfs: { host: '', export: '', base_path: '', version: '4', options: '' },
+      webdav: { url: '', username: '', password: '', base_path: '', insecure_skip_verify: false },
+      s3: { bucket: '', region: '', access_key: '', secret_key: '', endpoint: '', base_path: '', force_path_style: false },
     }
-    form.config = defaults[form.type] || {}
+    // Reassign the full form object so Svelte always re-renders the keyed
+    // config block when switching destination type.
+    form = {
+      ...form,
+      type: nextType,
+      config: defaults[nextType] || {},
+    }
   }
 
   const storageIcons = {
@@ -253,6 +262,8 @@
     sftp: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
     smb: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
     nfs: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
+    webdav: 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z',
+    s3: 'M5 19a2 2 0 01-2-2V7a2 2 0 012-2h3.586a1 1 0 01.707.293l1.414 1.414A1 1 0 0011.414 7H19a2 2 0 012 2v8a2 2 0 01-2 2H5z',
   }
 
   const storageColors = {
@@ -260,6 +271,8 @@
     sftp: 'text-emerald-400',
     smb: 'text-purple-400',
     nfs: 'text-amber-400',
+    webdav: 'text-cyan-400',
+    s3: 'text-orange-400',
   }
 </script>
 
@@ -332,6 +345,13 @@
               {#if cfg.base_path || cfg.path}<p>Path: {cfg.base_path || cfg.path}</p>{/if}
             {:else if dest.type === 'nfs'}
               <p class="text-xs text-text-muted truncate">{cfg.host}:{cfg.export}</p>
+            {:else if dest.type === 'webdav'}
+              <p class="text-xs text-text-muted truncate">{cfg.url || '—'}</p>
+              {#if cfg.base_path}<p>Path: {cfg.base_path}</p>{/if}
+            {:else if dest.type === 's3'}
+              <p>Bucket: {cfg.bucket || '—'}</p>
+              <p>Region: {cfg.region || '—'}</p>
+              {#if cfg.endpoint}<p class="truncate">Endpoint: {cfg.endpoint}</p>{/if}
             {/if}
           </div>
 
@@ -378,12 +398,14 @@
 
     <div>
       <label for="stype" class="block text-sm font-medium text-text-muted mb-1.5">Type</label>
-      <select id="stype" bind:value={form.type} onchange={onTypeChange}
+      <select id="stype" value={form.type} onchange={onTypeChange}
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
         <option value="local">Local Path</option>
         <option value="sftp">SFTP</option>
         <option value="smb">SMB / CIFS</option>
         <option value="nfs">NFS</option>
+        <option value="webdav">WebDAV</option>
+        <option value="s3">S3 / S3-Compatible</option>
       </select>
     </div>
 
@@ -485,6 +507,74 @@
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
       </div>
+    {:else if form.type === 'webdav'}
+      <div>
+        <label for="dav_url" class="block text-sm font-medium text-text-muted mb-1.5">Server URL <Tooltip text="Full URL to the WebDAV endpoint, e.g. https://nextcloud.example.com/remote.php/dav/files/username/" /></label>
+        <input id="dav_url" type="url" bind:value={form.config.url} placeholder="https://webdav.example.com/"
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="dav_user" class="block text-sm font-medium text-text-muted mb-1.5">Username</label>
+          <input id="dav_user" type="text" bind:value={form.config.username}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+        <div>
+          <label for="dav_pass" class="block text-sm font-medium text-text-muted mb-1.5">Password / App Token</label>
+          <input id="dav_pass" type="password" bind:value={form.config.password}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+      </div>
+      <div>
+        <label for="dav_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional sub-folder under the server URL where Vault will write its data." /></label>
+        <input id="dav_base" type="text" bind:value={form.config.base_path} placeholder="vault"
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+      </div>
+      <label class="flex items-center gap-2 text-sm text-text-muted">
+        <input type="checkbox" bind:checked={form.config.insecure_skip_verify} class="accent-vault" />
+        Allow self-signed TLS certificates
+        <Tooltip text="Skip TLS certificate validation. Only enable for trusted private servers using self-signed certificates." />
+      </label>
+    {:else if form.type === 's3'}
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="s3_bucket" class="block text-sm font-medium text-text-muted mb-1.5">Bucket</label>
+          <input id="s3_bucket" type="text" bind:value={form.config.bucket} placeholder="my-vault-backups"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+        <div>
+          <label for="s3_region" class="block text-sm font-medium text-text-muted mb-1.5">Region <Tooltip text="AWS region code, e.g. us-east-1. For S3-compatible providers, use the region required by the provider." /></label>
+          <input id="s3_region" type="text" bind:value={form.config.region} placeholder="us-east-1"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="s3_ak" class="block text-sm font-medium text-text-muted mb-1.5">Access Key ID</label>
+          <input id="s3_ak" type="text" bind:value={form.config.access_key} autocomplete="off"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+        </div>
+        <div>
+          <label for="s3_sk" class="block text-sm font-medium text-text-muted mb-1.5">Secret Access Key</label>
+          <input id="s3_sk" type="password" bind:value={form.config.secret_key} autocomplete="off"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+        </div>
+      </div>
+      <div>
+        <label for="s3_endpoint" class="block text-sm font-medium text-text-muted mb-1.5">Endpoint <Tooltip text="Optional. Required for S3-compatible providers like Backblaze B2, MinIO, Cloudflare R2 or Wasabi. Leave blank for AWS S3." /></label>
+        <input id="s3_endpoint" type="text" bind:value={form.config.endpoint} placeholder="https://s3.us-west-002.backblazeb2.com"
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+      </div>
+      <div>
+        <label for="s3_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional key prefix prepended to every object Vault writes." /></label>
+        <input id="s3_base" type="text" bind:value={form.config.base_path} placeholder="vault"
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+      </div>
+      <label class="flex items-center gap-2 text-sm text-text-muted">
+        <input type="checkbox" bind:checked={form.config.force_path_style} class="accent-vault" />
+        Force path-style addressing
+        <Tooltip text="Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual hosted-style buckets." />
+      </label>
     {/if}
     {/key}
 

@@ -40,8 +40,10 @@ const (
 type StorageType string
 
 const (
-	StorageLocal StorageType = "local"
-	StorageSMB   StorageType = "smb"
-	StorageNFS   StorageType = "nfs"
-	StorageSFTP  StorageType = "sftp"
+	StorageLocal  StorageType = "local"
+	StorageSMB    StorageType = "smb"
+	StorageNFS    StorageType = "nfs"
+	StorageSFTP   StorageType = "sftp"
+	StorageWebDAV StorageType = "webdav"
+	StorageS3     StorageType = "s3"
 )

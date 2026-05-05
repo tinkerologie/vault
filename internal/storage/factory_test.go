@@ -48,6 +48,26 @@ func TestNewAdapterNFS(t *testing.T) {
 	}
 }
 
+func TestNewAdapterWebDAV(t *testing.T) {
+	adapter, err := NewAdapter("webdav", `{"url":"https://webdav.example.com/","username":"u","password":"p","base_path":"vault"}`)
+	if err != nil {
+		t.Fatalf("NewAdapter() error = %v", err)
+	}
+	if adapter == nil {
+		t.Fatal("adapter is nil")
+	}
+}
+
+func TestNewAdapterS3(t *testing.T) {
+	adapter, err := NewAdapter("s3", `{"bucket":"vault-bk","region":"us-east-1","access_key":"AK","secret_key":"SK"}`)
+	if err != nil {
+		t.Fatalf("NewAdapter() error = %v", err)
+	}
+	if adapter == nil {
+		t.Fatal("adapter is nil")
+	}
+}
+
 func TestNewAdapterUnknown(t *testing.T) {
 	_, err := NewAdapter("ftp", `{}`)
 	if err == nil {

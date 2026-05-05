@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- WebDAV storage backend (closes #83). Stateless HTTP-based backup target that avoids per-user concurrent-connection limits seen on managed SFTP/SMB providers. Supports Basic and Digest auth (negotiated automatically), optional self-signed TLS, and an optional base path. Compatible with Nextcloud, ownCloud, Synology WebDAV, and any RFC 4918 server.
+- S3 / S3-compatible storage backend (closes #88). Built on AWS SDK v2 with a reusable, connection-pooled client. Works with AWS S3, Backblaze B2, MinIO, Cloudflare R2, and Wasabi via configurable endpoint and force-path-style options. Uses the SDK's manager.Uploader for streaming uploads of arbitrarily large archives without buffering to disk.
+
 ### Changed
 
 - Updated direct dependencies to latest versions: `github.com/alchemillahq/gzfs` (Apr 9 → ZFS support) and `github.com/cloudsoda/go-smb2` (Apr 8 → SMB adapter). All deps verified maintained, no deprecation notices, `govulncheck` reports zero vulnerabilities, `gosec` reports zero issues, Go toolchain confirmed at 1.26.2 (latest stable)

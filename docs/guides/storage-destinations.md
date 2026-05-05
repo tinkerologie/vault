@@ -10,6 +10,8 @@ Vault writes compressed (and optionally encrypted) backup archives to a storage 
 | **SFTP** | Any Linux/BSD server reachable by SSH — another NAS, a VPS, a cloud VM |
 | **SMB** | Windows shares and Samba servers; common for Synology and TrueNAS SCALE |
 | **NFS** | NFS exports from Linux/BSD servers and most NAS devices |
+| **WebDAV** | Stateless HTTP backup target — Nextcloud, ownCloud, Synology WebDAV, generic WebDAV servers |
+| **S3** | AWS S3 and S3-compatible object storage — Backblaze B2, MinIO, Cloudflare R2, Wasabi |
 
 ---
 
@@ -92,6 +94,52 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 - The export path must be listed in `/etc/exports` on the NFS server and the Unraid server's IP must be allowed.
 - NFS v3 is used by default. Ensure the `nfs-utils` package or equivalent is installed on the server.
 - NFS offers the lowest overhead for LAN backups to a Linux-based NAS.
+
+---
+
+## WebDAV
+
+| Field | Description |
+|-------|-------------|
+| **Server URL** | Full URL to the WebDAV endpoint, e.g. `https://nextcloud.example.com/remote.php/dav/files/username/` for Nextcloud or `https://webdav.example.com/` for a generic server. Must start with `http://` or `https://`. |
+| **Username** | WebDAV user. Optional if the server allows anonymous writes. |
+| **Password / App Token** | Password or app-specific token. For Nextcloud, generate an [app password](https://docs.nextcloud.com/server/latest/user_manual/en/session_management.html) under Settings → Security. |
+| **Base Path** | Optional sub-folder under the server URL where Vault will write its data. |
+| **Allow self-signed TLS certificates** | Skip TLS validation. Only enable for trusted private servers. |
+
+**Notes:**
+
+- WebDAV is **stateless HTTP**: each operation opens its own connection and closes it. This avoids the per-user concurrent-connection caps that affect SFTP/SMB on managed providers like Synology and TrueNAS.
+- Vault uses `gowebdav`'s auto-auth, so Basic and Digest authentication are negotiated automatically.
+- For Nextcloud, the server URL **must** include `/remote.php/dav/files/<username>/` — the share-root WebDAV endpoint is not the file-storage endpoint.
+- For ownCloud, use `/remote.php/webdav/`.
+
+---
+
+## S3 / S3-Compatible
+
+| Field | Description |
+|-------|-------------|
+| **Bucket** | Existing S3 bucket name. Vault will not create the bucket for you. |
+| **Region** | AWS region code (e.g. `us-east-1`). For S3-compatible providers, use the region required by the provider (e.g. `us-west-002` for Backblaze B2). |
+| **Access Key ID** | IAM user access key with `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on the bucket. |
+| **Secret Access Key** | Matching secret key. |
+| **Endpoint** | Optional. Required for S3-compatible providers. Examples: `https://s3.us-west-002.backblazeb2.com` (B2), `https://<account>.r2.cloudflarestorage.com` (R2), `http://minio.local:9000` (MinIO). Leave blank for AWS S3. |
+| **Base Path** | Optional key prefix prepended to every object Vault writes. |
+| **Force path-style addressing** | Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual-hosted-style buckets. AWS S3 does not need this. |
+
+**Provider notes:**
+
+- **AWS S3** — Leave Endpoint blank. Region must match the bucket's region.
+- **Backblaze B2** — Use the S3-compatible endpoint shown in your bucket's settings (e.g. `https://s3.us-west-002.backblazeb2.com`) and the matching region (`us-west-002`).
+- **MinIO** — Set Endpoint to your MinIO base URL (`http://minio.local:9000`). Enable **Force path-style** for older releases.
+- **Cloudflare R2** — Use endpoint `https://<account-id>.r2.cloudflarestorage.com` and region `auto`.
+- **Wasabi** — Use endpoint `https://s3.<region>.wasabisys.com`.
+
+**Tips:**
+
+- Vault uses the AWS SDK v2's reusable client, which pools HTTP connections internally — a single S3 destination can sustain many concurrent uploads.
+- Server-side encryption is your provider's responsibility. Vault's own encryption (Settings → Security) layers on top and protects backups even from the storage operator.
 
 ---
 
