@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- Updated direct dependencies to latest versions: `github.com/alchemillahq/gzfs` (Apr 9 → ZFS support) and `github.com/cloudsoda/go-smb2` (Apr 8 → SMB adapter). All deps verified maintained, no deprecation notices, `govulncheck` reports zero vulnerabilities, `gosec` reports zero issues, Go toolchain confirmed at 1.26.2 (latest stable)
+- `make security-check` now auto-installs `govulncheck` if missing and invokes it via `$GOPATH/bin/govulncheck`, fixing the previous "No such file or directory" failure when the tool wasn't on `$PATH`
+- Increased unit test coverage of pure-logic packages as part of ongoing test-quality work: `internal/unraid` 89.5% → 94.7%, `internal/safepath` 69.8% → 90.7%, `internal/tempdir` 68.3% → 91.9%, `internal/crypto` 75.9% → 84.3%, `internal/db` 65.2% → 84.3%. Engine sub-files (`incremental.go`, `folder.go`) now have direct coverage where previously they were exercised only through orchestrator paths. Remaining gaps in `crypto` (`crypto/rand`, `bcrypt` failure branches) and `db` (SQL driver error branches) are bounded by Go-stdlib failure modes that aren't tractable to test without invasive dependency injection
 - Restore wizard "Choose Version" step, the Restore page restore-point list, the Job History timeline, the Dashboard Recent Activity panel, and the Logs page now show **absolute timestamps** (e.g. `Apr 21, 2026, 21:22`) as the primary label on each row, with the relative form (`48m ago`, `2d ago`) preserved as a hover tooltip. This matches how Veeam, restic, and Time Machine present restore points and aligns with established UX guidance: when the user is matching a backup to a remembered point in time ("this was working fine until 17 April"), an absolute date is far easier to scan than mentally subtracting a relative offset (closes #81)
 
 ### Fixed

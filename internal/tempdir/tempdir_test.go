@@ -3,6 +3,7 @@ package tempdir
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -280,5 +281,275 @@ func TestResolveInfoWithOverride(t *testing.T) {
 	}
 	if info.ResolvedPath != overridePath {
 		t.Errorf("ResolvedPath = %q, want %q", info.ResolvedPath, overridePath)
+	}
+}
+
+func TestGetCachePaths(t *testing.T) {
+	cleanup := SetCachePathsForTest([]string{"/mnt/cache", "/mnt/nvme"})
+	defer cleanup()
+	got := GetCachePaths()
+	if len(got) != 2 || got[0] != "/mnt/cache" {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestPrependCachePathsBasic(t *testing.T) {
+	cleanup := SetCachePathsForTest([]string{"/mnt/cache"})
+	defer cleanup()
+	PrependCachePaths([]string{"/mnt/fast", "/mnt/cache"}) // dedupe cache
+	got := GetCachePaths()
+	if len(got) != 2 || got[0] != "/mnt/fast" || got[1] != "/mnt/cache" {
+		t.Errorf("got %v, want [/mnt/fast /mnt/cache]", got)
+	}
+}
+
+func TestPrependCachePathsEmptyAndRoot(t *testing.T) {
+	cleanup := SetCachePathsForTest([]string{"/mnt/cache"})
+	defer cleanup()
+	PrependCachePaths(nil)
+	PrependCachePaths([]string{"/", "/"}) // rejected
+	got := GetCachePaths()
+	if len(got) != 1 || got[0] != "/mnt/cache" {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestCleanStageDirReadError(t *testing.T) {
+	// Non-existent path — should silently no-op.
+	cleanStageDir(filepath.Join(t.TempDir(), "does-not-exist"))
+}
+
+func TestPruneEmptyNonEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pruneEmpty(dir)
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("non-empty dir was removed: %v", err)
+	}
+}
+
+func TestPruneEmptyMissing(t *testing.T) {
+	pruneEmpty(filepath.Join(t.TempDir(), "missing"))
+}
+
+func TestCreateBackupDirLocalBadConfig(t *testing.T) {
+	cleanup := SetCachePathsForTest(nil)
+	defer cleanup()
+	// Bad JSON — should fall back to system temp.
+	dest := StorageConfig{Type: "local", Config: "{not valid json"}
+	dir, cleanupDir, err := CreateBackupDir(dest, "")
+	if err != nil {
+		t.Fatalf("expected fallback success, got %v", err)
+	}
+	defer cleanupDir()
+	if dir == "" {
+		t.Error("got empty dir")
+	}
+}
+
+func TestCreateBackupDirOverrideMissing(t *testing.T) {
+	cleanup := SetCachePathsForTest(nil)
+	defer cleanup()
+	// Override is a path that doesn't exist — should fall back.
+	dir, cleanupDir, err := CreateBackupDir(StorageConfig{}, "/nonexistent/path/abc123")
+	if err != nil {
+		t.Fatalf("fallback failed: %v", err)
+	}
+	defer cleanupDir()
+	if dir == "" {
+		t.Error("got empty dir")
+	}
+}
+
+func TestResolveInfoLocalStorage(t *testing.T) {
+	cleanup := SetCachePathsForTest(nil)
+	defer cleanup()
+	root := t.TempDir()
+	dest := StorageConfig{Type: "local", Config: `{"path":"` + root + `"}`}
+	info := ResolveInfo([]StorageConfig{dest}, "")
+	if info.ResolvedPath == "" {
+		t.Error("expected a resolved path")
+	}
+	// Ensure the local-storage cascade entry exists and is available.
+	found := false
+	for _, c := range info.Cascade {
+		if c.Source == "local-storage" && c.Available {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("local-storage cascade entry missing: %+v", info.Cascade)
+	}
+}
+
+func TestResolveInfoLocalBadJSON(t *testing.T) {
+	cleanup := SetCachePathsForTest(nil)
+	defer cleanup()
+	dest := StorageConfig{Type: "local", Config: "garbage"}
+	info := ResolveInfo([]StorageConfig{dest}, "")
+	for _, c := range info.Cascade {
+		if c.Source == "local-storage" {
+			t.Errorf("should have skipped bad JSON: %+v", c)
+		}
+	}
+}
+
+func TestResolveInfoOverrideMissing(t *testing.T) {
+	cleanup := SetCachePathsForTest(nil)
+	defer cleanup()
+	info := ResolveInfo(nil, "/nonexistent/abc999")
+	if info.Source == "override" {
+		t.Errorf("nonexistent override should not win, got %+v", info)
+	}
+}
+
+func TestCreateBackupDirUsesCachePath(t *testing.T) {
+	root := t.TempDir()
+	cleanup := SetCachePathsForTest([]string{root})
+	defer cleanup()
+	dir, cleanupDir, err := CreateBackupDir(StorageConfig{}, "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer cleanupDir()
+	if !strings.HasPrefix(dir, root) {
+		t.Errorf("dir %q should be inside cache root %q", dir, root)
+	}
+	// The .vault-stage directory should now exist.
+	stageDir := filepath.Join(root, StageDirName)
+	if _, err := os.Stat(stageDir); err != nil {
+		t.Errorf("stage dir not created: %v", err)
+	}
+}
+
+func TestCreateBackupDirSkipsBadCacheEntry(t *testing.T) {
+	good := t.TempDir()
+	bad := filepath.Join(t.TempDir(), "missing-or-file")
+	if err := os.WriteFile(bad, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanup := SetCachePathsForTest([]string{bad, good})
+	defer cleanup()
+	dir, cleanupDir, err := CreateBackupDir(StorageConfig{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupDir()
+	if !strings.HasPrefix(dir, good) {
+		t.Errorf("expected dir under %s, got %s", good, dir)
+	}
+}
+
+func TestCleanupStaleWithRealCachePaths(t *testing.T) {
+	root := t.TempDir()
+	stageBase := filepath.Join(root, StageDirName)
+	stale := filepath.Join(stageBase, "backup-old")
+	if err := os.MkdirAll(stale, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cleanup := SetCachePathsForTest([]string{root})
+	defer cleanup()
+	CleanupStale(nil)
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale dir should be removed, got err=%v", err)
+	}
+}
+
+func TestCleanupStaleWithLocalDestination(t *testing.T) {
+	cleanup := SetCachePathsForTest(nil)
+	defer cleanup()
+	root := t.TempDir()
+	stale := filepath.Join(root, StageDirName, "restore-old")
+	if err := os.MkdirAll(stale, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	dest := StorageConfig{Type: "local", Config: `{"path":"` + root + `"}`}
+	CleanupStale([]StorageConfig{dest, {Type: "sftp"}, {Type: "local", Config: "bad"}})
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale dir should be removed: %v", err)
+	}
+}
+
+func TestCleanupFuncPrunesParentWhenEmpty(t *testing.T) {
+	root := t.TempDir()
+	stageBase := filepath.Join(root, StageDirName)
+	if err := os.MkdirAll(stageBase, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(stageBase, "backup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupFunc(dir, stageBase)()
+	if _, err := os.Stat(stageBase); !os.IsNotExist(err) {
+		t.Errorf("expected stage base pruned: %v", err)
+	}
+}
+
+func TestPrependCachePathsTriggersDiscovery(t *testing.T) {
+	// Reset state so the discovery branch runs.
+	cachePathsMu.Lock()
+	origVal := cachePathsVal
+	origDone := cachePathsDone
+	cachePathsVal = nil
+	cachePathsDone = false
+	cachePathsTest = nil
+	cachePathsMu.Unlock()
+	defer func() {
+		cachePathsMu.Lock()
+		cachePathsVal = origVal
+		cachePathsDone = origDone
+		cachePathsMu.Unlock()
+	}()
+	// Prepend to exercise the discovery branch (unraid.DiscoverPools may
+	// return nothing on a non-Unraid host; we just check no panic).
+	PrependCachePaths([]string{"/mnt/zzz-test-only"})
+}
+
+func TestResolveInfoOverrideWins(t *testing.T) {
+	cleanup := SetCachePathsForTest(nil)
+	defer cleanup()
+	override := t.TempDir()
+	info := ResolveInfo(nil, override)
+	if info.Source != "override" || info.ResolvedPath != override {
+		t.Errorf("expected override to win, got %+v", info)
+	}
+	if info.DiskTotalBytes == 0 {
+		t.Error("expected disk total bytes to be populated")
+	}
+}
+
+func TestResolveInfoNoCascade(t *testing.T) {
+	cleanup := SetCachePathsForTest(nil)
+	defer cleanup()
+	info := ResolveInfo(nil, "")
+	// System temp is always available — should win.
+	if info.Source != "system" {
+		t.Errorf("expected system fallback, got %+v", info)
+	}
+}
+
+func TestResolveInfoCacheCascadePopulated(t *testing.T) {
+	root := t.TempDir()
+	cleanup := SetCachePathsForTest([]string{root, "/nonexistent-cache-xyz"})
+	defer cleanup()
+	info := ResolveInfo(nil, "")
+	cacheCount := 0
+	availableCount := 0
+	for _, ci := range info.Cascade {
+		if ci.Source == "cache" {
+			cacheCount++
+			if ci.Available {
+				availableCount++
+			}
+		}
+	}
+	if cacheCount != 2 {
+		t.Errorf("expected 2 cache entries, got %d (%+v)", cacheCount, info.Cascade)
+	}
+	if availableCount != 1 {
+		t.Errorf("expected 1 available cache, got %d", availableCount)
 	}
 }

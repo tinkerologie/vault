@@ -10,7 +10,8 @@ import (
 )
 
 // mntBase is the root directory for Unraid mount points.
-const mntBase = "/mnt"
+// It is a variable so tests can override it.
+var mntBase = "/mnt"
 
 // mountInfoPath is the procfs file used to determine active mount points.
 // It is a variable so tests can override it.

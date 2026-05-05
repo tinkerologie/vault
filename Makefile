@@ -88,7 +88,8 @@ lint-web:
 
 security-check:
 	gosec -fmt=text -exclude-dir=vendor -exclude-dir=build -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703 -severity=medium -confidence=medium ./...
-	govulncheck ./...
+	@command -v govulncheck >/dev/null 2>&1 || { echo "Installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
+	$(shell go env GOPATH)/bin/govulncheck ./...
 	go mod verify
 
 pre-commit-install:

@@ -135,3 +135,24 @@ func TestUnsealInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadOrCreateServerKeyReadError(t *testing.T) {
+	// Path is a directory — os.ReadFile returns a non-NotExist error.
+	dir := t.TempDir()
+	if _, err := LoadOrCreateServerKey(dir); err == nil {
+		t.Error("expected error reading directory as key")
+	}
+}
+
+func TestLoadOrCreateServerKeyMkdirFailure(t *testing.T) {
+	// Create a file, then use a path that treats it as a parent directory.
+	parent := t.TempDir()
+	blocking := filepath.Join(parent, "block")
+	if err := os.WriteFile(blocking, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write blocking file: %v", err)
+	}
+	keyPath := filepath.Join(blocking, "subdir", "vault.key")
+	if _, err := LoadOrCreateServerKey(keyPath); err == nil {
+		t.Error("expected MkdirAll failure when parent path is a file")
+	}
+}

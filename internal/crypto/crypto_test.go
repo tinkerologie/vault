@@ -91,3 +91,55 @@ func TestHashAndVerifyPassphrase(t *testing.T) {
 		t.Error("VerifyPassphrase() should fail with wrong passphrase")
 	}
 }
+
+// failingReader returns an error after returning some initial data so the
+// goroutine inside EncryptReader hits its io.Copy error branch.
+type failingReader struct{ err error }
+
+func (f *failingReader) Read(p []byte) (int, error) { return 0, f.err }
+
+func TestEncryptReaderSourceError(t *testing.T) {
+	r, err := EncryptReader("pw", &failingReader{err: io.ErrUnexpectedEOF})
+	if err != nil {
+		t.Fatalf("encrypt setup: %v", err)
+	}
+	_, err = io.ReadAll(r)
+	if err == nil {
+		t.Error("expected pipe error from failing source reader")
+	}
+}
+
+func TestHashPassphraseTooLong(t *testing.T) {
+	// bcrypt rejects passphrases longer than 72 bytes.
+	long := strings.Repeat("a", 73)
+	if _, err := HashPassphrase(long); err == nil {
+		t.Error("expected bcrypt to reject >72-byte passphrase")
+	}
+}
+
+func TestSealBadKeySize(t *testing.T) {
+	if _, err := Seal([]byte("short"), "data"); err == nil {
+		t.Error("expected error for invalid key size")
+	}
+}
+
+func TestUnsealBadKeySize(t *testing.T) {
+	if _, err := Unseal([]byte("short"), "anything"); err == nil {
+		t.Error("expected error for invalid key size")
+	}
+}
+
+func TestUnsealInvalidBase64(t *testing.T) {
+	key := bytes.Repeat([]byte{0x42}, 32)
+	if _, err := Unseal(key, "not-valid-base64!!!"); err == nil {
+		t.Error("expected base64 decode error")
+	}
+}
+
+func TestUnsealTooShort(t *testing.T) {
+	key := bytes.Repeat([]byte{0x42}, 32)
+	// Valid base64 but only 4 bytes — shorter than the 12-byte GCM nonce.
+	if _, err := Unseal(key, "AAAA"); err == nil {
+		t.Error("expected too-short error")
+	}
+}

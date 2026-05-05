@@ -185,3 +185,50 @@ func TestPreferredMountedPoolIn(t *testing.T) {
 		}
 	})
 }
+
+func TestPublicWrappersWithOverriddenRoots(t *testing.T) {
+	// Not parallel — these tests mutate package-level vars.
+	origMnt := mntBase
+	origInfo := mountInfoPath
+	t.Cleanup(func() {
+		mntBase = origMnt
+		mountInfoPath = origInfo
+	})
+
+	root := t.TempDir()
+	for _, n := range []string{"cache", "nvme", "user", "disk1"} {
+		if err := os.Mkdir(filepath.Join(root, n), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	mntBase = root
+
+	// DiscoverPools wrapper
+	pools := DiscoverPools()
+	if len(pools) != 2 {
+		t.Fatalf("DiscoverPools returned %d pools, want 2 (got %v)", len(pools), pools)
+	}
+	if filepath.Base(pools[0]) != "cache" {
+		t.Errorf("cache should sort first, got %v", pools)
+	}
+
+	// IsMountedPool wrapper — point mountInfoPath at a fake mountinfo
+	mountInfo := filepath.Join(t.TempDir(), "mountinfo")
+	cachePath := filepath.Join(root, "cache")
+	content := "35 22 8:2 / " + cachePath + " rw,relatime - btrfs /dev/sdb1 rw\n"
+	if err := os.WriteFile(mountInfo, []byte(content), 0o644); err != nil {
+		t.Fatalf("write mountinfo: %v", err)
+	}
+	mountInfoPath = mountInfo
+	if !IsMountedPool(cachePath) {
+		t.Errorf("IsMountedPool(%s) = false, want true", cachePath)
+	}
+	if IsMountedPool(filepath.Join(root, "nvme")) {
+		t.Error("IsMountedPool for unmounted path should be false")
+	}
+
+	// PreferredPool wrapper — should pick mounted cache
+	if got := PreferredPool(); got != cachePath {
+		t.Errorf("PreferredPool() = %s, want %s", got, cachePath)
+	}
+}
