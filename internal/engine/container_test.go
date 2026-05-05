@@ -498,3 +498,40 @@ func containsEntry(names []string, target string) bool {
 	}
 	return false
 }
+
+// TestShouldExcludeFileMount covers the exclusion semantics for file-based
+// bind mounts (issue #70). The user reported six pattern variants that all
+// failed silently when applied to /var/run/docker.sock; this table exercises
+// each form.
+func TestShouldExcludeFileMount(t *testing.T) {
+	tests := []struct {
+		name        string
+		exclusions  []string
+		destination string
+		want        bool
+	}{
+		{"no exclusions", nil, "/var/run/docker.sock", false},
+		{"empty destination", []string{"/var/run/docker.sock"}, "", false},
+		{"exact absolute path", []string{"/var/run/docker.sock"}, "/var/run/docker.sock", true},
+		{"absolute path + glob", []string{"/var/run/*"}, "/var/run/docker.sock", true},
+		{"absolute directory path", []string{"/var/run"}, "/var/run/docker.sock", true},
+		{"basename only", []string{"docker.sock"}, "/var/run/docker.sock", true},
+		{"pure wildcard glob", []string{"*docker.sock*"}, "/var/run/docker.sock", true},
+		{"basename glob", []string{"*.sock"}, "/var/run/docker.sock", true},
+		{"non-matching pattern", []string{"/etc/passwd"}, "/var/run/docker.sock", false},
+		{"non-matching glob", []string{"*.log"}, "/var/run/docker.sock", false},
+		{"empty pattern entries skipped", []string{"", "/var/run/docker.sock"}, "/var/run/docker.sock", true},
+		{"trailing slash on parent", []string{"/var/run/"}, "/var/run/docker.sock", true},
+		{"sibling not excluded by parent prefix string", []string{"/var/runtime"}, "/var/run/docker.sock", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldExcludeFileMount(tt.exclusions, tt.destination)
+			if got != tt.want {
+				t.Errorf("shouldExcludeFileMount(%v, %q) = %v, want %v",
+					tt.exclusions, tt.destination, got, tt.want)
+			}
+		})
+	}
+}

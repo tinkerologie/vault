@@ -161,6 +161,52 @@ func shouldExcludePath(relPath string, exclusions []string) bool {
 	return false
 }
 
+// shouldExcludeFileMount reports whether a file-based bind mount should be
+// excluded based on user-provided exclusion patterns. Mirrors the matching
+// logic of shouldExcludePath (used inside directory walks) so users get
+// consistent semantics no matter whether a bind mount is a directory or a
+// single file. Supported pattern forms:
+//
+//   - Exact absolute path                  (e.g. /var/run/docker.sock)
+//   - Parent directory (with or without /) (e.g. /var/run)
+//   - Basename                             (e.g. docker.sock)
+//   - Glob against full path or basename   (e.g. *docker.sock*, *.log)
+//
+// (issue #70)
+func shouldExcludeFileMount(exclusions []string, mountDestination string) bool {
+	if len(exclusions) == 0 || mountDestination == "" {
+		return false
+	}
+	cleanDest := filepath.Clean(mountDestination)
+	base := filepath.Base(cleanDest)
+
+	for _, pattern := range exclusions {
+		if pattern == "" {
+			continue
+		}
+		if isGlobPattern(pattern) {
+			if m, _ := filepath.Match(pattern, cleanDest); m {
+				return true
+			}
+			if m, _ := filepath.Match(pattern, base); m {
+				return true
+			}
+			continue
+		}
+		cleanPattern := filepath.Clean(pattern)
+		if cleanPattern == cleanDest {
+			return true
+		}
+		if strings.HasPrefix(cleanDest, cleanPattern+"/") {
+			return true
+		}
+		if !strings.Contains(pattern, "/") && cleanPattern == base {
+			return true
+		}
+	}
+	return false
+}
+
 // mapExclusionsToVolume converts container-side exclusion paths into paths
 // relative to a specific volume's mount destination. Glob patterns pass
 // through unchanged since they apply to all volumes.
@@ -401,6 +447,35 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 					entry.ExcludedPaths = volExclusions
 				}
 			} else {
+				// Auto-skip non-regular inodes (sockets, named pipes, devices,
+				// irregular). archive/tar refuses to write headers for these
+				// types and would fail the entire backup with errors like
+				// "archive/tar: sockets not supported". Container bind mounts
+				// to runtime sockets such as /var/run/docker.sock are never
+				// useful to back up — skip them with a clear reason rather
+				// than aborting the whole job (issue #70).
+				if srcInfo.Mode()&(os.ModeSocket|os.ModeNamedPipe|os.ModeDevice|os.ModeCharDevice|os.ModeIrregular) != 0 {
+					reason := fmt.Sprintf("unsupported inode type (%s)", srcInfo.Mode().Type().String())
+					log.Printf("engine: skipping volume %s for %s: %s", mount.Source, item.Name, reason)
+					entry.BackedUp = false
+					entry.SkipReason = reason
+					manifest = append(manifest, entry)
+					continue
+				}
+
+				// Honour exclusion patterns for file-based bind mounts. The
+				// directory tar functions already evaluate exclusions at the
+				// file-walk stage; doing the same here gives users consistent
+				// behaviour regardless of whether a bind mount is a directory
+				// or a single file (issue #70).
+				if shouldExcludeFileMount(exclusions, mount.Destination) {
+					log.Printf("engine: skipping volume %s for %s: matches exclusion pattern", mount.Source, item.Name)
+					entry.BackedUp = false
+					entry.SkipReason = "matches exclusion pattern"
+					manifest = append(manifest, entry)
+					continue
+				}
+
 				if err := tarFile(ctx, mount.Source, volDest); err != nil {
 					return fmt.Errorf("archiving volume file %s: %w", mount.Source, err)
 				}
