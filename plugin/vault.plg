@@ -46,6 +46,43 @@ fi
 ]]></INLINE>
 </FILE>
 
+<!--
+    Stop any running Vault daemon before upgrading the package.
+
+    Without this, upgradepkg replaces the on-disk binary while the previous
+    daemon is still running, the post-install "start" sees an existing PID
+    and exits silently, and the user keeps running the OLD binary until they
+    reboot the server (issue #72).
+
+    Persistent state under /boot/config/plugins/vault (vault.cfg, vault.db,
+    sealed credentials) is intentionally left untouched so user settings and
+    configuration survive the upgrade.
+-->
+<FILE Run="/bin/bash">
+    <INLINE><![CDATA[
+if [ -x /etc/rc.d/rc.vault ]; then
+    echo "Stopping Vault daemon before upgrade..."
+    /etc/rc.d/rc.vault stop || echo "Warning: rc.vault stop reported a non-zero status; continuing"
+fi
+
+# Belt-and-braces: ensure no stray vault process is still holding the binary.
+attempts=15
+while pidof vault >/dev/null 2>&1 && [ "$attempts" -gt 0 ]; do
+    sleep 1
+    attempts=$((attempts - 1))
+done
+
+if pidof vault >/dev/null 2>&1; then
+    echo "Vault daemon did not exit gracefully; forcing shutdown..."
+    killall -9 vault 2>/dev/null || true
+    sleep 1
+fi
+
+# Stale pidfile would block the post-install start step.
+rm -f /var/run/vault.pid
+]]></INLINE>
+</FILE>
+
 <!-- Download and install the bundle -->
 <FILE Name="/boot/config/plugins/&name;/&bundle;" Run="upgradepkg --install-new">
     <URL>&bundleURL;</URL>
@@ -72,7 +109,10 @@ mkdir -p /boot/config/plugins/vault
 chmod 755 /usr/local/sbin/vault
 chmod 755 /etc/rc.d/rc.vault
 
-# Start daemon
+# Restart cleanly: stop any leftover daemon (e.g. from an aborted previous
+# upgrade) before starting the new binary. This guarantees the user is
+# running the just-installed version without requiring a server reboot.
+/etc/rc.d/rc.vault stop 2>/dev/null || true
 /etc/rc.d/rc.vault start
 
 echo "Vault plugin installed successfully"

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Plugin upgrades now stop the running Vault daemon before `upgradepkg --install-new` and restart it afterwards, so users get the new binary without needing to reboot Unraid. User configuration (`vault.cfg`), the database (`vault.db`), and sealed credentials under `/boot/config/plugins/vault/` are preserved across upgrades (closes #72)
+
 ## [2026.04.00] - 2026-04-16
 
 ### Added
