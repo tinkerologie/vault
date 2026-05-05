@@ -157,6 +157,140 @@ func TestImportBackups(t *testing.T) {
 			t.Errorf("got %d jobs, want 1", len(jobs))
 		}
 	})
+
+	t.Run("recreates job items and settings from native manifest", func(t *testing.T) {
+		t.Parallel()
+		r, database, storageDir := setupTestRunner(t)
+		dest := createLocalDest(t, database, storageDir)
+
+		backups := []map[string]any{
+			{
+				"job_name":          "containers-job",
+				"storage_path":      "containers-job/1_2026-04-01_020000",
+				"backup_type":       "full",
+				"backup_type_chain": "full",
+				"compression":       "zstd",
+				"encryption":        "age",
+				"retention_count":   float64(14),
+				"retention_days":    float64(60),
+				"container_mode":    "stop",
+				"vm_mode":           "snapshot",
+				"notify_on":         "always",
+				"verify_backup":     true,
+				"size_bytes":        float64(2048),
+				"items": []any{
+					map[string]any{"name": "plex", "type": "container", "id": "abc123"},
+					map[string]any{"name": "homeassistant", "type": "container", "settings": map[string]any{"exclude_paths": []any{"/config/log"}}},
+				},
+			},
+		}
+
+		imported, err := r.ImportBackups(dest.ID, backups)
+		if err != nil {
+			t.Fatalf("ImportBackups error = %v", err)
+		}
+		if imported != 1 {
+			t.Fatalf("imported = %d, want 1", imported)
+		}
+
+		job, err := database.GetJobByName("containers-job")
+		if err != nil {
+			t.Fatalf("GetJobByName error = %v", err)
+		}
+		if job.RetentionCount != 14 || job.RetentionDays != 60 {
+			t.Errorf("retention = (%d,%d), want (14,60)", job.RetentionCount, job.RetentionDays)
+		}
+		if job.ContainerMode != "stop" {
+			t.Errorf("ContainerMode = %q, want stop", job.ContainerMode)
+		}
+		if job.VMMode != "snapshot" {
+			t.Errorf("VMMode = %q, want snapshot", job.VMMode)
+		}
+		if job.NotifyOn != "always" {
+			t.Errorf("NotifyOn = %q, want always", job.NotifyOn)
+		}
+		if !job.VerifyBackup {
+			t.Error("VerifyBackup should be true")
+		}
+
+		items, err := database.GetJobItems(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobItems error = %v", err)
+		}
+		if len(items) != 2 {
+			t.Fatalf("got %d items, want 2", len(items))
+		}
+		byName := map[string]db.JobItem{}
+		for _, it := range items {
+			byName[it.ItemName] = it
+		}
+		plex, ok := byName["plex"]
+		if !ok {
+			t.Fatal("missing plex item")
+		}
+		if plex.ItemType != "container" {
+			t.Errorf("plex type = %q, want container", plex.ItemType)
+		}
+		if plex.ItemID != "abc123" {
+			t.Errorf("plex item_id = %q, want abc123", plex.ItemID)
+		}
+		ha, ok := byName["homeassistant"]
+		if !ok {
+			t.Fatal("missing homeassistant item")
+		}
+		if !strings.Contains(ha.Settings, "/config/log") {
+			t.Errorf("homeassistant settings = %q, want exclude_paths preserved", ha.Settings)
+		}
+	})
+
+	t.Run("falls back to item_sizes for legacy manifests", func(t *testing.T) {
+		t.Parallel()
+		r, database, storageDir := setupTestRunner(t)
+		dest := createLocalDest(t, database, storageDir)
+
+		backups := []map[string]any{
+			{
+				"job_name":     "legacy-job",
+				"storage_path": "legacy-job/1_run",
+				"backup_type":  "full",
+				"item_sizes":   map[string]any{"plex": float64(1024), "sonarr": float64(2048)},
+			},
+		}
+
+		if _, err := r.ImportBackups(dest.ID, backups); err != nil {
+			t.Fatalf("ImportBackups error = %v", err)
+		}
+		job, _ := database.GetJobByName("legacy-job")
+		items, _ := database.GetJobItems(job.ID)
+		if len(items) != 2 {
+			t.Errorf("got %d items, want 2 (plex, sonarr)", len(items))
+		}
+	})
+
+	t.Run("creates single container item for appdata.backup source", func(t *testing.T) {
+		t.Parallel()
+		r, database, storageDir := setupTestRunner(t)
+		dest := createLocalDest(t, database, storageDir)
+
+		backups := []map[string]any{
+			{
+				"source":       "appdata.backup",
+				"job_name":     "plex",
+				"storage_path": "ab_20260304_040001/plex.tar.gz",
+				"backup_type":  "full",
+				"compression":  "gzip",
+			},
+		}
+
+		if _, err := r.ImportBackups(dest.ID, backups); err != nil {
+			t.Fatalf("ImportBackups error = %v", err)
+		}
+		job, _ := database.GetJobByName("plex")
+		items, _ := database.GetJobItems(job.ID)
+		if len(items) != 1 || items[0].ItemName != "plex" || items[0].ItemType != "container" {
+			t.Errorf("got items = %+v, want one container named plex", items)
+		}
+	})
 }
 
 func TestScanAppdataBackups(t *testing.T) {

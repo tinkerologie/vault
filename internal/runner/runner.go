@@ -882,7 +882,7 @@ func (r *Runner) RunJob(jobID int64) {
 		}
 
 		// Write manifest.json to storage for out-of-band recovery.
-		r.writeManifest(dest, basePath, job, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, timestamp)
+		r.writeManifest(dest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, timestamp)
 
 		// Auto-backup the SQLite database to a centralized storage location.
 		r.backupDatabase(dest)
@@ -1813,21 +1813,47 @@ func (r *Runner) resolvePassphrase() string {
 // writeManifest writes a manifest.json file to storage containing metadata
 // about the backup run: files, checksums, encryption status, and timestamps.
 // This enables out-of-band recovery without access to the database.
-func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job db.Job, runID int64, backupType string, itemsDone, itemsFailed int, totalSize int64, itemChecksums map[string]map[string]string, timestamp string) {
+func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job db.Job, items []db.JobItem, runID int64, backupType string, itemsDone, itemsFailed int, totalSize int64, itemChecksums map[string]map[string]string, timestamp string) {
+	// Serialize items so a future import can recreate JobItems with the
+	// correct type, name, and per-item settings (e.g. folder path,
+	// container exclude_paths, ZFS dataset). Without this, importing a
+	// backup from a different Vault installation produces an empty job
+	// with no restorable items.
+	manifestItems := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		entry := map[string]any{
+			"name": it.ItemName,
+			"type": it.ItemType,
+			"id":   it.ItemID,
+		}
+		if it.Settings != "" {
+			entry["settings"] = json.RawMessage(it.Settings)
+		}
+		manifestItems = append(manifestItems, entry)
+	}
+
 	manifest := map[string]any{
-		"version":      1,
-		"job_name":     job.Name,
-		"job_id":       job.ID,
-		"run_id":       runID,
-		"backup_type":  backupType,
-		"encryption":   job.Encryption,
-		"compression":  job.Compression,
-		"items_done":   itemsDone,
-		"items_failed": itemsFailed,
-		"size_bytes":   totalSize,
-		"verified":     job.VerifyBackup,
-		"timestamp":    timestamp,
-		"created_at":   time.Now().UTC().Format(time.RFC3339),
+		"version":           2,
+		"job_name":          job.Name,
+		"job_id":            job.ID,
+		"run_id":            runID,
+		"backup_type":       backupType,
+		"backup_type_chain": job.BackupTypeChain,
+		"encryption":        job.Encryption,
+		"compression":       job.Compression,
+		"retention_count":   job.RetentionCount,
+		"retention_days":    job.RetentionDays,
+		"container_mode":    job.ContainerMode,
+		"vm_mode":           job.VMMode,
+		"notify_on":         job.NotifyOn,
+		"verify_backup":     job.VerifyBackup,
+		"items":             manifestItems,
+		"items_done":        itemsDone,
+		"items_failed":      itemsFailed,
+		"size_bytes":        totalSize,
+		"verified":          job.VerifyBackup,
+		"timestamp":         timestamp,
+		"created_at":        time.Now().UTC().Format(time.RFC3339),
 	}
 	if len(itemChecksums) > 0 {
 		manifest["checksums"] = itemChecksums
@@ -2160,7 +2186,10 @@ func parseAppdataTimestamp(dirName string) string {
 // ImportBackups creates job and restore point records from previously
 // discovered manifests. For each manifest, it finds or creates the job
 // by name, creates a synthetic job run, and creates a restore point
-// referencing the original storage path.
+// referencing the original storage path. When a manifest is from the
+// native Vault format (writeManifest) it also propagates job-level
+// settings (retention, modes, verify) and recreates the per-item rows
+// (JobItems) so the restore wizard can list snapshots immediately.
 func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (int, error) {
 	imported := 0
 
@@ -2181,25 +2210,69 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 
 		// Find or create the job.
 		job, err := r.db.GetJobByName(jobName)
+		jobIsNew := false
 		if err != nil {
-			// Job doesn't exist — create a minimal one.
+			// Job doesn't exist — populate from the manifest where
+			// possible so retention, container/VM modes, and verify
+			// settings survive across installations.
+			chain, _ := b["backup_type_chain"].(string)
+			if chain == "" {
+				chain = "full"
+			}
+			retentionCount := 7
+			if v, ok := b["retention_count"].(float64); ok && v > 0 {
+				retentionCount = int(v)
+			}
+			retentionDays := 30
+			if v, ok := b["retention_days"].(float64); ok && v >= 0 {
+				retentionDays = int(v)
+			}
+			containerMode, _ := b["container_mode"].(string)
+			if containerMode == "" {
+				containerMode = "one_by_one"
+			}
+			vmMode, _ := b["vm_mode"].(string)
+			notifyOn, _ := b["notify_on"].(string)
+			if notifyOn == "" {
+				notifyOn = "failure"
+			}
+			verifyBackup := true
+			if v, ok := b["verify_backup"].(bool); ok {
+				verifyBackup = v
+			}
+
 			job = db.Job{
 				Name:            jobName,
 				Enabled:         false,
-				BackupTypeChain: "full",
-				RetentionCount:  7,
-				RetentionDays:   30,
+				BackupTypeChain: chain,
+				RetentionCount:  retentionCount,
+				RetentionDays:   retentionDays,
 				Compression:     compression,
 				Encryption:      encryption,
-				ContainerMode:   "one_by_one",
-				NotifyOn:        "failure",
-				VerifyBackup:    true,
+				ContainerMode:   containerMode,
+				VMMode:          vmMode,
+				NotifyOn:        notifyOn,
+				VerifyBackup:    verifyBackup,
 				StorageDestID:   storageDestID,
 			}
 			job.ID, err = r.db.CreateJob(job)
 			if err != nil {
 				log.Printf("runner: import: failed to create job %q: %v", jobName, err)
 				continue
+			}
+			jobIsNew = true
+		}
+
+		// Recreate JobItems so the restore wizard can list items.
+		// Only populate for newly-created jobs; if the job already
+		// existed locally, trust the user's current configuration.
+		if jobIsNew {
+			itemRows := buildImportJobItems(b)
+			for _, item := range itemRows {
+				item.JobID = job.ID
+				if _, err := r.db.AddJobItem(item); err != nil {
+					log.Printf("runner: import: failed to add item %q for job %q: %v", item.ItemName, jobName, err)
+				}
 			}
 		}
 
@@ -2256,6 +2329,84 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 	}
 
 	return imported, nil
+}
+
+// buildImportJobItems extracts JobItem rows from an import manifest. It
+// supports three sources, in order of preference:
+//
+//  1. Native Vault manifests v2+ with an explicit "items" array containing
+//     {name, type, settings, id} per item.
+//  2. Older Vault manifests without an items array — falls back to the
+//     "item_sizes" map (item names only, type defaulted to "container").
+//  3. appdata.backup imports (source == "appdata.backup") — produces a
+//     single container item matching the job/container name.
+//
+// Returns an empty slice if no items can be inferred; callers must treat
+// that as "skip item creation" rather than an error.
+func buildImportJobItems(b map[string]any) []db.JobItem {
+	if rawItems, ok := b["items"].([]any); ok && len(rawItems) > 0 {
+		items := make([]db.JobItem, 0, len(rawItems))
+		for _, raw := range rawItems {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := m["name"].(string)
+			if name == "" {
+				continue
+			}
+			itemType, _ := m["type"].(string)
+			if itemType == "" {
+				itemType = "container"
+			}
+			itemID, _ := m["id"].(string)
+			settingsJSON := "{}"
+			if s, ok := m["settings"]; ok && s != nil {
+				if sb, err := json.Marshal(s); err == nil {
+					settingsJSON = string(sb)
+				}
+			}
+			items = append(items, db.JobItem{
+				ItemType: itemType,
+				ItemName: name,
+				ItemID:   itemID,
+				Settings: settingsJSON,
+			})
+		}
+		if len(items) > 0 {
+			return items
+		}
+	}
+
+	// Fallback: appdata.backup produces one container per file.
+	if source, _ := b["source"].(string); source == "appdata.backup" {
+		jobName, _ := b["job_name"].(string)
+		if jobName != "" {
+			return []db.JobItem{{
+				ItemType: "container",
+				ItemName: jobName,
+				Settings: "{}",
+			}}
+		}
+	}
+
+	// Fallback for legacy Vault manifests: derive names from item_sizes.
+	if sizes, ok := b["item_sizes"].(map[string]any); ok {
+		items := make([]db.JobItem, 0, len(sizes))
+		for name := range sizes {
+			if name == "" {
+				continue
+			}
+			items = append(items, db.JobItem{
+				ItemType: "container",
+				ItemName: name,
+				Settings: "{}",
+			})
+		}
+		return items
+	}
+
+	return nil
 }
 
 // parseItemChecksums extracts the SHA-256 checksums for a specific item from
