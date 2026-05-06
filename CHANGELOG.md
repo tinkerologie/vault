@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 
-- Settings → Security → API Access: clicking **Show** or **Rotate** on the API key card no longer throws `revealAPIKey is not a function` / `rotateAPIKey is not a function`. The Svelte page was calling `api.revealAPIKey()` and `api.rotateAPIKey()` wrappers that did not exist in `web/src/lib/api.js`, so the bundled UI raised a `TypeError` (`$.revealAPIKey is not a function`) the moment the user tried to view or rotate an existing key. Added the missing `revealAPIKey()` (`GET /settings/api-key/key`) and `rotateAPIKey()` (`POST /settings/api-key/rotate`) wrappers to mirror the already-implemented backend handlers.
+- Settings → Reference → API Endpoints: refreshed the endpoint list to match the daemon's actual surface. Endpoints are now grouped by resource (Health & Realtime, Jobs, Storage Destinations, Settings, Encryption, API Key, Discovery, Replication, Activity & History, Model Context Protocol), with `DELETE` styled distinctly from other verbs and a header note explaining the `/api/v1` prefix and `X-API-Key` requirement. Previously the table only showed 10 routes and was missing API key management, encryption, replication, discovery (containers/vms/folders/plugins/zfs), recovery, activity, browse, MCP, and most jobs/storage sub-resources.
 
 ## [2026.05.00] - 2026-05-XX
 

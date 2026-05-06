@@ -1130,32 +1130,116 @@
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">API Endpoints</h2>
+          <p class="text-xs text-text-muted mt-1">All routes are prefixed with <code class="bg-surface px-1 rounded">/api/v1</code>. External clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header when an API key is configured and the request is not from localhost.</p>
         </div>
-        <div class="p-5">
-          <div class="space-y-2 text-sm font-mono">
-            {#each [
-              ['GET', '/api/v1/health', 'Health check'],
-              ['GET', '/api/v1/settings', 'Get settings'],
-              ['PUT', '/api/v1/settings', 'Update settings'],
-              ['GET', '/api/v1/storage', 'List storage destinations'],
-              ['POST', '/api/v1/storage', 'Create storage destination'],
-              ['GET', '/api/v1/jobs', 'List backup jobs'],
-              ['POST', '/api/v1/jobs', 'Create backup job'],
-              ['GET', '/api/v1/jobs/:id/history', 'Job run history'],
-              ['GET', '/api/v1/jobs/:id/restore-points', 'Restore points'],
-              ['WS', '/api/v1/ws', 'WebSocket events'],
-            ] as [method, path, desc] (`${method}:${path}`)}
-              <div class="flex items-center gap-3">
-                <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3rem] text-center
-                  {method === 'GET' ? 'bg-info/20 text-info' :
-                   method === 'POST' ? 'bg-success/20 text-success' :
-                   method === 'PUT' ? 'bg-warning/20 text-warning' :
-                   'bg-vault/20 text-vault'}">{method}</span>
-                <span class="text-text-muted">{path}</span>
-                <span class="text-text-dim text-xs ml-auto hidden sm:inline">{desc}</span>
+        <div class="p-5 space-y-5">
+          {#each [
+            { group: 'Health & Realtime', rows: [
+              ['GET', '/health', 'Liveness check'],
+              ['GET', '/health/summary', 'Aggregate system health'],
+              ['GET', '/runner/status', 'Backup runner status'],
+              ['WS',  '/ws', 'WebSocket event stream'],
+            ]},
+            { group: 'Jobs', rows: [
+              ['GET',    '/jobs', 'List backup jobs'],
+              ['POST',   '/jobs', 'Create backup job'],
+              ['GET',    '/jobs/next-runs', 'Next scheduled run for every job'],
+              ['GET',    '/jobs/{id}', 'Get job'],
+              ['PUT',    '/jobs/{id}', 'Update job'],
+              ['DELETE', '/jobs/{id}', 'Delete job'],
+              ['GET',    '/jobs/{id}/next-run', 'Next scheduled run'],
+              ['GET',    '/jobs/{id}/history', 'Job run history'],
+              ['GET',    '/jobs/{id}/restore-points', 'List restore points'],
+              ['DELETE', '/jobs/{id}/restore-points/{rpid}', 'Delete a restore point'],
+              ['POST',   '/jobs/{id}/run', 'Run job now'],
+              ['POST',   '/jobs/{id}/cancel', 'Cancel running job'],
+              ['POST',   '/jobs/{id}/restore', 'Restore from a restore point'],
+            ]},
+            { group: 'Storage Destinations', rows: [
+              ['GET',    '/storage', 'List storage destinations'],
+              ['POST',   '/storage', 'Create storage destination'],
+              ['GET',    '/storage/{id}', 'Get storage destination'],
+              ['PUT',    '/storage/{id}', 'Update storage destination'],
+              ['DELETE', '/storage/{id}', 'Delete storage destination'],
+              ['POST',   '/storage/{id}/test', 'Test connection'],
+              ['POST',   '/storage/{id}/scan', 'Scan for existing backups'],
+              ['POST',   '/storage/{id}/import', 'Import discovered backups'],
+              ['POST',   '/storage/{id}/restore-db', 'Restore Vault database from this destination'],
+              ['GET',    '/storage/{id}/jobs', 'Jobs targeting this destination'],
+              ['GET',    '/storage/{id}/list', 'List files at destination'],
+              ['GET',    '/storage/{id}/files', 'Download a file from destination'],
+            ]},
+            { group: 'Settings', rows: [
+              ['GET', '/settings', 'Get settings'],
+              ['PUT', '/settings', 'Update settings'],
+              ['GET', '/settings/staging', 'Get staging path info'],
+              ['PUT', '/settings/staging', 'Override staging path'],
+              ['GET', '/settings/database', 'Get database location info'],
+              ['PUT', '/settings/database', 'Set custom database snapshot path'],
+              ['GET', '/settings/diagnostics', 'Download diagnostics bundle'],
+              ['POST','/settings/discord/test', 'Send Discord webhook test'],
+            ]},
+            { group: 'Encryption', rows: [
+              ['GET',  '/settings/encryption', 'Encryption status'],
+              ['POST', '/settings/encryption', 'Enable / disable encryption'],
+              ['POST', '/settings/encryption/verify', 'Verify passphrase (rate-limited 10/min)'],
+              ['GET',  '/settings/encryption/passphrase', 'Reveal stored passphrase'],
+            ]},
+            { group: 'API Key', rows: [
+              ['GET',    '/settings/api-key', 'API key status'],
+              ['POST',   '/settings/api-key/generate', 'Generate API key (rate-limited 5/min)'],
+              ['GET',    '/settings/api-key/key', 'Reveal API key'],
+              ['POST',   '/settings/api-key/rotate', 'Rotate API key (rate-limited 5/min)'],
+              ['DELETE', '/settings/api-key', 'Revoke API key'],
+            ]},
+            { group: 'Discovery', rows: [
+              ['GET', '/containers', 'List Docker containers'],
+              ['GET', '/vms', 'List libvirt VMs'],
+              ['GET', '/folders', 'List user share folders'],
+              ['GET', '/plugins', 'List Unraid plugins'],
+              ['GET', '/zfs', 'List ZFS datasets'],
+              ['GET', '/browse', 'Browse filesystem paths'],
+              ['GET', '/presets/exclusions', 'Built-in exclusion presets'],
+            ]},
+            { group: 'Replication', rows: [
+              ['GET',    '/replication', 'List replication peers'],
+              ['POST',   '/replication', 'Create replication peer'],
+              ['POST',   '/replication/test-url', 'Test a peer URL'],
+              ['GET',    '/replication/{id}', 'Get peer'],
+              ['PUT',    '/replication/{id}', 'Update peer'],
+              ['DELETE', '/replication/{id}', 'Delete peer'],
+              ['POST',   '/replication/{id}/test', 'Test peer connection'],
+              ['POST',   '/replication/{id}/sync', 'Sync now'],
+              ['GET',    '/replication/{id}/jobs', 'List replicated jobs'],
+            ]},
+            { group: 'Activity & History', rows: [
+              ['GET',    '/activity', 'List activity log'],
+              ['DELETE', '/activity', 'Purge activity log'],
+              ['DELETE', '/history', 'Purge job run history'],
+              ['GET',    '/recovery/plan', 'Disaster recovery plan'],
+            ]},
+            { group: 'Model Context Protocol', rows: [
+              ['ANY', '/mcp', 'MCP server endpoint (Streamable HTTP)'],
+            ]},
+          ] as section (section.group)}
+            <div>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">{section.group}</h3>
+              <div class="space-y-1.5 text-sm font-mono">
+                {#each section.rows as [method, path, desc] (`${method}:${path}`)}
+                  <div class="flex items-center gap-3">
+                    <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3.5rem] text-center
+                      {method === 'GET' ? 'bg-info/20 text-info' :
+                       method === 'POST' ? 'bg-success/20 text-success' :
+                       method === 'PUT' ? 'bg-warning/20 text-warning' :
+                       method === 'DELETE' ? 'bg-danger/20 text-danger' :
+                       'bg-vault/20 text-vault'}">{method}</span>
+                    <span class="text-text-muted truncate">{path}</span>
+                    <span class="text-text-dim text-xs ml-auto hidden sm:inline truncate">{desc}</span>
+                  </div>
+                {/each}
               </div>
-            {/each}
-          </div>
+            </div>
+          {/each}
         </div>
       </div>
 
