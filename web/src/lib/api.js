@@ -78,6 +78,8 @@ export const api = {
   // API Key
   getAPIKeyStatus: () => request('GET', '/settings/api-key'),
   generateAPIKey: () => request('POST', '/settings/api-key/generate'),
+  revealAPIKey: () => request('GET', '/settings/api-key/key'),
+  rotateAPIKey: () => request('POST', '/settings/api-key/rotate'),
   revokeAPIKey: () => request('DELETE', '/settings/api-key'),
 
   // Staging

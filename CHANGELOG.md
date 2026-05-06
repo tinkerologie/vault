@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Settings → Security → API Access: clicking **Show** or **Rotate** on the API key card no longer throws `revealAPIKey is not a function` / `rotateAPIKey is not a function`. The Svelte page was calling `api.revealAPIKey()` and `api.rotateAPIKey()` wrappers that did not exist in `web/src/lib/api.js`, so the bundled UI raised a `TypeError` (`$.revealAPIKey is not a function`) the moment the user tried to view or rotate an existing key. Added the missing `revealAPIKey()` (`GET /settings/api-key/key`) and `rotateAPIKey()` (`POST /settings/api-key/rotate`) wrappers to mirror the already-implemented backend handlers.
+
 ## [2026.05.00] - 2026-05-XX
 
 ### Added
