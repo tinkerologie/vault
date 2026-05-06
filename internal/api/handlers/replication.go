@@ -24,16 +24,38 @@ type ReplicationHandler struct {
 	getSyncer   SyncerProvider
 	serverKey   []byte
 	schedReload ScheduleReloader
+	broadcaster Broadcaster
+}
+
+// Broadcaster is the minimal interface ReplicationHandler needs to publish
+// `config_changed` WebSocket events. *runner.Runner satisfies it via its
+// public Broadcast method.
+type Broadcaster interface {
+	Broadcast(map[string]any)
 }
 
 // NewReplicationHandler creates a new ReplicationHandler.
-func NewReplicationHandler(database *db.DB, getSyncer SyncerProvider, serverKey []byte, reload ScheduleReloader) *ReplicationHandler {
+func NewReplicationHandler(database *db.DB, getSyncer SyncerProvider, serverKey []byte, reload ScheduleReloader, b Broadcaster) *ReplicationHandler {
 	return &ReplicationHandler{
 		db:          database,
 		getSyncer:   getSyncer,
 		serverKey:   serverKey,
 		schedReload: reload,
+		broadcaster: b,
 	}
+}
+
+// broadcastConfigChange sends a `config_changed` WebSocket event so that
+// the Dashboard's 3-2-1 compliance widget and other derived UI state
+// re-fetch without a manual page reload.
+func (h *ReplicationHandler) broadcastConfigChange() {
+	if h.broadcaster == nil {
+		return
+	}
+	h.broadcaster.Broadcast(map[string]any{
+		"type":   "config_changed",
+		"entity": "replication",
+	})
 }
 
 // reloadScheduler triggers a scheduler reload, logging any errors.
@@ -97,6 +119,7 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	h.reloadScheduler()
 	respondJSON(w, http.StatusCreated, src)
+	h.broadcastConfigChange()
 }
 
 // Get returns a single replication source.
@@ -150,6 +173,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	h.reloadScheduler()
 	respondJSON(w, http.StatusOK, src)
+	h.broadcastConfigChange()
 }
 
 // Delete removes a replication source and its replicated jobs.
@@ -171,6 +195,7 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	h.reloadScheduler()
 	w.WriteHeader(http.StatusNoContent)
+	h.broadcastConfigChange()
 }
 
 // TestConnection tests connectivity to a replication target.

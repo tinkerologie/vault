@@ -49,6 +49,20 @@ func (h *JobHandler) notifyConfigChange() {
 	}
 }
 
+// broadcastConfigChange sends a `config_changed` WebSocket event so that
+// dashboards / 3-2-1 compliance widgets / recovery plans re-fetch derived
+// state without requiring a full page reload. The `entity` field tells
+// the client what changed (e.g., "job", "storage", "replication").
+func (h *JobHandler) broadcastConfigChange(entity string) {
+	if h.runner == nil {
+		return
+	}
+	h.runner.Broadcast(map[string]any{
+		"type":   "config_changed",
+		"entity": entity,
+	})
+}
+
 // reloadScheduler triggers a scheduler reload, logging any errors.
 func (h *JobHandler) reloadScheduler() {
 	if h.schedReload != nil {
@@ -92,6 +106,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, req.Job)
 	h.reloadScheduler()
 	h.notifyConfigChange()
+	h.broadcastConfigChange("job")
 }
 
 func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +157,7 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, req.Job)
 	h.reloadScheduler()
 	h.notifyConfigChange()
+	h.broadcastConfigChange("job")
 }
 
 func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +181,7 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 	h.reloadScheduler()
 	h.notifyConfigChange()
+	h.broadcastConfigChange("job")
 }
 
 func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {

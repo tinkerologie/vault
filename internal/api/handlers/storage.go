@@ -24,6 +24,20 @@ func NewStorageHandler(database *db.DB, r *runner.Runner) *StorageHandler {
 	return &StorageHandler{db: database, runner: r}
 }
 
+// broadcastConfigChange sends a `config_changed` WebSocket event so that
+// dashboards / 3-2-1 compliance widgets re-fetch derived state without
+// requiring a full page reload. Safe to call when the runner is nil
+// (e.g., in tests).
+func (h *StorageHandler) broadcastConfigChange(entity string) {
+	if h.runner == nil {
+		return
+	}
+	h.runner.Broadcast(map[string]any{
+		"type":   "config_changed",
+		"entity": entity,
+	})
+}
+
 func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
 	dests, err := h.db.ListStorageDestinations()
 	if err != nil {
@@ -49,6 +63,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	dest.ID = id
 	respondJSON(w, http.StatusCreated, dest)
+	h.broadcastConfigChange("storage")
 }
 
 func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +96,7 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, dest)
+	h.broadcastConfigChange("storage")
 }
 
 func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +134,7 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+	h.broadcastConfigChange("storage")
 }
 
 func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) {

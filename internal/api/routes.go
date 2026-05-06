@@ -153,7 +153,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 				return s.schedReload()
 			}
 			return nil
-		})
+		}, s.runner)
 		r.Route("/replication", func(r chi.Router) {
 			r.Get("/", replH.List)
 			r.Post("/", replH.Create)

@@ -36,7 +36,7 @@ func setupReplicationTest(t *testing.T) (*ReplicationHandler, *db.DB) {
 		t.Fatalf("create storage dest: %v", err)
 	}
 
-	h := NewReplicationHandler(database, nil, serverKey, nil)
+	h := NewReplicationHandler(database, nil, serverKey, nil, nil)
 	return h, database
 }
 

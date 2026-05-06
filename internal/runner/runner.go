@@ -1825,6 +1825,14 @@ func (r *Runner) broadcast(data map[string]any) {
 	r.hub.Broadcast(msg)
 }
 
+// Broadcast sends a JSON event to every connected WebSocket client. It is
+// the public entry point used by API handlers (e.g., storage / job CRUD)
+// to notify the UI that derived state — health summary, 3-2-1 compliance,
+// recovery plan — needs to be re-fetched.
+func (r *Runner) Broadcast(data map[string]any) {
+	r.broadcast(data)
+}
+
 // broadcastQueueUpdate sends the current queue state to all WebSocket clients.
 func (r *Runner) broadcastQueueUpdate() {
 	r.queueMu.Lock()

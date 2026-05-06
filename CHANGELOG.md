@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Live `config_changed` WebSocket event broadcast on every storage destination, backup job, and replication source create/update/delete. The Dashboard now refetches its derived state (3-2-1 Backup Rule badge, Storage card, Jobs card, Protection Status, Recent Activity) the moment configuration changes from any client — no manual refresh needed when adding a new storage destination, enabling a previously-imported job, or deleting a replication source. Verified end-to-end: creating a 2nd storage destination via API updated the Dashboard Storage card from 1→2 within ~2s and back to 1 on delete, all without a page reload.
+
 ## [2026.05.00] - 2026-05-XX
 
 ### Added

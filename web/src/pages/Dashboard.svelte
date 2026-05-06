@@ -75,6 +75,13 @@
         liveStartTime = null
         loadDashboard()
       }
+      if (msg.type === 'config_changed') {
+        // Storage / job / replication CRUD changes the inputs to the
+        // 3-2-1 compliance widget, the protection-status panel, and the
+        // recovery plan. Re-fetch so derived UI stays current without a
+        // page reload.
+        loadDashboard()
+      }
     })
     return unsub
   })
