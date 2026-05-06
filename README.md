@@ -19,7 +19,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 - VM backup and restore with snapshot and cold modes
 - Folder and plugin backup support
 - Full, incremental, and differential backup chains
-- Local, SFTP, SMB, and NFS storage backends
+- Local, SFTP, SMB, NFS, WebDav and S3 storage backends
 - Cron-based scheduling with retention policies
 - Web UI with Dashboard, Jobs, Restore, Storage, History, Replication, Recovery, and Settings
 - WebSocket progress streaming and runner queue visibility
