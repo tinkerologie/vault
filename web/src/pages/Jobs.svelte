@@ -264,7 +264,7 @@
   onMount(() => {
     loadData()
     const unsub = onWsMessage((msg) => {
-      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed') {
+      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed') {
         loadData()
       }
     })

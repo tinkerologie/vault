@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Imported backups now show the correct item count on the Restore page instead of `[object Object],[object Object],...`. The import path used to persist the raw manifest verbatim, which carries `items` as an array of `{name,type,id,…}` objects, while restore points produced by fresh runs use `items` as a count. The restore wizard's `{meta.items} items` label was therefore stringifying the array. The import path now writes a normalized restore-point metadata shape (`items` as a count, plus `item_sizes`, `checksums`, `verified`, etc.) and keeps the original manifest items under `manifest_items` for diagnostics. The wizard is also defensive: if `meta.items` is an array (e.g. for already-imported restore points), it now uses `length`
+- Backup History, Restore, Storage, Jobs, and Dashboard pages now refresh automatically after an import. The runner emits a new `import_completed` WebSocket event when one or more backups are imported, and each page subscribes to it alongside `job_run_started` / `job_run_completed`. Previously the pages only refreshed on backup-run events, so freshly-imported jobs and restore points stayed hidden until the user reloaded the page
+
 ## [2026.05.00] - 2026-05-XX
 
 ### Added

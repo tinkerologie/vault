@@ -447,7 +447,8 @@
               <span>Run #{rp.job_run_id}</span>
               <span class="text-text-muted">{rp.jobName}</span>
               {#if meta.items}
-                <span>{meta.items} items</span>
+                {@const itemCount = Array.isArray(meta.items) ? meta.items.length : meta.items}
+                <span>{itemCount} items</span>
               {/if}
             </div>
             {#if rp.chain_status === 'broken'}

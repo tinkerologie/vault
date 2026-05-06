@@ -69,7 +69,7 @@
         const elapsed = (Date.now() - liveStartTime) / 1000
         if (elapsed > 0) liveSpeed = formatSpeed(liveCumulativeBytes, elapsed)
       }
-      if (msg.type === 'job_run_completed' || msg.type === 'job_run_started') {
+      if (msg.type === 'job_run_completed' || msg.type === 'job_run_started' || msg.type === 'import_completed') {
         liveSpeed = null
         liveCumulativeBytes = 0
         liveStartTime = null

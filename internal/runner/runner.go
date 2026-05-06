@@ -1814,6 +1814,9 @@ func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination,
 
 // broadcast sends a JSON message to all connected WebSocket clients.
 func (r *Runner) broadcast(data map[string]any) {
+	if r.hub == nil {
+		return
+	}
 	msg, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("runner: failed to marshal broadcast: %v", err)
@@ -2554,8 +2557,36 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 			continue
 		}
 
-		// Build metadata JSON from manifest.
-		metaBytes, _ := json.Marshal(b)
+		// Build metadata JSON from manifest. The native runner stores
+		// `items` as a count (int) on restore points, but Vault
+		// manifests carry `items` as an array of {name,type,id,...}
+		// objects. Normalize to the runner's restore-point shape so
+		// the restore wizard's `meta.items` rendering doesn't end up
+		// stringifying an array of objects.
+		rpMeta := map[string]any{
+			"items":       itemsDone,
+			"job_name":    jobName,
+			"backup_type": backupType,
+			"imported":    true,
+		}
+		if v, ok := b["items_failed"].(float64); ok {
+			rpMeta["items_failed"] = int(v)
+		}
+		if v, ok := b["item_sizes"].(map[string]any); ok && len(v) > 0 {
+			rpMeta["item_sizes"] = v
+		}
+		if v, ok := b["checksums"].(map[string]any); ok && len(v) > 0 {
+			rpMeta["checksums"] = v
+		}
+		if v, ok := b["verified"].(bool); ok {
+			rpMeta["verified"] = v
+		}
+		if rawItems, ok := b["items"].([]any); ok {
+			// Keep the original manifest items under a non-conflicting
+			// key for diagnostics / future use without breaking the UI.
+			rpMeta["manifest_items"] = rawItems
+		}
+		metaBytes, _ := json.Marshal(rpMeta)
 
 		rp := db.RestorePoint{
 			JobRunID:    runID,
@@ -2571,6 +2602,16 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 		}
 
 		imported++
+	}
+
+	if imported > 0 {
+		// Notify connected clients so the History and Restore pages
+		// refresh after a successful import without requiring a manual
+		// page reload.
+		r.broadcast(map[string]any{
+			"type":     "import_completed",
+			"imported": imported,
+		})
 	}
 
 	return imported, nil
