@@ -118,6 +118,7 @@
       post_script: '',
       notify_on: 'failure',
       verify_backup: true,
+      defer_remote_upload: false,
       encryption: 'none',
       storage_dest_id: 0,
       items: [],
@@ -311,6 +312,7 @@
         post_script: data.job.post_script || '',
         notify_on: data.job.notify_on || 'failure',
         verify_backup: data.job.verify_backup ?? true,
+        defer_remote_upload: data.job.defer_remote_upload ?? false,
         encryption: data.job.encryption || 'none',
         storage_dest_id: data.job.storage_dest_id || 0,
         items: data.items || [],
@@ -402,6 +404,7 @@
         post_script: fullJob.post_script || '',
         notify_on: fullJob.notify_on || 'failure',
         verify_backup: fullJob.verify_backup ?? true,
+        defer_remote_upload: fullJob.defer_remote_upload ?? false,
         enabled: false,
         items: (data.items || []).map(i => ({
           item_type: i.item_type,
@@ -916,6 +919,30 @@
             </div>
           </div>
         </details>
+
+        <!-- Advanced: Deferred remote upload (#77) -->
+        {#if true}
+          {@const _selectedStorage = storageList.find(s => s.id === form.storage_dest_id)}
+          {@const _isLocalDest = !_selectedStorage || _selectedStorage.type === 'local'}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Deferred Remote Upload <Tooltip text="Best for slow upload links. Stops, backs up, and restarts each container locally first, then uploads everything to the remote destination after all containers are running again. Requires sufficient local staging space." />
+            </summary>
+            <div class="mt-3 pl-6">
+              <div class="flex items-start gap-3">
+                <label class="relative inline-flex items-center cursor-pointer mt-0.5" class:opacity-50={_isLocalDest} class:cursor-not-allowed={_isLocalDest} title={_isLocalDest ? 'Only available when destination is remote' : ''}>
+                  <input type="checkbox" bind:checked={form.defer_remote_upload} disabled={_isLocalDest} class="sr-only peer" />
+                  <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                </label>
+                <div>
+                  <p class="text-sm text-text">Defer remote upload until all backups complete</p>
+                  <p class="text-xs text-text-dim mt-0.5">Backs up every container to local staging first and brings them all online before any data is sent to the remote destination. {_isLocalDest ? 'Only available when destination is remote (SFTP, SMB, NFS, S3, WebDAV).' : 'Per-file uploads are retried up to 3 times with exponential backoff (5s → 30s → 2m).'}</p>
+                </div>
+              </div>
+            </div>
+          </details>
+        {/if}
 
         {#if hasVMs}
           <details class="group" open>

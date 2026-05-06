@@ -27,6 +27,46 @@ func TestCreateAndGetJob(t *testing.T) {
 	if got.Schedule != "0 2 * * *" {
 		t.Errorf("Schedule = %q, want %q", got.Schedule, "0 2 * * *")
 	}
+	if got.DeferRemoteUpload {
+		t.Errorf("DeferRemoteUpload default = true, want false")
+	}
+}
+
+func TestJobDeferRemoteUploadRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})
+
+	id, err := d.CreateJob(Job{
+		Name: "deferred-job", StorageDestID: destID, BackupTypeChain: "full",
+		ContainerMode: "one_by_one", DeferRemoteUpload: true,
+	})
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	got, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("Get error = %v", err)
+	}
+	if !got.DeferRemoteUpload {
+		t.Errorf("DeferRemoteUpload after create = false, want true")
+	}
+
+	got.DeferRemoteUpload = false
+	if err := d.UpdateJob(got); err != nil {
+		t.Fatalf("Update error = %v", err)
+	}
+	got2, _ := d.GetJob(id)
+	if got2.DeferRemoteUpload {
+		t.Errorf("DeferRemoteUpload after update to false = true, want false")
+	}
+
+	// ListJobs round-trip
+	jobs, _ := d.ListJobs()
+	for _, j := range jobs {
+		if j.ID == id && j.DeferRemoteUpload {
+			t.Errorf("ListJobs returned DeferRemoteUpload=true after update to false")
+		}
+	}
 }
 
 func TestGetJobByName(t *testing.T) {

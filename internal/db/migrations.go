@@ -111,4 +111,5 @@ var alterMigrations = []string{
 	"ALTER TABLE job_runs ADD COLUMN run_type TEXT DEFAULT 'backup'",
 	"ALTER TABLE replication_sources ADD COLUMN type TEXT DEFAULT 'remote_vault'",
 	"ALTER TABLE replication_sources ADD COLUMN config TEXT DEFAULT '{}'",
+	"ALTER TABLE jobs ADD COLUMN defer_remote_upload INTEGER DEFAULT 0",
 }

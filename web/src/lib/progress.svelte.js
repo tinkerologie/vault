@@ -174,6 +174,36 @@ export function handleProgressMessage(msg, jobNameResolver) {
       phaseMessage = msg.message || null
       return true
     }
+    case 'backup_phase': {
+      // Deferred-mode phase transitions emitted by the runner (#77).
+      if (msg.phase === 'staging') {
+        phaseMessage = msg.item_name
+          ? `Staging ${msg.item_name} locally...`
+          : 'Staging backups locally...'
+      } else if (msg.phase === 'uploading') {
+        const n = msg.count || 0
+        phaseMessage = n > 0
+          ? `Uploading ${n} staged item${n === 1 ? '' : 's'} to remote storage...`
+          : 'Uploading to remote storage...'
+      }
+      return true
+    }
+    case 'item_staged': {
+      const prev = itemProgress[msg.item_name] || {}
+      itemProgress = {
+        ...itemProgress,
+        [msg.item_name]: { ...prev, percent: 50, message: 'Staged — awaiting upload', status: 'running', item_type: msg.item_type || prev.item_type },
+      }
+      return true
+    }
+    case 'item_upload_start': {
+      const prev = itemProgress[msg.item_name] || {}
+      itemProgress = {
+        ...itemProgress,
+        [msg.item_name]: { ...prev, percent: 60, message: 'Uploading...', status: 'running', item_type: msg.item_type || prev.item_type },
+      }
+      return true
+    }
     case 'item_backup_start': {
       phaseMessage = null
       if (msg.items_total) overallTotal = msg.items_total

@@ -27,6 +27,19 @@ type WebDAVConfig struct {
 	InsecureSkipVerify bool   `json:"insecure_skip_verify"` // Skip TLS cert validation (self-signed certs).
 }
 
+// String redacts the Password field so accidental logging via fmt verbs
+// (%v, %+v, %s) does not leak credentials. The API layer already redacts
+// password fields before sending configs to the UI (see handlers.redactConfig);
+// this Stringer adds a defence-in-depth layer for log statements.
+func (c WebDAVConfig) String() string {
+	pw := ""
+	if c.Password != "" {
+		pw = "<redacted>"
+	}
+	return fmt.Sprintf("WebDAVConfig{URL:%q Username:%q Password:%s BasePath:%q InsecureSkipVerify:%t}",
+		c.URL, c.Username, pw, c.BasePath, c.InsecureSkipVerify)
+}
+
 // WebDAVAdapter implements Adapter against a WebDAV endpoint.
 //
 // The adapter creates a fresh gowebdav client per operation rather than

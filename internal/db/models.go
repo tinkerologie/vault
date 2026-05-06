@@ -3,26 +3,27 @@ package db
 import "time"
 
 type Job struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description"`
-	Enabled         bool      `json:"enabled"`
-	Schedule        string    `json:"schedule"`
-	BackupTypeChain string    `json:"backup_type_chain"`
-	RetentionCount  int       `json:"retention_count"`
-	RetentionDays   int       `json:"retention_days"`
-	Compression     string    `json:"compression"`
-	Encryption      string    `json:"encryption"`
-	ContainerMode   string    `json:"container_mode"`
-	VMMode          string    `json:"vm_mode"`
-	PreScript       string    `json:"pre_script"`
-	PostScript      string    `json:"post_script"`
-	NotifyOn        string    `json:"notify_on"`
-	VerifyBackup    bool      `json:"verify_backup"`
-	StorageDestID   int64     `json:"storage_dest_id"`
-	SourceID        int64     `json:"source_id"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                int64     `json:"id"`
+	Name              string    `json:"name"`
+	Description       string    `json:"description"`
+	Enabled           bool      `json:"enabled"`
+	Schedule          string    `json:"schedule"`
+	BackupTypeChain   string    `json:"backup_type_chain"`
+	RetentionCount    int       `json:"retention_count"`
+	RetentionDays     int       `json:"retention_days"`
+	Compression       string    `json:"compression"`
+	Encryption        string    `json:"encryption"`
+	ContainerMode     string    `json:"container_mode"`
+	VMMode            string    `json:"vm_mode"`
+	PreScript         string    `json:"pre_script"`
+	PostScript        string    `json:"post_script"`
+	NotifyOn          string    `json:"notify_on"`
+	VerifyBackup      bool      `json:"verify_backup"`
+	StorageDestID     int64     `json:"storage_dest_id"`
+	SourceID          int64     `json:"source_id"`
+	DeferRemoteUpload bool      `json:"defer_remote_upload"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type JobItem struct {

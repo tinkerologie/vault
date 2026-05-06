@@ -540,6 +540,27 @@ func (r *Runner) RunJob(jobID int64) {
 		}
 	}
 
+	// Deferred remote upload mode (#77): stage every item locally first, restart
+	// stop_all containers as soon as staging finishes, then upload to remote
+	// storage in a second phase. Local destinations always run inline.
+	deferred := job.DeferRemoteUpload && dest.Type != "local"
+	type stagedItemEntry struct {
+		engineItem engine.BackupItem
+		dbItem     db.JobItem
+		itemPath   string
+		tmpDir     string
+		cleanup    func()
+		result     *engine.BackupResult
+	}
+	var stagedItems []stagedItemEntry
+	defer func() {
+		for _, s := range stagedItems {
+			if s.cleanup != nil {
+				s.cleanup()
+			}
+		}
+	}()
+
 	for _, item := range items {
 		// Check for cancellation between items.
 		if ctx.Err() != nil {
@@ -628,6 +649,62 @@ func (r *Runner) RunJob(jobID int64) {
 
 		r.updateRunProgress(itemsDone, itemsFailed, item.ItemName)
 		r.updateCurrentItemProgress(item.ItemType, 0, "Starting...")
+
+		if deferred {
+			r.broadcast(map[string]any{
+				"type":      "backup_phase",
+				"job_id":    jobID,
+				"run_id":    runID,
+				"phase":     "staging",
+				"item_name": item.ItemName,
+				"item_type": item.ItemType,
+			})
+			tmpDir, stageResult, cleanup, stageErr := r.stageItemLocally(ctx, backupItem, dest)
+			if stageErr != nil {
+				if ctx.Err() != nil {
+					log.Printf("runner: job %d item %s cancelled during staging: %v", jobID, item.ItemName, stageErr)
+					break
+				}
+				itemsFailed++
+				failedNames = append(failedNames, item.ItemName)
+				itemResults = append(itemResults, map[string]any{
+					"name":   item.ItemName,
+					"status": "failed",
+					"error":  stageErr.Error(),
+				})
+				log.Printf("runner: stage item %s failed: %v", item.ItemName, stageErr)
+				r.broadcast(map[string]any{
+					"type":        "item_backup_failed",
+					"job_id":      jobID,
+					"run_id":      runID,
+					"item_name":   item.ItemName,
+					"item_type":   item.ItemType,
+					"items_total": len(items),
+					"items_done":  itemsDone,
+					"error":       stageErr.Error(),
+				})
+			} else {
+				stagedItems = append(stagedItems, stagedItemEntry{
+					engineItem: backupItem,
+					dbItem:     item,
+					itemPath:   itemPath,
+					tmpDir:     tmpDir,
+					cleanup:    cleanup,
+					result:     stageResult,
+				})
+				r.broadcast(map[string]any{
+					"type":        "item_staged",
+					"job_id":      jobID,
+					"run_id":      runID,
+					"item_name":   item.ItemName,
+					"item_type":   item.ItemType,
+					"items_total": len(items),
+				})
+			}
+			_ = r.db.UpdateJobRunProgress(runID, itemsDone, itemsFailed, totalSize)
+			r.updateRunProgress(itemsDone, itemsFailed, "")
+			continue
+		}
 
 		result, checksums, backupErr := r.backupItem(ctx, backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression)
 		if backupErr != nil {
@@ -811,6 +888,98 @@ func (r *Runner) RunJob(jobID int64) {
 		}
 	}
 
+	// Phase 2 of deferred mode: upload all staged items to remote storage.
+	// Containers have already been restarted (above) so the upload runs in
+	// parallel to normal service. Each item's success/failure is recorded
+	// here, mirroring the inline path's accounting.
+	if deferred && len(stagedItems) > 0 {
+		r.broadcast(map[string]any{
+			"type":   "backup_phase",
+			"job_id": jobID,
+			"run_id": runID,
+			"phase":  "uploading",
+			"count":  len(stagedItems),
+		})
+		for _, s := range stagedItems {
+			if ctx.Err() != nil {
+				log.Printf("runner: job %d cancelled before uploading %s", jobID, s.dbItem.ItemName)
+				break
+			}
+			r.broadcast(map[string]any{
+				"type":      "item_upload_start",
+				"job_id":    jobID,
+				"run_id":    runID,
+				"item_name": s.dbItem.ItemName,
+				"item_type": s.dbItem.ItemType,
+			})
+			checksums, uploadErr := r.uploadStagedFiles(ctx, s.tmpDir, dest, s.itemPath, job.VerifyBackup, encryptPassphrase, job.Compression, s.dbItem.ItemType, s.dbItem.ItemName)
+			if uploadErr != nil {
+				if ctx.Err() != nil {
+					log.Printf("runner: job %d upload of %s cancelled: %v", jobID, s.dbItem.ItemName, uploadErr)
+					break
+				}
+				itemsFailed++
+				failedNames = append(failedNames, s.dbItem.ItemName)
+				itemResults = append(itemResults, map[string]any{
+					"name":   s.dbItem.ItemName,
+					"status": "failed",
+					"error":  uploadErr.Error(),
+				})
+				log.Printf("runner: upload item %s failed: %v", s.dbItem.ItemName, uploadErr)
+				r.broadcast(map[string]any{
+					"type":        "item_backup_failed",
+					"job_id":      jobID,
+					"run_id":      runID,
+					"item_name":   s.dbItem.ItemName,
+					"item_type":   s.dbItem.ItemType,
+					"items_total": len(items),
+					"items_done":  itemsDone,
+					"error":       uploadErr.Error(),
+				})
+			} else {
+				itemsDone++
+				var itemSize int64
+				if s.result != nil {
+					for _, f := range s.result.Files {
+						itemSize += f.Size
+					}
+				}
+				totalSize += itemSize
+
+				resEntry := map[string]any{
+					"name":       s.dbItem.ItemName,
+					"status":     "ok",
+					"size_bytes": itemSize,
+				}
+				if job.VerifyBackup {
+					resEntry["verified"] = true
+				}
+				if s.dbItem.ItemType == "zfs" {
+					if snap, ok := s.engineItem.Settings["dataset"].(string); ok {
+						resEntry["zfs_dataset"] = snap
+					}
+				}
+				itemResults = append(itemResults, resEntry)
+				if len(checksums) > 0 {
+					itemChecksums[s.dbItem.ItemName] = checksums
+				}
+				r.broadcast(map[string]any{
+					"type":        "item_backup_done",
+					"job_id":      jobID,
+					"run_id":      runID,
+					"item_name":   s.dbItem.ItemName,
+					"item_type":   s.dbItem.ItemType,
+					"items_total": len(items),
+					"items_done":  itemsDone,
+					"size_bytes":  itemSize,
+					"verified":    job.VerifyBackup,
+				})
+			}
+			_ = r.db.UpdateJobRunProgress(runID, itemsDone, itemsFailed, totalSize)
+			r.updateRunProgress(itemsDone, itemsFailed, "")
+		}
+	}
+
 	status := "completed"
 	if ctx.Err() != nil {
 		status = "cancelled"
@@ -952,12 +1121,30 @@ func (r *Runner) RunJob(jobID int64) {
 // If verify is true, it reads each file back and validates SHA-256 checksums.
 // If passphrase is non-empty, each file is encrypted with age before uploading.
 func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string) (*engine.BackupResult, map[string]string, error) {
+	tmpDir, result, cleanup, err := r.stageItemLocally(ctx, item, dest)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cleanup()
+
+	checksums, err := r.uploadStagedFiles(ctx, tmpDir, dest, storagePath, verify, passphrase, compression, item.Type, item.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result, checksums, nil
+}
+
+// stageItemLocally creates a temp directory and runs the appropriate engine
+// handler to stage the item's archive(s) on local disk. It returns the staging
+// dir, the backup result, and a cleanup func the caller must invoke when the
+// staged files are no longer needed (callers may defer it immediately for the
+// non-deferred path, or hold it across the upload phase for deferred mode).
+func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, dest db.StorageDestination) (string, *engine.BackupResult, func(), error) {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
 	tmpDir, cleanup, err := tempdir.CreateBackupDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config}, stageOverride)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating temp dir: %w", err)
+		return "", nil, func() {}, fmt.Errorf("creating temp dir: %w", err)
 	}
-	defer cleanup()
 
 	var handler engine.Handler
 	switch item.Type {
@@ -972,10 +1159,12 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 	case "zfs":
 		handler, err = engine.NewZFSHandler()
 	default:
-		return nil, nil, fmt.Errorf("unknown item type: %s", item.Type)
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("unknown item type: %s", item.Type)
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating %s handler: %w", item.Type, err)
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("creating %s handler: %w", item.Type, err)
 	}
 
 	progress := func(name string, pct int, msg string) {
@@ -995,43 +1184,64 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 
 	result, err := handler.Backup(ctx, item, tmpDir, progress)
 	if err != nil {
-		return nil, nil, fmt.Errorf("backup %s: %w", item.Name, err)
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("backup %s: %w", item.Name, err)
+	}
+	return tmpDir, result, cleanup, nil
+}
+
+// uploadStagedFiles streams every regular file in tmpDir through the
+// compression/encryption pipeline to the storage adapter, computes SHA-256
+// checksums during upload, and (optionally) verifies by re-reading. Each
+// per-file upload is retried with exponential backoff (5s, 30s, 2m) for up
+// to 3 attempts to tolerate transient remote-storage failures (#77).
+func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, itemType string, itemName string) (map[string]string, error) {
+	progress := func(pct int, msg string) {
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
+
+		r.updateCurrentItemProgress(itemType, pct, msg)
+		r.broadcast(map[string]any{
+			"type":      "backup_progress",
+			"item":      itemName,
+			"item_type": itemType,
+			"percent":   pct,
+			"message":   msg,
+		})
 	}
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating storage adapter: %w", err)
+		return nil, fmt.Errorf("creating storage adapter: %w", err)
 	}
 	defer storage.CloseAdapter(adapter)
 
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading backup dir: %w", err)
+		return nil, fmt.Errorf("reading backup dir: %w", err)
 	}
 
-	// Write files and compute SHA-256 checksums.
-	checksums := make(map[string]string)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	// uploadOnce opens the source file, builds the compression+encryption
+	// pipeline freshly, streams to storage with a SHA-256 tee, and returns
+	// (storageName, checksumHex, err). The hasher is local so a retry never
+	// inherits partial state from a failed attempt.
+	uploadOnce := func(entryName string) (string, string, error) {
+		filePath := filepath.Join(tmpDir, entryName)
+		f, openErr := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entryName from os.ReadDir
+		if openErr != nil {
+			return "", "", fmt.Errorf("opening backup file %s: %w", entryName, openErr)
 		}
-		filePath := filepath.Join(tmpDir, entry.Name())
-		f, err := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entry.Name() from os.ReadDir
-		if err != nil {
-			return nil, nil, fmt.Errorf("opening backup file %s: %w", entry.Name(), err)
-		}
+		defer f.Close()
 
-		// Pipeline: file → (compress?) → (encrypt?) → tee(sha256) → storage.
 		var reader io.Reader = f
-		storageName := entry.Name()
+		storageName := entryName
 
-		// Apply compression if configured.
 		if compression != "" && compression != "none" {
 			pr, pw := io.Pipe()
 			cw, closeFn, ext, compErr := compressWriter(pw, compression)
 			if compErr != nil {
-				_ = f.Close()
-				return nil, nil, fmt.Errorf("compressing %s: %w", entry.Name(), compErr)
+				return "", "", fmt.Errorf("compressing %s: %w", entryName, compErr)
 			}
 			storageName += ext
 			go func() {
@@ -1051,8 +1261,7 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 		if passphrase != "" {
 			encrypted, encErr := crypto.EncryptReader(passphrase, reader)
 			if encErr != nil {
-				_ = f.Close()
-				return nil, nil, fmt.Errorf("encrypting %s: %w", entry.Name(), encErr)
+				return "", "", fmt.Errorf("encrypting %s: %w", entryName, encErr)
 			}
 			reader = encrypted
 			storageName += ".age"
@@ -1063,12 +1272,45 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 
 		destPath := filepath.Join(storagePath, storageName)
 		if writeErr := adapter.Write(destPath, tee); writeErr != nil {
-			_ = f.Close()
-			return nil, nil, fmt.Errorf("writing %s to storage: %w", storageName, writeErr)
+			return storageName, "", fmt.Errorf("writing %s to storage: %w", storageName, writeErr)
 		}
-		_ = f.Close()
+		return storageName, hex.EncodeToString(hasher.Sum(nil)), nil
+	}
 
-		checksums[storageName] = hex.EncodeToString(hasher.Sum(nil))
+	backoffs := []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
+	checksums := make(map[string]string)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		var (
+			storageName string
+			checksum    string
+			lastErr     error
+		)
+		for attempt := 0; attempt < len(backoffs); attempt++ {
+			if attempt > 0 {
+				wait := backoffs[attempt-1]
+				progress(0, fmt.Sprintf("Retrying %s in %s (attempt %d/%d): %v", entry.Name(), wait, attempt+1, len(backoffs), lastErr))
+				select {
+				case <-ctx.Done():
+					return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
+				case <-time.After(wait):
+				}
+			}
+			storageName, checksum, lastErr = uploadOnce(entry.Name())
+			if lastErr == nil {
+				break
+			}
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
+			}
+			log.Printf("runner: upload attempt %d/%d for %s failed: %v", attempt+1, len(backoffs), entry.Name(), lastErr)
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		checksums[storageName] = checksum
 	}
 
 	// Verify: read files back from storage and re-compute SHA-256.
@@ -1077,22 +1319,22 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 			destPath := filepath.Join(storagePath, fileName)
 			reader, err := adapter.Read(destPath)
 			if err != nil {
-				return nil, nil, fmt.Errorf("verification read %s: %w", fileName, err)
+				return nil, fmt.Errorf("verification read %s: %w", fileName, err)
 			}
 			verifyHasher := sha256.New()
 			if _, err := io.Copy(verifyHasher, reader); err != nil {
 				_ = reader.Close()
-				return nil, nil, fmt.Errorf("verification hash %s: %w", fileName, err)
+				return nil, fmt.Errorf("verification hash %s: %w", fileName, err)
 			}
 			_ = reader.Close()
 			actualHash := hex.EncodeToString(verifyHasher.Sum(nil))
 			if actualHash != expectedHash {
-				return nil, nil, fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash)
+				return nil, fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash)
 			}
 		}
 	}
 
-	return result, checksums, nil
+	return checksums, nil
 }
 
 // RestoreTarget describes a single item to restore.

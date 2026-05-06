@@ -53,7 +53,9 @@ type S3Adapter struct {
 // Validation is intentionally permissive: AccessKey and SecretKey are not
 // required because some deployments rely on instance/IRSA credentials provided
 // by the Go SDK's default chain (AWS_*, EC2 metadata, etc.). When both are
-// blank the adapter will fall back to the SDK default.
+// blank the adapter will fall back to the SDK default. Supplying only one of
+// the two is rejected as a configuration error to avoid silently falling back
+// to the default chain when the operator clearly intended static credentials.
 func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 	cfg.Bucket = strings.TrimSpace(cfg.Bucket)
 	cfg.Region = strings.TrimSpace(cfg.Region)
@@ -70,10 +72,15 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 	loadOpts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(cfg.Region),
 	}
-	if cfg.AccessKey != "" && cfg.SecretKey != "" {
+	haveAccess := cfg.AccessKey != ""
+	haveSecret := cfg.SecretKey != ""
+	switch {
+	case haveAccess && haveSecret:
 		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, ""),
 		))
+	case haveAccess != haveSecret:
+		return nil, fmt.Errorf("s3: partial credentials provided; access_key and secret_key must both be set or both be empty")
 	}
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(), loadOpts...)
@@ -168,16 +175,33 @@ func (a *S3Adapter) Read(p string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The op context governs the GetObject request *and* the lifetime of the
+	// returned body stream — cancelling it before the caller finishes reading
+	// would abort the download. Cancel only when the caller closes the body.
 	ctx, cancel := ctxOp()
-	defer cancel()
 	out, err := a.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(a.config.Bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("s3: get %s: %w", key, err)
 	}
-	return out.Body, nil
+	return &cancelOnCloseReader{ReadCloser: out.Body, cancel: cancel}, nil
+}
+
+// cancelOnCloseReader pairs an S3 response body with the context cancel func
+// for the GetObject request. Closing the reader cancels the context, ensuring
+// no goroutine/timer is left dangling once the caller is done reading.
+type cancelOnCloseReader struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r *cancelOnCloseReader) Close() error {
+	err := r.ReadCloser.Close()
+	r.cancel()
+	return err
 }
 
 func (a *S3Adapter) Delete(p string) error {
