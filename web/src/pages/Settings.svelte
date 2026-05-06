@@ -1271,7 +1271,7 @@
         </div>
         <div class="p-5">
           <p class="text-sm text-text-muted leading-relaxed">
-            Vault is a backup and restore manager for Unraid servers. It provides automated backup of Docker containers and libvirt VMs to pluggable storage destinations including local paths, SFTP, SMB/CIFS, and NFS shares.
+            Vault is a backup and restore manager for Unraid servers. It automates scheduled, encrypted backups of Docker containers, libvirt VMs, plugins, ZFS datasets, and arbitrary folders (including the Unraid flash drive) to a wide range of storage destinations &mdash; local paths, SFTP, SMB/CIFS, NFS, WebDAV, and S3-compatible object stores (AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi).
           </p>
           <div class="mt-4 flex items-center gap-4">
             <a href="https://github.com/ruaan-deysel/vault" target="_blank" rel="noopener"

@@ -1194,7 +1194,7 @@ func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, d
 // compression/encryption pipeline to the storage adapter, computes SHA-256
 // checksums during upload, and (optionally) verifies by re-reading. Each
 // per-file upload is retried with exponential backoff (5s, 30s, 2m) for up
-// to 3 attempts to tolerate transient remote-storage failures (#77).
+// to 4 attempts to tolerate transient remote-storage failures (#77).
 func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, itemType string, itemName string) (map[string]string, error) {
 	progress := func(pct int, msg string) {
 		r.lastProgressMu.Lock()
@@ -1278,6 +1278,9 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 	}
 
 	backoffs := []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
+	// Total attempts = len(backoffs)+1: one initial try plus one retry per
+	// backoff entry (so 3 backoff entries == 4 attempts).
+	maxAttempts := len(backoffs) + 1
 	checksums := make(map[string]string)
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -1288,10 +1291,10 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 			checksum    string
 			lastErr     error
 		)
-		for attempt := 0; attempt < len(backoffs); attempt++ {
+		for attempt := 0; attempt < maxAttempts; attempt++ {
 			if attempt > 0 {
 				wait := backoffs[attempt-1]
-				progress(0, fmt.Sprintf("Retrying %s in %s (attempt %d/%d): %v", entry.Name(), wait, attempt+1, len(backoffs), lastErr))
+				progress(0, fmt.Sprintf("Retrying %s in %s (attempt %d/%d): %v", entry.Name(), wait, attempt+1, maxAttempts, lastErr))
 				select {
 				case <-ctx.Done():
 					return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
@@ -1305,7 +1308,7 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
 			}
-			log.Printf("runner: upload attempt %d/%d for %s failed: %v", attempt+1, len(backoffs), entry.Name(), lastErr)
+			log.Printf("runner: upload attempt %d/%d for %s failed: %v", attempt+1, maxAttempts, entry.Name(), lastErr)
 		}
 		if lastErr != nil {
 			return nil, lastErr

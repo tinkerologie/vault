@@ -529,6 +529,16 @@
     }
   })
 
+  // Clear defer_remote_upload when the user switches to (or stays on) a local
+  // destination — deferring an upload that never leaves the box is a no-op.
+  $effect(() => {
+    const selected = storageList.find(s => s.id === form.storage_dest_id)
+    const isLocal = !selected || selected.type === 'local'
+    if (isLocal && form.defer_remote_upload) {
+      form.defer_remote_upload = false
+    }
+  })
+
   // describeSchedule and relTimeUntil imported from utils.js
 </script>
 

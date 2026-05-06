@@ -210,6 +210,13 @@
     z-index: 9999;
     pointer-events: none;
     animation: tooltip-in 0.15s ease-out;
+    /* Force wrapping inside the bubble so long unbroken strings (e.g. URLs)
+       don't overflow horizontally. `overflow-wrap: anywhere` allows breaks
+       at any character when needed; `white-space: normal` ensures text wraps
+       across multiple lines instead of staying on one line. */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .tooltip-above {
     transform: translateY(-100%);

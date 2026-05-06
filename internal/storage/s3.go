@@ -235,7 +235,13 @@ func (a *S3Adapter) List(prefix string) ([]FileInfo, error) {
 	var (
 		out    []FileInfo
 		token  *string
-		basePf = strings.TrimSuffix(strings.Trim(a.config.BasePath, "/")+"/", "/")
+		basePf = func() string {
+			p := strings.Trim(a.config.BasePath, "/")
+			if p == "" {
+				return ""
+			}
+			return p + "/"
+		}()
 	)
 	for {
 		page, err := a.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{

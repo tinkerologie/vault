@@ -102,10 +102,17 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 | Field | Description |
 |-------|-------------|
 | **Server URL** | Full URL to the WebDAV endpoint, e.g. `https://nextcloud.example.com/remote.php/dav/files/username/` for Nextcloud or `https://webdav.example.com/` for a generic server. Must start with `http://` or `https://`. |
-| **Username** | WebDAV user. **Strongly recommended for production**: configure a dedicated service account on the WebDAV server with least-privilege write access scoped to the backup directory only. Leaving this blank to rely on anonymous writes is **strongly discouraged** for production backups — it exposes the destination to unauthenticated tampering and prevents per-account auditing. Always pair authenticated accounts with TLS (`https://`) and restrict server-side write permissions to the backup path. |
+| **Username** | WebDAV username (leave blank for anonymous access — not recommended for production). |
 | **Password / App Token** | Password or app-specific token. For Nextcloud, generate an [app password](https://docs.nextcloud.com/server/latest/user_manual/en/session_management.html) under Settings → Security. |
 | **Base Path** | Optional sub-folder under the server URL where Vault will write its data. |
 | **Allow self-signed TLS certificates** | Skip TLS validation. Only enable for trusted private servers. |
+
+**Security Best Practices:**
+
+- **Use a dedicated, least-privileged service account** scoped only to the backup directory — do not reuse a personal or admin account.
+- **Avoid anonymous access for production backups.** Anonymous writes leave the destination open to unauthenticated tampering and prevent per-account auditing.
+- **Always use TLS (`https://`).** WebDAV authentication is HTTP Basic/Digest; over plain HTTP, credentials are sent in cleartext (Basic) or trivially crackable (Digest).
+- **Restrict server-side write permissions to the backup path.** Configure the WebDAV server so the service account cannot read or modify other users' data.
 
 **Notes:**
 
