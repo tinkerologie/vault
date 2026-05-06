@@ -31,18 +31,18 @@ There is no Kubernetes, no cloud provider, no container orchestration in product
 
 ## Toolchain
 
-| Concern             | Tool                                                                     |
-| ------------------- | ------------------------------------------------------------------------ |
-| Build & test entry  | `Makefile` (delegates to Ansible for cross-compile/deploy/verify)         |
-| Cross-compile       | `go build` with `CGO_ENABLED=0` for `linux/amd64`                        |
-| Lint                | `golangci-lint` with `.golangci.yml`                                      |
-| Security scanning   | `gosec`, `govulncheck`, `go mod verify` (via `make security-check`)       |
-| Pre-commit          | `.pre-commit-config.yaml`                                                 |
-| Deploy              | Ansible — `ansible/ansible.yml`, roles in `ansible/roles/`, inventory in `ansible/inventory.yml` (untracked) |
-| Plugin installer    | `plugin/vault.plg` (Unraid-style PLG XML)                                 |
-| Service script      | `plugin/rc.vault` (runs the daemon on the Unraid host)                    |
-| CI                  | GitHub Actions in `.github/workflows/` — see `github-actions-expert.agent.md` for hardening rules |
-| Web assets          | Svelte 5 in `web/`, built as part of `make build`                         |
+| Concern            | Tool                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Build & test entry | `Makefile` (delegates to Ansible for cross-compile/deploy/verify)                                            |
+| Cross-compile      | `go build` with `CGO_ENABLED=0` for `linux/amd64`                                                            |
+| Lint               | `golangci-lint` with `.golangci.yml`                                                                         |
+| Security scanning  | `gosec`, `govulncheck`, `go mod verify` (via `make security-check`)                                          |
+| Pre-commit         | `.pre-commit-config.yaml`                                                                                    |
+| Deploy             | Ansible — `ansible/ansible.yml`, roles in `ansible/roles/`, inventory in `ansible/inventory.yml` (untracked) |
+| Plugin installer   | `plugin/vault.plg` (Unraid-style PLG XML)                                                                    |
+| Service script     | `plugin/rc.vault` (runs the daemon on the Unraid host)                                                       |
+| CI                 | GitHub Actions in `.github/workflows/` — see `github-actions-expert.agent.md` for hardening rules            |
+| Web assets         | Svelte 5 in `web/`, built as part of `make build`                                                            |
 
 ## The Delivery Loop
 

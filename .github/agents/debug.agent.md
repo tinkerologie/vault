@@ -27,6 +27,7 @@ You are in debug mode. Your objective is to reproduce, isolate, and fix a bug wi
 ## Phase 1: Problem Assessment
 
 1. **Gather context**
+
    - Read error messages, stack traces, failing test output
    - Identify which layer the symptom lives in (use the triage table below)
    - Note expected vs. actual behavior
@@ -40,21 +41,22 @@ You are in debug mode. Your objective is to reproduce, isolate, and fix a bug wi
 
 ### Vault Triage Table
 
-| Symptom                            | First place to look                                   |
-| ---------------------------------- | ----------------------------------------------------- |
-| Test fails on macOS but not Linux  | Missing build tag or stub in `internal/engine/`       |
-| "connection refused" / timeout     | `internal/storage/` adapter (SFTP, SMB, NFS, local)   |
-| "permission denied" on files       | Engine handler (Docker SDK or libvirt RPC)            |
-| "no such container" / "no such VM" | Engine handler — `ListItems()` or runtime lookup      |
-| "database is locked"               | `internal/db/` — WAL mode / busy timeout / open `rows`|
-| Job stuck, no progress             | `internal/scheduler/` or `internal/ws/` hub           |
-| 404 on a route that should exist   | `internal/api/routes.go` (Chi registration)           |
-| WebSocket client never receives    | Hub in `internal/ws/` — register/broadcast ordering   |
+| Symptom                            | First place to look                                     |
+| ---------------------------------- | ------------------------------------------------------- |
+| Test fails on macOS but not Linux  | Missing build tag or stub in `internal/engine/`         |
+| "connection refused" / timeout     | `internal/storage/` adapter (SFTP, SMB, NFS, local)     |
+| "permission denied" on files       | Engine handler (Docker SDK or libvirt RPC)              |
+| "no such container" / "no such VM" | Engine handler — `ListItems()` or runtime lookup        |
+| "database is locked"               | `internal/db/` — WAL mode / busy timeout / open `rows`  |
+| Job stuck, no progress             | `internal/scheduler/` or `internal/ws/` hub             |
+| 404 on a route that should exist   | `internal/api/routes.go` (Chi registration)             |
+| WebSocket client never receives    | Hub in `internal/ws/` — register/broadcast ordering     |
 | Panic in daemon                    | Recoverer middleware logs it — `internal/api/server.go` |
 
 ## Phase 2: Investigation
 
 3. **Root cause analysis**
+
    - Trace the execution path across Scheduler → Engine → Storage → DB → WebSocket
    - Inspect variable state and error wrapping at each boundary — Vault wraps with `fmt.Errorf("context: %w", err)`, so unwrap to find the origin
    - Look for classic Go pitfalls: loop-variable capture, `defer` in loops, unclosed `rows`, missing context propagation, nil interface vs. nil concrete
@@ -69,6 +71,7 @@ You are in debug mode. Your objective is to reproduce, isolate, and fix a bug wi
 ## Phase 3: Resolution
 
 5. **Implement the fix**
+
    - Minimal, targeted change at the root cause — do not refactor adjacent code "while you're there"
    - Follow existing patterns: handler → repo → adapter layering, `respondJSON`/`respondError`, error wrapping with context
    - If a platform-specific code path changes, update its stub counterpart
@@ -84,6 +87,7 @@ You are in debug mode. Your objective is to reproduce, isolate, and fix a bug wi
 ## Phase 4: Quality Assurance
 
 7. **Test hardening**
+
    - Add a regression test that fails without your fix — table-driven when possible
    - For storage adapters, use `t.TempDir()`; for DB, `Open(":memory:")`
    - If the bug involved concurrency, add a test with `t.Parallel()` or explicit goroutine fan-out

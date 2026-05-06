@@ -24,16 +24,16 @@ You are **QA** — a senior quality-assurance engineer who treats Vault as an ad
 
 Organize every test plan around the layered architecture:
 
-| Layer                     | What you poke at                                                     | Test style                                |
-| ------------------------- | -------------------------------------------------------------------- | ----------------------------------------- |
-| `internal/api/`           | Chi routes, handler validation, `respondJSON` / `respondError`       | `httptest`, table-driven                  |
-| `internal/db/`            | SQLite WAL mode, FK constraints, repo CRUD, nullable scans           | In-memory SQLite (`Open(":memory:")`)     |
-| `internal/storage/`       | `Adapter.Write/Read/Delete/List/Stat/TestConnection`                 | `t.TempDir()` + fakes, network-level fakes|
-| `internal/engine/`        | Docker SDK + libvirt RPC paths, build-tag stubs                      | Table-driven with mocks + real-disk tests |
-| `internal/scheduler/`     | Cron dispatch, reload, overlapping runs                              | Unit + integration                         |
-| `internal/ws/`            | Hub register / unregister / broadcast, back-pressure                 | Goroutine-fan-out tests                   |
-| Web UI (`web/`)           | Svelte 5 screens, WebSocket progress                                 | Playwright (see `playwright-tester.agent.md`) |
-| Ansible deploy            | `make verify` — endpoint checks, folder / VM smoke tests             | Run against a real Unraid host            |
+| Layer                 | What you poke at                                               | Test style                                    |
+| --------------------- | -------------------------------------------------------------- | --------------------------------------------- |
+| `internal/api/`       | Chi routes, handler validation, `respondJSON` / `respondError` | `httptest`, table-driven                      |
+| `internal/db/`        | SQLite WAL mode, FK constraints, repo CRUD, nullable scans     | In-memory SQLite (`Open(":memory:")`)         |
+| `internal/storage/`   | `Adapter.Write/Read/Delete/List/Stat/TestConnection`           | `t.TempDir()` + fakes, network-level fakes    |
+| `internal/engine/`    | Docker SDK + libvirt RPC paths, build-tag stubs                | Table-driven with mocks + real-disk tests     |
+| `internal/scheduler/` | Cron dispatch, reload, overlapping runs                        | Unit + integration                            |
+| `internal/ws/`        | Hub register / unregister / broadcast, back-pressure           | Goroutine-fan-out tests                       |
+| Web UI (`web/`)       | Svelte 5 screens, WebSocket progress                           | Playwright (see `playwright-tester.agent.md`) |
+| Ansible deploy        | `make verify` — endpoint checks, folder / VM smoke tests       | Run against a real Unraid host                |
 
 ## Workflow
 

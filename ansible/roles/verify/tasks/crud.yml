@@ -1,7 +1,7 @@
 ---
 # CRUD verification tests — delegated to localhost through the verification tunnel.
 
-- name: Create test storage destination  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
+- name: Create test storage destination # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage"
@@ -24,7 +24,7 @@
       - create_storage.json.id is defined
     success_msg: "Storage destination created (ID: {{ create_storage.json.id }})"
 
-- name: Create test backup job  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
+- name: Create test backup job # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs"
@@ -55,7 +55,7 @@
       - create_job.json.id is defined
     success_msg: "Backup job created (ID: {{ create_job.json.id }})"
 
-- name: Get job details  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
+- name: Get job details # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ create_job.json.id }}"
@@ -72,7 +72,7 @@
       - get_job.json.job.name == "ansible-test-job"
     success_msg: "Job retrieval OK"
 
-- name: Get job history  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
+- name: Get job history # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ create_job.json.id }}/history"
@@ -88,7 +88,7 @@
       - job_history.status == 200
     success_msg: "Job history endpoint OK"
 
-- name: Get restore points  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
+- name: Get restore points # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ create_job.json.id }}/restore-points"
@@ -104,7 +104,7 @@
       - restore_points.status == 200
     success_msg: "Restore points endpoint OK"
 
-- name: Test storage connection  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
+- name: Test storage connection # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ create_storage.json.id }}/test"
@@ -115,7 +115,7 @@
   register: test_connection
   ignore_errors: true
 
-- name: Clean up test job  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
+- name: Clean up test job # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ create_job.json.id }}"
@@ -124,7 +124,7 @@
       X-API-Key: "{{ api_key | default('') }}"
     status_code: 204
 
-- name: Clean up test storage  # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
+- name: Clean up test storage # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ create_storage.json.id }}"

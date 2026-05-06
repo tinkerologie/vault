@@ -49,12 +49,12 @@ Vault needs somewhere to write your backups before you can create any jobs.
 3. Give it a name (e.g. "NAS Backups")
 4. Choose a type:
 
-   | Type | Use case |
-   |------|----------|
+   | Type      | Use case                                                 |
+   | --------- | -------------------------------------------------------- |
    | **Local** | A path on your Unraid array or a directly attached drive |
-   | **SFTP** | Any server accessible via SSH (another NAS, VPS, etc.) |
-   | **SMB** | Windows shares or Samba servers on your LAN |
-   | **NFS** | Linux/NAS NFS exports |
+   | **SFTP**  | Any server accessible via SSH (another NAS, VPS, etc.)   |
+   | **SMB**   | Windows shares or Samba servers on your LAN              |
+   | **NFS**   | Linux/NAS NFS exports                                    |
 
 5. Fill in the connection details. See [Storage Destinations](guides/storage-destinations.md) for field-by-field guidance.
 6. Click **Test Connection** to verify Vault can reach the destination.
@@ -66,24 +66,28 @@ Vault needs somewhere to write your backups before you can create any jobs.
 
 ## 4. Create a Backup Job
 
-A job defines *what* to back up, *where* to put it, *when* to run, and how many copies to keep.
+A job defines _what_ to back up, _where_ to put it, _when_ to run, and how many copies to keep.
 
 1. Go to **Jobs** in the left sidebar
 2. Click **Create Job**
 3. Work through the wizard:
 
    **Step 1 — Name & Type**
+
    - Give the job a descriptive name (e.g. "Weekly Container Backup")
    - Choose a backup type: **Full**, **Incremental**, or **Differential**
 
    **Step 2 — Select Items**
+
    - Pick which Docker containers, VMs, or folders to include
    - Items are listed automatically from what Vault discovers on your server
 
    **Step 3 — Storage Destination**
+
    - Select the destination you created in step 3
 
    **Step 4 — Schedule & Retention**
+
    - Set a cron schedule (daily, weekly, monthly, or custom)
    - Set retention: how many restore points to keep before the oldest is pruned
 
@@ -122,15 +126,15 @@ Each restore point also shows chain health annotations so you can see if a full 
 
 ## What's Next
 
-| Goal | Where to look |
-|------|---------------|
-| Configure SFTP, SMB, or NFS in detail | [Storage Destinations](guides/storage-destinations.md) |
-| Set up encryption | Settings → Security → Encryption |
-| Enable Discord notifications | Settings → Notifications |
-| Replicate backups to a second Vault server | [Replication](guides/replication.md) |
-| Automate with Home Assistant | [Home Assistant Integration](home-assistant-integration.md) |
-| Use the REST API | [API Reference](api.md) |
-| Use the MCP server | [MCP](mcp.md) |
+| Goal                                       | Where to look                                               |
+| ------------------------------------------ | ----------------------------------------------------------- |
+| Configure SFTP, SMB, or NFS in detail      | [Storage Destinations](guides/storage-destinations.md)      |
+| Set up encryption                          | Settings → Security → Encryption                            |
+| Enable Discord notifications               | Settings → Notifications                                    |
+| Replicate backups to a second Vault server | [Replication](guides/replication.md)                        |
+| Automate with Home Assistant               | [Home Assistant Integration](home-assistant-integration.md) |
+| Use the REST API                           | [API Reference](api.md)                                     |
+| Use the MCP server                         | [MCP](mcp.md)                                               |
 
 ---
 

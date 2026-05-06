@@ -16,6 +16,7 @@ Prevent production security failures through thorough review. Focus on OWASP Top
 ## Step 0: Create a Targeted Review Plan
 
 1. **What am I reviewing?**
+
    - HTTP handler (`internal/api/handlers/`) → input validation, authz, output filtering
    - Storage adapter (`internal/storage/`) → credential handling, path traversal, TLS/SSH verification
    - Engine handler (`internal/engine/`) → privileged SDK calls (Docker, libvirt), platform isolation
@@ -24,6 +25,7 @@ Prevent production security failures through thorough review. Focus on OWASP Top
    - Plugin payload (`plugin/`, `ansible/`) → installer integrity, service-script privileges
 
 2. **Risk level?**
+
    - **High:** storage credentials, libvirt/Docker access, restore paths, plugin installer
    - **Medium:** job CRUD endpoints, scheduler, WebSocket broadcasts
    - **Low:** UI-only utilities, read-only helpers, pure logging

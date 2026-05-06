@@ -46,6 +46,7 @@ The UI is a Svelte 5 SPA in `web/`, built as part of `make build` and served by 
 2. **Locator discovery from live snapshots.** Snapshots reveal accessible names and refs — those are the preferred locators. Avoid brittle selectors (`nth-child`, deep CSS paths). Prefer role + name, then `data-testid` when the Svelte components expose one.
 
 3. **Test authoring.** Write TypeScript tests. Structure:
+
    - `tests/<feature>.spec.ts`
    - Use fixtures for login / seeded DB state
    - One logical behavior per `test()`

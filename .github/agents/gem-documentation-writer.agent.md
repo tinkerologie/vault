@@ -17,21 +17,21 @@ DOCUMENTATION WRITER: write technical docs, generate diagrams, keep code-and-doc
 
 Documentation for Vault lives in these places (do not invent new top-level doc directories without reason):
 
-| Location                  | Purpose                                                             |
-| ------------------------- | ------------------------------------------------------------------- |
-| `README.md`               | Project overview for GitHub landing                                 |
-| `AGENTS.md`               | Master instructions for AI agents                                   |
-| `CLAUDE.md`               | Claude-specific wrapper pointing to `AGENTS.md`                     |
-| `docs/architecture.md`    | System architecture — layering, interfaces, build tags              |
-| `docs/api.md`             | REST and WebSocket API reference                                    |
-| `docs/getting-started.md` | User-facing install + first-run guide                               |
-| `docs/guides/`            | Operational how-tos and feature walkthroughs                        |
-| `docs/mcp.md`             | MCP integration notes                                               |
-| `docs/home-assistant-integration.md` | Home Assistant integration guide                         |
-| `docs/screenshots/`       | PNGs used by README and docs                                        |
-| `CHANGELOG.md`            | Keep-a-Changelog entries — `## [Unreleased]` before release cut     |
-| `ansible/README.md`       | Deployment automation docs                                          |
-| `plugin/`                 | Unraid plugin metadata — keep any user-visible strings in sync      |
+| Location                             | Purpose                                                         |
+| ------------------------------------ | --------------------------------------------------------------- |
+| `README.md`                          | Project overview for GitHub landing                             |
+| `AGENTS.md`                          | Master instructions for AI agents                               |
+| `CLAUDE.md`                          | Claude-specific wrapper pointing to `AGENTS.md`                 |
+| `docs/architecture.md`               | System architecture — layering, interfaces, build tags          |
+| `docs/api.md`                        | REST and WebSocket API reference                                |
+| `docs/getting-started.md`            | User-facing install + first-run guide                           |
+| `docs/guides/`                       | Operational how-tos and feature walkthroughs                    |
+| `docs/mcp.md`                        | MCP integration notes                                           |
+| `docs/home-assistant-integration.md` | Home Assistant integration guide                                |
+| `docs/screenshots/`                  | PNGs used by README and docs                                    |
+| `CHANGELOG.md`                       | Keep-a-Changelog entries — `## [Unreleased]` before release cut |
+| `ansible/README.md`                  | Deployment automation docs                                      |
+| `plugin/`                            | Unraid plugin metadata — keep any user-visible strings in sync  |
 
 If the work calls for a plan or walkthrough, create it under `docs/guides/<short-name>.md` unless the caller specifies otherwise. There is no `docs/plan/{plan_id}/` convention in this repo — do not invent one.
 
@@ -118,7 +118,7 @@ Return the created/updated file paths and a brief summary of changes. Write a YA
   "overview": "string",
   "steps_completed": ["array"],
   "outcomes": "string",
-  "next_steps": ["array"]
+  "next_steps": ["array"],
 }
 ```
 
@@ -130,9 +130,11 @@ Return the created/updated file paths and a brief summary of changes. Write a YA
   "task_id": "[task_id]",
   "summary": "≤ 3 sentences",
   "docs_created": [{ "path": "string", "title": "string", "type": "string" }],
-  "docs_updated": [{ "path": "string", "title": "string", "changes": "string" }],
+  "docs_updated": [
+    { "path": "string", "title": "string", "changes": "string" },
+  ],
   "parity_verified": true,
-  "coverage_percentage": 100
+  "coverage_percentage": 100,
 }
 ```
 

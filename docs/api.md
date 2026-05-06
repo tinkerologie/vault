@@ -27,21 +27,21 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Jobs
 
-| Method | Endpoint                               | Description                                  |
-| ------ | -------------------------------------- | -------------------------------------------- |
-| GET    | `/jobs`                                | List jobs                                    |
-| POST   | `/jobs`                                | Create job                                   |
-| GET    | `/jobs/next-runs`                      | Next scheduled run for every job             |
-| GET    | `/jobs/{id}`                           | Get a job and its items                      |
-| PUT    | `/jobs/{id}`                           | Update a job                                 |
-| DELETE | `/jobs/{id}`                           | Delete a job                                 |
-| GET    | `/jobs/{id}/history`                   | Job run history                              |
-| GET    | `/jobs/{id}/restore-points`            | Restore points with chain health annotations |
+| Method | Endpoint                               | Description                                   |
+| ------ | -------------------------------------- | --------------------------------------------- |
+| GET    | `/jobs`                                | List jobs                                     |
+| POST   | `/jobs`                                | Create job                                    |
+| GET    | `/jobs/next-runs`                      | Next scheduled run for every job              |
+| GET    | `/jobs/{id}`                           | Get a job and its items                       |
+| PUT    | `/jobs/{id}`                           | Update a job                                  |
+| DELETE | `/jobs/{id}`                           | Delete a job                                  |
+| GET    | `/jobs/{id}/history`                   | Job run history                               |
+| GET    | `/jobs/{id}/restore-points`            | Restore points with chain health annotations  |
 | DELETE | `/jobs/{id}/restore-points/{point_id}` | Delete a specific restore point and its files |
-| POST   | `/jobs/{id}/run`                       | Trigger an immediate backup                  |
-| POST   | `/jobs/{id}/cancel`                    | Cancel a running backup job                  |
-| POST   | `/jobs/{id}/restore`                   | Trigger a restore                            |
-| GET    | `/jobs/{id}/next-run`                  | Next scheduled run for one job               |
+| POST   | `/jobs/{id}/run`                       | Trigger an immediate backup                   |
+| POST   | `/jobs/{id}/cancel`                    | Cancel a running backup job                   |
+| POST   | `/jobs/{id}/restore`                   | Trigger a restore                             |
+| GET    | `/jobs/{id}/next-run`                  | Next scheduled run for one job                |
 
 ## Storage
 
@@ -62,48 +62,48 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Settings
 
-| Method | Endpoint                             | Description                                                  |
-| ------ | ------------------------------------ | ------------------------------------------------------------ |
-| GET    | `/settings`                          | List settings                                                |
-| PUT    | `/settings`                          | Update settings                                              |
-| GET    | `/settings/encryption`               | Encryption status                                            |
-| POST   | `/settings/encryption`               | Set encryption passphrase                                    |
-| POST   | `/settings/encryption/verify`        | Verify encryption passphrase                                 |
-| GET    | `/settings/encryption/passphrase`    | Read the configured passphrase (`Cache-Control: no-store`)   |
-| GET    | `/settings/staging`                  | Staging directory info                                       |
-| PUT    | `/settings/staging`                  | Override the staging directory                               |
-| GET    | `/settings/database`                 | Database snapshot settings                                   |
-| PUT    | `/settings/database`                 | Update database snapshot settings                            |
-| POST   | `/settings/discord/test`             | Test the Discord webhook                                     |
-| GET    | `/settings/api-key`                  | API key status (configured / not configured)                 |
-| POST   | `/settings/api-key/generate`         | Generate a new API key                                       |
-| POST   | `/settings/api-key/rotate`           | Rotate the existing API key                                  |
-| DELETE | `/settings/api-key/revoke`           | Revoke the API key                                           |
-| GET    | `/settings/diagnostics`              | Download a diagnostics bundle (ZIP with redacted system info) |
+| Method | Endpoint                          | Description                                                   |
+| ------ | --------------------------------- | ------------------------------------------------------------- |
+| GET    | `/settings`                       | List settings                                                 |
+| PUT    | `/settings`                       | Update settings                                               |
+| GET    | `/settings/encryption`            | Encryption status                                             |
+| POST   | `/settings/encryption`            | Set encryption passphrase                                     |
+| POST   | `/settings/encryption/verify`     | Verify encryption passphrase                                  |
+| GET    | `/settings/encryption/passphrase` | Read the configured passphrase (`Cache-Control: no-store`)    |
+| GET    | `/settings/staging`               | Staging directory info                                        |
+| PUT    | `/settings/staging`               | Override the staging directory                                |
+| GET    | `/settings/database`              | Database snapshot settings                                    |
+| PUT    | `/settings/database`              | Update database snapshot settings                             |
+| POST   | `/settings/discord/test`          | Test the Discord webhook                                      |
+| GET    | `/settings/api-key`               | API key status (configured / not configured)                  |
+| POST   | `/settings/api-key/generate`      | Generate a new API key                                        |
+| POST   | `/settings/api-key/rotate`        | Rotate the existing API key                                   |
+| DELETE | `/settings/api-key/revoke`        | Revoke the API key                                            |
+| GET    | `/settings/diagnostics`           | Download a diagnostics bundle (ZIP with redacted system info) |
 
 ## Discovery
 
-| Method | Endpoint       | Description                |
-| ------ | -------------- | -------------------------- |
-| GET    | `/browse`      | Browse filesystem paths    |
-| GET    | `/containers`  | Discover Docker containers |
-| GET    | `/vms`         | Discover VMs               |
-| GET    | `/folders`     | Discover folder presets    |
-| GET    | `/plugins`     | Discover plugins           |
+| Method | Endpoint      | Description                |
+| ------ | ------------- | -------------------------- |
+| GET    | `/browse`     | Browse filesystem paths    |
+| GET    | `/containers` | Discover Docker containers |
+| GET    | `/vms`        | Discover VMs               |
+| GET    | `/folders`    | Discover folder presets    |
+| GET    | `/plugins`    | Discover plugins           |
 
 ## Activity Logs
 
-| Method | Endpoint    | Description                                                       |
-| ------ | ----------- | ----------------------------------------------------------------- |
-| GET    | `/activity` | Activity log entries                                              |
-| DELETE | `/activity` | Purge all activity log entries (irreversible)                     |
+| Method | Endpoint    | Description                                   |
+| ------ | ----------- | --------------------------------------------- |
+| GET    | `/activity` | Activity log entries                          |
+| DELETE | `/activity` | Purge all activity log entries (irreversible) |
 
 ## History
 
-| Method | Endpoint    | Description                                                       |
-| ------ | ----------- | ----------------------------------------------------------------- |
-| GET    | `/history`  | All job run records across all jobs                               |
-| DELETE | `/history`  | Purge all job run history records (irreversible)                  |
+| Method | Endpoint   | Description                                      |
+| ------ | ---------- | ------------------------------------------------ |
+| GET    | `/history` | All job run records across all jobs              |
+| DELETE | `/history` | Purge all job run history records (irreversible) |
 
 ## Replication
 
@@ -121,9 +121,9 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Recovery
 
-| Method | Endpoint          | Description   |
-| ------ | ----------------- | ------------- |
-| GET    | `/recovery/plan`  | Recovery plan |
+| Method | Endpoint         | Description   |
+| ------ | ---------------- | ------------- |
+| GET    | `/recovery/plan` | Recovery plan |
 
 ## WebSocket
 
