@@ -6,10 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Changed
-
-- Settings → Reference → API Endpoints: refreshed the endpoint list to match the daemon's actual surface. Endpoints are now grouped by resource (Health & Realtime, Jobs, Storage Destinations, Settings, Encryption, API Key, Discovery, Replication, Activity & History, Model Context Protocol), with `DELETE` styled distinctly from other verbs and a header note explaining the `/api/v1` prefix and `X-API-Key` requirement. Previously the table only showed 10 routes and was missing API key management, encryption, replication, discovery (containers/vms/folders/plugins/zfs), recovery, activity, browse, MCP, and most jobs/storage sub-resources.
-
 ## [2026.05.00] - 2026-05-XX
 
 ### Added
