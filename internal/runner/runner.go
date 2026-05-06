@@ -2548,21 +2548,55 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 		}
 
 		// Create a synthetic job run.
+		// Manifest schema (writeManifest):
+		//   items        — array of {name,type,id,...}; len = total items
+		//   items_done   — int, succeeded
+		//   items_failed — int, failed
+		//   size_bytes   — int64, total archive size
+		// We populate items_total from len(items) (or fall back to
+		// items_done if the manifest predates v2), items_done /
+		// items_failed / size_bytes from their respective fields, so
+		// the Backup & Restore History page shows the original
+		// success counts and contributes to the Total Size card —
+		// not "0/14 items" with "—" size.
 		itemsDone := 0
 		if v, ok := b["items_done"].(float64); ok {
 			itemsDone = int(v)
 		}
+		itemsFailed := 0
+		if v, ok := b["items_failed"].(float64); ok {
+			itemsFailed = int(v)
+		}
+		itemsTotal := itemsDone
+		if rawItems, ok := b["items"].([]any); ok && len(rawItems) > 0 {
+			itemsTotal = len(rawItems)
+		}
+		runSizeBytes := int64(sizeBytes)
 		run := db.JobRun{
 			JobID:      job.ID,
 			Status:     "imported",
 			BackupType: backupType,
-			ItemsTotal: itemsDone,
-			ItemsDone:  itemsDone,
+			ItemsTotal: itemsTotal,
 		}
 		runID, err := r.db.CreateJobRun(run)
 		if err != nil {
 			log.Printf("runner: import: failed to create job run for %q: %v", jobName, err)
 			continue
+		}
+		// Backfill the run with completion stats (size_bytes,
+		// items_done, items_failed). UpdateJobRun also sets
+		// completed_at = CURRENT_TIMESTAMP so the run no longer
+		// appears in-progress and its size contributes to the
+		// History "Total Size" stat card.
+		if err := r.db.UpdateJobRun(db.JobRun{
+			ID:          runID,
+			Status:      "imported",
+			Log:         "",
+			ItemsDone:   itemsDone,
+			ItemsFailed: itemsFailed,
+			SizeBytes:   runSizeBytes,
+		}); err != nil {
+			log.Printf("runner: import: failed to backfill job run %d for %q: %v", runID, jobName, err)
 		}
 
 		// Build metadata JSON from manifest. The native runner stores
@@ -2572,13 +2606,13 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 		// the restore wizard's `meta.items` rendering doesn't end up
 		// stringifying an array of objects.
 		rpMeta := map[string]any{
-			"items":       itemsDone,
+			"items":       itemsTotal,
 			"job_name":    jobName,
 			"backup_type": backupType,
 			"imported":    true,
 		}
-		if v, ok := b["items_failed"].(float64); ok {
-			rpMeta["items_failed"] = int(v)
+		if itemsFailed > 0 {
+			rpMeta["items_failed"] = itemsFailed
 		}
 		if v, ok := b["item_sizes"].(map[string]any); ok && len(v) > 0 {
 			rpMeta["item_sizes"] = v
