@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.05.00] - 2026-05-XX
+
 ### Added
 
 - **Defer remote upload mode** for slow-link backups (closes #77). New per-job toggle "Defer remote upload until all backups complete" stages every container backup to local disk first, restarts all containers as soon as staging is done, then streams the staged archives to the remote destination in a second phase. Containers go offline only for the (fast) local backup window, while the (slow) remote upload runs while every service is back online. The toggle is disabled when the destination is local (no benefit) and is automatically gated behind a non-local `dest.Type`. Per-file uploads are now retried up to 3 times with exponential backoff (5s → 30s → 2m), recovering automatically from transient remote-storage failures that previously failed entire jobs. WebSocket `backup_phase`, `item_staged`, and `item_upload_start` events drive a STAGING / UPLOADING phase indicator in the Backup Progress panel. Schema migration adds a `defer_remote_upload` column to `jobs` (default off). v1 scope: containers only — VM/folder/plugin/zfs items continue to upload inline.
@@ -14,9 +16,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
-- Updated direct dependencies to latest versions: `github.com/alchemillahq/gzfs` (Apr 9 → ZFS support) and `github.com/cloudsoda/go-smb2` (Apr 8 → SMB adapter). All deps verified maintained, no deprecation notices, `govulncheck` reports zero vulnerabilities, `gosec` reports zero issues, Go toolchain confirmed at 1.26.2 (latest stable)
-- `make security-check` now auto-installs `govulncheck` if missing and invokes it via `$GOPATH/bin/govulncheck`, fixing the previous "No such file or directory" failure when the tool wasn't on `$PATH`
-- Increased unit test coverage of pure-logic packages as part of ongoing test-quality work: `internal/unraid` 89.5% → 94.7%, `internal/safepath` 69.8% → 90.7%, `internal/tempdir` 68.3% → 91.9%, `internal/crypto` 75.9% → 84.3%, `internal/db` 65.2% → 84.3%. Engine sub-files (`incremental.go`, `folder.go`) now have direct coverage where previously they were exercised only through orchestrator paths. Remaining gaps in `crypto` (`crypto/rand`, `bcrypt` failure branches) and `db` (SQL driver error branches) are bounded by Go-stdlib failure modes that aren't tractable to test without invasive dependency injection
 - Restore wizard "Choose Version" step, the Restore page restore-point list, the Job History timeline, the Dashboard Recent Activity panel, and the Logs page now show **absolute timestamps** (e.g. `Apr 21, 2026, 21:22`) as the primary label on each row, with the relative form (`48m ago`, `2d ago`) preserved as a hover tooltip. This matches how Veeam, restic, and Time Machine present restore points and aligns with established UX guidance: when the user is matching a backup to a remembered point in time ("this was working fine until 17 April"), an absolute date is far easier to scan than mentally subtracting a relative offset (closes #81)
 
 ### Fixed
