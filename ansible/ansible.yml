@@ -44,6 +44,12 @@
     - role: replica
       tags: [replica]
 
+    - role: test-cloud-storage
+      tags: [test-cloud-storage]
+
+    - role: test-cloud-storage-teardown
+      tags: [test-cloud-storage-teardown]
+
   post_tasks:
     - name: Deployment and test summary
       tags: [always]

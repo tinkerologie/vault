@@ -1,0 +1,51 @@
+---
+# Deploy WebDAV container.
+
+- name: Remove existing WebDAV container
+  ansible.builtin.raw: docker rm -f {{ test_webdav_container }} 2>/dev/null; true
+  changed_when: false
+
+- name: Ensure WebDAV data directory exists
+  ansible.builtin.raw: mkdir -p {{ test_webdav_data_dir }} && chmod 0777 {{ test_webdav_data_dir }}
+  changed_when: true
+
+- name: Pull WebDAV image
+  ansible.builtin.raw: docker pull dgraziotin/nginx-webdav-nononsense:latest
+  changed_when: false
+
+- name: Start WebDAV container
+  ansible.builtin.raw: >
+    docker run -d
+    --name {{ test_webdav_container }}
+    --restart unless-stopped
+    -p {{ test_webdav_port }}:80
+    -v {{ test_webdav_data_dir }}:/data
+    -e WEBDAV_USERNAME='{{ test_webdav_username }}'
+    -e WEBDAV_PASSWORD='{{ test_webdav_password }}'
+    -e PUID=99
+    -e PGID=100
+    -e TIMEZONE='{{ timezone | default("UTC") }}'
+    dgraziotin/nginx-webdav-nononsense:latest
+  changed_when: true
+
+- name: Wait for WebDAV to respond
+  ansible.builtin.raw: |
+    for i in $(seq 1 30); do
+      code=$(curl -s -o /dev/null -w '%{http_code}' \
+        -u '{{ test_webdav_username }}:{{ test_webdav_password }}' \
+        http://127.0.0.1:{{ test_webdav_port }}/ || echo 000)
+      if [ "$code" = "200" ] || [ "$code" = "207" ] || [ "$code" = "301" ]; then
+        echo READY
+        exit 0
+      fi
+      sleep 1
+    done
+    echo "TIMEOUT(last=$code)"
+    exit 1
+  register: cs_webdav_ready
+  changed_when: false
+  failed_when: "'READY' not in cs_webdav_ready.stdout"
+
+- name: WebDAV ready
+  ansible.builtin.debug:
+    msg: "WebDAV running on {{ ansible_host }}:{{ test_webdav_port }}"

@@ -90,7 +90,10 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 
 	clientOpts := []func(*s3.Options){}
 	if cfg.Endpoint != "" {
-		clientOpts = append(clientOpts, s3.WithEndpointResolverV2(&staticS3EndpointResolver{endpoint: cfg.Endpoint}))
+		clientOpts = append(clientOpts, s3.WithEndpointResolverV2(&staticS3EndpointResolver{
+			endpoint:     cfg.Endpoint,
+			usePathStyle: cfg.ForcePathStyle,
+		}))
 	}
 	if cfg.ForcePathStyle {
 		clientOpts = append(clientOpts, func(o *s3.Options) { o.UsePathStyle = true })
@@ -107,14 +110,35 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 // staticS3EndpointResolver routes every S3 request to a fixed endpoint,
 // preserving the bucket and signing region resolved by the SDK. This is the
 // SDK v2 idiomatic replacement for the deprecated single-endpoint flag.
+//
+// When the SDK is configured with UsePathStyle (the default for our
+// custom-endpoint case), the bucket name normally appears as the first path
+// segment. With a custom EndpointResolverV2 the SDK does *not* auto-inject
+// the bucket — it expects the resolver to return an endpoint whose path
+// already contains the bucket. We therefore explicitly join the bucket from
+// EndpointParameters into the path. Without this, requests are sent to
+// "/" or "/<key>" instead of "/<bucket>/<key>", causing MinIO/AWS to
+// respond with NoSuchBucket or BadRequest.
 type staticS3EndpointResolver struct {
-	endpoint string
+	endpoint     string
+	usePathStyle bool
 }
 
-func (r *staticS3EndpointResolver) ResolveEndpoint(_ context.Context, _ s3.EndpointParameters) (smithyendpoints.Endpoint, error) {
+func (r *staticS3EndpointResolver) ResolveEndpoint(_ context.Context, params s3.EndpointParameters) (smithyendpoints.Endpoint, error) {
 	u, err := neturl.Parse(r.endpoint)
 	if err != nil {
 		return smithyendpoints.Endpoint{}, fmt.Errorf("s3: parse endpoint %q: %w", r.endpoint, err)
+	}
+	if params.Bucket != nil && *params.Bucket != "" {
+		bucket := *params.Bucket
+		if r.usePathStyle {
+			// Path-style: prepend bucket to URL path.
+			u.Path = path.Join("/", u.Path, bucket)
+		} else {
+			// Virtual-host style: prepend bucket to host (only safe when the
+			// endpoint host is a real DNS name, not an IP literal).
+			u.Host = bucket + "." + u.Host
+		}
 	}
 	return smithyendpoints.Endpoint{URI: *u}, nil
 }

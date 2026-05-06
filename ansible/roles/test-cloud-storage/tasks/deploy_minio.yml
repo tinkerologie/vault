@@ -1,0 +1,71 @@
+---
+# Deploy MinIO container and create the test bucket.
+
+- name: Check Docker is available
+  ansible.builtin.raw: docker info > /dev/null 2>&1 && echo OK || echo FAIL
+  register: cs_docker_check
+  changed_when: false
+
+- name: Assert Docker is available
+  ansible.builtin.assert:
+    that: "'OK' in cs_docker_check.stdout"
+    fail_msg: "Docker is not available on the target host"
+
+- name: Remove existing MinIO container
+  ansible.builtin.raw: docker rm -f {{ test_minio_container }} 2>/dev/null; true
+  changed_when: false
+
+- name: Ensure MinIO data directory exists
+  ansible.builtin.raw: mkdir -p {{ test_minio_data_dir }}
+  changed_when: true
+
+- name: Pull MinIO image
+  ansible.builtin.raw: docker pull minio/minio:latest
+  changed_when: false
+
+- name: Start MinIO container
+  ansible.builtin.raw: >
+    docker run -d
+    --name {{ test_minio_container }}
+    --restart unless-stopped
+    -p {{ test_minio_api_port }}:9000
+    -p {{ test_minio_console_port }}:9001
+    -v {{ test_minio_data_dir }}:/data
+    -e MINIO_ROOT_USER='{{ test_minio_root_user }}'
+    -e MINIO_ROOT_PASSWORD='{{ test_minio_root_password }}'
+    minio/minio:latest
+    server /data --console-address ":9001"
+  changed_when: true
+
+- name: Wait for MinIO API to respond
+  ansible.builtin.raw: |
+    for i in $(seq 1 30); do
+      if curl -fsS http://127.0.0.1:{{ test_minio_api_port }}/minio/health/ready >/dev/null 2>&1; then
+        echo READY
+        exit 0
+      fi
+      sleep 1
+    done
+    echo TIMEOUT
+    exit 1
+  register: cs_minio_ready
+  changed_when: false
+  failed_when: "'READY' not in cs_minio_ready.stdout"
+
+- name: Pull mc (MinIO client) image
+  ansible.builtin.raw: docker pull minio/mc:latest
+  changed_when: false
+
+- name: Create MinIO bucket via mc (idempotent)
+  ansible.builtin.raw: >
+    docker run --rm --entrypoint sh --network=host minio/mc:latest -c
+    "mc alias set local http://127.0.0.1:{{ test_minio_api_port }} '{{ test_minio_root_user }}' '{{ test_minio_root_password }}' &&
+     mc mb --ignore-existing local/{{ test_minio_bucket }} &&
+     echo BUCKET_OK"
+  register: cs_minio_bucket
+  changed_when: "'Bucket created successfully' in cs_minio_bucket.stdout"
+  failed_when: "'BUCKET_OK' not in cs_minio_bucket.stdout"
+
+- name: MinIO ready
+  ansible.builtin.debug:
+    msg: "MinIO running on {{ ansible_host }}:{{ test_minio_api_port }} (bucket: {{ test_minio_bucket }})"

@@ -1,0 +1,85 @@
+---
+# Spin up MinIO (S3) and WebDAV containers on the Unraid host, register them
+# as Vault storage destinations, run TestConnection, then run a disposable
+# folder backup/restore smoke test against each adapter.
+#
+# Tags:
+#   --tags test-cloud-storage          full deploy + test
+#   --tags test-cloud-storage-teardown remove containers + storage destinations
+#
+# Variables (override in inventory or with -e):
+#   test_minio_*    — MinIO container settings
+#   test_webdav_*   — WebDAV container settings
+
+- name: Read effective daemon bind for verification
+  ansible.builtin.raw: |
+    if [ -f {{ config_dir }}/vault.cfg ]; then
+      # shellcheck source=/dev/null
+      . {{ config_dir }}/vault.cfg
+    fi
+    BIND_VALUE="${BIND_ADDRESS:-{{ bind_address }}}"
+    PORT_VALUE="${PORT:-{{ api_port }}}"
+    TARGET_VALUE="$BIND_VALUE"
+    if [ "$TARGET_VALUE" = "0.0.0.0" ] || [ "$TARGET_VALUE" = "::" ]; then
+      TARGET_VALUE="127.0.0.1"
+    fi
+    printf '%s\n%s\n' "${BIND_VALUE}:${PORT_VALUE}" "$TARGET_VALUE"
+  register: cs_bind_info
+  changed_when: false
+
+- name: Set verification bind facts
+  ansible.builtin.set_fact:
+    daemon_bind_display: "{{ cs_bind_info.stdout_lines[0] | default(bind_address ~ ':' ~ api_port) }}"
+    cs_target_host: "{{ cs_bind_info.stdout_lines[1] | default('127.0.0.1') }}"
+
+- name: Remove stale verification tunnel socket
+  delegate_to: localhost
+  ansible.builtin.file:
+    path: "/tmp/vault-cloudtest-{{ inventory_hostname }}.sock"
+    state: absent
+
+- name: Start SSH tunnel to local-only Vault daemon
+  delegate_to: localhost
+  ansible.builtin.command:
+    cmd: >
+      sshpass -p '{{ ansible_password }}'
+      ssh -M -S /tmp/vault-cloudtest-{{ inventory_hostname }}.sock -f -N
+      -L 127.0.0.1:{{ verify_local_port }}:{% if ':' in cs_target_host and not cs_target_host.startswith('[') %}[{{ cs_target_host }}]{% else %}{{ cs_target_host }}{% endif %}:{{ api_port }}
+      -o ExitOnForwardFailure=yes
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o PubkeyAuthentication=no -o PreferredAuthentications=password
+      {{ ansible_user }}@{{ ansible_host }}
+    creates: "/tmp/vault-cloudtest-{{ inventory_hostname }}.sock"
+
+- name: Run cloud-storage tests
+  block:
+    - ansible.builtin.include_tasks: deploy_minio.yml
+    - ansible.builtin.include_tasks: deploy_webdav.yml
+    - ansible.builtin.include_tasks: smoke_s3.yml
+    - ansible.builtin.include_tasks: smoke_webdav.yml
+  always:
+    - name: Stop SSH tunnel
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          ssh -S /tmp/vault-cloudtest-{{ inventory_hostname }}.sock -O exit
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ ansible_user }}@{{ ansible_host }}
+      ignore_errors: true
+      changed_when: false
+
+- name: Cloud-storage test summary
+  ansible.builtin.debug:
+    msg: |
+      ══════════════════════════════════════════════════════
+      Vault Cloud-Storage Test Summary
+      ══════════════════════════════════════════════════════
+      MinIO:    http://{{ ansible_host }}:{{ test_minio_api_port }}
+                console http://{{ ansible_host }}:{{ test_minio_console_port }}
+                bucket  {{ test_minio_bucket }}
+      WebDAV:   http://{{ ansible_host }}:{{ test_webdav_port }}
+      S3 backup+restore:     {{ s3_smoke_status | default('not run') }}
+      WebDAV backup+restore: {{ webdav_smoke_status | default('not run') }}
+      ══════════════════════════════════════════════════════
+      Run `make test-cloud-storage-teardown` to remove containers.

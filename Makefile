@@ -13,7 +13,7 @@ LDFLAGS := -s -w \
 
 ANSIBLE_CMD := cd ansible && ansible-playbook -i inventory.yml ansible.yml
 
-.PHONY: all build build-local build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push
+.PHONY: all build build-local build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push test-cloud-storage test-cloud-storage-teardown
 
 all: test build-local
 
@@ -30,6 +30,12 @@ verify:
 
 redeploy:
 	$(ANSIBLE_CMD) --tags redeploy
+
+test-cloud-storage:
+	$(ANSIBLE_CMD) --tags test-cloud-storage
+
+test-cloud-storage-teardown:
+	$(ANSIBLE_CMD) --tags test-cloud-storage-teardown -e test_cloud_storage_purge_data=true
 
 # ── Local development utilities ────────────────────────────────────────────────
 

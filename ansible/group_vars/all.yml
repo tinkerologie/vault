@@ -19,3 +19,18 @@ replica_port: "{{ hostvars[inventory_hostname].replica_port | default(24086) }}"
 replica_data_dir: /mnt/cache/appdata/vault-replica
 replica_storage_dir: /mnt/user/backups/vault-replica
 timezone: Australia/Sydney
+
+# Cloud-storage test containers (S3 + WebDAV smoke tests)
+test_minio_container: vault-test-minio
+test_minio_api_port: 9100
+test_minio_console_port: 9101
+test_minio_root_user: vaultadmin
+test_minio_root_password: "vaultadmin-test-only"
+test_minio_bucket: vault-test
+test_minio_data_dir: /mnt/cache/appdata/vault-test-minio
+
+test_webdav_container: vault-test-webdav
+test_webdav_port: 8082
+test_webdav_username: vault
+test_webdav_password: "vault-webdav-test-only"
+test_webdav_data_dir: /mnt/cache/appdata/vault-test-webdav

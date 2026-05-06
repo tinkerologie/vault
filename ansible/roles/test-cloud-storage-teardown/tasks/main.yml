@@ -1,0 +1,22 @@
+---
+# Tear down the MinIO and WebDAV test containers and wipe their appdata.
+
+- name: Stop and remove test containers
+  ansible.builtin.raw: |
+    docker rm -f {{ test_minio_container }} 2>/dev/null
+    docker rm -f {{ test_webdav_container }} 2>/dev/null
+    docker rm -f mctrace 2>/dev/null
+    true
+  changed_when: false
+
+- name: Remove appdata directories
+  ansible.builtin.raw: |
+    rm -rf {{ test_minio_data_dir }} {{ test_webdav_data_dir }}
+  changed_when: false
+  when: test_cloud_storage_purge_data | default(false) | bool
+
+- name: Teardown summary
+  ansible.builtin.debug:
+    msg: |
+      Cloud-storage test containers removed: {{ test_minio_container }}, {{ test_webdav_container }}
+      Data wiped: {{ test_cloud_storage_purge_data | default(false) | bool }}
