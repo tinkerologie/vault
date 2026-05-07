@@ -48,6 +48,9 @@ func (s *Scheduler) SetReplicationRunner(fn ReplicationRunner) {
 }
 
 func (s *Scheduler) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	jobs, err := s.db.ListJobs()
 	if err != nil {
 		return err

@@ -13,8 +13,15 @@ async function request(method, path, body = null) {
   const { url, options } = buildApiRequest(method, path, { body })
   const res = await fetch(url, options)
   if (res.status === 204) return null
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  // Read as text first so we don't throw on empty / non-JSON bodies
+  // (e.g. 502 from an upstream proxy). Errors should surface a clean
+  // HTTP status message rather than a JSON parse error.
+  const text = await res.text()
+  let data = null
+  if (text) {
+    try { data = JSON.parse(text) } catch { /* non-JSON body */ }
+  }
+  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`)
   return data
 }
 
@@ -59,8 +66,19 @@ export const api = {
   getRunnerStatus: () => request('GET', '/runner/status'),
 
   // Discovery
-  browse: (path = '') => request('GET', `/browse${path ? '?path=' + encodeURIComponent(path) : ''}`),
-  browseFiles: (path = '') => request('GET', `/browse?files=true${path ? '&path=' + encodeURIComponent(path) : ''}`),
+  browse: (path = '', { includeZfs = false } = {}) => {
+    const params = new URLSearchParams()
+    if (path) params.set('path', path)
+    if (includeZfs) params.set('include_zfs', 'true')
+    const qs = params.toString()
+    return request('GET', `/browse${qs ? '?' + qs : ''}`)
+  },
+  browseFiles: (path = '', { includeZfs = false } = {}) => {
+    const params = new URLSearchParams({ files: 'true' })
+    if (path) params.set('path', path)
+    if (includeZfs) params.set('include_zfs', 'true')
+    return request('GET', `/browse?${params.toString()}`)
+  },
   listContainers: () => request('GET', '/containers'),
   listVMs: () => request('GET', '/vms'),
   listFolders: () => request('GET', '/folders'),
