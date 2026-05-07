@@ -434,13 +434,6 @@
   let folderBackupOn = $derived(settings.folder_backup_enabled !== 'false')
   let flashBackupOn = $derived(settings.flash_backup_enabled !== 'false')
 
-  function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-      showToast('Copied to clipboard', 'success')
-    }).catch(() => {
-      showToast('Failed to copy', 'error')
-    })
-  }
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />

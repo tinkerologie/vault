@@ -14,7 +14,6 @@
 
   let loading = $state(true)
   let sources = $state([])
-  let destinations = $state([])
   let showModal = $state(false)
   let editing = $state(null)
   let testing = $state(null)
@@ -55,10 +54,6 @@
     form.config = JSON.stringify(cfg)
   }
 
-  function setCloudConfig(obj) {
-    form.config = JSON.stringify(obj)
-  }
-
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
@@ -81,12 +76,8 @@
   async function loadData() {
     loading = true
     try {
-      const [srcs, dests] = await Promise.all([
-        api.listReplicationSources(),
-        api.listStorage(),
-      ])
+      const srcs = await api.listReplicationSources()
       sources = srcs || []
-      destinations = dests || []
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -214,19 +205,6 @@
     } finally {
       loadingJobs = false
     }
-  }
-
-  function destName(id) {
-    const d = destinations.find(d => d.id === id)
-    return d?.name || `Storage #${id}`
-  }
-
-  function onTypeChange() {
-    // Reset type-specific fields when type changes.
-    form.url = ''
-    form.config = '{}'
-    form.storage_dest_id = 0
-    modalTestResult = null
   }
 
   const typeLabels = {

@@ -25,9 +25,6 @@
   let showAddFolder = $state(false)
   let customFolderPath = $state('')
 
-  // Map TypePicker IDs to ItemPicker tab IDs
-  const typeToTab = { containers: 'containers', vms: 'vms', folders: 'folders', flash: 'flash', plugins: 'plugins', zfs: 'zfs' }
-
   // Determine which tabs to show based on allowedTypes
   function isTabAllowed(tabId) {
     if (!allowedTypes) return true
@@ -77,7 +74,9 @@
   // Prune selected items when allowed types change while component is mounted
   $effect(() => {
     if (!allowedTypes) return
-    const allowed = [...allowedTypes]
+    // Read allowedTypes here so the effect re-runs when it changes;
+    // the actual filtering happens inside untrack().
+    void allowedTypes.length
     untrack(() => {
       let changed = false
       for (const [key, item] of selected) {

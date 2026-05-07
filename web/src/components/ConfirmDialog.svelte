@@ -1,6 +1,4 @@
 <script>
-  import { onMount } from 'svelte'
-
   let {
     show = false,
     title = 'Confirm',

@@ -145,6 +145,7 @@
   ]
 
   function deriveTypesFromItems(items) {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local Set used only for de-duplication, not reactive state
     const types = new Set()
     for (const item of items) {
       if (item.item_type === 'container') types.add('containers')
@@ -1079,7 +1080,8 @@
                       const paths = e.currentTarget.value.split('\n').map(p => p.trim()).filter(Boolean)
                       updateContainerExclusionPaths(cItem.item_name, paths)
                     }}
-                    placeholder={"/config/Cache\n*.log"}
+                    placeholder={`/config/Cache
+*.log`}
                     rows="4"
                     class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-dim/50"
                   ></textarea>

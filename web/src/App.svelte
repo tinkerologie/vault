@@ -1,9 +1,8 @@
 <script>
   import { getRoute, navigate } from './lib/router.svelte.js'
-  import { connectWs, getWsStatus } from './lib/ws.svelte.js'
-  import { initTheme, getMode, setMode, getIsDark, getIsThemed } from './lib/theme.svelte.js'
+  import { connectWs } from './lib/ws.svelte.js'
+  import { initTheme, getMode, setMode, getIsThemed } from './lib/theme.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
-  import { getLiveMode, isProxyMode } from './lib/runtime-config.js'
   import { onMount } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -49,8 +48,6 @@
 
   let ready = $state(false)
   let replicaMode = $state(false)
-  const liveMode = getLiveMode()
-  const proxyMode = isProxyMode()
 
   onMount(async () => {
     initTheme()
