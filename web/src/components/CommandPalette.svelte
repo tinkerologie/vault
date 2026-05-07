@@ -37,13 +37,13 @@
   async function loadData() {
     try {
       const [j, s] = await Promise.all([
-        api.listJobs().catch(() => []),
-        api.listStorage().catch(() => []),
+        api.listJobs().catch((err) => { console.error('CommandPalette: listJobs failed', err); return [] }),
+        api.listStorage().catch((err) => { console.error('CommandPalette: listStorage failed', err); return [] }),
       ])
       jobs = j || []
       storages = s || []
       loaded = true
-    } catch { /* ignore */ }
+    } catch (err) { console.error('CommandPalette: loadData failed', err) }
   }
 
   let dynamicCommands = $derived.by(() => {
@@ -55,7 +55,7 @@
         icon: 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z',
         category: 'Jobs',
         action: async () => {
-          try { await api.runJob(job.id) } catch { /* ignore */ }
+          try { await api.runJob(job.id) } catch (err) { console.error('CommandPalette: runJob failed', err) }
         },
       })
     }
@@ -66,7 +66,7 @@
         icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
         category: 'Storage',
         action: async () => {
-          try { await api.testStorage(s.id) } catch { /* ignore */ }
+          try { await api.testStorage(s.id) } catch (err) { console.error('CommandPalette: testStorage failed', err) }
         },
       })
     }

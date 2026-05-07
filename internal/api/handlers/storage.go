@@ -275,6 +275,11 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "storage_path is required")
 		return
 	}
+	cleanedStoragePath := path.Clean("/" + req.StoragePath)
+	if cleanedStoragePath == "/" || strings.Contains(req.StoragePath, "..") {
+		respondError(w, http.StatusBadRequest, "invalid storage_path")
+		return
+	}
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
@@ -282,7 +287,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbPath := req.StoragePath + "/vault.db"
+	dbPath := strings.TrimPrefix(cleanedStoragePath, "/") + "/vault.db"
 	rc, err := adapter.Read(dbPath)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "vault.db not found at "+dbPath)
@@ -325,7 +330,9 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 
 	// Close current DB, swap files, re-open is handled by the caller
 	// (daemon restart). For now, copy the temp file over the current DB.
-	_ = h.db.Close()
+	if err := h.db.Close(); err != nil {
+		log.Printf("Warning: closing current DB before restore: %v", err)
+	}
 	srcFile, err := os.Open(tmpPath) // #nosec G304 — tmpPath is os.CreateTemp result, vault-controlled
 	if err != nil {
 		_ = os.Remove(tmpPath)
@@ -344,12 +351,27 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		_ = srcFile.Close()
 		_ = dstFile.Close()
+		_ = os.Remove(currentPath)
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, err)
 		return
 	}
-	_ = srcFile.Close()
-	_ = dstFile.Close()
+	if err := dstFile.Sync(); err != nil {
+		_ = srcFile.Close()
+		_ = dstFile.Close()
+		_ = os.Remove(currentPath)
+		_ = os.Remove(tmpPath)
+		respondInternalError(w, err)
+		return
+	}
+	if err := srcFile.Close(); err != nil {
+		log.Printf("Warning: closing source temp DB: %v", err)
+	}
+	if err := dstFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		respondInternalError(w, err)
+		return
+	}
 	_ = os.Remove(tmpPath)
 
 	// Remove WAL and SHM files (stale after replacement).

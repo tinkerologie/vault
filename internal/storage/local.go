@@ -37,9 +37,19 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
 	if _, err := io.Copy(f, reader); err != nil {
+		_ = f.Close()
+		_ = os.Remove(full)
 		return fmt.Errorf("write file: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(full)
+		return fmt.Errorf("sync file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(full)
+		return fmt.Errorf("close file: %w", err)
 	}
 	return nil
 }

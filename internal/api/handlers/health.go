@@ -73,7 +73,8 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Health score: weighted average of protection % and success rate.
-	healthScore := (protectionPct*40 + successRate*60) / 100
+	// Round to nearest integer rather than truncating.
+	healthScore := (protectionPct*40 + successRate*60 + 50) / 100
 
 	result := map[string]any{
 		"health_score":    healthScore,

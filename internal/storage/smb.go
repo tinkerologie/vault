@@ -95,10 +95,22 @@ func (s *SMBAdapter) Write(path string, reader io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("create: %w", err)
 	}
-	defer f.Close()
 
-	_, err = io.Copy(f, reader)
-	return err
+	if _, err := io.Copy(f, reader); err != nil {
+		_ = f.Close()
+		_ = share.Remove(full)
+		return fmt.Errorf("write: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = share.Remove(full)
+		return fmt.Errorf("sync: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = share.Remove(full)
+		return fmt.Errorf("close: %w", err)
+	}
+	return nil
 }
 
 func (s *SMBAdapter) Read(path string) (io.ReadCloser, error) {

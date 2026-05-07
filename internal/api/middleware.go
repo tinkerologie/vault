@@ -51,6 +51,11 @@ func newQuietRequestLogger(logger *log.Logger, slowThreshold time.Duration) func
 				return
 			}
 
+			// Logged fields are deliberately limited to method, path, status, bytes,
+			// duration, and remote host. DO NOT add request or response headers here:
+			// authorization headers (X-API-Key, Authorization, Cookie, etc.) MUST NOT
+			// be logged. If header logging is added in future, redact the following
+			// keys: authorization, cookie, set-cookie, x-api-key, proxy-authorization.
 			logger.Printf(
 				"api: %s %s status=%d bytes=%d duration=%s remote=%s",
 				r.Method,

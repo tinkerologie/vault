@@ -425,7 +425,7 @@
         </div>
         <div>
           <label for="cfg_port" class="block text-sm font-medium text-text-muted mb-1.5">Port</label>
-          <input id="cfg_port" type="number" bind:value={form.config.port}
+          <input id="cfg_port" type="number" min="1" max="65535" bind:value={form.config.port}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" placeholder="22" />
         </div>
       </div>

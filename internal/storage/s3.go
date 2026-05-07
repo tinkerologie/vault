@@ -254,7 +254,7 @@ func (a *S3Adapter) List(prefix string) ([]FileInfo, error) {
 		key += "/"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := ctxOp()
 	defer cancel()
 	var (
 		out    []FileInfo

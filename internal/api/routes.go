@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -257,6 +258,9 @@ func detectUnraidTimeFormat() string {
 func detectTimeFormatFromPath(path string) string {
 	data, err := os.ReadFile(path) // #nosec G304 //nolint:gosec // path is a hardcoded constant from detectUnraidTimeFormat
 	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("Warning: could not read Unraid time-format config %q: %v — falling back to \"auto\"", path, err)
+		}
 		return "auto"
 	}
 	return parseTimeFormatINI(string(data))

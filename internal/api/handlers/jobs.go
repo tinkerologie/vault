@@ -192,12 +192,15 @@ func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	const maxLimit = 1000
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			if parsed > maxLimit {
-				parsed = maxLimit
-			}
-			limit = parsed
+		parsed, err := strconv.Atoi(l)
+		if err != nil || parsed < 1 {
+			respondError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
 		}
+		if parsed > maxLimit {
+			parsed = maxLimit
+		}
+		limit = parsed
 	}
 	runs, err := h.db.GetJobRuns(id, limit)
 	if err != nil {

@@ -14,7 +14,12 @@ function handleHashChange() {
 }
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('hashchange', handleHashChange)
+  // Guard against duplicate registrations under HMR.
+  const w = /** @type {any} */ (window)
+  if (!w.__vaultRouterInit) {
+    window.addEventListener('hashchange', handleHashChange)
+    w.__vaultRouterInit = true
+  }
 }
 
 export function navigate(path) {

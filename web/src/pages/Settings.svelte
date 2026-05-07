@@ -273,7 +273,10 @@
       a.href = url
       a.download = `vault-emergency-kit-${date}.txt`
       a.click()
-      URL.revokeObjectURL(url)
+      // Defer revocation: some browsers start the download asynchronously
+      // after a.click(), and revoking the URL synchronously can race the
+      // download on slow disks.
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
       showToast('Emergency kit downloaded', 'success')
     } catch (e) {
       showToast(e.message, 'error')

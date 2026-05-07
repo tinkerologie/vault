@@ -143,10 +143,17 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("create: %w", err)
 	}
-	defer f.Close()
 
-	_, err = io.Copy(f, reader)
-	return err
+	if _, err := io.Copy(f, reader); err != nil {
+		_ = f.Close()
+		_ = client.Remove(full)
+		return fmt.Errorf("write: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = client.Remove(full)
+		return fmt.Errorf("close: %w", err)
+	}
+	return nil
 }
 
 func (s *SFTPAdapter) Read(path string) (io.ReadCloser, error) {
