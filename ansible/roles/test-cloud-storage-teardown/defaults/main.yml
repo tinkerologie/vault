@@ -1,0 +1,5 @@
+---
+# Container name used by mc (MinIO client) traces. Configurable so it stays
+# consistent with the peer test_minio_container / test_webdav_container vars
+# defined in group_vars/all.yml.
+test_mctrace_container: mctrace

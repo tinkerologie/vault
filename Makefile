@@ -34,8 +34,23 @@ redeploy:
 test-cloud-storage:
 	$(ANSIBLE_CMD) --tags test-cloud-storage
 
+# test-cloud-storage-teardown removes the smoke-test containers. Pass
+# PURGE_DATA=true to also wipe the appdata directories on the Unraid host.
+# Without PURGE_DATA=true the role only stops/removes containers, leaving
+# data in place so it can be inspected after a failed run.
 test-cloud-storage-teardown:
-	$(ANSIBLE_CMD) --tags test-cloud-storage-teardown -e test_cloud_storage_purge_data=true
+	@if [ "$(PURGE_DATA)" = "true" ]; then \
+		printf 'About to purge MinIO/WebDAV test data directories on the target host. Type "yes" to confirm: '; \
+		read ans; \
+		if [ "$$ans" = "yes" ]; then \
+			$(ANSIBLE_CMD) --tags test-cloud-storage-teardown -e test_cloud_storage_purge_data=true; \
+		else \
+			echo 'Purge cancelled — running teardown without data wipe.'; \
+			$(ANSIBLE_CMD) --tags test-cloud-storage-teardown; \
+		fi; \
+	else \
+		$(ANSIBLE_CMD) --tags test-cloud-storage-teardown; \
+	fi
 
 # ── Local development utilities ────────────────────────────────────────────────
 

@@ -53,6 +53,44 @@
     return map[type] || 'text-text-muted'
   }
 
+  // Debounce + in-flight guard for loadDashboard() triggered by burst-y
+  // websocket events. Without this, rapid messages (e.g. a job that emits
+  // many config_changed/run_started/run_completed in quick succession) can
+  // queue up several overlapping fetches that each clobber the UI state.
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let dashboardReloadTimer = null
+  let dashboardReloadInFlight = false
+  let dashboardReloadPending = false
+
+  function scheduleDashboardReload() {
+    if (dashboardReloadTimer !== null) {
+      clearTimeout(dashboardReloadTimer)
+    }
+    dashboardReloadTimer = setTimeout(() => {
+      dashboardReloadTimer = null
+      void runDashboardReload()
+    }, 300)
+  }
+
+  async function runDashboardReload() {
+    if (dashboardReloadInFlight) {
+      // Coalesce: remember that another reload was requested while we were
+      // mid-flight and run exactly one more after the current call returns.
+      dashboardReloadPending = true
+      return
+    }
+    dashboardReloadInFlight = true
+    try {
+      await loadDashboard()
+    } finally {
+      dashboardReloadInFlight = false
+      if (dashboardReloadPending) {
+        dashboardReloadPending = false
+        scheduleDashboardReload()
+      }
+    }
+  }
+
   onMount(() => {
     loadDashboard()
     // Restore progress overlay if a backup/restore is already running.
@@ -73,17 +111,23 @@
         liveSpeed = null
         liveCumulativeBytes = 0
         liveStartTime = null
-        loadDashboard()
+        scheduleDashboardReload()
       }
       if (msg.type === 'config_changed') {
         // Storage / job / replication CRUD changes the inputs to the
         // 3-2-1 compliance widget, the protection-status panel, and the
         // recovery plan. Re-fetch so derived UI stays current without a
         // page reload.
-        loadDashboard()
+        scheduleDashboardReload()
       }
     })
-    return unsub
+    return () => {
+      unsub()
+      if (dashboardReloadTimer !== null) {
+        clearTimeout(dashboardReloadTimer)
+        dashboardReloadTimer = null
+      }
+    }
   })
 
   async function loadDashboard() {

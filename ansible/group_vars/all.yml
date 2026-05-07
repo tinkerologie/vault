@@ -22,8 +22,10 @@ timezone: Australia/Sydney
 
 # Cloud-storage test containers (S3 + WebDAV smoke tests)
 test_minio_container: vault-test-minio
-test_minio_api_port: 9100
-test_minio_console_port: 9101
+# Ports are deliberately outside the well-known Prometheus exporter range
+# (9100/9101 collide with node_exporter/HAProxy exporter on Unraid hosts).
+test_minio_api_port: 19100
+test_minio_console_port: 19101
 test_minio_root_user: vaultadmin
 test_minio_root_password: "vaultadmin-test-only"
 test_minio_bucket: vault-test

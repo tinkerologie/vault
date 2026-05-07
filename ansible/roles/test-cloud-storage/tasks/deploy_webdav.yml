@@ -1,50 +1,79 @@
 ---
 # Deploy WebDAV container.
+# Tasks targeting the Unraid host use ansible.builtin.raw because Unraid
+# does not ship a Python interpreter usable by Ansible's regular modules.
 
 - name: Remove existing WebDAV container
-  ansible.builtin.raw: docker rm -f {{ test_webdav_container }} 2>/dev/null; true
-  changed_when: false
+  ansible.builtin.raw: |
+    out=$(docker rm -f {{ test_webdav_container | quote }} 2>/dev/null || true)
+    if [ -n "$out" ]; then echo REMOVED; fi
+  register: cs_webdav_rm
+  changed_when: "'REMOVED' in cs_webdav_rm.stdout"
 
 - name: Ensure WebDAV data directory exists
-  ansible.builtin.raw: mkdir -p {{ test_webdav_data_dir }} && chmod 0777 {{ test_webdav_data_dir }}
-  changed_when: true
+  ansible.builtin.raw: |
+    if [ ! -d {{ test_webdav_data_dir | quote }} ]; then
+      mkdir -p {{ test_webdav_data_dir | quote }}
+      chmod 0755 {{ test_webdav_data_dir | quote }}
+      echo CREATED
+    fi
+  register: cs_webdav_mkdir
+  changed_when: "'CREATED' in cs_webdav_mkdir.stdout"
 
 - name: Pull WebDAV image
-  ansible.builtin.raw: docker pull dgraziotin/nginx-webdav-nononsense:latest
+  ansible.builtin.raw: docker pull {{ test_webdav_image | quote }}
   changed_when: false
 
 - name: Start WebDAV container
-  ansible.builtin.raw: >
-    docker run -d
-    --name {{ test_webdav_container }}
-    --restart unless-stopped
-    -p {{ test_webdav_port }}:80
-    -v {{ test_webdav_data_dir }}:/data
-    -e WEBDAV_USERNAME='{{ test_webdav_username }}'
-    -e WEBDAV_PASSWORD='{{ test_webdav_password }}'
-    -e PUID=99
-    -e PGID=100
-    -e TIMEZONE='{{ timezone | default("UTC") }}'
-    dgraziotin/nginx-webdav-nononsense:latest
+  # Credentials enter the container via the parent shell's env so they don't
+  # appear in `docker run`'s argv. no_log suppresses the playbook expansion.
+  ansible.builtin.raw: |
+    WEBDAV_USERNAME={{ test_webdav_username | quote }} \
+    WEBDAV_PASSWORD={{ test_webdav_password | quote }} \
+    TIMEZONE={{ (timezone | default('UTC')) | quote }} \
+    docker run -d \
+      --name {{ test_webdav_container | quote }} \
+      --restart unless-stopped \
+      -p {{ test_webdav_port | quote }}:80 \
+      -v {{ test_webdav_data_dir | quote }}:/data \
+      -e WEBDAV_USERNAME \
+      -e WEBDAV_PASSWORD \
+      -e PUID=99 \
+      -e PGID=100 \
+      -e TIMEZONE \
+      {{ test_webdav_image | quote }}
   changed_when: true
+  no_log: true
 
 - name: Wait for WebDAV to respond
+  # curl reads basic-auth credentials from a temporary netrc-style file
+  # rather than the command line, so they don't appear in `ps` output.
   ansible.builtin.raw: |
-    for i in $(seq 1 30); do
-      code=$(curl -s -o /dev/null -w '%{http_code}' \
-        -u '{{ test_webdav_username }}:{{ test_webdav_password }}' \
-        http://127.0.0.1:{{ test_webdav_port }}/ || echo 000)
+    netrc_file=$(mktemp)
+    trap 'rm -f "$netrc_file"' EXIT
+    chmod 600 "$netrc_file"
+    printf 'machine 127.0.0.1\nlogin %s\npassword %s\n' \
+      {{ test_webdav_username | quote }} \
+      {{ test_webdav_password | quote }} > "$netrc_file"
+    code=000
+    for i in $(seq 1 60); do
+      code=$(curl -s -o /dev/null \
+        --max-time 5 --connect-timeout 3 \
+        -w '%{http_code}' \
+        --netrc-file "$netrc_file" \
+        "http://127.0.0.1:{{ test_webdav_port }}/" || echo 000)
       if [ "$code" = "200" ] || [ "$code" = "207" ] || [ "$code" = "301" ]; then
         echo READY
         exit 0
       fi
-      sleep 1
+      sleep 2
     done
     echo "TIMEOUT(last=$code)"
     exit 1
   register: cs_webdav_ready
   changed_when: false
   failed_when: "'READY' not in cs_webdav_ready.stdout"
+  no_log: true
 
 - name: WebDAV ready
   ansible.builtin.debug:

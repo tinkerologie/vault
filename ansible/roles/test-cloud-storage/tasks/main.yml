@@ -13,9 +13,10 @@
 
 - name: Read effective daemon bind for verification
   ansible.builtin.raw: |
-    if [ -f {{ config_dir }}/vault.cfg ]; then
+    CONFIG_DIR={{ config_dir | quote }}
+    if [ -f "$CONFIG_DIR/vault.cfg" ]; then
       # shellcheck source=/dev/null
-      . {{ config_dir }}/vault.cfg
+      . "$CONFIG_DIR/vault.cfg"
     fi
     BIND_VALUE="${BIND_ADDRESS:-{{ bind_address }}}"
     PORT_VALUE="${PORT:-{{ api_port }}}"
@@ -23,14 +24,25 @@
     if [ "$TARGET_VALUE" = "0.0.0.0" ] || [ "$TARGET_VALUE" = "::" ]; then
       TARGET_VALUE="127.0.0.1"
     fi
-    printf '%s\n%s\n' "${BIND_VALUE}:${PORT_VALUE}" "$TARGET_VALUE"
+    # Sentinel-prefixed lines so the consumer can extract values reliably
+    # even if SSH/MOTD or shell rc files inject extra noise on stdout.
+    printf 'BIND=%s\n' "${BIND_VALUE}:${PORT_VALUE}"
+    printf 'TARGET=%s\n' "$TARGET_VALUE"
   register: cs_bind_info
   changed_when: false
 
 - name: Set verification bind facts
   ansible.builtin.set_fact:
-    daemon_bind_display: "{{ cs_bind_info.stdout_lines[0] | default(bind_address ~ ':' ~ api_port) }}"
-    cs_target_host: "{{ cs_bind_info.stdout_lines[1] | default('127.0.0.1') }}"
+    daemon_bind_display: >-
+      {{
+        (cs_bind_info.stdout | regex_search('^BIND=(.*)$', '\\1', multiline=True))
+        | default(bind_address ~ ':' ~ api_port, true)
+      }}
+    cs_target_host: >-
+      {{
+        (cs_bind_info.stdout | regex_search('^TARGET=(.*)$', '\\1', multiline=True))
+        | default('127.0.0.1', true)
+      }}
 
 - name: Remove stale verification tunnel socket
   delegate_to: localhost
@@ -42,14 +54,17 @@
   delegate_to: localhost
   ansible.builtin.command:
     cmd: >
-      sshpass -p '{{ ansible_password }}'
+      sshpass -e
       ssh -M -S /tmp/vault-cloudtest-{{ inventory_hostname }}.sock -f -N
       -L 127.0.0.1:{{ verify_local_port }}:{% if ':' in cs_target_host and not cs_target_host.startswith('[') %}[{{ cs_target_host }}]{% else %}{{ cs_target_host }}{% endif %}:{{ api_port }}
       -o ExitOnForwardFailure=yes
-      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o StrictHostKeyChecking=accept-new
       -o PubkeyAuthentication=no -o PreferredAuthentications=password
       {{ ansible_user }}@{{ ansible_host }}
     creates: "/tmp/vault-cloudtest-{{ inventory_hostname }}.sock"
+  environment:
+    SSHPASS: "{{ ansible_password }}"
+  no_log: true
 
 - name: Run cloud-storage tests
   block:
@@ -63,7 +78,7 @@
       ansible.builtin.command:
         cmd: >
           ssh -S /tmp/vault-cloudtest-{{ inventory_hostname }}.sock -O exit
-          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o StrictHostKeyChecking=accept-new
           -o PubkeyAuthentication=no -o PreferredAuthentications=password
           {{ ansible_user }}@{{ ansible_host }}
       ignore_errors: true

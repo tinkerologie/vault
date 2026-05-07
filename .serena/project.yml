@@ -73,7 +73,7 @@ included_optional_tools: []
 fixed_tools: []
 
 # list of mode names to that are always to be included in the set of active modes
-# The full set of modes to be activated is base_modes + default_modes.
+# The full set of modes to be activated is base_modes + default_modes + added_modes.
 # If the setting is undefined, the base_modes from the global configuration (serena_config.yml) apply.
 # Otherwise, this setting overrides the global configuration.
 # Set this to [] to disable base modes for this project.

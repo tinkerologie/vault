@@ -2592,6 +2592,9 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 				}
 			}
 		}
+		if runTime.IsZero() {
+			runTime = time.Now()
+		}
 
 		run := db.JobRun{
 			JobID:       job.ID,

@@ -55,17 +55,33 @@ func TestJobDeferRemoteUploadRoundTrip(t *testing.T) {
 	if err := d.UpdateJob(got); err != nil {
 		t.Fatalf("Update error = %v", err)
 	}
-	got2, _ := d.GetJob(id)
+	got2, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("GetJob after update error = %v", err)
+	}
 	if got2.DeferRemoteUpload {
 		t.Errorf("DeferRemoteUpload after update to false = true, want false")
 	}
 
 	// ListJobs round-trip
-	jobs, _ := d.ListJobs()
+	jobs, err := d.ListJobs()
+	if err != nil {
+		t.Fatalf("ListJobs error = %v", err)
+	}
+	if len(jobs) == 0 {
+		t.Fatalf("ListJobs returned no jobs, want at least 1")
+	}
+	found := false
 	for _, j := range jobs {
-		if j.ID == id && j.DeferRemoteUpload {
-			t.Errorf("ListJobs returned DeferRemoteUpload=true after update to false")
+		if j.ID == id {
+			found = true
+			if j.DeferRemoteUpload {
+				t.Errorf("ListJobs returned DeferRemoteUpload=true after update to false")
+			}
 		}
+	}
+	if !found {
+		t.Fatalf("ListJobs did not return job with ID %d", id)
 	}
 }
 

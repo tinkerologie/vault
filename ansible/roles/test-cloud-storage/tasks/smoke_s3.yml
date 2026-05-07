@@ -7,6 +7,14 @@
 
 - name: S3 smoke test
   block:
+    - name: Assert API key is configured
+      delegate_to: localhost
+      ansible.builtin.assert:
+        that:
+          - api_key is defined
+          - (api_key) | length > 0
+        fail_msg: "api_key must be set (e.g. -e api_key=...) to call the Vault API"
+
     - name: Create source folder on Unraid (S3)
       ansible.builtin.raw: |
         rm -rf /tmp/vault-cs-s3-src /tmp/vault-cs-s3-restore
@@ -19,7 +27,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage"
         method: POST
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         body_format: json
         body:
           name: "test-cloud-s3"
@@ -37,6 +45,7 @@
         status_code: 201
         return_content: true
       register: cs_s3_storage
+      no_log: true
 
     - name: Test S3 connection
       delegate_to: localhost
@@ -44,7 +53,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ cs_s3_storage.json.id }}/test"
         method: POST
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         status_code: 200
         return_content: true
       register: cs_s3_test
@@ -63,7 +72,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs"
         method: POST
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         body_format: json
         body:
           name: "test-cloud-s3-job"
@@ -91,7 +100,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ cs_s3_job.json.id }}/run"
         method: POST
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         status_code: [200, 202]
 
     - name: Poll until S3 backup completes
@@ -100,7 +109,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/runner/status"
         method: GET
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         return_content: true
       register: cs_s3_runner
       until: not cs_s3_runner.json.active
@@ -113,7 +122,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ cs_s3_job.json.id }}/history"
         method: GET
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         return_content: true
       register: cs_s3_history
 
@@ -121,9 +130,9 @@
       ansible.builtin.assert:
         that:
           - cs_s3_history.json | length > 0
-          - cs_s3_history.json[0].status == 'completed'
+          - (cs_s3_history.json | length > 0) and (cs_s3_history.json[0].status == 'completed')
         success_msg: "S3 backup completed"
-        fail_msg: "S3 backup failed: {{ (cs_s3_history.json[0].log if (cs_s3_history.json | length > 0) else 'no history') }}"
+        fail_msg: "S3 backup failed: {{ (cs_s3_history.json[0].log | default('no log available')) if (cs_s3_history.json | length > 0) else 'no history' }}"
 
     - name: Get S3 restore points
       delegate_to: localhost
@@ -131,7 +140,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ cs_s3_job.json.id }}/restore-points"
         method: GET
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         return_content: true
       register: cs_s3_rps
 
@@ -146,7 +155,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ cs_s3_job.json.id }}/restore"
         method: POST
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         body_format: json
         body:
           restore_point_id: "{{ cs_s3_rps.json[0].id }}"
@@ -159,7 +168,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/runner/status"
         method: GET
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         return_content: true
       register: cs_s3_runner_r
       until: not cs_s3_runner_r.json.active
@@ -167,7 +176,13 @@
       delay: 2
 
     - name: Read restored S3 file
-      ansible.builtin.raw: find /tmp/vault-cs-s3-restore -name 'payload.txt' | head -1 | xargs cat
+      ansible.builtin.raw: |
+        f=$(find /tmp/vault-cs-s3-restore -name 'payload.txt' | head -1)
+        if [ -z "$f" ]; then
+          echo "NO_PAYLOAD_FOUND" >&2
+          exit 1
+        fi
+        cat "$f"
       register: cs_s3_restored
       changed_when: false
 
@@ -195,7 +210,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/jobs/{{ cs_s3_job.json.id }}?deleteFiles=true"
         method: DELETE
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         status_code: [204, 404]
       when: cs_s3_job is defined and cs_s3_job.json is defined and cs_s3_job.json.id is defined
       ignore_errors: true
@@ -206,7 +221,7 @@
         url: "http://127.0.0.1:{{ verify_local_port }}/api/v1/storage/{{ cs_s3_storage.json.id }}?deleteFiles=true"
         method: DELETE
         headers:
-          X-API-Key: "{{ api_key | default('') }}"
+          X-API-Key: "{{ api_key }}"
         status_code: [204, 404]
       when: cs_s3_storage is defined and cs_s3_storage.json is defined and cs_s3_storage.json.id is defined
       ignore_errors: true

@@ -1,22 +1,24 @@
 ---
 # Tear down the MinIO and WebDAV test containers and wipe their appdata.
+# Tasks on the Unraid target use ansible.builtin.raw because Unraid does not
+# ship a Python interpreter for Ansible's normal modules.
 
 - name: Stop and remove test containers
   ansible.builtin.raw: |
-    docker rm -f {{ test_minio_container }} 2>/dev/null
-    docker rm -f {{ test_webdav_container }} 2>/dev/null
-    docker rm -f mctrace 2>/dev/null
+    docker rm -f {{ test_minio_container | quote }} 2>/dev/null || true
+    docker rm -f {{ test_webdav_container | quote }} 2>/dev/null || true
+    docker rm -f {{ test_mctrace_container | quote }} 2>/dev/null || true
     true
   changed_when: false
 
 - name: Remove appdata directories
   ansible.builtin.raw: |
-    rm -rf {{ test_minio_data_dir }} {{ test_webdav_data_dir }}
+    rm -rf -- {{ test_minio_data_dir | quote }} {{ test_webdav_data_dir | quote }}
   changed_when: false
   when: test_cloud_storage_purge_data | default(false) | bool
 
 - name: Teardown summary
   ansible.builtin.debug:
     msg: |
-      Cloud-storage test containers removed: {{ test_minio_container }}, {{ test_webdav_container }}
+      Cloud-storage test containers removed: {{ test_minio_container }}, {{ test_webdav_container }}, {{ test_mctrace_container }}
       Data wiped: {{ test_cloud_storage_purge_data | default(false) | bool }}

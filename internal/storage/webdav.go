@@ -2,6 +2,7 @@ package storage
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,6 +39,20 @@ func (c WebDAVConfig) String() string {
 	}
 	return fmt.Sprintf("WebDAVConfig{URL:%q Username:%q Password:%s BasePath:%q InsecureSkipVerify:%t}",
 		c.URL, c.Username, pw, c.BasePath, c.InsecureSkipVerify)
+}
+
+// MarshalJSON ensures structured loggers (e.g. encoding/json wrappers) cannot
+// emit the plaintext password. Persistence does not flow through this method:
+// the storage handlers store the request body's JSON string directly into
+// the DB Config column, so adding MarshalJSON only affects log/debug paths
+// that explicitly marshal a WebDAVConfig value.
+func (c WebDAVConfig) MarshalJSON() ([]byte, error) {
+	type alias WebDAVConfig // avoid recursion into MarshalJSON
+	redacted := alias(c)
+	if redacted.Password != "" {
+		redacted.Password = "<redacted>"
+	}
+	return json.Marshal(redacted)
 }
 
 // WebDAVAdapter implements Adapter against a WebDAV endpoint.
@@ -178,9 +193,9 @@ func (w *WebDAVAdapter) Stat(p string) (FileInfo, error) {
 }
 
 // TestConnection verifies the configured endpoint is reachable and the base
-// path is readable. Some servers refuse PROPFIND on the root URL, so we fall
-// back to attempting an MkdirAll on the base path which both proves write
-// access and creates the path if missing.
+// path is readable. If the base path is missing (404) we attempt to create
+// it; any other error (auth, 5xx, network) is surfaced unchanged so callers
+// can see the real failure rather than a misleading mkdir error.
 func (w *WebDAVAdapter) TestConnection() error {
 	c := w.client()
 	target := "/"
@@ -189,8 +204,11 @@ func (w *WebDAVAdapter) TestConnection() error {
 	}
 	if _, err := c.ReadDir(target); err == nil {
 		return nil
+	} else if !gowebdav.IsErrNotFound(err) {
+		return fmt.Errorf("webdav: connection test failed: %w", err)
 	}
-	// Path may not exist yet — try to create it.
+	// Base path missing — attempt to create it. This both proves write
+	// access and avoids forcing the operator to pre-create the directory.
 	if err := c.MkdirAll(target, 0750); err != nil {
 		return fmt.Errorf("webdav: connection test failed: %w", err)
 	}
