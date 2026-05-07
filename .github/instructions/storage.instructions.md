@@ -34,7 +34,9 @@ When adding a new adapter:
 
 ## Config Storage
 
-Storage destination config is stored as a JSON blob in the `storage_destinations.config` DB column. Each adapter parses its own config struct from this JSON.
+Storage destination config is stored as a JSON blob in the `storage_destinations.config` DB column. Each adapter should define and parse its own adapter-specific config struct from this JSON (shared embedded/common fields are allowed where appropriate).
+
+If JSON parsing fails, return a descriptive error indicating invalid storage configuration for that adapter.
 
 ## TestConnection
 
