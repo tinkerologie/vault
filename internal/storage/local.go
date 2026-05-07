@@ -30,26 +30,37 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0750); err != nil {
+	dir := filepath.Dir(full)
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("create directories: %w", err)
 	}
-	f, err := os.Create(full) // #nosec G304 — full validated by safepath.JoinUnderBase in fullPath()
+	// Write to a sibling temp file, then atomically rename into place. This
+	// avoids leaving a partial file at `full` if Close() or Sync() fails, and
+	// avoids the silent no-op of os.Remove on Windows when the file is still
+	// open.
+	tmp, err := os.CreateTemp(dir, ".vault-tmp-*")
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
+		return fmt.Errorf("create temp file: %w", err)
 	}
-	if _, err := io.Copy(f, reader); err != nil {
-		_ = f.Close()
-		_ = os.Remove(full)
+	tmpPath := tmp.Name()
+	cleanupTmp := func() { _ = os.Remove(tmpPath) }
+	if _, err := io.Copy(tmp, reader); err != nil {
+		_ = tmp.Close()
+		cleanupTmp()
 		return fmt.Errorf("write file: %w", err)
 	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(full)
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanupTmp()
 		return fmt.Errorf("sync file: %w", err)
 	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(full)
+	if err := tmp.Close(); err != nil {
+		cleanupTmp()
 		return fmt.Errorf("close file: %w", err)
+	}
+	if err := os.Rename(tmpPath, full); err != nil {
+		cleanupTmp()
+		return fmt.Errorf("rename file: %w", err)
 	}
 	return nil
 }

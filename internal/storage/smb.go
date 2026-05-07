@@ -107,7 +107,9 @@ func (s *SMBAdapter) Write(path string, reader io.Reader) error {
 		return fmt.Errorf("sync: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		_ = share.Remove(full)
+		if removeErr := share.Remove(full); removeErr != nil {
+			return fmt.Errorf("close: %w (cleanup remove failed: %v)", err, removeErr)
+		}
 		return fmt.Errorf("close: %w", err)
 	}
 	return nil

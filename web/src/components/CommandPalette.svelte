@@ -1,6 +1,7 @@
 <script>
   import { api } from '../lib/api.js'
   import { navigate } from '../lib/router.svelte.js'
+  import Toast from './Toast.svelte'
 
   let { show = $bindable(false), onclose = () => {} } = $props()
 
@@ -10,6 +11,15 @@
   let jobs = $state([])
   let storages = $state([])
   let loaded = $state(false)
+  let toastMessage = $state('')
+  let toastType = $state('info')
+  let toastKey = $state(0)
+
+  function showToast(message, type = 'info') {
+    toastMessage = message
+    toastType = type
+    toastKey++
+  }
 
   // Static navigation commands
   const navCommands = [
@@ -55,7 +65,13 @@
         icon: 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z',
         category: 'Jobs',
         action: async () => {
-          try { await api.runJob(job.id) } catch (err) { console.error('CommandPalette: runJob failed', err) }
+          try {
+            await api.runJob(job.id)
+            showToast(`Started job: ${job.name}`, 'success')
+          } catch (err) {
+            console.error('CommandPalette: runJob failed', err)
+            showToast(`Failed to start ${job.name}: ${err?.message || err}`, 'error')
+          }
         },
       })
     }
@@ -66,7 +82,17 @@
         icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
         category: 'Storage',
         action: async () => {
-          try { await api.testStorage(s.id) } catch (err) { console.error('CommandPalette: testStorage failed', err) }
+          try {
+            const result = await api.testStorage(s.id)
+            if (result?.success) {
+              showToast(`${s.name}: connection successful`, 'success')
+            } else {
+              showToast(`${s.name}: ${result?.error || 'connection failed'}`, 'error')
+            }
+          } catch (err) {
+            console.error('CommandPalette: testStorage failed', err)
+            showToast(`${s.name}: ${err?.message || err}`, 'error')
+          }
         },
       })
     }
@@ -175,3 +201,5 @@
     </div>
   </div>
 {/if}
+
+<Toast message={toastMessage} type={toastType} key={toastKey} />

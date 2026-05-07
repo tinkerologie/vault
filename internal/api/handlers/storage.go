@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -328,13 +329,37 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Close current DB, swap files, re-open is handled by the caller
-	// (daemon restart). For now, copy the temp file over the current DB.
+	// Close current DB before swapping files. Aborting on close failure avoids
+	// overwriting the live DB while another goroutine still holds it.
 	if err := h.db.Close(); err != nil {
-		log.Printf("Warning: closing current DB before restore: %v", err)
+		_ = os.Remove(tmpPath)
+		respondInternalError(w, fmt.Errorf("closing current DB before restore: %w", err))
+		return
 	}
+
+	// Atomic-replace pattern: rename current → .bak, copy temp → current,
+	// remove .bak on success or restore .bak on failure. This guarantees
+	// we never end up without a usable DB on disk.
+	backupPath := currentPath + ".bak"
+	_ = os.Remove(backupPath) // clear any stale backup
+	backupExists := false
+	if _, statErr := os.Stat(currentPath); statErr == nil {
+		if err := os.Rename(currentPath, backupPath); err != nil {
+			_ = os.Remove(tmpPath)
+			respondInternalError(w, fmt.Errorf("backup current DB: %w", err))
+			return
+		}
+		backupExists = true
+	}
+	restoreBackup := func() {
+		if backupExists {
+			_ = os.Rename(backupPath, currentPath)
+		}
+	}
+
 	srcFile, err := os.Open(tmpPath) // #nosec G304 — tmpPath is os.CreateTemp result, vault-controlled
 	if err != nil {
+		restoreBackup()
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, err)
 		return
@@ -343,6 +368,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	dstFile, err := os.Create(currentPath) // #nosec G304 //nolint:gosec // currentPath is from h.db.Path(), set at daemon startup — not user input
 	if err != nil {
 		_ = srcFile.Close()
+		restoreBackup()
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, err)
 		return
@@ -352,6 +378,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		_ = srcFile.Close()
 		_ = dstFile.Close()
 		_ = os.Remove(currentPath)
+		restoreBackup()
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, err)
 		return
@@ -360,6 +387,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		_ = srcFile.Close()
 		_ = dstFile.Close()
 		_ = os.Remove(currentPath)
+		restoreBackup()
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, err)
 		return
@@ -368,9 +396,16 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Warning: closing source temp DB: %v", err)
 	}
 	if err := dstFile.Close(); err != nil {
+		_ = os.Remove(currentPath)
+		restoreBackup()
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, err)
 		return
+	}
+
+	// Success — drop backup and temp.
+	if backupExists {
+		_ = os.Remove(backupPath)
 	}
 	_ = os.Remove(tmpPath)
 

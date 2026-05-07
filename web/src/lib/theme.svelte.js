@@ -86,9 +86,14 @@ export function initTheme() {
   if (storedMode && VALID_MODES.includes(/** @type {any} */ (storedMode))) {
     mode = /** @type {'light' | 'system' | 'dark'} */ (storedMode)
   }
+  // Detach any handler from the previous MediaQueryList before replacing it
+  // (e.g. under HMR). Operating on the *existing* mediaQuery is the only way
+  // to actually unregister the old listener — a fresh matchMedia() returns a
+  // brand-new object that has no listeners attached.
+  if (mediaQuery) {
+    mediaQuery.removeEventListener('change', applyTheme)
+  }
   mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-  // Remove any previously registered listener (e.g. under HMR) before adding a fresh one.
-  mediaQuery.removeEventListener('change', applyTheme)
   mediaQuery.addEventListener('change', applyTheme)
   applyTheme()
 }
