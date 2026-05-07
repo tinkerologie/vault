@@ -2572,31 +2572,40 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 			itemsTotal = len(rawItems)
 		}
 		runSizeBytes := int64(sizeBytes)
+
+		// Use the manifest's original backup time as both started_at
+		// and completed_at so the History page shows when the backup
+		// actually ran — not when it was imported. Prefer ISO-8601
+		// `created_at` (RFC3339), then the legacy `timestamp`
+		// (`2006-01-02_150405`); fall back to time.Now() if both are
+		// missing.
+		runTime := time.Time{}
+		if v, ok := b["created_at"].(string); ok && v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				runTime = t
+			}
+		}
+		if runTime.IsZero() {
+			if v, ok := b["timestamp"].(string); ok && v != "" {
+				if t, err := time.Parse("2006-01-02_150405", v); err == nil {
+					runTime = t
+				}
+			}
+		}
+
 		run := db.JobRun{
-			JobID:      job.ID,
-			Status:     "imported",
-			BackupType: backupType,
-			ItemsTotal: itemsTotal,
-		}
-		runID, err := r.db.CreateJobRun(run)
-		if err != nil {
-			log.Printf("runner: import: failed to create job run for %q: %v", jobName, err)
-			continue
-		}
-		// Backfill the run with completion stats (size_bytes,
-		// items_done, items_failed). UpdateJobRun also sets
-		// completed_at = CURRENT_TIMESTAMP so the run no longer
-		// appears in-progress and its size contributes to the
-		// History "Total Size" stat card.
-		if err := r.db.UpdateJobRun(db.JobRun{
-			ID:          runID,
+			JobID:       job.ID,
 			Status:      "imported",
-			Log:         "",
+			BackupType:  backupType,
+			ItemsTotal:  itemsTotal,
 			ItemsDone:   itemsDone,
 			ItemsFailed: itemsFailed,
 			SizeBytes:   runSizeBytes,
-		}); err != nil {
-			log.Printf("runner: import: failed to backfill job run %d for %q: %v", runID, jobName, err)
+		}
+		runID, err := r.db.CreateImportedJobRun(run, runTime)
+		if err != nil {
+			log.Printf("runner: import: failed to create job run for %q: %v", jobName, err)
+			continue
 		}
 
 		// Build metadata JSON from manifest. The native runner stores

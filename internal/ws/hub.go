@@ -47,7 +47,11 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 		case msg := <-h.broadcast:
-			h.mu.RLock()
+			// Take the write lock — the broadcast branch may
+			// delete from h.clients (when a client's send buffer
+			// is full and we drop them). RLock would race with
+			// the map mutation under -race.
+			h.mu.Lock()
 			for client := range h.clients {
 				select {
 				case client.send <- msg:
@@ -56,7 +60,7 @@ func (h *Hub) Run() {
 					delete(h.clients, client)
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }

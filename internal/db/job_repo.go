@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 func (d *DB) CreateJob(job Job) (int64, error) {
@@ -150,6 +151,33 @@ func (d *DB) CreateJobRun(run JobRun) (int64, error) {
 	res, err := d.Exec(
 		"INSERT INTO job_runs (job_id, status, backup_type, run_type, items_total) VALUES (?, ?, ?, ?, ?)",
 		run.JobID, run.Status, run.BackupType, runType, run.ItemsTotal,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// CreateImportedJobRun creates a synthetic JobRun for a backup imported
+// from storage, preserving the original backup timestamp on both
+// started_at and completed_at so the History page reflects when the
+// backup actually ran (not when it was imported). All counters
+// (items_total/done/failed and size_bytes) are populated from the
+// manifest in a single statement so the run never appears in-progress.
+func (d *DB) CreateImportedJobRun(run JobRun, ts time.Time) (int64, error) {
+	runType := run.RunType
+	if runType == "" {
+		runType = "backup"
+	}
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	res, err := d.Exec(
+		`INSERT INTO job_runs (job_id, status, backup_type, run_type, items_total,
+			items_done, items_failed, size_bytes, started_at, completed_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.JobID, run.Status, run.BackupType, runType, run.ItemsTotal,
+		run.ItemsDone, run.ItemsFailed, run.SizeBytes, ts.UTC(), ts.UTC(),
 	)
 	if err != nil {
 		return 0, err
