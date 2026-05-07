@@ -50,6 +50,7 @@ URL params via `chi.URLParam(r, "id")`.
 - Hub in `internal/ws/` manages client connections
 - Exposed at `GET /api/v1/ws`
 - Broadcasts progress events to all connected clients
+- On invalid/malformed WebSocket upgrade requests or frames, log the error and close the connection immediately
 
 ## Middleware
 

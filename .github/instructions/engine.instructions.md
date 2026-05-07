@@ -35,6 +35,11 @@ Uses Docker Engine SDK (`github.com/docker/docker`):
 
 Progress reported via `ProgressFunc` callback.
 
+- Treat `ProgressFunc` as best-effort and non-fatal
+- If `ProgressFunc` returns an error or panics, recover/log context and continue backup/restore work
+- Do not abort core operations solely due to progress reporting failures
+- Keep progress updates monotonic and emit a final completion update when possible
+
 ## VM Handler
 
 Uses the pure-Go libvirt RPC client (`github.com/digitalocean/go-libvirt`) on Linux only:

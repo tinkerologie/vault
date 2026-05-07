@@ -33,5 +33,5 @@ Inline in `migrations.go` using `CREATE TABLE IF NOT EXISTS`. No versioned migra
 - Always close `rows` with `defer rows.Close()`
 - Use `_ = sqlDB.Close()` in error paths
 - Scan nullable fields with `sql.NullString`, `sql.NullInt64`
-- Return `(int64, error)` for Create operations (returns last insert ID)
+- For Create operations on all tables, return `(int64, error)` (returns last insert ID)
 - Return `error` for Update/Delete operations
