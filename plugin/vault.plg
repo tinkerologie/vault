@@ -6,9 +6,9 @@
     <!ENTITY launch    "Settings/Vault">
     <!ENTITY gitURL    "https://github.com/ruaan-deysel/&name;">
     <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/&name;/main/plugin/vault.plg">
-    <!ENTITY bundle    "&name;-&version;.txz">
+            <!ENTITY bundle    "&name;-&version;.txz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
-    <!ENTITY sha256      "e2b36fd81fe1037b00c45e73463564280b6de4503867ccafc077d7b67c749ad7">
+            <!ENTITY sha256      "2f74121eceb1f9413f49d93ec6902850995d45a59cb6a208b143e6922348e63d">
     <!ENTITY support   "https://forums.unraid.net/topic/197786-plugin-vault-backup-manager">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
@@ -86,7 +86,7 @@ rm -f /var/run/vault.pid
 <!-- Download and install the bundle -->
 <FILE Name="/boot/config/plugins/&name;/&bundle;" Run="upgradepkg --install-new">
     <URL>&bundleURL;</URL>
-                                                    <SHA256>&sha256;</SHA256>
+                                                            <SHA256>&sha256;</SHA256>
 </FILE>
 
 <!-- Post-install: create default config and start daemon -->
