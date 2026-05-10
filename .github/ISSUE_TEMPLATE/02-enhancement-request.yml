@@ -3,7 +3,6 @@ description: Request a new capability or an improvement to an existing workflow.
 title: "[Enhancement]: "
 labels:
   - enhancement
-  - "status: needs-triage"
 body:
   - type: markdown
     attributes:

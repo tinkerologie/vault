@@ -3,7 +3,6 @@ description: Report a reproducible bug or regression in Vault.
 title: "[Bug]: "
 labels:
   - bug
-  - "status: needs-triage"
 body:
   - type: markdown
     attributes:
