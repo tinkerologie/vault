@@ -86,7 +86,7 @@ rm -f /var/run/vault.pid
 <!-- Download and install the bundle -->
 <FILE Name="/boot/config/plugins/&name;/&bundle;" Run="upgradepkg --install-new">
     <URL>&bundleURL;</URL>
-                                                                    <SHA256>&sha256;</SHA256>
+    <SHA256>&sha256;</SHA256>
 </FILE>
 
 <!-- Post-install: create default config and start daemon -->
