@@ -67,8 +67,9 @@ type domainSnapshotSource struct {
 }
 
 type domainBackupXML struct {
-	XMLName xml.Name           `xml:"domainbackup"`
-	Disks   []domainBackupDisk `xml:"disks>disk"`
+	XMLName     xml.Name           `xml:"domainbackup"`
+	Incremental string             `xml:"incremental,omitempty"`
+	Disks       []domainBackupDisk `xml:"disks>disk"`
 }
 
 type domainBackupDisk struct {
@@ -91,6 +92,7 @@ type vmBackupArtifact struct {
 	Disk       domainDisk
 	BackupFile string
 	TargetPath string
+	Format     string
 }
 
 func parseDomainDisksWithTargets(xmlDesc string) ([]domainDisk, string, error) {
@@ -182,8 +184,18 @@ func buildSnapshotXML(name string, disks []domainDisk) (string, error) {
 }
 
 func buildBackupXML(destDir string, disks []domainDisk) (string, []vmBackupArtifact, error) {
+	return buildBackupXMLWithParent(destDir, disks, "", false)
+}
+
+// buildBackupXMLWithParent constructs domainbackup XML for libvirt's push-mode
+// backup job. When parentCheckpoint is non-empty, the resulting XML requests
+// an incremental backup that only includes blocks dirty since that checkpoint.
+// When forceQcow2 is true, all disks are written as qcow2 regardless of source
+// format — required for incremental output and recommended for differential.
+func buildBackupXMLWithParent(destDir string, disks []domainDisk, parentCheckpoint string, forceQcow2 bool) (string, []vmBackupArtifact, error) {
 	backup := domainBackupXML{
-		Disks: make([]domainBackupDisk, 0, len(disks)),
+		Incremental: parentCheckpoint,
+		Disks:       make([]domainBackupDisk, 0, len(disks)),
 	}
 	artifacts := make([]vmBackupArtifact, 0, len(disks))
 
@@ -192,9 +204,19 @@ func buildBackupXML(destDir string, disks []domainDisk) (string, []vmBackupArtif
 			return "", nil, fmt.Errorf("disk %s has no target device", disk.Path)
 		}
 
-		backupFile := fmt.Sprintf("vdisk%d%s", disk.Index, filepath.Ext(disk.Path))
-		targetPath := filepath.Join(destDir, backupFile)
 		driverType := backupDriverType(disk.Path)
+		if forceQcow2 {
+			driverType = "qcow2"
+		}
+
+		// Output filename always uses .qcow2 when we force qcow2 so restore
+		// can identify the format from the extension.
+		ext := filepath.Ext(disk.Path)
+		if forceQcow2 {
+			ext = ".qcow2"
+		}
+		backupFile := fmt.Sprintf("vdisk%d%s", disk.Index, ext)
+		targetPath := filepath.Join(destDir, backupFile)
 
 		backup.Disks = append(backup.Disks, domainBackupDisk{
 			Name:   disk.Target,
@@ -207,6 +229,7 @@ func buildBackupXML(destDir string, disks []domainDisk) (string, []vmBackupArtif
 			Disk:       disk,
 			BackupFile: backupFile,
 			TargetPath: targetPath,
+			Format:     driverType,
 		})
 	}
 

@@ -481,6 +481,7 @@ func (r *Runner) RunJob(jobID int64) {
 		itemsFailed   int
 		itemResults   []map[string]any
 		itemChecksums = make(map[string]map[string]string)
+		vmCheckpoints = make(map[string]string)
 		failedNames   []string
 		jobStart      = time.Now()
 	)
@@ -605,9 +606,19 @@ func (r *Runner) RunJob(jobID int64) {
 			}
 			backupItem.Settings["id"] = itemID
 			backupItem.Settings["backup_mode"] = job.VMMode
+			backupItem.Settings["backup_type"] = btResult.BackupType
+			backupItem.Settings["backup_run_id"] = runID
+			// For incremental/differential, read the parent libvirt checkpoint
+			// from the parent restore point metadata. The engine falls back
+			// to a full backup if the named checkpoint no longer exists.
+			if btResult.ParentRP != nil && btResult.BackupType != "full" {
+				if cp := vmCheckpointFromRPMeta(btResult.ParentRP.Metadata, item.ItemName); cp != "" {
+					backupItem.Settings["parent_checkpoint"] = cp
+				}
+			}
 		}
 
-		if btResult.ParentRP != nil && (item.ItemType == "container" || item.ItemType == "vm" || item.ItemType == "folder") {
+		if btResult.ParentRP != nil && (item.ItemType == "container" || item.ItemType == "folder") {
 			backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
 		}
 
@@ -755,6 +766,18 @@ func (r *Runner) RunJob(jobID int64) {
 			if item.ItemType == "zfs" {
 				if snap, ok := backupItem.Settings["dataset"].(string); ok {
 					resEntry["zfs_dataset"] = snap
+				}
+			}
+			// For VM items, capture the libvirt checkpoint name produced by
+			// the engine so future incremental/differential backups can
+			// reference it as their parent.
+			if item.ItemType == "vm" && result != nil {
+				if cp, ok := result.Meta["vm_checkpoint"].(string); ok && cp != "" {
+					vmCheckpoints[item.ItemName] = cp
+					resEntry["vm_checkpoint"] = cp
+				}
+				if bt, ok := result.Meta["vm_backup_type"].(string); ok && bt != "" {
+					resEntry["vm_backup_type"] = bt
 				}
 			}
 			itemResults = append(itemResults, resEntry)
@@ -959,6 +982,15 @@ func (r *Runner) RunJob(jobID int64) {
 						resEntry["zfs_dataset"] = snap
 					}
 				}
+				if s.dbItem.ItemType == "vm" && s.result != nil {
+					if cp, ok := s.result.Meta["vm_checkpoint"].(string); ok && cp != "" {
+						vmCheckpoints[s.dbItem.ItemName] = cp
+						resEntry["vm_checkpoint"] = cp
+					}
+					if bt, ok := s.result.Meta["vm_backup_type"].(string); ok && bt != "" {
+						resEntry["vm_backup_type"] = bt
+					}
+				}
 				itemResults = append(itemResults, resEntry)
 				if len(checksums) > 0 {
 					itemChecksums[s.dbItem.ItemName] = checksums
@@ -1030,6 +1062,9 @@ func (r *Runner) RunJob(jobID int64) {
 		rpMeta["backup_type"] = btResult.BackupType
 		if btResult.ParentRP != nil {
 			rpMeta["parent_restore_point_id"] = btResult.ParentRP.ID
+		}
+		if len(vmCheckpoints) > 0 {
+			rpMeta["vm_checkpoints"] = vmCheckpoints
 		}
 		metadata, _ := json.Marshal(rpMeta)
 
@@ -1598,6 +1633,35 @@ func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType,
 		return fmt.Errorf("creating temp dir: %w", err)
 	}
 	defer cleanup()
+
+	// VM qcow2 chains must be assembled per-step then flattened with
+	// qemu-img so each chain step keeps its own dirty-block deltas. For
+	// non-VM items we keep the simple flat staging where each chain step
+	// can safely overlay files in the same directory (folder rsync,
+	// container layered tar, etc.).
+	if itemType == "vm" && len(chain) > 1 {
+		stepDirs := make([]string, 0, len(chain))
+		for i, rp := range chain {
+			log.Printf("runner: staging VM chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
+			stepDir := filepath.Join(tmpDir, fmt.Sprintf("step_%d", i))
+			if err := os.MkdirAll(stepDir, 0o755); err != nil {
+				return fmt.Errorf("creating chain step dir: %w", err)
+			}
+			phaseStart := (i * 30) / len(chain)
+			phaseEnd := ((i + 1) * 30) / len(chain)
+			if err := r.stageRestorePointItem(rp, itemName, stepDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
+				return fmt.Errorf("staging VM chain step %d (id=%d): %w", i+1, rp.ID, err)
+			}
+			stepDirs = append(stepDirs, stepDir)
+		}
+
+		r.reportRestoreProgress(reporter, 30, "Flattening VM chain")
+		flattenedDir := filepath.Join(tmpDir, "flat")
+		if err := flattenVMChain(stepDirs, flattenedDir); err != nil {
+			return fmt.Errorf("flattening VM chain: %w", err)
+		}
+		return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, reporter, 40, 100)
+	}
 
 	for i, rp := range chain {
 		log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
@@ -2186,11 +2250,47 @@ func (r *Runner) enforceRetention(dest db.StorageDestination, jobID int64, keepC
 		if _, ok := protected[rp.ID]; ok {
 			continue
 		}
+		// Best-effort cleanup of libvirt checkpoints associated with VM
+		// items in this restore point. Failures are logged and ignored
+		// so retention continues to delete storage and the DB row.
+		r.deleteVMCheckpointsForRP(rp)
 		if adapter != nil && rp.StoragePath != "" {
 			r.deleteStorageDir(adapter, rp.StoragePath)
 		}
 		if err := r.db.DeleteRestorePoint(rp.ID); err != nil {
 			log.Printf("runner: failed to delete restore point %d for job %d: %v", rp.ID, jobID, err)
+		}
+	}
+}
+
+// deleteVMCheckpointsForRP removes any libvirt checkpoints recorded in the
+// given restore point's metadata. It is safe to call for non-VM restore
+// points and on systems without libvirt — both result in no-ops.
+func (r *Runner) deleteVMCheckpointsForRP(rp db.RestorePoint) {
+	if rp.Metadata == "" {
+		return
+	}
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(rp.Metadata), &meta); err != nil {
+		return
+	}
+	raw, ok := meta["vm_checkpoints"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return
+	}
+	handler, err := engine.NewVMHandler()
+	if err != nil {
+		log.Printf("runner: skipping VM checkpoint cleanup for RP %d: %v", rp.ID, err)
+		return
+	}
+	defer handler.Close()
+	for domainName, v := range raw {
+		cp, _ := v.(string)
+		if cp == "" {
+			continue
+		}
+		if err := handler.DeleteCheckpoint(domainName, cp); err != nil {
+			log.Printf("runner: failed to delete checkpoint %s for VM %s (RP %d): %v", cp, domainName, rp.ID, err)
 		}
 	}
 }
@@ -2747,6 +2847,25 @@ func buildImportJobItems(b map[string]any) []db.JobItem {
 	}
 
 	return nil
+}
+
+// vmCheckpointFromRPMeta returns the libvirt checkpoint name recorded for the
+// given VM item in a restore point's metadata JSON. Returns "" when the
+// metadata does not include a checkpoint for that item.
+func vmCheckpointFromRPMeta(metadata, itemName string) string {
+	if metadata == "" || itemName == "" {
+		return ""
+	}
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
+		return ""
+	}
+	raw, ok := meta["vm_checkpoints"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	cp, _ := raw[itemName].(string)
+	return cp
 }
 
 // parseItemChecksums extracts the SHA-256 checksums for a specific item from

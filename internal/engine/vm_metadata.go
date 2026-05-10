@@ -27,9 +27,21 @@ type vmRestoreVerifyConfig struct {
 	TCPPort        int    `json:"tcp_port,omitempty"`
 }
 
+// vmDiskMeta describes one backup output disk so the restore code can map
+// per-disk artefacts across an incremental/differential chain.
+type vmDiskMeta struct {
+	Target     string `json:"target"`      // libvirt target dev (e.g. "hdc", "vda")
+	BackupFile string `json:"backup_file"` // relative filename in the backup dir
+	Format     string `json:"format"`      // qcow2 or raw
+}
+
 type vmBackupMetadata struct {
-	State         string                `json:"state"`
-	RestoreVerify vmRestoreVerifyConfig `json:"restore_verify,omitempty"`
+	State            string                `json:"state"`
+	RestoreVerify    vmRestoreVerifyConfig `json:"restore_verify,omitempty"`
+	BackupType       string                `json:"backup_type,omitempty"`       // full, incremental, differential
+	Checkpoint       string                `json:"checkpoint,omitempty"`        // libvirt checkpoint created by this backup
+	ParentCheckpoint string                `json:"parent_checkpoint,omitempty"` // checkpoint name this backup was based on
+	Disks            []vmDiskMeta          `json:"disks,omitempty"`
 }
 
 func writeVMBackupMetadata(destDir, state string, settings map[string]any) (string, error) {
@@ -53,6 +65,33 @@ func writeVMBackupMetadata(destDir, state string, settings map[string]any) (stri
 	}
 
 	return metadataPath, nil
+}
+
+// updateVMBackupMetadata reads vm_meta.json, applies fn, and writes it back.
+// Used to record post-backup chain info (checkpoint, disk artefacts).
+//
+// non-linux build of the package.
+//
+//nolint:unused // referenced by linux-tagged vm.go; the linter sees only
+func updateVMBackupMetadata(destDir string, fn func(*vmBackupMetadata)) error {
+	path := filepath.Join(destDir, vmMetadataFileName)
+	data, err := os.ReadFile(path) // #nosec G304 — path is destDir + fixed filename
+	if err != nil {
+		return fmt.Errorf("read vm metadata: %w", err)
+	}
+	var metadata vmBackupMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return fmt.Errorf("parse vm metadata: %w", err)
+	}
+	fn(&metadata)
+	out, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal vm metadata: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return fmt.Errorf("write vm metadata: %w", err)
+	}
+	return nil
 }
 
 func readVMRestoreMetadata(sourceDir string) (vmBackupMetadata, error) {

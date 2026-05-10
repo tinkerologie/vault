@@ -29,3 +29,9 @@ func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, p
 func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	return fmt.Errorf("VM backup handler is not supported on this platform")
 }
+
+// Close is a no-op on non-Linux platforms.
+func (h *VMHandler) Close() error { return nil }
+
+// DeleteCheckpoint is a no-op on non-Linux platforms.
+func (h *VMHandler) DeleteCheckpoint(_, _ string) error { return nil }

@@ -9,10 +9,11 @@ type BackupItem struct {
 }
 
 type BackupResult struct {
-	ItemName string       `json:"item_name"`
-	Success  bool         `json:"success"`
-	Error    string       `json:"error"`
-	Files    []BackupFile `json:"files"`
+	ItemName string         `json:"item_name"`
+	Success  bool           `json:"success"`
+	Error    string         `json:"error"`
+	Files    []BackupFile   `json:"files"`
+	Meta     map[string]any `json:"meta,omitempty"` // engine-specific metadata (e.g. vm_checkpoint)
 }
 
 type BackupFile struct {

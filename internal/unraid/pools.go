@@ -43,6 +43,11 @@ func discoverPoolsIn(root string) []string {
 		return nil
 	}
 
+	// Build a set of mount points whose filesystem is unsuitable for staging
+	// (tmpfs, devtmpfs, etc.). On Unraid, /mnt/addons and /mnt/rootshare are
+	// 1MB tmpfs mounts that must never be used for backup staging.
+	unsuitable := unsuitableMountPoints(mountInfoPath)
+
 	var pools []string
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -60,7 +65,12 @@ func discoverPoolsIn(root string) []string {
 			continue
 		}
 
-		pools = append(pools, filepath.Join(root, name))
+		full := filepath.Join(root, name)
+		if unsuitable[full] {
+			continue
+		}
+
+		pools = append(pools, full)
 	}
 
 	// Sort with "cache" first for backwards compatibility, then alphabetical.
@@ -169,4 +179,51 @@ func unescapeMountInfo(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// unsuitableFSTypes lists filesystem types that must never be used for
+// backup staging (RAM-backed or virtual filesystems).
+var unsuitableFSTypes = map[string]bool{
+	"tmpfs":    true,
+	"devtmpfs": true,
+	"ramfs":    true,
+	"proc":     true,
+	"sysfs":    true,
+	"cgroup":   true,
+	"cgroup2":  true,
+	"overlay":  true,
+}
+
+// unsuitableMountPoints returns a set of mount points (under any root) whose
+// filesystem type is in unsuitableFSTypes. Returns an empty map if mountinfo
+// cannot be read (callers must treat as "no exclusions").
+func unsuitableMountPoints(infoPath string) map[string]bool {
+	out := make(map[string]bool)
+	f, err := os.Open(infoPath) // #nosec G304 — caller passes a known mountinfo path
+	if err != nil {
+		return out
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		// mountinfo format: ID PARENT MAJ:MIN ROOT MOUNTPOINT OPTS - FSTYPE SOURCE SUPEROPTS
+		// The "-" separator splits the optional fields from the FS info.
+		line := scanner.Text()
+		sepIdx := strings.Index(line, " - ")
+		if sepIdx < 0 {
+			continue
+		}
+		left := strings.Fields(line[:sepIdx])
+		right := strings.Fields(line[sepIdx+3:])
+		if len(left) < 5 || len(right) < 1 {
+			continue
+		}
+		mountPoint := unescapeMountInfo(left[4])
+		fsType := right[0]
+		if unsuitableFSTypes[fsType] {
+			out[mountPoint] = true
+		}
+	}
+	return out
 }

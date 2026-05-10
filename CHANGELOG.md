@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.05.01] - 2026-05-10
+
+### Fixed
+
+- **VM checkpoint creation now succeeds for cold (shut-off) backups.** Previously the engine called `DomainCheckpointCreateXML` against the persistent domain handle *after* `restoreDomainState()` had already destroyed the transient paused session — libvirt rejected the call with "Operation not supported: cannot create checkpoint for inactive domain", so every cold incremental/differential ran without ever recording a parent checkpoint and silently fell back to producing a full-size qcow2. Checkpoints are now created against the live (paused) `backupDom` while the transient backup session is still active, and only after the bitmap is persisted to qcow2 does the runner tear the session down. End-to-end verified against a cold Fedora VM: full = 2.3 GB, incremental and differential = 192 KB on a no-change cycle.
+- **Engine no longer reports "incremental" / "differential" when no parent checkpoint is recorded.** When the runner had no checkpoint metadata to pass (first run after a chain reset), the engine still produced a full-size backup but labelled the result `vm_backup_type: incremental`, which corrupted the chain bookkeeping. The fall-back logic now also covers the empty-parent case and downgrades `actualType` to `"full"` with a clear log entry before writing `vm_meta.json` and `result.Meta`.
+- **VM incremental backups now actually capture only changed blocks.** Previously every "incremental" or "differential" run silently produced a full copy of each qcow2 disk: the engine emitted a regular libvirt push-mode backup XML with no `<incremental>` element, and the only "incremental" behaviour was a file-mtime gate that either (a) re-copied the whole disk anyway when the VM was running (mtime always advanced) or (b) skipped the disk entirely when the VM was cold (mtime unchanged after the previous backup) — silently losing data. The engine now creates a libvirt **checkpoint** (persistent dirty bitmap stored in qcow2) after each successful backup and references it via `<incremental>parent_checkpoint</incremental>` on subsequent runs, so libvirt streams only the dirty blocks since the parent checkpoint. Restore points record the checkpoint name in `vm_checkpoints` metadata; missing-parent or non-qcow2 disks fall back to a full backup with a clear log entry. Retention cleanup deletes orphaned libvirt checkpoints. (closes the broken VM Incremental / Differential modes)
+- **Backups failing with `No space left on device` when staging to `/mnt/addons` (1 MB tmpfs).** The pool-discovery cascade in `internal/unraid/pools.go` selected any directory that exists under `/mnt/`, which on modern Unraid includes the `/mnt/addons` tmpfs mount. Pool discovery now reads `/proc/self/mountinfo` and rejects paths backed by `tmpfs`, `devtmpfs`, `ramfs`, `proc`, `sysfs`, `cgroup`, `cgroup2`, or `overlay` filesystems, so staging falls through to a real cache or array pool.
+
+### Added
+
+- VM **chain restore** for incremental and differential backups. The runner now stages each chain step into its own subdirectory and uses `qemu-img rebase -u` plus `qemu-img convert -O qcow2` to materialise a single self-contained qcow2 per disk before invoking the existing libvirt restore path. The qemu-img invocation lives in the runner package to preserve the engine package's pure-Go invariant.
+- `BackupResult.Meta` channel for engine-specific metadata. The VM engine populates it with `vm_checkpoint`, `vm_backup_type`, and (when applicable) `vm_parent_checkpoint`, which the runner persists into restore-point metadata so future backups can locate their parent checkpoint and retention can clean up libvirt-side state.
+- VM `vm_meta.json` sidecar now records `BackupType`, `Checkpoint`, `ParentCheckpoint`, and per-disk `Disks[]` entries (`Target`, `BackupFile`, `Format`) for diagnostics and forward compatibility.
+
+### Changed
+
+- Removed the legacy mtime-based `changed_since` gate from the VM backup path. Folder and container backups continue to use it. ZFS keeps its dataset-snapshot-based incremental flow unchanged.
+
+### Verified
+
+- Hot-VM backups end-to-end on a running Fedora guest: Full = 2.34 GB / 34 s (`vault-run-6`), Incremental from prior run = 3.5 MB / 1 s (`vault-run-7`), Differential from last full = 4.07 MB / 1 s (`vault-run-8`). All three runs created persistent libvirt checkpoints on the live (paused) backup session.
+- VM **chain restore** end-to-end: restored Fedora from incremental RP 7 (parent = full RP 6) using `qemu-img rebase -u` + `qemu-img convert`. The runner staged both layers, materialised a single 2.18 GiB self-contained qcow2, the engine redefined the domain and auto-started it, and the guest kernel booted successfully (balloon driver active, vCPUs accumulating CPU time).
+
 ## [2026.05.00] - 2026-05-10
 
 ### Added
