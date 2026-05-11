@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Recommended-exclusion presets for host-mount monitoring agents and Docker-socket-consuming management containers.** Adds curated `ContainerExclusionPresets` entries for **Telegraf**, **Glances**, **Netdata**, **cAdvisor**, **Prometheus node-exporter**, **Scrutiny**, **Prometheus**, **Loki**, **VictoriaMetrics**, **Uptime Kuma**, **Watchtower**, **Diun**, **Dozzle**, **Autoheal**, **Dockhand**, and **docker-socket-proxy**, and enhances the existing **Portainer** preset to include `/var/run/docker.sock`. Telegraf and Glances now ship with `/rootfs`/`/hostfs`/`/var/run/docker.sock` (and friends) so the "Load recommended exclusions" button on the Container Path Exclusions step auto-populates the exact paths needed to prevent the recursive host-filesystem walk described in #70. The existing Svelte UI flow (`fetchContainerPresets()` → `GET /api/v1/presets/exclusions?image=...`) picks up the new presets automatically — no UI change required. Verified end-to-end on Unraid: clicking the button on the Test Containers job's Glances item populated `/rootfs`, `/var/run/docker.sock`, `/etc/os-release` (3 paths) and on the telegraf item populated `/rootfs`, `/hostfs`, `/var/run/docker.sock`, `/var/run/utmp`, `/run/udev` (5 paths), with both buttons flipping to the disabled "Recommended exclusions loaded" state.
+
+### Fixed
+
+- **Container Path Exclusions now skip directory bind mounts at the volume level (closes #70).** The earlier fix (2026.05.01) only applied exclusion patterns to single-file bind mounts. Directory mounts — most notably the recursive `/` → `/rootfs` mount used by Telegraf, Netdata, cAdvisor, Glances, and Prometheus node-exporter — still entered the recursive walk and only filtered special-file inodes, so the engine eventually started archiving the host filesystem (including the array into itself) and the job hung indefinitely. Exclusion matching now runs once, up front, against every bind mount's container-side destination regardless of whether the mount is a file or a directory, mirroring the single-file behaviour the user reported as working. Verified end-to-end on Unraid with a real "Test Containers" job (Influxdb + Grafana + Glances + Telegraf, both Glances and Telegraf bind-mounting `/` → `/rootfs`): job completed in 37 s (4/4 items, 1.9 GB) with `engine: skipping volume / … matches exclusion pattern` in the daemon log, replacing a previous 13 m 37 s hang that failed at 2/4 items.
+
+### Changed
+
+- Renamed the internal helper `shouldExcludeFileMount` to `shouldExcludeMount` and hoisted the call above the `IsDir()` dispatch in `ContainerHandler.Backup()` so it covers both directory and file mounts.
+- Ansible `verify` role no longer runs the folder / VM-backup / VM-restore / deleted-VM-restore smoke tests. The folder, VM-backup, VM-restore, and deleted-VM-restore smoke task files were deleted along with their `include_tasks` entries in `verify/tasks/main.yml`. `make verify` now runs only the lightweight endpoint, CRUD, WebSocket, and MCP checks. Use `make deploy` (not `make redeploy`) for in-place binary updates that preserve the existing Unraid Vault database and `vault.cfg`.
+
 ## [2026.05.01] - 2026-05-10
 
 ### Fixed

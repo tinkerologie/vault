@@ -21,6 +21,19 @@ func TestGetExclusionPreset(t *testing.T) {
 		{"empty image", "", false, ""},
 		{"jellyseerr matches seerr", "fallenbagel/jellyseerr:latest", true, "seerr"},
 		{"home-assistant", "ghcr.io/home-assistant/home-assistant:stable", true, "home-assistant"},
+		// Host-mount monitoring agents (issue #70) — these MUST surface
+		// recommended exclusions so users don't run into recursive host
+		// filesystem walks that hang the backup job.
+		{"telegraf", "telegraf:latest", true, "telegraf"},
+		{"glances", "nicolargo/glances:latest", true, "glances"},
+		{"netdata", "netdata/netdata:stable", true, "netdata"},
+		{"cadvisor", "gcr.io/cadvisor/cadvisor:v0.49.1", true, "cadvisor"},
+		{"node-exporter", "prom/node-exporter:v1.7.0", true, "node-exporter"},
+		{"scrutiny", "ghcr.io/analogj/scrutiny:master-omnibus", true, "scrutiny"},
+		// Docker socket consumers.
+		{"watchtower", "containrrr/watchtower:latest", true, "watchtower"},
+		{"dozzle", "amir20/dozzle:latest", true, "dozzle"},
+		{"dockhand", "ghcr.io/scottyhardy/dockhand:latest", true, "dockhand"},
 	}
 
 	for _, tt := range tests {

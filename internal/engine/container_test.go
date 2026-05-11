@@ -499,11 +499,13 @@ func containsEntry(names []string, target string) bool {
 	return false
 }
 
-// TestShouldExcludeFileMount covers the exclusion semantics for file-based
-// bind mounts (issue #70). The user reported six pattern variants that all
-// failed silently when applied to /var/run/docker.sock; this table exercises
-// each form.
-func TestShouldExcludeFileMount(t *testing.T) {
+// TestShouldExcludeMount covers the exclusion semantics for bind mounts
+// (issue #70). The original report identified six pattern variants that all
+// failed silently when applied to /var/run/docker.sock; the follow-up report
+// identified that directory mounts (e.g. recursive `/` -> `/rootfs`) were
+// also not honoured. This table exercises each form for both single-file
+// and directory destinations.
+func TestShouldExcludeMount(t *testing.T) {
 	tests := []struct {
 		name        string
 		exclusions  []string
@@ -523,13 +525,21 @@ func TestShouldExcludeFileMount(t *testing.T) {
 		{"empty pattern entries skipped", []string{"", "/var/run/docker.sock"}, "/var/run/docker.sock", true},
 		{"trailing slash on parent", []string{"/var/run/"}, "/var/run/docker.sock", true},
 		{"sibling not excluded by parent prefix string", []string{"/var/runtime"}, "/var/run/docker.sock", false},
+		// Directory-mount cases (issue #70 follow-up): containers like
+		// Telegraf bind-mount `/` -> `/rootfs` and the user expects an
+		// exclusion of `/rootfs` to skip the whole volume.
+		{"directory mount exact match", []string{"/rootfs"}, "/rootfs", true},
+		{"directory mount with trailing slash", []string{"/rootfs/"}, "/rootfs", true},
+		{"directory mount basename", []string{"rootfs"}, "/rootfs", true},
+		{"directory mount glob", []string{"/rootfs*"}, "/rootfs", true},
+		{"unrelated directory not excluded", []string{"/rootfs"}, "/config", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldExcludeFileMount(tt.exclusions, tt.destination)
+			got := shouldExcludeMount(tt.exclusions, tt.destination)
 			if got != tt.want {
-				t.Errorf("shouldExcludeFileMount(%v, %q) = %v, want %v",
+				t.Errorf("shouldExcludeMount(%v, %q) = %v, want %v",
 					tt.exclusions, tt.destination, got, tt.want)
 			}
 		})

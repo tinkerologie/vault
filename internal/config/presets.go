@@ -158,6 +158,93 @@ var ContainerExclusionPresets = map[string][]string{
 		"*.log",
 		"/var/lib/influxdb/wal",
 	},
+	// Host-mount monitoring agents — these bind-mount the host root and/or
+	// /proc, /sys, /var/run/docker.sock. Without these exclusions the engine
+	// would attempt to recurse the entire host filesystem (including the
+	// Unraid array into itself) and the job will hang indefinitely
+	// (issue #70).
+	"telegraf": {
+		"/rootfs",
+		"/hostfs",
+		"/var/run/docker.sock",
+		"/var/run/utmp",
+		"/run/udev",
+	},
+	"glances": {
+		"/rootfs",
+		"/var/run/docker.sock",
+		"/etc/os-release",
+	},
+	"netdata": {
+		"/host",
+		"/hostfs",
+		"/etcfs",
+		"/var/run/docker.sock",
+		"/var/cache/netdata",
+		"/var/log/netdata",
+	},
+	"cadvisor": {
+		"/rootfs",
+		"/var/run/docker.sock",
+		"/var/lib/docker",
+		"/cgroup",
+		"/sys/fs/cgroup",
+	},
+	"node-exporter": {
+		"/host",
+		"/rootfs",
+		"/hostfs",
+	},
+	"node_exporter": {
+		"/host",
+		"/rootfs",
+		"/hostfs",
+	},
+	"scrutiny": {
+		"/run/udev",
+		"/var/run/docker.sock",
+	},
+	"prometheus": {
+		"/prometheus/wal",
+		"/prometheus/chunks_head",
+		"*.log",
+	},
+	"loki": {
+		"/loki/wal",
+		"/loki/chunks",
+		"*.log",
+	},
+	"victoriametrics": {
+		"/victoria-metrics-data/tmp",
+		"*.log",
+	},
+	"uptime-kuma": {
+		"/app/data/upload",
+		"*.log",
+	},
+
+	// Docker management / agent containers — bind-mount the Docker socket
+	// and often /var/lib/docker. Backing up the socket fails the tar header
+	// stage; /var/lib/docker is huge and never useful to back up via these
+	// containers.
+	"dockhand": {
+		"/var/run/docker.sock",
+	},
+	"watchtower": {
+		"/var/run/docker.sock",
+	},
+	"diun": {
+		"/var/run/docker.sock",
+	},
+	"dozzle": {
+		"/var/run/docker.sock",
+	},
+	"autoheal": {
+		"/var/run/docker.sock",
+	},
+	"docker-socket-proxy": {
+		"/var/run/docker.sock",
+	},
 
 	// DNS/Ad-blocking
 	"pihole": {
@@ -179,6 +266,7 @@ var ContainerExclusionPresets = map[string][]string{
 
 	// Misc
 	"portainer": {
+		"/var/run/docker.sock",
 		"*.log",
 	},
 	"syncthing": {

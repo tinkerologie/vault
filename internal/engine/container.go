@@ -161,19 +161,19 @@ func shouldExcludePath(relPath string, exclusions []string) bool {
 	return false
 }
 
-// shouldExcludeFileMount reports whether a file-based bind mount should be
-// excluded based on user-provided exclusion patterns. Mirrors the matching
-// logic of shouldExcludePath (used inside directory walks) so users get
-// consistent semantics no matter whether a bind mount is a directory or a
-// single file. Supported pattern forms:
+// shouldExcludeMount reports whether a bind mount (directory or single file)
+// should be excluded entirely based on user-provided exclusion patterns.
+// Mirrors the matching logic of shouldExcludePath (used inside directory
+// walks) so users get consistent semantics regardless of whether a bind
+// mount is a directory or a single file. Supported pattern forms:
 //
-//   - Exact absolute path                  (e.g. /var/run/docker.sock)
+//   - Exact absolute path                  (e.g. /var/run/docker.sock, /rootfs)
 //   - Parent directory (with or without /) (e.g. /var/run)
 //   - Basename                             (e.g. docker.sock)
 //   - Glob against full path or basename   (e.g. *docker.sock*, *.log)
 //
 // (issue #70)
-func shouldExcludeFileMount(exclusions []string, mountDestination string) bool {
+func shouldExcludeMount(exclusions []string, mountDestination string) bool {
 	if len(exclusions) == 0 || mountDestination == "" {
 		return false
 	}
@@ -430,6 +430,22 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				return fmt.Errorf("stat volume %s: %w", mount.Source, err)
 			}
 
+			// Honour exclusion patterns at the volume level for BOTH directory
+			// and file mounts. Historically this check only applied to
+			// file-based mounts, which meant exclusions like `/rootfs` for
+			// containers that bind-mount the host root (Telegraf, Netdata,
+			// cAdvisor, Glances, node-exporter) were ignored — the engine
+			// recursed into the entire host filesystem and hung. Applying the
+			// check up-front matches the semantics users expect from the UI
+			// hint ("absolute container paths"). (issue #70)
+			if shouldExcludeMount(exclusions, mount.Destination) {
+				log.Printf("engine: skipping volume %s for %s: matches exclusion pattern", mount.Source, item.Name)
+				entry.BackedUp = false
+				entry.SkipReason = "matches exclusion pattern"
+				manifest = append(manifest, entry)
+				continue
+			}
+
 			if srcInfo.IsDir() {
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
 
@@ -463,18 +479,9 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 					continue
 				}
 
-				// Honour exclusion patterns for file-based bind mounts. The
-				// directory tar functions already evaluate exclusions at the
-				// file-walk stage; doing the same here gives users consistent
-				// behaviour regardless of whether a bind mount is a directory
-				// or a single file (issue #70).
-				if shouldExcludeFileMount(exclusions, mount.Destination) {
-					log.Printf("engine: skipping volume %s for %s: matches exclusion pattern", mount.Source, item.Name)
-					entry.BackedUp = false
-					entry.SkipReason = "matches exclusion pattern"
-					manifest = append(manifest, entry)
-					continue
-				}
+				// Honour exclusion patterns for file-based bind mounts is
+				// already handled at the volume level above via
+				// shouldExcludeMount (issue #70).
 
 				if err := tarFile(ctx, mount.Source, volDest); err != nil {
 					return fmt.Errorf("archiving volume file %s: %w", mount.Source, err)
