@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.05.02] - 2026-05-13
+
 ### Added
 
 - **Recommended-exclusion presets for host-mount monitoring agents and Docker-socket-consuming management containers.** Adds curated `ContainerExclusionPresets` entries for **Telegraf**, **Glances**, **Netdata**, **cAdvisor**, **Prometheus node-exporter**, **Scrutiny**, **Prometheus**, **Loki**, **VictoriaMetrics**, **Uptime Kuma**, **Watchtower**, **Diun**, **Dozzle**, **Autoheal**, **Dockhand**, and **docker-socket-proxy**, and enhances the existing **Portainer** preset to include `/var/run/docker.sock`. Telegraf and Glances now ship with `/rootfs`/`/hostfs`/`/var/run/docker.sock` (and friends) so the "Load recommended exclusions" button on the Container Path Exclusions step auto-populates the exact paths needed to prevent the recursive host-filesystem walk described in #70. The existing Svelte UI flow (`fetchContainerPresets()` → `GET /api/v1/presets/exclusions?image=...`) picks up the new presets automatically — no UI change required. Verified end-to-end on Unraid: clicking the button on the Test Containers job's Glances item populated `/rootfs`, `/var/run/docker.sock`, `/etc/os-release` (3 paths) and on the telegraf item populated `/rootfs`, `/hostfs`, `/var/run/docker.sock`, `/var/run/utmp`, `/run/udev` (5 paths), with both buttons flipping to the disabled "Recommended exclusions loaded" state.
@@ -17,7 +19,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - Renamed the internal helper `shouldExcludeFileMount` to `shouldExcludeMount` and hoisted the call above the `IsDir()` dispatch in `ContainerHandler.Backup()` so it covers both directory and file mounts.
-- Ansible `verify` role no longer runs the folder / VM-backup / VM-restore / deleted-VM-restore smoke tests. The folder, VM-backup, VM-restore, and deleted-VM-restore smoke task files were deleted along with their `include_tasks` entries in `verify/tasks/main.yml`. `make verify` now runs only the lightweight endpoint, CRUD, WebSocket, and MCP checks. Use `make deploy` (not `make redeploy`) for in-place binary updates that preserve the existing Unraid Vault database and `vault.cfg`.
 
 ## [2026.05.01] - 2026-05-10
 
