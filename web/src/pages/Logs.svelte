@@ -16,6 +16,10 @@
   let levelFilter = $state('')
   let limit = $state(100)
   let expandedIds = $state(new SvelteSet())
+  // IDs we've auto-expanded for errors. Prevents auto-expand from undoing a
+  // user collapse on the next refresh, and prevents user-expanded non-error
+  // rows from getting wiped when the 5s poll re-renders the list (#83).
+  let autoExpandedIds = $state(new SvelteSet())
   let autoScroll = $state(true)
   let logContainer = $state(null)
   let copiedId = $state(null)
@@ -30,9 +34,10 @@
         if (category && msg.entry.category !== category) return
         if (!entries.some(e => e.id === msg.entry.id)) {
           entries = [msg.entry, ...entries].slice(0, limit)
-          // Auto-expand errors
-          if (msg.entry.level === 'error' && msg.entry.details) {
+          // Auto-expand errors once; user can collapse and it stays collapsed.
+          if (msg.entry.level === 'error' && msg.entry.details && !autoExpandedIds.has(msg.entry.id)) {
             expandedIds.add(msg.entry.id)
+            autoExpandedIds.add(msg.entry.id)
           }
           if (autoScroll && logContainer) {
             requestAnimationFrame(() => logContainer.scrollTop = 0)
@@ -68,10 +73,21 @@
     loading = true
     try {
       entries = (await api.getActivity(limit, category)) || []
-      expandedIds.clear()
-      // Auto-expand errors
+      // Preserve user expand/collapse choices across the 5s auto-refresh.
+      // Only auto-expand errors we haven't seen before, and drop tracking
+      // state for entries that have aged out of the list.
+      const presentIds = new Set(entries.map(e => e.id))
+      for (const id of [...expandedIds]) {
+        if (!presentIds.has(id)) expandedIds.delete(id)
+      }
+      for (const id of [...autoExpandedIds]) {
+        if (!presentIds.has(id)) autoExpandedIds.delete(id)
+      }
       for (const e of entries) {
-        if (e.level === 'error' && e.details) expandedIds.add(e.id)
+        if (e.level === 'error' && e.details && !autoExpandedIds.has(e.id)) {
+          expandedIds.add(e.id)
+          autoExpandedIds.add(e.id)
+        }
       }
     } catch (e) {
       error = e.message || 'Failed to load activity log'

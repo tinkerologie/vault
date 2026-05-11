@@ -424,7 +424,10 @@
                 {/if}
               </div>
               <div class="flex items-center gap-2">
-                <span class="text-xs text-text-dim" title={relTime(rp.created_at)}>{formatDate(rp.created_at)}</span>
+                <span class="text-xs text-text-dim" title={relTime(rp.created_at)}>
+                  {formatDate(rp.created_at)}
+                  <span class="text-text-muted">· {relTime(rp.created_at)}</span>
+                </span>
                 <button
                   type="button"
                   onclick={(e) => { e.stopPropagation(); deleteRestorePoint(rp) }}

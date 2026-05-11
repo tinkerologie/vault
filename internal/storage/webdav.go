@@ -1,13 +1,18 @@
 package storage
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/safepath"
@@ -26,6 +31,21 @@ type WebDAVConfig struct {
 	Password           string `json:"password"`             // Optional.
 	BasePath           string `json:"base_path"`            // Optional sub-directory under URL.
 	InsecureSkipVerify bool   `json:"insecure_skip_verify"` // Skip TLS cert validation (self-signed certs).
+
+	// TimeoutSeconds is an optional overall request lifetime cap. It maps to
+	// http.Client.Timeout and includes connect + TLS + headers + body
+	// transfer. The default of 0 means **unlimited** so multi-GB uploads
+	// over slow WAN links can complete; stuck connections are still detected
+	// via the per-phase transport timeouts (dial, TLS handshake, response
+	// headers) plus the stall watchdog below. Power-users can set this for
+	// a hard ceiling per request. (closes #83 comment)
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+
+	// StallTimeoutSeconds aborts an in-flight upload if no bytes flow for
+	// this many seconds. Default is 300 (5 minutes). Set to a negative
+	// value to disable. This is the primary safety net against hung TCP
+	// connections that the OS keepalive has not yet torn down.
+	StallTimeoutSeconds int `json:"stall_timeout_seconds,omitempty"`
 }
 
 // String redacts the Password field so accidental logging via fmt verbs
@@ -37,8 +57,8 @@ func (c WebDAVConfig) String() string {
 	if c.Password != "" {
 		pw = "<redacted>"
 	}
-	return fmt.Sprintf("WebDAVConfig{URL:%q Username:%q Password:%s BasePath:%q InsecureSkipVerify:%t}",
-		c.URL, c.Username, pw, c.BasePath, c.InsecureSkipVerify)
+	return fmt.Sprintf("WebDAVConfig{URL:%q Username:%q Password:%s BasePath:%q InsecureSkipVerify:%t TimeoutSeconds:%d StallTimeoutSeconds:%d}",
+		c.URL, c.Username, pw, c.BasePath, c.InsecureSkipVerify, c.TimeoutSeconds, c.StallTimeoutSeconds)
 }
 
 // MarshalJSON ensures structured loggers (e.g. encoding/json wrappers) cannot
@@ -79,17 +99,143 @@ func NewWebDAVAdapter(cfg WebDAVConfig) (*WebDAVAdapter, error) {
 	return &WebDAVAdapter{config: cfg}, nil
 }
 
-// client builds a fresh WebDAV client. Sets a sensible HTTP timeout so a
-// hung server cannot block the daemon indefinitely.
+// client builds a fresh WebDAV client.
+//
+// The previous implementation called gowebdav.Client.SetTimeout(60s), which
+// translates to http.Client.Timeout — a deadline that covers the *entire*
+// request lifetime including the upload body. That made multi-GB PUTs over
+// any real WAN link impossible (closes #83 comment from @SebboGit:
+// "context deadline exceeded ... Client.Timeout exceeded while awaiting
+// headers" on a 20-container backup to Hetzner Storage Box).
+//
+// We now use a custom http.Transport with **phase-specific** timeouts:
+//
+//   - TCP dial: 30 s (cheap, network-level)
+//   - TLS handshake: 30 s
+//   - Expect-Continue: 5 s
+//   - Response headers: 5 min (applies AFTER body is fully sent; some servers
+//     buffer the upload to disk before responding)
+//   - Idle keep-alive: 90 s
+//   - TCP keepalive: 30 s (OS-level dead-peer detection)
+//
+// We deliberately leave http.Client.Timeout at 0 (unlimited) by default,
+// because the upload body transfer has no upper bound that depends on
+// anything other than file size and link speed. Stuck/dead connections are
+// still caught by the dial/TLS/header timeouts and by the stall watchdog
+// wrapped around the upload reader in Write().
+//
+// Power-users can still cap total request lifetime via TimeoutSeconds.
 func (w *WebDAVAdapter) client() *gowebdav.Client {
 	c := gowebdav.NewAuthClient(w.config.URL, gowebdav.NewAutoAuth(w.config.Username, w.config.Password))
-	c.SetTimeout(60 * time.Second)
-	if w.config.InsecureSkipVerify {
-		c.SetTransport(&http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 — opt-in flag for self-signed servers
-		})
+
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ExpectContinueTimeout: 5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Minute,
 	}
+	if w.config.InsecureSkipVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 — opt-in flag for self-signed servers
+	}
+	c.SetTransport(transport)
+
+	if w.config.TimeoutSeconds > 0 {
+		c.SetTimeout(time.Duration(w.config.TimeoutSeconds) * time.Second)
+	}
+	// else: leave http.Client.Timeout at its default 0 (no overall deadline).
 	return c
+}
+
+// stallTimeout returns the configured no-progress upload abort window, or
+// 5 minutes if unset. A negative value disables the watchdog entirely.
+func (w *WebDAVAdapter) stallTimeout() time.Duration {
+	switch {
+	case w.config.StallTimeoutSeconds < 0:
+		return 0
+	case w.config.StallTimeoutSeconds == 0:
+		return 5 * time.Minute
+	default:
+		return time.Duration(w.config.StallTimeoutSeconds) * time.Second
+	}
+}
+
+// stallReader wraps an io.Reader and records the timestamp of every
+// successful Read. A companion goroutine polls the timestamp and, if no
+// bytes have flowed for `timeout`, closes a sentinel pipe that causes the
+// next Read to return ErrUploadStalled. This aborts the underlying HTTP
+// PUT promptly without depending on a fixed overall deadline.
+type stallReader struct {
+	src      io.Reader
+	lastNano atomic.Int64 // unix nano of last successful Read
+	timeout  time.Duration
+	cancel   context.CancelFunc
+	stalled  atomic.Bool
+}
+
+// ErrUploadStalled signals that an upload was aborted because no bytes
+// were transferred within the configured stall timeout.
+var ErrUploadStalled = errors.New("webdav: upload stalled (no progress for stall_timeout window)")
+
+func newStallReader(src io.Reader, timeout time.Duration) *stallReader {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &stallReader{src: src, timeout: timeout, cancel: cancel}
+	r.lastNano.Store(time.Now().UnixNano())
+	if timeout > 0 {
+		go r.watch(ctx)
+	}
+	return r
+}
+
+func (r *stallReader) watch(ctx context.Context) {
+	// Poll at min(timeout/4, 30s); cheap and prompt enough.
+	interval := r.timeout / 4
+	if interval > 30*time.Second {
+		interval = 30 * time.Second
+	}
+	if interval < time.Second {
+		interval = time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			last := time.Unix(0, r.lastNano.Load())
+			if now.Sub(last) >= r.timeout {
+				log.Printf("webdav: upload stalled — no bytes for %s, aborting", now.Sub(last).Round(time.Second))
+				r.stalled.Store(true)
+				return
+			}
+		}
+	}
+}
+
+func (r *stallReader) Read(p []byte) (int, error) {
+	if r.stalled.Load() {
+		return 0, ErrUploadStalled
+	}
+	n, err := r.src.Read(p)
+	if n > 0 {
+		r.lastNano.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+func (r *stallReader) Close() error {
+	r.cancel()
+	if closer, ok := r.src.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 // fullPath joins the configured base path with an operation-supplied path,
@@ -125,7 +271,17 @@ func (w *WebDAVAdapter) Write(p string, reader io.Reader) error {
 			return fmt.Errorf("webdav: mkdir %s: %w", dir, err)
 		}
 	}
-	if err := c.WriteStream(full, reader, 0640); err != nil {
+	// Wrap the reader in a stall watchdog so we abort hung uploads promptly
+	// instead of relying on the OS keepalive (which can take minutes). The
+	// watchdog has no fixed deadline; it only fires when no bytes flow for
+	// the configured window, so slow-but-progressing transfers of any size
+	// will complete. (See client() comment block for #83 background.)
+	sr := newStallReader(reader, w.stallTimeout())
+	defer sr.cancel()
+	if err := c.WriteStream(full, sr, 0640); err != nil {
+		if sr.stalled.Load() {
+			return fmt.Errorf("webdav: write %s: %w", full, ErrUploadStalled)
+		}
 		return fmt.Errorf("webdav: write %s: %w", full, err)
 	}
 	return nil

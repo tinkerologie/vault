@@ -1317,6 +1317,43 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 	// backoff entry (so 3 backoff entries == 4 attempts).
 	maxAttempts := len(backoffs) + 1
 	checksums := make(map[string]string)
+	// Best-effort cleanup of partially-uploaded files when the overall upload
+	// fails (transient errors exhausted, ctx cancelled, or verify mismatch).
+	// Leaving these behind wastes remote storage quota and confuses the next
+	// run because the storagePath looks "half done". We log but do not surface
+	// delete errors — the original upload failure is what the caller cares
+	// about. See issue #83 follow-up.
+	cleanupPartial := func(extra ...string) {
+		seen := make(map[string]struct{}, len(checksums)+len(extra))
+		paths := make([]string, 0, len(checksums)+len(extra))
+		for name := range checksums {
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			paths = append(paths, name)
+		}
+		for _, name := range extra {
+			if name == "" {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			paths = append(paths, name)
+		}
+		if len(paths) == 0 {
+			return
+		}
+		log.Printf("runner: cleaning up %d partial upload(s) under %s after failure", len(paths), storagePath)
+		for _, name := range paths {
+			p := filepath.Join(storagePath, name)
+			if delErr := adapter.Delete(p); delErr != nil {
+				log.Printf("runner: cleanup: failed to delete orphaned %s: %v", p, delErr)
+			}
+		}
+	}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -1332,6 +1369,7 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 				progress(0, fmt.Sprintf("Retrying %s in %s (attempt %d/%d): %v", entry.Name(), wait, attempt+1, maxAttempts, lastErr))
 				select {
 				case <-ctx.Done():
+					cleanupPartial(storageName)
 					return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
 				case <-time.After(wait):
 				}
@@ -1341,11 +1379,13 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 				break
 			}
 			if ctx.Err() != nil {
+				cleanupPartial(storageName)
 				return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
 			}
 			log.Printf("runner: upload attempt %d/%d for %s failed: %v", attempt+1, maxAttempts, entry.Name(), lastErr)
 		}
 		if lastErr != nil {
+			cleanupPartial(storageName)
 			return nil, lastErr
 		}
 		checksums[storageName] = checksum
@@ -1357,16 +1397,19 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 			destPath := filepath.Join(storagePath, fileName)
 			reader, err := adapter.Read(destPath)
 			if err != nil {
+				cleanupPartial()
 				return nil, fmt.Errorf("verification read %s: %w", fileName, err)
 			}
 			verifyHasher := sha256.New()
 			if _, err := io.Copy(verifyHasher, reader); err != nil {
 				_ = reader.Close()
+				cleanupPartial()
 				return nil, fmt.Errorf("verification hash %s: %w", fileName, err)
 			}
 			_ = reader.Close()
 			actualHash := hex.EncodeToString(verifyHasher.Sum(nil))
 			if actualHash != expectedHash {
+				cleanupPartial()
 				return nil, fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash)
 			}
 		}

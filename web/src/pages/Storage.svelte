@@ -245,7 +245,7 @@
       sftp: { host: '', port: 22, user: '', password: '', base_path: '' },
       smb: { host: '', share: '', user: '', password: '', base_path: '' },
       nfs: { host: '', export: '', base_path: '', version: '4', options: '' },
-      webdav: { url: '', username: '', password: '', base_path: '', insecure_skip_verify: false },
+      webdav: { url: '', username: '', password: '', base_path: '', insecure_skip_verify: false, timeout_seconds: 0, stall_timeout_seconds: 300 },
       s3: { bucket: '', region: '', access_key: '', secret_key: '', endpoint: '', base_path: '', force_path_style: false },
     }
     // Reassign the full form object so Svelte always re-renders the keyed
@@ -535,6 +535,29 @@
         Allow self-signed TLS certificates
         <Tooltip text="Skip TLS certificate validation. Only enable for trusted private servers using self-signed certificates." />
       </label>
+      <details class="group">
+        <summary class="text-sm font-medium text-text-muted hover:text-text cursor-pointer select-none">
+          Advanced &middot; Timeouts
+        </summary>
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <div>
+            <label for="dav_stall" class="block text-sm font-medium text-text-muted mb-1.5">
+              Stall timeout (seconds)
+              <Tooltip text="Abort an upload if no bytes flow for this many seconds. Default 300 (5 min). Set to -1 to disable. Multi-GB uploads of any size complete as long as data keeps moving." />
+            </label>
+            <input id="dav_stall" type="number" bind:value={form.config.stall_timeout_seconds} placeholder="300" min="-1"
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          </div>
+          <div>
+            <label for="dav_overall" class="block text-sm font-medium text-text-muted mb-1.5">
+              Overall request timeout (seconds)
+              <Tooltip text="Hard ceiling on every WebDAV request including upload body. Default 0 = unlimited (recommended). Only set a value if you understand it must accommodate the largest single file upload over your slowest link." />
+            </label>
+            <input id="dav_overall" type="number" bind:value={form.config.timeout_seconds} placeholder="0 (unlimited)" min="0"
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          </div>
+        </div>
+      </details>
     {:else if form.type === 's3'}
       <div class="grid grid-cols-2 gap-3">
         <div>

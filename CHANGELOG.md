@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Restore wizard "Choose Version" step now shows the absolute date alongside the relative offset inline (closes #81 follow-up from @SebboGit).** The previous fix relied on a native `title` tooltip to surface the relative time on hover, but native browser tooltips were unreliable on the parent button row (Firefox in particular suppresses them when the `<span>` lives inside a `role="button"`/`cursor: pointer` ancestor). Both forms are now rendered together as `12 May 2026, 02:09 am · 7h ago`, giving an unambiguous absolute timestamp with the relative offset always visible — no hover required, works on touch.
+- **Logs page no longer collapses expanded "Details" rows every 5 s during auto-refresh.** `loadLogs()` previously called `expandedIds.clear()` on every poll cycle and re-added only error rows, so any non-error row a user had manually expanded was wiped on the next refresh. The expanded set is now preserved across reloads, entries that have aged out of the visible window are pruned, and the auto-expand-error behaviour now tracks a separate "already auto-expanded" set so collapsing an auto-expanded error keeps it collapsed.
+- **Failed backup jobs no longer leave orphaned partial uploads at the storage destination.** When `uploadStagedFiles` exhausted its 4-attempt retry loop (or hit a verify mismatch or ctx cancellation), it returned an error without cleaning up the per-item files it had already successfully uploaded, or the partially-written bytes from the failing item. This wasted remote-storage quota (especially painful on quota-bounded providers like Hetzner Storage Box) and made the destination directory look "half done" to the next run. The runner now performs best-effort `adapter.Delete()` on every known partial file before returning the error. Cleanup failures are logged but never mask the original upload error.
+- **WebDAV uploads of multi-GB files no longer fail with `context deadline exceeded ... Client.Timeout exceeded while awaiting headers` (closes #83 follow-up from @SebboGit).** The WebDAV adapter previously called `gowebdav.Client.SetTimeout(60*time.Second)`, which maps to `http.Client.Timeout` — a single deadline that covers the **entire** request lifetime, including the upload body. A 20-container backup to Hetzner Storage Box repeatedly failed during the upload-retry loop (4× exponential-backoff attempts per item, all timing out at the same 60 s mark), eventually crashing the daemon. The fixed 60 s deadline is replaced with **phase-specific** `http.Transport` timeouts that do not bound body-transfer duration:
+  - TCP dial 30 s, TCP keepalive 30 s
+  - TLS handshake 30 s
+  - Expect-Continue 5 s
+  - Response headers 5 min (applies AFTER the body is fully sent)
+  - Idle keep-alive 90 s
+  - `http.Client.Timeout` left at 0 (unlimited) by default
+
+  In addition, every upload reader is now wrapped in a stall watchdog: it records the timestamp of every successful `Read()` and aborts the PUT with `webdav: upload stalled` when no bytes flow for the configured window (default **300 s / 5 min**). Slow-but-progressing transfers of any size succeed; truly dead connections still fail promptly without depending on the OS keepalive.
+
+### Added
+
+- **Two new optional WebDAV config fields exposed in the Storage form under "Advanced · Timeouts":**
+  - `timeout_seconds` — overall hard ceiling on every WebDAV request including upload body. Default 0 = unlimited (recommended). Power users can set a value if they want a strict per-request cap.
+  - `stall_timeout_seconds` — abort an upload if no bytes flow for this many seconds. Default 300 (5 min). Set to a negative value to disable the watchdog entirely.
+
 ## [2026.05.02] - 2026-05-13
 
 ### Added
