@@ -37,6 +37,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Renamed the internal helper `shouldExcludeFileMount` to `shouldExcludeMount` and hoisted the call above the `IsDir()` dispatch in `ContainerHandler.Backup()` so it covers both directory and file mounts.
 
+### Security
+
+- **Bumped Go toolchain to 1.26.3 and `golang.org/x/net` to v0.53.0 to address two `govulncheck` findings.** `GO-2026-4971` (net: panic in `Dial`/`LookupPort` on Windows when handling NUL bytes — stdlib, fixed in Go 1.26.3) and `GO-2026-4918` (HTTP/2 transport infinite loop on bad `SETTINGS_MAX_FRAME_SIZE` — both stdlib and `golang.org/x/net`, fixed in Go 1.26.3 / `x/net` v0.53.0). `make security-check` (gosec + govulncheck + `go mod verify`) is now clean: 0 gosec issues, 0 vulnerabilities, all modules verified.
+
 ## [2026.05.01] - 2026-05-10
 
 ### Fixed
