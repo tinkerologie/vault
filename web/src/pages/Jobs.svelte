@@ -830,6 +830,11 @@
               <option value="gzip">Gzip</option>
               <option value="zstd">Zstandard (recommended)</option>
             </select>
+            <p class="text-xs text-text-dim mt-1">
+              {form.compression === 'none' ? 'No compression — fastest backup with zero CPU overhead but largest size. Best for pre-compressed content like media files or already-encrypted blobs.' :
+               form.compression === 'gzip' ? 'Universal compatibility, moderate compression ratio and speed. Good when archives need to be opened by other tools.' :
+               form.compression === 'zstd' ? 'Best all-rounder: better compression than gzip and roughly 3–5× faster. Recommended for container images and large volumes.' : ''}
+            </p>
           </div>
           <div>
             <label for="encryption" class="block text-sm font-medium text-text-muted mb-1.5">Encryption</label>

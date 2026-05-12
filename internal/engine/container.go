@@ -2,7 +2,6 @@ package engine
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -370,16 +369,28 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			if err != nil {
 				return fmt.Errorf("saving image: %w", err)
 			}
-			imagePath := filepath.Join(destDir, "image.tar")
+			imagePath := filepath.Join(destDir, "image.tar"+archiveExt(item.Compression))
 			imgFile, err := os.Create(imagePath) // #nosec G304 — destDir is vault-controlled temp directory
 			if err != nil {
 				_ = imgReader.Close()
 				return fmt.Errorf("creating image file: %w", err)
 			}
-			if _, err := io.Copy(imgFile, imgReader); err != nil {
+			cw, closeCompress, cwErr := compressedWriter(imgFile, item.Compression)
+			if cwErr != nil {
+				_ = imgFile.Close()
+				_ = imgReader.Close()
+				return cwErr
+			}
+			if _, err := io.Copy(cw, imgReader); err != nil {
+				_ = closeCompress()
 				_ = imgFile.Close()
 				_ = imgReader.Close()
 				return fmt.Errorf("writing image: %w", err)
+			}
+			if err := closeCompress(); err != nil {
+				_ = imgFile.Close()
+				_ = imgReader.Close()
+				return fmt.Errorf("finalising image compression: %w", err)
 			}
 			_ = imgFile.Close()
 			_ = imgReader.Close()
@@ -421,7 +432,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				}
 			}
 
-			archiveName := fmt.Sprintf("volume_%d.tar.gz", i)
+			archiveName := fmt.Sprintf("volume_%d.tar%s", i, archiveExt(item.Compression))
 			volDest := filepath.Join(destDir, archiveName)
 
 			// Detect file-based bind mounts (e.g. Tailscale hook files).
@@ -450,11 +461,11 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
 
 				if hasChangedSince {
-					if err := tarDirectoryFiltered(ctx, mount.Source, volDest, changedSince, volExclusions); err != nil {
+					if err := tarDirectoryFiltered(ctx, mount.Source, volDest, changedSince, volExclusions, item.Compression); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				} else {
-					if err := tarDirectory(ctx, mount.Source, volDest, volExclusions); err != nil {
+					if err := tarDirectory(ctx, mount.Source, volDest, volExclusions, item.Compression); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				}
@@ -483,7 +494,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				// already handled at the volume level above via
 				// shouldExcludeMount (issue #70).
 
-				if err := tarFile(ctx, mount.Source, volDest); err != nil {
+				if err := tarFile(ctx, mount.Source, volDest, item.Compression); err != nil {
 					return fmt.Errorf("archiving volume file %s: %w", mount.Source, err)
 				}
 				entry.IsFile = true
@@ -578,14 +589,24 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 
 	// Step 1: Load image.
 	progress(item.Name, 5, "loading image")
-	imagePath := filepath.Join(sourceDir, "image.tar")
-	imgFile, err := os.Open(imagePath) // #nosec G304 — sourceDir is vault-controlled temp directory
+	imagePath, err := findArchive(sourceDir, "image.tar")
+	if err != nil {
+		return fmt.Errorf("locating image archive: %w", err)
+	}
+	imgFile, err := os.Open(imagePath) // #nosec G304 — sourceDir is vault-controlled temp directory; findArchive only returns sourceDir-rooted paths
 	if err != nil {
 		return fmt.Errorf("opening image file: %w", err)
 	}
 	defer imgFile.Close()
 
-	resp, err := h.cli.ImageLoad(ctx, imgFile)
+	// Auto-detect compression so we can hand a plain-tar stream to docker.
+	imgReader, closeImgDecompress, err := detectingReader(imgFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeImgDecompress() }()
+
+	resp, err := h.cli.ImageLoad(ctx, imgReader)
 	if err != nil {
 		return fmt.Errorf("loading image: %w", err)
 	}
@@ -688,8 +709,8 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		if mount.Type != "bind" {
 			continue
 		}
-		volArchive := filepath.Join(sourceDir, fmt.Sprintf("volume_%d.tar.gz", i))
-		if _, err := os.Stat(volArchive); err != nil {
+		volArchive, err := findArchive(sourceDir, fmt.Sprintf("volume_%d.tar", i))
+		if err != nil {
 			// Check manifest to explain why.
 			for _, me := range savedManifest {
 				if me.Index == i && !me.BackedUp {
@@ -908,9 +929,10 @@ func contextCopy(ctx context.Context, dst io.Writer, src io.Reader) (int64, erro
 	}
 }
 
-// tarFile creates a gzip-compressed tar archive containing a single file.
-// Used for file-based bind mounts (e.g. Tailscale container hook).
-func tarFile(ctx context.Context, srcPath, destPath string) error {
+// tarFile creates a tar archive (optionally compressed via compression) at
+// destPath containing a single file from srcPath. Used for file-based bind
+// mounts (e.g. Tailscale container hook).
+func tarFile(ctx context.Context, srcPath, destPath, compression string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -926,10 +948,13 @@ func tarFile(ctx context.Context, srcPath, destPath string) error {
 	}
 	defer outFile.Close()
 
-	gw := gzip.NewWriter(outFile)
-	defer gw.Close()
+	cw, closeCompress, err := compressedWriter(outFile, compression)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeCompress() }()
 
-	tw := tar.NewWriter(gw)
+	tw := tar.NewWriter(cw)
 	defer tw.Close()
 
 	header, err := tar.FileInfoHeader(info, "")
@@ -955,8 +980,10 @@ func tarFile(ctx context.Context, srcPath, destPath string) error {
 	return nil
 }
 
-// untarFile extracts the first regular file from a gzip-compressed tar archive
-// and writes it to destPath. Used for restoring file-based bind mounts.
+// untarFile extracts the first regular file from a tar archive and writes it
+// to destPath. The archive may be plain, gzip-compressed, or zstd-compressed —
+// the compression layer is auto-detected from the leading magic bytes. Used
+// for restoring file-based bind mounts.
 func untarFile(ctx context.Context, srcPath, destPath string) error {
 	inFile, err := os.Open(srcPath) // #nosec G304 — srcPath is sourceDir + fixed volume archive name
 	if err != nil {
@@ -964,13 +991,13 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 	}
 	defer inFile.Close()
 
-	gr, err := gzip.NewReader(inFile)
+	dr, closeDecompress, err := detectingReader(inFile)
 	if err != nil {
-		return fmt.Errorf("creating gzip reader: %w", err)
+		return err
 	}
-	defer gr.Close()
+	defer func() { _ = closeDecompress() }()
 
-	tr := tar.NewReader(gr)
+	tr := tar.NewReader(dr)
 	for {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -1013,8 +1040,9 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 	}
 }
 
-// tarDirectory creates a gzip-compressed tar archive of srcDir at destPath.
-func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []string) error {
+// tarDirectory creates a tar archive of srcDir at destPath. The compression
+// argument selects the archive compression layer ("none", "gzip", or "zstd").
+func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []string, compression string) error {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -1027,10 +1055,13 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 	}
 	defer outFile.Close()
 
-	gw := gzip.NewWriter(outFile)
-	defer gw.Close()
+	cw, closeCompress, err := compressedWriter(outFile, compression)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeCompress() }()
 
-	tw := tar.NewWriter(gw)
+	tw := tar.NewWriter(cw)
 	defer tw.Close()
 
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
@@ -1121,11 +1152,12 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 	})
 }
 
-// tarDirectoryFiltered creates a gzip-compressed tar archive of srcDir at destPath,
-// including only files whose modification time is after changedSince. Directory
-// entries are always included to preserve structure. This is used for
-// incremental and differential backups.
-func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string) error {
+// tarDirectoryFiltered creates a tar archive of srcDir at destPath, including
+// only files whose modification time is after changedSince. Directory entries
+// are always included to preserve structure. This is used for incremental and
+// differential backups. The compression argument selects the archive
+// compression layer ("none", "gzip", or "zstd").
+func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string, compression string) error {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -1138,10 +1170,13 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 	}
 	defer outFile.Close()
 
-	gw := gzip.NewWriter(outFile)
-	defer gw.Close()
+	cw, closeCompress, err := compressedWriter(outFile, compression)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeCompress() }()
 
-	tw := tar.NewWriter(gw)
+	tw := tar.NewWriter(cw)
 	defer tw.Close()
 
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
@@ -1233,7 +1268,10 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 	})
 }
 
-// untarDirectory extracts a gzip-compressed tar archive from srcPath into destDir.
+// untarDirectory extracts a tar archive from srcPath into destDir. The archive
+// may be plain, gzip-compressed, or zstd-compressed — the compression layer
+// is auto-detected from the leading magic bytes so legacy and new archives
+// both restore correctly.
 func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 	inFile, err := os.Open(srcPath) // #nosec G304 — srcPath is sourceDir + fixed archive name, caller-controlled
 	if err != nil {
@@ -1241,13 +1279,13 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 	}
 	defer inFile.Close()
 
-	gr, err := gzip.NewReader(inFile)
+	dr, closeDecompress, err := detectingReader(inFile)
 	if err != nil {
-		return fmt.Errorf("creating gzip reader: %w", err)
+		return err
 	}
-	defer gr.Close()
+	defer func() { _ = closeDecompress() }()
 
-	tr := tar.NewReader(gr)
+	tr := tar.NewReader(dr)
 	for {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr

@@ -6,6 +6,11 @@ type BackupItem struct {
 	Name     string         `json:"name"`
 	Type     string         `json:"type"` // "container", "vm", or "folder"
 	Settings map[string]any `json:"settings"`
+	// Compression controls the archive-level compression applied by the
+	// engine when producing tar archives ("none", "gzip", or "zstd"). An
+	// empty string is treated as "none". Engines that do not produce tar
+	// archives (e.g. VM, ZFS) may ignore this field.
+	Compression string `json:"compression,omitempty"`
 }
 
 type BackupResult struct {

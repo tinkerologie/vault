@@ -61,7 +61,7 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 
 	progress(item.Name, 10, "archiving "+srcPath)
 
-	archiveName := "data.tar.gz"
+	archiveName := "data.tar" + archiveExt(item.Compression)
 	archivePath := filepath.Join(destDir, archiveName)
 
 	// Determine if this is an incremental/differential backup.
@@ -74,11 +74,11 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
-		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, nil); err != nil {
+		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, nil, item.Compression); err != nil {
 			return nil, fmt.Errorf("archiving changed files in %s: %w", srcPath, err)
 		}
 	} else {
-		if err := tarDirectory(ctx, srcPath, archivePath, nil); err != nil {
+		if err := tarDirectory(ctx, srcPath, archivePath, nil, item.Compression); err != nil {
 			return nil, fmt.Errorf("archiving %s: %w", srcPath, err)
 		}
 	}
@@ -134,8 +134,8 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 
 	progress(item.Name, 30, "restoring to "+destPath)
 
-	archivePath := filepath.Join(sourceDir, "data.tar.gz")
-	if _, err := os.Stat(archivePath); err != nil {
+	archivePath, err := findArchive(sourceDir, "data.tar")
+	if err != nil {
 		return fmt.Errorf("backup archive not found: %w", err)
 	}
 

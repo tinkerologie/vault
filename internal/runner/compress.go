@@ -14,33 +14,9 @@ var (
 	_ = fileCompressionExt
 )
 
-// compressWriter wraps a writer with the specified compression and returns the
-// compressed writer, a close function that must be called to flush/finalize
-// the compression, and the file extension to append (e.g. ".gz", ".zst").
-// For "none" or empty compression, returns the original writer unchanged.
-func compressWriter(w io.Writer, compression string) (io.Writer, func() error, string, error) {
-	switch compression {
-	case "gzip":
-		gw, err := gzip.NewWriterLevel(w, gzip.DefaultCompression)
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("creating gzip writer: %w", err)
-		}
-		return gw, gw.Close, ".gz", nil
-
-	case "zstd":
-		zw, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedDefault))
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("creating zstd writer: %w", err)
-		}
-		return zw, zw.Close, ".zst", nil
-
-	case "none", "":
-		return w, func() error { return nil }, "", nil
-
-	default:
-		return nil, nil, "", fmt.Errorf("unknown compression type: %s", compression)
-	}
-}
+// compressWriter was removed in favour of engine-side compression. The engine
+// now owns archive-level compression so the runner only handles encryption and
+// transport. See internal/engine/compress.go for the replacement helpers.
 
 // decompressReader wraps a reader with the appropriate decompression based on
 // the file extension. Returns the decompressed reader and a close function.

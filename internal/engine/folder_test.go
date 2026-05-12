@@ -47,9 +47,10 @@ func TestFolderHandlerBackupRestoreRoundTrip(t *testing.T) {
 	dest := t.TempDir()
 	progress := func(string, int, string) {}
 	item := BackupItem{
-		Name:     "test-folder",
-		Type:     "folder",
-		Settings: map[string]any{"path": src},
+		Name:        "test-folder",
+		Type:        "folder",
+		Settings:    map[string]any{"path": src},
+		Compression: CompressionGzip,
 	}
 
 	res, err := h.Backup(context.Background(), item, dest, progress)

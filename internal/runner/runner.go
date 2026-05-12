@@ -587,6 +587,7 @@ func (r *Runner) RunJob(jobID int64) {
 				"image": settings["image"],
 				"state": settings["state"],
 			},
+			Compression: job.Compression,
 		}
 
 		if item.ItemType == "container" {
@@ -1257,10 +1258,17 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 		return nil, fmt.Errorf("reading backup dir: %w", err)
 	}
 
-	// uploadOnce opens the source file, builds the compression+encryption
-	// pipeline freshly, streams to storage with a SHA-256 tee, and returns
+	// uploadOnce opens the source file, encrypts it (if a passphrase is
+	// configured), streams to storage with a SHA-256 tee, and returns
 	// (storageName, checksumHex, err). The hasher is local so a retry never
 	// inherits partial state from a failed attempt.
+	//
+	// Compression is applied by the engine when it produces the archive so
+	// the runner no longer wraps the upload stream — historically the engine
+	// always emitted .tar.gz and the runner added a second transport-layer
+	// compression on top, which yielded double-compressed files such as
+	// `volume_0.tar.gz.zst` for zstd jobs and ignored the user's "None"
+	// selection entirely.
 	uploadOnce := func(entryName string) (string, string, error) {
 		filePath := filepath.Join(tmpDir, entryName)
 		f, openErr := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entryName from os.ReadDir
@@ -1271,27 +1279,6 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 
 		var reader io.Reader = f
 		storageName := entryName
-
-		if compression != "" && compression != "none" {
-			pr, pw := io.Pipe()
-			cw, closeFn, ext, compErr := compressWriter(pw, compression)
-			if compErr != nil {
-				return "", "", fmt.Errorf("compressing %s: %w", entryName, compErr)
-			}
-			storageName += ext
-			go func() {
-				_, copyErr := io.Copy(cw, f)
-				closeErr := closeFn()
-				if copyErr != nil {
-					pw.CloseWithError(copyErr)
-				} else if closeErr != nil {
-					pw.CloseWithError(closeErr)
-				} else {
-					_ = pw.Close()
-				}
-			}()
-			reader = pr
-		}
 
 		if passphrase != "" {
 			encrypted, encErr := crypto.EncryptReader(passphrase, reader)
