@@ -6,7 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-## [2026.05.02] - 2026-05-13
+### Fixed
+
+- **Restored Docker containers now show their correct update status in the Unraid Docker Manager UI instead of "not available".** Unraid computes a container's "up-to-date" / "update available" badge by reading `RepoDigests[0]` from each image's metadata, but `docker load` (used during restore) does not populate `RepoDigests` — only `docker pull` does. As a result, restored containers showed "not available" and the "Check for Updates" button could not resolve a local digest, leaving the badge stuck. The container engine now captures each image's `RepoDigests` at backup time into a small `image_meta.json` companion file (alongside `image.tar*`), and the restore path uses that to re-seed `/var/lib/docker/unraid-update-status.json` with the recorded local digest after `ImageLoad`. The Unraid UI then resolves "up-to-date" or "update available" immediately, and "Check for Updates" works against the restored container. Verified end-to-end on Unraid against the "Test Containers" job: Grafana, Influxdb, and telegraf all flipped from "not available" to "up-to-date" after a fresh backup→restore cycle.
+- **Restore now also performs a `docker pull` after `ImageLoad` to authoritatively populate `RepoDigests` for the restored image.** This handles the chicken-and-egg case where the source container's image itself had no `RepoDigests` at backup time (e.g. the image was previously restored from tar without ever being pulled, or the user is upgrading from a Vault version older than the `image_meta.json` capture), in which case the backup's `image_meta.json` recorded `repo_digests: null` and the prior `unraid-update-status.json` seeder had nothing to write. The pull is non-destructive — when layers already exist locally (the common case immediately after `ImageLoad`) Docker only fetches the manifest, which is exactly the metadata required. The freshly-pulled digest is then written directly into `unraid-update-status.json`, so the badge flips to "up-to-date" without depending on the backup's recorded metadata. If the daemon is offline or the registry is unreachable, the call fails silently and the path falls back to `image_meta.json`-based seeding. Verified end-to-end on Unraid: `nicolargo/glances:latest` (which had empty `RepoDigests` on the host from a prior tar-only restore) flipped from "not available" to "up-to-date" after restore-with-pull.
+
+### Added
+
+- **Image metadata capture (`image_meta.json`) is now written next to each container's `image.tar*` during backup.** Stores `image_tag` and `repo_digests` so the engine can repopulate Unraid's docker `unraid-update-status.json` on restore (see Fixed). Old backups without this file fall back to current behaviour silently; the file is best-effort and never fails a backup.
+- **Backup Size Trend chart on the History page is now coloured by backup target category.** Each run is rendered as a bar tinted by its dominant item type — Containers (blue), VMs (purple), Folders & Files (green), Flash (amber), Other (gray) — with a top-right legend that doubles as a category filter. The hover tooltip shows the category swatch alongside the run's size, date, and job name, making it easy to see at a glance whether a size spike came from a container-heavy run, a VM snapshot, or a folder backup. The linear-regression trend indicator (Growing / Stable / Shrinking) is preserved. Job categories are derived from the dominant `item_type` across each job's items, hydrated via parallel `getJob` calls when the History page loads.
+
+### Notes on concurrency
+
+- Multiple backup/restore requests are **serialised through a single runner mutex** (`runner.Runner.mu`). Submitting more than one job at once does **not** crash or hang — additional jobs are added to an in-memory queue (`runner.Runner.queue`) and run one at a time in FIFO order. This is intentional to avoid contention on the Docker socket, libvirt RPC, and the same storage destination. The UI shows queued jobs via `Status().Queue`. If concurrent jobs are desired in the future they would need separate worker pools plus per-destination locks; today, expect strictly serial execution.
+
+## [2026.05.02]
 
 ### Fixed
 

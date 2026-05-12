@@ -395,6 +395,19 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			_ = imgFile.Close()
 			_ = imgReader.Close()
 			result.Files = append(result.Files, backupFileInfo(imagePath))
+
+			// Capture image RepoDigests so restore can repopulate Unraid's
+			// docker update-status.json. `docker load` (used on restore) does
+			// not preserve RepoDigests, so without this the Unraid Docker
+			// Manager UI shows "not available" for the restored container and
+			// "Check for Updates" cannot resolve a local digest.
+			if metaPath := filepath.Join(destDir, "image_meta.json"); metaPath != "" {
+				meta := buildImageMeta(ctx, h.cli, imageName)
+				if metaBytes, mErr := json.MarshalIndent(meta, "", "  "); mErr == nil {
+					_ = os.WriteFile(metaPath, metaBytes, 0600) // #nosec G306 — metadata file, ok world-readable
+					result.Files = append(result.Files, backupFileInfo(metaPath))
+				}
+			}
 		}
 
 		// Step 4: Tar bind mount volumes, skipping large shared data paths.
@@ -887,6 +900,21 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
 		}
 	}
+
+	// Step 5b: Repopulate Unraid's docker update-status so the "Check for
+	// Updates" feature works for the restored container. `docker load`
+	// doesn't preserve RepoDigests, so the Unraid Docker Manager would
+	// otherwise be unable to compute a local digest and show "not available".
+	//
+	// Strategy: first try to refresh RepoDigests via a `docker pull` —
+	// non-destructive when the layers we just loaded are already up to date
+	// with the registry, and it lets Docker populate RepoDigests natively
+	// (which is the only thing Unraid actually reads). If the pull succeeds
+	// the JSON-meta seeding is still safe to run as a confirmation, but
+	// when it fails (offline / private registry / etc.) we fall back to
+	// seeding from `image_meta.json` captured at backup time.
+	_ = populateRepoDigestsViaPull(ctx, h.cli, inspect.Config.Image)
+	restoreUnraidUpdateStatus(sourceDir, inspect.Config.Image)
 
 	// Step 6: Start container if it was originally running.
 	if inspect.State.Running {

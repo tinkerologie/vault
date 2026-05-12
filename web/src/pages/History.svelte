@@ -37,7 +37,19 @@
   async function loadData(silent = false) {
     if (!silent) loading = true
     try {
-      jobs = (await api.listJobs()) || []
+      const jobsList = (await api.listJobs()) || []
+      // Hydrate each job with its items so SizeChart can categorise runs by
+      // backup-target type (containers / vms / folder / flash). We do this
+      // in parallel and tolerate per-job failures — a missing items array
+      // just falls into the "Other" category.
+      jobs = await Promise.all(
+        jobsList.map(j =>
+          api
+            .getJob(j.id)
+            .then(d => ({ ...j, items: d?.items || [] }))
+            .catch(() => ({ ...j, items: [] }))
+        )
+      )
       const promises = jobs.map(async (job) => {
         try {
           const runs = await api.getJobHistory(job.id, 200)
@@ -255,7 +267,7 @@
       </EmptyState>
     {:else}
       <!-- Size trend chart -->
-      <SizeChart runs={filteredRuns} />
+      <SizeChart runs={filteredRuns} {jobs} />
 
       <!-- Date-grouped timeline -->
       <div class="space-y-8">
