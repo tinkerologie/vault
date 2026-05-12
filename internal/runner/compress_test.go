@@ -95,4 +95,3 @@ func TestDecompressStoredReader_ContentBased(t *testing.T) {
 		})
 	}
 }
-

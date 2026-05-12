@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -284,6 +285,42 @@ func (h *ContainerHandler) ListItems() ([]BackupItem, error) {
 		})
 	}
 	return items, nil
+}
+
+// DetectSocketMounts inspects the named container and returns a sorted list of
+// in-container destination paths for any bind mount whose host source ends in
+// ".sock" (e.g. /var/run/docker.sock, /var/run/docker-shim.sock). These paths
+// are recommended exclusions because Go's archive/tar cannot serialize Unix
+// socket inodes, and runtime sockets are never useful to back up.
+//
+// Returns an empty slice when the container has no socket mounts. Returns an
+// error only when the inspect call itself fails (e.g. container not found).
+func (h *ContainerHandler) DetectSocketMounts(ctx context.Context, name string) ([]string, error) {
+	if name == "" {
+		return nil, nil
+	}
+	inspectResult, err := h.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("inspecting container %q: %w", name, err)
+	}
+	seen := make(map[string]struct{})
+	paths := make([]string, 0)
+	for _, m := range inspectResult.Container.Mounts {
+		if !strings.HasSuffix(m.Source, ".sock") {
+			continue
+		}
+		dest := m.Destination
+		if dest == "" {
+			dest = m.Source
+		}
+		if _, ok := seen[dest]; ok {
+			continue
+		}
+		seen[dest] = struct{}{}
+		paths = append(paths, dest)
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // Backup performs a full backup of a Docker container:

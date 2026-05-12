@@ -507,9 +507,13 @@
     for (const item of items) {
       const settings = parseItemSettings(item)
       const image = settings.image || ''
-      if (!image) continue
+      const containerName = item.item_name || ''
+      if (!image && !containerName) continue
       try {
-        const { url, options } = buildApiRequest('GET', `/presets/exclusions?image=${encodeURIComponent(image)}`)
+        const params = new URLSearchParams()
+        if (image) params.set('image', image)
+        if (containerName) params.set('container', containerName)
+        const { url, options } = buildApiRequest('GET', `/presets/exclusions?${params.toString()}`)
         const res = await fetch(url, { ...options, signal })
         if (!res.ok) continue
         const data = await res.json()
