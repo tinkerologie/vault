@@ -796,16 +796,32 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	}
 
 	// Build container config.
+	// Convert the inspected ExposedPorts (raw `"<port>/<proto>": {}` JSON
+	// from the original container) into the typed PortSet the Docker API
+	// requires. Without this the restored container has no exposed ports,
+	// which causes the Unraid Docker page to show blank "Container Port"
+	// and "LAN IP:Port" columns until the user opens Edit → Done.
+	exposedPorts := network.PortSet{}
+	for portKey := range inspect.Config.ExposedPorts {
+		p, err := network.ParsePort(portKey)
+		if err != nil {
+			log.Printf("engine: restore: skipping malformed exposed port %q for %s: %v", portKey, item.Name, err)
+			continue
+		}
+		exposedPorts[p] = struct{}{}
+	}
+
 	containerConfig := &container.Config{
-		Hostname:   inspect.Config.Hostname,
-		Domainname: inspect.Config.Domainname,
-		User:       inspect.Config.User,
-		Env:        inspect.Config.Env,
-		Cmd:        inspect.Config.Cmd,
-		Entrypoint: inspect.Config.Entrypoint,
-		Image:      inspect.Config.Image,
-		Labels:     inspect.Config.Labels,
-		WorkingDir: inspect.Config.WorkingDir,
+		Hostname:     inspect.Config.Hostname,
+		Domainname:   inspect.Config.Domainname,
+		User:         inspect.Config.User,
+		Env:          inspect.Config.Env,
+		Cmd:          inspect.Config.Cmd,
+		Entrypoint:   inspect.Config.Entrypoint,
+		Image:        inspect.Config.Image,
+		Labels:       inspect.Config.Labels,
+		WorkingDir:   inspect.Config.WorkingDir,
+		ExposedPorts: exposedPorts,
 	}
 
 	// Build host config.
@@ -829,11 +845,39 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		binds = rewritten
 	}
 
-	portBindings := make(map[string][]string)
-	// Convert port bindings to the format expected by Docker API.
+	// Convert the inspected PortBindings (raw `"<port>/<proto>": [{HostIp, HostPort}]`
+	// JSON from the original container) into the typed network.PortMap the
+	// Docker API requires. This is what populates the "LAN IP:Port" column
+	// on the Unraid Docker page — without it the restored container has no
+	// host-port bindings and the column shows blank until the user opens
+	// Edit → Done in the Unraid UI.
+	portBindings := network.PortMap{}
+	for portKey, bindings := range inspect.HostConfig.PortBindings {
+		p, err := network.ParsePort(portKey)
+		if err != nil {
+			log.Printf("engine: restore: skipping malformed port binding %q for %s: %v", portKey, item.Name, err)
+			continue
+		}
+		converted := make([]network.PortBinding, 0, len(bindings))
+		for _, b := range bindings {
+			pb := network.PortBinding{HostPort: b.HostPort}
+			if b.HostIP != "" {
+				if addr, parseErr := netip.ParseAddr(b.HostIP); parseErr == nil {
+					pb.HostIP = addr
+				}
+				// Empty/invalid HostIP is left as the zero netip.Addr,
+				// which Docker treats as "bind on all interfaces" —
+				// matching docker's own default behaviour.
+			}
+			converted = append(converted, pb)
+		}
+		portBindings[p] = converted
+	}
+
 	hostConfig := &container.HostConfig{
-		Binds:       binds,
-		NetworkMode: container.NetworkMode(inspect.HostConfig.NetworkMode),
+		Binds:        binds,
+		NetworkMode:  container.NetworkMode(inspect.HostConfig.NetworkMode),
+		PortBindings: portBindings,
 		RestartPolicy: container.RestartPolicy{
 			Name:              container.RestartPolicyMode(inspect.HostConfig.RestartPolicy.Name),
 			MaximumRetryCount: inspect.HostConfig.RestartPolicy.MaximumRetryCount,
@@ -853,7 +897,6 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			Memory:     inspect.HostConfig.Memory,
 		},
 	}
-	_ = portBindings // avoid unused variable
 
 	// Convert devices.
 	for _, d := range inspect.HostConfig.Devices {
