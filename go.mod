@@ -8,8 +8,8 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
-	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.20
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.100.1
+	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/aws/smithy-go v1.25.1
 	github.com/cloudsoda/go-smb2 v0.0.0-20260408191215-349cbc5b0af3
 	github.com/coder/websocket v1.8.14
@@ -26,8 +26,8 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/studio-b12/gowebdav v0.12.0
-	golang.org/x/crypto v0.50.0
-	modernc.org/sqlite v1.50.0
+	golang.org/x/crypto v0.51.0
+	modernc.org/sqlite v1.50.1
 )
 
 require (
@@ -91,8 +91,8 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	modernc.org/libc v1.72.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
