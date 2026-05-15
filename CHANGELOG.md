@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.05.02] - 2026-05-15
+
 ### Fixed
 
 - **S3 / Backblaze B2 uploads of multi-GB objects no longer abort with `context deadline exceeded` mid-multipart (closes #95).** The S3 adapter previously routed every operation — including large multipart uploads via `transfermanager.Uploader` — through a single hardcoded 5-minute context (`ctxOp`). A real Immich-style folder backup to Backblaze B2 exceeded that ceiling well before the upload (and its in-flight `AbortMultipartUpload` cleanup) could complete, producing a cascading context-cancellation failure. Upload operations are now scoped to a separate, configurable deadline (`uploadTimeout`, default **240 minutes / 4 hours**) while metadata operations (Read / List / Stat / Delete / TestConnection) continue to use the existing 5-minute budget unchanged. A new optional `upload_timeout_minutes` field on the S3 storage config — surfaced in the Storage form as "Upload timeout (minutes)" under the existing advanced options — lets users tune the ceiling for very large files over slow links (set `0` to accept the 4-hour default; negative values are rejected at construction time).
