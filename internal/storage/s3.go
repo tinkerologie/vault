@@ -37,15 +37,27 @@ type S3Config struct {
 	Endpoint       string `json:"endpoint"`         // Optional, e.g. "https://s3.us-west-002.backblazeb2.com"
 	BasePath       string `json:"base_path"`        // Optional key prefix for all objects.
 	ForcePathStyle bool   `json:"force_path_style"` // Optional, for older S3-compatible services.
+	// UploadTimeoutMinutes caps how long a single object upload (including
+	// multipart transfers) may take. Defaults to 240 (4 hours) when 0 or
+	// unset, matching the runner's job-level timeout. Negative values are
+	// rejected. Metadata operations (List/Stat/Delete/TestConnection/Read)
+	// continue to use a short 5-minute timeout.
+	UploadTimeoutMinutes int `json:"upload_timeout_minutes"`
 }
+
+// defaultS3UploadTimeout is the default per-upload deadline applied when
+// UploadTimeoutMinutes is 0 or unset. It matches the runner's job-level
+// timeout so that a single large multipart upload is not cut short.
+const defaultS3UploadTimeout = 240 * time.Minute
 
 // S3Adapter implements Adapter against an S3 bucket. Unlike SFTP/SMB, the
 // underlying client is HTTP-based and pools connections internally, so we
 // build it once in the constructor and reuse it for the adapter's lifetime.
 type S3Adapter struct {
-	config   S3Config
-	client   *s3.Client
-	uploader *transfermanager.Client
+	config        S3Config
+	client        *s3.Client
+	uploader      *transfermanager.Client
+	uploadTimeout time.Duration
 }
 
 // NewS3Adapter validates the config and constructs an S3 client.
@@ -67,6 +79,13 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 	}
 	if cfg.Region == "" {
 		return nil, fmt.Errorf("s3: region is required")
+	}
+	if cfg.UploadTimeoutMinutes < 0 {
+		return nil, fmt.Errorf("s3: upload_timeout_minutes must be >= 0, got %d", cfg.UploadTimeoutMinutes)
+	}
+	uploadTimeout := defaultS3UploadTimeout
+	if cfg.UploadTimeoutMinutes > 0 {
+		uploadTimeout = time.Duration(cfg.UploadTimeoutMinutes) * time.Minute
 	}
 
 	loadOpts := []func(*awsconfig.LoadOptions) error{
@@ -101,9 +120,10 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 
 	client := s3.NewFromConfig(awsCfg, clientOpts...)
 	return &S3Adapter{
-		config:   cfg,
-		client:   client,
-		uploader: transfermanager.New(client),
+		config:        cfg,
+		client:        client,
+		uploader:      transfermanager.New(client),
+		uploadTimeout: uploadTimeout,
 	}, nil
 }
 
@@ -147,6 +167,13 @@ func ctxOp() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 5*time.Minute)
 }
 
+// ctxUpload returns a context with the adapter's configured upload timeout.
+// Used by Write() so that large multipart uploads (which can run for hours)
+// are not aborted by the short metadata-operation timeout.
+func (a *S3Adapter) ctxUpload() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), a.uploadTimeout)
+}
+
 // keyFor joins the configured base path and an operation-supplied path using
 // "/" as the separator (S3 keys are virtual). safepath is used to reject
 // traversal attempts ("../") regardless of host OS.
@@ -182,7 +209,7 @@ func (a *S3Adapter) Write(p string, reader io.Reader) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := ctxOp()
+	ctx, cancel := a.ctxUpload()
 	defer cancel()
 	if _, err := a.uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(a.config.Bucket),

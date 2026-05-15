@@ -246,7 +246,7 @@
       smb: { host: '', share: '', user: '', password: '', base_path: '' },
       nfs: { host: '', export: '', base_path: '', version: '4', options: '' },
       webdav: { url: '', username: '', password: '', base_path: '', insecure_skip_verify: false, timeout_seconds: 0, stall_timeout_seconds: 300 },
-      s3: { bucket: '', region: '', access_key: '', secret_key: '', endpoint: '', base_path: '', force_path_style: false },
+      s3: { bucket: '', region: '', access_key: '', secret_key: '', endpoint: '', base_path: '', force_path_style: false, upload_timeout_minutes: 0 },
     }
     // Reassign the full form object so Svelte always re-renders the keyed
     // config block when switching destination type.
@@ -598,6 +598,14 @@
         Force path-style addressing
         <Tooltip text="Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual hosted-style buckets." />
       </label>
+      <div>
+        <label for="s3_upload_timeout" class="block text-sm font-medium text-text-muted mb-1.5">
+          Upload timeout (minutes)
+          <Tooltip text="Maximum time a single object upload (including multipart transfers) may take. Defaults to 240 (4 hours) when 0 or unset. Increase for very large files over slow links." />
+        </label>
+        <input id="s3_upload_timeout" type="number" bind:value={form.config.upload_timeout_minutes} placeholder="240 (default)" min="0"
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+      </div>
     {/if}
     {/key}
 

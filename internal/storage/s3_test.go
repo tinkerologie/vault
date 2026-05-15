@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -46,6 +47,16 @@ func TestNewS3Adapter(t *testing.T) {
 			name:    "missing region",
 			config:  S3Config{Bucket: "vault-bk", AccessKey: "AK", SecretKey: "SK"},
 			wantErr: true,
+		},
+		{
+			name:    "negative upload timeout",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", UploadTimeoutMinutes: -1},
+			wantErr: true,
+		},
+		{
+			name:    "explicit upload timeout",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", UploadTimeoutMinutes: 30},
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
@@ -146,6 +157,48 @@ func TestStaticS3EndpointResolver(t *testing.T) {
 			}
 			if got.URI.Path != tt.wantPath {
 				t.Errorf("path = %q, want %q", got.URI.Path, tt.wantPath)
+			}
+		})
+	}
+}
+
+func TestS3AdapterUploadTimeout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		configMins  int
+		wantTimeout time.Duration
+	}{
+		{name: "default when zero", configMins: 0, wantTimeout: defaultS3UploadTimeout},
+		{name: "explicit value", configMins: 30, wantTimeout: 30 * time.Minute},
+		{name: "large explicit value", configMins: 720, wantTimeout: 12 * time.Hour},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a, err := NewS3Adapter(S3Config{
+				Bucket:               "b",
+				Region:               "us-east-1",
+				UploadTimeoutMinutes: tt.configMins,
+			})
+			if err != nil {
+				t.Fatalf("NewS3Adapter error: %v", err)
+			}
+			if a.uploadTimeout != tt.wantTimeout {
+				t.Errorf("uploadTimeout = %v, want %v", a.uploadTimeout, tt.wantTimeout)
+			}
+			ctx, cancel := a.ctxUpload()
+			defer cancel()
+			dl, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("ctxUpload context has no deadline")
+			}
+			remaining := time.Until(dl)
+			// Allow a small margin for clock skew between WithTimeout and Deadline read.
+			if remaining < tt.wantTimeout-time.Second || remaining > tt.wantTimeout+time.Second {
+				t.Errorf("ctxUpload deadline = %v from now, want ~%v", remaining, tt.wantTimeout)
 			}
 		})
 	}
