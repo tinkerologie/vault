@@ -69,12 +69,11 @@ const (
 )
 
 // webDAVChunkRetryBackoffs holds the per-chunk PUT retry backoff schedule.
-// The values are exponential (factor ~3) capped at 8s, matching the shape
-// of Kopia's retry policy (kopia/internal/retry — 100ms initial, 32s max,
-// 1.5× factor, 10 attempts) but trimmed for Vault's smaller blast radius:
-// each chunk is at most a few hundred MiB, and Vault has its own job-level
-// retry loop wrapped around the adapter (runner.uploadOnce, 4 attempts).
-// Exposed as var so tests can override to keep total runtime small.
+// The values are exponential (factor ~3) capped at 8s. Trimmed for Vault's
+// blast radius: each chunk is at most a few hundred MiB, and Vault has its
+// own job-level retry loop wrapped around the adapter (runner.uploadOnce,
+// 4 attempts). Exposed as var so tests can override to keep total runtime
+// small.
 var webDAVChunkRetryBackoffs = []time.Duration{
 	100 * time.Millisecond,
 	300 * time.Millisecond,
@@ -85,8 +84,7 @@ var webDAVChunkRetryBackoffs = []time.Duration{
 
 // httpErrorCode extracts the numeric HTTP status code from a gowebdav error.
 // gowebdav wraps non-2xx responses in *os.PathError whose Err text starts
-// with the status code as a decimal integer (e.g. "423 Locked"). This is
-// the same parsing strategy Kopia uses (repo/blob/webdav/webdav_storage.go).
+// with the status code as a decimal integer (e.g. "423 Locked").
 // Returns 0 when the error is not from gowebdav (network/dial/timeout).
 func httpErrorCode(err error) int {
 	var pe *os.PathError
@@ -103,7 +101,6 @@ func httpErrorCode(err error) int {
 
 // isWebDAVRetriable classifies a transfer error as retriable.
 //
-// Modelled on Kopia's isRetriable (repo/blob/webdav/webdav_storage.go):
 //   - HTTP 423 (Locked), 409 (Conflict), 429 (Too Many Requests) and any
 //     5xx are retriable: the request was understood by the server but
 //     could not be processed at this moment.
@@ -434,7 +431,6 @@ func (w *WebDAVAdapter) writeBytesWithChunkRetry(c *gowebdav.Client, full string
 		}
 		// Status-aware fail-fast: auth/path/payload errors are never
 		// transient. Retrying just hides the real problem and wastes time.
-		// This matches Kopia's isRetriable classification.
 		if !isWebDAVRetriable(lastErr) {
 			log.Printf("webdav: non-retriable chunk PUT error for %s: %v", full, lastErr)
 			return lastErr

@@ -243,10 +243,9 @@ func TestWebDAVChunkFailureCleansUploadedChunks(t *testing.T) {
 	}
 }
 
-// TestWebDAVChunkRetryFailFastOn4xx asserts the Kopia-style classifier
-// in isWebDAVRetriable short-circuits permanent failures (e.g. 401, 403,
+// TestWebDAVChunkRetryFailFastOn4xx asserts the classifier in
+// isWebDAVRetriable short-circuits permanent failures (e.g. 401, 403,
 // 413) instead of burning through the full exponential backoff schedule.
-// This matches Kopia's behaviour in repo/blob/webdav/webdav_storage.go.
 func TestWebDAVChunkRetryFailFastOn4xx(t *testing.T) {
 	root := t.TempDir()
 	putCount := 0

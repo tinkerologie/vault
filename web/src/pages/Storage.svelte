@@ -539,7 +539,7 @@
         <summary class="text-sm font-medium text-text-muted hover:text-text cursor-pointer select-none">
           Advanced &middot; Transfer
         </summary>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+        <div class="flex flex-col gap-3 mt-3">
           <div>
             <label for="dav_chunk" class="block text-sm font-medium text-text-muted mb-1.5">
               Chunk size (MiB)
@@ -606,24 +606,29 @@
         Force path-style addressing
         <Tooltip text="Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual hosted-style buckets." />
       </label>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label for="s3_upload_timeout" class="block text-sm font-medium text-text-muted mb-1.5">
-            Upload timeout (minutes)
-            <Tooltip text="Maximum time a single object upload (including multipart transfers) may take. Defaults to 240 (4 hours) when 0 or unset. Increase for very large files over slow links." />
-          </label>
-          <input id="s3_upload_timeout" type="number" bind:value={form.config.upload_timeout_minutes} placeholder="240 (default)" min="0"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+      <details class="group">
+        <summary class="text-sm font-medium text-text-muted hover:text-text cursor-pointer select-none">
+          Advanced &middot; Transfer
+        </summary>
+        <div class="flex flex-col gap-3 mt-3">
+          <div>
+            <label for="s3_upload_timeout" class="block text-sm font-medium text-text-muted mb-1.5">
+              Upload timeout (minutes)
+              <Tooltip text="Maximum time a single object upload (including multipart transfers) may take. Defaults to 240 (4 hours) when 0 or unset. Increase for very large files over slow links." />
+            </label>
+            <input id="s3_upload_timeout" type="number" bind:value={form.config.upload_timeout_minutes} placeholder="240 (default)" min="0"
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          </div>
+          <div>
+            <label for="s3_part_size" class="block text-sm font-medium text-text-muted mb-1.5">
+              Part size (MiB)
+              <Tooltip text="Multipart upload part size. S3 allows max 10,000 parts per object, so this directly sets the per-object ceiling (PartSize × 10,000). Default 0 = 64 MiB (640 GB ceiling). Raise for multi-TB datasets (256 → 2.5 TB, 1024 → 10 TB). Valid range: 5-5120 MiB." />
+            </label>
+            <input id="s3_part_size" type="number" bind:value={form.config.part_size_mb} placeholder="0 (64 MiB)" min="0" max="5120"
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          </div>
         </div>
-        <div>
-          <label for="s3_part_size" class="block text-sm font-medium text-text-muted mb-1.5">
-            Part size (MiB)
-            <Tooltip text="Multipart upload part size. S3 allows max 10,000 parts per object, so this directly sets the per-object ceiling (PartSize × 10,000). Default 0 = 64 MiB (640 GB ceiling). Raise for multi-TB datasets (256 → 2.5 TB, 1024 → 10 TB). Valid range: 5-5120 MiB." />
-          </label>
-          <input id="s3_part_size" type="number" bind:value={form.config.part_size_mb} placeholder="0 (64 MiB)" min="0" max="5120"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
-        </div>
-      </div>
+      </details>
     {/if}
     {/key}
 

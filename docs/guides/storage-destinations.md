@@ -124,7 +124,7 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 **Notes:**
 
 - WebDAV is **stateless HTTP**: each operation opens its own connection and closes it. This avoids the per-user concurrent-connection caps that affect SFTP/SMB on managed providers like Synology and TrueNAS.
-- Large WebDAV files are uploaded as bounded chunks with a small JSON manifest. This mirrors the approach used by backup tools such as Kopia: a transient network failure only retries the current chunk instead of a multi-GB archive from byte zero.
+- Large WebDAV files are uploaded as bounded chunks with a small JSON manifest, so a transient network failure only retries the current chunk instead of a multi-GB archive from byte zero.
 - Existing non-chunked WebDAV backups remain readable. Vault detects a chunk manifest when present and falls back to the original single-file read path otherwise.
 - Vault uses `gowebdav`'s auto-auth, so Basic and Digest authentication are negotiated automatically.
 - For Nextcloud, the server URL **must** include `/remote.php/dav/files/<username>/` — the share-root WebDAV endpoint is not the file-storage endpoint.
