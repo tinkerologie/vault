@@ -43,12 +43,42 @@ type S3Config struct {
 	// rejected. Metadata operations (List/Stat/Delete/TestConnection/Read)
 	// continue to use a short 5-minute timeout.
 	UploadTimeoutMinutes int `json:"upload_timeout_minutes"`
+	// PartSizeMB controls the multipart upload part size (in MiB) passed to
+	// the AWS transfermanager. The S3 protocol caps the number of parts per
+	// multipart upload at 10,000, so the part size directly bounds the
+	// maximum object size: ceiling = PartSizeMB * 10000.
+	//
+	// transfermanager defaults to 8 MiB → 80 GB ceiling, which is too low
+	// for whole-folder backups (e.g. Immich at 281 GB busts the limit with
+	// "exceeded total allowed S3 limit MaxUploadParts (10000)"). It also
+	// only auto-scales when the input stream's size is known up-front, which
+	// is never the case for our age-encrypted streams (io.PipeReader has no
+	// Size()/ContentLength).
+	//
+	// Vault therefore defaults to 64 MiB → 640 GB ceiling, large enough for
+	// every home-server workload we've seen. Power users can raise it for
+	// multi-TB datasets (256 MiB → 2.5 TB, 1024 MiB → 10 TB). Note that
+	// per-upload peak memory ≈ PartSizeMB × concurrency (default 5), so
+	// 1 GiB parts cost ~5 GiB of RAM during the upload.
+	//
+	// Valid range: 5–5120 (S3/B2 protocol minimum and maximum). 0 = default.
+	PartSizeMB int `json:"part_size_mb,omitempty"`
 }
 
 // defaultS3UploadTimeout is the default per-upload deadline applied when
 // UploadTimeoutMinutes is 0 or unset. It matches the runner's job-level
 // timeout so that a single large multipart upload is not cut short.
 const defaultS3UploadTimeout = 240 * time.Minute
+
+// S3 protocol bounds for the multipart PartSize header. AWS S3 and every
+// S3-compatible service we test against (Backblaze B2, MinIO, Cloudflare R2,
+// Wasabi) reject parts outside this range; the AWS SDK's transfermanager
+// docs the same minimum (5 MiB).
+const (
+	minS3PartSizeMB     = 5
+	maxS3PartSizeMB     = 5120 // 5 GiB upper bound
+	defaultS3PartSizeMB = 64
+)
 
 // S3Adapter implements Adapter against an S3 bucket. Unlike SFTP/SMB, the
 // underlying client is HTTP-based and pools connections internally, so we
@@ -58,6 +88,7 @@ type S3Adapter struct {
 	client        *s3.Client
 	uploader      *transfermanager.Client
 	uploadTimeout time.Duration
+	partSizeBytes int64
 }
 
 // NewS3Adapter validates the config and constructs an S3 client.
@@ -87,6 +118,17 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 	if cfg.UploadTimeoutMinutes > 0 {
 		uploadTimeout = time.Duration(cfg.UploadTimeoutMinutes) * time.Minute
 	}
+	partSizeMB := defaultS3PartSizeMB
+	if cfg.PartSizeMB != 0 {
+		if cfg.PartSizeMB < minS3PartSizeMB {
+			return nil, fmt.Errorf("s3: part_size_mb must be >= %d (S3 minimum), got %d", minS3PartSizeMB, cfg.PartSizeMB)
+		}
+		if cfg.PartSizeMB > maxS3PartSizeMB {
+			return nil, fmt.Errorf("s3: part_size_mb must be <= %d (S3 maximum 5 GiB), got %d", maxS3PartSizeMB, cfg.PartSizeMB)
+		}
+		partSizeMB = cfg.PartSizeMB
+	}
+	partSizeBytes := int64(partSizeMB) * 1024 * 1024
 
 	loadOpts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(cfg.Region),
@@ -119,11 +161,20 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 	}
 
 	client := s3.NewFromConfig(awsCfg, clientOpts...)
+	// Bind the configured PartSize to the uploader so multipart transfers
+	// stay under the 10,000-part ceiling even for streams whose size is
+	// unknown up-front (age-encrypted PipeReader has no Size/ContentLength,
+	// which prevents transfermanager's built-in auto-scale at upload time).
+	// Closes the MaxUploadParts failure mode on #95.
+	uploader := transfermanager.New(client, func(o *transfermanager.Options) {
+		o.PartSizeBytes = partSizeBytes
+	})
 	return &S3Adapter{
 		config:        cfg,
 		client:        client,
-		uploader:      transfermanager.New(client),
+		uploader:      uploader,
 		uploadTimeout: uploadTimeout,
+		partSizeBytes: partSizeBytes,
 	}, nil
 }
 

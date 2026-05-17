@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
@@ -23,6 +24,7 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("EncryptReader() error = %v", err)
 			}
+			defer encrypted.Close()
 			ciphertext, err := io.ReadAll(encrypted)
 			if err != nil {
 				t.Fatalf("reading encrypted data: %v", err)
@@ -65,6 +67,7 @@ func TestDecryptReaderWrongPassphrase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncryptReader() error = %v", err)
 	}
+	defer encrypted.Close()
 	ciphertext, err := io.ReadAll(encrypted)
 	if err != nil {
 		t.Fatalf("reading encrypted: %v", err)
@@ -106,6 +109,31 @@ func TestEncryptReaderSourceError(t *testing.T) {
 	_, err = io.ReadAll(r)
 	if err == nil {
 		t.Error("expected pipe error from failing source reader")
+	}
+	_ = r.Close()
+}
+
+func TestEncryptReaderCloseUnblocksGoroutine(t *testing.T) {
+	src := strings.NewReader(strings.Repeat("x", 10*1024*1024))
+	encrypted, err := EncryptReader("pw", src)
+	if err != nil {
+		t.Fatalf("EncryptReader() error = %v", err)
+	}
+
+	buf := make([]byte, 64)
+	if _, err := encrypted.Read(buf); err != nil {
+		t.Fatalf("initial encrypted read: %v", err)
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- encrypted.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil && !strings.Contains(err.Error(), "closed") {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close() did not unblock encryption goroutine")
 	}
 }
 

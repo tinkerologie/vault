@@ -5,4 +5,4 @@
 # reproducible CI runs. Verify the tag exists on Docker Hub before pinning.
 test_minio_image: "minio/minio:latest"
 test_mc_image: "minio/mc:latest"
-test_webdav_image: "dgraziotin/nginx-webdav-nononsense:latest"
+test_webdav_image: "ghcr.io/hacdias/webdav:latest"

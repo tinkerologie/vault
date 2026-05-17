@@ -1278,6 +1278,7 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 		defer f.Close()
 
 		var reader io.Reader = f
+		var readerCloser io.Closer
 		storageName := entryName
 
 		if passphrase != "" {
@@ -1285,7 +1286,9 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 			if encErr != nil {
 				return "", "", fmt.Errorf("encrypting %s: %w", entryName, encErr)
 			}
+			defer encrypted.Close()
 			reader = encrypted
+			readerCloser = encrypted
 			storageName += ".age"
 		}
 
@@ -1294,6 +1297,9 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 
 		destPath := filepath.Join(storagePath, storageName)
 		if writeErr := adapter.Write(destPath, tee); writeErr != nil {
+			if readerCloser != nil {
+				_ = readerCloser.Close()
+			}
 			return storageName, "", fmt.Errorf("writing %s to storage: %w", storageName, writeErr)
 		}
 		return storageName, hex.EncodeToString(hasher.Sum(nil)), nil

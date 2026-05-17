@@ -36,3 +36,4 @@ test_webdav_port: 8082
 test_webdav_username: vault
 test_webdav_password: "vault-webdav-test-only"
 test_webdav_data_dir: /mnt/cache/appdata/vault-test-webdav
+test_webdav_config_dir: /mnt/cache/appdata/vault-test-webdav-config

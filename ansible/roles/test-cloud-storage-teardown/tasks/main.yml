@@ -13,7 +13,7 @@
 
 - name: Remove appdata directories
   ansible.builtin.raw: |
-    rm -rf -- {{ test_minio_data_dir | quote }} {{ test_webdav_data_dir | quote }}
+    rm -rf -- {{ test_minio_data_dir | quote }} {{ test_webdav_data_dir | quote }} {{ test_webdav_config_dir | quote }}
   changed_when: false
   when: test_cloud_storage_purge_data | default(false) | bool
 

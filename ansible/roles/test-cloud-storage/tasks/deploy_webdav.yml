@@ -10,15 +10,58 @@
   register: cs_webdav_rm
   changed_when: "'REMOVED' in cs_webdav_rm.stdout"
 
-- name: Ensure WebDAV data directory exists
+- name: Ensure WebDAV data and config directories exist
   ansible.builtin.raw: |
+    changed=0
     if [ ! -d {{ test_webdav_data_dir | quote }} ]; then
       mkdir -p {{ test_webdav_data_dir | quote }}
-      chmod 0755 {{ test_webdav_data_dir | quote }}
+      changed=1
+    fi
+    if [ ! -d {{ test_webdav_config_dir | quote }} ]; then
+      mkdir -p {{ test_webdav_config_dir | quote }}
+      changed=1
+    fi
+    chmod 0755 {{ test_webdav_data_dir | quote }} {{ test_webdav_config_dir | quote }}
+    if [ "$changed" = "1" ]; then
       echo CREATED
     fi
   register: cs_webdav_mkdir
   changed_when: "'CREATED' in cs_webdav_mkdir.stdout"
+
+- name: Write WebDAV config.yml
+  # hacdias/webdav reads credentials from the environment via {env} markers,
+  # so the config file can be persisted without storing the plaintext password.
+  ansible.builtin.raw: |
+    config_file={{ (test_webdav_config_dir ~ '/config.yml') | quote }}
+    tmp_file="${config_file}.tmp"
+    cat > "$tmp_file" <<'EOF'
+    address: 0.0.0.0
+    port: 6065
+    tls: false
+    prefix: /
+    debug: false
+    noSniff: false
+    behindProxy: false
+    directory: /data
+    permissions: CRUD
+    rules: []
+    rulesBehavior: overwrite
+    users:
+      - username: "{env}WEBDAV_USERNAME"
+        password: "{env}WEBDAV_PASSWORD"
+        directory: /data
+        permissions: CRUD
+    EOF
+    chmod 0600 "$tmp_file"
+    if [ ! -f "$config_file" ] || ! cmp -s "$tmp_file" "$config_file"; then
+      mv "$tmp_file" "$config_file"
+      echo CHANGED
+    else
+      rm -f "$tmp_file"
+    fi
+  register: cs_webdav_config
+  changed_when: "'CHANGED' in cs_webdav_config.stdout"
+  no_log: true
 
 - name: Pull WebDAV image
   ansible.builtin.raw: docker pull {{ test_webdav_image | quote }}
@@ -34,14 +77,13 @@
     docker run -d \
       --name {{ test_webdav_container | quote }} \
       --restart unless-stopped \
-      -p {{ test_webdav_port | quote }}:80 \
+      -p {{ test_webdav_port | quote }}:6065 \
+      -v {{ (test_webdav_config_dir ~ '/config.yml') | quote }}:/config.yml:ro \
       -v {{ test_webdav_data_dir | quote }}:/data \
       -e WEBDAV_USERNAME \
       -e WEBDAV_PASSWORD \
-      -e PUID=99 \
-      -e PGID=100 \
       -e TIMEZONE \
-      {{ test_webdav_image | quote }}
+      {{ test_webdav_image | quote }} -c /config.yml
   changed_when: true
   no_log: true
 

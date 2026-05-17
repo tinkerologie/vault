@@ -33,16 +33,8 @@
 
 - name: Set verification bind facts
   ansible.builtin.set_fact:
-    daemon_bind_display: >-
-      {{
-        (cs_bind_info.stdout | regex_search('^BIND=(.*)$', '\\1', multiline=True))
-        | default(bind_address ~ ':' ~ api_port, true)
-      }}
-    cs_target_host: >-
-      {{
-        (cs_bind_info.stdout | regex_search('^TARGET=(.*)$', '\\1', multiline=True))
-        | default('127.0.0.1', true)
-      }}
+    daemon_bind_display: "{{ ((cs_bind_info.stdout_lines | select('match', '^BIND=') | list | first | default('BIND=' ~ bind_address ~ ':' ~ api_port, true)) | regex_replace('^BIND=', '')) }}"
+    cs_target_host: "{{ ((cs_bind_info.stdout_lines | select('match', '^TARGET=') | list | first | default('TARGET=127.0.0.1', true)) | regex_replace('^TARGET=', '')) }}"
 
 - name: Remove stale verification tunnel socket
   delegate_to: localhost

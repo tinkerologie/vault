@@ -1,16 +1,22 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -46,6 +52,95 @@ type WebDAVConfig struct {
 	// value to disable. This is the primary safety net against hung TCP
 	// connections that the OS keepalive has not yet torn down.
 	StallTimeoutSeconds int `json:"stall_timeout_seconds,omitempty"`
+
+	// ChunkSizeMB controls WebDAV chunked logical-file uploads. The default of
+	// 0 uses 50 MiB chunks. Negative values disable chunking, but WebDAV still
+	// writes through a temporary file and WriteStreamWithLength to avoid
+	// gowebdav.WriteStream buffering non-seekable readers into memory.
+	ChunkSizeMB int `json:"chunk_size_mb,omitempty"`
+}
+
+const (
+	defaultWebDAVChunkSizeBytes = int64(50 * 1024 * 1024)
+	maxWebDAVChunkSizeMB        = 4096
+	webDAVManifestVersion       = 1
+	webDAVSidecarPrefix         = ".vault-webdav-"
+	webDAVManifestSuffix        = ".manifest.json"
+)
+
+// webDAVChunkRetryBackoffs holds the per-chunk PUT retry backoff schedule.
+// The values are exponential (factor ~3) capped at 8s, matching the shape
+// of Kopia's retry policy (kopia/internal/retry — 100ms initial, 32s max,
+// 1.5× factor, 10 attempts) but trimmed for Vault's smaller blast radius:
+// each chunk is at most a few hundred MiB, and Vault has its own job-level
+// retry loop wrapped around the adapter (runner.uploadOnce, 4 attempts).
+// Exposed as var so tests can override to keep total runtime small.
+var webDAVChunkRetryBackoffs = []time.Duration{
+	100 * time.Millisecond,
+	300 * time.Millisecond,
+	1 * time.Second,
+	3 * time.Second,
+	8 * time.Second,
+}
+
+// httpErrorCode extracts the numeric HTTP status code from a gowebdav error.
+// gowebdav wraps non-2xx responses in *os.PathError whose Err text starts
+// with the status code as a decimal integer (e.g. "423 Locked"). This is
+// the same parsing strategy Kopia uses (repo/blob/webdav/webdav_storage.go).
+// Returns 0 when the error is not from gowebdav (network/dial/timeout).
+func httpErrorCode(err error) int {
+	var pe *os.PathError
+	if !errors.As(err, &pe) || pe.Err == nil {
+		return 0
+	}
+	parts := strings.SplitN(pe.Err.Error(), " ", 2)
+	code, convErr := strconv.Atoi(parts[0])
+	if convErr != nil {
+		return 0
+	}
+	return code
+}
+
+// isWebDAVRetriable classifies a transfer error as retriable.
+//
+// Modelled on Kopia's isRetriable (repo/blob/webdav/webdav_storage.go):
+//   - HTTP 423 (Locked), 409 (Conflict), 429 (Too Many Requests) and any
+//     5xx are retriable: the request was understood by the server but
+//     could not be processed at this moment.
+//   - Stall-watchdog aborts (ErrUploadStalled) are retriable: the next
+//     attempt opens a fresh TCP connection.
+//   - All 4xx other than the three above are fatal (auth, bad path,
+//     payload too large). Retrying just wastes time and bandwidth.
+//   - Errors without a status (network, dial, TLS, EOF) are retriable.
+func isWebDAVRetriable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrUploadStalled) {
+		return true
+	}
+	code := httpErrorCode(err)
+	switch code {
+	case 0:
+		return true // network / transport / non-HTTP failure
+	case http.StatusLocked, http.StatusConflict, http.StatusTooManyRequests:
+		return true
+	}
+	return code >= http.StatusInternalServerError
+}
+
+type webDAVChunkManifest struct {
+	Version   int                `json:"version"`
+	Path      string             `json:"path"`
+	Size      int64              `json:"size"`
+	ChunkSize int64              `json:"chunk_size"`
+	Chunks    []webDAVChunkEntry `json:"chunks"`
+}
+
+type webDAVChunkEntry struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
 }
 
 // String redacts the Password field so accidental logging via fmt verbs
@@ -57,8 +152,8 @@ func (c WebDAVConfig) String() string {
 	if c.Password != "" {
 		pw = "<redacted>"
 	}
-	return fmt.Sprintf("WebDAVConfig{URL:%q Username:%q Password:%s BasePath:%q InsecureSkipVerify:%t TimeoutSeconds:%d StallTimeoutSeconds:%d}",
-		c.URL, c.Username, pw, c.BasePath, c.InsecureSkipVerify, c.TimeoutSeconds, c.StallTimeoutSeconds)
+	return fmt.Sprintf("WebDAVConfig{URL:%q Username:%q Password:%s BasePath:%q InsecureSkipVerify:%t TimeoutSeconds:%d StallTimeoutSeconds:%d ChunkSizeMB:%d}",
+		c.URL, c.Username, pw, c.BasePath, c.InsecureSkipVerify, c.TimeoutSeconds, c.StallTimeoutSeconds, c.ChunkSizeMB)
 }
 
 // MarshalJSON ensures structured loggers (e.g. encoding/json wrappers) cannot
@@ -93,6 +188,9 @@ func NewWebDAVAdapter(cfg WebDAVConfig) (*WebDAVAdapter, error) {
 	}
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		return nil, fmt.Errorf("webdav: url must start with http:// or https://")
+	}
+	if cfg.ChunkSizeMB > maxWebDAVChunkSizeMB {
+		return nil, fmt.Errorf("webdav: chunk_size_mb must be <= %d, got %d", maxWebDAVChunkSizeMB, cfg.ChunkSizeMB)
 	}
 	cfg.URL = strings.TrimRight(url, "/")
 	cfg.BasePath = strings.Trim(cfg.BasePath, "/")
@@ -149,8 +247,19 @@ func (w *WebDAVAdapter) client() *gowebdav.Client {
 	if w.config.TimeoutSeconds > 0 {
 		c.SetTimeout(time.Duration(w.config.TimeoutSeconds) * time.Second)
 	}
+	c.SetHeader("Accept-Encoding", "identity")
 	// else: leave http.Client.Timeout at its default 0 (no overall deadline).
 	return c
+}
+
+func (w *WebDAVAdapter) chunkSize() (int64, bool) {
+	if w.config.ChunkSizeMB < 0 {
+		return 0, false
+	}
+	if w.config.ChunkSizeMB == 0 {
+		return defaultWebDAVChunkSizeBytes, true
+	}
+	return int64(w.config.ChunkSizeMB) * 1024 * 1024, true
 }
 
 // stallTimeout returns the configured no-progress upload abort window, or
@@ -260,6 +369,221 @@ func (w *WebDAVAdapter) fullPath(p string, allowRoot bool) (string, error) {
 	return "/" + strings.Trim(joined, "/"), nil
 }
 
+func cleanWebDAVLogicalPath(p string) string {
+	return strings.Trim(strings.ReplaceAll(p, "\\", "/"), "/")
+}
+
+func webDAVSidecarStem(full string) string {
+	sum := sha256.Sum256([]byte(full))
+	return webDAVSidecarPrefix + path.Base(full) + "." + hex.EncodeToString(sum[:8])
+}
+
+func webDAVManifestPath(full string) string {
+	return path.Join(path.Dir(full), webDAVSidecarStem(full)+webDAVManifestSuffix)
+}
+
+func webDAVChunkDir(full string) string {
+	return path.Join(path.Dir(full), webDAVSidecarStem(full)+".chunks")
+}
+
+func webDAVChunkPath(full string, index int) string {
+	return path.Join(webDAVChunkDir(full), fmt.Sprintf("%06d.part", index))
+}
+
+func isWebDAVSidecarName(name string) bool {
+	return strings.HasPrefix(name, webDAVSidecarPrefix)
+}
+
+func isWebDAVNotFound(err error) bool {
+	return err != nil && gowebdav.IsErrNotFound(err)
+}
+
+func readWebDAVChunk(r io.Reader, limit int64) ([]byte, bool, error) {
+	var buf bytes.Buffer
+	_, err := io.CopyN(&buf, r, limit)
+	if err == nil {
+		return buf.Bytes(), false, nil
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return buf.Bytes(), true, nil
+	}
+	return nil, false, err
+}
+
+func (w *WebDAVAdapter) writeStreamWithLength(c *gowebdav.Client, full string, reader io.Reader, size int64) error {
+	sr := newStallReader(reader, w.stallTimeout())
+	defer sr.Close()
+	if err := c.WriteStreamWithLength(full, sr, size, 0640); err != nil {
+		if sr.stalled.Load() {
+			return fmt.Errorf("webdav: write %s: %w", full, ErrUploadStalled)
+		}
+		return fmt.Errorf("webdav: write %s: %w", full, err)
+	}
+	return nil
+}
+
+func (w *WebDAVAdapter) writeBytesWithChunkRetry(c *gowebdav.Client, full string, data []byte) error {
+	var lastErr error
+	for attempt := 0; attempt <= len(webDAVChunkRetryBackoffs); attempt++ {
+		if attempt > 0 {
+			time.Sleep(webDAVChunkRetryBackoffs[attempt-1])
+		}
+		lastErr = w.writeStreamWithLength(c, full, bytes.NewReader(data), int64(len(data)))
+		if lastErr == nil {
+			return nil
+		}
+		// Status-aware fail-fast: auth/path/payload errors are never
+		// transient. Retrying just hides the real problem and wastes time.
+		// This matches Kopia's isRetriable classification.
+		if !isWebDAVRetriable(lastErr) {
+			log.Printf("webdav: non-retriable chunk PUT error for %s: %v", full, lastErr)
+			return lastErr
+		}
+	}
+	return lastErr
+}
+
+func (w *WebDAVAdapter) readManifest(c *gowebdav.Client, full string) (webDAVChunkManifest, bool, error) {
+	rc, err := c.ReadStream(webDAVManifestPath(full))
+	if err != nil {
+		if isWebDAVNotFound(err) {
+			return webDAVChunkManifest{}, false, nil
+		}
+		return webDAVChunkManifest{}, false, fmt.Errorf("webdav: read chunk manifest %s: %w", webDAVManifestPath(full), err)
+	}
+	defer rc.Close()
+	var manifest webDAVChunkManifest
+	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
+		return webDAVChunkManifest{}, false, fmt.Errorf("webdav: decode chunk manifest %s: %w", webDAVManifestPath(full), err)
+	}
+	if manifest.Version != webDAVManifestVersion {
+		return webDAVChunkManifest{}, false, fmt.Errorf("webdav: unsupported chunk manifest version %d", manifest.Version)
+	}
+	return manifest, true, nil
+}
+
+func (w *WebDAVAdapter) writeBufferedSingle(c *gowebdav.Client, full string, data []byte) error {
+	if err := w.deleteChunkSidecars(c, full); err != nil {
+		return err
+	}
+	return w.writeStreamWithLength(c, full, bytes.NewReader(data), int64(len(data)))
+}
+
+func (w *WebDAVAdapter) writeTempSingle(c *gowebdav.Client, full string, reader io.Reader) error {
+	if err := w.deleteChunkSidecars(c, full); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp("", "vault-webdav-upload-*")
+	if err != nil {
+		return fmt.Errorf("webdav: create upload temp file: %w", err)
+	}
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+	size, err := io.Copy(tmp, reader)
+	if err != nil {
+		return fmt.Errorf("webdav: spool upload temp file: %w", err)
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("webdav: rewind upload temp file: %w", err)
+	}
+	return w.writeStreamWithLength(c, full, tmp, size)
+}
+
+func (w *WebDAVAdapter) writeChunked(c *gowebdav.Client, logicalPath string, full string, firstChunk []byte, reader io.Reader, chunkSize int64) error {
+	if err := w.deleteChunkSidecars(c, full); err != nil {
+		return err
+	}
+	if err := c.Remove(full); err != nil && !isWebDAVNotFound(err) {
+		return fmt.Errorf("webdav: remove existing %s: %w", full, err)
+	}
+
+	manifest := webDAVChunkManifest{
+		Version:   webDAVManifestVersion,
+		Path:      logicalPath,
+		ChunkSize: chunkSize,
+	}
+	uploaded := make([]string, 0)
+	cleanup := func() {
+		for _, chunkPath := range uploaded {
+			if err := c.Remove(chunkPath); err != nil && !isWebDAVNotFound(err) {
+				log.Printf("webdav: cleanup: failed to delete chunk %s: %v", chunkPath, err)
+			}
+		}
+		if err := c.Remove(webDAVManifestPath(full)); err != nil && !isWebDAVNotFound(err) {
+			log.Printf("webdav: cleanup: failed to delete chunk manifest %s: %v", webDAVManifestPath(full), err)
+		}
+	}
+
+	writeChunk := func(data []byte) error {
+		index := len(manifest.Chunks)
+		chunkPath := webDAVChunkPath(full, index)
+		sum := sha256.Sum256(data)
+		if err := w.writeBytesWithChunkRetry(c, chunkPath, data); err != nil {
+			return err
+		}
+		uploaded = append(uploaded, chunkPath)
+		manifest.Chunks = append(manifest.Chunks, webDAVChunkEntry{
+			Path:   chunkPath,
+			Size:   int64(len(data)),
+			SHA256: hex.EncodeToString(sum[:]),
+		})
+		manifest.Size += int64(len(data))
+		return nil
+	}
+
+	if err := writeChunk(firstChunk); err != nil {
+		cleanup()
+		return err
+	}
+	for {
+		chunk, eof, err := readWebDAVChunk(reader, chunkSize)
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("webdav: read chunk for %s: %w", full, err)
+		}
+		if len(chunk) > 0 {
+			if err := writeChunk(chunk); err != nil {
+				cleanup()
+				return err
+			}
+		}
+		if eof {
+			break
+		}
+	}
+
+	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("webdav: encode chunk manifest: %w", err)
+	}
+	if err := w.writeBytesWithChunkRetry(c, webDAVManifestPath(full), manifestBytes); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
+func (w *WebDAVAdapter) deleteChunkSidecars(c *gowebdav.Client, full string) error {
+	manifest, found, err := w.readManifest(c, full)
+	if err != nil {
+		return err
+	}
+	if found {
+		for _, chunk := range manifest.Chunks {
+			if err := c.Remove(chunk.Path); err != nil && !isWebDAVNotFound(err) {
+				return fmt.Errorf("webdav: delete chunk %s: %w", chunk.Path, err)
+			}
+		}
+	}
+	if err := c.Remove(webDAVManifestPath(full)); err != nil && !isWebDAVNotFound(err) {
+		return fmt.Errorf("webdav: delete chunk manifest %s: %w", webDAVManifestPath(full), err)
+	}
+	return nil
+}
+
 func (w *WebDAVAdapter) Write(p string, reader io.Reader) error {
 	full, err := w.fullPath(p, false)
 	if err != nil {
@@ -271,20 +595,18 @@ func (w *WebDAVAdapter) Write(p string, reader io.Reader) error {
 			return fmt.Errorf("webdav: mkdir %s: %w", dir, err)
 		}
 	}
-	// Wrap the reader in a stall watchdog so we abort hung uploads promptly
-	// instead of relying on the OS keepalive (which can take minutes). The
-	// watchdog has no fixed deadline; it only fires when no bytes flow for
-	// the configured window, so slow-but-progressing transfers of any size
-	// will complete. (See client() comment block for #83 background.)
-	sr := newStallReader(reader, w.stallTimeout())
-	defer sr.cancel()
-	if err := c.WriteStream(full, sr, 0640); err != nil {
-		if sr.stalled.Load() {
-			return fmt.Errorf("webdav: write %s: %w", full, ErrUploadStalled)
-		}
-		return fmt.Errorf("webdav: write %s: %w", full, err)
+	chunkSize, chunkingEnabled := w.chunkSize()
+	if !chunkingEnabled {
+		return w.writeTempSingle(c, full, reader)
 	}
-	return nil
+	firstChunk, eof, err := readWebDAVChunk(reader, chunkSize)
+	if err != nil {
+		return fmt.Errorf("webdav: read upload %s: %w", full, err)
+	}
+	if eof {
+		return w.writeBufferedSingle(c, full, firstChunk)
+	}
+	return w.writeChunked(c, cleanWebDAVLogicalPath(p), full, firstChunk, reader, chunkSize)
 }
 
 func (w *WebDAVAdapter) Read(p string) (io.ReadCloser, error) {
@@ -292,7 +614,15 @@ func (w *WebDAVAdapter) Read(p string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	rc, err := w.client().ReadStream(full)
+	c := w.client()
+	manifest, found, err := w.readManifest(c, full)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		return &webDAVChunkReader{client: c, manifest: manifest}, nil
+	}
+	rc, err := c.ReadStream(full)
 	if err != nil {
 		return nil, fmt.Errorf("webdav: read %s: %w", full, err)
 	}
@@ -304,8 +634,12 @@ func (w *WebDAVAdapter) Delete(p string) error {
 	if err != nil {
 		return err
 	}
-	if err := w.client().Remove(full); err != nil {
+	c := w.client()
+	if err := c.Remove(full); err != nil && !isWebDAVNotFound(err) {
 		return fmt.Errorf("webdav: delete %s: %w", full, err)
+	}
+	if err := w.deleteChunkSidecars(c, full); err != nil {
+		return err
 	}
 	return nil
 }
@@ -315,14 +649,40 @@ func (w *WebDAVAdapter) List(prefix string) ([]FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	entries, err := w.client().ReadDir(full)
+	c := w.client()
+	entries, err := c.ReadDir(full)
 	if err != nil {
 		return nil, fmt.Errorf("webdav: list %s: %w", full, err)
 	}
 	out := make([]FileInfo, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
 	for _, e := range entries {
+		if isWebDAVSidecarName(e.Name()) {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), webDAVManifestSuffix) {
+				manifestPath := path.Join(full, e.Name())
+				rc, readErr := c.ReadStream(manifestPath)
+				if readErr != nil {
+					return nil, fmt.Errorf("webdav: read chunk manifest %s: %w", manifestPath, readErr)
+				}
+				var manifest webDAVChunkManifest
+				decodeErr := json.NewDecoder(rc).Decode(&manifest)
+				_ = rc.Close()
+				if decodeErr != nil {
+					return nil, fmt.Errorf("webdav: decode chunk manifest %s: %w", manifestPath, decodeErr)
+				}
+				if manifest.Version == webDAVManifestVersion && manifest.Path != "" {
+					out = append(out, FileInfo{Path: manifest.Path, Size: manifest.Size, ModTime: e.ModTime(), IsDir: false})
+					seen[manifest.Path] = struct{}{}
+				}
+			}
+			continue
+		}
+		relPath := path.Join(prefix, e.Name())
+		if _, ok := seen[relPath]; ok {
+			continue
+		}
 		out = append(out, FileInfo{
-			Path:    path.Join(prefix, e.Name()),
+			Path:    relPath,
 			Size:    e.Size(),
 			ModTime: e.ModTime(),
 			IsDir:   e.IsDir(),
@@ -336,7 +696,15 @@ func (w *WebDAVAdapter) Stat(p string) (FileInfo, error) {
 	if err != nil {
 		return FileInfo{}, err
 	}
-	info, err := w.client().Stat(full)
+	c := w.client()
+	manifest, found, err := w.readManifest(c, full)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	if found {
+		return FileInfo{Path: p, Size: manifest.Size, IsDir: false}, nil
+	}
+	info, err := c.Stat(full)
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("webdav: stat %s: %w", full, err)
 	}
@@ -367,6 +735,66 @@ func (w *WebDAVAdapter) TestConnection() error {
 	// access and avoids forcing the operator to pre-create the directory.
 	if err := c.MkdirAll(target, 0750); err != nil {
 		return fmt.Errorf("webdav: connection test failed: %w", err)
+	}
+	return nil
+}
+
+type webDAVChunkReader struct {
+	client      *gowebdav.Client
+	manifest    webDAVChunkManifest
+	index       int
+	current     io.ReadCloser
+	currentHash hash.Hash
+	currentSize int64
+}
+
+func (r *webDAVChunkReader) Read(p []byte) (int, error) {
+	for {
+		if r.current == nil {
+			if r.index >= len(r.manifest.Chunks) {
+				return 0, io.EOF
+			}
+			rc, err := r.client.ReadStream(r.manifest.Chunks[r.index].Path)
+			if err != nil {
+				return 0, fmt.Errorf("webdav: read chunk %s: %w", r.manifest.Chunks[r.index].Path, err)
+			}
+			r.current = rc
+			r.currentHash = sha256.New()
+			r.currentSize = 0
+		}
+
+		n, err := r.current.Read(p)
+		if n > 0 {
+			_, _ = r.currentHash.Write(p[:n])
+			r.currentSize += int64(n)
+			return n, nil
+		}
+		if errors.Is(err, io.EOF) {
+			if closeErr := r.current.Close(); closeErr != nil {
+				return 0, fmt.Errorf("webdav: close chunk %s: %w", r.manifest.Chunks[r.index].Path, closeErr)
+			}
+			chunk := r.manifest.Chunks[r.index]
+			if r.currentSize != chunk.Size {
+				return 0, fmt.Errorf("webdav: chunk %s size mismatch: got %d, want %d", chunk.Path, r.currentSize, chunk.Size)
+			}
+			actual := hex.EncodeToString(r.currentHash.Sum(nil))
+			if actual != chunk.SHA256 {
+				return 0, fmt.Errorf("webdav: chunk %s checksum mismatch: got %s, want %s", chunk.Path, actual, chunk.SHA256)
+			}
+			r.current = nil
+			r.index++
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+}
+
+func (r *webDAVChunkReader) Close() error {
+	if r.current != nil {
+		return r.current.Close()
 	}
 	return nil
 }

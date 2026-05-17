@@ -245,8 +245,8 @@
       sftp: { host: '', port: 22, user: '', password: '', base_path: '' },
       smb: { host: '', share: '', user: '', password: '', base_path: '' },
       nfs: { host: '', export: '', base_path: '', version: '4', options: '' },
-      webdav: { url: '', username: '', password: '', base_path: '', insecure_skip_verify: false, timeout_seconds: 0, stall_timeout_seconds: 300 },
-      s3: { bucket: '', region: '', access_key: '', secret_key: '', endpoint: '', base_path: '', force_path_style: false, upload_timeout_minutes: 0 },
+      webdav: { url: '', username: '', password: '', base_path: '', insecure_skip_verify: false, timeout_seconds: 0, stall_timeout_seconds: 300, chunk_size_mb: 0 },
+      s3: { bucket: '', region: '', access_key: '', secret_key: '', endpoint: '', base_path: '', force_path_style: false, upload_timeout_minutes: 0, part_size_mb: 0 },
     }
     // Reassign the full form object so Svelte always re-renders the keyed
     // config block when switching destination type.
@@ -537,9 +537,17 @@
       </label>
       <details class="group">
         <summary class="text-sm font-medium text-text-muted hover:text-text cursor-pointer select-none">
-          Advanced &middot; Timeouts
+          Advanced &middot; Transfer
         </summary>
-        <div class="grid grid-cols-2 gap-3 mt-3">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+          <div>
+            <label for="dav_chunk" class="block text-sm font-medium text-text-muted mb-1.5">
+              Chunk size (MiB)
+              <Tooltip text="Files larger than this are split into independent WebDAV PUT requests. Default 0 = 50 MiB. Set to -1 to disable chunking." />
+            </label>
+            <input id="dav_chunk" type="number" bind:value={form.config.chunk_size_mb} placeholder="0 (50 MiB)" min="-1"
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          </div>
           <div>
             <label for="dav_stall" class="block text-sm font-medium text-text-muted mb-1.5">
               Stall timeout (seconds)
@@ -598,13 +606,23 @@
         Force path-style addressing
         <Tooltip text="Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual hosted-style buckets." />
       </label>
-      <div>
-        <label for="s3_upload_timeout" class="block text-sm font-medium text-text-muted mb-1.5">
-          Upload timeout (minutes)
-          <Tooltip text="Maximum time a single object upload (including multipart transfers) may take. Defaults to 240 (4 hours) when 0 or unset. Increase for very large files over slow links." />
-        </label>
-        <input id="s3_upload_timeout" type="number" bind:value={form.config.upload_timeout_minutes} placeholder="240 (default)" min="0"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label for="s3_upload_timeout" class="block text-sm font-medium text-text-muted mb-1.5">
+            Upload timeout (minutes)
+            <Tooltip text="Maximum time a single object upload (including multipart transfers) may take. Defaults to 240 (4 hours) when 0 or unset. Increase for very large files over slow links." />
+          </label>
+          <input id="s3_upload_timeout" type="number" bind:value={form.config.upload_timeout_minutes} placeholder="240 (default)" min="0"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+        <div>
+          <label for="s3_part_size" class="block text-sm font-medium text-text-muted mb-1.5">
+            Part size (MiB)
+            <Tooltip text="Multipart upload part size. S3 allows max 10,000 parts per object, so this directly sets the per-object ceiling (PartSize × 10,000). Default 0 = 64 MiB (640 GB ceiling). Raise for multi-TB datasets (256 → 2.5 TB, 1024 → 10 TB). Valid range: 5-5120 MiB." />
+          </label>
+          <input id="s3_part_size" type="number" bind:value={form.config.part_size_mb} placeholder="0 (64 MiB)" min="0" max="5120"
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
       </div>
     {/if}
     {/key}

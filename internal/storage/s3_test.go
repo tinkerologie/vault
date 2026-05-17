@@ -58,6 +58,26 @@ func TestNewS3Adapter(t *testing.T) {
 			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", UploadTimeoutMinutes: 30},
 			wantErr: false,
 		},
+		{
+			name:    "part size below minimum",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", PartSizeMB: minS3PartSizeMB - 1},
+			wantErr: true,
+		},
+		{
+			name:    "part size above maximum",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", PartSizeMB: maxS3PartSizeMB + 1},
+			wantErr: true,
+		},
+		{
+			name:    "explicit part size at minimum",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", PartSizeMB: minS3PartSizeMB},
+			wantErr: false,
+		},
+		{
+			name:    "explicit part size at maximum",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", PartSizeMB: maxS3PartSizeMB},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -157,6 +177,51 @@ func TestStaticS3EndpointResolver(t *testing.T) {
 			}
 			if got.URI.Path != tt.wantPath {
 				t.Errorf("path = %q, want %q", got.URI.Path, tt.wantPath)
+			}
+		})
+	}
+}
+
+// TestS3AdapterPartSize locks in the part-size defaults and overrides that
+// raise the per-object ceiling above transfermanager's 80 GB default. See
+// issue #95: large Backblaze B2 uploads (e.g. ~281 GB Immich folder) failed
+// with "exceeded total allowed S3 limit MaxUploadParts (10000)" because the
+// SDK's auto-scale only triggers when objectSize is known up-front, and
+// Vault's age-encrypted streams have no Size/ContentLength.
+func TestS3AdapterPartSize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		configMB    int
+		wantBytes   int64
+		wantCeiling int64 // PartSize * 10 000, the multipart limit
+	}{
+		{name: "default when zero", configMB: 0, wantBytes: int64(defaultS3PartSizeMB) * 1024 * 1024, wantCeiling: int64(defaultS3PartSizeMB) * 1024 * 1024 * 10000},
+		{name: "explicit 5 MiB minimum", configMB: 5, wantBytes: 5 * 1024 * 1024, wantCeiling: 5 * 1024 * 1024 * 10000},
+		{name: "explicit 256 MiB", configMB: 256, wantBytes: 256 * 1024 * 1024, wantCeiling: 256 * 1024 * 1024 * 10000},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a, err := NewS3Adapter(S3Config{
+				Bucket:     "b",
+				Region:     "us-east-1",
+				PartSizeMB: tt.configMB,
+			})
+			if err != nil {
+				t.Fatalf("NewS3Adapter error: %v", err)
+			}
+			if a.partSizeBytes != tt.wantBytes {
+				t.Errorf("partSizeBytes = %d, want %d", a.partSizeBytes, tt.wantBytes)
+			}
+			// The 10 000-part cap means the maximum-sized object we can
+			// accept is partSizeBytes * 10000. Document that relationship
+			// in the test so future tweaks don't silently lower the
+			// ceiling below what users configured.
+			if got := a.partSizeBytes * 10000; got != tt.wantCeiling {
+				t.Errorf("multipart ceiling = %d, want %d", got, tt.wantCeiling)
 			}
 		})
 	}

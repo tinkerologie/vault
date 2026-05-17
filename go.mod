@@ -27,6 +27,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/studio-b12/gowebdav v0.12.0
 	golang.org/x/crypto v0.51.0
+	golang.org/x/net v0.53.0
 	modernc.org/sqlite v1.50.1
 )
 
@@ -89,7 +90,6 @@ require (
 	go.opentelemetry.io/otel/sdk v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	modernc.org/libc v1.72.3 // indirect

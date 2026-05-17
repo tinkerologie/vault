@@ -110,6 +110,9 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 | **Password / App Token**               | Password or app-specific token. For Nextcloud, generate an [app password](https://docs.nextcloud.com/server/latest/user_manual/en/session_management.html) under Settings → Security.                              |
 | **Base Path**                          | Optional sub-folder under the server URL where Vault will write its data.                                                                                                                                          |
 | **Allow self-signed TLS certificates** | Skip TLS validation. Only enable for trusted private servers.                                                                                                                                                      |
+| **Chunk size (MiB)**                   | Optional. Files larger than this are split into independent WebDAV PUT requests with a manifest sidecar. Default `0` = 50 MiB. Set `-1` to disable chunking.                                                       |
+| **Stall timeout (seconds)**            | Optional. Abort an upload if no bytes flow for this many seconds. Default `300`. Set `-1` to disable the stall watchdog.                                                                                           |
+| **Overall request timeout (seconds)**  | Optional hard ceiling per WebDAV request. Default `0` = unlimited; recommended for large backups over slower links.                                                                                                |
 
 **Security Best Practices:**
 
@@ -121,6 +124,8 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 **Notes:**
 
 - WebDAV is **stateless HTTP**: each operation opens its own connection and closes it. This avoids the per-user concurrent-connection caps that affect SFTP/SMB on managed providers like Synology and TrueNAS.
+- Large WebDAV files are uploaded as bounded chunks with a small JSON manifest. This mirrors the approach used by backup tools such as Kopia: a transient network failure only retries the current chunk instead of a multi-GB archive from byte zero.
+- Existing non-chunked WebDAV backups remain readable. Vault detects a chunk manifest when present and falls back to the original single-file read path otherwise.
 - Vault uses `gowebdav`'s auto-auth, so Basic and Digest authentication are negotiated automatically.
 - For Nextcloud, the server URL **must** include `/remote.php/dav/files/<username>/` — the share-root WebDAV endpoint is not the file-storage endpoint.
 - For ownCloud, use `/remote.php/webdav/`.
@@ -138,6 +143,8 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 | **Endpoint**                    | Optional. Required for S3-compatible providers. Examples: `https://s3.us-west-002.backblazeb2.com` (B2), `https://<account>.r2.cloudflarestorage.com` (R2), `http://minio.local:9000` (MinIO). Leave blank for AWS S3. |
 | **Base Path**                   | Optional key prefix prepended to every object Vault writes.                                                                                                                                                            |
 | **Force path-style addressing** | Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual-hosted-style buckets. AWS S3 does not need this.                                                                                  |
+| **Upload timeout (minutes)**    | Optional. Hard ceiling on a single object upload (including multipart transfers). Default `0` = 240 (4 hours). Raise for very large files over slow links.                                                             |
+| **Part size (MiB)**             | Optional. Multipart part size used for uploads. S3 caps the number of parts at 10,000 so this directly sets the per-object ceiling (`part_size × 10,000`). Default `0` = 64 MiB → 640 GB ceiling. Range 5–5120 MiB.   |
 
 **Provider notes:**
 
@@ -151,6 +158,7 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 
 - Vault uses the AWS SDK v2's reusable client, which pools HTTP connections internally — a single S3 destination can sustain many concurrent uploads.
 - Server-side encryption is your provider's responsibility. Vault's own encryption (Settings → Security) layers on top and protects backups even from the storage operator.
+- **Sizing Part size** — the S3 protocol caps a multipart upload at 10,000 parts, so the maximum object Vault can upload is `part_size × 10,000`. Default 64 MiB → 640 GB ceiling, which fits typical home-server workloads. For Immich libraries, full-disk images, or other multi-TB datasets, raise the value: 256 → 2.5 TB, 512 → 5 TB, 1024 → 10 TB. Peak upload memory ≈ `part_size × concurrency` (default 5), so 1 GiB parts cost ~5 GiB RAM during an active upload. Backblaze B2, MinIO, AWS S3, Cloudflare R2, and Wasabi all accept parts in the 5 MiB – 5 GiB range.
 
 ---
 

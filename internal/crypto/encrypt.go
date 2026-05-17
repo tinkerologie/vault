@@ -3,14 +3,16 @@ package crypto
 import (
 	"fmt"
 	"io"
+	"sync"
 
 	"filippo.io/age"
 )
 
 // EncryptReader wraps src in an age-encrypted stream using a passphrase.
-// The returned io.Reader streams encrypted data suitable for writing to
-// storage. The caller must read the returned reader to completion.
-func EncryptReader(passphrase string, src io.Reader) (io.Reader, error) {
+// The returned reader streams encrypted data suitable for writing to storage.
+// Callers must close it if they stop reading early so the encryption goroutine
+// is unblocked and can release its buffers.
+func EncryptReader(passphrase string, src io.Reader) (io.ReadCloser, error) {
 	if passphrase == "" {
 		return nil, fmt.Errorf("encryption passphrase must not be empty")
 	}
@@ -21,8 +23,10 @@ func EncryptReader(passphrase string, src io.Reader) (io.Reader, error) {
 	}
 
 	pr, pw := io.Pipe()
+	done := make(chan struct{})
 
 	go func() {
+		defer close(done)
 		w, err := age.Encrypt(pw, recipient)
 		if err != nil {
 			pw.CloseWithError(fmt.Errorf("starting age encryption: %w", err))
@@ -40,5 +44,20 @@ func EncryptReader(passphrase string, src io.Reader) (io.Reader, error) {
 		_ = pw.Close()
 	}()
 
-	return pr, nil
+	return &encryptReadCloser{PipeReader: pr, done: done}, nil
+}
+
+type encryptReadCloser struct {
+	*io.PipeReader
+	done chan struct{}
+	once sync.Once
+}
+
+func (r *encryptReadCloser) Close() error {
+	var err error
+	r.once.Do(func() {
+		err = r.PipeReader.Close()
+		<-r.done
+	})
+	return err
 }
