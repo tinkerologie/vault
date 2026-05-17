@@ -3,27 +3,35 @@ package db
 import "time"
 
 type Job struct {
-	ID                int64     `json:"id"`
-	Name              string    `json:"name"`
-	Description       string    `json:"description"`
-	Enabled           bool      `json:"enabled"`
-	Schedule          string    `json:"schedule"`
-	BackupTypeChain   string    `json:"backup_type_chain"`
-	RetentionCount    int       `json:"retention_count"`
-	RetentionDays     int       `json:"retention_days"`
-	Compression       string    `json:"compression"`
-	Encryption        string    `json:"encryption"`
-	ContainerMode     string    `json:"container_mode"`
-	VMMode            string    `json:"vm_mode"`
-	PreScript         string    `json:"pre_script"`
-	PostScript        string    `json:"post_script"`
-	NotifyOn          string    `json:"notify_on"`
-	VerifyBackup      bool      `json:"verify_backup"`
-	StorageDestID     int64     `json:"storage_dest_id"`
-	SourceID          int64     `json:"source_id"`
-	DeferRemoteUpload bool      `json:"defer_remote_upload"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	Enabled           bool   `json:"enabled"`
+	Schedule          string `json:"schedule"`
+	BackupTypeChain   string `json:"backup_type_chain"`
+	RetentionCount    int    `json:"retention_count"`
+	RetentionDays     int    `json:"retention_days"`
+	Compression       string `json:"compression"`
+	Encryption        string `json:"encryption"`
+	ContainerMode     string `json:"container_mode"`
+	VMMode            string `json:"vm_mode"`
+	PreScript         string `json:"pre_script"`
+	PostScript        string `json:"post_script"`
+	NotifyOn          string `json:"notify_on"`
+	VerifyBackup      bool   `json:"verify_backup"`
+	StorageDestID     int64  `json:"storage_dest_id"`
+	SourceID          int64  `json:"source_id"`
+	DeferRemoteUpload bool   `json:"defer_remote_upload"`
+	// GFS (grandfather-father-son) retention. Each defaults to 0 (disabled).
+	// If any of the five is > 0 the runner uses GFS classification and
+	// ignores RetentionCount / RetentionDays.
+	KeepLatest  int       `json:"keep_latest"`
+	KeepDaily   int       `json:"keep_daily"`
+	KeepWeekly  int       `json:"keep_weekly"`
+	KeepMonthly int       `json:"keep_monthly"`
+	KeepYearly  int       `json:"keep_yearly"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type JobItem struct {

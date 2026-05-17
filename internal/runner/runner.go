@@ -1103,7 +1103,10 @@ func (r *Runner) RunJob(jobID int64) {
 		}
 	}
 
-	if job.RetentionCount > 0 || job.RetentionDays > 0 {
+	gfs := gfsPolicyFromJob(job)
+	if gfs.IsActive() {
+		r.enforceRetentionGFS(dest, jobID, gfs)
+	} else if job.RetentionCount > 0 || job.RetentionDays > 0 {
 		r.enforceRetention(dest, jobID, job.RetentionCount, job.RetentionDays)
 	}
 
@@ -2261,6 +2264,41 @@ func (r *Runner) backupDatabase(dest db.StorageDestination) {
 	const destPath = "_vault/vault.db"
 	if err := adapter.Write(destPath, f); err != nil {
 		log.Printf("runner: failed to backup database to %s: %v", destPath, err)
+	}
+}
+
+// enforceRetentionGFS deletes restore points that are not protected by the
+// grandfather-father-son policy. Chain-ancestor protection mirrors the
+// classic enforceRetention path: any parent restore point still required by
+// a kept incremental/differential survives the sweep.
+func (r *Runner) enforceRetentionGFS(dest db.StorageDestination, jobID int64, policy GFSPolicy) {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		log.Printf("runner: failed to create adapter for GFS retention cleanup: %v", err)
+	}
+	defer storage.CloseAdapter(adapter)
+
+	allRestorePoints, err := r.db.ListRestorePoints(jobID)
+	if err != nil {
+		log.Printf("runner: failed to list restore points for job %d: %v", jobID, err)
+		return
+	}
+
+	protected := gfsProtectedRestorePointIDs(allRestorePoints, policy, time.Local)
+	log.Printf("runner: GFS retention for job %d: keeping %d of %d restore points (policy: latest=%d daily=%d weekly=%d monthly=%d yearly=%d)",
+		jobID, len(protected), len(allRestorePoints),
+		policy.KeepLatest, policy.KeepDaily, policy.KeepWeekly, policy.KeepMonthly, policy.KeepYearly)
+	for _, rp := range allRestorePoints {
+		if _, ok := protected[rp.ID]; ok {
+			continue
+		}
+		r.deleteVMCheckpointsForRP(rp)
+		if adapter != nil && rp.StoragePath != "" {
+			r.deleteStorageDir(adapter, rp.StoragePath)
+		}
+		if err := r.db.DeleteRestorePoint(rp.ID); err != nil {
+			log.Printf("runner: failed to delete restore point %d for job %d: %v", rp.ID, jobID, err)
+		}
 	}
 }
 

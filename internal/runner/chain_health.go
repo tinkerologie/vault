@@ -28,8 +28,17 @@ func AnnotateRestorePoints(job db.Job, points []db.RestorePoint) []AnnotatedRest
 
 func annotateRestorePoints(job db.Job, points []db.RestorePoint, now time.Time) []AnnotatedRestorePoint {
 	sorted := sortRestorePointsNewest(points)
-	directKeep := directlyKeptRestorePointIDs(sorted, job.RetentionCount, job.RetentionDays, now)
-	protected := protectedRestorePointIDs(sorted, job.RetentionCount, job.RetentionDays, now)
+	var (
+		directKeep map[int64]struct{}
+		protected  map[int64]struct{}
+	)
+	if gfs := gfsPolicyFromJob(job); gfs.IsActive() {
+		directKeep = gfsDirectlyKept(sorted, gfs, time.Local)
+		protected = gfsProtectedRestorePointIDs(sorted, gfs, time.Local)
+	} else {
+		directKeep = directlyKeptRestorePointIDs(sorted, job.RetentionCount, job.RetentionDays, now)
+		protected = protectedRestorePointIDs(sorted, job.RetentionCount, job.RetentionDays, now)
+	}
 	dependencyCounts := retainedDependencyCounts(sorted, directKeep)
 	byID := make(map[int64]db.RestorePoint, len(sorted))
 	for _, rp := range sorted {

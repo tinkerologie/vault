@@ -111,6 +111,11 @@
       backup_type_chain: 'full',
       retention_count: 5,
       retention_days: 30,
+      keep_latest: 0,
+      keep_daily: 0,
+      keep_weekly: 0,
+      keep_monthly: 0,
+      keep_yearly: 0,
       compression: 'zstd',
       container_mode: 'one_by_one',
       vm_mode: 'snapshot',
@@ -306,6 +311,11 @@
         backup_type_chain: data.job.backup_type_chain || 'full',
         retention_count: data.job.retention_count || 5,
         retention_days: data.job.retention_days || 30,
+        keep_latest: data.job.keep_latest || 0,
+        keep_daily: data.job.keep_daily || 0,
+        keep_weekly: data.job.keep_weekly || 0,
+        keep_monthly: data.job.keep_monthly || 0,
+        keep_yearly: data.job.keep_yearly || 0,
         compression: data.job.compression || 'zstd',
         container_mode: data.job.container_mode || 'one_by_one',
         vm_mode: 'snapshot',
@@ -401,6 +411,11 @@
         backup_type_chain: fullJob.backup_type_chain || 'full',
         retention_count: fullJob.retention_count || 5,
         retention_days: fullJob.retention_days || 30,
+        keep_latest: fullJob.keep_latest || 0,
+        keep_daily: fullJob.keep_daily || 0,
+        keep_weekly: fullJob.keep_weekly || 0,
+        keep_monthly: fullJob.keep_monthly || 0,
+        keep_yearly: fullJob.keep_yearly || 0,
         pre_script: fullJob.pre_script || '',
         post_script: fullJob.post_script || '',
         notify_on: fullJob.notify_on || 'failure',
@@ -908,6 +923,44 @@
           </div>
         </details>
 
+        <!-- Advanced: Long-term retention (GFS) -->
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Long-term retention (GFS) <Tooltip text="Grandfather-father-son retention. Keep N latest, plus the most recent backup per day/week/month/year. A single backup can fill multiple buckets. If any of these is > 0, the simple Retention Policy above is ignored for this job." />
+          </summary>
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-3 pl-6">
+            <div>
+              <label for="keep_latest" class="block text-xs font-medium text-text-muted mb-1">Latest</label>
+              <input id="keep_latest" type="number" bind:value={form.keep_latest} min="0" placeholder="0"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+            </div>
+            <div>
+              <label for="keep_daily" class="block text-xs font-medium text-text-muted mb-1">Daily</label>
+              <input id="keep_daily" type="number" bind:value={form.keep_daily} min="0" placeholder="0"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+            </div>
+            <div>
+              <label for="keep_weekly" class="block text-xs font-medium text-text-muted mb-1">Weekly</label>
+              <input id="keep_weekly" type="number" bind:value={form.keep_weekly} min="0" placeholder="0"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+            </div>
+            <div>
+              <label for="keep_monthly" class="block text-xs font-medium text-text-muted mb-1">Monthly</label>
+              <input id="keep_monthly" type="number" bind:value={form.keep_monthly} min="0" placeholder="0"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+            </div>
+            <div>
+              <label for="keep_yearly" class="block text-xs font-medium text-text-muted mb-1">Yearly</label>
+              <input id="keep_yearly" type="number" bind:value={form.keep_yearly} min="0" placeholder="0"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+            </div>
+          </div>
+          {#if (form.keep_latest || 0) + (form.keep_daily || 0) + (form.keep_weekly || 0) + (form.keep_monthly || 0) + (form.keep_yearly || 0) > 0}
+            <p class="mt-2 pl-6 text-xs text-warning">GFS is active — the simple Retention Policy above is ignored for this job.</p>
+          {/if}
+        </details>
+
         <!-- Advanced: Scripts -->
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
@@ -1158,7 +1211,13 @@
           </div>
           <div class="flex justify-between">
             <span class="text-text-muted">Retention</span>
-            <span class="text-text">{form.retention_count} backups / {form.retention_days} days</span>
+            {#if (form.keep_latest || 0) + (form.keep_daily || 0) + (form.keep_weekly || 0) + (form.keep_monthly || 0) + (form.keep_yearly || 0) > 0}
+              <span class="text-text">
+                GFS: {form.keep_latest || 0} latest / {form.keep_daily || 0} daily / {form.keep_weekly || 0} weekly / {form.keep_monthly || 0} monthly / {form.keep_yearly || 0} yearly
+              </span>
+            {:else}
+              <span class="text-text">{form.retention_count} backups / {form.retention_days} days</span>
+            {/if}
           </div>
           <div class="flex justify-between">
             <span class="text-text-muted">Verification</span>

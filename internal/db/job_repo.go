@@ -10,12 +10,14 @@ func (d *DB) CreateJob(job Job) (int64, error) {
 	res, err := d.Exec(
 		`INSERT INTO jobs (name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
-		post_script, notify_on, verify_backup, storage_dest_id, defer_remote_upload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		post_script, notify_on, verify_backup, storage_dest_id, defer_remote_upload,
+		keep_latest, keep_daily, keep_weekly, keep_monthly, keep_yearly)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
 		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, job.StorageDestID,
 		job.DeferRemoteUpload,
+		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 	)
 	if err != nil {
 		return 0, err
@@ -29,12 +31,16 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0),
-		COALESCE(defer_remote_upload, 0), created_at, updated_at
+		COALESCE(defer_remote_upload, 0),
+		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
+		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
+		created_at, updated_at
 		FROM jobs WHERE id = ?`, id,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
 		&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression,
 		&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
 		&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
+		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
@@ -47,7 +53,10 @@ func (d *DB) ListJobs() ([]Job, error) {
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0),
-		COALESCE(defer_remote_upload, 0), created_at, updated_at
+		COALESCE(defer_remote_upload, 0),
+		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
+		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
+		created_at, updated_at
 		FROM jobs ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -60,6 +69,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 			&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression,
 			&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
 			&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
+			&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 			&job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -73,11 +83,14 @@ func (d *DB) UpdateJob(job Job) error {
 		`UPDATE jobs SET name=?, description=?, enabled=?, schedule=?, backup_type_chain=?,
 		retention_count=?, retention_days=?, compression=?, encryption=?, container_mode=?, vm_mode=?, pre_script=?,
 		post_script=?, notify_on=?, verify_backup=?, storage_dest_id=?, defer_remote_upload=?,
+		keep_latest=?, keep_daily=?, keep_weekly=?, keep_monthly=?, keep_yearly=?,
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
 		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, job.StorageDestID,
-		job.DeferRemoteUpload, job.ID,
+		job.DeferRemoteUpload,
+		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
+		job.ID,
 	)
 	return err
 }
@@ -95,12 +108,16 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0),
-		COALESCE(defer_remote_upload, 0), created_at, updated_at
+		COALESCE(defer_remote_upload, 0),
+		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
+		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
+		created_at, updated_at
 		FROM jobs WHERE name = ?`, name,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
 		&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression,
 		&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
 		&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
+		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
