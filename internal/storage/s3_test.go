@@ -227,6 +227,58 @@ func TestS3AdapterPartSize(t *testing.T) {
 	}
 }
 
+// TestS3AdapterChecksumDisabledForCustomEndpoints locks in the #88 follow-up
+// fix for MEGA / Backblaze B2 / IDrive E2: when a custom Endpoint is set the
+// adapter must dial back the SDK's default flexible-checksum trailer, which
+// S3-compat gateways routinely reject with `403 SignatureDoesNotMatch` even
+// though HeadBucket (Test Connection) succeeds. Real AWS (no endpoint) must
+// preserve the SDK default so genuine S3 still validates checksums.
+func TestS3AdapterChecksumDisabledForCustomEndpoints(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		endpoint     string
+		wantRequest  aws.RequestChecksumCalculation
+		wantResponse aws.ResponseChecksumValidation
+	}{
+		{
+			name:         "custom endpoint dials back to WhenRequired",
+			endpoint:     "https://s3.us-west-002.backblazeb2.com",
+			wantRequest:  aws.RequestChecksumCalculationWhenRequired,
+			wantResponse: aws.ResponseChecksumValidationWhenRequired,
+		},
+		{
+			name:         "no endpoint keeps SDK default (WhenSupported)",
+			endpoint:     "",
+			wantRequest:  aws.RequestChecksumCalculationWhenSupported,
+			wantResponse: aws.ResponseChecksumValidationWhenSupported,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a, err := NewS3Adapter(S3Config{
+				Bucket:    "b",
+				Region:    "us-east-1",
+				AccessKey: "AK",
+				SecretKey: "SK",
+				Endpoint:  tt.endpoint,
+			})
+			if err != nil {
+				t.Fatalf("NewS3Adapter error: %v", err)
+			}
+			if a.requestChecksum != tt.wantRequest {
+				t.Errorf("requestChecksum = %v, want %v", a.requestChecksum, tt.wantRequest)
+			}
+			if a.responseChecksum != tt.wantResponse {
+				t.Errorf("responseChecksum = %v, want %v", a.responseChecksum, tt.wantResponse)
+			}
+		})
+	}
+}
+
 func TestS3AdapterUploadTimeout(t *testing.T) {
 	t.Parallel()
 

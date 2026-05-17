@@ -84,11 +84,13 @@ const (
 // underlying client is HTTP-based and pools connections internally, so we
 // build it once in the constructor and reuse it for the adapter's lifetime.
 type S3Adapter struct {
-	config        S3Config
-	client        *s3.Client
-	uploader      *transfermanager.Client
-	uploadTimeout time.Duration
-	partSizeBytes int64
+	config           S3Config
+	client           *s3.Client
+	uploader         *transfermanager.Client
+	uploadTimeout    time.Duration
+	partSizeBytes    int64
+	requestChecksum  aws.RequestChecksumCalculation
+	responseChecksum aws.ResponseChecksumValidation
 }
 
 // NewS3Adapter validates the config and constructs an S3 client.
@@ -133,6 +135,27 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 	loadOpts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(cfg.Region),
 	}
+	// When the user configures a custom Endpoint they are talking to an
+	// S3-compatible service (MEGA, Backblaze B2, IDrive E2, MinIO older
+	// builds, …), not real AWS. Since aws-sdk-go-v2 v1.32 the S3 client
+	// auto-injects a flexible-checksum trailer (x-amz-trailer:
+	// x-amz-checksum-crc32) on every PutObject / UploadPart and includes it
+	// in the SigV4 canonical request. AWS S3 honours the trailer; most
+	// S3-compatible gateways do not, recompute the signature without it,
+	// and respond `403 SignatureDoesNotMatch` — visible to users as
+	// "Test Connection passes, every upload fails" because HeadBucket has
+	// no body and therefore no trailer. Closes #88 follow-up (MEGA) and
+	// matches the no-trailer behaviour of Kopia's minio-go based S3
+	// implementation, which is why Kopia works against the same gateways
+	// out of the box. Vault already verifies object integrity end-to-end
+	// via SHA-256 in the runner (see uploadStagedFiles), so the trailer
+	// adds no real safety here.
+	if cfg.Endpoint != "" {
+		loadOpts = append(loadOpts,
+			awsconfig.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
+			awsconfig.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
+		)
+	}
 	haveAccess := cfg.AccessKey != ""
 	haveSecret := cfg.SecretKey != ""
 	switch {
@@ -170,11 +193,13 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 		o.PartSizeBytes = partSizeBytes
 	})
 	return &S3Adapter{
-		config:        cfg,
-		client:        client,
-		uploader:      uploader,
-		uploadTimeout: uploadTimeout,
-		partSizeBytes: partSizeBytes,
+		config:           cfg,
+		client:           client,
+		uploader:         uploader,
+		uploadTimeout:    uploadTimeout,
+		partSizeBytes:    partSizeBytes,
+		requestChecksum:  awsCfg.RequestChecksumCalculation,
+		responseChecksum: awsCfg.ResponseChecksumValidation,
 	}, nil
 }
 

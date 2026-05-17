@@ -153,11 +153,14 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 - **MinIO** — Set Endpoint to your MinIO base URL (`http://minio.local:9000`). Enable **Force path-style** for older releases.
 - **Cloudflare R2** — Use endpoint `https://<account-id>.r2.cloudflarestorage.com` and region `auto`.
 - **Wasabi** — Use endpoint `https://s3.<region>.wasabisys.com`.
+- **MEGA S3** — Use the S3 endpoint from your MEGA storage settings. The `SignatureDoesNotMatch` error MEGA used to return on every PutObject is now handled automatically (see Tips).
+- **IDrive E2 / iDrive360** — Use the regional endpoint shown in the IDrive panel. Same checksum-trailer handling as MEGA / B2.
 
 **Tips:**
 
 - Vault uses the AWS SDK v2's reusable client, which pools HTTP connections internally — a single S3 destination can sustain many concurrent uploads.
 - Server-side encryption is your provider's responsibility. Vault's own encryption (Settings → Security) layers on top and protects backups even from the storage operator.
+- **Custom endpoints and the AWS SDK flexible-checksum trailer** — Since AWS SDK Go v2 v1.32, every `PutObject` and `UploadPart` is signed with an `x-amz-checksum-crc32` trailer header. AWS S3 includes that trailer in the SigV4 canonical request; most S3-compatible gateways (MEGA, Backblaze B2, IDrive E2, older MinIO builds) do not, so they recompute the signature without it and respond `403 SignatureDoesNotMatch`. The most common symptom is "Test Connection succeeds but every upload fails", because the test path (`HeadBucket`) has no body and no trailer. Vault now automatically dials back the checksum behaviour to `WhenRequired` whenever a custom **Endpoint** is configured — real AWS keeps the trailer for end-to-end integrity, S3-compat services get a clean request and accept the PUT. Vault's own SHA-256 verification in the runner (`verify_backup`) continues to guarantee object integrity end-to-end regardless of whether the trailer is sent.
 - **Sizing Part size** — the S3 protocol caps a multipart upload at 10,000 parts, so the maximum object Vault can upload is `part_size × 10,000`. Default 64 MiB → 640 GB ceiling, which fits typical home-server workloads. For Immich libraries, full-disk images, or other multi-TB datasets, raise the value: 256 → 2.5 TB, 512 → 5 TB, 1024 → 10 TB. Peak upload memory ≈ `part_size × concurrency` (default 5), so 1 GiB parts cost ~5 GiB RAM during an active upload. Backblaze B2, MinIO, AWS S3, Cloudflare R2, and Wasabi all accept parts in the 5 MiB – 5 GiB range.
 
 ---
