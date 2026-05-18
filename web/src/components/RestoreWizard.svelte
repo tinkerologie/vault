@@ -26,6 +26,72 @@
   // Restore progress
   let restoring = $state(false)
 
+  // Partial-restore file picker (Feature B).
+  // Per-item map: itemName -> { contents: TarIndex|null, selected: SvelteSet<string>,
+  //                              loading: boolean, error: string, search: string, open: boolean }
+  let picker = $state(new SvelteMap())
+
+  function ensurePickerEntry(itemName) {
+    if (!picker.has(itemName)) {
+      picker.set(itemName, {
+        contents: null,
+        selected: new SvelteSet(),
+        loading: false,
+        error: '',
+        search: '',
+        open: false,
+      })
+    }
+    return picker.get(itemName)
+  }
+
+  async function togglePickerOpen(item) {
+    const entry = ensurePickerEntry(item.name)
+    entry.open = !entry.open
+    if (entry.open && !entry.contents && !entry.loading) {
+      entry.loading = true
+      entry.error = ''
+      try {
+        entry.contents = await api.getRestorePointContents(selectedPoint.jobId, selectedPoint.id, item.name)
+      } catch (e) {
+        entry.error = e?.message || 'failed to load file list'
+      } finally {
+        entry.loading = false
+      }
+    }
+    // Reassign so Svelte 5 tracks the mutation on the map's value.
+    picker.set(item.name, entry)
+  }
+
+  function toggleFilePicked(itemName, filePath) {
+    const entry = picker.get(itemName)
+    if (!entry) return
+    if (entry.selected.has(filePath)) entry.selected.delete(filePath)
+    else entry.selected.add(filePath)
+    picker.set(itemName, entry)
+  }
+
+  function selectAllFiltered(itemName) {
+    const entry = picker.get(itemName)
+    if (!entry?.contents) return
+    for (const f of filteredFiles(entry)) entry.selected.add(f.path)
+    picker.set(itemName, entry)
+  }
+
+  function clearPickerSelection(itemName) {
+    const entry = picker.get(itemName)
+    if (!entry) return
+    entry.selected.clear()
+    picker.set(itemName, entry)
+  }
+
+  function filteredFiles(entry) {
+    if (!entry?.contents?.files) return []
+    const q = entry.search.trim().toLowerCase()
+    if (!q) return entry.contents.files
+    return entry.contents.files.filter(f => f.path.toLowerCase().includes(q))
+  }
+
   onMount(() => {
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'job_run_completed' && msg.run_type === 'restore') {
@@ -242,6 +308,19 @@
     }
     if (passphrase) {
       payload.passphrase = passphrase
+    }
+
+    // Feature B: per-item partial restore. Build file_paths map from any
+    // picker entries that have a non-empty selection. Items without an
+    // active selection are restored in full (legacy behaviour).
+    const filePaths = {}
+    for (const [itemName, entry] of picker.entries()) {
+      if (entry?.selected && entry.selected.size > 0) {
+        filePaths[itemName] = Array.from(entry.selected)
+      }
+    }
+    if (Object.keys(filePaths).length > 0) {
+      payload.file_paths = filePaths
     }
 
     onrestore(selectedPoint.jobId, payload)
@@ -578,6 +657,83 @@
           <p class="text-xs text-text-dim mt-1">This backup uses age encryption. A passphrase is required to decrypt.</p>
         </div>
       {/if}
+    </div>
+
+    <!-- Per-item file picker (Feature B). Folder/plugin/container-volume
+         items now expose a "Restore specific files…" disclosure that
+         loads the tar index sidecar and lets the user pick which entries
+         to extract. Items with an empty selection restore in full. -->
+    <div class="mb-6 space-y-3">
+      {#each selectedItemsArray as item (`${item.type}:${item.name}`)}
+        {@const entry = picker.get(item.name)}
+        {@const sel = entry?.selected?.size || 0}
+        {@const total = entry?.contents?.files?.length || 0}
+        <details class="group bg-surface-2 border border-border rounded-xl"
+          open={entry?.open || false}>
+          <summary class="flex items-center justify-between gap-3 cursor-pointer select-none p-3 text-sm"
+            onclick={(e) => { e.preventDefault(); togglePickerOpen(item) }}>
+            <span class="flex items-center gap-2">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <span class="font-medium text-text">{item.name}</span>
+              <span class="text-xs text-text-dim">({item.type})</span>
+            </span>
+            <span class="text-xs text-text-muted">
+              {#if sel > 0}
+                {sel} of {total} files selected
+              {:else if total > 0}
+                Restore all {total} files
+              {:else if entry?.error}
+                <span class="text-danger">{entry.error}</span>
+              {:else if entry?.loading}
+                Loading…
+              {:else}
+                Click to browse contents
+              {/if}
+            </span>
+          </summary>
+          {#if entry?.open}
+            <div class="border-t border-border p-3 space-y-2">
+              {#if entry.loading}
+                <p class="text-xs text-text-muted">Loading file list…</p>
+              {:else if entry.error}
+                <p class="text-xs text-danger">{entry.error}</p>
+                <p class="text-xs text-text-muted">This restore point may have been produced before partial restore was added; whole-archive extract will run instead.</p>
+              {:else if !entry.contents}
+                <p class="text-xs text-text-muted">No contents loaded.</p>
+              {:else}
+                <div class="flex items-center gap-2">
+                  <input type="text" placeholder="Filter by path…" bind:value={entry.search}
+                    class="flex-1 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-dim" />
+                  <button type="button" onclick={() => selectAllFiltered(item.name)}
+                    class="text-xs px-2 py-1 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text">Select all</button>
+                  <button type="button" onclick={() => clearPickerSelection(item.name)}
+                    class="text-xs px-2 py-1 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text">Clear</button>
+                </div>
+                <div class="max-h-64 overflow-y-auto border border-border rounded-lg bg-surface-3/30">
+                  {#each filteredFiles(entry) as f (f.path)}
+                    <label class="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-surface-3 cursor-pointer">
+                      <input type="checkbox" checked={entry.selected.has(f.path)}
+                        onchange={() => toggleFilePicked(item.name, f.path)} class="accent-vault" />
+                      <span class="font-mono text-text flex-1 truncate" title={f.path}>{f.path}</span>
+                      {#if f.is_dir}
+                        <span class="text-text-dim">dir</span>
+                      {:else}
+                        <span class="text-text-dim">{formatBytes(f.size)}</span>
+                      {/if}
+                    </label>
+                  {/each}
+                  {#if filteredFiles(entry).length === 0}
+                    <p class="px-3 py-2 text-xs text-text-dim">No files match "{entry.search}"</p>
+                  {/if}
+                </div>
+                {#if sel > 0}
+                  <p class="text-xs text-info">Restoring {sel} selected file{sel === 1 ? '' : 's'} only. Clear to restore everything.</p>
+                {/if}
+              {/if}
+            </div>
+          {/if}
+        </details>
+      {/each}
     </div>
 
     <!-- Warning banner -->
