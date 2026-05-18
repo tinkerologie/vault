@@ -102,6 +102,48 @@
   // Form state
   let form = $state(defaultForm())
 
+  // GFS retention preview state (Feature C). Recomputed via a debounced
+  // effect whenever any keep_* field changes on an editing job. Inactive
+  // for new-job mode (no restore points to preview against yet).
+  let retentionPreview = $state(null)
+  let retentionPreviewLoading = $state(false)
+  let retentionPreviewError = $state('')
+  let retentionPreviewTimer = null
+
+  let gfsActive = $derived(
+    (form.keep_latest || 0) + (form.keep_daily || 0) + (form.keep_weekly || 0) +
+    (form.keep_monthly || 0) + (form.keep_yearly || 0) > 0
+  )
+
+  $effect(() => {
+    // Re-trigger on any keep_* change.
+    const policy = {
+      keep_latest: form.keep_latest || 0,
+      keep_daily: form.keep_daily || 0,
+      keep_weekly: form.keep_weekly || 0,
+      keep_monthly: form.keep_monthly || 0,
+      keep_yearly: form.keep_yearly || 0,
+    }
+    if (!editing || !gfsActive) {
+      retentionPreview = null
+      retentionPreviewError = ''
+      return
+    }
+    if (retentionPreviewTimer) clearTimeout(retentionPreviewTimer)
+    retentionPreviewTimer = setTimeout(async () => {
+      retentionPreviewLoading = true
+      retentionPreviewError = ''
+      try {
+        retentionPreview = await api.getRetentionPreview(editing.id, policy)
+      } catch (e) {
+        retentionPreviewError = e?.message || 'request failed'
+        retentionPreview = null
+      } finally {
+        retentionPreviewLoading = false
+      }
+    }, 300)
+  })
+
   function defaultForm() {
     return {
       name: '',
@@ -956,8 +998,28 @@
                 class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
             </div>
           </div>
-          {#if (form.keep_latest || 0) + (form.keep_daily || 0) + (form.keep_weekly || 0) + (form.keep_monthly || 0) + (form.keep_yearly || 0) > 0}
+          {#if gfsActive}
             <p class="mt-2 pl-6 text-xs text-warning">GFS is active — the simple Retention Policy above is ignored for this job.</p>
+            {#if editing}
+              <div class="mt-3 pl-6 text-xs">
+                {#if retentionPreviewLoading}
+                  <span class="text-text-muted">Calculating preview…</span>
+                {:else if retentionPreview}
+                  <div class="bg-surface-3/50 border border-border rounded-lg p-3">
+                    <p class="text-text font-medium">
+                      Would keep {retentionPreview.kept_with_ancestors.length} of {retentionPreview.total_restore_points} current restore points
+                    </p>
+                    <p class="text-text-muted mt-1">
+                      {retentionPreview.would_delete.length} would be pruned · {retentionPreview.kept_directly.length} kept directly · {retentionPreview.kept_with_ancestors.length - retentionPreview.kept_directly.length} kept as chain ancestors
+                    </p>
+                  </div>
+                {:else if retentionPreviewError}
+                  <span class="text-danger">Preview unavailable: {retentionPreviewError}</span>
+                {/if}
+              </div>
+            {:else}
+              <p class="mt-2 pl-6 text-xs text-text-dim">Save the job first to see how many existing restore points this policy would keep.</p>
+            {/if}
           {/if}
         </details>
 

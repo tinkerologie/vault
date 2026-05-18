@@ -41,6 +41,21 @@ func (p GFSPolicy) IsActive() bool {
 		p.KeepYearly > 0
 }
 
+// GFSDirectlyKept is the public-API version of gfsDirectlyKept, used by the
+// retention-preview endpoint so the UI can show users which restore points
+// a given policy would preserve before they save the job. Wraps the package-
+// private implementation so external callers don't depend on internal
+// helpers.
+func GFSDirectlyKept(points []db.RestorePoint, policy GFSPolicy, loc *time.Location) map[int64]struct{} {
+	return gfsDirectlyKept(points, policy, loc)
+}
+
+// GFSProtectedRestorePointIDs is the public-API version of
+// gfsProtectedRestorePointIDs (includes chain ancestors).
+func GFSProtectedRestorePointIDs(all []db.RestorePoint, policy GFSPolicy, loc *time.Location) map[int64]struct{} {
+	return gfsProtectedRestorePointIDs(all, policy, loc)
+}
+
 // gfsDirectlyKept walks restore points newest-first and returns the IDs of
 // the points that are directly kept by the GFS policy. Chain-protection of
 // parent incrementals is applied by the caller via protectedRestorePointIDs.

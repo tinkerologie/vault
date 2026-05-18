@@ -56,6 +56,16 @@ export const api = {
   deleteJob: (id, deleteFiles = false) => request('DELETE', `/jobs/${id}${deleteFiles ? '?deleteFiles=true' : ''}`),
   getJobHistory: (id, limit = 50) => request('GET', `/jobs/${id}/history?limit=${limit}`),
   getRestorePoints: (id) => request('GET', `/jobs/${id}/restore-points`),
+  // getRetentionPreview asks the server what a hypothetical GFS retention
+  // policy would do to a job's current restore points. Used by the Jobs
+  // wizard to show "would keep X of Y" as the user tunes the keep_* fields.
+  getRetentionPreview: (id, policy) => {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(policy)) {
+      if (Number.isFinite(v) && v > 0) qs.set(k, String(v))
+    }
+    return request('GET', `/jobs/${id}/retention-preview?${qs.toString()}`)
+  },
   deleteRestorePoint: (jobId, rpId) => request('DELETE', `/jobs/${jobId}/restore-points/${rpId}`),
   // getRestorePointContents fetches the tar-index sidecar for one item at a
   // restore point, returning {version, archive, files:[{path,size,mode,modtime,is_dir}]}.

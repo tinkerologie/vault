@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
@@ -387,6 +388,107 @@ func resolveIndexCandidates(adapter storage.Adapter, itemPrefix, archiveName str
 		}
 	}
 	return out, nil
+}
+
+// RetentionPreview returns the impact of a hypothetical GFS retention
+// policy against the job's current restore points without actually
+// applying it. Used by the Jobs wizard to show "would keep X of Y" as the
+// user tunes the keep_* fields.
+//
+//	GET /api/v1/jobs/{id}/retention-preview?keep_latest=3&keep_daily=7&keep_weekly=4&keep_monthly=12&keep_yearly=5
+//
+//	Returns: {
+//	  "total_restore_points": N,
+//	  "kept_directly":        []int64,  // IDs the policy would keep outright
+//	  "kept_with_ancestors":  []int64,  // IDs kept once chain protection is layered on
+//	  "would_delete":         []int64,  // IDs that would be pruned
+//	}
+func (h *JobHandler) RetentionPreview(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if _, err := h.db.GetJob(id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
+	q := r.URL.Query()
+	parseN := func(key string) int {
+		if s := q.Get(key); s != "" {
+			if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+				return n
+			}
+		}
+		return 0
+	}
+	policy := runner.GFSPolicy{
+		KeepLatest:  parseN("keep_latest"),
+		KeepDaily:   parseN("keep_daily"),
+		KeepWeekly:  parseN("keep_weekly"),
+		KeepMonthly: parseN("keep_monthly"),
+		KeepYearly:  parseN("keep_yearly"),
+	}
+	rps, err := h.db.ListRestorePoints(id)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	sorted := sortRestorePointsNewestFirst(rps)
+
+	if !policy.IsActive() {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"total_restore_points": len(rps),
+			"kept_directly":        []int64{},
+			"kept_with_ancestors":  []int64{},
+			"would_delete":         []int64{},
+			"policy_active":        false,
+		})
+		return
+	}
+
+	direct := runner.GFSDirectlyKept(sorted, policy, time.Local)
+	protected := runner.GFSProtectedRestorePointIDs(sorted, policy, time.Local)
+	directIDs := make([]int64, 0, len(direct))
+	for k := range direct {
+		directIDs = append(directIDs, k)
+	}
+	protectedIDs := make([]int64, 0, len(protected))
+	for k := range protected {
+		protectedIDs = append(protectedIDs, k)
+	}
+	deleteIDs := make([]int64, 0, len(rps))
+	for _, rp := range rps {
+		if _, ok := protected[rp.ID]; !ok {
+			deleteIDs = append(deleteIDs, rp.ID)
+		}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"total_restore_points": len(rps),
+		"kept_directly":        directIDs,
+		"kept_with_ancestors":  protectedIDs,
+		"would_delete":         deleteIDs,
+		"policy_active":        true,
+	})
+}
+
+// sortRestorePointsNewestFirst is a local copy of the chain_health helper
+// so the API handler can pre-sort without importing internal sorting.
+func sortRestorePointsNewestFirst(points []db.RestorePoint) []db.RestorePoint {
+	out := make([]db.RestorePoint, len(points))
+	copy(out, points)
+	for i := 0; i < len(out)-1; i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].CreatedAt.After(out[i].CreatedAt) ||
+				(out[j].CreatedAt.Equal(out[i].CreatedAt) && out[j].ID > out[i].ID) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
 }
 
 // VerifyRestorePoint kicks off a verification of a restore point.
