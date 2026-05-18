@@ -55,6 +55,9 @@ export const api = {
   updateJob: (id, data) => request('PUT', `/jobs/${id}`, data),
   deleteJob: (id, deleteFiles = false) => request('DELETE', `/jobs/${id}${deleteFiles ? '?deleteFiles=true' : ''}`),
   getJobHistory: (id, limit = 50) => request('GET', `/jobs/${id}/history?limit=${limit}`),
+  // Manually trigger a storage destination health check; returns
+  // {status: "ok"|"failed", error: string}.
+  healthCheckStorage: (id) => request('POST', `/storage/${id}/health-check`),
   getRestorePoints: (id) => request('GET', `/jobs/${id}/restore-points`),
   // getRetentionPreview asks the server what a hypothetical GFS retention
   // policy would do to a job's current restore points. Used by the Jobs

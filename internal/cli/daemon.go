@@ -331,6 +331,11 @@ var daemonCmd = &cobra.Command{
 			}()
 		})
 
+		// Daily storage destination health check (Feature F).
+		sched.SetHealthChecker(func() {
+			srv.Runner().RunHealthChecks()
+		})
+
 		if err := sched.Start(); err != nil {
 			log.Printf("Warning: scheduler failed to start: %v", err)
 		}

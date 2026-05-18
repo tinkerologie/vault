@@ -16,12 +16,19 @@ type JobRunner func(jobID int64)
 // ReplicationRunner is called when a replication source sync is due.
 type ReplicationRunner func(sourceID int64)
 
+// HealthChecker is called on a daily cron tick to verify every configured
+// storage destination is still reachable. The hook lives on Scheduler so
+// the daemon can wire in Runner.RunHealthChecks without scheduler depending
+// on the runner package.
+type HealthChecker func()
+
 // Scheduler manages cron entries for backup jobs and replication sources.
 type Scheduler struct {
 	cron              *cron.Cron
 	db                *db.DB
 	runner            JobRunner
 	replicationRunner ReplicationRunner
+	healthChecker     HealthChecker
 	entries           map[int64]cron.EntryID
 	lastDayEntries    map[int64]cron.EntryID // daily-trigger entries for L (last day) schedules
 	replEntries       map[int64]cron.EntryID
@@ -47,6 +54,14 @@ func (s *Scheduler) SetReplicationRunner(fn ReplicationRunner) {
 	s.replicationRunner = fn
 }
 
+// SetHealthChecker installs the daily storage-destination health check hook.
+// Must be called before Start() for the daily cron entry to be registered.
+func (s *Scheduler) SetHealthChecker(fn HealthChecker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.healthChecker = fn
+}
+
 func (s *Scheduler) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,6 +79,15 @@ func (s *Scheduler) Start() error {
 	// Schedule replication sources.
 	if err := s.loadReplicationSources(); err != nil {
 		log.Printf("Warning: failed to load replication sources: %v", err)
+	}
+
+	// Daily storage-destination health check (Feature F). Runs at 03:30
+	// local time \xe2\x80\x94 deliberately after typical backup windows so a
+	// failing destination is caught before the next morning's backup.
+	if s.healthChecker != nil {
+		if _, err := s.cron.AddFunc("30 3 * * *", s.healthChecker); err != nil {
+			log.Printf("Warning: failed to schedule daily storage health check: %v", err)
+		}
 	}
 
 	s.cron.Start()

@@ -363,6 +363,13 @@
               {:else}
                 <span class="text-xs text-text-dim">No jobs</span>
               {/if}
+              {#if dest.last_health_check_at}
+                {#if dest.last_health_check_status === 'ok'}
+                  <span class="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success font-medium" title={`Last health check: ${formatDate(dest.last_health_check_at)}`}>Healthy</span>
+                {:else if dest.last_health_check_status === 'failed'}
+                  <span class="text-xs px-2 py-0.5 rounded-full bg-danger/10 text-danger font-medium" title={dest.last_health_check_error || 'health check failed'}>Unhealthy</span>
+                {/if}
+              {/if}
             </div>
             <button
               onclick={() => testConnection(dest.id)}

@@ -16,8 +16,13 @@ func (d *DB) CreateStorageDestination(dest StorageDestination) (int64, error) {
 func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 	var dest StorageDestination
 	err := d.QueryRow(
-		"SELECT id, name, type, config, created_at, updated_at FROM storage_destinations WHERE id = ?", id,
-	).Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config, &dest.CreatedAt, &dest.UpdatedAt)
+		`SELECT id, name, type, config,
+		last_health_check_at, COALESCE(last_health_check_status, ''), COALESCE(last_health_check_error, ''),
+		created_at, updated_at
+		FROM storage_destinations WHERE id = ?`, id,
+	).Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config,
+		&dest.LastHealthCheckAt, &dest.LastHealthCheckStatus, &dest.LastHealthCheckError,
+		&dest.CreatedAt, &dest.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return dest, ErrNotFound
 	}
@@ -25,7 +30,11 @@ func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 }
 
 func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
-	rows, err := d.Query("SELECT id, name, type, config, created_at, updated_at FROM storage_destinations ORDER BY name")
+	rows, err := d.Query(
+		`SELECT id, name, type, config,
+		last_health_check_at, COALESCE(last_health_check_status, ''), COALESCE(last_health_check_error, ''),
+		created_at, updated_at
+		FROM storage_destinations ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -33,12 +42,30 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 	var dests []StorageDestination
 	for rows.Next() {
 		var dest StorageDestination
-		if err := rows.Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config, &dest.CreatedAt, &dest.UpdatedAt); err != nil {
+		if err := rows.Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config,
+			&dest.LastHealthCheckAt, &dest.LastHealthCheckStatus, &dest.LastHealthCheckError,
+			&dest.CreatedAt, &dest.UpdatedAt); err != nil {
 			return nil, err
 		}
 		dests = append(dests, dest)
 	}
 	return dests, rows.Err()
+}
+
+// UpdateStorageDestinationHealth records the outcome of a TestConnection
+// against a storage destination. status is "ok" or "failed"; errMsg holds
+// the error string when status == "failed". The timestamp is set to the
+// current UTC time.
+func (d *DB) UpdateStorageDestinationHealth(id int64, status, errMsg string) error {
+	_, err := d.Exec(
+		`UPDATE storage_destinations SET
+		last_health_check_at = CURRENT_TIMESTAMP,
+		last_health_check_status = ?,
+		last_health_check_error = ?
+		WHERE id = ?`,
+		status, errMsg, id,
+	)
+	return err
 }
 
 func (d *DB) UpdateStorageDestination(dest StorageDestination) error {

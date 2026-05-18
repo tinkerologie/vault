@@ -160,6 +160,28 @@ func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+// HealthCheck is the manual-trigger sibling of the scheduler's daily
+// storage-destination health sweep. Runs TestConnection synchronously,
+// persists the result on the storage_destinations row, and returns it.
+//
+//	POST /api/v1/storage/{id}/health-check
+func (h *StorageHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	status, errMsg := h.runner.CheckStorageDestination(dest)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"status": status,
+		"error":  errMsg,
+	})
+}
+
 // Scan discovers existing backups on a storage destination by reading
 // manifest.json files from each backup run directory.
 //

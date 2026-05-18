@@ -133,4 +133,9 @@ var alterMigrations = []string{
 	"ALTER TABLE jobs ADD COLUMN keep_weekly INTEGER NOT NULL DEFAULT 0",
 	"ALTER TABLE jobs ADD COLUMN keep_monthly INTEGER NOT NULL DEFAULT 0",
 	"ALTER TABLE jobs ADD COLUMN keep_yearly INTEGER NOT NULL DEFAULT 0",
+	// Storage destination health tracking (Feature F). Refreshed by the
+	// daily HealthChecker; surfaced in the UI as a per-destination badge.
+	"ALTER TABLE storage_destinations ADD COLUMN last_health_check_at DATETIME",
+	"ALTER TABLE storage_destinations ADD COLUMN last_health_check_status TEXT DEFAULT ''",
+	"ALTER TABLE storage_destinations ADD COLUMN last_health_check_error TEXT DEFAULT ''",
 }

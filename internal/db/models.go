@@ -74,12 +74,15 @@ type RestorePoint struct {
 }
 
 type StorageDestination struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Config    string    `json:"config"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID                    int64      `json:"id"`
+	Name                  string     `json:"name"`
+	Type                  string     `json:"type"`
+	Config                string     `json:"config"`
+	LastHealthCheckAt     *time.Time `json:"last_health_check_at"`
+	LastHealthCheckStatus string     `json:"last_health_check_status"`
+	LastHealthCheckError  string     `json:"last_health_check_error"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type ActivityLogEntry struct {
