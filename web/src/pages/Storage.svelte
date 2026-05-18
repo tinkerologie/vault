@@ -241,12 +241,12 @@
   function onTypeChange(event) {
     const nextType = event?.currentTarget?.value || form.type
     const defaults = {
-      local: { path: '' },
-      sftp: { host: '', port: 22, user: '', password: '', base_path: '' },
-      smb: { host: '', share: '', user: '', password: '', base_path: '' },
-      nfs: { host: '', export: '', base_path: '', version: '4', options: '' },
-      webdav: { url: '', username: '', password: '', base_path: '', insecure_skip_verify: false, timeout_seconds: 0, stall_timeout_seconds: 300, chunk_size_mb: 0 },
-      s3: { bucket: '', region: '', access_key: '', secret_key: '', endpoint: '', base_path: '', force_path_style: false, upload_timeout_minutes: 0, part_size_mb: 0 },
+      local: { path: '', bandwidth_limit_mbps: 0 },
+      sftp: { host: '', port: 22, user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
+      smb: { host: '', share: '', user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
+      nfs: { host: '', export: '', base_path: '', version: '4', options: '', bandwidth_limit_mbps: 0 },
+      webdav: { url: '', username: '', password: '', base_path: '', insecure_skip_verify: false, timeout_seconds: 0, stall_timeout_seconds: 300, chunk_size_mb: 0, bandwidth_limit_mbps: 0 },
+      s3: { bucket: '', region: '', access_key: '', secret_key: '', endpoint: '', base_path: '', force_path_style: false, upload_timeout_minutes: 0, part_size_mb: 0, bandwidth_limit_mbps: 0 },
     }
     // Reassign the full form object so Svelte always re-renders the keyed
     // config block when switching destination type.
@@ -638,6 +638,17 @@
       </details>
     {/if}
     {/key}
+
+    <!-- Universal: bandwidth throttling (Feature D). Applies to every
+         storage type via the factory.WrapThrottled wrapper. -->
+    <div>
+      <label for="bandwidth_limit_mbps" class="block text-sm font-medium text-text-muted mb-1.5">
+        Bandwidth limit (Mbps)
+        <Tooltip text="Cap upload/download throughput for this destination in megabits per second. 0 = unlimited. Useful for shared internet uplinks so backups don't saturate the line. Metadata operations (list/stat/test) are never throttled." />
+      </label>
+      <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
+        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+    </div>
 
     <div class="flex justify-end gap-3 pt-4 border-t border-border">
       <button type="button" onclick={() => showModal = false} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">

@@ -5,7 +5,31 @@ import (
 	"fmt"
 )
 
+// NewAdapter constructs a storage adapter of the requested type from the JSON
+// config blob stored on the storage_destinations row. When the config
+// includes `bandwidth_limit_mbps > 0`, the returned adapter is wrapped in a
+// rate-limited shell that throttles every Read/Write body to the requested
+// megabits per second (Feature D). Metadata operations (List/Stat/Delete/
+// TestConnection) are never throttled.
 func NewAdapter(storageType, configJSON string) (Adapter, error) {
+	// Universal optional field present on every storage type. Parsed
+	// once up-front so the per-type config structs don't have to
+	// duplicate the same field.
+	var common struct {
+		BandwidthLimitMbps int `json:"bandwidth_limit_mbps"`
+	}
+	_ = json.Unmarshal([]byte(configJSON), &common)
+
+	adapter, err := newRawAdapter(storageType, configJSON)
+	if err != nil {
+		return nil, err
+	}
+	return WrapThrottled(adapter, common.BandwidthLimitMbps), nil
+}
+
+// newRawAdapter is the original type-dispatched factory, kept here so the
+// throttled-wrap step in NewAdapter is the only public entry point.
+func newRawAdapter(storageType, configJSON string) (Adapter, error) {
 	switch storageType {
 	case "local":
 		var cfg struct {
