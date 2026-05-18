@@ -91,6 +91,22 @@ type ActivityLogEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// VerifyRun records one execution of restore-point verification. Mode is
+// "quick" (storage HEAD + size compare) or "deep" (full read + SHA-256
+// re-compute). Status transitions running -> passed | failed | cancelled.
+type VerifyRun struct {
+	ID             int64      `json:"id"`
+	RestorePointID int64      `json:"restore_point_id"`
+	Mode           string     `json:"mode"`
+	Status         string     `json:"status"`
+	FilesChecked   int        `json:"files_checked"`
+	FilesFailed    int        `json:"files_failed"`
+	BytesRead      int64      `json:"bytes_read"`
+	StartedAt      time.Time  `json:"started_at"`
+	CompletedAt    *time.Time `json:"completed_at"`
+	ErrorSummary   string     `json:"error_summary"`
+}
+
 // ReplicationSource represents a replication target (remote Vault server)
 // where local backups are pushed for disaster recovery.
 type ReplicationSource struct {

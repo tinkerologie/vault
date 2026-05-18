@@ -389,6 +389,128 @@ func resolveIndexCandidates(adapter storage.Adapter, itemPrefix, archiveName str
 	return out, nil
 }
 
+// VerifyRestorePoint kicks off a verification of a restore point.
+//
+//	POST /api/v1/jobs/{id}/restore-points/{rpid}/verify  {"mode": "quick"|"deep"}
+//
+// Returns 202 + {"verify_run_id": N} so the caller can poll
+// GET /verify-runs/{vrid} or subscribe to WebSocket verify_progress events.
+func (h *JobHandler) VerifyRestorePoint(w http.ResponseWriter, r *http.Request) {
+	jobID, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	rpID, ok := parseID(w, r, "rpid")
+	if !ok {
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = string(runner.VerifyModeQuick)
+	}
+	mode := runner.VerifyMode(strings.ToLower(req.Mode))
+	if !mode.IsValid() {
+		respondError(w, http.StatusBadRequest, "mode must be 'quick' or 'deep'")
+		return
+	}
+
+	rp, err := h.db.GetRestorePoint(rpID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "restore point not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
+	if rp.JobID != jobID {
+		respondError(w, http.StatusNotFound, "restore point not found")
+		return
+	}
+
+	id, err := h.runner.RunVerify(rp, mode)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusAccepted, map[string]any{
+		"verify_run_id":    id,
+		"restore_point_id": rp.ID,
+		"mode":             string(mode),
+	})
+}
+
+// GetVerifyRun returns the current state of a verify run.
+//
+//	GET /api/v1/jobs/{id}/verify-runs/{vrid}
+func (h *JobHandler) GetVerifyRun(w http.ResponseWriter, r *http.Request) {
+	_, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	vrID, ok := parseID(w, r, "vrid")
+	if !ok {
+		return
+	}
+	vr, err := h.db.GetVerifyRun(vrID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "verify run not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, vr)
+}
+
+// ListRestorePointVerifyRuns returns recent verify runs for a restore
+// point. Used by the UI to render the per-restore-point verify-history
+// badge ("Verified Deep · 2h ago ✓").
+//
+//	GET /api/v1/jobs/{id}/restore-points/{rpid}/verify-runs?limit=10
+func (h *JobHandler) ListRestorePointVerifyRuns(w http.ResponseWriter, r *http.Request) {
+	jobID, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	rpID, ok := parseID(w, r, "rpid")
+	if !ok {
+		return
+	}
+	rp, err := h.db.GetRestorePoint(rpID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "restore point not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
+	if rp.JobID != jobID {
+		respondError(w, http.StatusNotFound, "restore point not found")
+		return
+	}
+	limit := 10
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, parseErr := strconv.Atoi(s); parseErr == nil && n > 0 {
+			limit = n
+		}
+	}
+	rows, err := h.db.ListVerifyRunsForRestorePoint(rpID, limit)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, rows)
+}
+
 // DeleteRestorePoint deletes a single restore point and its storage files.
 //
 //	DELETE /api/v1/jobs/{id}/restore-points/{rpid}
