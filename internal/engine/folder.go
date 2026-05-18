@@ -61,7 +61,10 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 
 	progress(item.Name, 10, "archiving "+srcPath)
 
-	archiveName := "data.tar" + archiveExt(item.Compression)
+	// Skip wasted CPU on media-heavy folders by downgrading to no-op
+	// compression when most of the source is already-compressed bytes.
+	effectiveCompression := MaybeDowngradeCompression(srcPath, item.Compression)
+	archiveName := "data.tar" + archiveExt(effectiveCompression)
 	archivePath := filepath.Join(destDir, archiveName)
 
 	// Determine if this is an incremental/differential backup.
@@ -74,11 +77,11 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
-		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, nil, item.Compression); err != nil {
+		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, nil, effectiveCompression); err != nil {
 			return nil, fmt.Errorf("archiving changed files in %s: %w", srcPath, err)
 		}
 	} else {
-		if err := tarDirectory(ctx, srcPath, archivePath, nil, item.Compression); err != nil {
+		if err := tarDirectory(ctx, srcPath, archivePath, nil, effectiveCompression); err != nil {
 			return nil, fmt.Errorf("archiving %s: %w", srcPath, err)
 		}
 	}

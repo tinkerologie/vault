@@ -482,14 +482,18 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				}
 			}
 
-			archiveName := fmt.Sprintf("volume_%d.tar%s", i, archiveExt(item.Compression))
-			volDest := filepath.Join(destDir, archiveName)
-
 			// Detect file-based bind mounts (e.g. Tailscale hook files).
 			srcInfo, err := os.Lstat(mount.Source)
 			if err != nil {
 				return fmt.Errorf("stat volume %s: %w", mount.Source, err)
 			}
+
+			// Auto-downgrade compression for media-heavy volumes (single-file
+			// bind mounts are auto-handled too — the helper inspects whatever
+			// path it's given). Saves CPU on Immich/Jellyfin/etc. appdata.
+			effectiveCompression := MaybeDowngradeCompression(mount.Source, item.Compression)
+			archiveName := fmt.Sprintf("volume_%d.tar%s", i, archiveExt(effectiveCompression))
+			volDest := filepath.Join(destDir, archiveName)
 
 			// Honour exclusion patterns at the volume level for BOTH directory
 			// and file mounts. Historically this check only applied to
@@ -511,11 +515,11 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
 
 				if hasChangedSince {
-					if err := tarDirectoryFiltered(ctx, mount.Source, volDest, changedSince, volExclusions, item.Compression); err != nil {
+					if err := tarDirectoryFiltered(ctx, mount.Source, volDest, changedSince, volExclusions, effectiveCompression); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				} else {
-					if err := tarDirectory(ctx, mount.Source, volDest, volExclusions, item.Compression); err != nil {
+					if err := tarDirectory(ctx, mount.Source, volDest, volExclusions, effectiveCompression); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				}
@@ -544,7 +548,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				// already handled at the volume level above via
 				// shouldExcludeMount (issue #70).
 
-				if err := tarFile(ctx, mount.Source, volDest, item.Compression); err != nil {
+				if err := tarFile(ctx, mount.Source, volDest, effectiveCompression); err != nil {
 					return fmt.Errorf("archiving volume file %s: %w", mount.Source, err)
 				}
 				entry.IsFile = true

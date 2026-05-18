@@ -105,8 +105,9 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	progress(item.Name, 40, "archiving config")
 	configDir := filepath.Join(pluginsDir, pluginName)
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
-		archivePath := filepath.Join(destDir, "config.tar"+archiveExt(item.Compression))
-		if err := tarDirectory(ctx, configDir, archivePath, nil, item.Compression); err != nil {
+		effectiveCompression := MaybeDowngradeCompression(configDir, item.Compression)
+		archivePath := filepath.Join(destDir, "config.tar"+archiveExt(effectiveCompression))
+		if err := tarDirectory(ctx, configDir, archivePath, nil, effectiveCompression); err != nil {
 			return nil, fmt.Errorf("archiving plugin config: %w", err)
 		}
 		result.Files = append(result.Files, backupFileInfo(archivePath))
