@@ -57,6 +57,12 @@ export const api = {
   getJobHistory: (id, limit = 50) => request('GET', `/jobs/${id}/history?limit=${limit}`),
   getRestorePoints: (id) => request('GET', `/jobs/${id}/restore-points`),
   deleteRestorePoint: (jobId, rpId) => request('DELETE', `/jobs/${jobId}/restore-points/${rpId}`),
+  // getRestorePointContents fetches the tar-index sidecar for one item at a
+  // restore point, returning {version, archive, files:[{path,size,mode,modtime,is_dir}]}.
+  // `file` is optional; omit to let the server pick the first index sidecar it finds
+  // in the item's directory (right call for single-archive items like folders/plugins).
+  getRestorePointContents: (jobId, rpId, item, file) =>
+    request('GET', `/jobs/${jobId}/restore-points/${rpId}/contents?item=${encodeURIComponent(item)}${file ? `&file=${encodeURIComponent(file)}` : ''}`),
   runJob: (id) => request('POST', `/jobs/${id}/run`),
   restoreJob: (id, data) => request('POST', `/jobs/${id}/restore`, data),
   getNextRuns: () => request('GET', '/jobs/next-runs'),

@@ -110,6 +110,9 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 			return nil, fmt.Errorf("archiving plugin config: %w", err)
 		}
 		result.Files = append(result.Files, backupFileInfo(archivePath))
+		if err := WriteTarIndex(archivePath); err == nil {
+			result.Files = append(result.Files, backupFileInfo(archivePath+IndexSuffix))
+		}
 	}
 
 	// Step 3: Save metadata.
@@ -175,7 +178,8 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		if err := os.MkdirAll(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
-		if err := untarDirectory(ctx, configArchive, configDir); err != nil { // untarDirectory has Zip Slip (CWE-22) protection via joinArchiveTarget + resolveWithinBase
+		include := extractRestoreFilePaths(item.Settings)
+		if err := untarDirectoryFiltered(ctx, configArchive, configDir, include); err != nil { // untarDirectoryFiltered inherits Zip Slip (CWE-22) protection via joinArchiveTarget + resolveWithinBase
 			return fmt.Errorf("restoring plugin config: %w", err)
 		}
 	}

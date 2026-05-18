@@ -554,6 +554,16 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			entry.BackedUp = true
 			entry.Archive = archiveName
 			manifest = append(manifest, entry)
+
+			// Best-effort tar index sidecar for partial restore. Only
+			// useful for directory tars (volume containing multiple
+			// files); single-file bind-mount archives are skipped via
+			// the entry.IsFile flag because there is nothing to index.
+			if !entry.IsFile {
+				if err := WriteTarIndex(volDest); err == nil {
+					result.Files = append(result.Files, backupFileInfo(volDest+IndexSuffix))
+				}
+			}
 		}
 
 		// Save volumes manifest so restore knows which mounts were backed up.
@@ -1381,6 +1391,21 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 // is auto-detected from the leading magic bytes so legacy and new archives
 // both restore correctly.
 func untarDirectory(ctx context.Context, srcPath, destDir string) error {
+	return untarDirectoryFiltered(ctx, srcPath, destDir, nil)
+}
+
+// untarDirectoryFiltered behaves like untarDirectory but only extracts the
+// tar entries whose Name is present in the include set. Any entry whose path
+// is the descendant of an included directory is also extracted. The empty
+// set restores every entry (caller passes nil for "extract everything").
+//
+// This is the v1 partial-restore path: callers supply file paths chosen
+// from the engine's tar index sidecar (see WriteTarIndex). Compatible with
+// every archive — encrypted/compressed/plain — because filtering happens
+// after the existing decryption + decompression pipeline that the runner
+// has already staged.
+func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, include []string) error {
+	includeSet := newIncludeSet(include)
 	inFile, err := os.Open(srcPath) // #nosec G304 — srcPath is sourceDir + fixed archive name, caller-controlled
 	if err != nil {
 		return fmt.Errorf("opening archive: %w", err)
@@ -1405,6 +1430,10 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("reading tar entry: %w", err)
+		}
+
+		if !includeSet.matches(header.Name) {
+			continue
 		}
 
 		target, err := joinArchiveTarget(destDir, header.Name)

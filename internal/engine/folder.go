@@ -84,6 +84,17 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	}
 	result.Files = append(result.Files, backupFileInfo(archivePath))
 
+	// Best-effort sidecar index for partial restore. Failures here are
+	// logged via the returned error path but never abort the backup —
+	// without the index, restore simply falls back to whole-archive
+	// extraction (its prior behaviour).
+	if err := WriteTarIndex(archivePath); err != nil {
+		// Treat indexing as advisory: log and continue.
+		_ = err
+	} else {
+		result.Files = append(result.Files, backupFileInfo(archivePath+IndexSuffix))
+	}
+
 	// Store source path metadata so restore knows the original location.
 	metaPath := filepath.Join(destDir, "folder_meta.json")
 	metaJSON := fmt.Sprintf(`{"path":%q,"name":%q}`, srcPath, item.Name)
@@ -143,10 +154,39 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
 	}
 
-	if err := untarDirectory(ctx, archivePath, destPath); err != nil {
+	// Partial-restore filter from the file-picker. nil = extract everything
+	// (the legacy whole-archive path).
+	include := extractRestoreFilePaths(item.Settings)
+
+	if err := untarDirectoryFiltered(ctx, archivePath, destPath, include); err != nil {
 		return fmt.Errorf("extracting to %s: %w", destPath, err)
 	}
 
 	progress(item.Name, 100, "restore complete")
+	return nil
+}
+
+// extractRestoreFilePaths reads the "restore_file_paths" setting injected
+// by the runner from the API and returns it as a []string. The setting can
+// arrive as []string (direct call), []any (decoded from JSON), or be
+// absent — all three cases produce a sensible result. Returns nil for the
+// "extract everything" case so callers can use the result directly.
+func extractRestoreFilePaths(settings map[string]any) []string {
+	raw, ok := settings["restore_file_paths"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
 	return nil
 }

@@ -1414,10 +1414,15 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 	return checksums, nil
 }
 
-// RestoreTarget describes a single item to restore.
+// RestoreTarget describes a single item to restore. When FilePaths is non-nil
+// the restore extracts only those tar entries from the item's archive(s).
+// Paths use the same form as they appear in the tar index sidecar
+// (forward-slash separated, no leading slash). An empty/nil FilePaths means
+// "restore everything in this item" (legacy behaviour).
 type RestoreTarget struct {
-	Name string
-	Type string
+	Name      string
+	Type      string
+	FilePaths []string
 }
 
 // RunRestore executes a tracked restore operation. It creates a job_run
@@ -1531,7 +1536,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		r.reportRestoreProgress(reporter, 0, "Starting...")
 
 		start := time.Now()
-		restoreErr := r.restoreItemWithReporter(restorePoint, t.Name, t.Type, destination, passphrase, reporter)
+		restoreErr := r.restoreItemWithReporter(restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, reporter)
 		elapsed := time.Since(start)
 
 		result := map[string]any{
@@ -1631,10 +1636,10 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 // For incremental/differential restore points, the full chain is restored
 // in order (base full → incremental/differential overlays).
 func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string) error {
-	return r.restoreItemWithReporter(restorePoint, itemName, itemType, destination, passphrase, restoreProgressReporter{})
+	return r.restoreItemWithReporter(restorePoint, itemName, itemType, destination, passphrase, nil, restoreProgressReporter{})
 }
 
-func (r *Runner) restoreItemWithReporter(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreItemWithReporter(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
 		chain, err := r.buildRestoreChain(restorePoint)
@@ -1642,18 +1647,18 @@ func (r *Runner) restoreItemWithReporter(restorePoint db.RestorePoint, itemName,
 			return fmt.Errorf("building restore chain: %w", err)
 		}
 		if usesMergedRestoreChain(itemType) {
-			return r.restoreMergedChain(chain, itemName, itemType, destination, passphrase, reporter)
+			return r.restoreMergedChain(chain, itemName, itemType, destination, passphrase, filePaths, reporter)
 		}
 		for i, rp := range chain {
 			log.Printf("runner: restoring chain step %d/%d (type=%s, id=%d)",
 				i+1, len(chain), rp.BackupType, rp.ID)
-			if err := r.restoreSinglePoint(rp, itemName, itemType, destination, passphrase, reporter); err != nil {
+			if err := r.restoreSinglePoint(rp, itemName, itemType, destination, passphrase, filePaths, reporter); err != nil {
 				return fmt.Errorf("restoring chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
 		}
 		return nil
 	}
-	return r.restoreSinglePoint(restorePoint, itemName, itemType, destination, passphrase, reporter)
+	return r.restoreSinglePoint(restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
 }
 
 func usesMergedRestoreChain(itemType string) bool {
@@ -1665,7 +1670,7 @@ func usesMergedRestoreChain(itemType string) bool {
 	}
 }
 
-func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType, destination, passphrase string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
@@ -1699,7 +1704,7 @@ func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType,
 		if err := flattenVMChain(stepDirs, flattenedDir); err != nil {
 			return fmt.Errorf("flattening VM chain: %w", err)
 		}
-		return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, reporter, 40, 100)
+		return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100)
 	}
 
 	for i, rp := range chain {
@@ -1711,11 +1716,11 @@ func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType,
 		}
 	}
 
-	return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, reporter, 40, 100)
+	return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
 }
 
 // restoreSinglePoint restores a single restore point (without chain logic).
-func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
@@ -1727,7 +1732,7 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 		return err
 	}
 
-	return r.restoreStagedItem(restorePoint.JobID, itemName, itemType, destination, tmpDir, reporter, 40, 100)
+	return r.restoreStagedItem(restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
 }
 
 func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter) error {
@@ -1856,7 +1861,7 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 	return nil
 }
 
-func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination, tmpDir string, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
+func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination, tmpDir string, filePaths []string, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
 	var handler engine.Handler
 	var err error
 	switch itemType {
@@ -1908,6 +1913,13 @@ func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination,
 	// Override restore destination if specified.
 	if destination != "" {
 		backupItem.Settings["restore_destination"] = destination
+	}
+
+	// Per-item partial-restore filter (file picker in the restore wizard).
+	// The engine handler is responsible for honouring this; non-supporting
+	// handlers fall back to whole-archive restore.
+	if len(filePaths) > 0 {
+		backupItem.Settings["restore_file_paths"] = filePaths
 	}
 
 	restoreErr := handler.Restore(context.Background(), backupItem, tmpDir, progress)
@@ -2167,6 +2179,14 @@ func (r *Runner) resolvePassphrase() string {
 	// Fall back to legacy plaintext (will be cleaned up on next SetEncryption call).
 	plaintext, _ := r.db.GetSetting("encryption_passphrase", "")
 	return plaintext
+}
+
+// ResolvePassphrase exposes the configured encryption passphrase to other
+// packages that need to read encrypted artifacts (e.g. the contents API
+// handler that decrypts tar index sidecars). Returns the empty string when
+// no passphrase is configured.
+func (r *Runner) ResolvePassphrase() string {
+	return r.resolvePassphrase()
 }
 
 // writeManifest writes a manifest.json file to storage containing metadata

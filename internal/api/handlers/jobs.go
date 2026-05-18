@@ -4,11 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 
+	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
@@ -232,6 +237,158 @@ func (h *JobHandler) GetRestorePoints(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, runner.AnnotateRestorePoints(job, rps))
 }
 
+// RestorePointContents returns the list of files inside an archive at a
+// restore point, sourced from the engine-side tar index sidecar.
+//
+//	GET /api/v1/jobs/{id}/restore-points/{rpid}/contents?item=<itemName>&file=<archiveName>
+//
+// `item` selects the per-item subdirectory under the restore point's storage
+// path (e.g. "Flash Drive"). `file` is the archive basename — when omitted
+// the handler scans for any "*.index.json[.age]" sidecar and uses the first
+// it finds (so callers can omit the file parameter for single-archive items
+// like folders / plugins).
+//
+// On encrypted jobs the sidecar is uploaded as `<archive>.index.json.age`
+// and is decrypted on the fly using the runner's configured passphrase.
+// Returns 404 when no index sidecar exists (e.g. backups produced before
+// this feature was added); the restore wizard falls back to whole-archive
+// extraction in that case.
+func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request) {
+	jobID, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	rpID, ok := parseID(w, r, "rpid")
+	if !ok {
+		return
+	}
+
+	rp, err := h.db.GetRestorePoint(rpID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "restore point not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
+	if rp.JobID != jobID {
+		respondError(w, http.StatusNotFound, "restore point not found")
+		return
+	}
+
+	itemName := strings.TrimSpace(r.URL.Query().Get("item"))
+	if itemName == "" {
+		respondError(w, http.StatusBadRequest, "item query parameter is required")
+		return
+	}
+	archiveName := strings.TrimSpace(r.URL.Query().Get("file"))
+
+	job, err := h.db.GetJob(jobID)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	dest, err := h.db.GetStorageDestination(job.StorageDestID)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	defer storage.CloseAdapter(adapter)
+
+	itemPrefix := path.Join(rp.StoragePath, itemName)
+
+	// Resolve which sidecar to read. When `file` is supplied, build both
+	// candidates explicitly (with and without .age). When `file` is
+	// omitted, list the per-item directory and pick the first index file.
+	candidates, err := resolveIndexCandidates(adapter, itemPrefix, archiveName)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	if len(candidates) == 0 {
+		respondError(w, http.StatusNotFound, "no tar index sidecar found for this item")
+		return
+	}
+
+	var (
+		indexReader io.ReadCloser
+		sidecarPath string
+	)
+	for _, candidate := range candidates {
+		rc, err := adapter.Read(candidate)
+		if err != nil {
+			continue
+		}
+		indexReader = rc
+		sidecarPath = candidate
+		break
+	}
+	if indexReader == nil {
+		respondError(w, http.StatusNotFound, "tar index sidecar not readable at any candidate path")
+		return
+	}
+	defer indexReader.Close()
+
+	var src io.Reader = indexReader
+	if strings.HasSuffix(sidecarPath, ".age") {
+		pass := h.runner.ResolvePassphrase()
+		if pass == "" {
+			respondError(w, http.StatusFailedDependency, "index is encrypted but no passphrase is configured")
+			return
+		}
+		dec, err := crypto.DecryptReader(pass, indexReader)
+		if err != nil {
+			respondInternalError(w, err)
+			return
+		}
+		defer dec.Close()
+		src = dec
+	}
+
+	idx, err := engine.ReadTarIndex(src)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, idx)
+}
+
+// resolveIndexCandidates returns the list of storage paths to probe for the
+// requested archive's tar index sidecar. When `archiveName` is supplied the
+// list is just the two encryption variants of `<itemPrefix>/<archive>.index.json`.
+// Otherwise the item directory is listed and any `*.index.json[.age]` files
+// found are returned in their natural order (alphabetical from List()).
+func resolveIndexCandidates(adapter storage.Adapter, itemPrefix, archiveName string) ([]string, error) {
+	if archiveName != "" {
+		// Strip any user-supplied .age suffix so we always probe the plain
+		// path first then the encrypted variant.
+		base := strings.TrimSuffix(archiveName, ".age")
+		stem := path.Join(itemPrefix, base+engine.IndexSuffix)
+		return []string{stem, stem + ".age"}, nil
+	}
+	entries, err := adapter.List(itemPrefix)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir {
+			continue
+		}
+		base := path.Base(e.Path)
+		if strings.HasSuffix(base, engine.IndexSuffix) || strings.HasSuffix(base, engine.IndexSuffix+".age") {
+			out = append(out, e.Path)
+		}
+	}
+	return out, nil
+}
+
 // DeleteRestorePoint deletes a single restore point and its storage files.
 //
 //	DELETE /api/v1/jobs/{id}/restore-points/{rpid}
@@ -345,6 +502,11 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		ItemType       string   `json:"item_type"`
 		Destination    string   `json:"destination"`
 		Passphrase     string   `json:"passphrase"`
+		// FilePaths is the optional per-item include-list used by the
+		// partial-restore file picker. Keys are item names; values are
+		// tar entry paths chosen from the index sidecar. Items absent
+		// from this map (or with an empty slice) restore everything.
+		FilePaths map[string][]string `json:"file_paths"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
@@ -430,7 +592,11 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	// Build runner targets and execute tracked restore asynchronously.
 	runnerTargets := make([]runner.RestoreTarget, 0, len(targets))
 	for _, t := range targets {
-		runnerTargets = append(runnerTargets, runner.RestoreTarget{Name: t.Name, Type: t.Type})
+		runnerTargets = append(runnerTargets, runner.RestoreTarget{
+			Name:      t.Name,
+			Type:      t.Type,
+			FilePaths: req.FilePaths[t.Name],
+		})
 	}
 
 	go h.runner.RunRestore(*found, runnerTargets, req.Destination, req.Passphrase)
