@@ -47,6 +47,31 @@ type VerifyResult struct {
 	Err      error  // non-nil on missing file, size mismatch, or checksum mismatch
 }
 
+// RunScheduledVerify is the scheduler-facing wrapper: given a job ID and a
+// mode string, pick the job's most recent restore point and dispatch a
+// verify run. Used as the VerifyRunner hook in the cron scheduler. Logs
+// and silently no-ops when the job has no restore points yet (a freshly
+// created job won't have run a backup).
+func (r *Runner) RunScheduledVerify(jobID int64, mode string) {
+	job, err := r.db.GetJob(jobID)
+	if err != nil {
+		log.Printf("runner: scheduled verify: cannot load job %d: %v", jobID, err)
+		return
+	}
+	rp, err := r.db.GetLastRestorePoint(jobID)
+	if err != nil {
+		log.Printf("runner: scheduled verify: job %d (%s) has no restore points yet, skipping", jobID, job.Name)
+		return
+	}
+	id, err := r.RunVerify(rp, VerifyMode(mode))
+	if err != nil {
+		log.Printf("runner: scheduled verify: dispatch failed for job %d: %v", jobID, err)
+		return
+	}
+	log.Printf("runner: scheduled verify queued for job %d (%s), mode=%s, verify_run_id=%d, restore_point_id=%d",
+		jobID, job.Name, mode, id, rp.ID)
+}
+
 // RunVerify executes a verification of one restore point. It returns the
 // new verify_run row's ID immediately and continues in a background goroutine
 // so the API call is non-blocking. The Runner's job-mutex is NOT taken —

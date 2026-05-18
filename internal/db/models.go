@@ -25,13 +25,18 @@ type Job struct {
 	// GFS (grandfather-father-son) retention. Each defaults to 0 (disabled).
 	// If any of the five is > 0 the runner uses GFS classification and
 	// ignores RetentionCount / RetentionDays.
-	KeepLatest  int       `json:"keep_latest"`
-	KeepDaily   int       `json:"keep_daily"`
-	KeepWeekly  int       `json:"keep_weekly"`
-	KeepMonthly int       `json:"keep_monthly"`
-	KeepYearly  int       `json:"keep_yearly"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	KeepLatest  int `json:"keep_latest"`
+	KeepDaily   int `json:"keep_daily"`
+	KeepWeekly  int `json:"keep_weekly"`
+	KeepMonthly int `json:"keep_monthly"`
+	KeepYearly  int `json:"keep_yearly"`
+	// Scheduled verification (Feature A). VerifySchedule is a cron
+	// expression; empty means no scheduled verification. VerifyMode is
+	// "quick" or "deep".
+	VerifySchedule string    `json:"verify_schedule"`
+	VerifyMode     string    `json:"verify_mode"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type JobItem struct {

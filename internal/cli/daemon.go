@@ -336,6 +336,11 @@ var daemonCmd = &cobra.Command{
 			srv.Runner().RunHealthChecks()
 		})
 
+		// Per-job scheduled verification (Feature A).
+		sched.SetVerifyRunner(func(jobID int64, mode string) {
+			srv.Runner().RunScheduledVerify(jobID, mode)
+		})
+
 		if err := sched.Start(); err != nil {
 			log.Printf("Warning: scheduler failed to start: %v", err)
 		}

@@ -158,6 +158,8 @@
       keep_weekly: 0,
       keep_monthly: 0,
       keep_yearly: 0,
+      verify_schedule: '',
+      verify_mode: 'quick',
       compression: 'zstd',
       container_mode: 'one_by_one',
       vm_mode: 'snapshot',
@@ -358,6 +360,8 @@
         keep_weekly: data.job.keep_weekly || 0,
         keep_monthly: data.job.keep_monthly || 0,
         keep_yearly: data.job.keep_yearly || 0,
+        verify_schedule: data.job.verify_schedule || '',
+        verify_mode: data.job.verify_mode || 'quick',
         compression: data.job.compression || 'zstd',
         container_mode: data.job.container_mode || 'one_by_one',
         vm_mode: 'snapshot',
@@ -458,6 +462,8 @@
         keep_weekly: fullJob.keep_weekly || 0,
         keep_monthly: fullJob.keep_monthly || 0,
         keep_yearly: fullJob.keep_yearly || 0,
+        verify_schedule: fullJob.verify_schedule || '',
+        verify_mode: fullJob.verify_mode || 'quick',
         pre_script: fullJob.pre_script || '',
         post_script: fullJob.post_script || '',
         notify_on: fullJob.notify_on || 'failure',
@@ -1021,6 +1027,29 @@
               <p class="mt-2 pl-6 text-xs text-text-dim">Save the job first to see how many existing restore points this policy would keep.</p>
             {/if}
           {/if}
+        </details>
+
+        <!-- Advanced: Scheduled verification (Feature A) -->
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Scheduled verification <Tooltip text="Periodically verify the most recent restore point on its storage destination. Quick = HEAD/size check (no bandwidth). Deep = full SHA-256 reread (catches bit rot). Leave the cron empty to disable." />
+          </summary>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 pl-6">
+            <div class="sm:col-span-2">
+              <label for="verify_schedule" class="block text-xs font-medium text-text-muted mb-1">Cron expression</label>
+              <input id="verify_schedule" type="text" bind:value={form.verify_schedule} placeholder="0 4 * * 0 (every Sunday 04:00)"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+            </div>
+            <div>
+              <label for="verify_mode" class="block text-xs font-medium text-text-muted mb-1">Mode</label>
+              <select id="verify_mode" bind:value={form.verify_mode}
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+                <option value="quick">Quick (HEAD + size)</option>
+                <option value="deep">Deep (SHA-256 reread)</option>
+              </select>
+            </div>
+          </div>
         </details>
 
         <!-- Advanced: Scripts -->

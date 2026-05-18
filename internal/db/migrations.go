@@ -138,4 +138,9 @@ var alterMigrations = []string{
 	"ALTER TABLE storage_destinations ADD COLUMN last_health_check_at DATETIME",
 	"ALTER TABLE storage_destinations ADD COLUMN last_health_check_status TEXT DEFAULT ''",
 	"ALTER TABLE storage_destinations ADD COLUMN last_health_check_error TEXT DEFAULT ''",
+	// Scheduled verification (Feature A). verify_schedule is a cron
+	// expression; verify_mode is "quick" or "deep". Both empty means no
+	// scheduled verification for that job.
+	"ALTER TABLE jobs ADD COLUMN verify_schedule TEXT DEFAULT ''",
+	"ALTER TABLE jobs ADD COLUMN verify_mode TEXT DEFAULT 'quick'",
 }

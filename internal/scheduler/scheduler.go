@@ -22,6 +22,11 @@ type ReplicationRunner func(sourceID int64)
 // on the runner package.
 type HealthChecker func()
 
+// VerifyRunner is called when a job's scheduled verification is due. The
+// daemon wires this in to Runner.RunScheduledVerify so the scheduler does
+// not need to depend on the runner package.
+type VerifyRunner func(jobID int64, mode string)
+
 // Scheduler manages cron entries for backup jobs and replication sources.
 type Scheduler struct {
 	cron              *cron.Cron
@@ -29,8 +34,10 @@ type Scheduler struct {
 	runner            JobRunner
 	replicationRunner ReplicationRunner
 	healthChecker     HealthChecker
+	verifyRunner      VerifyRunner
 	entries           map[int64]cron.EntryID
 	lastDayEntries    map[int64]cron.EntryID // daily-trigger entries for L (last day) schedules
+	verifyEntries     map[int64]cron.EntryID
 	replEntries       map[int64]cron.EntryID
 	mu                sync.Mutex
 }
@@ -43,6 +50,7 @@ func New(database *db.DB, runner JobRunner) *Scheduler {
 		runner:         runner,
 		entries:        make(map[int64]cron.EntryID),
 		lastDayEntries: make(map[int64]cron.EntryID),
+		verifyEntries:  make(map[int64]cron.EntryID),
 		replEntries:    make(map[int64]cron.EntryID),
 	}
 }
@@ -62,6 +70,14 @@ func (s *Scheduler) SetHealthChecker(fn HealthChecker) {
 	s.healthChecker = fn
 }
 
+// SetVerifyRunner installs the per-job scheduled-verification callback.
+// Must be called before Start() / Reload() for verify entries to register.
+func (s *Scheduler) SetVerifyRunner(fn VerifyRunner) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.verifyRunner = fn
+}
+
 func (s *Scheduler) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,6 +89,11 @@ func (s *Scheduler) Start() error {
 	for _, job := range jobs {
 		if job.Enabled && job.Schedule != "" {
 			s.addJob(job)
+		}
+		// Scheduled verification is independent of the backup schedule:
+		// a user can run nightly backups but only verify weekly.
+		if job.Enabled && job.VerifySchedule != "" && s.verifyRunner != nil {
+			s.addVerifyJob(job)
 		}
 	}
 
@@ -115,6 +136,12 @@ func (s *Scheduler) Reload() error {
 		delete(s.lastDayEntries, jobID)
 	}
 
+	// Remove all existing verify entries.
+	for jobID, entryID := range s.verifyEntries {
+		s.cron.Remove(entryID)
+		delete(s.verifyEntries, jobID)
+	}
+
 	// Remove all existing replication entries.
 	for srcID, entryID := range s.replEntries {
 		s.cron.Remove(entryID)
@@ -129,6 +156,9 @@ func (s *Scheduler) Reload() error {
 	for _, job := range jobs {
 		if job.Enabled && job.Schedule != "" {
 			s.addJob(job)
+		}
+		if job.Enabled && job.VerifySchedule != "" && s.verifyRunner != nil {
+			s.addVerifyJob(job)
 		}
 	}
 
@@ -165,6 +195,25 @@ func (s *Scheduler) addJob(job db.Job) {
 		return
 	}
 	s.entries[job.ID] = entryID
+}
+
+// addVerifyJob registers the per-job scheduled verification cron entry.
+// The runner picks the latest restore point and runs verify in the
+// configured mode. "" mode defaults to "quick".
+func (s *Scheduler) addVerifyJob(job db.Job) {
+	jobID := job.ID
+	mode := job.VerifyMode
+	if mode == "" {
+		mode = "quick"
+	}
+	entryID, err := s.cron.AddFunc(job.VerifySchedule, func() {
+		s.verifyRunner(jobID, mode)
+	})
+	if err != nil {
+		log.Printf("Failed to schedule verify for job %d (%s): %v", job.ID, job.Name, err)
+		return
+	}
+	s.verifyEntries[job.ID] = entryID
 }
 
 // parseLastDaySchedule checks if a cron string contains L in the day-of-month
