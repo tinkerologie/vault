@@ -45,22 +45,30 @@
     return picker.get(itemName)
   }
 
+  // updateEntry replaces the picker entry with a shallow clone + patch.
+  // SvelteMap tracks set(); mutating a value in place after an `await`
+  // boundary does NOT propagate (Svelte 5 only sees the synchronous
+  // mutation). We always go through this helper to keep that contract.
+  // The `selected` SvelteSet is preserved across clones so toggleFilePicked
+  // / clearPickerSelection don't lose their reactive backing.
+  function updateEntry(itemName, patch) {
+    const cur = ensurePickerEntry(itemName)
+    picker.set(itemName, { ...cur, ...patch })
+  }
+
   async function togglePickerOpen(item) {
-    const entry = ensurePickerEntry(item.name)
-    entry.open = !entry.open
-    if (entry.open && !entry.contents && !entry.loading) {
-      entry.loading = true
-      entry.error = ''
+    const cur = ensurePickerEntry(item.name)
+    const willOpen = !cur.open
+    updateEntry(item.name, { open: willOpen })
+    if (willOpen && !cur.contents && !cur.loading) {
+      updateEntry(item.name, { loading: true, error: '' })
       try {
-        entry.contents = await api.getRestorePointContents(selectedPoint.jobId, selectedPoint.id, item.name)
+        const contents = await api.getRestorePointContents(selectedPoint.jobId, selectedPoint.id, item.name)
+        updateEntry(item.name, { contents, loading: false })
       } catch (e) {
-        entry.error = e?.message || 'failed to load file list'
-      } finally {
-        entry.loading = false
+        updateEntry(item.name, { error: e?.message || 'failed to load file list', loading: false })
       }
     }
-    // Reassign so Svelte 5 tracks the mutation on the map's value.
-    picker.set(item.name, entry)
   }
 
   function toggleFilePicked(itemName, filePath) {
@@ -68,21 +76,23 @@
     if (!entry) return
     if (entry.selected.has(filePath)) entry.selected.delete(filePath)
     else entry.selected.add(filePath)
-    picker.set(itemName, entry)
+    // SvelteSet is reactive on add/delete; touch the entry too so the
+    // summary "X of Y selected" counter rerenders.
+    updateEntry(itemName, {})
   }
 
   function selectAllFiltered(itemName) {
     const entry = picker.get(itemName)
     if (!entry?.contents) return
     for (const f of filteredFiles(entry)) entry.selected.add(f.path)
-    picker.set(itemName, entry)
+    updateEntry(itemName, {})
   }
 
   function clearPickerSelection(itemName) {
     const entry = picker.get(itemName)
     if (!entry) return
     entry.selected.clear()
-    picker.set(itemName, entry)
+    updateEntry(itemName, {})
   }
 
   function filteredFiles(entry) {

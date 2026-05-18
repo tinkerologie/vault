@@ -115,6 +115,18 @@
     (form.keep_monthly || 0) + (form.keep_yearly || 0) > 0
   )
 
+  // Feature A: friendly verify schedule. The backend still stores a cron
+  // string in form.verify_schedule (empty = disabled). The checkbox below
+  // toggles between empty (off) and a sensible default (Sunday 04:00).
+  let verifyEnabled = $derived((form.verify_schedule || '').trim() !== '')
+  function toggleVerifyEnabled(e) {
+    if (e.currentTarget.checked) {
+      form.verify_schedule = form.verify_schedule || '0 4 * * 0'
+    } else {
+      form.verify_schedule = ''
+    }
+  }
+
   $effect(() => {
     // Re-trigger on any keep_* change.
     const policy = {
@@ -1033,22 +1045,26 @@
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Scheduled verification <Tooltip text="Periodically verify the most recent restore point on its storage destination. Quick = HEAD/size check (no bandwidth). Deep = full SHA-256 reread (catches bit rot). Leave the cron empty to disable." />
+            Scheduled verification <Tooltip text="Periodically verify the most recent restore point on its storage destination. Quick = HEAD/size check (no bandwidth). Deep = full SHA-256 reread (catches bit rot)." />
           </summary>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 pl-6">
-            <div class="sm:col-span-2">
-              <label for="verify_schedule" class="block text-xs font-medium text-text-muted mb-1">Cron expression</label>
-              <input id="verify_schedule" type="text" bind:value={form.verify_schedule} placeholder="0 4 * * 0 (every Sunday 04:00)"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
-            </div>
-            <div>
-              <label for="verify_mode" class="block text-xs font-medium text-text-muted mb-1">Mode</label>
-              <select id="verify_mode" bind:value={form.verify_mode}
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
-                <option value="quick">Quick (HEAD + size)</option>
-                <option value="deep">Deep (SHA-256 reread)</option>
-              </select>
-            </div>
+          <div class="mt-3 pl-6 space-y-3">
+            <label class="flex items-center gap-2 text-sm text-text-muted">
+              <input type="checkbox" checked={verifyEnabled} onchange={toggleVerifyEnabled} class="accent-vault" />
+              Run verification on a schedule
+            </label>
+            {#if verifyEnabled}
+              <div class="bg-surface-3/50 border border-border rounded-lg p-3">
+                <ScheduleBuilder bind:value={form.verify_schedule} />
+              </div>
+              <div>
+                <label for="verify_mode" class="block text-xs font-medium text-text-muted mb-1">Mode</label>
+                <select id="verify_mode" bind:value={form.verify_mode}
+                  class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+                  <option value="quick">Quick (HEAD + size, no bandwidth)</option>
+                  <option value="deep">Deep (full SHA-256 reread)</option>
+                </select>
+              </div>
+            {/if}
           </div>
         </details>
 
