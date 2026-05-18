@@ -58,6 +58,10 @@ export const api = {
   // Manually trigger a storage destination health check; returns
   // {status: "ok"|"failed", error: string}.
   healthCheckStorage: (id) => request('POST', `/storage/${id}/health-check`),
+  // Orphan GC: scan returns {orphans, total_bytes}; delete consumes a
+  // paths array that must still be orphaned (server re-checks).
+  scanStorageOrphans: (id) => request('POST', `/storage/${id}/scan-orphans`),
+  deleteStorageOrphans: (id, paths) => request('POST', `/storage/${id}/delete-orphans`, { paths }),
   getRestorePoints: (id) => request('GET', `/jobs/${id}/restore-points`),
   // getRetentionPreview asks the server what a hypothetical GFS retention
   // policy would do to a job's current restore points. Used by the Jobs

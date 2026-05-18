@@ -182,6 +182,68 @@ func (h *StorageHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ScanOrphans walks the storage destination and returns the list of paths
+// that don't belong to any known restore point. Safe to call repeatedly:
+// no state is modified. The user clicks DeleteOrphans to actually delete.
+//
+//	POST /api/v1/storage/{id}/scan-orphans
+//
+// Returns: {"orphans": ["path/a", "path/b"], "total_bytes": N}
+func (h *StorageHandler) ScanOrphans(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	orphans, totalBytes, err := h.runner.ScanStorageOrphans(dest)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"orphans":     orphans,
+		"total_bytes": totalBytes,
+	})
+}
+
+// DeleteOrphans accepts the same orphan list the UI got from ScanOrphans
+// and deletes those files. The body shape is {"paths":["a","b"]}; only
+// paths actually in the current orphan set are deleted (so a stale list
+// from a prior scan can't accidentally delete a fresh restore point).
+//
+//	POST /api/v1/storage/{id}/delete-orphans  {"paths":[...]}
+func (h *StorageHandler) DeleteOrphans(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if len(req.Paths) == 0 {
+		respondJSON(w, http.StatusOK, map[string]any{"deleted": 0, "errors": []string{}})
+		return
+	}
+	deleted, errs := h.runner.DeleteStorageOrphans(dest, req.Paths)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"deleted": deleted,
+		"errors":  errs,
+	})
+}
+
 // Scan discovers existing backups on a storage destination by reading
 // manifest.json files from each backup run directory.
 //
