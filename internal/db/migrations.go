@@ -106,6 +106,31 @@ CREATE TABLE IF NOT EXISTS replication_sources (
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS dedup_packs (
+	id           TEXT PRIMARY KEY,
+	storage_id   INTEGER NOT NULL,
+	path         TEXT NOT NULL,
+	size_bytes   INTEGER NOT NULL,
+	chunk_count  INTEGER NOT NULL,
+	created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (storage_id) REFERENCES storage_destinations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_dedup_packs_storage ON dedup_packs(storage_id);
+
+CREATE TABLE IF NOT EXISTS dedup_chunks (
+	chunk_id     BLOB NOT NULL,
+	storage_id   INTEGER NOT NULL,
+	pack_id      TEXT NOT NULL,
+	offset       INTEGER NOT NULL,
+	length       INTEGER NOT NULL,
+	PRIMARY KEY (storage_id, chunk_id),
+	FOREIGN KEY (storage_id) REFERENCES storage_destinations(id) ON DELETE CASCADE,
+	FOREIGN KEY (pack_id) REFERENCES dedup_packs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_dedup_chunks_pack ON dedup_chunks(storage_id, pack_id);
+
 -- Add verify_backup column if it does not exist.
 -- SQLite does not support IF NOT EXISTS for ALTER TABLE, so we
 -- attempt the ALTER in Go and silently ignore "duplicate column" errors.
@@ -143,4 +168,10 @@ var alterMigrations = []string{
 	// scheduled verification for that job.
 	"ALTER TABLE jobs ADD COLUMN verify_schedule TEXT DEFAULT ''",
 	"ALTER TABLE jobs ADD COLUMN verify_mode TEXT DEFAULT 'quick'",
+	// Deduplication (Feature D). dedup_enabled toggles content-defined
+	// chunking + pack-based storage on a destination. manifest_id holds
+	// the SHA-256 (or similar) of the per-restore-point manifest blob;
+	// NULL means the restore point is not dedup-backed.
+	"ALTER TABLE storage_destinations ADD COLUMN dedup_enabled INTEGER NOT NULL DEFAULT 0",
+	"ALTER TABLE restore_points       ADD COLUMN manifest_id   BLOB    DEFAULT NULL",
 }

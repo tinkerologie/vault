@@ -75,6 +75,7 @@ type RestorePoint struct {
 	SizeBytes            int64     `json:"size_bytes"`
 	ParentRestorePointID int64     `json:"parent_restore_point_id"`
 	SourceID             int64     `json:"source_id"`
+	ManifestID           []byte    `json:"manifest_id,omitempty"`
 	CreatedAt            time.Time `json:"created_at"`
 }
 
@@ -83,6 +84,7 @@ type StorageDestination struct {
 	Name                  string     `json:"name"`
 	Type                  string     `json:"type"`
 	Config                string     `json:"config"`
+	DedupEnabled          bool       `json:"dedup_enabled"`
 	LastHealthCheckAt     *time.Time `json:"last_health_check_at"`
 	LastHealthCheckStatus string     `json:"last_health_check_status"`
 	LastHealthCheckError  string     `json:"last_health_check_error"`

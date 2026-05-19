@@ -4,8 +4,8 @@ import "database/sql"
 
 func (d *DB) CreateStorageDestination(dest StorageDestination) (int64, error) {
 	res, err := d.Exec(
-		"INSERT INTO storage_destinations (name, type, config) VALUES (?, ?, ?)",
-		dest.Name, dest.Type, dest.Config,
+		"INSERT INTO storage_destinations (name, type, config, dedup_enabled) VALUES (?, ?, ?, ?)",
+		dest.Name, dest.Type, dest.Config, dest.DedupEnabled,
 	)
 	if err != nil {
 		return 0, err
@@ -16,11 +16,11 @@ func (d *DB) CreateStorageDestination(dest StorageDestination) (int64, error) {
 func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 	var dest StorageDestination
 	err := d.QueryRow(
-		`SELECT id, name, type, config,
+		`SELECT id, name, type, config, COALESCE(dedup_enabled, 0),
 		last_health_check_at, COALESCE(last_health_check_status, ''), COALESCE(last_health_check_error, ''),
 		created_at, updated_at
 		FROM storage_destinations WHERE id = ?`, id,
-	).Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config,
+	).Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config, &dest.DedupEnabled,
 		&dest.LastHealthCheckAt, &dest.LastHealthCheckStatus, &dest.LastHealthCheckError,
 		&dest.CreatedAt, &dest.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -31,7 +31,7 @@ func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 
 func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 	rows, err := d.Query(
-		`SELECT id, name, type, config,
+		`SELECT id, name, type, config, COALESCE(dedup_enabled, 0),
 		last_health_check_at, COALESCE(last_health_check_status, ''), COALESCE(last_health_check_error, ''),
 		created_at, updated_at
 		FROM storage_destinations ORDER BY name`)
@@ -42,7 +42,7 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 	var dests []StorageDestination
 	for rows.Next() {
 		var dest StorageDestination
-		if err := rows.Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config,
+		if err := rows.Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config, &dest.DedupEnabled,
 			&dest.LastHealthCheckAt, &dest.LastHealthCheckStatus, &dest.LastHealthCheckError,
 			&dest.CreatedAt, &dest.UpdatedAt); err != nil {
 			return nil, err
@@ -70,8 +70,8 @@ func (d *DB) UpdateStorageDestinationHealth(id int64, status, errMsg string) err
 
 func (d *DB) UpdateStorageDestination(dest StorageDestination) error {
 	_, err := d.Exec(
-		"UPDATE storage_destinations SET name=?, type=?, config=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-		dest.Name, dest.Type, dest.Config, dest.ID,
+		"UPDATE storage_destinations SET name=?, type=?, config=?, dedup_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.ID,
 	)
 	return err
 }

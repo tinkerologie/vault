@@ -335,7 +335,7 @@ func (d *DB) CreateRestorePoint(rp RestorePoint) (int64, error) {
 func (d *DB) ListRestorePoints(jobID int64) ([]RestorePoint, error) {
 	rows, err := d.Query(
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
-			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), created_at
+			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
 		FROM restore_points WHERE job_id = ? ORDER BY created_at DESC`, jobID,
 	)
 	if err != nil {
@@ -347,7 +347,7 @@ func (d *DB) ListRestorePoints(jobID int64) ([]RestorePoint, error) {
 		var rp RestorePoint
 		if err := rows.Scan(&rp.ID, &rp.JobRunID, &rp.JobID, &rp.BackupType,
 			&rp.StoragePath, &rp.Metadata, &rp.SizeBytes,
-			&rp.ParentRestorePointID, &rp.SourceID, &rp.CreatedAt); err != nil {
+			&rp.ParentRestorePointID, &rp.SourceID, &rp.ManifestID, &rp.CreatedAt); err != nil {
 			return nil, err
 		}
 		rps = append(rps, rp)
@@ -375,7 +375,7 @@ func (d *DB) DeleteOldRestorePoints(jobID int64, keepCount int) error {
 func (d *DB) GetOldRestorePoints(jobID int64, keepCount int) ([]RestorePoint, error) {
 	rows, err := d.Query(
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
-			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), created_at
+			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
 		FROM restore_points WHERE job_id = ? AND id NOT IN
 		(SELECT id FROM restore_points WHERE job_id = ? ORDER BY created_at DESC LIMIT ?)
 		ORDER BY created_at ASC`,
@@ -390,7 +390,7 @@ func (d *DB) GetOldRestorePoints(jobID int64, keepCount int) ([]RestorePoint, er
 		var rp RestorePoint
 		if err := rows.Scan(&rp.ID, &rp.JobRunID, &rp.JobID, &rp.BackupType,
 			&rp.StoragePath, &rp.Metadata, &rp.SizeBytes,
-			&rp.ParentRestorePointID, &rp.SourceID, &rp.CreatedAt); err != nil {
+			&rp.ParentRestorePointID, &rp.SourceID, &rp.ManifestID, &rp.CreatedAt); err != nil {
 			return nil, err
 		}
 		rps = append(rps, rp)
@@ -403,7 +403,7 @@ func (d *DB) GetOldRestorePoints(jobID int64, keepCount int) ([]RestorePoint, er
 func (d *DB) GetExpiredRestorePoints(jobID int64, olderThanDays int) ([]RestorePoint, error) {
 	rows, err := d.Query(
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
-			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), created_at
+			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
 		FROM restore_points WHERE job_id = ? AND created_at < datetime('now', '-' || ? || ' days')
 		ORDER BY created_at ASC`,
 		jobID, olderThanDays,
@@ -417,7 +417,7 @@ func (d *DB) GetExpiredRestorePoints(jobID int64, olderThanDays int) ([]RestoreP
 		var rp RestorePoint
 		if err := rows.Scan(&rp.ID, &rp.JobRunID, &rp.JobID, &rp.BackupType,
 			&rp.StoragePath, &rp.Metadata, &rp.SizeBytes,
-			&rp.ParentRestorePointID, &rp.SourceID, &rp.CreatedAt); err != nil {
+			&rp.ParentRestorePointID, &rp.SourceID, &rp.ManifestID, &rp.CreatedAt); err != nil {
 			return nil, err
 		}
 		rps = append(rps, rp)
@@ -440,11 +440,11 @@ func (d *DB) GetRestorePoint(id int64) (RestorePoint, error) {
 	var rp RestorePoint
 	err := d.QueryRow(
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
-			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), created_at
+			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
 		FROM restore_points WHERE id = ?`, id,
 	).Scan(&rp.ID, &rp.JobRunID, &rp.JobID, &rp.BackupType,
 		&rp.StoragePath, &rp.Metadata, &rp.SizeBytes,
-		&rp.ParentRestorePointID, &rp.SourceID, &rp.CreatedAt)
+		&rp.ParentRestorePointID, &rp.SourceID, &rp.ManifestID, &rp.CreatedAt)
 	return rp, err
 }
 
@@ -454,12 +454,12 @@ func (d *DB) GetLastRestorePointByType(jobID int64, backupType string) (RestoreP
 	var rp RestorePoint
 	err := d.QueryRow(
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
-			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), created_at
+			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
 		FROM restore_points WHERE job_id = ? AND backup_type = ?
 		ORDER BY created_at DESC, id DESC LIMIT 1`, jobID, backupType,
 	).Scan(&rp.ID, &rp.JobRunID, &rp.JobID, &rp.BackupType,
 		&rp.StoragePath, &rp.Metadata, &rp.SizeBytes,
-		&rp.ParentRestorePointID, &rp.SourceID, &rp.CreatedAt)
+		&rp.ParentRestorePointID, &rp.SourceID, &rp.ManifestID, &rp.CreatedAt)
 	return rp, err
 }
 
@@ -469,11 +469,19 @@ func (d *DB) GetLastRestorePoint(jobID int64) (RestorePoint, error) {
 	var rp RestorePoint
 	err := d.QueryRow(
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
-			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), created_at
+			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
 		FROM restore_points WHERE job_id = ?
 		ORDER BY created_at DESC, id DESC LIMIT 1`, jobID,
 	).Scan(&rp.ID, &rp.JobRunID, &rp.JobID, &rp.BackupType,
 		&rp.StoragePath, &rp.Metadata, &rp.SizeBytes,
-		&rp.ParentRestorePointID, &rp.SourceID, &rp.CreatedAt)
+		&rp.ParentRestorePointID, &rp.SourceID, &rp.ManifestID, &rp.CreatedAt)
 	return rp, err
+}
+
+// SetRestorePointManifestID stores the manifest blob ID for a restore
+// point. Used by the dedup engine to associate a restore point with its
+// manifest (which lists the chunks comprising the backup).
+func (d *DB) SetRestorePointManifestID(restorePointID int64, manifestID []byte) error {
+	_, err := d.Exec(`UPDATE restore_points SET manifest_id = ? WHERE id = ?`, manifestID, restorePointID)
+	return err
 }
