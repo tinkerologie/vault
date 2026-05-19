@@ -9,10 +9,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ruaan-deysel/vault/internal/dedup"
 )
 
 // pluginsDir is the base directory where Unraid plugins are installed.
 const pluginsDir = "/boot/config/plugins"
+
+// pluginPath returns the canonical config directory for a plugin under
+// /boot/config/plugins/. Shared by Backup (tar) and BackupChunked (dedup) so
+// both code paths agree on what the plugin's "data" lives in.
+func pluginPath(name string) string {
+	if name == "" {
+		return ""
+	}
+	return filepath.Join(pluginsDir, name)
+}
 
 // PluginHandler implements Handler for Unraid plugin backup/restore.
 // Each plugin consists of a .plg installer file and an optional per-plugin
@@ -103,7 +115,7 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 
 	// Step 2: Archive the config directory if it exists.
 	progress(item.Name, 40, "archiving config")
-	configDir := filepath.Join(pluginsDir, pluginName)
+	configDir := pluginPath(pluginName)
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
 		effectiveCompression := MaybeDowngradeCompression(configDir, item.Compression)
 		archivePath := filepath.Join(destDir, "config.tar"+archiveExt(effectiveCompression))
@@ -175,7 +187,7 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// Step 2: Restore config directory.
 	progress(item.Name, 60, "restoring config")
 	if configArchive, err := findArchive(sourceDir, "config.tar"); err == nil {
-		configDir := filepath.Join(pluginsDir, pluginName)
+		configDir := pluginPath(pluginName)
 		if err := os.MkdirAll(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
@@ -187,4 +199,45 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 
 	progress(item.Name, 100, "restore complete")
 	return nil
+}
+
+// BackupChunked walks the plugin's config directory tree and chunks every
+// regular file into the dedup repo. Returns the manifest's chunk ID. Thin
+// wrapper that delegates to FolderHandler.BackupChunked with the plugin's
+// directory as the source — plugins are folder-shaped under
+// /boot/config/plugins/<name>/.
+//
+// item.Settings["path"] overrides the default plugin path lookup (used by
+// tests so they can point at a t.TempDir() instead of /boot/config/plugins/);
+// in production the runner does not set it and pluginPath(item.Name) applies.
+// Note: this only chunks the plugin's config directory — the .plg installer
+// file itself is not part of the chunked stream (the runner handles plg
+// preservation separately if needed).
+func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+	src, _ := item.Settings["path"].(string)
+	if src == "" {
+		src = pluginPath(item.Name)
+	}
+	if src == "" {
+		return dedup.ID{}, fmt.Errorf("plugin: cannot resolve directory for %q", item.Name)
+	}
+	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: map[string]any{"path": src}}
+	fh := &FolderHandler{}
+	return fh.BackupChunked(ctx, proxy, repo, progress)
+}
+
+// RestoreChunked reconstructs the plugin's config directory tree from the
+// manifest. destPath defaults to the plugin's well-known directory
+// (pluginPath(item.Name)) when empty — the runner passes "" so production
+// restore lands in /boot/config/plugins/<name>/. Tests pass a t.TempDir().
+func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	if destPath == "" {
+		destPath = pluginPath(item.Name)
+	}
+	if destPath == "" {
+		return fmt.Errorf("plugin: cannot resolve restore directory for %q", item.Name)
+	}
+	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: map[string]any{"path": destPath}}
+	fh := &FolderHandler{}
+	return fh.RestoreChunked(ctx, proxy, repo, manifestID, destPath, progress)
 }
