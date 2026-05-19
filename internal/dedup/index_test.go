@@ -9,7 +9,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/db"
 )
 
-func newTestIndex(t *testing.T) (*Index, *fakeAdapter, *db.DB, int64, func()) {
+func newTestIndex(t *testing.T) (*Index, *FakeAdapter, *db.DB, int64, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	d, err := db.Open(filepath.Join(dir, "vault.db"))
@@ -20,7 +20,7 @@ func newTestIndex(t *testing.T) (*Index, *fakeAdapter, *db.DB, int64, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := newFakeAdapter()
+	a := NewFakeAdapter()
 	idx := NewIndex(d, a, destID)
 	cleanup := func() { d.Close(); os.RemoveAll(dir) }
 	return idx, a, d, destID, cleanup

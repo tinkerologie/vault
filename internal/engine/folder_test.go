@@ -1,10 +1,14 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/dedup"
 )
 
 func TestFolderHandlerListItems(t *testing.T) {
@@ -146,5 +150,132 @@ func TestFolderHandlerRestoreMissingArchive(t *testing.T) {
 	err := h.Restore(context.Background(), item, stage, func(string, int, string) {})
 	if err == nil {
 		t.Error("expected error for missing archive")
+	}
+}
+
+// TestFolderChunkedRoundTrip backs up a small file tree (mixed sizes plus an
+// empty file plus a nested subdirectory) into a dedup repo, restores it to a
+// new directory, and verifies every regular file's bytes match by SHA-256.
+// Exercises the happy path of BackupChunked + RestoreChunked end-to-end.
+func TestFolderChunkedRoundTrip(t *testing.T) {
+	src := t.TempDir()
+	must := func(p string, data []byte) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(filepath.Join(src, "a.txt"), []byte("hello world"))
+	must(filepath.Join(src, "sub/b.bin"), bytes.Repeat([]byte{0x42}, 50_000))
+	must(filepath.Join(src, "sub/c.empty"), nil)
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
+	ctx := context.Background()
+	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := t.TempDir()
+	if err := h.RestoreChunked(ctx, item, r, manifestID, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Compare every file's SHA-256.
+	errs := 0
+	_ = filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(src, p)
+		srcBody, _ := os.ReadFile(p) // #nosec G304 — test-controlled tempdir
+		dstBody, err := os.ReadFile(filepath.Join(dst, rel))
+		if err != nil {
+			t.Errorf("missing restored file %s: %v", rel, err)
+			errs++
+			return nil
+		}
+		if sha256.Sum256(srcBody) != sha256.Sum256(dstBody) {
+			t.Errorf("file %s SHA-256 mismatch", rel)
+			errs++
+		}
+		return nil
+	})
+	if errs > 0 {
+		t.Fatalf("%d file mismatches", errs)
+	}
+}
+
+// TestFolderChunkedDedupSkipsRepeats verifies that running BackupChunked
+// twice against an unchanged source tree does not add any new chunks to the
+// repository (content-defined dedup is the whole point of the feature).
+func TestFolderChunkedDedupSkipsRepeats(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "x.bin"), bytes.Repeat([]byte{0xab}, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+	h := &FolderHandler{}
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
+	if _, err := h.BackupChunked(context.Background(), item, r, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	after1 := r.Stats().TotalChunks
+	if _, err := h.BackupChunked(context.Background(), item, r, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	after2 := r.Stats().TotalChunks
+	if after2 != after1 {
+		t.Fatalf("second backup added chunks: %d → %d", after1, after2)
+	}
+}
+
+// TestFolderChunkedSkipsNonRegularFiles confirms that BackupChunked silently
+// skips symlinks (and by extension sockets / fifos) without aborting the run.
+// Skipped on filesystems that disallow symlink creation (rare in tests).
+func TestFolderChunkedSkipsNonRegularFiles(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "real.txt"), []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.txt", filepath.Join(src, "link.txt")); err != nil {
+		t.Skip("symlink unsupported in test fs")
+	}
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+	h := &FolderHandler{}
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
+	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := r.GetManifest(mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.Files["real.txt"]; !ok {
+		t.Error("manifest missing real.txt")
+	}
+	if _, ok := m.Files["link.txt"]; ok {
+		t.Error("manifest unexpectedly includes symlink")
 	}
 }

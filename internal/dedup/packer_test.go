@@ -3,71 +3,12 @@ package dedup
 import (
 	"bytes"
 	"crypto/rand"
-	"errors"
-	"io"
 	"strings"
 	"testing"
-
-	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
-// fakeAdapter is an in-memory storage.Adapter for testing. It supports
-// Write / Read / ReadRange / Delete / List / Stat / TestConnection so we can
-// use it interchangeably with the real LocalAdapter throughout the dedup
-// package tests.
-type fakeAdapter struct{ files map[string][]byte }
-
-func newFakeAdapter() *fakeAdapter { return &fakeAdapter{files: map[string][]byte{}} }
-func (f *fakeAdapter) Write(path string, r io.Reader) error {
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
-	f.files[path] = b
-	return nil
-}
-func (f *fakeAdapter) Read(path string) (io.ReadCloser, error) {
-	b, ok := f.files[path]
-	if !ok {
-		return nil, errors.New("not found")
-	}
-	return io.NopCloser(bytes.NewReader(b)), nil
-}
-func (f *fakeAdapter) ReadRange(path string, offset, length int64) (io.ReadCloser, error) {
-	b, ok := f.files[path]
-	if !ok {
-		return nil, errors.New("not found")
-	}
-	if offset >= int64(len(b)) {
-		return nil, io.ErrUnexpectedEOF
-	}
-	end := offset + length
-	if end > int64(len(b)) {
-		end = int64(len(b))
-	}
-	return io.NopCloser(bytes.NewReader(b[offset:end])), nil
-}
-func (f *fakeAdapter) Delete(path string) error { delete(f.files, path); return nil }
-func (f *fakeAdapter) List(prefix string) ([]storage.FileInfo, error) {
-	out := []storage.FileInfo{}
-	for k, v := range f.files {
-		if strings.HasPrefix(k, prefix) {
-			out = append(out, storage.FileInfo{Path: k, Size: int64(len(v))})
-		}
-	}
-	return out, nil
-}
-func (f *fakeAdapter) Stat(path string) (storage.FileInfo, error) {
-	b, ok := f.files[path]
-	if !ok {
-		return storage.FileInfo{}, errors.New("not found")
-	}
-	return storage.FileInfo{Path: path, Size: int64(len(b))}, nil
-}
-func (f *fakeAdapter) TestConnection() error { return nil }
-
 func TestPackerFlushesAtTarget(t *testing.T) {
-	a := newFakeAdapter()
+	a := NewFakeAdapter()
 	master := bytes.Repeat([]byte{0xaa}, 32)
 	packsWritten := 0
 	p := NewPacker(a, master, "test/packs", func(info PackInfo) { packsWritten++ })
@@ -90,7 +31,7 @@ func TestPackerFlushesAtTarget(t *testing.T) {
 }
 
 func TestPackerFlushNoopOnEmpty(t *testing.T) {
-	a := newFakeAdapter()
+	a := NewFakeAdapter()
 	master := bytes.Repeat([]byte{0xaa}, 32)
 	p := NewPacker(a, master, "test/packs", func(info PackInfo) {
 		t.Fatalf("onFlush should not be called for empty packer; got %+v", info)
@@ -101,7 +42,7 @@ func TestPackerFlushNoopOnEmpty(t *testing.T) {
 }
 
 func TestPackerFooterRoundTrip(t *testing.T) {
-	a := newFakeAdapter()
+	a := NewFakeAdapter()
 	master := bytes.Repeat([]byte{0xab}, 32)
 	var writtenPath string
 	p := NewPacker(a, master, "test/packs", func(info PackInfo) { writtenPath = info.Path })
@@ -138,7 +79,7 @@ func TestPackerFooterRoundTrip(t *testing.T) {
 }
 
 func TestPackerPathLayout(t *testing.T) {
-	a := newFakeAdapter()
+	a := NewFakeAdapter()
 	master := bytes.Repeat([]byte{0xaa}, 32)
 	var info PackInfo
 	p := NewPacker(a, master, "_vault/packs", func(i PackInfo) { info = i })

@@ -25,7 +25,7 @@ func newTestRepo(t *testing.T) (*Repo, []byte, func()) {
 		t.Fatal(err)
 	}
 	serverKey := bytes.Repeat([]byte{0xee}, SecretSize)
-	a := newFakeAdapter()
+	a := NewFakeAdapter()
 	r, err := InitRepo(d, a, destID, serverKey)
 	if err != nil {
 		t.Fatal(err)

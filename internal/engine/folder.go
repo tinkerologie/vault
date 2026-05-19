@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
+
+	"github.com/ruaan-deysel/vault/internal/dedup"
 )
 
 // FolderHandler implements Handler for arbitrary filesystem directories.
@@ -166,6 +170,180 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	}
 
 	progress(item.Name, 100, "restore complete")
+	return nil
+}
+
+// BackupChunked walks the source tree and writes every regular file's content
+// into the dedup repo, accumulating a Manifest that lists per-file chunk IDs.
+// Returns the manifest's chunk ID (the runner persists it as
+// restore_point.manifest_id). The repo's Flush is NOT called here — the
+// runner flushes once per backup run after all items complete, to amortise
+// packer flushes across multiple items.
+//
+// Symlinks, sockets, fifos, and other non-regular files are skipped with a
+// log line; the run continues. Directories are recorded with their permission
+// bits so Restore can recreate them with the same mode. Empty files produce
+// a manifest entry with zero chunks (not an error).
+func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+	srcPath, _ := item.Settings["path"].(string)
+	if srcPath == "" {
+		return dedup.ID{}, fmt.Errorf("folder: missing path setting")
+	}
+	chunker, err := dedup.NewChunker(repo.SplitterSecret())
+	if err != nil {
+		return dedup.ID{}, err
+	}
+
+	// Open srcPath as a rooted handle so file opens during the walk go
+	// through root.Open(rel) — race-safe against symlink TOCTOU traversal
+	// (gosec G122). Matches the pattern used by tarDirectory in container.go.
+	root, err := os.OpenRoot(srcPath)
+	if err != nil {
+		return dedup.ID{}, fmt.Errorf("folder: open source root: %w", err)
+	}
+	defer root.Close()
+
+	m := dedup.Manifest{Version: dedup.ManifestVersion, Item: item.Name, Files: map[string]dedup.ManifestEntry{}}
+	var totalBytes int64
+	err = filepath.Walk(srcPath, func(p string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		rel, _ := filepath.Rel(srcPath, p)
+		if rel == "." {
+			return nil
+		}
+		entry := dedup.ManifestEntry{
+			Mode:    uint32(info.Mode().Perm()),
+			ModTime: info.ModTime().UTC().Format(time.RFC3339),
+			Size:    info.Size(),
+			IsDir:   info.IsDir(),
+		}
+		if info.IsDir() {
+			m.Files[rel] = entry
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			log.Printf("engine: skipping non-regular file %s (mode %v)", rel, info.Mode())
+			return nil
+		}
+		f, err := root.Open(rel)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		ids := []dedup.ID{}
+		if err := chunker.Split(f, func(chunk []byte) error {
+			id, err := repo.Put(chunk)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+			return nil
+		}); err != nil {
+			return fmt.Errorf("folder: chunk %s: %w", rel, err)
+		}
+		entry.Chunks = ids
+		m.Files[rel] = entry
+		totalBytes += info.Size()
+		if progress != nil {
+			progress(item.Name, -1, fmt.Sprintf("chunked %s", rel))
+		}
+		return nil
+	})
+	if err != nil {
+		return dedup.ID{}, err
+	}
+
+	manifestID, err := repo.PutManifest(item.Name, m)
+	if err != nil {
+		return dedup.ID{}, err
+	}
+	if progress != nil {
+		progress(item.Name, 100, fmt.Sprintf("manifest written (%d entries, %d bytes)", len(m.Files), totalBytes))
+	}
+	return manifestID, nil
+}
+
+// RestoreChunked reads the Manifest at manifestID and reconstructs the file
+// tree under destPath. Directories are restored first (sorted shallowest-to-
+// deepest) with their recorded mode (defaulting to 0o755 when zero), then
+// files are written in sorted order for determinism. Each file's chunks are
+// fetched in order and concatenated; mtime is preserved via os.Chtimes.
+// Empty files (zero chunks) are created as zero-byte files.
+func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	m, err := repo.GetManifest(manifestID)
+	if err != nil {
+		return err
+	}
+
+	// Split entries into dirs and files so we can MkdirAll before writing
+	// any file content.
+	var dirs, files []string
+	for p, e := range m.Files {
+		if e.IsDir {
+			dirs = append(dirs, p)
+		} else {
+			files = append(files, p)
+		}
+	}
+	sort.Strings(dirs)
+	for _, d := range dirs {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		full := filepath.Join(destPath, d)
+		mode := os.FileMode(m.Files[d].Mode)
+		if mode == 0 {
+			mode = 0o755
+		}
+		if err := os.MkdirAll(full, mode); err != nil {
+			return fmt.Errorf("restore mkdir %s: %w", d, err)
+		}
+	}
+
+	sort.Strings(files)
+	for _, fp := range files {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		e := m.Files[fp]
+		full := filepath.Join(destPath, fp)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			return err
+		}
+		mode := os.FileMode(e.Mode)
+		if mode == 0 {
+			mode = 0o644
+		}
+		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — caller-supplied dest
+		if err != nil {
+			return err
+		}
+		for _, cid := range e.Chunks {
+			body, err := repo.Get(cid)
+			if err != nil {
+				_ = out.Close()
+				return fmt.Errorf("restore %s: %w", fp, err)
+			}
+			if _, err := out.Write(body); err != nil {
+				_ = out.Close()
+				return err
+			}
+		}
+		if err := out.Close(); err != nil {
+			return err
+		}
+		if t, err := time.Parse(time.RFC3339, e.ModTime); err == nil {
+			_ = os.Chtimes(full, t, t)
+		}
+		if progress != nil {
+			progress(item.Name, -1, fmt.Sprintf("restored %s", fp))
+		}
+	}
 	return nil
 }
 
