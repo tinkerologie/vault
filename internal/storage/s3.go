@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -327,6 +328,39 @@ func (r *cancelOnCloseReader) Close() error {
 	err := r.ReadCloser.Close()
 	r.cancel()
 	return err
+}
+
+// ReadRange streams a half-open byte slice [offset, offset+length) of an
+// object. S3 honours `Range: bytes=START-END` (inclusive on both ends) so we
+// translate the half-open length-based contract into the S3 form.
+//
+// The cancel func on the GetObject context is deferred to Close, mirroring
+// Read(), so that closing the body promptly releases the SDK's internal
+// timer and any in-flight retry goroutine.
+func (a *S3Adapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("s3: invalid range offset=%d length=%d", offset, length)
+	}
+	key, err := a.keyFor(p, false)
+	if err != nil {
+		return nil, err
+	}
+	if length == 0 {
+		// Avoid issuing a request with an inverted Range (END < START); the
+		// caller asked for nothing, so return an empty no-op reader.
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	}
+	ctx, cancel := ctxOp()
+	out, err := a.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(a.config.Bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)),
+	})
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("s3: get range %s [%d-%d]: %w", key, offset, offset+length-1, err)
+	}
+	return &cancelOnCloseReader{ReadCloser: out.Body, cancel: cancel}, nil
 }
 
 func (a *S3Adapter) Delete(p string) error {

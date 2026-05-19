@@ -73,6 +73,32 @@ func (l *LocalAdapter) Read(path string) (io.ReadCloser, error) {
 	return os.Open(fullPath) // #nosec G304 — fullPath validated by safepath.JoinUnderBase in fullPath()
 }
 
+func (l *LocalAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
+	full, err := l.fullPath(p, false)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return nil, err
+	}
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("invalid range offset=%d length=%d", offset, length)
+	}
+	if offset >= info.Size() {
+		return nil, fmt.Errorf("offset %d at or past EOF (size=%d)", offset, info.Size())
+	}
+	f, err := os.Open(full) // #nosec G304 — fullPath validated by safepath.JoinUnderBase in fullPath()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return &rangeReader{Reader: io.LimitReader(f, length), closer: f}, nil
+}
+
 func (l *LocalAdapter) Delete(path string) error {
 	fullPath, err := l.fullPath(path, false)
 	if err != nil {

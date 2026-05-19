@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -442,6 +443,113 @@ type blockingReader struct{}
 func (b *blockingReader) Read(_ []byte) (int, error) {
 	time.Sleep(50 * time.Millisecond)
 	return 0, nil
+}
+
+// TestWebDAVReadRange exercises HTTP Range support via httptest. Vault's
+// dedup layer reads small slices of large pack files, so the WebDAV adapter
+// must issue a Range request rather than downloading the whole object.
+func TestWebDAVReadRange(t *testing.T) {
+	t.Parallel()
+	payload := []byte("the quick brown fox jumps over the lazy dog")
+
+	// Track that the server actually received Range: bytes=10-14.
+	var gotRange string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method", http.StatusMethodNotAllowed)
+			return
+		}
+		gotRange = r.Header.Get("Range")
+		// Parse Range header: "bytes=START-END" (inclusive).
+		if !strings.HasPrefix(gotRange, "bytes=") {
+			http.Error(w, "missing range", http.StatusBadRequest)
+			return
+		}
+		spec := strings.TrimPrefix(gotRange, "bytes=")
+		parts := strings.SplitN(spec, "-", 2)
+		if len(parts) != 2 {
+			http.Error(w, "bad range", http.StatusBadRequest)
+			return
+		}
+		start, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			http.Error(w, "bad range start", http.StatusBadRequest)
+			return
+		}
+		end, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			http.Error(w, "bad range end", http.StatusBadRequest)
+			return
+		}
+		if start >= int64(len(payload)) {
+			http.Error(w, "range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if end >= int64(len(payload)) {
+			end = int64(len(payload)) - 1
+		}
+		slice := payload[start : end+1]
+		w.Header().Set("Content-Range", "bytes "+parts[0]+"-"+strconv.FormatInt(end, 10)+"/"+strconv.Itoa(len(payload)))
+		w.Header().Set("Content-Length", strconv.Itoa(len(slice)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(slice)
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := a.ReadRange("file.bin", 10, 5)
+	if err != nil {
+		t.Fatalf("ReadRange() error = %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(got) != "brown" {
+		t.Fatalf("ReadRange returned %q, want %q", got, "brown")
+	}
+	if gotRange != "bytes=10-14" {
+		t.Fatalf("server saw Range %q, want %q", gotRange, "bytes=10-14")
+	}
+}
+
+// TestWebDAVReadRangeFallbackOn200 exercises the fallback path for servers
+// that ignore Range and return the entire 200 OK body. The adapter must
+// slice the response client-side so callers still get the requested window.
+func TestWebDAVReadRangeFallbackOn200(t *testing.T) {
+	t.Parallel()
+	payload := []byte("the quick brown fox jumps over the lazy dog")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Deliberately ignore Range — emulate a server that strips the header.
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := a.ReadRange("file.bin", 10, 5)
+	if err != nil {
+		t.Fatalf("ReadRange() error = %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(got) != "brown" {
+		t.Fatalf("ReadRange fallback returned %q, want %q", got, "brown")
+	}
 }
 
 func newTestWebDAVAdapter(t *testing.T, cfg WebDAVConfig) (*WebDAVAdapter, string, func()) {

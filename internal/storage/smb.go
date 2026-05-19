@@ -157,6 +157,48 @@ func (r *smbReadCloser) Close() error {
 	return errors.Join(errs...)
 }
 
+func (s *SMBAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("invalid range offset=%d length=%d", offset, length)
+	}
+	share, session, err := s.connect()
+	if err != nil {
+		return nil, err
+	}
+
+	fullPath, err := s.fullPath(p, false)
+	if err != nil {
+		_ = share.Umount()
+		_ = session.Logoff()
+		return nil, err
+	}
+	info, err := share.Stat(fullPath)
+	if err != nil {
+		_ = share.Umount()
+		_ = session.Logoff()
+		return nil, err
+	}
+	if offset >= info.Size() {
+		_ = share.Umount()
+		_ = session.Logoff()
+		return nil, fmt.Errorf("offset %d at or past EOF (size=%d)", offset, info.Size())
+	}
+	f, err := share.Open(fullPath)
+	if err != nil {
+		_ = share.Umount()
+		_ = session.Logoff()
+		return nil, err
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		_ = f.Close()
+		_ = share.Umount()
+		_ = session.Logoff()
+		return nil, err
+	}
+	rc := &smbReadCloser{file: f, share: share, session: session}
+	return &rangeReader{Reader: io.LimitReader(rc, length), closer: rc}, nil
+}
+
 func (s *SMBAdapter) Delete(path string) error {
 	share, session, err := s.connect()
 	if err != nil {

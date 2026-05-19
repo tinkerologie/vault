@@ -33,6 +33,20 @@ func (r *recordingAdapter) Read(p string) (io.ReadCloser, error) {
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
+func (r *recordingAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
+	b, ok := r.data[p]
+	if !ok {
+		return nil, io.ErrUnexpectedEOF
+	}
+	if offset >= int64(len(b)) {
+		return nil, io.EOF
+	}
+	end := offset + length
+	if end > int64(len(b)) {
+		end = int64(len(b))
+	}
+	return io.NopCloser(bytes.NewReader(b[offset:end])), nil
+}
 func (r *recordingAdapter) Delete(p string) error                  { delete(r.data, p); return nil }
 func (r *recordingAdapter) List(prefix string) ([]FileInfo, error) { return nil, nil }
 func (r *recordingAdapter) Stat(p string) (FileInfo, error)        { return FileInfo{}, nil }

@@ -89,6 +89,54 @@ func TestLocalStat(t *testing.T) {
 	}
 }
 
+func TestLocalReadRange(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a := NewLocalAdapter(dir)
+
+	payload := []byte("the quick brown fox jumps over the lazy dog")
+	if err := a.Write("file.bin", bytes.NewReader(payload)); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	// Bytes 10..14 inclusive = "brown" (length 5 starting at offset 10).
+	rc, err := a.ReadRange("file.bin", 10, 5)
+	if err != nil {
+		t.Fatalf("ReadRange() error = %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(got) != "brown" {
+		t.Fatalf("ReadRange returned %q, want %q", got, "brown")
+	}
+
+	// Reading past EOF on the tail: length straddling EOF should return only
+	// the bytes that exist (io.LimitReader naturally surfaces io.EOF here).
+	rc, err = a.ReadRange("file.bin", int64(len(payload)-3), 100)
+	if err != nil {
+		t.Fatalf("ReadRange tail error = %v", err)
+	}
+	got, err = io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatalf("ReadAll tail error = %v", err)
+	}
+	if string(got) != "dog" {
+		t.Fatalf("ReadRange tail = %q, want %q", got, "dog")
+	}
+
+	// Offset at or beyond EOF must return an error rather than empty bytes.
+	if _, err := a.ReadRange("file.bin", int64(len(payload)), 5); err == nil {
+		t.Fatal("ReadRange at EOF should error, got nil")
+	}
+	if _, err := a.ReadRange("file.bin", int64(len(payload))+100, 5); err == nil {
+		t.Fatal("ReadRange past EOF should error, got nil")
+	}
+}
+
 func TestLocalRejectsTraversal(t *testing.T) {
 	t.Parallel()
 

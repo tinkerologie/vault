@@ -130,6 +130,13 @@ func (n *NFSAdapter) Read(path string) (io.ReadCloser, error) {
 	return n.local.Read(path)
 }
 
+func (n *NFSAdapter) ReadRange(path string, offset, length int64) (io.ReadCloser, error) {
+	if err := n.mount(); err != nil {
+		return nil, err
+	}
+	return n.local.ReadRange(path, offset, length)
+}
+
 func (n *NFSAdapter) Delete(path string) error {
 	if err := n.mount(); err != nil {
 		return err

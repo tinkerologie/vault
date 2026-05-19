@@ -50,6 +50,14 @@ func (t *throttledAdapter) Read(p string) (io.ReadCloser, error) {
 	return &throttledReadCloser{rc: rc, limiter: t.limiter}, nil
 }
 
+func (t *throttledAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
+	rc, err := t.inner.ReadRange(p, offset, length)
+	if err != nil {
+		return nil, err
+	}
+	return &throttledReadCloser{rc: rc, limiter: t.limiter}, nil
+}
+
 func (t *throttledAdapter) Delete(p string) error { return t.inner.Delete(p) }
 func (t *throttledAdapter) List(prefix string) ([]FileInfo, error) {
 	return t.inner.List(prefix)

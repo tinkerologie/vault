@@ -222,8 +222,23 @@ func NewWebDAVAdapter(cfg WebDAVConfig) (*WebDAVAdapter, error) {
 // Power-users can still cap total request lifetime via TimeoutSeconds.
 func (w *WebDAVAdapter) client() *gowebdav.Client {
 	c := gowebdav.NewAuthClient(w.config.URL, gowebdav.NewAutoAuth(w.config.Username, w.config.Password))
+	c.SetTransport(w.transport())
 
-	transport := &http.Transport{
+	if w.config.TimeoutSeconds > 0 {
+		c.SetTimeout(time.Duration(w.config.TimeoutSeconds) * time.Second)
+	}
+	c.SetHeader("Accept-Encoding", "identity")
+	// else: leave http.Client.Timeout at its default 0 (no overall deadline).
+	return c
+}
+
+// transport builds the http.Transport used by both the gowebdav client
+// (Write/Read/List/Stat/Delete) and the raw http.Client used by ReadRange.
+// Centralising the construction keeps the phase-specific timeouts, TLS
+// settings, and proxy honouring in one place. See client() for the rationale
+// behind the individual timeout choices.
+func (w *WebDAVAdapter) transport() *http.Transport {
+	t := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -237,16 +252,9 @@ func (w *WebDAVAdapter) client() *gowebdav.Client {
 		ResponseHeaderTimeout: 5 * time.Minute,
 	}
 	if w.config.InsecureSkipVerify {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 — opt-in flag for self-signed servers
+		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 — opt-in flag for self-signed servers
 	}
-	c.SetTransport(transport)
-
-	if w.config.TimeoutSeconds > 0 {
-		c.SetTimeout(time.Duration(w.config.TimeoutSeconds) * time.Second)
-	}
-	c.SetHeader("Accept-Encoding", "identity")
-	// else: leave http.Client.Timeout at its default 0 (no overall deadline).
-	return c
+	return t
 }
 
 func (w *WebDAVAdapter) chunkSize() (int64, bool) {
@@ -623,6 +631,73 @@ func (w *WebDAVAdapter) Read(p string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("webdav: read %s: %w", full, err)
 	}
 	return rc, nil
+}
+
+// ReadRange fetches a half-open byte slice [offset, offset+length) of a
+// remote object via an HTTP Range request. gowebdav does not expose Range,
+// so we build the request by hand using the same transport as client().
+//
+// Servers that honour Range respond 206 Partial Content; servers that
+// silently ignore it return 200 OK with the full body, which we slice
+// client-side so the caller still gets the requested window. Chunked
+// (sidecar manifest) uploads are NOT supported here: dedup-managed objects
+// are pack files written as single PUTs, and the chunked manifest format
+// is invisible to Range reads. Detecting a manifest at ReadRange time
+// would defeat the purpose of avoiding a full download.
+func (w *WebDAVAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("webdav: invalid range offset=%d length=%d", offset, length)
+	}
+	full, err := w.fullPath(p, false)
+	if err != nil {
+		return nil, err
+	}
+	if length == 0 {
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	}
+
+	target := strings.TrimRight(w.config.URL, "/") + full
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("webdav: build range request: %w", err)
+	}
+	if w.config.Username != "" || w.config.Password != "" {
+		req.SetBasicAuth(w.config.Username, w.config.Password)
+	}
+	// HTTP Range is inclusive on both ends.
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
+	req.Header.Set("Accept-Encoding", "identity")
+
+	httpClient := &http.Client{Transport: w.transport()}
+	if w.config.TimeoutSeconds > 0 {
+		httpClient.Timeout = time.Duration(w.config.TimeoutSeconds) * time.Second
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("webdav: range get %s: %w", full, err)
+	}
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		// Server honoured Range. Cap reads at length in case it sent more.
+		return &rangeReader{Reader: io.LimitReader(resp.Body, length), closer: resp.Body}, nil
+	case http.StatusOK:
+		// Server ignored Range and returned the full body. Skip the leading
+		// bytes and slice to length so the caller gets the requested window.
+		if _, err := io.CopyN(io.Discard, resp.Body, offset); err != nil {
+			_ = resp.Body.Close()
+			if errors.Is(err, io.EOF) {
+				return nil, fmt.Errorf("webdav: offset %d at or past EOF", offset)
+			}
+			return nil, fmt.Errorf("webdav: skip to offset %d: %w", offset, err)
+		}
+		return &rangeReader{Reader: io.LimitReader(resp.Body, length), closer: resp.Body}, nil
+	case http.StatusRequestedRangeNotSatisfiable:
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("webdav: range not satisfiable for %s [%d-%d]", full, offset, offset+length-1)
+	default:
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("webdav: unexpected status %d for %s range request", resp.StatusCode, full)
+	}
 }
 
 func (w *WebDAVAdapter) Delete(p string) error {

@@ -193,6 +193,42 @@ func (r *sftpReadCloser) Close() error {
 	return clientErr
 }
 
+func (s *SFTPAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("invalid range offset=%d length=%d", offset, length)
+	}
+	client, err := s.connect()
+	if err != nil {
+		return nil, err
+	}
+	fullPath, err := s.fullPath(p, false)
+	if err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	info, err := client.Stat(fullPath)
+	if err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	if offset >= info.Size() {
+		_ = client.Close()
+		return nil, fmt.Errorf("offset %d at or past EOF (size=%d)", offset, info.Size())
+	}
+	f, err := client.Open(fullPath)
+	if err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		_ = f.Close()
+		_ = client.Close()
+		return nil, err
+	}
+	rc := &sftpReadCloser{file: f, client: client}
+	return &rangeReader{Reader: io.LimitReader(rc, length), closer: rc}, nil
+}
+
 func (s *SFTPAdapter) Delete(path string) error {
 	client, err := s.connect()
 	if err != nil {
