@@ -182,6 +182,13 @@ func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
 	return out, rows.Err()
 }
 
+// DeleteDedupPack removes a pack row and (via FK ON DELETE CASCADE) all its
+// chunk rows. Caller is responsible for deleting the on-storage blob first.
+func (d *DB) DeleteDedupPack(storageID int64, packID string) error {
+	_, err := d.Exec(`DELETE FROM dedup_packs WHERE storage_id=? AND id=?`, storageID, packID)
+	return err
+}
+
 // ListDedupChunksByPack returns every chunk row inside one pack.
 func (d *DB) ListDedupChunksByPack(storageID int64, packID string) ([]DedupChunk, error) {
 	rows, err := d.Query(`SELECT chunk_id, storage_id, pack_id, offset, length FROM dedup_chunks WHERE storage_id=? AND pack_id=?`, storageID, packID)
