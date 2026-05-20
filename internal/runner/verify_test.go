@@ -1,6 +1,19 @@
 package runner
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/ruaan-deysel/vault/internal/ws"
+)
 
 func TestParseRestorePointChecksums_HappyPath(t *testing.T) {
 	// Matches the actual restore-point metadata shape: items is an int
@@ -91,3 +104,242 @@ func TestVerifyMode_IsValid(t *testing.T) {
 		}
 	}
 }
+
+// setupDedupVerifyFixture provisions a Runner, a dedup-enabled local
+// destination, and runs a small folder backup so the caller has a dedup
+// restore point to verify. Mirrors the setup used by
+// TestRunnerDedupBackupRoundTrip in runner_test.go.
+func setupDedupVerifyFixture(t *testing.T) (*db.DB, *Runner, db.RestorePoint, string) {
+	t.Helper()
+
+	storageDir := t.TempDir()
+	sourceDir := t.TempDir()
+	// A few files so the manifest references real chunks (and a deep
+	// verify has > 0 bytes_read).
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		body := []byte("verify content for " + name + " — repeated text to ensure splitter emits chunks")
+		if err := os.WriteFile(filepath.Join(sourceDir, name), body, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "vault.db")
+	d, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("db open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	serverKey := bytes.Repeat([]byte{0xee}, 32)
+	hub := ws.NewHub()
+	go hub.Run()
+	r := New(d, hub, serverKey)
+
+	destCfg, _ := json.Marshal(map[string]string{"path": storageDir})
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name:         "dedup-verify-test",
+		Type:         "local",
+		Config:       string(destCfg),
+		DedupEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create storage destination: %v", err)
+	}
+
+	jobID, err := d.CreateJob(db.Job{
+		Name:            "dedup-verify-job",
+		StorageDestID:   destID,
+		BackupTypeChain: "full",
+		Enabled:         true,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	itemSettings, _ := json.Marshal(map[string]any{"path": sourceDir})
+	if _, err := d.AddJobItem(db.JobItem{
+		JobID:    jobID,
+		ItemType: "folder",
+		ItemName: "src",
+		Settings: string(itemSettings),
+	}); err != nil {
+		t.Fatalf("add job item: %v", err)
+	}
+
+	// RunJob is synchronous (holds r.mu and runs the pipeline inline).
+	r.RunJob(jobID)
+
+	rps, err := d.ListRestorePoints(jobID)
+	if err != nil {
+		t.Fatalf("list restore points: %v", err)
+	}
+	if len(rps) != 1 {
+		t.Fatalf("expected 1 restore point, got %d", len(rps))
+	}
+	rp := rps[0]
+	if len(rp.ManifestID) != 32 {
+		t.Fatalf("manifest_id not persisted: got %d bytes", len(rp.ManifestID))
+	}
+
+	return d, r, rp, storageDir
+}
+
+// waitForVerifyCompletion polls db.GetVerifyRun until status leaves
+// "running" or the timeout fires. Returns the final row.
+func waitForVerifyCompletion(t *testing.T, d *db.DB, verifyID int64, timeout time.Duration) db.VerifyRun {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		run, err := d.GetVerifyRun(verifyID)
+		if err != nil {
+			t.Fatalf("get verify run %d: %v", verifyID, err)
+		}
+		if run.Status != "running" {
+			return run
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("verify run %d did not complete within %s", verifyID, timeout)
+	return db.VerifyRun{}
+}
+
+func TestVerifyDedupQuick(t *testing.T) {
+	d, r, rp, _ := setupDedupVerifyFixture(t)
+
+	verifyID, err := r.RunVerify(rp, VerifyModeQuick)
+	if err != nil {
+		t.Fatalf("RunVerify quick: %v", err)
+	}
+	run := waitForVerifyCompletion(t, d, verifyID, 10*time.Second)
+
+	if run.Status != "passed" {
+		t.Fatalf("quick verify status = %q, want passed (error_summary=%q)", run.Status, run.ErrorSummary)
+	}
+	if run.FilesFailed != 0 {
+		t.Fatalf("quick verify files_failed = %d, want 0", run.FilesFailed)
+	}
+	if run.FilesChecked < 1 {
+		t.Fatalf("quick verify files_checked = %d, want >= 1 (at least one pack)", run.FilesChecked)
+	}
+	// Quick mode does no decryption / streaming; bytes_read should stay 0.
+	if run.BytesRead != 0 {
+		t.Fatalf("quick verify bytes_read = %d, want 0", run.BytesRead)
+	}
+}
+
+func TestVerifyDedupDeep(t *testing.T) {
+	d, r, rp, _ := setupDedupVerifyFixture(t)
+
+	verifyID, err := r.RunVerify(rp, VerifyModeDeep)
+	if err != nil {
+		t.Fatalf("RunVerify deep: %v", err)
+	}
+	run := waitForVerifyCompletion(t, d, verifyID, 30*time.Second)
+
+	if run.Status != "passed" {
+		t.Fatalf("deep verify status = %q, want passed (error_summary=%q)", run.Status, run.ErrorSummary)
+	}
+	if run.FilesFailed != 0 {
+		t.Fatalf("deep verify files_failed = %d, want 0", run.FilesFailed)
+	}
+	if run.FilesChecked < 1 {
+		t.Fatalf("deep verify files_checked = %d, want >= 1", run.FilesChecked)
+	}
+	if run.BytesRead <= 0 {
+		t.Fatalf("deep verify bytes_read = %d, want > 0 (deep mode reads chunk plaintexts)", run.BytesRead)
+	}
+}
+
+func TestVerifyDedupDeepDetectsTamper(t *testing.T) {
+	d, r, rp, storageDir := setupDedupVerifyFixture(t)
+
+	// Open the repo independently so we can resolve the on-disk offset
+	// of a known *file* chunk (not the manifest chunk) and flip a byte
+	// inside its ciphertext. Targeting a referenced chunk guarantees the
+	// verify path will read and AEAD-decrypt it.
+	job, err := d.GetJob(rp.JobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	dest, err := d.GetStorageDestination(job.StorageDestID)
+	if err != nil {
+		t.Fatalf("get dest: %v", err)
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	defer storage.CloseAdapter(adapter)
+
+	serverKey := bytes.Repeat([]byte{0xee}, 32)
+	repo, err := dedup.OpenRepo(d, adapter, dest.ID, serverKey)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+
+	var mID dedup.ID
+	copy(mID[:], rp.ManifestID)
+	m, err := repo.GetManifest(mID)
+	if err != nil {
+		t.Fatalf("get manifest: %v", err)
+	}
+
+	// Pick the first file chunk from the first file in the manifest.
+	var chunkID dedup.ID
+	var foundChunk bool
+	for _, entry := range m.Files {
+		if len(entry.Chunks) > 0 {
+			chunkID = entry.Chunks[0]
+			foundChunk = true
+			break
+		}
+	}
+	if !foundChunk {
+		t.Fatalf("manifest has no file chunks to tamper")
+	}
+
+	packRel, offset, length, err := repo.LocateForVerify(chunkID)
+	if err != nil {
+		t.Fatalf("locate chunk: %v", err)
+	}
+	if length < 2 {
+		t.Fatalf("chunk length too small to tamper (%d)", length)
+	}
+
+	packPath := filepath.Join(storageDir, packRel)
+	pack, err := os.ReadFile(packPath)
+	if err != nil {
+		t.Fatalf("read pack %s: %v", packPath, err)
+	}
+	// Flip a byte inside the chunk's ciphertext region (skip the leading
+	// flags byte). int64 offset is safe here — packs are KB-sized in this
+	// test, well within int range.
+	tamperOffset := int(offset) + 1 + int(length)/2
+	if tamperOffset >= len(pack) {
+		t.Fatalf("tamper offset %d out of range (pack %d bytes)", tamperOffset, len(pack))
+	}
+	pack[tamperOffset] ^= 0xFF
+	if err := os.WriteFile(packPath, pack, 0o644); err != nil {
+		t.Fatalf("rewrite tampered pack: %v", err)
+	}
+
+	verifyID, err := r.RunVerify(rp, VerifyModeDeep)
+	if err != nil {
+		t.Fatalf("RunVerify deep: %v", err)
+	}
+	run := waitForVerifyCompletion(t, d, verifyID, 30*time.Second)
+
+	if run.Status != "failed" {
+		t.Fatalf("tamper deep verify status = %q, want failed (error_summary=%q)", run.Status, run.ErrorSummary)
+	}
+	if run.FilesFailed != 1 {
+		t.Fatalf("tamper deep verify files_failed = %d, want exactly 1 (one chunk tampered)", run.FilesFailed)
+	}
+	if run.ErrorSummary == "" {
+		t.Fatalf("expected non-empty error_summary on tampered deep verify")
+	}
+	if !strings.Contains(run.ErrorSummary, "chunk") {
+		t.Fatalf("expected error_summary to mention chunk, got %q", run.ErrorSummary)
+	}
+}
+

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -98,7 +99,16 @@ func (r *Runner) RunVerify(rp db.RestorePoint, mode VerifyMode) (int64, error) {
 
 // runVerifyLoop is the actual work goroutine. Updates the verify_runs row
 // incrementally; broadcasts WebSocket progress for the UI.
+//
+// Dedup restore points (rp.ManifestID populated) take an entirely different
+// path: there are no per-file tarballs on storage, just a manifest plus a
+// pack of chunks. The dedup branch is in runVerifyLoopDedup; the classic
+// per-file flow below is unchanged.
 func (r *Runner) runVerifyLoop(verifyID int64, rp db.RestorePoint, mode VerifyMode, dest db.StorageDestination) {
+	if len(rp.ManifestID) == 32 {
+		r.runVerifyLoopDedup(verifyID, rp, mode, dest)
+		return
+	}
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		r.finishVerify(verifyID, "failed", fmt.Sprintf("storage adapter: %v", err))
@@ -158,6 +168,170 @@ func (r *Runner) runVerifyLoop(verifyID int64, rp db.RestorePoint, mode VerifyMo
 	if err := r.db.UpdateVerifyRunProgress(verifyID, filesChecked, filesFailed, bytesRead); err != nil {
 		log.Printf("runner: verify final progress update failed for run %d: %v", verifyID, err)
 	}
+
+	status := "passed"
+	summary := ""
+	if filesFailed > 0 {
+		status = "failed"
+		summary = strings.Join(failures, "\n")
+	}
+	r.finishVerify(verifyID, status, summary)
+	r.broadcast(map[string]any{
+		"type":          "verify_complete",
+		"verify_run_id": verifyID,
+		"status":        status,
+		"files_checked": filesChecked,
+		"files_failed":  filesFailed,
+		"bytes_read":    bytesRead,
+	})
+}
+
+// runVerifyLoopDedup verifies a dedup restore point. Quick mode reads the
+// manifest, collects the unique set of pack files referenced by every chunk,
+// and Stats each pack (no decryption, cheap). Deep mode range-reads every
+// chunk, AEAD-decrypts it, and recomputes its content ID to detect bit rot
+// or tampering on the pack store.
+//
+// Progress events use the same `verify_progress` / `verify_complete` shape
+// as the classic loop so the WebSocket UI consumer needs no branching.
+// `files_checked` reflects packs verified in quick mode and chunks verified
+// in deep mode (chunk granularity is the natural unit for dedup stats).
+func (r *Runner) runVerifyLoopDedup(verifyID int64, rp db.RestorePoint, mode VerifyMode, dest db.StorageDestination) {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		r.finishVerify(verifyID, "failed", fmt.Sprintf("storage adapter: %v", err))
+		return
+	}
+	defer storage.CloseAdapter(adapter)
+
+	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	if err != nil {
+		r.finishVerify(verifyID, "failed", fmt.Sprintf("open dedup repo: %v", err))
+		return
+	}
+
+	var mID dedup.ID
+	copy(mID[:], rp.ManifestID)
+	m, err := repo.GetManifest(mID)
+	if err != nil {
+		r.finishVerify(verifyID, "failed", fmt.Sprintf("manifest unreadable: %v", err))
+		return
+	}
+
+	var (
+		filesChecked int
+		filesFailed  int
+		bytesRead    int64
+		failures     []string
+	)
+
+	// totalUnits is what the UI shows as the denominator on the progress bar.
+	// Quick = unique pack count; Deep = total chunk references in the manifest.
+	totalUnits := 0
+	switch mode {
+	case VerifyModeQuick:
+		seen := map[string]struct{}{}
+		for _, f := range m.Files {
+			for _, cid := range f.Chunks {
+				packPath, _, _, locErr := repo.LocateForVerify(cid)
+				if locErr != nil {
+					continue
+				}
+				seen[packPath] = struct{}{}
+			}
+		}
+		totalUnits = len(seen)
+	case VerifyModeDeep:
+		for _, f := range m.Files {
+			totalUnits += len(f.Chunks)
+		}
+	}
+
+	r.broadcast(map[string]any{
+		"type":             "verify_started",
+		"verify_run_id":    verifyID,
+		"restore_point_id": rp.ID,
+		"mode":             string(mode),
+		"files_total":      totalUnits,
+	})
+
+	emitProgress := func() {
+		if err := r.db.UpdateVerifyRunProgress(verifyID, filesChecked, filesFailed, bytesRead); err != nil {
+			log.Printf("runner: verify progress update failed for run %d: %v", verifyID, err)
+		}
+		r.broadcast(map[string]any{
+			"type":          "verify_progress",
+			"verify_run_id": verifyID,
+			"files_checked": filesChecked,
+			"files_total":   totalUnits,
+			"files_failed":  filesFailed,
+			"bytes_read":    bytesRead,
+		})
+	}
+
+	switch mode {
+	case VerifyModeQuick:
+		// Gather unique packs referenced by all chunks in the manifest.
+		// LocateForVerify returns the pack path for each chunk ID; we
+		// dedupe and Stat each pack exactly once.
+		packs := map[string]struct{}{}
+		for path, entry := range m.Files {
+			for _, cid := range entry.Chunks {
+				packPath, _, _, locErr := repo.LocateForVerify(cid)
+				if locErr != nil {
+					filesFailed++
+					failures = append(failures, fmt.Sprintf("locate chunk %x (%s): %v", cid[:8], path, locErr))
+					continue
+				}
+				packs[packPath] = struct{}{}
+			}
+		}
+		for p := range packs {
+			if _, statErr := adapter.Stat(p); statErr != nil {
+				filesFailed++
+				failures = append(failures, fmt.Sprintf("stat pack %s: %v", p, statErr))
+				continue
+			}
+			filesChecked++
+			if filesChecked%5 == 0 || filesFailed > 0 {
+				emitProgress()
+			}
+		}
+
+	case VerifyModeDeep:
+		// For every chunk in every file: range-read from its pack,
+		// decrypt (AEAD tag verifies authenticity), and recompute the
+		// content ID. Any failure increments filesFailed but the loop
+		// continues so we report every bad chunk, not just the first.
+		for filePath, entry := range m.Files {
+			for _, cid := range entry.Chunks {
+				body, getErr := repo.Get(cid)
+				if getErr != nil {
+					filesFailed++
+					failures = append(failures, fmt.Sprintf("get chunk %x for %s: %v", cid[:8], filePath, getErr))
+					continue
+				}
+				got := repo.ChunkID(body)
+				if got != cid {
+					filesFailed++
+					failures = append(failures, fmt.Sprintf("chunk id mismatch for %s: want %x got %x", filePath, cid[:8], got[:8]))
+					continue
+				}
+				bytesRead += int64(len(body))
+				filesChecked++
+				if filesChecked%50 == 0 {
+					emitProgress()
+				}
+			}
+		}
+
+	default:
+		r.finishVerify(verifyID, "failed", fmt.Sprintf("unknown verify mode: %s", mode))
+		return
+	}
+
+	// Final progress flush so the row's counters match the totals we report.
+	emitProgress()
 
 	status := "passed"
 	summary := ""
