@@ -14,6 +14,10 @@ import (
 	"github.com/moby/moby/client"
 )
 
+// (helpers in this file take the narrow dockerClient interface — defined
+// in docker_client.go — rather than the concrete *client.Client, so the
+// same code paths can be exercised by mocks in container_test.go.)
+
 // unraidUpdateStatusPath is the Unraid Docker Manager's update status cache.
 // It maps `<image>:<tag>` to {local, remote, status}. When `local` is null
 // (which is what `docker load` produces for restored images, since RepoDigests
@@ -33,7 +37,7 @@ type imageMeta struct {
 // restore needs to repopulate Unraid's docker update-status.json. Errors
 // are logged but otherwise swallowed — image meta is best-effort and a
 // missing file just means restore falls back to current (pre-fix) behaviour.
-func buildImageMeta(ctx context.Context, cli *client.Client, imageRef string) imageMeta {
+func buildImageMeta(ctx context.Context, cli dockerClient, imageRef string) imageMeta {
 	meta := imageMeta{ImageTag: imageRef}
 	if cli == nil || imageRef == "" {
 		return meta
@@ -208,7 +212,7 @@ func shortSHA(sha string) string {
 // restoreUnraidUpdateStatus.
 //
 // All errors are logged and swallowed — this is best-effort.
-func populateRepoDigestsViaPull(ctx context.Context, cli *client.Client, imageRef string) bool {
+func populateRepoDigestsViaPull(ctx context.Context, cli dockerClient, imageRef string) bool {
 	if cli == nil || imageRef == "" {
 		return false
 	}

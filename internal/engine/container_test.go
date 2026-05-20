@@ -10,6 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	containertypes "github.com/moby/moby/api/types/container"
+	imagetypes "github.com/moby/moby/api/types/image"
+	mounttypes "github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
+
+	"github.com/ruaan-deysel/vault/internal/dedup"
 )
 
 func TestTarDirectory(t *testing.T) {
@@ -544,4 +551,237 @@ func TestShouldExcludeMount(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mockDockerClient is a stub dockerClient that returns canned responses for
+// the methods exercised by BackupChunked tests. Methods not invoked by the
+// test return zero values + a sentinel error so accidental call sites fail
+// loudly. To extend the mock for restore-side coverage, supply a real
+// ImagePull / ContainerCreate / ContainerStart implementation in the
+// respective fields below.
+type mockDockerClient struct {
+	inspectResp client.ContainerInspectResult
+	inspectErr  error
+	imageResp   client.ImageInspectResult
+}
+
+func (m *mockDockerClient) ContainerInspect(ctx context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+	return m.inspectResp, m.inspectErr
+}
+func (m *mockDockerClient) ImageInspect(ctx context.Context, _ string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	return m.imageResp, nil
+}
+
+// The remaining methods are unreachable for BackupChunked; they return
+// canned zero-value + sentinel errors so any unexpected call surfaces in
+// the test output.
+func (m *mockDockerClient) ContainerList(ctx context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{}, errors.New("mockDockerClient: ContainerList not implemented")
+}
+func (m *mockDockerClient) ContainerCreate(ctx context.Context, _ client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+	return client.ContainerCreateResult{}, errors.New("mockDockerClient: ContainerCreate not implemented")
+}
+func (m *mockDockerClient) ContainerStart(ctx context.Context, _ string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {
+	return client.ContainerStartResult{}, errors.New("mockDockerClient: ContainerStart not implemented")
+}
+func (m *mockDockerClient) ContainerStop(ctx context.Context, _ string, _ client.ContainerStopOptions) (client.ContainerStopResult, error) {
+	return client.ContainerStopResult{}, errors.New("mockDockerClient: ContainerStop not implemented")
+}
+func (m *mockDockerClient) ContainerRemove(ctx context.Context, _ string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+	return client.ContainerRemoveResult{}, errors.New("mockDockerClient: ContainerRemove not implemented")
+}
+func (m *mockDockerClient) ImageSave(ctx context.Context, _ []string, _ ...client.ImageSaveOption) (client.ImageSaveResult, error) {
+	return nil, errors.New("mockDockerClient: ImageSave not implemented")
+}
+func (m *mockDockerClient) ImageLoad(ctx context.Context, _ io.Reader, _ ...client.ImageLoadOption) (client.ImageLoadResult, error) {
+	return nil, errors.New("mockDockerClient: ImageLoad not implemented")
+}
+func (m *mockDockerClient) ImagePull(ctx context.Context, _ string, _ client.ImagePullOptions) (client.ImagePullResponse, error) {
+	return nil, errors.New("mockDockerClient: ImagePull not implemented")
+}
+
+// Compile-time guard so a missed method on dockerClient breaks the test
+// build rather than triggering at runtime.
+var _ dockerClient = (*mockDockerClient)(nil)
+
+// TestContainerChunkedBackupCapturesVolumesAndMeta exercises BackupChunked
+// against a mock docker client with one synthetic bind mount and verifies
+// the resulting manifest carries the expected __inspect / __image_meta /
+// __vol__* entries. Restore round-trip is deferred to Task 16's end-to-end
+// smoke because the mock can't easily satisfy ImagePull's complex
+// ImagePullResponse interface (iter.Seq2 over jsonstream.Message).
+func TestContainerChunkedBackupCapturesVolumesAndMeta(t *testing.T) {
+	// Synthetic bind-mount source — populated with a couple of small files
+	// so FolderHandler.BackupChunked has real bytes to chunk.
+	volSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(volSrc, "config.yml"), []byte("foo: bar\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(volSrc, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(volSrc, "data", "blob.bin"), []byte("payload bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:   "deadbeef",
+				Name: "/test-container",
+				Config: &containertypes.Config{
+					Image: "nginx:latest",
+				},
+				State: &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{
+						Type:        mounttypes.TypeBind,
+						Source:      volSrc,
+						Destination: "/etc/myapp",
+					},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+			},
+		},
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &ContainerHandler{cli: mock}
+	item := BackupItem{
+		Name:     "test-container",
+		Type:     "container",
+		Settings: map[string]any{"id": "deadbeef"},
+	}
+
+	manifestID, err := h.BackupChunked(context.Background(), item, r, nil)
+	if err != nil {
+		t.Fatalf("BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	m, err := r.GetManifest(manifestID)
+	if err != nil {
+		t.Fatalf("GetManifest() error = %v", err)
+	}
+
+	// Required: __inspect entry must always be present.
+	inspectEntry, ok := m.Files[containerInspectKey]
+	if !ok {
+		t.Fatalf("manifest missing %s entry", containerInspectKey)
+	}
+	if len(inspectEntry.Chunks) != 1 {
+		t.Errorf("__inspect entry chunks = %d, want 1", len(inspectEntry.Chunks))
+	}
+
+	// __image_meta entry should be present because mock.imageResp has a
+	// non-empty RepoDigests slice → buildImageMeta returns a non-empty
+	// meta blob that we always persist.
+	if _, ok := m.Files[containerImageMetaKey]; !ok {
+		t.Errorf("manifest missing %s entry", containerImageMetaKey)
+	}
+
+	// At least one __vol__* entry; the one we synthesised should point at
+	// /etc/myapp and carry a single sub-manifest chunk ID.
+	volKey := containerVolPrefix + "/etc/myapp"
+	volEntry, ok := m.Files[volKey]
+	if !ok {
+		t.Fatalf("manifest missing %s entry", volKey)
+	}
+	if len(volEntry.Chunks) != 1 {
+		t.Errorf("%s entry chunks = %d, want 1 (sub-manifest ID)", volKey, len(volEntry.Chunks))
+	}
+
+	// Spot-check the sub-manifest decodes and lists the files we created.
+	subManifest, err := r.GetManifest(volEntry.Chunks[0])
+	if err != nil {
+		t.Fatalf("GetManifest(sub) error = %v", err)
+	}
+	if _, ok := subManifest.Files["config.yml"]; !ok {
+		t.Errorf("sub-manifest missing config.yml (have keys: %v)", manifestKeys(subManifest))
+	}
+	if _, ok := subManifest.Files["data/blob.bin"]; !ok {
+		t.Errorf("sub-manifest missing data/blob.bin (have keys: %v)", manifestKeys(subManifest))
+	}
+
+	// Count the __vol__* entries — defensive, the test only synthesised
+	// one bind mount but make the assertion explicit for future-proofing.
+	volCount := 0
+	for k := range m.Files {
+		if strings.HasPrefix(k, containerVolPrefix) {
+			volCount++
+		}
+	}
+	if volCount == 0 {
+		t.Errorf("manifest has no %s* entries", containerVolPrefix)
+	}
+}
+
+// TestContainerChunkedBackupSkipsNonBindMounts verifies the volumes-only
+// scope rule: anonymous / named volumes (mount.Type != "bind") and tmpfs
+// mounts are silently excluded from the manifest, matching the classic
+// Backup's bind-only logic. Without this guard the runner would attempt to
+// chunk arbitrary Docker volume paths under /var/lib/docker/volumes/
+// (often shared between containers) and silently bloat the repo.
+func TestContainerChunkedBackupSkipsNonBindMounts(t *testing.T) {
+	volSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(volSrc, "a.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "deadbeef",
+				Name:   "/svc",
+				Config: &containertypes.Config{Image: "redis:7"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: volSrc, Destination: "/data"},
+					{Type: mounttypes.TypeVolume, Source: "/var/lib/docker/volumes/foo/_data", Destination: "/cache"},
+					{Type: mounttypes.TypeTmpfs, Source: "", Destination: "/tmp"},
+				},
+			},
+		},
+	}
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+	h := &ContainerHandler{cli: mock}
+	item := BackupItem{Name: "svc", Type: "container", Settings: map[string]any{"id": "deadbeef"}}
+	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	if err != nil {
+		t.Fatalf("BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := r.GetManifest(mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only one __vol__* entry — the bind mount. The volume + tmpfs must
+	// not appear.
+	if _, ok := m.Files[containerVolPrefix+"/data"]; !ok {
+		t.Errorf("manifest missing expected bind volume %s/data", containerVolPrefix)
+	}
+	if _, ok := m.Files[containerVolPrefix+"/cache"]; ok {
+		t.Errorf("manifest unexpectedly contains volume-typed mount %s/cache", containerVolPrefix)
+	}
+	if _, ok := m.Files[containerVolPrefix+"/tmp"]; ok {
+		t.Errorf("manifest unexpectedly contains tmpfs mount %s/tmp", containerVolPrefix)
+	}
+}
+
+func manifestKeys(m dedup.Manifest) []string {
+	keys := make([]string, 0, len(m.Files))
+	for k := range m.Files {
+		keys = append(keys, k)
+	}
+	return keys
 }

@@ -19,6 +19,8 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+
+	"github.com/ruaan-deysel/vault/internal/dedup"
 )
 
 // maxExtractSize is the maximum size for a single file extracted from a tar
@@ -246,8 +248,14 @@ func mapExclusionsToVolume(exclusions []string, mountDestination string) []strin
 }
 
 // ContainerHandler implements Handler for Docker containers.
+//
+// The cli field is held as the narrow dockerClient interface (not the
+// concrete *client.Client) so unit tests can supply a mock without
+// constructing the full moby client. The real moby *client.Client
+// satisfies dockerClient via a compile-time assertion in
+// docker_client.go.
 type ContainerHandler struct {
-	cli *client.Client
+	cli dockerClient
 }
 
 // NewContainerHandler creates a new ContainerHandler with a Docker client
@@ -686,67 +694,10 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		return fmt.Errorf("reading config: %w", err)
 	}
 
-	// Parse the full ContainerJSON to get mounts and determine if the
-	// container was running. We use a partial struct to avoid depending
-	// on the exact Docker API version for all fields.
-	var inspect struct {
-		Name   string `json:"Name"`
-		Config struct {
-			Hostname     string            `json:"Hostname"`
-			Domainname   string            `json:"Domainname"`
-			User         string            `json:"User"`
-			Env          []string          `json:"Env"`
-			Cmd          []string          `json:"Cmd"`
-			Entrypoint   []string          `json:"Entrypoint"`
-			Image        string            `json:"Image"`
-			Labels       map[string]string `json:"Labels"`
-			WorkingDir   string            `json:"WorkingDir"`
-			ExposedPorts map[string]any    `json:"ExposedPorts"`
-		} `json:"Config"`
-		HostConfig struct {
-			Binds        []string `json:"Binds"`
-			NetworkMode  string   `json:"NetworkMode"`
-			PortBindings map[string][]struct {
-				HostIP   string `json:"HostIp"`
-				HostPort string `json:"HostPort"`
-			} `json:"PortBindings"`
-			RestartPolicy struct {
-				Name              string `json:"Name"`
-				MaximumRetryCount int    `json:"MaximumRetryCount"`
-			} `json:"RestartPolicy"`
-			Privileged bool     `json:"Privileged"`
-			CapAdd     []string `json:"CapAdd"`
-			CapDrop    []string `json:"CapDrop"`
-			Dns        []string `json:"Dns"`
-			DnsSearch  []string `json:"DnsSearch"`
-			ExtraHosts []string `json:"ExtraHosts"`
-			IpcMode    string   `json:"IpcMode"`
-			PidMode    string   `json:"PidMode"`
-			Devices    []struct {
-				PathOnHost        string `json:"PathOnHost"`
-				PathInContainer   string `json:"PathInContainer"`
-				CgroupPermissions string `json:"CgroupPermissions"`
-			} `json:"Devices"`
-			Tmpfs      map[string]string `json:"Tmpfs"`
-			ShmSize    int64             `json:"ShmSize"`
-			CpusetCpus string            `json:"CpusetCpus"`
-			Memory     int64             `json:"Memory"`
-		} `json:"HostConfig"`
-		NetworkSettings struct {
-			Networks map[string]struct {
-				IPAMConfig *struct {
-					IPv4Address string `json:"IPv4Address"`
-				} `json:"IPAMConfig"`
-			} `json:"Networks"`
-		} `json:"NetworkSettings"`
-		State struct {
-			Running bool `json:"Running"`
-		} `json:"State"`
-		Mounts []struct {
-			Type   string `json:"Type"`
-			Source string `json:"Source"`
-		} `json:"Mounts"`
-	}
+	// Decode using the shared partial-struct shape so both the classic
+	// (tar-on-disk) restore and the dedup-chunked restore unmarshal the
+	// same fields. See restoreInspect for the full shape.
+	var inspect restoreInspect
 	if err := json.Unmarshal(configData, &inspect); err != nil {
 		return fmt.Errorf("parsing config: %w", err)
 	}
@@ -825,7 +776,101 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		}
 	}
 
-	// Step 4: Recreate the container.
+	// Step 4-6: Recreate the container, restore the Unraid template XML,
+	// repopulate update-status, and start the container if it was running.
+	// Hoisted into recreateAndStartContainer so the dedup-chunked restore
+	// path can reuse the exact same sequence.
+	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, sourceDir, progress); err != nil {
+		return err
+	}
+
+	progress(item.Name, 100, "restore complete")
+	return nil
+}
+
+// restoreInspect is the partial-struct shape used to decode the saved
+// container inspect JSON. It carries only the fields we actually need to
+// recreate the container; the rest are intentionally dropped so we stay
+// resilient against Docker API version churn. Used by both the classic
+// (tar-on-disk) and dedup-chunked restore paths so the two share one
+// container-recreation pipeline.
+type restoreInspect struct {
+	Name   string `json:"Name"`
+	Config struct {
+		Hostname     string            `json:"Hostname"`
+		Domainname   string            `json:"Domainname"`
+		User         string            `json:"User"`
+		Env          []string          `json:"Env"`
+		Cmd          []string          `json:"Cmd"`
+		Entrypoint   []string          `json:"Entrypoint"`
+		Image        string            `json:"Image"`
+		Labels       map[string]string `json:"Labels"`
+		WorkingDir   string            `json:"WorkingDir"`
+		ExposedPorts map[string]any    `json:"ExposedPorts"`
+	} `json:"Config"`
+	HostConfig struct {
+		Binds        []string `json:"Binds"`
+		NetworkMode  string   `json:"NetworkMode"`
+		PortBindings map[string][]struct {
+			HostIP   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"PortBindings"`
+		RestartPolicy struct {
+			Name              string `json:"Name"`
+			MaximumRetryCount int    `json:"MaximumRetryCount"`
+		} `json:"RestartPolicy"`
+		Privileged bool     `json:"Privileged"`
+		CapAdd     []string `json:"CapAdd"`
+		CapDrop    []string `json:"CapDrop"`
+		Dns        []string `json:"Dns"`
+		DnsSearch  []string `json:"DnsSearch"`
+		ExtraHosts []string `json:"ExtraHosts"`
+		IpcMode    string   `json:"IpcMode"`
+		PidMode    string   `json:"PidMode"`
+		Devices    []struct {
+			PathOnHost        string `json:"PathOnHost"`
+			PathInContainer   string `json:"PathInContainer"`
+			CgroupPermissions string `json:"CgroupPermissions"`
+		} `json:"Devices"`
+		Tmpfs      map[string]string `json:"Tmpfs"`
+		ShmSize    int64             `json:"ShmSize"`
+		CpusetCpus string            `json:"CpusetCpus"`
+		Memory     int64             `json:"Memory"`
+	} `json:"HostConfig"`
+	NetworkSettings struct {
+		Networks map[string]struct {
+			IPAMConfig *struct {
+				IPv4Address string `json:"IPv4Address"`
+			} `json:"IPAMConfig"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
+	State struct {
+		Running bool `json:"Running"`
+	} `json:"State"`
+	Mounts []struct {
+		Type        string `json:"Type"`
+		Source      string `json:"Source"`
+		Destination string `json:"Destination"`
+	} `json:"Mounts"`
+}
+
+// recreateAndStartContainer is the shared post-volume-restore pipeline:
+//
+//  1. Remove any existing container with the same name.
+//  2. Build typed Config / HostConfig / NetworkingConfig from the decoded
+//     inspect struct (rewriting bind source paths when restoring to an
+//     alternate destination).
+//  3. Create the container.
+//  4. Restore the Unraid template XML (if sourceDir is non-empty and a
+//     template.xml sidecar exists). The dedup-chunked path passes
+//     sourceDir="" because no template is captured in that scope.
+//  5. Repopulate Unraid's docker update-status cache so the "Check for
+//     Updates" UI badge works after restore.
+//  6. Start the container if it was originally running.
+//
+// Hoisted from the classic Restore method so the dedup-chunked
+// RestoreChunked path uses the same code, avoiding a 200-LOC copy.
+func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item BackupItem, inspect restoreInspect, restoreDest, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 55, "recreating container")
 	containerName := strings.TrimPrefix(inspect.Name, "/")
 	if containerName == "" {
@@ -985,13 +1030,17 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		return fmt.Errorf("creating container: %w", err)
 	}
 
-	// Step 5: Restore Unraid template XML.
-	progress(item.Name, 80, "restoring template")
-	templateSrc := filepath.Join(sourceDir, "template.xml")
-	if data, readErr := os.ReadFile(templateSrc); readErr == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
-		templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
-		if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
-			_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
+	// Step 5: Restore Unraid template XML (classic path only; the
+	// dedup-chunked path passes sourceDir="" because no template sidecar
+	// is captured in volumes-only scope).
+	if sourceDir != "" {
+		progress(item.Name, 80, "restoring template")
+		templateSrc := filepath.Join(sourceDir, "template.xml")
+		if data, readErr := os.ReadFile(templateSrc); readErr == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
+			templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
+			if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
+				_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
+			}
 		}
 	}
 
@@ -1008,7 +1057,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// when it fails (offline / private registry / etc.) we fall back to
 	// seeding from `image_meta.json` captured at backup time.
 	_ = populateRepoDigestsViaPull(ctx, h.cli, inspect.Config.Image)
-	restoreUnraidUpdateStatus(sourceDir, inspect.Config.Image)
+	if sourceDir != "" {
+		restoreUnraidUpdateStatus(sourceDir, inspect.Config.Image)
+	}
 
 	// Step 6: Start container if it was originally running.
 	if inspect.State.Running {
@@ -1017,8 +1068,296 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			return fmt.Errorf("starting restored container: %w", err)
 		}
 	}
+	return nil
+}
 
-	progress(item.Name, 100, "restore complete")
+// Special manifest-key prefixes used by the dedup-chunked container backup
+// format. The Manifest.Files map mixes these synthetic keys (always prefixed
+// "__") with… nothing else: containers only ever store synthetic entries,
+// never per-file entries (per-file chunking happens inside the nested
+// FolderHandler manifests pointed to by the __vol__ entries). Document the
+// shape here so future readers don't have to reverse-engineer it.
+//
+//	__inspect            → one-chunk entry holding json.Marshal(container.InspectResponse)
+//	__image_meta         → one-chunk entry holding imageMeta JSON (best-effort)
+//	__vol__<destination> → one-chunk entry whose single chunk ID is the
+//	                       sub-manifest ID of a nested FolderHandler.BackupChunked
+//	                       for that bind mount's source path. Skipped volumes are
+//	                       represented with Size: -1 and an empty Chunks slice,
+//	                       so the volume manifest is preserved for diagnostics
+//	                       even when we didn't back it up.
+const (
+	containerInspectKey   = "__inspect"
+	containerImageMetaKey = "__image_meta"
+	containerVolPrefix    = "__vol__"
+	// volumeSkippedSize is the sentinel size stored on a __vol__<dest> entry
+	// when shouldSkipVolume returned true at backup time. Restore uses this
+	// to skip the entry without trying to dereference a missing chunk ID.
+	volumeSkippedSize int64 = -1
+)
+
+// BackupChunked is the dedup-repo equivalent of Backup. Scope is
+// volumes-only: each BIND mount's source tree is delegated to
+// FolderHandler.BackupChunked (so chunk-level dedup is shared with the
+// folder backup type), and the container's inspect JSON + image metadata
+// are stored as single-chunk entries on the top-level manifest.
+//
+// Image bytes are intentionally NOT preserved — docker layer streams are
+// already compressed and dedup poorly, while volumes (Unraid appdata) are
+// where real dedup value lives. RestoreChunked runs `docker pull` for the
+// recorded image tag, mirroring how the classic restore uses ImageLoad +
+// post-pull RepoDigests refresh.
+//
+// Like FolderHandler.BackupChunked, repo.Flush is NOT called here — the
+// runner flushes once per backup run after all items complete.
+func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+	if repo == nil {
+		return dedup.ID{}, fmt.Errorf("container: dedup repo is nil")
+	}
+
+	// Resolve container ID first, then inspect (mirrors classic Backup's
+	// fallback: stored ID may be stale, so re-resolve by name).
+	containerID, _ := item.Settings["id"].(string)
+	if containerID == "" {
+		containerID = item.Name
+	}
+	if progress != nil {
+		progress(item.Name, 10, "inspecting container")
+	}
+	inspectResult, err := h.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil {
+		inspectResult, err = h.cli.ContainerInspect(ctx, item.Name, client.ContainerInspectOptions{})
+		if err != nil {
+			return dedup.ID{}, fmt.Errorf("inspecting container: %w", err)
+		}
+	}
+	inspect := inspectResult.Container
+
+	m := dedup.Manifest{
+		Version: dedup.ManifestVersion,
+		Item:    item.Name,
+		Files:   map[string]dedup.ManifestEntry{},
+	}
+
+	// 1. Inspect JSON — used by RestoreChunked to recreate the container.
+	inspectBody, err := json.Marshal(inspect)
+	if err != nil {
+		return dedup.ID{}, fmt.Errorf("marshal inspect: %w", err)
+	}
+	inspectChunkID, err := repo.Put(inspectBody)
+	if err != nil {
+		return dedup.ID{}, fmt.Errorf("put inspect: %w", err)
+	}
+	m.Files[containerInspectKey] = dedup.ManifestEntry{
+		Size:   int64(len(inspectBody)),
+		Chunks: []dedup.ID{inspectChunkID},
+	}
+
+	// 2. Image metadata (best-effort). Used by restoreUnraidUpdateStatus
+	//    to repopulate Unraid's docker update-status.json after the post-
+	//    restore `docker pull` runs. Failures here are logged inside
+	//    buildImageMeta; if RepoDigests come back empty we still write the
+	//    entry so the restore path knows the meta was captured.
+	if inspect.Config != nil && inspect.Config.Image != "" {
+		meta := buildImageMeta(ctx, h.cli, inspect.Config.Image)
+		if metaBody, mErr := json.MarshalIndent(meta, "", "  "); mErr == nil {
+			metaChunkID, mPutErr := repo.Put(metaBody)
+			if mPutErr != nil {
+				return dedup.ID{}, fmt.Errorf("put image_meta: %w", mPutErr)
+			}
+			m.Files[containerImageMetaKey] = dedup.ManifestEntry{
+				Size:   int64(len(metaBody)),
+				Chunks: []dedup.ID{metaChunkID},
+			}
+		}
+	}
+
+	// 3. Bind-mount volumes — each delegated to FolderHandler.BackupChunked.
+	//    Non-bind mounts (volume, tmpfs, etc.) are skipped to match the
+	//    classic Backup's bind-only logic. Skipped binds (per
+	//    shouldSkipVolume) are recorded with Size: volumeSkippedSize so
+	//    RestoreChunked can keep the diagnostic entry but not dereference
+	//    a missing sub-manifest.
+	fh := &FolderHandler{}
+	if progress != nil {
+		progress(item.Name, 50, "backing up volumes")
+	}
+	for _, mnt := range inspect.Mounts {
+		if string(mnt.Type) != "bind" {
+			continue
+		}
+		if mnt.Source == "" || mnt.Destination == "" {
+			continue
+		}
+		key := containerVolPrefix + mnt.Destination
+		if skip, reason := shouldSkipVolume(mnt.Source); skip {
+			log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
+			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+			continue
+		}
+		volItem := BackupItem{
+			Name: mnt.Destination,
+			Type: "folder",
+			Settings: map[string]any{
+				"path": mnt.Source,
+			},
+		}
+		volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
+		if vErr != nil {
+			return dedup.ID{}, fmt.Errorf("backup volume %s: %w", mnt.Destination, vErr)
+		}
+		m.Files[key] = dedup.ManifestEntry{
+			Size:   0,
+			Chunks: []dedup.ID{volManifestID},
+		}
+	}
+
+	manifestID, err := repo.PutManifest(item.Name, m)
+	if err != nil {
+		return dedup.ID{}, err
+	}
+	if progress != nil {
+		progress(item.Name, 100, fmt.Sprintf("manifest written (%d volumes)", len(m.Files)-1))
+	}
+	return manifestID, nil
+}
+
+// RestoreChunked is the dedup-repo equivalent of Restore. It decodes the
+// stored inspect blob, runs `docker pull` for the recorded image tag (the
+// chunked backup did NOT save image.tar — see BackupChunked's docstring),
+// seeds Unraid's update-status cache from the captured image_meta blob,
+// restores each volume tree via FolderHandler.RestoreChunked, and finally
+// recreates + starts the container via the shared
+// recreateAndStartContainer helper.
+//
+// The fifth argument is the legacy destPath used by other RestoreChunked
+// implementations; for containers it is ignored because each volume's
+// destination is the original bind source from inspect.Mounts (so volumes
+// land back where they were).
+func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, _ string, progress ProgressFunc) error {
+	if repo == nil {
+		return fmt.Errorf("container: dedup repo is nil")
+	}
+	m, err := repo.GetManifest(manifestID)
+	if err != nil {
+		return err
+	}
+
+	// 1. Inspect blob — required.
+	inspectEntry, ok := m.Files[containerInspectKey]
+	if !ok || len(inspectEntry.Chunks) == 0 {
+		return fmt.Errorf("container restore: manifest missing %s entry", containerInspectKey)
+	}
+	inspectBody, err := repo.Get(inspectEntry.Chunks[0])
+	if err != nil {
+		return fmt.Errorf("get inspect chunk: %w", err)
+	}
+	// Decode into the same partial-struct shape used by classic Restore —
+	// both paths share recreateAndStartContainer below.
+	var inspect restoreInspect
+	if err := json.Unmarshal(inspectBody, &inspect); err != nil {
+		return fmt.Errorf("parse inspect: %w", err)
+	}
+
+	// 2. Pull the image fresh. We didn't save image.tar in chunked scope,
+	//    so this is the only way to get the layers locally. Errors are
+	//    logged-and-continued because the user may want to restore the
+	//    container metadata + volumes even when the registry is offline
+	//    (the container will fail to start, but at least the data is
+	//    back). populateRepoDigestsViaPull (called inside
+	//    recreateAndStartContainer) will run a second pull to refresh
+	//    RepoDigests for Unraid's update-status cache.
+	if inspect.Config.Image != "" {
+		if progress != nil {
+			progress(item.Name, 20, "pulling image "+inspect.Config.Image)
+		}
+		pullResp, pullErr := h.cli.ImagePull(ctx, inspect.Config.Image, client.ImagePullOptions{})
+		if pullErr != nil {
+			log.Printf("engine: chunked restore: image pull %q: %v (continuing — container may fail to start)", inspect.Config.Image, pullErr)
+		} else {
+			if waitErr := pullResp.Wait(ctx); waitErr != nil {
+				log.Printf("engine: chunked restore: image pull wait %q: %v", inspect.Config.Image, waitErr)
+			}
+			_ = pullResp.Close()
+		}
+	}
+
+	// 3. Seed Unraid update-status from the captured image_meta (only used
+	//    when the post-create populateRepoDigestsViaPull fails — e.g.
+	//    offline registry). Reuses the existing seedUnraidUpdateStatus
+	//    helper so the on-disk update-status.json format stays in sync
+	//    with the classic path. (recreateAndStartContainer calls
+	//    populateRepoDigestsViaPull again after the container is created.)
+	if metaEntry, ok := m.Files[containerImageMetaKey]; ok && len(metaEntry.Chunks) > 0 {
+		if metaBody, mErr := repo.Get(metaEntry.Chunks[0]); mErr == nil {
+			var meta imageMeta
+			if jErr := json.Unmarshal(metaBody, &meta); jErr == nil && len(meta.RepoDigests) > 0 {
+				if sha := extractSHA(meta.RepoDigests[0]); sha != "" {
+					seedUnraidUpdateStatus(inspect.Config.Image, sha)
+				}
+			}
+		}
+	}
+
+	// 4. Restore volumes. Each __vol__<dest> entry's single chunk ID is a
+	//    sub-manifest ID — hand off to FolderHandler.RestoreChunked with
+	//    the original bind source from inspect.Mounts as the dest path.
+	//    Skipped entries (Size == volumeSkippedSize) are silently honoured.
+	if progress != nil {
+		progress(item.Name, 40, "restoring volumes")
+	}
+	fh := &FolderHandler{}
+	mountByDest := map[string]string{} // destination → host source
+	for _, mnt := range inspect.Mounts {
+		if mnt.Type == "bind" && mnt.Destination != "" {
+			mountByDest[mnt.Destination] = mnt.Source
+		}
+	}
+	for k, v := range m.Files {
+		if !strings.HasPrefix(k, containerVolPrefix) {
+			continue
+		}
+		if v.Size == volumeSkippedSize {
+			log.Printf("engine: chunked restore: %s was skipped at backup time, nothing to restore", k)
+			continue
+		}
+		if len(v.Chunks) == 0 {
+			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
+			continue
+		}
+		dest := strings.TrimPrefix(k, containerVolPrefix)
+		src, ok := mountByDest[dest]
+		if !ok || src == "" {
+			log.Printf("engine: chunked restore: no matching bind mount for %s in inspect — skipping", dest)
+			continue
+		}
+		if err := os.MkdirAll(src, 0o750); err != nil {
+			return fmt.Errorf("mkdir volume %s: %w", src, err)
+		}
+		proxy := BackupItem{Name: dest, Type: "folder"}
+		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
+			return fmt.Errorf("restore volume %s: %w", dest, err)
+		}
+	}
+
+	// 5. Recreate + start container (shared helper with classic restore).
+	//    Pass sourceDir="" because the chunked format has no template.xml
+	//    or image_meta.json sidecars — image_meta seeding above already
+	//    handled the update-status seeding from the manifest entry.
+	restoreDest, _ := item.Settings["restore_destination"].(string)
+	if restoreDest != "" {
+		normalized, err := normalizeRestorePath(restoreDest)
+		if err != nil {
+			return err
+		}
+		restoreDest = normalized
+	}
+	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, "", progress); err != nil {
+		return err
+	}
+	if progress != nil {
+		progress(item.Name, 100, "container restored")
+	}
 	return nil
 }
 
