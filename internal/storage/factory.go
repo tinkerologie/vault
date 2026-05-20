@@ -7,10 +7,13 @@ import (
 
 // NewAdapter constructs a storage adapter of the requested type from the JSON
 // config blob stored on the storage_destinations row. When the config
-// includes `bandwidth_limit_mbps > 0`, the returned adapter is wrapped in a
+// includes `bandwidth_limit_mbps > 0` AND the destination is a remote type
+// (SFTP / SMB / NFS / WebDAV / S3), the returned adapter is wrapped in a
 // rate-limited shell that throttles every Read/Write body to the requested
-// megabits per second (Feature D). Metadata operations (List/Stat/Delete/
-// TestConnection) are never throttled.
+// megabits per second. Metadata operations (List/Stat/Delete/TestConnection)
+// are never throttled. Local destinations never honour the limit — there is
+// no upstream link to protect, throttling local I/O just slows backups for
+// no operational benefit.
 func NewAdapter(storageType, configJSON string) (Adapter, error) {
 	// Universal optional field present on every storage type. Parsed
 	// once up-front so the per-type config structs don't have to
@@ -23,6 +26,13 @@ func NewAdapter(storageType, configJSON string) (Adapter, error) {
 	adapter, err := newRawAdapter(storageType, configJSON)
 	if err != nil {
 		return nil, err
+	}
+	if storageType == "local" {
+		// Local storage talks directly to the host's filesystem; no
+		// network link to throttle. Skip the wrapper even if a stale
+		// bandwidth_limit_mbps value lingers in the config from an
+		// earlier release that exposed the field for local destinations.
+		return adapter, nil
 	}
 	return WrapThrottled(adapter, common.BandwidthLimitMbps), nil
 }

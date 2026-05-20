@@ -208,6 +208,13 @@ func (r *Repo) Has(id ID) bool { return r.idx.Has(id) }
 // backup pass to drain any pending pack.
 func (r *Repo) Put(plaintext []byte) (ID, error) {
 	id := r.ChunkID(plaintext)
+	// Track every Put's plaintext size on the session counter regardless of
+	// dedup outcome — this is what the runner uses to populate
+	// restore_points.size_bytes (the user's "would-have-cost-without-dedup"
+	// total for this backup pass).
+	r.statsMu.Lock()
+	r.stats.LogicalBytes += int64(len(plaintext))
+	r.statsMu.Unlock()
 	if r.idx.Has(id) {
 		return id, nil
 	}
@@ -226,9 +233,6 @@ func (r *Repo) Put(plaintext []byte) (ID, error) {
 		return ID{}, err
 	}
 	r.pending[id] = struct{}{}
-	r.statsMu.Lock()
-	r.stats.LogicalBytes += int64(len(plaintext))
-	r.statsMu.Unlock()
 	// Surface any onFlush error that happened during the Add (if the buffer
 	// crossed PackTargetSize the packer flushed and may have set lastFlushErr).
 	if r.lastFlushErr != nil {
@@ -310,8 +314,39 @@ func (r *Repo) GetManifest(id ID) (Manifest, error) {
 
 // Stats returns a snapshot of dedup metrics for this destination. Cheap;
 // safe to call from request handlers.
+//
+// TotalChunks / TotalPacks / PhysicalBytes / LogicalBytes are read from
+// SQL aggregates (db.DedupAggregates) so the values are correct across
+// daemon restarts and from any goroutine — not just the one that wrote
+// them. WastedBytesEstimate / LastGCAt / LastGCFreedBytes are in-memory
+// since-process-start values, populated by RunGC and reset on daemon
+// restart (acceptable for v1 — these are short-term GC-result indicators,
+// not historical metrics).
 func (r *Repo) Stats() Stats {
+	out := Stats{}
+	if agg, err := r.db.DedupAggregates(r.storageID); err == nil {
+		out.TotalChunks = agg.TotalChunks
+		out.TotalPacks = agg.TotalPacks
+		out.PhysicalBytes = agg.PhysicalBytes
+		out.LogicalBytes = agg.LogicalBytes
+	}
+	r.statsMu.RLock()
+	out.WastedBytesEstimate = r.stats.WastedBytesEstimate
+	out.LastGCAt = r.stats.LastGCAt
+	out.LastGCFreedBytes = r.stats.LastGCFreedBytes
+	r.statsMu.RUnlock()
+	return out
+}
+
+// SessionLogicalBytes returns the number of plaintext bytes Put through
+// this Repo instance since it was opened. Counts both newly-stored AND
+// already-present chunks — so the value reflects the user's
+// "would-have-cost-without-dedup" footprint for the current backup pass.
+// The runner persists this on restore_points.size_bytes so the API's
+// dedup_ratio can compare cumulative logical bytes (sum across snapshots)
+// to physical bytes (single shared chunk store).
+func (r *Repo) SessionLogicalBytes() int64 {
 	r.statsMu.RLock()
 	defer r.statsMu.RUnlock()
-	return r.stats
+	return r.stats.LogicalBytes
 }

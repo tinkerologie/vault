@@ -1470,16 +1470,29 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 	}
 
 	stats := repo.Stats()
-	log.Printf("runner: dedup item=%q manifest=%x chunks_total=%d packs_total=%d logical=%dB physical=%dB",
-		item.Name, manifestID[:8], stats.TotalChunks, stats.TotalPacks, stats.LogicalBytes, stats.PhysicalBytes)
+	itemLogical := repo.SessionLogicalBytes()
+	log.Printf("runner: dedup item=%q manifest=%x chunks_total=%d packs_total=%d session_logical=%dB physical=%dB",
+		item.Name, manifestID[:8], stats.TotalChunks, stats.TotalPacks, itemLogical, stats.PhysicalBytes)
 
 	midCopy := append([]byte(nil), manifestID[:]...)
+	// The existing per-item byte accounting in RunJob sums result.Files[].Size
+	// to populate restore_points.size_bytes. For dedup runs we don't write
+	// distinct files, so report a single synthetic entry whose size is the
+	// session's plaintext-bytes total (every Put through this Repo instance,
+	// dedupe-hit or not). That keeps the Storage card's dedup_ratio
+	// directionally correct across snapshots: each restore_point row
+	// contributes its full logical size to the numerator while the chunk
+	// store stays a single shared denominator.
 	result := &engine.BackupResult{
 		ItemName: item.Name,
 		Success:  true,
+		Files: []engine.BackupFile{{
+			Name: "__manifest:" + item.Name,
+			Size: itemLogical,
+		}},
 		Meta: map[string]any{
 			"manifest_id":    midCopy,
-			"dedup_logical":  stats.LogicalBytes,
+			"dedup_logical":  itemLogical,
 			"dedup_physical": stats.PhysicalBytes,
 			"dedup_chunks":   stats.TotalChunks,
 			"dedup_packs":    stats.TotalPacks,

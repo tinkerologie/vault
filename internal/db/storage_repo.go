@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 func (d *DB) CreateStorageDestination(dest StorageDestination) (int64, error) {
 	res, err := d.Exec(
@@ -149,6 +152,48 @@ func (d *DB) LocateDedupChunk(storageID int64, chunkID []byte) (packPath string,
          WHERE c.storage_id=? AND c.chunk_id=?`,
 		storageID, chunkID).Scan(&packPath, &offset, &length)
 	return
+}
+
+// DedupAggregates is the source-of-truth stats snapshot for one destination,
+// computed from SQL aggregates rather than from in-memory counters. Used by
+// the Storage page's dedup stats card (polled every 30s) so a fresh daemon
+// process or a different goroutine still sees the correct totals.
+type DedupAggregates struct {
+	TotalChunks   int64 // COUNT(*) dedup_chunks
+	TotalPacks    int64 // COUNT(*) dedup_packs
+	PhysicalBytes int64 // SUM(size_bytes) dedup_packs
+	LogicalBytes  int64 // SUM(size_bytes) of live dedup restore_points for jobs on this destination
+}
+
+// DedupAggregates returns SQL-derived totals for the destination. Caller must
+// already have verified the destination is dedup-enabled.
+func (d *DB) DedupAggregates(storageID int64) (DedupAggregates, error) {
+	var agg DedupAggregates
+	var phys sql.NullInt64
+	if err := d.QueryRow(`
+        SELECT COUNT(*), COALESCE(SUM(size_bytes), 0)
+          FROM dedup_packs WHERE storage_id=?`, storageID).Scan(&agg.TotalPacks, &phys); err != nil {
+		return agg, fmt.Errorf("aggregate packs: %w", err)
+	}
+	agg.PhysicalBytes = phys.Int64
+	if err := d.QueryRow(`
+        SELECT COUNT(*) FROM dedup_chunks WHERE storage_id=?`, storageID).Scan(&agg.TotalChunks); err != nil {
+		return agg, fmt.Errorf("aggregate chunks: %w", err)
+	}
+	// Logical = sum of per-restore-point byte counts for dedup runs. The
+	// runner persists this on restore_points.size_bytes at backup time, so
+	// it reflects the user's "would-have-cost-without-dedup" total across
+	// every snapshot still present on this destination.
+	var logical sql.NullInt64
+	if err := d.QueryRow(`
+        SELECT COALESCE(SUM(size_bytes), 0)
+          FROM restore_points
+         WHERE manifest_id IS NOT NULL
+           AND job_id IN (SELECT id FROM jobs WHERE storage_dest_id=?)`, storageID).Scan(&logical); err != nil {
+		return agg, fmt.Errorf("aggregate logical bytes: %w", err)
+	}
+	agg.LogicalBytes = logical.Int64
+	return agg, nil
 }
 
 // DropDedupState wipes all SQLite dedup rows for one destination.

@@ -306,7 +306,7 @@
   function onTypeChange(event) {
     const nextType = event?.currentTarget?.value || form.type
     const defaults = {
-      local: { path: '', bandwidth_limit_mbps: 0 },
+      local: { path: '' },
       sftp: { host: '', port: 22, user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
       smb: { host: '', share: '', user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
       nfs: { host: '', export: '', base_path: '', version: '4', options: '', bandwidth_limit_mbps: 0 },
@@ -741,16 +741,20 @@
     {/if}
     {/key}
 
-    <!-- Universal: bandwidth throttling. Applies to every storage type
-         via the factory.WrapThrottled wrapper. -->
-    <div>
-      <label for="bandwidth_limit_mbps" class="block text-sm font-medium text-text-muted mb-1.5">
-        Bandwidth limit (Mbps)
-        <Tooltip text="Cap upload/download throughput for this destination in megabits per second. 0 = unlimited. Useful for shared internet uplinks so backups don't saturate the line. Metadata operations (list/stat/test) are never throttled." />
-      </label>
-      <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
-    </div>
+    <!-- Universal (remote only): bandwidth throttling. Local destinations
+         talk directly to the host's filesystem; there is no upstream link
+         to protect, so the field is hidden + the backend factory skips the
+         throttle wrapper for `type === 'local'`. -->
+    {#if form.type !== 'local'}
+      <div>
+        <label for="bandwidth_limit_mbps" class="block text-sm font-medium text-text-muted mb-1.5">
+          Bandwidth limit (Mbps)
+          <Tooltip text="Cap upload/download throughput for this destination in megabits per second. 0 = unlimited. Useful for shared internet uplinks so backups don't saturate the line. Metadata operations (list/stat/test) are never throttled." />
+        </label>
+        <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+      </div>
+    {/if}
 
     <!-- Universal: deduplication. Top-level column on storage_destinations.
          Immutable after creation — backend ignores any update attempt and
