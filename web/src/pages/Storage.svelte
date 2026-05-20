@@ -3,7 +3,7 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { formatDate, parseConfig } from '../lib/utils.js'
+  import { formatBytes, formatDate, parseConfig, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
@@ -35,11 +35,19 @@
 
   let form = $state(defaultForm())
 
+  // Per-destination dedup stats, polled every 30s for dedup-enabled
+  // destinations. Keyed by destination ID. cleanupBusy / verifyBusy track
+  // per-card button busy states so we can disable them while a request is
+  // in flight.
+  let dedupStats = $state(new SvelteMap())
+  let cleanupBusy = $state(new SvelteSet())
+
   function defaultForm() {
     return {
       name: '',
       type: 'local',
       config: { path: '' },
+      dedup_enabled: false,
     }
   }
 
@@ -53,9 +61,61 @@
       if (msg.type === 'job_run_completed' || msg.type === 'import_completed') {
         loadData()
       }
+      // Refresh the affected card immediately after a GC run instead of
+      // waiting for the 30s poll cycle.
+      if (msg.type === 'dedup_gc_complete' && msg.destination) {
+        refreshOneDedupStats(msg.destination)
+      }
     })
-    return unsub
+    // Refresh dedup stats every 30s for dedup-enabled destinations.
+    const pollHandle = setInterval(refreshDedupStats, 30000)
+    return () => { unsub(); clearInterval(pollHandle) }
   })
+
+  async function refreshDedupStats() {
+    const targets = destinations.filter(d => d.dedup_enabled)
+    if (targets.length === 0) return
+    const next = new SvelteMap(dedupStats)
+    await Promise.all(targets.map(async (d) => {
+      try {
+        next.set(d.id, await api.dedupStats(d.id))
+      } catch (e) {
+        // 404 is expected briefly before the first backup creates the repo.
+        // Keep any previous stats; don't clear on transient failure.
+      }
+    }))
+    dedupStats = next
+  }
+
+  async function refreshOneDedupStats(id) {
+    try {
+      const s = await api.dedupStats(id)
+      const next = new SvelteMap(dedupStats)
+      next.set(id, s)
+      dedupStats = next
+    } catch { /* ignore */ }
+  }
+
+  async function runCleanup(id) {
+    if (cleanupBusy.has(id)) return
+    cleanupBusy.add(id)
+    cleanupBusy = new SvelteSet(cleanupBusy)
+    try {
+      await api.runDedupGC(id)
+      showToast('Cleanup started — refreshing stats…', 'info')
+      // Best-effort refresh in 2s; the WS dedup_gc_complete event will
+      // catch up the card if the GC takes longer.
+      setTimeout(async () => {
+        await refreshOneDedupStats(id)
+        cleanupBusy.delete(id)
+        cleanupBusy = new SvelteSet(cleanupBusy)
+      }, 2000)
+    } catch (e) {
+      cleanupBusy.delete(id)
+      cleanupBusy = new SvelteSet(cleanupBusy)
+      showToast(`Cleanup failed: ${e.message}`, 'error')
+    }
+  }
 
   async function loadData() {
     loading = true
@@ -70,6 +130,7 @@
         } catch { /* ignore */ counts.set(d.id, 0) }
       }))
       depCounts = counts
+      refreshDedupStats()
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -94,6 +155,7 @@
       name: dest.name,
       type: dest.type,
       config: cfg,
+      dedup_enabled: !!dest.dedup_enabled,
     }
     showModal = true
   }
@@ -106,6 +168,9 @@
         name: form.name,
         type: form.type,
         config: JSON.stringify(form.config),
+        // Top-level: stored as its own column on storage_destinations.
+        // Immutable after creation (UI gates the toggle when editing).
+        dedup_enabled: !!form.dedup_enabled,
       }
       if (editing) {
         await api.updateStorage(editing.id, payload)
@@ -354,6 +419,43 @@
               {#if cfg.endpoint}<p class="truncate">Endpoint: {cfg.endpoint}</p>{/if}
             {/if}
           </div>
+
+          {#if dest.dedup_enabled}
+            {@const s = dedupStats.get(dest.id)}
+            <div class="border-t border-border pt-3 mb-3 text-xs space-y-1">
+              {#if s}
+                <div class="flex justify-between">
+                  <span class="text-text-muted">Dedup</span>
+                  <span class="font-medium text-text">{(s.dedup_ratio || 1).toFixed(1)}× ({formatBytes(s.logical_bytes)} → {formatBytes(s.physical_bytes)})</span>
+                </div>
+                <div class="flex justify-between text-text-dim">
+                  <span>Chunks · Packs</span>
+                  <span>{(s.total_chunks ?? 0).toLocaleString()} · {(s.total_packs ?? 0).toLocaleString()}</span>
+                </div>
+                <div class="flex justify-between text-text-dim">
+                  <span>Wasted</span>
+                  <span>
+                    {formatBytes(s.wasted_bytes_estimate)}
+                    {#if s.last_gc_at && s.last_gc_at !== '0001-01-01T00:00:00Z'}
+                      <span class="text-text-dim">· last cleanup {relTime(s.last_gc_at)}</span>
+                    {/if}
+                  </span>
+                </div>
+                <div class="pt-1">
+                  <button
+                    type="button"
+                    onclick={() => runCleanup(dest.id)}
+                    disabled={cleanupBusy.has(dest.id)}
+                    class="px-2.5 py-1 text-xs rounded-md bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text disabled:opacity-50 transition-colors"
+                  >
+                    {cleanupBusy.has(dest.id) ? 'Cleaning…' : 'Run cleanup'}
+                  </button>
+                </div>
+              {:else}
+                <div class="text-text-dim italic">Dedup repo not initialised yet — first backup populates it.</div>
+              {/if}
+            </div>
+          {/if}
 
           <div class="flex items-center justify-between pt-3 border-t border-border">
             <div class="flex items-center gap-3">
@@ -639,8 +741,8 @@
     {/if}
     {/key}
 
-    <!-- Universal: bandwidth throttling (Feature D). Applies to every
-         storage type via the factory.WrapThrottled wrapper. -->
+    <!-- Universal: bandwidth throttling. Applies to every storage type
+         via the factory.WrapThrottled wrapper. -->
     <div>
       <label for="bandwidth_limit_mbps" class="block text-sm font-medium text-text-muted mb-1.5">
         Bandwidth limit (Mbps)
@@ -648,6 +750,31 @@
       </label>
       <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+    </div>
+
+    <!-- Universal: deduplication. Top-level column on storage_destinations.
+         Immutable after creation — backend ignores any update attempt and
+         the UI disables the toggle when editing. -->
+    <div class="border-t border-border pt-4">
+      <label class="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          bind:checked={form.dedup_enabled}
+          disabled={editing !== null}
+          class="accent-vault mt-1"
+        />
+        <span class="flex-1">
+          <span class="block font-medium text-text">Enable deduplication</span>
+          <span class="block text-xs text-text-muted mt-0.5">
+            Stores only changed data blocks across snapshots and jobs targeting this destination. Recommended for backups containing similar data (Immich, Nextcloud, container volumes). <strong>Cannot be changed after creating the destination.</strong>
+          </span>
+          {#if editing !== null}
+            <span class="block text-xs text-warning mt-1 italic">
+              Dedup mode is locked at creation time. Create a new destination to switch.
+            </span>
+          {/if}
+        </span>
+      </label>
     </div>
 
     <div class="flex justify-end gap-3 pt-4 border-t border-border">

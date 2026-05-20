@@ -62,6 +62,11 @@ export const api = {
   // paths array that must still be orphaned (server re-checks).
   scanStorageOrphans: (id) => request('POST', `/storage/${id}/scan-orphans`),
   deleteStorageOrphans: (id, paths) => request('POST', `/storage/${id}/delete-orphans`, { paths }),
+  // Dedup: per-destination chunk-store stats (refreshed every 30s by the
+  // Storage page) and async mark-and-sweep GC (returns 202 + gc_run_id;
+  // dedup_gc_complete WS event carries the final result).
+  dedupStats: (id) => request('GET', `/storage/${id}/dedup-stats`),
+  runDedupGC: (id) => request('POST', `/storage/${id}/gc`),
   getRestorePoints: (id) => request('GET', `/jobs/${id}/restore-points`),
   // getRetentionPreview asks the server what a hypothetical GFS retention
   // policy would do to a job's current restore points. Used by the Jobs
