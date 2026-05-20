@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -597,6 +599,95 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, rc); err != nil {
 		log.Printf("Warning: error streaming file %q: %v", filePath, err) // #nosec G706 //nolint:gosec // filePath is admin-configured storage path
 	}
+}
+
+// GetDedupStats returns the in-memory dedup stats snapshot for a
+// destination's chunk repository. Returns 404 if the destination is not
+// dedup-enabled — the field-level "enabled" key in the response body lets
+// the UI render a friendly empty state on the same endpoint when
+// 404 handling would be noisy.
+//
+//	GET /api/v1/storage/{id}/dedup-stats
+func (h *StorageHandler) GetDedupStats(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "destination not found")
+		return
+	}
+	if !dest.DedupEnabled {
+		respondError(w, http.StatusNotFound, "destination is not dedup-enabled")
+		return
+	}
+	stats, err := h.runner.GetDedupStats(dest)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+
+	out := map[string]any{
+		"enabled":               true,
+		"total_chunks":          stats.TotalChunks,
+		"total_packs":           stats.TotalPacks,
+		"logical_bytes":         stats.LogicalBytes,
+		"physical_bytes":        stats.PhysicalBytes,
+		"wasted_bytes_estimate": stats.WastedBytesEstimate,
+		"last_gc_at":            stats.LastGCAt,
+		"last_gc_freed_bytes":   stats.LastGCFreedBytes,
+	}
+	if stats.PhysicalBytes > 0 {
+		out["dedup_ratio"] = float64(stats.LogicalBytes) / float64(stats.PhysicalBytes)
+	} else {
+		out["dedup_ratio"] = 1.0
+	}
+	respondJSON(w, http.StatusOK, out)
+}
+
+// RunDedupGC kicks off an asynchronous mark-and-sweep GC against a
+// dedup-enabled destination. Returns 202 with a `gc_run_id` immediately;
+// the result is broadcast over the WebSocket hub as `dedup_gc_complete`
+// when the run finishes.
+//
+//	POST /api/v1/storage/{id}/gc
+func (h *StorageHandler) RunDedupGC(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "destination not found")
+		return
+	}
+	if !dest.DedupEnabled {
+		respondError(w, http.StatusBadRequest, "destination is not dedup-enabled")
+		return
+	}
+	if h.runner == nil {
+		respondError(w, http.StatusInternalServerError, "runner unavailable")
+		return
+	}
+	runID, err := newGCRunID()
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("generate gc id: %w", err))
+		return
+	}
+	go h.runner.RunDedupGC(dest, runID)
+	respondJSON(w, http.StatusAccepted, map[string]string{"gc_run_id": runID})
+}
+
+// newGCRunID returns a short random hex identifier for a GC run. Used to
+// correlate the 202-Accepted response with the eventual
+// `dedup_gc_complete` WebSocket event.
+func newGCRunID() (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // sensitiveConfigKeys are config field names that contain credentials.

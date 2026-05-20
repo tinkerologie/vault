@@ -1231,6 +1231,170 @@ func (r *Runner) openDedupRepo(adapter storage.Adapter, dest db.StorageDestinati
 	return dedup.InitRepo(r.db, adapter, dest.ID, r.serverKey)
 }
 
+// GetDedupStats opens (read-only) the dedup repo at dest and returns a
+// snapshot of its in-memory Stats. Used by the
+// GET /api/v1/storage/{id}/dedup-stats handler. Returns an error if dest
+// is not dedup-enabled or the repo cannot be opened.
+func (r *Runner) GetDedupStats(dest db.StorageDestination) (dedup.Stats, error) {
+	if !dest.DedupEnabled {
+		return dedup.Stats{}, fmt.Errorf("destination %q is not dedup-enabled", dest.Name)
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return dedup.Stats{}, fmt.Errorf("adapter: %w", err)
+	}
+	defer storage.CloseAdapter(adapter)
+	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	if err != nil {
+		return dedup.Stats{}, fmt.Errorf("open dedup repo: %w", err)
+	}
+	return repo.Stats(), nil
+}
+
+// RunDedupGC runs a mark-and-sweep GC for the given destination. Intended
+// to be invoked from an HTTP handler in a goroutine — broadcasts the
+// result over the WebSocket hub as `dedup_gc_complete` and logs progress
+// so operators can follow along in the daemon log.
+func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
+	if !dest.DedupEnabled {
+		log.Printf("gc: refusing to run on non-dedup destination %d (%q)", dest.ID, dest.Name)
+		r.Broadcast(map[string]any{
+			"type":        "dedup_gc_complete",
+			"gc_run_id":   runID,
+			"destination": dest.ID,
+			"status":      "failed",
+			"error":       "destination is not dedup-enabled",
+		})
+		return
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		log.Printf("gc: adapter for %q: %v", dest.Name, err)
+		r.Broadcast(map[string]any{
+			"type":        "dedup_gc_complete",
+			"gc_run_id":   runID,
+			"destination": dest.ID,
+			"status":      "failed",
+			"error":       err.Error(),
+		})
+		return
+	}
+	defer storage.CloseAdapter(adapter)
+
+	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	if err != nil {
+		log.Printf("gc: open repo for %q: %v", dest.Name, err)
+		r.Broadcast(map[string]any{
+			"type":        "dedup_gc_complete",
+			"gc_run_id":   runID,
+			"destination": dest.ID,
+			"status":      "failed",
+			"error":       err.Error(),
+		})
+		return
+	}
+
+	live, err := r.collectLiveManifestIDs(dest.ID)
+	if err != nil {
+		log.Printf("gc: live ids for %q: %v", dest.Name, err)
+		r.Broadcast(map[string]any{
+			"type":        "dedup_gc_complete",
+			"gc_run_id":   runID,
+			"destination": dest.ID,
+			"status":      "failed",
+			"error":       err.Error(),
+		})
+		return
+	}
+
+	result, gcErr := dedup.RunGC(repo, live)
+	status := "completed"
+	var errMsg string
+	if gcErr != nil {
+		status = "failed"
+		errMsg = gcErr.Error()
+		log.Printf("gc: %q: %v", dest.Name, gcErr)
+	}
+	log.Printf("gc: dest=%q run=%s freed_packs=%d freed_bytes=%d rewritable=%d errors=%d",
+		dest.Name, runID, result.FreedPacks, result.FreedBytes, result.RewritableBytes, len(result.Errors))
+
+	msg := map[string]any{
+		"type":             "dedup_gc_complete",
+		"gc_run_id":        runID,
+		"destination":      dest.ID,
+		"status":           status,
+		"freed_packs":      result.FreedPacks,
+		"freed_bytes":      result.FreedBytes,
+		"rewritable_bytes": result.RewritableBytes,
+		"errors":           result.Errors,
+	}
+	if errMsg != "" {
+		msg["error"] = errMsg
+	}
+	r.Broadcast(msg)
+}
+
+// collectLiveManifestIDs returns every dedup manifest ID referenced by a
+// restore point whose owning job targets the given destination. Used by
+// the dedup GC mark phase. Reads both restore_points.manifest_id (the
+// single-item shortcut) and the per-item hex-encoded IDs persisted under
+// restore_points.metadata.item_manifests (multi-item jobs).
+func (r *Runner) collectLiveManifestIDs(destID int64) ([]dedup.ID, error) {
+	rows, err := r.db.Query(`
+        SELECT manifest_id, metadata
+          FROM restore_points
+         WHERE job_id IN (SELECT id FROM jobs WHERE storage_dest_id = ?)`, destID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := make(map[dedup.ID]struct{})
+	for rows.Next() {
+		var (
+			mID      []byte
+			metadata sql.NullString
+		)
+		if err := rows.Scan(&mID, &metadata); err != nil {
+			return nil, err
+		}
+		if len(mID) == 32 {
+			var id dedup.ID
+			copy(id[:], mID)
+			seen[id] = struct{}{}
+		}
+		if metadata.Valid && metadata.String != "" {
+			var meta map[string]any
+			if err := json.Unmarshal([]byte(metadata.String), &meta); err == nil {
+				if im, ok := meta["item_manifests"].(map[string]any); ok {
+					for _, v := range im {
+						hexStr, ok := v.(string)
+						if !ok || hexStr == "" {
+							continue
+						}
+						raw, derr := hex.DecodeString(hexStr)
+						if derr != nil || len(raw) != 32 {
+							continue
+						}
+						var id dedup.ID
+						copy(id[:], raw)
+						seen[id] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]dedup.ID, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	return out, nil
+}
+
 // backupItem executes a single item backup using the appropriate engine handler,
 // writing output to a local temp dir and then to the storage adapter.
 // If verify is true, it reads each file back and validates SHA-256 checksums.

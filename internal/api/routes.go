@@ -66,6 +66,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/{id}/health-check", storageH.HealthCheck)
 			r.Post("/{id}/scan-orphans", storageH.ScanOrphans)
 			r.Post("/{id}/delete-orphans", storageH.DeleteOrphans)
+			r.Get("/{id}/dedup-stats", storageH.GetDedupStats)
+			r.Post("/{id}/gc", storageH.RunDedupGC)
 			r.Post("/{id}/scan", storageH.Scan)
 			r.Post("/{id}/import", storageH.Import)
 			r.Post("/{id}/restore-db", storageH.RestoreDB)
