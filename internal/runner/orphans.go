@@ -25,6 +25,9 @@ import (
 //     deletion.
 //   - Directory entries are not listed as orphans (only regular files).
 func (r *Runner) ScanStorageOrphans(dest db.StorageDestination) ([]string, int64, error) {
+	if dest.DedupEnabled {
+		return nil, 0, fmt.Errorf("dedup destination uses chunk-store GC instead; call POST /api/v1/storage/%d/gc", dest.ID)
+	}
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		return nil, 0, fmt.Errorf("adapter: %w", err)
@@ -91,6 +94,9 @@ func (r *Runner) ScanStorageOrphans(dest db.StorageDestination) ([]string, int64
 // and returned so the UI can surface them; one failure does not abort
 // the rest of the deletion list.
 func (r *Runner) DeleteStorageOrphans(dest db.StorageDestination, paths []string) (int, []string) {
+	if dest.DedupEnabled {
+		return 0, []string{fmt.Sprintf("dedup destination uses chunk-store GC instead; call POST /api/v1/storage/%d/gc", dest.ID)}
+	}
 	currentOrphans, _, err := r.ScanStorageOrphans(dest)
 	if err != nil {
 		return 0, []string{fmt.Sprintf("rescan failed: %v", err)}

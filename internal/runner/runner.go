@@ -20,6 +20,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/notify"
 	"github.com/ruaan-deysel/vault/internal/storage"
@@ -482,6 +483,12 @@ func (r *Runner) RunJob(jobID int64) {
 		itemResults   []map[string]any
 		itemChecksums = make(map[string]map[string]string)
 		vmCheckpoints = make(map[string]string)
+		// itemManifests holds per-item dedup manifest IDs (hex-encoded) for
+		// the dedup path. Populated when result.Meta["manifest_id"] is set
+		// by backupItemChunked. Persisted in restore_point metadata as
+		// "item_manifests" so the restore path can resolve manifests per
+		// item even in multi-item jobs.
+		itemManifests = make(map[string]string)
 		failedNames   []string
 		jobStart      = time.Now()
 	)
@@ -544,7 +551,9 @@ func (r *Runner) RunJob(jobID int64) {
 	// Deferred remote upload mode (#77): stage every item locally first, restart
 	// stop_all containers as soon as staging finishes, then upload to remote
 	// storage in a second phase. Local destinations always run inline.
-	deferred := job.DeferRemoteUpload && dest.Type != "local"
+	// Dedup-enabled destinations also run inline so the chunked backup path
+	// is taken in backupItem rather than the classic stage-then-upload split.
+	deferred := job.DeferRemoteUpload && dest.Type != "local" && !dest.DedupEnabled
 	type stagedItemEntry struct {
 		engineItem engine.BackupItem
 		dbItem     db.JobItem
@@ -786,6 +795,14 @@ func (r *Runner) RunJob(jobID int64) {
 			// Store checksums per item for restore-point metadata.
 			if len(checksums) > 0 {
 				itemChecksums[item.ItemName] = checksums
+			}
+
+			// Capture dedup manifest_id (set by backupItemChunked) so the
+			// restore-point row can be linked to the chunked manifest.
+			if result != nil {
+				if mid, ok := result.Meta["manifest_id"].([]byte); ok && len(mid) == 32 {
+					itemManifests[item.ItemName] = hex.EncodeToString(mid)
+				}
 			}
 
 			r.broadcast(map[string]any{
@@ -1067,6 +1084,14 @@ func (r *Runner) RunJob(jobID int64) {
 		if len(vmCheckpoints) > 0 {
 			rpMeta["vm_checkpoints"] = vmCheckpoints
 		}
+		// item_manifests carries one hex-encoded dedup manifest ID per item
+		// for dedup destinations. The restore path uses this to resolve the
+		// per-item manifest within a multi-item restore point. For
+		// single-item dedup jobs we additionally set rp.ManifestID (below)
+		// so the common case can look up the manifest without parsing JSON.
+		if len(itemManifests) > 0 {
+			rpMeta["item_manifests"] = itemManifests
+		}
 		metadata, _ := json.Marshal(rpMeta)
 
 		var parentID int64
@@ -1082,8 +1107,25 @@ func (r *Runner) RunJob(jobID int64) {
 			SizeBytes:            totalSize,
 			ParentRestorePointID: parentID,
 		}
-		if _, err := r.db.CreateRestorePoint(rp); err != nil {
+		// For dedup runs with exactly one item, persist the manifest ID
+		// directly on the row so the common case avoids a metadata lookup.
+		if len(itemManifests) == 1 {
+			for _, hexID := range itemManifests {
+				if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {
+					rp.ManifestID = decoded
+				}
+			}
+		}
+		rpID, err := r.db.CreateRestorePoint(rp)
+		if err != nil {
 			log.Printf("runner: failed to create restore point for run %d: %v", runID, err)
+		} else if rp.ManifestID != nil {
+			// CreateRestorePoint may not persist ManifestID depending on
+			// the repository's INSERT columns; ensure it's stored via the
+			// dedicated setter.
+			if err := r.db.SetRestorePointManifestID(rpID, rp.ManifestID); err != nil {
+				log.Printf("runner: failed to persist manifest_id for rp %d: %v", rpID, err)
+			}
 		}
 
 		// Write manifest.json to storage for out-of-band recovery.
@@ -1155,11 +1197,61 @@ func (r *Runner) RunJob(jobID int64) {
 	r.sendNotification(job, status, itemsDone, itemsFailed, totalSize, int(time.Since(jobStart).Seconds()), failedNames)
 }
 
+// newHandler instantiates the engine handler for the given backup item type.
+// Shared by the classic (stageItemLocally / restoreStagedItem) and chunked
+// (backupItemChunked / restoreSinglePointChunked) paths so all five handler
+// types stay registered in one place.
+func newHandler(itemType string) (engine.Handler, error) {
+	switch itemType {
+	case "container":
+		return engine.NewContainerHandler()
+	case "vm":
+		return engine.NewVMHandler()
+	case "folder":
+		return engine.NewFolderHandler()
+	case "plugin":
+		return engine.NewPluginHandler()
+	case "zfs":
+		return engine.NewZFSHandler()
+	default:
+		return nil, fmt.Errorf("unknown item type: %s", itemType)
+	}
+}
+
+// openDedupRepo opens or initialises the dedup repo for dest. On first
+// backup to a dedup-enabled destination, _vault/repo.json doesn't exist
+// yet — Init creates it. Subsequent calls Open the existing one and
+// unseal the master key with r.serverKey.
+//
+// Caller is responsible for storage.CloseAdapter(adapter) when done.
+func (r *Runner) openDedupRepo(adapter storage.Adapter, dest db.StorageDestination) (*dedup.Repo, error) {
+	if _, err := adapter.Stat("_vault/repo.json"); err == nil {
+		return dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	}
+	return dedup.InitRepo(r.db, adapter, dest.ID, r.serverKey)
+}
+
 // backupItem executes a single item backup using the appropriate engine handler,
 // writing output to a local temp dir and then to the storage adapter.
 // If verify is true, it reads each file back and validates SHA-256 checksums.
 // If passphrase is non-empty, each file is encrypted with age before uploading.
+//
+// When dest.DedupEnabled is true and the resolved handler implements
+// engine.ChunkedHandler, the call is routed to backupItemChunked instead of
+// the classic tar pipeline. Handlers that don't support chunking (vm, zfs)
+// transparently fall through to the classic path even on dedup destinations.
 func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string) (*engine.BackupResult, map[string]string, error) {
+	if dest.DedupEnabled {
+		handler, err := newHandler(item.Type)
+		if err != nil {
+			return nil, nil, err
+		}
+		if chunked, ok := handler.(engine.ChunkedHandler); ok {
+			return r.backupItemChunked(ctx, item, dest, chunked)
+		}
+		// Fall through to classic tar for non-chunked handlers (VM, ZFS).
+	}
+
 	tmpDir, result, cleanup, err := r.stageItemLocally(ctx, item, dest)
 	if err != nil {
 		return nil, nil, err
@@ -1171,6 +1263,65 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 		return nil, nil, err
 	}
 	return result, checksums, nil
+}
+
+// backupItemChunked runs a single item backup via the dedup path. It opens
+// (or initialises on first use) the dedup repo at dest, invokes the
+// handler's BackupChunked, flushes any pending pack, and returns a
+// BackupResult whose Meta carries the manifest ID for the runner to
+// persist on the resulting restore_points row.
+func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, handler engine.ChunkedHandler) (*engine.BackupResult, map[string]string, error) {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("adapter: %w", err)
+	}
+	defer storage.CloseAdapter(adapter)
+
+	repo, err := r.openDedupRepo(adapter, dest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
+	}
+
+	progress := func(name string, pct int, msg string) {
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
+
+		r.updateCurrentItemProgress(item.Type, pct, msg)
+		r.broadcast(map[string]any{
+			"type":      "backup_progress",
+			"item":      name,
+			"item_type": item.Type,
+			"percent":   pct,
+			"message":   msg,
+		})
+	}
+
+	manifestID, err := handler.BackupChunked(ctx, item, repo, progress)
+	if err != nil {
+		return nil, nil, fmt.Errorf("backup chunked: %w", err)
+	}
+	if err := repo.Flush(); err != nil {
+		return nil, nil, fmt.Errorf("repo flush: %w", err)
+	}
+
+	stats := repo.Stats()
+	log.Printf("runner: dedup item=%q manifest=%x chunks_total=%d packs_total=%d logical=%dB physical=%dB",
+		item.Name, manifestID[:8], stats.TotalChunks, stats.TotalPacks, stats.LogicalBytes, stats.PhysicalBytes)
+
+	midCopy := append([]byte(nil), manifestID[:]...)
+	result := &engine.BackupResult{
+		ItemName: item.Name,
+		Success:  true,
+		Meta: map[string]any{
+			"manifest_id":    midCopy,
+			"dedup_logical":  stats.LogicalBytes,
+			"dedup_physical": stats.PhysicalBytes,
+			"dedup_chunks":   stats.TotalChunks,
+			"dedup_packs":    stats.TotalPacks,
+		},
+	}
+	return result, nil, nil
 }
 
 // stageItemLocally creates a temp directory and runs the appropriate engine
@@ -1720,7 +1871,13 @@ func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType,
 }
 
 // restoreSinglePoint restores a single restore point (without chain logic).
+// For dedup restore points (manifest_id set, or item_manifests in metadata),
+// the chunked restore path is taken instead of the classic stage + restore.
 func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+	if manifestID, ok := resolveManifestID(restorePoint, itemName); ok {
+		return r.restoreSinglePointChunked(restorePoint, manifestID, itemName, itemType, destination, reporter)
+	}
+
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
@@ -1733,6 +1890,113 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 	}
 
 	return r.restoreStagedItem(restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+}
+
+// resolveManifestID returns the dedup manifest ID for itemName from a
+// restore point. It first consults metadata["item_manifests"][itemName] (a
+// hex string written by the backup path for multi-item dedup jobs), then
+// falls back to restorePoint.ManifestID for single-item dedup jobs. The
+// ok=false case means this is a classic (non-dedup) restore point.
+func resolveManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool) {
+	if rp.Metadata != "" {
+		var meta map[string]any
+		if err := json.Unmarshal([]byte(rp.Metadata), &meta); err == nil {
+			if itemMap, ok := meta["item_manifests"].(map[string]any); ok {
+				if hexID, ok := itemMap[itemName].(string); ok && hexID != "" {
+					if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {
+						var id dedup.ID
+						copy(id[:], decoded)
+						return id, true
+					}
+				}
+			}
+		}
+	}
+	if len(rp.ManifestID) == 32 {
+		var id dedup.ID
+		copy(id[:], rp.ManifestID)
+		return id, true
+	}
+	return dedup.ID{}, false
+}
+
+// restoreSinglePointChunked restores one item from a dedup restore point.
+// It opens the dedup repo at the destination, resolves the handler (must
+// implement engine.ChunkedHandler — otherwise it's a corrupted RP where a
+// manifest_id was persisted for a handler that can't chunk), and invokes
+// RestoreChunked. destPath is passed through to the handler so it can write
+// directly to the target — no local staging required.
+func (r *Runner) restoreSinglePointChunked(rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, reporter restoreProgressReporter) error {
+	job, err := r.db.GetJob(rp.JobID)
+	if err != nil {
+		return fmt.Errorf("getting job: %w", err)
+	}
+	dest, err := r.db.GetStorageDestination(job.StorageDestID)
+	if err != nil {
+		return fmt.Errorf("getting storage destination: %w", err)
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return fmt.Errorf("creating storage adapter: %w", err)
+	}
+	defer storage.CloseAdapter(adapter)
+
+	repo, err := r.openDedupRepo(adapter, dest)
+	if err != nil {
+		return fmt.Errorf("open dedup repo: %w", err)
+	}
+
+	handler, err := newHandler(itemType)
+	if err != nil {
+		return err
+	}
+	chunked, ok := handler.(engine.ChunkedHandler)
+	if !ok {
+		return fmt.Errorf("restore: handler for %q does not support chunked restore but restore point %d has manifest_id (data corruption?)", itemType, rp.ID)
+	}
+
+	// Resolve restore destination: explicit override wins; otherwise pull
+	// the original path from the job's item settings (folder items only;
+	// container/plugin handlers determine their own destination internally).
+	destPath := destination
+	if destPath == "" && itemType == "folder" {
+		if jobItems, itemsErr := r.db.GetJobItems(rp.JobID); itemsErr == nil {
+			for _, ji := range jobItems {
+				if ji.ItemName == itemName && ji.ItemType == "folder" {
+					var s map[string]any
+					if json.Unmarshal([]byte(ji.Settings), &s) == nil {
+						if p, ok := s["path"].(string); ok {
+							destPath = p
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+
+	item := engine.BackupItem{
+		Name: itemName,
+		Type: itemType,
+		Settings: map[string]any{
+			"path": destPath,
+		},
+	}
+	if destination != "" {
+		item.Settings["restore_destination"] = destination
+	}
+
+	progress := func(name string, pct int, msg string) {
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
+		reporter.ItemName = name
+		r.reportRestoreProgress(reporter, pct, msg)
+	}
+
+	restoreErr := chunked.RestoreChunked(context.Background(), item, repo, manifestID, destPath, progress)
+	r.sendRestoreNotification(itemName, itemType, restoreErr)
+	return restoreErr
 }
 
 func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter) error {

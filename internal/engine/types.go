@@ -1,6 +1,10 @@
 package engine
 
-import "context"
+import (
+	"context"
+
+	"github.com/ruaan-deysel/vault/internal/dedup"
+)
 
 type BackupItem struct {
 	Name     string         `json:"name"`
@@ -32,4 +36,15 @@ type Handler interface {
 	Backup(ctx context.Context, item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
 	Restore(ctx context.Context, item BackupItem, source string, progress ProgressFunc) error
 	ListItems() ([]BackupItem, error)
+}
+
+// ChunkedHandler is the optional sibling of Handler for handlers that can
+// produce content-defined dedup output (folder, plugin, container — see
+// the dedup design spec). Runner branches on dest.DedupEnabled at backup
+// time and on restore_point.manifest_id at restore time; handlers that
+// don't satisfy this interface continue to use the classic tar path on
+// dedup destinations.
+type ChunkedHandler interface {
+	BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error)
+	RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error
 }
