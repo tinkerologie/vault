@@ -291,6 +291,103 @@ func TestImportBackups(t *testing.T) {
 			t.Errorf("got items = %+v, want one container named plex", items)
 		}
 	})
+
+	t.Run("propagates dedup item_manifests onto restore point", func(t *testing.T) {
+		t.Parallel()
+		r, database, storageDir := setupTestRunner(t)
+		dest := createLocalDest(t, database, storageDir)
+
+		// 32-byte (64 hex char) IDs as written by writeManifest for dedup
+		// runs. Two items → multi-item dedup job; only metadata is
+		// populated (rp.ManifestID stays nil).
+		const idAppdata = "1111111111111111111111111111111111111111111111111111111111111111"
+		const idConfig = "2222222222222222222222222222222222222222222222222222222222222222"
+
+		backups := []map[string]any{
+			{
+				"job_name":     "dedup-multi",
+				"storage_path": "dedup-multi/1_run",
+				"backup_type":  "full",
+				"items_done":   float64(2),
+				"item_manifests": map[string]any{
+					"appdata": idAppdata,
+					"config":  idConfig,
+				},
+			},
+		}
+
+		if _, err := r.ImportBackups(dest.ID, backups); err != nil {
+			t.Fatalf("ImportBackups error = %v", err)
+		}
+		job, _ := database.GetJobByName("dedup-multi")
+		rps, _ := database.ListRestorePoints(job.ID)
+		if len(rps) != 1 {
+			t.Fatalf("got %d restore points, want 1", len(rps))
+		}
+		if len(rps[0].ManifestID) != 0 {
+			t.Errorf("multi-item dedup: rp.ManifestID should stay nil, got %x", rps[0].ManifestID)
+		}
+		var meta map[string]any
+		if err := json.Unmarshal([]byte(rps[0].Metadata), &meta); err != nil {
+			t.Fatalf("metadata not valid JSON: %v", err)
+		}
+		got, ok := meta["item_manifests"].(map[string]any)
+		if !ok {
+			t.Fatalf("item_manifests missing from metadata; got %T", meta["item_manifests"])
+		}
+		if got["appdata"] != idAppdata || got["config"] != idConfig {
+			t.Errorf("item_manifests roundtrip mismatch: %+v", got)
+		}
+	})
+
+	t.Run("single-item dedup promotes manifest_id onto row", func(t *testing.T) {
+		t.Parallel()
+		r, database, storageDir := setupTestRunner(t)
+		dest := createLocalDest(t, database, storageDir)
+
+		const idImmich = "abababababababababababababababababababababababababababababababab"
+
+		backups := []map[string]any{
+			{
+				"job_name":     "dedup-single",
+				"storage_path": "dedup-single/1_run",
+				"backup_type":  "full",
+				"items_done":   float64(1),
+				"item_manifests": map[string]any{
+					"immich": idImmich,
+				},
+			},
+		}
+
+		if _, err := r.ImportBackups(dest.ID, backups); err != nil {
+			t.Fatalf("ImportBackups error = %v", err)
+		}
+		job, _ := database.GetJobByName("dedup-single")
+		rps, _ := database.ListRestorePoints(job.ID)
+		if len(rps) != 1 {
+			t.Fatalf("got %d restore points, want 1", len(rps))
+		}
+		if len(rps[0].ManifestID) != 32 {
+			t.Fatalf("rp.ManifestID = %d bytes, want 32", len(rps[0].ManifestID))
+		}
+		// Hex round-trip: rp.ManifestID is raw bytes; compare hex form.
+		gotHex := strings.ToLower(toHex(rps[0].ManifestID))
+		if gotHex != idImmich {
+			t.Errorf("rp.ManifestID hex = %s, want %s", gotHex, idImmich)
+		}
+	})
+}
+
+// toHex is a tiny helper to avoid pulling encoding/hex into the test imports
+// twice; mirrors hex.EncodeToString.
+func toHex(b []byte) string {
+	const hexDigits = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, v := range b {
+		out[i*2] = hexDigits[v>>4]
+		out[i*2+1] = hexDigits[v&0x0f]
+	}
+	return string(out)
 }
 
 func TestScanAppdataBackups(t *testing.T) {

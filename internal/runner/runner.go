@@ -1128,8 +1128,10 @@ func (r *Runner) RunJob(jobID int64) {
 			}
 		}
 
-		// Write manifest.json to storage for out-of-band recovery.
-		r.writeManifest(dest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, timestamp)
+		// Write manifest.json to storage for out-of-band recovery. For dedup
+		// destinations we include itemManifests so a re-import on another
+		// instance can resolve per-item chunks via the dedup repo.
+		r.writeManifest(dest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, itemManifests, timestamp)
 
 		// Auto-backup the SQLite database to a centralized storage location.
 		r.backupDatabase(dest)
@@ -2672,7 +2674,12 @@ func (r *Runner) ResolvePassphrase() string {
 // writeManifest writes a manifest.json file to storage containing metadata
 // about the backup run: files, checksums, encryption status, and timestamps.
 // This enables out-of-band recovery without access to the database.
-func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job db.Job, items []db.JobItem, runID int64, backupType string, itemsDone, itemsFailed int, totalSize int64, itemChecksums map[string]map[string]string, timestamp string) {
+//
+// itemManifests carries per-item dedup manifest IDs (hex-encoded) when the
+// destination has dedup enabled; pass nil/empty for non-dedup jobs. Without
+// it, restoring an imported dedup backup on another instance can't resolve
+// chunks because the manifest-ID linkage lives only in the local DB.
+func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job db.Job, items []db.JobItem, runID int64, backupType string, itemsDone, itemsFailed int, totalSize int64, itemChecksums map[string]map[string]string, itemManifests map[string]string, timestamp string) {
 	// Serialize items so a future import can recreate JobItems with the
 	// correct type, name, and per-item settings (e.g. folder path,
 	// container exclude_paths, ZFS dataset). Without this, importing a
@@ -2716,6 +2723,9 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 	}
 	if len(itemChecksums) > 0 {
 		manifest["checksums"] = itemChecksums
+	}
+	if len(itemManifests) > 0 {
+		manifest["item_manifests"] = itemManifests
 	}
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
@@ -3314,6 +3324,22 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 			// key for diagnostics / future use without breaking the UI.
 			rpMeta["manifest_items"] = rawItems
 		}
+		// For dedup backups the manifest carries item_manifests: a map of
+		// item name -> hex-encoded dedup manifest ID. Propagate it so the
+		// restore path's resolveManifestID lookup succeeds for imported
+		// dedup restore points. Without this, the row would appear in the
+		// UI but restore would fail (chunks unreachable, IDs lost).
+		itemManifests := map[string]string{}
+		if v, ok := b["item_manifests"].(map[string]any); ok {
+			for name, raw := range v {
+				if hexID, ok := raw.(string); ok && hexID != "" {
+					itemManifests[name] = hexID
+				}
+			}
+		}
+		if len(itemManifests) > 0 {
+			rpMeta["item_manifests"] = itemManifests
+		}
 		metaBytes, _ := json.Marshal(rpMeta)
 
 		rp := db.RestorePoint{
@@ -3324,9 +3350,25 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 			Metadata:    string(metaBytes),
 			SizeBytes:   int64(sizeBytes),
 		}
-		if _, err := r.db.CreateRestorePoint(rp); err != nil {
+		// Single-item dedup jobs also get the manifest ID promoted onto
+		// the restore-point row so resolveManifestID can hit the fast
+		// path without parsing JSON.
+		if len(itemManifests) == 1 {
+			for _, hexID := range itemManifests {
+				if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {
+					rp.ManifestID = decoded
+				}
+			}
+		}
+		rpID, err := r.db.CreateRestorePoint(rp)
+		if err != nil {
 			log.Printf("runner: import: failed to create restore point for %q: %v", jobName, err)
 			continue
+		}
+		if rp.ManifestID != nil {
+			if err := r.db.SetRestorePointManifestID(rpID, rp.ManifestID); err != nil {
+				log.Printf("runner: import: failed to persist manifest_id for rp %d: %v", rpID, err)
+			}
 		}
 
 		imported++
