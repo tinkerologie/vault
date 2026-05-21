@@ -1,5 +1,4 @@
 // Package dedup implements per-destination content-defined deduplication.
-// See docs/superpowers/specs/2026-05-19-deduplication-design.md.
 package dedup
 
 import (

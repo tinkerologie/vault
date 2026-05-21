@@ -53,6 +53,7 @@ CLAUDE.md
 # Local planning and private docs
 docs/plans/
 docs/private/
+docs/superpowers/
 *.local.md
 *.local.json
 
