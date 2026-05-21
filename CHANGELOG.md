@@ -59,6 +59,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Dead code cleanup: `Server.Start`, `SettingsHandler.RestorationInfo`, `Client.GetJob`, `Syncer.SetHub`, `parseDomainDisks`/`domainDiskPaths`, and `decompressReader`/`fileCompressionExt` removed.** Each was either superseded by a context-aware variant, replaced by a content-based equivalent, or had no callers in the live tree.
 - **Daemon now flushes the DB snapshot to USB flash after every config mutation, not just on startup/shutdown.** `Server.SetConfigChangeHook` stored the hook on the Server struct but never forwarded it to the per-handler `onConfigChange` fields, so every `notifyConfigChange()` call across the four CRUD handlers was a no-op. The Server now stashes references to all four handlers and propagates the hook. `StorageHandler` and `ReplicationHandler` gained the missing hook plumbing too — every Create/Update/Delete now triggers the flush.
 
+### Security
+
+- **Folder dedup restore now validates every manifest path against the destination root before writing.** `FolderHandler.RestoreChunked` joined every manifest entry to `destPath` with `filepath.Join`, which does not prevent `..` segments from escaping the target directory. A tampered manifest at the storage destination could therefore have caused the restore to write files outside the chosen recovery folder (CWE-22 / CodeQL `go/path-injection`). Every entry now goes through `safepath.JoinUnderBase`, which rejects any path that wouldn't stay inside `destPath`. Closes CodeQL alerts #32–#35.
+- **Pack writer now bounds its pre-allocation size.** The pack-flush path allocated a buffer sized by `bufLen + footerLen + 4` without an explicit cap. In practice these values are bounded by `PackTargetSize` (24 MiB) plus one chunk's slop, but CodeQL `go/allocation-size-overflow` couldn't see that. An explicit ceiling (`PackTargetSize * 4`) is now enforced with a clear error if exceeded. Closes CodeQL alert #37.
+- **Discord-webhook log redaction now anchors on the `https://` scheme prefix** so it only matches genuine webhook URLs, not arbitrary log text that happens to mention the substring `discord.com/api/webhooks/…`. Behavioural impact is nil for real logs (the existing test still passes) but the regex now satisfies CodeQL `go/regex/missing-regexp-anchor`. Closes CodeQL alert #36.
+
 ## [2026.05.02] - 2026-05-15
 
 ### Fixed

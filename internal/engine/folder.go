@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/safepath"
 )
 
 // FolderHandler implements Handler for arbitrary filesystem directories.
@@ -281,7 +282,11 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	}
 
 	// Split entries into dirs and files so we can MkdirAll before writing
-	// any file content.
+	// any file content. Manifest paths originated from filepath.Walk at
+	// backup time so they should be clean relative paths, but the manifest
+	// is stored off-host and could in principle be tampered with — every
+	// entry path is therefore re-validated through safepath.JoinUnderBase
+	// to guarantee the resulting path stays inside destPath (CWE-22).
 	var dirs, files []string
 	for p, e := range m.Files {
 		if e.IsDir {
@@ -295,7 +300,10 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		full := filepath.Join(destPath, d)
+		full, err := safepath.JoinUnderBase(destPath, d, true)
+		if err != nil {
+			return fmt.Errorf("restore mkdir %s: %w", d, err)
+		}
 		mode := os.FileMode(m.Files[d].Mode)
 		if mode == 0 {
 			mode = 0o755
@@ -311,7 +319,10 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 			return ctx.Err()
 		}
 		e := m.Files[fp]
-		full := filepath.Join(destPath, fp)
+		full, err := safepath.JoinUnderBase(destPath, fp, false)
+		if err != nil {
+			return fmt.Errorf("restore %s: %w", fp, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
 		}
@@ -319,7 +330,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if mode == 0 {
 			mode = 0o644
 		}
-		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — caller-supplied dest
+		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — full is validated by safepath.JoinUnderBase
 		if err != nil {
 			return err
 		}

@@ -239,6 +239,15 @@ func TestRedactLogLines(t *testing.T) {
 			must:    []string{"discord.com/api/webhooks/123456/", "[REDACTED]"},
 		},
 		{
+			// Regex must NOT match arbitrary text mentioning the substring —
+			// only legitimate https Discord URLs. This is the regression
+			// test for CodeQL go/regex/missing-regexp-anchor.
+			name:    "discord mention without https scheme is not redacted",
+			input:   `user said: "see discord.com/api/webhooks/123456/fake-but-mentioned in chat"`,
+			mustNot: []string{"[REDACTED]"},
+			must:    []string{"discord.com/api/webhooks/123456/fake-but-mentioned"},
+		},
+		{
 			name:    "cookie header",
 			input:   `Cookie: session=fake-session-1; other=xyz`,
 			mustNot: []string{"session=fake-session-1"},

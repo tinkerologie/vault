@@ -171,8 +171,12 @@ var logRedactPatterns = []logRedactPattern{
 	{regexp.MustCompile(`(https?://)([^:/@\s]+):([^@\s]+)@`), `${1}` + redactedPlaceholder + `@`},
 	// Discord webhook URLs are sensitive end-to-end (the token IS in
 	// the path). Catch them anywhere in a log line, not just the
-	// structured notification path.
-	{regexp.MustCompile(`(discord(?:app)?\.com/api/webhooks/\d+/)\S+`), `${1}` + redactedPlaceholder},
+	// structured notification path. Anchored on https:// + optional
+	// subdomain so the host isn't matched mid-string (CodeQL
+	// go/regex/missing-regexp-anchor) — only legitimate Discord webhook
+	// URLs trigger redaction, not arbitrary log text mentioning the
+	// substring "discord.com/api/webhooks/...".
+	{regexp.MustCompile(`(https://(?:[a-z0-9-]+\.)*discord(?:app)?\.com/api/webhooks/\d+/)\S+`), `${1}` + redactedPlaceholder},
 }
 
 // RedactLogLines scrubs credentials and secrets from captured log

@@ -109,11 +109,23 @@ func (p *Packer) Flush() error {
 		return err
 	}
 
-	body := bytes.NewBuffer(make([]byte, 0, p.buf.Len()+len(footer)+4))
+	// maxPackBytes bounds the total pack size to head off any pre-allocation
+	// overflow concern (CodeQL go/allocation-size-overflow). In practice the
+	// pack buffer is capped by PackTargetSize (24 MiB) plus one chunk's worth
+	// of slop (~4 MiB), and the JSON footer scales with chunk count which is
+	// itself bounded by buffer size / min chunk size. The cap below leaves
+	// ample headroom while making the bound explicit to the analyser.
+	const maxPackBytes = PackTargetSize * 4
+	totalSize := p.buf.Len() + len(footer) + 4
+	if totalSize < 0 || totalSize > maxPackBytes {
+		return fmt.Errorf("dedup: pack size %d bytes exceeds safety bound %d", totalSize, maxPackBytes)
+	}
+
+	body := bytes.NewBuffer(make([]byte, 0, totalSize))
 	body.Write(p.buf.Bytes())
 	body.Write(footer)
 	lenBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lenBuf, uint32(len(footer)))
+	binary.BigEndian.PutUint32(lenBuf, uint32(len(footer))) // #nosec G115 — len(footer) bounded by maxPackBytes above, safe for uint32
 	body.Write(lenBuf)
 
 	size := int64(body.Len())
