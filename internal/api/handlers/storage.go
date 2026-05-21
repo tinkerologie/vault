@@ -19,12 +19,26 @@ import (
 )
 
 type StorageHandler struct {
-	db     *db.DB
-	runner *runner.Runner
+	db             *db.DB
+	runner         *runner.Runner
+	onConfigChange ConfigChangeHook
 }
 
 func NewStorageHandler(database *db.DB, r *runner.Runner) *StorageHandler {
 	return &StorageHandler{db: database, runner: r}
+}
+
+// SetConfigChangeHook registers a function called after storage mutations
+// (typically used by the daemon to flush the DB snapshot to USB flash).
+func (h *StorageHandler) SetConfigChangeHook(fn ConfigChangeHook) {
+	h.onConfigChange = fn
+}
+
+// notifyConfigChange invokes the persistence hook if one is registered.
+func (h *StorageHandler) notifyConfigChange() {
+	if h.onConfigChange != nil {
+		h.onConfigChange()
+	}
 }
 
 // broadcastConfigChange sends a `config_changed` WebSocket event so that
@@ -97,6 +111,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	saved.Config = redactConfig(saved.Config)
 	respondJSON(w, http.StatusCreated, saved)
 	h.broadcastConfigChange("storage")
+	h.notifyConfigChange()
 }
 
 func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +194,7 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	saved.Config = redactConfig(saved.Config)
 	respondJSON(w, http.StatusOK, saved)
 	h.broadcastConfigChange("storage")
+	h.notifyConfigChange()
 }
 
 func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -217,6 +233,7 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 	h.broadcastConfigChange("storage")
+	h.notifyConfigChange()
 }
 
 func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) {

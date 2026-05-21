@@ -142,15 +142,6 @@ func (c *Client) ListJobs() ([]RemoteJob, error) {
 	return jobs, nil
 }
 
-// GetJob returns a single job from the remote Vault instance.
-func (c *Client) GetJob(jobID int64) (*RemoteJob, error) {
-	var job RemoteJob
-	if err := c.getJSON(fmt.Sprintf("/api/v1/jobs/%d", jobID), &job); err != nil {
-		return nil, fmt.Errorf("get remote job %d: %w", jobID, err)
-	}
-	return &job, nil
-}
-
 // ListRestorePoints returns the restore points for a remote job.
 func (c *Client) ListRestorePoints(jobID int64) ([]RemoteRestorePoint, error) {
 	var rps []RemoteRestorePoint

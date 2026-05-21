@@ -54,6 +54,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/health/summary", healthH.Summary)
 
 		storageH := handlers.NewStorageHandler(s.db, s.runner)
+		s.storageHandler = storageH
 		r.Route("/storage", func(r chi.Router) {
 			// Storage CRUD is allowed in replica mode — replicas need
 			// storage destinations configured for replication targets.
@@ -82,6 +83,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			}
 			return nil
 		})
+		s.jobHandler = jobH
 		if s.nextRunResolver != nil {
 			jobH.SetNextRunResolver(s.nextRunResolver)
 		}
@@ -166,6 +168,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			}
 			return nil
 		}, s.runner)
+		s.replicationHandler = replH
 		r.Route("/replication", func(r chi.Router) {
 			r.Get("/", replH.List)
 			r.Post("/", replH.Create)

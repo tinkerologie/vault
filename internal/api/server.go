@@ -37,11 +37,14 @@ type Server struct {
 	// nextRunResolver looks up the next scheduled run time for a job.
 	nextRunResolver func(jobID int64) (string, bool)
 
-	settingsHandler *handlers.SettingsHandler
-	browseHandler   *handlers.BrowseHandler
+	settingsHandler    *handlers.SettingsHandler
+	browseHandler      *handlers.BrowseHandler
+	jobHandler         *handlers.JobHandler
+	storageHandler     *handlers.StorageHandler
+	replicationHandler *handlers.ReplicationHandler
 
 	// configChangeHook is called after any handler mutates persistent
-	// configuration. It flushed the DB to USB flash.
+	// configuration. It flushes the DB to USB flash.
 	configChangeHook handlers.ConfigChangeHook
 }
 
@@ -73,9 +76,22 @@ func (s *Server) SetNextRunResolver(fn func(jobID int64) (string, bool)) {
 
 // SetConfigChangeHook registers a function called after any handler mutates
 // persistent configuration (jobs, storage, settings, replication). The hook
-// runs in a goroutine to avoid blocking the HTTP response.
+// is forwarded to each CRUD handler so every mutation endpoint can fire it
+// (typically used by the daemon to flush the DB snapshot to USB flash).
 func (s *Server) SetConfigChangeHook(fn handlers.ConfigChangeHook) {
 	s.configChangeHook = fn
+	if s.jobHandler != nil {
+		s.jobHandler.SetConfigChangeHook(fn)
+	}
+	if s.settingsHandler != nil {
+		s.settingsHandler.SetConfigChangeHook(fn)
+	}
+	if s.storageHandler != nil {
+		s.storageHandler.SetConfigChangeHook(fn)
+	}
+	if s.replicationHandler != nil {
+		s.replicationHandler.SetConfigChangeHook(fn)
+	}
 }
 
 // Hub returns the WebSocket hub for external use (e.g., scheduler).
@@ -106,23 +122,6 @@ func (s *Server) SettingsHandler() *handlers.SettingsHandler {
 // BrowseHandler returns the browse handler for external configuration.
 func (s *Server) BrowseHandler() *handlers.BrowseHandler {
 	return s.browseHandler
-}
-
-func (s *Server) Start() error {
-	srv := &http.Server{
-		Addr:              s.config.Addr,
-		Handler:           s.router,
-		ReadTimeout:       15 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-	if s.config.TLSCert != "" && s.config.TLSKey != "" {
-		log.Printf("Vault API server listening on %s (TLS)", s.config.Addr)
-		return srv.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
-	}
-	log.Printf("Vault API server listening on %s", s.config.Addr)
-	return srv.ListenAndServe()
 }
 
 func (s *Server) StartWithContext(ctx context.Context) error {

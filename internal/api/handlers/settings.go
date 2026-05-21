@@ -50,14 +50,6 @@ func (h *SettingsHandler) SetSnapshotManager(sm interface {
 	h.snapshotManager = sm
 }
 
-// RestorationInfo returns the current restoration info, or nil if not available.
-func (h *SettingsHandler) RestorationInfo() *db.RestorationInfo {
-	if h.snapshotManager == nil {
-		return nil
-	}
-	return h.snapshotManager.RestorationSource()
-}
-
 // SetConfigChangeHook registers a function called after settings mutations to
 // flush the database to USB flash.
 func (h *SettingsHandler) SetConfigChangeHook(fn ConfigChangeHook) {

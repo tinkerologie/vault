@@ -11,11 +11,6 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-var (
-	_ = decompressReader
-	_ = fileCompressionExt
-)
-
 // gzipMagic and zstdMagic are the leading bytes of each codec's container
 // format. We use them to decide whether a downloaded file actually needs to be
 // transport-decompressed during restore.
@@ -23,35 +18,6 @@ var (
 	gzipMagic = []byte{0x1f, 0x8b}
 	zstdMagic = []byte{0x28, 0xb5, 0x2f, 0xfd}
 )
-
-// compressWriter was removed in favour of engine-side compression. The engine
-// now owns archive-level compression so the runner only handles encryption and
-// transport. See internal/engine/compress.go for the replacement helpers.
-
-// decompressReader wraps a reader with the appropriate decompression based on
-// the file extension. Returns the decompressed reader and a close function.
-// If no compression extension is detected, returns the original reader.
-func decompressReader(r io.Reader, fileName string) (io.Reader, func() error, error) {
-	ext := fileCompressionExt(fileName)
-	switch ext {
-	case ".gz":
-		gr, err := gzip.NewReader(r)
-		if err != nil {
-			return nil, nil, fmt.Errorf("creating gzip reader: %w", err)
-		}
-		return gr, gr.Close, nil
-
-	case ".zst":
-		zr, err := zstd.NewReader(r)
-		if err != nil {
-			return nil, nil, fmt.Errorf("creating zstd reader: %w", err)
-		}
-		return zr, func() error { zr.Close(); return nil }, nil
-
-	default:
-		return r, func() error { return nil }, nil
-	}
-}
 
 // decompressStoredReader unwraps one layer of transport compression from a
 // restored file. The engine is the single source of truth for archive-level
@@ -91,20 +57,4 @@ func decompressStoredReader(r io.Reader, fileName, compression string) (io.Reade
 	default:
 		return br, func() error { return nil }, fileName, nil
 	}
-}
-
-// fileCompressionExt returns the compression extension from a file name,
-// stripping any trailing ".age" encryption extension first.
-func fileCompressionExt(name string) string {
-	// Strip encryption extension first.
-	if len(name) > 4 && name[len(name)-4:] == ".age" {
-		name = name[:len(name)-4]
-	}
-	if len(name) > 3 && name[len(name)-3:] == ".gz" {
-		return ".gz"
-	}
-	if len(name) > 4 && name[len(name)-4:] == ".zst" {
-		return ".zst"
-	}
-	return ""
 }

@@ -13,9 +13,7 @@ import (
 // is untagged so shared XML logic can still be exercised from platform-neutral
 // tests and linted on the host OS.
 var (
-	_ = parseDomainDisks
 	_ = parseDomainDisksWithTargets
-	_ = domainDiskPaths
 	_ = sameDomainDisks
 	_ = buildBackupXML
 	_ = buildSnapshotXML
@@ -120,24 +118,6 @@ func parseDomainDisksWithTargets(xmlDesc string) ([]domainDisk, string, error) {
 	}
 
 	return disks, nvramPath, nil
-}
-
-func parseDomainDisks(xmlDesc string) ([]string, string, error) {
-	disks, nvramPath, err := parseDomainDisksWithTargets(xmlDesc)
-	if err != nil {
-		return nil, "", err
-	}
-
-	return domainDiskPaths(disks), nvramPath, nil
-}
-
-func domainDiskPaths(disks []domainDisk) []string {
-	paths := make([]string, 0, len(disks))
-	for _, disk := range disks {
-		paths = append(paths, disk.Path)
-	}
-
-	return paths
 }
 
 func sameDomainDisks(left, right []domainDisk) bool {

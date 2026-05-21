@@ -343,11 +343,6 @@ func (s *Syncer) rewriteMetadata(original, sourceName string) string {
 	return original
 }
 
-// SetHub sets the WebSocket hub for broadcasting sync events.
-func (s *Syncer) SetHub(hub *ws.Hub) {
-	s.hub = hub
-}
-
 // SetServerKey sets the AES-256 key used to unseal storage credentials.
 func (s *Syncer) SetServerKey(key []byte) {
 	s.serverKey = key

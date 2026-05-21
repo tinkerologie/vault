@@ -20,11 +20,26 @@ type SyncerProvider = func() *replication.Syncer
 
 // ReplicationHandler handles CRUD and sync operations for replication sources.
 type ReplicationHandler struct {
-	db          *db.DB
-	getSyncer   SyncerProvider
-	serverKey   []byte
-	schedReload ScheduleReloader
-	broadcaster Broadcaster
+	db             *db.DB
+	getSyncer      SyncerProvider
+	serverKey      []byte
+	schedReload    ScheduleReloader
+	broadcaster    Broadcaster
+	onConfigChange ConfigChangeHook
+}
+
+// SetConfigChangeHook registers a function called after replication source
+// mutations (typically used by the daemon to flush the DB snapshot to USB
+// flash).
+func (h *ReplicationHandler) SetConfigChangeHook(fn ConfigChangeHook) {
+	h.onConfigChange = fn
+}
+
+// notifyConfigChange invokes the persistence hook if one is registered.
+func (h *ReplicationHandler) notifyConfigChange() {
+	if h.onConfigChange != nil {
+		h.onConfigChange()
+	}
 }
 
 // Broadcaster is the minimal interface ReplicationHandler needs to publish
@@ -120,6 +135,7 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	h.reloadScheduler()
 	respondJSON(w, http.StatusCreated, src)
 	h.broadcastConfigChange()
+	h.notifyConfigChange()
 }
 
 // Get returns a single replication source.
@@ -174,6 +190,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.reloadScheduler()
 	respondJSON(w, http.StatusOK, src)
 	h.broadcastConfigChange()
+	h.notifyConfigChange()
 }
 
 // Delete removes a replication source and its replicated jobs.
@@ -196,6 +213,7 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.reloadScheduler()
 	w.WriteHeader(http.StatusNoContent)
 	h.broadcastConfigChange()
+	h.notifyConfigChange()
 }
 
 // TestConnection tests connectivity to a replication target.
