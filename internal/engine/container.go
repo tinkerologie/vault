@@ -490,6 +490,29 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				}
 			}
 
+			// Honour exclusion patterns at the volume level for BOTH directory
+			// and file mounts. Historically this check only applied to
+			// file-based mounts, which meant exclusions like `/rootfs` for
+			// containers that bind-mount the host root (Telegraf, Netdata,
+			// cAdvisor, Glances, node-exporter) were ignored — the engine
+			// recursed into the entire host filesystem and hung. Applying the
+			// check up-front matches the semantics users expect from the UI
+			// hint ("absolute container paths"). (issue #70)
+			//
+			// CRITICAL: this check MUST run before any work that touches
+			// mount.Source on disk. Previously MaybeDowngradeCompression was
+			// called first; for a `/` → `/rootfs` mount that meant a
+			// filepath.Walk of the entire host filesystem before the volume
+			// was skipped, regressing the original #70 fix (a 37 s Test
+			// Containers job degraded to 14 minutes).
+			if shouldExcludeMount(exclusions, mount.Destination) {
+				log.Printf("engine: skipping volume %s for %s: matches exclusion pattern", mount.Source, item.Name)
+				entry.BackedUp = false
+				entry.SkipReason = "matches exclusion pattern"
+				manifest = append(manifest, entry)
+				continue
+			}
+
 			// Detect file-based bind mounts (e.g. Tailscale hook files).
 			srcInfo, err := os.Lstat(mount.Source)
 			if err != nil {
@@ -502,22 +525,6 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			effectiveCompression := MaybeDowngradeCompression(mount.Source, item.Compression)
 			archiveName := fmt.Sprintf("volume_%d.tar%s", i, archiveExt(effectiveCompression))
 			volDest := filepath.Join(destDir, archiveName)
-
-			// Honour exclusion patterns at the volume level for BOTH directory
-			// and file mounts. Historically this check only applied to
-			// file-based mounts, which meant exclusions like `/rootfs` for
-			// containers that bind-mount the host root (Telegraf, Netdata,
-			// cAdvisor, Glances, node-exporter) were ignored — the engine
-			// recursed into the entire host filesystem and hung. Applying the
-			// check up-front matches the semantics users expect from the UI
-			// hint ("absolute container paths"). (issue #70)
-			if shouldExcludeMount(exclusions, mount.Destination) {
-				log.Printf("engine: skipping volume %s for %s: matches exclusion pattern", mount.Source, item.Name)
-				entry.BackedUp = false
-				entry.SkipReason = "matches exclusion pattern"
-				manifest = append(manifest, entry)
-				continue
-			}
 
 			if srcInfo.IsDir() {
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)

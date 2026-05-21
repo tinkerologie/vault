@@ -149,6 +149,40 @@ func (h *BrowseHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Exists is a lightweight existence + directory check used by the Items
+// wizard step to flag custom folders whose path has been moved or deleted
+// since the job was last edited. Returns `{exists, is_dir}` and never an
+// error for missing paths (those just return `{exists:false}` with 200).
+// The same allowed-roots / safepath rules as List apply so the caller
+// cannot probe arbitrary host paths.
+//
+//	GET /api/v1/path-exists?path=/mnt/user/isos
+func (h *BrowseHandler) Exists(w http.ResponseWriter, r *http.Request) {
+	qpath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if qpath == "" {
+		respondError(w, http.StatusBadRequest, "path query parameter is required")
+		return
+	}
+	normalized, err := h.normalizePath(qpath)
+	if err != nil {
+		// Outside allowed roots is reported as not-exists rather than
+		// 403 so the UI surface is uniform — the caller doesn't need to
+		// distinguish "blocked by safepath" from "actually missing"; in
+		// both cases the path is unusable for backup.
+		respondJSON(w, http.StatusOK, map[string]any{"exists": false, "is_dir": false})
+		return
+	}
+	info, err := os.Stat(normalized)
+	if err != nil {
+		respondJSON(w, http.StatusOK, map[string]any{"exists": false, "is_dir": false})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"exists": true,
+		"is_dir": info.IsDir(),
+	})
+}
+
 // discoverRoots returns Unraid well-known roots plus dynamically discovered
 // array disks (/mnt/disk1, /mnt/disk2, etc.) and cache/pool drives.
 // When includeZFS is true, ZFS dataset mountpoints are also included.

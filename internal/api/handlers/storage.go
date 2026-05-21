@@ -59,13 +59,43 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	dest.Name = strings.TrimSpace(dest.Name)
+	dest.Type = strings.TrimSpace(dest.Type)
+	if dest.Name == "" {
+		respondError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if dest.Type == "" {
+		respondError(w, http.StatusBadRequest, "type is required")
+		return
+	}
+	// Validate the config can construct a working adapter before persisting.
+	// Catches typos like type:"bogus", empty configs, malformed JSON in the
+	// config blob, and other misconfigurations that would otherwise sit in
+	// the dropdown as a permanently-broken destination.
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	storage.CloseAdapter(adapter)
+
 	id, err := h.db.CreateStorageDestination(dest)
 	if err != nil {
 		respondInternalError(w, err)
 		return
 	}
-	dest.ID = id
-	respondJSON(w, http.StatusCreated, dest)
+	// Re-fetch the row so the response includes server-assigned timestamps
+	// and the canonical, redacted config blob (never the plaintext one the
+	// caller just sent — would leak passwords and S3 secret keys via the
+	// response body even though Get redacts).
+	saved, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	saved.Config = redactConfig(saved.Config)
+	respondJSON(w, http.StatusCreated, saved)
 	h.broadcastConfigChange("storage")
 }
 
@@ -88,17 +118,66 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var dest db.StorageDestination
-	if err := json.NewDecoder(r.Body).Decode(&dest); err != nil {
+	existing, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	// Decode into a partial payload so we can distinguish "field omitted"
+	// from "field explicitly set to empty". Previously the handler decoded
+	// into a zero-valued db.StorageDestination and wrote the whole row,
+	// which silently blanked name/type/dedup_enabled when the caller sent a
+	// partial body (e.g. {config:"..."}) — orphaning every job that pointed
+	// at the destination. dest.Type and dest.DedupEnabled are immutable
+	// after creation; we reject attempts to change them rather than
+	// silently ignore.
+	var patch struct {
+		Name         *string `json:"name"`
+		Type         *string `json:"type"`
+		Config       *string `json:"config"`
+		DedupEnabled *bool   `json:"dedup_enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	dest.ID = id
-	if err := h.db.UpdateStorageDestination(dest); err != nil {
+	if patch.Type != nil && strings.TrimSpace(*patch.Type) != existing.Type {
+		respondError(w, http.StatusBadRequest, "type cannot be changed after creation")
+		return
+	}
+	if patch.DedupEnabled != nil && *patch.DedupEnabled != existing.DedupEnabled {
+		respondError(w, http.StatusBadRequest, "dedup_enabled cannot be changed after creation")
+		return
+	}
+	if patch.Name != nil {
+		name := strings.TrimSpace(*patch.Name)
+		if name == "" {
+			respondError(w, http.StatusBadRequest, "name cannot be empty")
+			return
+		}
+		existing.Name = name
+	}
+	if patch.Config != nil {
+		existing.Config = *patch.Config
+		// Re-validate; the user may have broken the config blob.
+		adapter, err := storage.NewAdapter(existing.Type, existing.Config)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		storage.CloseAdapter(adapter)
+	}
+	if err := h.db.UpdateStorageDestination(existing); err != nil {
 		respondInternalError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, dest)
+	saved, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	saved.Config = redactConfig(saved.Config)
+	respondJSON(w, http.StatusOK, saved)
 	h.broadcastConfigChange("storage")
 }
 
@@ -504,7 +583,9 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DependentJobs returns the number of jobs that reference a storage destination.
+// DependentJobs returns the list of jobs that reference a storage destination
+// plus a count for convenience. Front-ends can render which jobs would be
+// orphaned by a delete.
 //
 //	GET /api/v1/storage/{id}/jobs
 func (h *StorageHandler) DependentJobs(w http.ResponseWriter, r *http.Request) {
@@ -512,12 +593,15 @@ func (h *StorageHandler) DependentJobs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	count, err := h.db.CountJobsByStorageDestID(id)
+	jobs, err := h.db.ListJobsByStorageDestID(id)
 	if err != nil {
 		respondInternalError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"job_count": count})
+	respondJSON(w, http.StatusOK, map[string]any{
+		"jobs":      jobs,
+		"job_count": len(jobs),
+	})
 }
 
 // ListFiles lists files/directories at a given prefix on the storage.

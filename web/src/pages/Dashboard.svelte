@@ -155,10 +155,15 @@
       replicationSources = replSources || []
       settings = sett || {}
 
-      const enabledJobs = jobs.filter(j => j.enabled)
-      if (enabledJobs.length > 0) {
+      // Include items from ALL configured jobs, not just enabled ones. A
+      // disabled schedule does not remove existing restore points — the
+      // 2026.05.00 fix made the recovery API behave this way and the
+      // Dashboard should match. Filtering by j.enabled here caused the
+      // Protection Status panel to drop items the moment a user paused
+      // their schedule, even though those items still had recent backups.
+      if (jobs.length > 0) {
         const jobDetails = await Promise.all(
-          enabledJobs.map(j => api.getJob(j.id).catch(() => null))
+          jobs.map(j => api.getJob(j.id).catch(() => null))
         )
         const pSet = new SvelteSet()
         for (const detail of jobDetails) {

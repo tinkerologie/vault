@@ -107,6 +107,10 @@ export const api = {
     if (includeZfs) params.set('include_zfs', 'true')
     return request('GET', `/browse?${params.toString()}`)
   },
+  // Lightweight existence check used by the Items wizard to validate custom
+  // folder items. Returns {exists, is_dir} and never errors for missing
+  // paths.
+  pathExists: (path) => request('GET', `/path-exists?path=${encodeURIComponent(path)}`),
   listContainers: () => request('GET', '/containers'),
   listVMs: () => request('GET', '/vms'),
   listFolders: () => request('GET', '/folders'),

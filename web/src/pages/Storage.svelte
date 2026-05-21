@@ -546,7 +546,7 @@
         </div>
         <div>
           <label for="cfg_pass" class="block text-sm font-medium text-text-muted mb-1.5">Password</label>
-          <input id="cfg_pass" type="password" bind:value={form.config.password}
+          <input id="cfg_pass" type="password" autocomplete="off" bind:value={form.config.password}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
       </div>
@@ -576,7 +576,7 @@
         </div>
         <div>
           <label for="cfg_smbpass" class="block text-sm font-medium text-text-muted mb-1.5">Password</label>
-          <input id="cfg_smbpass" type="password" bind:value={form.config.password}
+          <input id="cfg_smbpass" type="password" autocomplete="off" bind:value={form.config.password}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
       </div>
@@ -630,7 +630,7 @@
         </div>
         <div>
           <label for="dav_pass" class="block text-sm font-medium text-text-muted mb-1.5">Password / App Token</label>
-          <input id="dav_pass" type="password" bind:value={form.config.password}
+          <input id="dav_pass" type="password" autocomplete="off" bind:value={form.config.password}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
       </div>

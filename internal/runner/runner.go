@@ -1234,7 +1234,11 @@ func (r *Runner) openDedupRepo(adapter storage.Adapter, dest db.StorageDestinati
 // GetDedupStats opens (read-only) the dedup repo at dest and returns a
 // snapshot of its in-memory Stats. Used by the
 // GET /api/v1/storage/{id}/dedup-stats handler. Returns an error if dest
-// is not dedup-enabled or the repo cannot be opened.
+// is not dedup-enabled. When the repo has not been initialised yet (no
+// backup has run, so _vault/repo.json does not exist) returns a zero-stats
+// snapshot with Enabled=true rather than an error — the Storage card calls
+// this immediately after Add Storage and a 500 there renders as a broken
+// card.
 func (r *Runner) GetDedupStats(dest db.StorageDestination) (dedup.Stats, error) {
 	if !dest.DedupEnabled {
 		return dedup.Stats{}, fmt.Errorf("destination %q is not dedup-enabled", dest.Name)
@@ -1244,11 +1248,46 @@ func (r *Runner) GetDedupStats(dest db.StorageDestination) (dedup.Stats, error) 
 		return dedup.Stats{}, fmt.Errorf("adapter: %w", err)
 	}
 	defer storage.CloseAdapter(adapter)
+	if _, err := adapter.Stat("_vault/repo.json"); err != nil {
+		// Repo not yet initialised — return a zero snapshot so the
+		// Storage card renders "0 chunks · 0 packs" instead of a 500.
+		// The handler adds the "enabled": true key.
+		return dedup.Stats{}, nil
+	}
 	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
 	if err != nil {
 		return dedup.Stats{}, fmt.Errorf("open dedup repo: %w", err)
 	}
 	return repo.Stats(), nil
+}
+
+// GetDedupManifest opens the dedup repo at dest and returns the manifest
+// for the given manifest ID. Used by the RestorePointContents API handler
+// so the restore wizard's file picker can list files even for dedup
+// restore points (which don't have a tar index sidecar — chunks live in
+// /_vault/packs/ instead of per-item tar archives).
+func (r *Runner) GetDedupManifest(dest db.StorageDestination, manifestID dedup.ID) (dedup.Manifest, error) {
+	if !dest.DedupEnabled {
+		return dedup.Manifest{}, fmt.Errorf("destination %q is not dedup-enabled", dest.Name)
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return dedup.Manifest{}, fmt.Errorf("adapter: %w", err)
+	}
+	defer storage.CloseAdapter(adapter)
+	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	if err != nil {
+		return dedup.Manifest{}, fmt.Errorf("open dedup repo: %w", err)
+	}
+	return repo.GetManifest(manifestID)
+}
+
+// ResolveItemManifestID is the public counterpart of the private
+// resolveManifestID helper. Used by API handlers that need to detect
+// whether a (rp, item) pair is a dedup restore point and, if so, fetch its
+// manifest ID without duplicating the metadata-parsing logic.
+func ResolveItemManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool) {
+	return resolveManifestID(rp, itemName)
 }
 
 // RunDedupGC runs a mark-and-sweep GC for the given destination. Intended

@@ -661,7 +661,7 @@
       {#if needsPassphrase}
         <div>
           <label for="rw_passphrase" class="block text-sm font-medium text-text-muted mb-2">Encryption Passphrase</label>
-          <input id="rw_passphrase" type="password" bind:value={passphrase}
+          <input id="rw_passphrase" type="password" autocomplete="off" bind:value={passphrase}
             placeholder="Enter the passphrase used to encrypt these backups"
             class="w-full sm:w-96 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <p class="text-xs text-text-dim mt-1">This backup uses age encryption. A passphrase is required to decrypt.</p>

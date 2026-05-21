@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	transfermanager "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
+	s3manager "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -85,9 +85,12 @@ const (
 // underlying client is HTTP-based and pools connections internally, so we
 // build it once in the constructor and reuse it for the adapter's lifetime.
 type S3Adapter struct {
-	config           S3Config
-	client           *s3.Client
-	uploader         *transfermanager.Client
+	config S3Config
+	client *s3.Client
+	// uploader is intentionally the (deprecated) feature/s3/manager.Uploader
+	// rather than feature/s3/transfermanager.Client; see the long-form
+	// rationale in NewS3Adapter where it's constructed.
+	uploader         *s3manager.Uploader //nolint:staticcheck // SA1019: feature/s3/transfermanager forces a checksum trailer that breaks S3-compatible gateways.
 	uploadTimeout    time.Duration
 	partSizeBytes    int64
 	requestChecksum  aws.RequestChecksumCalculation
@@ -177,19 +180,44 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 			endpoint:     cfg.Endpoint,
 			usePathStyle: cfg.ForcePathStyle,
 		}))
+		// Re-apply RequestChecksumCalculation directly on the s3.Client
+		// options. The setting set on the awsCfg via LoadOptions DOES
+		// propagate to NewFromConfig, but belt-and-braces here makes
+		// the contract obvious. Real AWS (no custom endpoint) keeps
+		// the SDK default WhenSupported for end-to-end integrity.
+		clientOpts = append(clientOpts, func(o *s3.Options) {
+			o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+			o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		})
 	}
 	if cfg.ForcePathStyle {
 		clientOpts = append(clientOpts, func(o *s3.Options) { o.UsePathStyle = true })
 	}
 
 	client := s3.NewFromConfig(awsCfg, clientOpts...)
-	// Bind the configured PartSize to the uploader so multipart transfers
-	// stay under the 10,000-part ceiling even for streams whose size is
-	// unknown up-front (age-encrypted PipeReader has no Size/ContentLength,
-	// which prevents transfermanager's built-in auto-scale at upload time).
-	// Closes the MaxUploadParts failure mode on #95.
-	uploader := transfermanager.New(client, func(o *transfermanager.Options) {
-		o.PartSizeBytes = partSizeBytes
+	// We deliberately use feature/s3/manager (the older, stable Uploader)
+	// rather than feature/s3/transfermanager because transfermanager
+	// hard-codes a default ChecksumAlgorithm=Crc32 inside its own option
+	// resolver, which causes it to attach an x-amz-checksum-crc32 trailer
+	// to every PutObject/UploadPart regardless of the global
+	// RequestChecksumCalculation setting. That trailer is included in the
+	// SigV4 canonical request; S3-compatible gateways (MinIO, MEGA, B2,
+	// IDrive E2, …) that don't consume the trailer recompute the signature
+	// without it and respond `403 SignatureDoesNotMatch` on every upload
+	// while TestConnection (HeadBucket has no body) succeeds. The older
+	// s3manager.Uploader honours RequestChecksumCalculation=WhenRequired
+	// correctly (see initChecksumAlgorithm in upload.go), so the trailer is
+	// only added when explicitly requested. Vault verifies object integrity
+	// end-to-end via SHA-256 in the runner already, so the trailer adds no
+	// real safety here.
+	//
+	// We also bind the configured PartSize so multipart transfers stay
+	// under the 10,000-part ceiling even for streams whose size is unknown
+	// up-front (age-encrypted PipeReader has no Size/ContentLength). Closes
+	// the MaxUploadParts failure mode on #95.
+	uploader := s3manager.NewUploader(client, func(u *s3manager.Uploader) { //nolint:staticcheck // SA1019: see deprecation rationale above
+		u.PartSize = partSizeBytes
+		u.RequestChecksumCalculation = awsCfg.RequestChecksumCalculation
 	})
 	return &S3Adapter{
 		config:           cfg,
@@ -252,6 +280,19 @@ func (a *S3Adapter) ctxUpload() (context.Context, context.CancelFunc) {
 // keyFor joins the configured base path and an operation-supplied path using
 // "/" as the separator (S3 keys are virtual). safepath is used to reject
 // traversal attempts ("../") regardless of host OS.
+//
+// Spaces and other URL-unsafe characters in each path segment are replaced
+// with `_` because the aws-sdk-go-v2 + custom EndpointResolverV2 + path-style
+// combination has a known signing-vs-sending URL-encoding asymmetry: a key
+// like "QA S3 verify/data.tar" sends as "/bucket/QA%20S3%20verify/data.tar"
+// but the SigV4 canonical URI used for signing is computed from the raw
+// (un-percent-encoded) path, so S3-compatible gateways (MinIO 2025-09-07+,
+// MEGA, IDrive E2) recompute the signature against the encoded form and
+// respond `403 SignatureDoesNotMatch` on every PutObject/DeleteObject
+// (HeadBucket has no path beyond the bucket so TestConnection still passes —
+// the "test passes, every upload fails" fingerprint). Both Write and Read
+// go through keyFor, so the substitution is transparent to higher layers
+// and applies uniformly to backup, restore, list, stat, delete.
 func (a *S3Adapter) keyFor(p string, allowRoot bool) (string, error) {
 	clean := strings.TrimSpace(p)
 	if clean == "" && !allowRoot {
@@ -268,15 +309,40 @@ func (a *S3Adapter) keyFor(p string, allowRoot bool) (string, error) {
 		}
 		return strings.Trim(a.config.BasePath, "/"), nil
 	}
-	for _, seg := range strings.Split(clean, "/") {
+	segments := strings.Split(clean, "/")
+	for i, seg := range segments {
 		if seg == "" || seg == "." || seg == ".." {
 			return "", fmt.Errorf("s3: invalid path segment %q", seg)
 		}
+		segments[i] = sanitizeS3KeySegment(seg)
 	}
+	clean = strings.Join(segments, "/")
 	if a.config.BasePath != "" {
-		clean = path.Join(a.config.BasePath, clean)
+		clean = path.Join(sanitizeS3KeySegment(a.config.BasePath), clean)
 	}
 	return clean, nil
+}
+
+// sanitizeS3KeySegment replaces characters that trigger the SDK signing
+// asymmetry with `_`. Conservative: replace whitespace and a handful of
+// punctuation chars that need percent-encoding. ASCII alphanumerics, dot,
+// dash, underscore, and tilde pass through (these are the "unreserved" set
+// per RFC 3986 — guaranteed safe in URLs and signatures alike).
+func sanitizeS3KeySegment(seg string) string {
+	var b strings.Builder
+	b.Grow(len(seg))
+	for _, r := range seg {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_', r == '~':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 func (a *S3Adapter) Write(p string, reader io.Reader) error {
@@ -286,7 +352,7 @@ func (a *S3Adapter) Write(p string, reader io.Reader) error {
 	}
 	ctx, cancel := a.ctxUpload()
 	defer cancel()
-	if _, err := a.uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
+	if _, err := a.uploader.Upload(ctx, &s3.PutObjectInput{ //nolint:staticcheck // SA1019: see deprecation rationale in NewS3Adapter
 		Bucket: aws.String(a.config.Bucket),
 		Key:    aws.String(key),
 		Body:   reader,

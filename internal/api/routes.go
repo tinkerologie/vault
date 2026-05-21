@@ -136,6 +136,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		browseH := handlers.NewBrowseHandler()
 		s.browseHandler = browseH
 		r.Get("/browse", browseH.List)
+		r.Get("/path-exists", browseH.Exists)
 
 		activityH := handlers.NewActivityHandler(s.db)
 		r.Route("/activity", func(r chi.Router) {

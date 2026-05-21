@@ -74,8 +74,25 @@
         headers:
           X-API-Key: "{{ api_key }}"
         body_format: json
+        # REGRESSION: job name and item name deliberately contain spaces.
+        # The combination of aws-sdk-go-v2 + a custom EndpointResolverV2 +
+        # path-style addressing has a signing-vs-sending URL-encoding
+        # asymmetry: keys with reserved characters (space, etc.) are sent
+        # as `%20` but the SigV4 canonical URI is computed from the raw
+        # path, causing every PutObject + DeleteObject to fail with `403
+        # SignatureDoesNotMatch` against MinIO 2025-09-07+, MEGA, IDrive
+        # E2, and similar gateways. TestConnection (HeadBucket has no
+        # path beyond the bucket) keeps passing — the "test passes,
+        # uploads always fail" fingerprint. The S3 adapter's `keyFor()`
+        # now sanitizes each path segment to the RFC 3986 unreserved
+        # set; this fixture proves the sanitizer is active and that a
+        # round-trip with reserved chars in the job/item name succeeds.
+        # Do NOT replace these names with alphanumeric-only values
+        # without re-testing against MinIO `RELEASE.2025-09-07T16-13-09Z`
+        # or later — the earlier alphanumeric-only fixture passed for
+        # months while the bug shipped to users.
         body:
-          name: "test-cloud-s3-job"
+          name: "QA S3 smoke (spaces)"
           description: "Cloud-storage S3 smoke test"
           enabled: false
           schedule: ""
@@ -87,7 +104,7 @@
           storage_dest_id: "{{ cs_s3_storage.json.id }}"
           items:
             - item_type: "folder"
-              item_name: "vault-cs-s3-src"
+              item_name: "src with spaces"
               item_id: "/tmp/vault-cs-s3-src"
               settings: '{"path":"/tmp/vault-cs-s3-src","preset":""}'
         status_code: 201
@@ -159,6 +176,10 @@
         body_format: json
         body:
           restore_point_id: "{{ cs_s3_rps.json[0].id }}"
+          # Item name matches the create-job step above — uses spaces
+          # to exercise the key-sanitization round-trip end-to-end.
+          items:
+            - "src with spaces"
           destination: "/tmp/vault-cs-s3-restore"
         status_code: [200, 202]
 

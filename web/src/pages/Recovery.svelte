@@ -19,12 +19,11 @@
 
   onMount(async () => {
     try {
-      const [p, cRes, vRes, fRes, jobs, sett] = await Promise.all([
+      const [p, cRes, vRes, fRes, sett] = await Promise.all([
         api.getRecoveryPlan(),
         api.listContainers().catch(() => ({ items: [] })),
         api.listVMs().catch(() => ({ items: [] })),
         api.listFolders().catch(() => ({ items: [] })),
-        api.listJobs(),
         api.getSettings().catch(() => ({})),
       ])
       plan = p
@@ -33,16 +32,17 @@
       folders = fRes.items || []
       settings = sett || {}
 
-      // Compute protected items from enabled jobs.
-      const enabledJobs = (jobs || []).filter(j => j.enabled)
-      const jobDetails = await Promise.all(
-        enabledJobs.map(j => api.getJob(j.id).catch(() => null))
-      )
+      // Derive protected items from the actual existence of restore points
+      // rather than from the enabled flag on the parent job. A job can have
+      // its schedule disabled (manual/one-off backup workflow) and still
+      // have restore points on disk — those items are protected. This
+      // matches the server-side recovery plan's has_restore_point logic.
       const pSet = new SvelteSet()
-      for (const detail of jobDetails) {
-        if (!detail?.items) continue
-        for (const item of detail.items) {
-          pSet.add(`${item.item_type}:${item.item_name}`)
+      for (const step of plan?.steps || []) {
+        for (const it of step.items || []) {
+          if (it.has_restore_point && it.type) {
+            pSet.add(`${it.type}:${it.name}`)
+          }
         }
       }
       protectedItems = pSet

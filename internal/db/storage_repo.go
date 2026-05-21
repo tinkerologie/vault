@@ -92,6 +92,33 @@ func (d *DB) CountJobsByStorageDestID(storageDestID int64) (int, error) {
 	return count, err
 }
 
+// ListJobsByStorageDestID returns id/name pairs of every job that references
+// the given storage destination. Used by the dependent-jobs API surface so the
+// UI can render which jobs would be orphaned by a delete.
+func (d *DB) ListJobsByStorageDestID(storageDestID int64) ([]JobRef, error) {
+	rows, err := d.Query("SELECT id, name FROM jobs WHERE storage_dest_id = ? ORDER BY name", storageDestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	jobs := make([]JobRef, 0)
+	for rows.Next() {
+		var j JobRef
+		if err := rows.Scan(&j.ID, &j.Name); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, rows.Err()
+}
+
+// JobRef is a slim id/name view of a job for endpoints that don't need the
+// full Job model.
+type JobRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
 // DedupPack is one row in the dedup_packs table: a single pack blob written
 // to a storage destination plus its metadata.
 type DedupPack struct {

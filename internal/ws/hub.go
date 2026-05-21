@@ -89,7 +89,30 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			"*.local:*",
 			"192.168.*.*:*",
 			"10.*.*.*:*",
+			// RFC1918 reserves 172.16.0.0/12 — 172.16.0.0 through
+			// 172.31.255.255. Previously we listed only "172.16.*.*"
+			// which excluded the other 15 /16s and prevented WS
+			// progress updates from rendering on LANs in those ranges
+			// (e.g. Docker's default 172.17.0.0/16, which a few users
+			// reverse-proxy through). Enumerate all 16 octet-2 values
+			// because coder/websocket's pattern matcher treats "*" as
+			// a single label/segment, not a range.
 			"172.16.*.*:*",
+			"172.17.*.*:*",
+			"172.18.*.*:*",
+			"172.19.*.*:*",
+			"172.20.*.*:*",
+			"172.21.*.*:*",
+			"172.22.*.*:*",
+			"172.23.*.*:*",
+			"172.24.*.*:*",
+			"172.25.*.*:*",
+			"172.26.*.*:*",
+			"172.27.*.*:*",
+			"172.28.*.*:*",
+			"172.29.*.*:*",
+			"172.30.*.*:*",
+			"172.31.*.*:*",
 		},
 	})
 	if err != nil {

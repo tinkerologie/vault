@@ -14,10 +14,35 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
+
+// dedupManifestToTarIndex synthesizes a TarIndex-shaped response from a
+// dedup manifest so the restore wizard's file picker can render dedup
+// restore points using the same UI as classic tar-backed restore points.
+// The "archive" field is set to the item name (there is no single archive
+// in dedup mode — content lives in /_vault/packs/) so the picker still has
+// a label to show.
+func dedupManifestToTarIndex(itemName string, m dedup.Manifest) engine.TarIndex {
+	idx := engine.TarIndex{
+		Version: 1,
+		Archive: itemName,
+		Files:   make([]engine.TarIndexEntry, 0, len(m.Files)),
+	}
+	for p, e := range m.Files {
+		idx.Files = append(idx.Files, engine.TarIndexEntry{
+			Path:    p,
+			Size:    e.Size,
+			Mode:    fmt.Sprintf("%04o", e.Mode&0o7777),
+			ModTime: e.ModTime,
+			IsDir:   e.IsDir,
+		})
+	}
+	return idx
+}
 
 // ScheduleReloader is called after job CRUD to reload the cron scheduler.
 type ScheduleReloader = func() error
@@ -109,7 +134,15 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	req.Job.ID = id
-	respondJSON(w, http.StatusCreated, req.Job)
+	// Re-fetch persisted items so the response includes their server-assigned
+	// IDs. Previously the response echoed only the Job and dropped the items
+	// silently. Keep the Job fields at the top level for backwards
+	// compatibility (front-end reads result.id) and add items alongside.
+	savedItems, _ := h.db.GetJobItems(id)
+	respondJSON(w, http.StatusCreated, struct {
+		db.Job
+		Items []db.JobItem `json:"items"`
+	}{req.Job, savedItems})
 	h.reloadScheduler()
 	h.notifyConfigChange()
 	h.broadcastConfigChange("job")
@@ -160,7 +193,11 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	respondJSON(w, http.StatusOK, req.Job)
+	savedItems, _ := h.db.GetJobItems(id)
+	respondJSON(w, http.StatusOK, struct {
+		db.Job
+		Items []db.JobItem `json:"items"`
+	}{req.Job, savedItems})
 	h.reloadScheduler()
 	h.notifyConfigChange()
 	h.broadcastConfigChange("job")
@@ -213,6 +250,11 @@ func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
+	// Always return an array shape — never JSON null. Front-ends call
+	// .length and .map on the response and would throw on null.
+	if runs == nil {
+		runs = []db.JobRun{}
+	}
 	respondJSON(w, http.StatusOK, runs)
 }
 
@@ -235,7 +277,11 @@ func (h *JobHandler) GetRestorePoints(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, runner.AnnotateRestorePoints(job, rps))
+	annotated := runner.AnnotateRestorePoints(job, rps)
+	if annotated == nil {
+		annotated = []runner.AnnotatedRestorePoint{}
+	}
+	respondJSON(w, http.StatusOK, annotated)
 }
 
 // RestorePointContents returns the list of files inside an archive at a
@@ -295,6 +341,20 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		respondInternalError(w, err)
 		return
 	}
+	// Dedup restore points have no per-item tar archive (chunks live in
+	// /_vault/packs/), so the tar-index sidecar path is irrelevant. Instead,
+	// synthesize a TarIndex from the dedup manifest so the file picker UI
+	// can render the file list the same way it does for classic backups.
+	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
+		manifest, err := h.runner.GetDedupManifest(dest, mID)
+		if err != nil {
+			respondInternalError(w, err)
+			return
+		}
+		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, manifest))
+		return
+	}
+
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		respondInternalError(w, err)

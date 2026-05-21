@@ -44,6 +44,7 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	// Collect all items, latest restore points, and warnings.
 	type stepItem struct {
 		Name            string     `json:"name"`
+		Type            string     `json:"type"` // container | vm | folder | zfs | plugin
 		LastBackup      *time.Time `json:"last_backup"`
 		StorageName     string     `json:"storage_name"`
 		SizeBytes       int64      `json:"size_bytes"`
@@ -90,6 +91,7 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 			totalProtected++
 			si := stepItem{
 				Name:            item.ItemName,
+				Type:            item.ItemType,
 				StorageName:     storageNames[job.StorageDestID],
 				HasRestorePoint: latestRP != nil,
 			}
@@ -129,21 +131,30 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	})
 	stepNum++
 
+	// stepStatus inspects every item in the step (not just the first) and
+	// returns "warning" if any one of them has no restore point yet. The
+	// original implementation only checked items[0], so a step rendered as
+	// "ready" even when later items would fail the restore.
+	stepStatus := func(items []stepItem) string {
+		for _, it := range items {
+			if !it.HasRestorePoint {
+				return "warning"
+			}
+		}
+		return "ready"
+	}
+
 	// Step 2: Restore Containers
 	if len(containerItems) > 0 {
 		var totalSize int64
 		for _, c := range containerItems {
 			totalSize += c.SizeBytes
 		}
-		status := "ready"
-		if !containerItems[0].HasRestorePoint {
-			status = "warning"
-		}
 		steps = append(steps, step{
 			Step:        stepNum,
 			Title:       fmt.Sprintf("Restore Containers (%d)", len(containerItems)),
 			Description: "Restore all Docker container appdata from backup.",
-			Status:      status,
+			Status:      stepStatus(containerItems),
 			Items:       containerItems,
 			TotalSize:   totalSize,
 		})
@@ -156,15 +167,11 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 		for _, v := range vmItems {
 			totalSize += v.SizeBytes
 		}
-		status := "ready"
-		if !vmItems[0].HasRestorePoint {
-			status = "warning"
-		}
 		steps = append(steps, step{
 			Step:        stepNum,
 			Title:       fmt.Sprintf("Restore Virtual Machines (%d)", len(vmItems)),
 			Description: "Restore VM disk images and configurations from backup.",
-			Status:      status,
+			Status:      stepStatus(vmItems),
 			Items:       vmItems,
 			TotalSize:   totalSize,
 		})
@@ -181,7 +188,7 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 			Step:        stepNum,
 			Title:       fmt.Sprintf("Restore Folders (%d)", len(folderItems)),
 			Description: "Restore custom folder backups (Flash Drive, shares, etc.).",
-			Status:      "ready",
+			Status:      stepStatus(folderItems),
 			Items:       folderItems,
 			TotalSize:   totalSize,
 		})

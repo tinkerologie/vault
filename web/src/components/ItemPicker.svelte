@@ -54,6 +54,16 @@
   // Selected items tracked as map: "type:name" -> item
   let selected = $state(new SvelteMap())
 
+  // Tracks per-key existence for custom folder items. Custom folders never
+  // appear in /api/v1/folders (which only enumerates discoverable presets
+  // like Flash Drive), so the inventory-based stale check would falsely
+  // flag every custom folder a user has ever added. Instead we async-call
+  // /api/v1/path-exists on mount for each selected custom folder and
+  // populate this map; isStaleItem consults it for folder items without a
+  // preset. Values: true = exists, false = missing, undefined = not yet
+  // checked (don't flag).
+  let customFolderExists = $state(new SvelteMap())
+
   // Drag state for reorder
   let dragIndex = $state(-1)
 
@@ -68,8 +78,29 @@
       selected = m
       // If some items were filtered, sync the bound items prop
       if (m.size < items.length) emitChange()
+      // Kick off async existence checks for custom folder items.
+      verifyCustomFolders()
     }
   })
+
+  // verifyCustomFolders calls /api/v1/path-exists for every selected
+  // folder item without a preset. Updates customFolderExists. Idempotent;
+  // re-running after addCustomFolder is cheap.
+  async function verifyCustomFolders() {
+    for (const [key, item] of selected) {
+      if (item.item_type !== 'folder') continue
+      const s = safeParseSettings(item.settings)
+      if (s.preset) continue // preset folders are inventory-tracked
+      const p = s.path
+      if (!p || customFolderExists.has(key)) continue
+      try {
+        const res = await api.pathExists(p)
+        customFolderExists.set(key, !!res?.exists)
+      } catch {
+        // Network failure — leave undefined so we don't false-alarm.
+      }
+    }
+  }
 
   // Prune selected items when allowed types change while component is mounted
   $effect(() => {
@@ -232,6 +263,9 @@
       item_id: customFolderPath,
       settings: JSON.stringify({ path: customFolderPath, preset: '' }),
     })
+    // PathBrowser only exposes paths under allowed roots that already
+    // exist, so we can pre-populate as exists=true and skip the probe.
+    customFolderExists.set(fKey, true)
     customFolderPath = ''
     showAddFolder = false
     emitChange()
@@ -284,6 +318,18 @@
   ]))
 
   function isStaleItem(key) {
+    const item = selected.get(key)
+    if (item?.item_type === 'folder') {
+      const s = safeParseSettings(item.settings)
+      // Custom folders (no preset) aren't in /api/v1/folders, so the
+      // inventory check would always fire. Use the path-exists probe
+      // result instead — undefined means "not yet checked", treat as
+      // healthy to avoid a false-alarm flash.
+      if (!s.preset) {
+        const present = customFolderExists.get(key)
+        return present === false
+      }
+    }
     return !inventoryKeys.has(key)
   }
 </script>
@@ -607,7 +653,13 @@
         </div>
       {:else if !showAddFolder}
         <p class="text-sm text-text-muted py-4 text-center">
-          {search ? 'No folders match your search' : 'No preset folders found. Add a custom folder above.'}
+          {#if search}
+            No folders match your search.
+          {:else}
+            No preset folders to choose from on this system.
+            Click <span class="text-vault font-medium">Add Custom Folder</span> above to pick any
+            path under <code class="text-xs">/mnt</code> or <code class="text-xs">/boot</code>.
+          {/if}
         </p>
       {/if}
     {:else if activeTab === 'flash'}
