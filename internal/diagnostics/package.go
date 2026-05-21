@@ -38,6 +38,7 @@ func PackageAsZip(bundle *DiagnosticBundle) (io.Reader, error) {
 	top.LogTail = ""
 	top.Activity = nil
 	top.Runs = nil
+	top.VerifyRuns = nil
 
 	files := []zipFile{
 		{name: "diagnostics.json", data: &top},
@@ -50,6 +51,12 @@ func PackageAsZip(bundle *DiagnosticBundle) (io.Reader, error) {
 		{name: "replication.json", data: bundle.Replication},
 		{name: "runner.json", data: bundle.Runner},
 		{name: "entries.json", data: bundle.Entries},
+		{name: "verify_runs.json", data: bundle.VerifyRuns},
+		{name: "dedup_stats.json", data: bundle.DedupStats},
+		{name: "runtime.json", data: bundle.Runtime},
+		{name: "pools.json", data: bundle.Pools},
+		{name: "connectivity.json", data: bundle.Connectivity},
+		{name: "scheduler.json", data: bundle.Scheduler},
 	}
 
 	for _, f := range files {

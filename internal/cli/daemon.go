@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/api"
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
@@ -331,6 +332,18 @@ var daemonCmd = &cobra.Command{
 				CurrentItemType: s.CurrentItemType,
 			}
 		}, version, logRing)
+		// Wire per-destination dedup stats into diagnostics. The
+		// runner owns the dedup repos and the serverKey needed to
+		// unseal them; passing a closure avoids an import cycle on
+		// internal/runner from internal/diagnostics.
+		diagCollector.SetDedupStatsFunc(func(dest db.StorageDestination) (chunks, packs, logical, physical, wasted int64, lastGCAt time.Time, lastGCFreed int64, err error) {
+			stats, e := srv.Runner().GetDedupStats(dest)
+			if e != nil {
+				return 0, 0, 0, 0, 0, time.Time{}, 0, e
+			}
+			return stats.TotalChunks, stats.TotalPacks, stats.LogicalBytes, stats.PhysicalBytes,
+				stats.WastedBytesEstimate, stats.LastGCAt, stats.LastGCFreedBytes, nil
+		})
 		srv.SettingsHandler().SetDiagnosticsCollector(diagCollector)
 
 		// Start the scheduler with the backup runner.
@@ -367,6 +380,10 @@ var daemonCmd = &cobra.Command{
 
 		srv.SetScheduleReloader(sched.Reload)
 		srv.SetNextRunResolver(sched.NextRun)
+		// Diagnostics next-run reporter shares the scheduler resolver
+		// so per-job rows in scheduler.json show the same timestamp the
+		// /api/v1/jobs/next-runs endpoint returns.
+		diagCollector.SetNextRunFunc(sched.NextRun)
 
 		// Listen for OS signals for graceful shutdown.
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

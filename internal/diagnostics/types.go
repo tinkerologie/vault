@@ -37,6 +37,112 @@ type DiagnosticBundle struct {
 	// clears this field on the JSON copy to keep diagnostics.json
 	// scannable.
 	LogTail string `json:"log_tail,omitempty"`
+
+	// PR2 extensions — extended troubleshooting context.
+	VerifyRuns   []VerifyRunInfo  `json:"verify_runs,omitempty"`
+	DedupStats   []DedupStatsInfo `json:"dedup_stats,omitempty"`
+	Runtime      RuntimeInfo      `json:"runtime"`
+	Pools        []PoolInfo       `json:"pools,omitempty"`
+	Connectivity ConnectivityInfo `json:"connectivity"`
+	Scheduler    SchedulerInfo    `json:"scheduler"`
+}
+
+// VerifyRunInfo summarises one verify run. Mirrors the verify_runs
+// table; "deep" failures are the most useful signal for support
+// because they prove on-disk corruption, while "quick" failures often
+// indicate a transient adapter error.
+type VerifyRunInfo struct {
+	ID             int64      `json:"id"`
+	RestorePointID int64      `json:"restore_point_id"`
+	Mode           string     `json:"mode"` // "quick" | "deep"
+	Status         string     `json:"status"`
+	FilesChecked   int        `json:"files_checked"`
+	FilesFailed    int        `json:"files_failed"`
+	BytesRead      int64      `json:"bytes_read"`
+	StartedAt      time.Time  `json:"started_at"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	ErrorSummary   string     `json:"error_summary,omitempty"`
+}
+
+// DedupStatsInfo embeds one dedup repo's current stats keyed by
+// storage destination. Skipped for non-dedup destinations and for
+// dedup destinations whose repo.json hasn't been written yet (the
+// runner.GetDedupStats helper already returns a zero snapshot in that
+// case).
+type DedupStatsInfo struct {
+	StorageID           int64     `json:"storage_id"`
+	StorageName         string    `json:"storage_name"`
+	TotalChunks         int64     `json:"total_chunks"`
+	TotalPacks          int64     `json:"total_packs"`
+	LogicalBytes        int64     `json:"logical_bytes"`
+	PhysicalBytes       int64     `json:"physical_bytes"`
+	DedupRatio          float64   `json:"dedup_ratio"`
+	WastedBytesEstimate int64     `json:"wasted_bytes_estimate"`
+	LastGCAt            time.Time `json:"last_gc_at,omitempty"`
+	LastGCFreedBytes    int64     `json:"last_gc_freed_bytes"`
+	Error               string    `json:"error,omitempty"`
+}
+
+// RuntimeInfo holds Go runtime metrics useful for diagnosing memory
+// leaks, goroutine pileups, and slow-GC reports.
+type RuntimeInfo struct {
+	NumGoroutine    int    `json:"num_goroutine"`
+	NumCPU          int    `json:"num_cpu"`
+	NumGC           uint32 `json:"num_gc"`
+	HeapAllocBytes  uint64 `json:"heap_alloc_bytes"`
+	HeapSysBytes    uint64 `json:"heap_sys_bytes"`
+	HeapObjects     uint64 `json:"heap_objects"`
+	StackInUseBytes uint64 `json:"stack_in_use_bytes"`
+	UptimeSeconds   int64  `json:"uptime_seconds"`
+}
+
+// PoolInfo reports one Unraid pool discovery result with its mount
+// state. Surfaces the cache-pool detection problems we hit in #69.
+type PoolInfo struct {
+	Path    string `json:"path"`
+	Mounted bool   `json:"mounted"`
+}
+
+// ConnectivityInfo reports whether the host has reachable Docker and
+// libvirt sockets. Failure here is the most common root cause of
+// "container backups don't run" or "VM backups silently empty" reports.
+type ConnectivityInfo struct {
+	Docker  DockerProbe  `json:"docker"`
+	Libvirt LibvirtProbe `json:"libvirt"`
+}
+
+// DockerProbe records the outcome of a NewContainerHandler() +
+// ListItems() probe. ContainerCount counts both running and stopped.
+type DockerProbe struct {
+	Available      bool   `json:"available"`
+	ContainerCount int    `json:"container_count"`
+	Error          string `json:"error,omitempty"`
+}
+
+// LibvirtProbe records the outcome of a NewVMHandler() + ListItems()
+// probe. Available=false on non-Linux builds via the build-tagged stub.
+type LibvirtProbe struct {
+	Available bool   `json:"available"`
+	VMCount   int    `json:"vm_count"`
+	Error     string `json:"error,omitempty"`
+}
+
+// SchedulerInfo reports next-run times per enabled job and per
+// verify-schedule. NextRunResolver is supplied by the daemon at
+// collector construction time (the scheduler is not a dependency of
+// this package — keeps the import graph one-way).
+type SchedulerInfo struct {
+	NextRuns       []NextRunInfo `json:"next_runs,omitempty"`
+	NextVerifyRuns []NextRunInfo `json:"next_verify_runs,omitempty"`
+}
+
+// NextRunInfo pairs a job with its computed next-run timestamp. Empty
+// NextRun string means "not scheduled" (job disabled or schedule
+// invalid).
+type NextRunInfo struct {
+	JobID   int64  `json:"job_id"`
+	JobName string `json:"job_name"`
+	NextRun string `json:"next_run,omitempty"`
 }
 
 // SystemInfo holds environment metadata.

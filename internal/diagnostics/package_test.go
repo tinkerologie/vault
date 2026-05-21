@@ -60,17 +60,23 @@ func TestPackageAsZip(t *testing.T) {
 	// refactor that drops one (or accidentally renames diagnostics.json)
 	// surfaces here.
 	wantFiles := map[string]bool{
-		"diagnostics.json": false,
-		"system.json":      false,
-		"settings.json":    false,
-		"storage.json":     false,
-		"jobs.json":        false,
-		"runs.json":        false,
-		"activity.json":    false,
-		"replication.json": false,
-		"runner.json":      false,
-		"entries.json":     false,
-		"vault.log":        false,
+		"diagnostics.json":  false,
+		"system.json":       false,
+		"settings.json":     false,
+		"storage.json":      false,
+		"jobs.json":         false,
+		"runs.json":         false,
+		"activity.json":     false,
+		"replication.json":  false,
+		"runner.json":       false,
+		"entries.json":      false,
+		"verify_runs.json":  false,
+		"dedup_stats.json":  false,
+		"runtime.json":      false,
+		"pools.json":        false,
+		"connectivity.json": false,
+		"scheduler.json":    false,
+		"vault.log":         false,
 	}
 	for _, f := range zr.File {
 		if _, ok := wantFiles[f.Name]; !ok {

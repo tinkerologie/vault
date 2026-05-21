@@ -60,6 +60,37 @@ func (d *DB) GetVerifyRun(id int64) (VerifyRun, error) {
 	return v, err
 }
 
+// ListRecentVerifyRuns returns the most recent verify runs across all
+// restore points, newest first. Used by the diagnostics collector to
+// embed verification history in the support bundle so reports show
+// whether scheduled verify runs have been failing.
+func (d *DB) ListRecentVerifyRuns(limit int) ([]VerifyRun, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	rows, err := d.Query(
+		`SELECT id, restore_point_id, mode, status, files_checked, files_failed, bytes_read,
+		started_at, completed_at, COALESCE(error_summary, '')
+		FROM verify_runs
+		ORDER BY started_at DESC LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	out := make([]VerifyRun, 0, limit)
+	for rows.Next() {
+		var v VerifyRun
+		if err := rows.Scan(&v.ID, &v.RestorePointID, &v.Mode, &v.Status, &v.FilesChecked,
+			&v.FilesFailed, &v.BytesRead, &v.StartedAt, &v.CompletedAt, &v.ErrorSummary); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // ListVerifyRunsForRestorePoint returns the most recent verify runs for a
 // given restore point, newest first.
 func (d *DB) ListVerifyRunsForRestorePoint(restorePointID int64, limit int) ([]VerifyRun, error) {

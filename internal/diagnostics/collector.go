@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/logbuf"
 	"github.com/ruaan-deysel/vault/internal/unraid"
 )
@@ -31,12 +32,25 @@ type RunnerStatus struct {
 // StatusFunc returns a snapshot of the current runner status.
 type StatusFunc func() RunnerStatus
 
+// DedupStatsFunc fetches a dedup-repo stats snapshot for one
+// destination. Supplied by the daemon (the diagnostics package can't
+// import internal/runner without an import cycle); nil-safe — when
+// nil the bundle simply omits per-destination dedup stats.
+type DedupStatsFunc func(dest db.StorageDestination) (chunks, packs, logical, physical, wasted int64, lastGCAt time.Time, lastGCFreed int64, err error)
+
+// NextRunFunc returns the next computed run time for a job ID as
+// "YYYY-MM-DD HH:MM:SS" and an ok flag. Wired to scheduler.NextRun.
+type NextRunFunc func(jobID int64) (string, bool)
+
 // Collector gathers diagnostic data from the system.
 type Collector struct {
-	db       *db.DB
-	statusFn StatusFunc
-	logRing  *logbuf.Ring
-	version  string
+	db        *db.DB
+	statusFn  StatusFunc
+	dedupFn   DedupStatsFunc
+	nextRunFn NextRunFunc
+	logRing   *logbuf.Ring
+	version   string
+	startTime time.Time
 }
 
 // NewCollector creates a new diagnostic collector. logRing may be nil
@@ -44,12 +58,22 @@ type Collector struct {
 // produced bundle simply omits the log tail.
 func NewCollector(database *db.DB, statusFn StatusFunc, version string, logRing *logbuf.Ring) *Collector {
 	return &Collector{
-		db:       database,
-		statusFn: statusFn,
-		logRing:  logRing,
-		version:  version,
+		db:        database,
+		statusFn:  statusFn,
+		logRing:   logRing,
+		version:   version,
+		startTime: time.Now(),
 	}
 }
+
+// SetDedupStatsFunc wires a per-destination dedup-stats fetcher (the
+// daemon owns the runner instance which owns the dedup repos). Safe to
+// call after construction; nil disables per-destination dedup stats.
+func (c *Collector) SetDedupStatsFunc(fn DedupStatsFunc) { c.dedupFn = fn }
+
+// SetNextRunFunc wires a next-run resolver (scheduler.NextRun). Safe
+// to call after construction.
+func (c *Collector) SetNextRunFunc(fn NextRunFunc) { c.nextRunFn = fn }
 
 // Collect gathers a complete diagnostic bundle from the system.
 func (c *Collector) Collect() (*DiagnosticBundle, error) {
@@ -238,8 +262,185 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 		}
 	}
 
+	// PR2 extensions — extended troubleshooting context.
+	bundle.Runtime = c.collectRuntime()
+	bundle.Pools = c.collectPools()
+	bundle.Connectivity = c.collectConnectivity()
+	bundle.VerifyRuns = c.collectVerifyRuns(&entries, now, correlationID, hostname)
+	bundle.DedupStats = c.collectDedupStats(bundle.Storage, &entries, now, correlationID, hostname)
+	bundle.Scheduler = c.collectScheduler(bundle.Jobs)
+
 	bundle.Entries = entries
 	return bundle, nil
+}
+
+// collectRuntime snapshots Go runtime metrics for memory-leak and
+// goroutine-pileup investigations.
+func (c *Collector) collectRuntime() RuntimeInfo {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	return RuntimeInfo{
+		NumGoroutine:    runtime.NumGoroutine(),
+		NumCPU:          runtime.NumCPU(),
+		NumGC:           ms.NumGC,
+		HeapAllocBytes:  ms.HeapAlloc,
+		HeapSysBytes:    ms.HeapSys,
+		HeapObjects:     ms.HeapObjects,
+		StackInUseBytes: ms.StackInuse,
+		UptimeSeconds:   int64(time.Since(c.startTime).Seconds()),
+	}
+}
+
+// collectPools enumerates Unraid pools and their mount state. Targets
+// the #69 class of "cache pool not detected" reports.
+func (c *Collector) collectPools() []PoolInfo {
+	pools := unraid.DiscoverPools()
+	out := make([]PoolInfo, 0, len(pools))
+	for _, p := range pools {
+		out = append(out, PoolInfo{Path: p, Mounted: unraid.IsMountedPool(p)})
+	}
+	return out
+}
+
+// collectConnectivity probes the Docker and libvirt control planes.
+// Errors are captured (not raised) so the bundle still completes when
+// either is unavailable — that absence is itself the diagnostic.
+func (c *Collector) collectConnectivity() ConnectivityInfo {
+	conn := ConnectivityInfo{}
+
+	// Docker.
+	if ch, err := engine.NewContainerHandler(); err != nil {
+		conn.Docker.Error = err.Error()
+	} else {
+		conn.Docker.Available = true
+		if items, listErr := ch.ListItems(); listErr != nil {
+			conn.Docker.Error = listErr.Error()
+		} else {
+			conn.Docker.ContainerCount = len(items)
+		}
+	}
+
+	// libvirt — NewVMHandler returns the stub error on non-Linux.
+	if vh, err := engine.NewVMHandler(); err != nil { //nolint:staticcheck // platform-dependent: stub returns error on non-Linux
+		conn.Libvirt.Error = err.Error()
+	} else {
+		conn.Libvirt.Available = true
+		if items, listErr := vh.ListItems(); listErr != nil { //nolint:staticcheck
+			conn.Libvirt.Error = listErr.Error()
+		} else {
+			conn.Libvirt.VMCount = len(items)
+		}
+	}
+
+	return conn
+}
+
+// collectVerifyRuns pulls the last 25 verify-runs across all restore
+// points. Critical signal for "my weekly verify keeps failing" reports.
+func (c *Collector) collectVerifyRuns(entries *[]DiagnosticEntry, now time.Time, cid, host string) []VerifyRunInfo {
+	runs, err := c.db.ListRecentVerifyRuns(25)
+	if err != nil {
+		*entries = append(*entries, warnEntry(now, cid, host, "verify",
+			fmt.Sprintf("Failed to list recent verify runs: %v", err)))
+		return nil
+	}
+	out := make([]VerifyRunInfo, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, VerifyRunInfo{
+			ID:             r.ID,
+			RestorePointID: r.RestorePointID,
+			Mode:           r.Mode,
+			Status:         r.Status,
+			FilesChecked:   r.FilesChecked,
+			FilesFailed:    r.FilesFailed,
+			BytesRead:      r.BytesRead,
+			StartedAt:      r.StartedAt,
+			CompletedAt:    r.CompletedAt,
+			ErrorSummary:   r.ErrorSummary,
+		})
+	}
+	*entries = append(*entries, infoEntry(now, cid, host, "verify",
+		fmt.Sprintf("Collected %d verify run(s)", len(out)), nil))
+	return out
+}
+
+// collectDedupStats fetches per-destination dedup stats for every
+// dedup-enabled storage destination already collected. Skipped
+// entirely when the daemon hasn't wired a DedupStatsFunc (avoids an
+// import cycle on internal/runner).
+func (c *Collector) collectDedupStats(storage []StorageInfo, entries *[]DiagnosticEntry, now time.Time, cid, host string) []DedupStatsInfo {
+	if c.dedupFn == nil {
+		return nil
+	}
+	dests, err := c.db.ListStorageDestinations()
+	if err != nil {
+		*entries = append(*entries, warnEntry(now, cid, host, "dedup",
+			fmt.Sprintf("Failed to re-list destinations for dedup stats: %v", err)))
+		return nil
+	}
+	out := make([]DedupStatsInfo, 0)
+	for _, d := range dests {
+		if !d.DedupEnabled {
+			continue
+		}
+		chunks, packs, logical, physical, wasted, lastGCAt, lastGCFreed, sErr := c.dedupFn(d)
+		ds := DedupStatsInfo{
+			StorageID:           d.ID,
+			StorageName:         d.Name,
+			TotalChunks:         chunks,
+			TotalPacks:          packs,
+			LogicalBytes:        logical,
+			PhysicalBytes:       physical,
+			WastedBytesEstimate: wasted,
+			LastGCAt:            lastGCAt,
+			LastGCFreedBytes:    lastGCFreed,
+		}
+		if physical > 0 {
+			ds.DedupRatio = float64(logical) / float64(physical)
+		} else {
+			ds.DedupRatio = 1.0
+		}
+		if sErr != nil {
+			ds.Error = sErr.Error()
+		}
+		out = append(out, ds)
+	}
+	_ = storage // signature retained for symmetry with other collect* helpers
+	if len(out) > 0 {
+		*entries = append(*entries, infoEntry(now, cid, host, "dedup",
+			fmt.Sprintf("Collected dedup stats for %d destination(s)", len(out)), nil))
+	}
+	return out
+}
+
+// collectScheduler resolves next-run timestamps per job from the
+// daemon-supplied resolver. No-op when the resolver isn't wired.
+func (c *Collector) collectScheduler(jobs []JobInfo) SchedulerInfo {
+	if c.nextRunFn == nil {
+		return SchedulerInfo{}
+	}
+	out := SchedulerInfo{}
+	for _, j := range jobs {
+		if !j.Enabled {
+			continue
+		}
+		nr := NextRunInfo{JobID: j.ID, JobName: j.Name}
+		if t, ok := c.nextRunFn(j.ID); ok {
+			nr.NextRun = t
+		}
+		out.NextRuns = append(out.NextRuns, nr)
+		if j.VerifySchedule != "" {
+			// Verify entries are keyed separately in the scheduler;
+			// without a dedicated resolver we surface the cron string
+			// itself so support can sanity-check the configured
+			// cadence. Future work: extend scheduler.NextRun to take
+			// a kind ("backup"/"verify") parameter and report both.
+			out.NextVerifyRuns = append(out.NextVerifyRuns, NextRunInfo{
+				JobID: j.ID, JobName: j.Name, NextRun: "schedule=" + j.VerifySchedule,
+			})
+		}
+	}
+	return out
 }
 
 // collectDatabaseInfo gathers database file information.
