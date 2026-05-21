@@ -1,24 +1,30 @@
 # Architecture
 
-Vault is a single Go binary that runs as a daemon on Unraid servers. It provides backup and restore for Docker containers, libvirt VMs, folders, and plugins.
+Vault is a single Go binary that runs as a daemon on Unraid servers. It provides backup and restore for Docker containers, libvirt VMs, ZFS datasets, folders, and plugins.
 
 ## Layered Design
 
 ```text
-CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / Engine
+CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / Engine / Runner
 ```
 
-| Layer     | Package               | Description                                             |
-| --------- | --------------------- | ------------------------------------------------------- |
-| CLI       | `internal/cli/`       | Cobra commands including `vault daemon` and `vault mcp` |
-| API       | `internal/api/`       | Chi router, REST handlers, WebSocket integration        |
-| MCP       | `internal/mcp/`       | Model Context Protocol tools over HTTP and stdio        |
-| Database  | `internal/db/`        | SQLite with WAL mode                                    |
-| Storage   | `internal/storage/`   | Local, SFTP, SMB, and NFS adapters                      |
-| Engine    | `internal/engine/`    | Backup and restore logic                                |
-| Scheduler | `internal/scheduler/` | Cron-based scheduling                                   |
-| WebSocket | `internal/ws/`        | Real-time event hub                                     |
-| Notify    | `internal/notify/`    | Unraid notifications                                    |
+| Layer       | Package                 | Description                                                                |
+| ----------- | ----------------------- | -------------------------------------------------------------------------- |
+| CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault mcp`, `vault dedup` |
+| API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                           |
+| MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP and stdio                |
+| Database    | `internal/db/`          | SQLite (WAL, pure-Go driver) with hybrid snapshot + USB shadow             |
+| Storage     | `internal/storage/`     | Local, SFTP, SMB, NFS, WebDAV, and S3 adapters (factory-dispatched)        |
+| Engine      | `internal/engine/`      | Per-type backup/restore handlers (container, VM, ZFS, folder, plugin)     |
+| Runner      | `internal/runner/`      | Job orchestration, retention, verification, compression                    |
+| Dedup       | `internal/dedup/`       | Keyed-FastCDC chunker, per-destination dedup repo, GC                      |
+| Crypto      | `internal/crypto/`      | AES-256-GCM, server key, passphrase-derived data keys                      |
+| Replication | `internal/replication/` | Pull-mode replication client + syncer                                      |
+| Scheduler   | `internal/scheduler/`   | Cron-based scheduling                                                      |
+| WebSocket   | `internal/ws/`          | Real-time event hub for backup progress and config changes                 |
+| Notify      | `internal/notify/`      | Unraid notifications + Discord webhooks                                    |
+| Diagnostics | `internal/diagnostics/` | Redacted ZIP bundle (system info, schema, runs, scheduler, daemon log)     |
+| Logbuf      | `internal/logbuf/`      | In-memory ring buffer that captures every `log.*` line for diagnostics     |
 
 ## Key Interfaces
 
@@ -35,6 +41,11 @@ type Adapter interface {
 }
 ```
 
+Adapters that hold persistent resources (SFTP, SMB) implement `io.Closer` and
+are released by `storage.CloseAdapter`. Bandwidth throttling is layered on
+top via a `RateLimit` config field for every remote type. Adapters are
+constructed via `storage.NewAdapter(type, configJSON)`.
+
 ### engine.Handler
 
 ```go
@@ -45,11 +56,16 @@ type Handler interface {
 }
 ```
 
+Handlers that support content-defined chunking additionally implement
+`engine.ChunkedHandler` (`BackupChunked` / `RestoreChunked`) so the runner
+can route them through the dedup repo on dedup-enabled destinations.
+
 ## Build Tags
 
-- `vm.go` and `fileutil.go`: `//go:build linux` — real libvirt RPC and file operations
-- `vm_stub.go`: `//go:build !linux` — stubs for macOS/Windows development
-- Tests and local builds work on macOS without libvirt installed
+- `vm.go`, `vm_restore.go`, and other libvirt-touching files use `//go:build linux` — real libvirt RPC against `/var/run/libvirt/libvirt-sock`
+- `vm_stub.go`: `//go:build !linux` — stubs for macOS / Windows so the rest of the daemon still builds and tests run
+- ZFS (`engine/zfs.go`) calls out to the host `zfs` binary; the code itself is platform-neutral
+- Local builds and the full test suite work on macOS without libvirt installed
 
 ## Database
 
@@ -59,47 +75,58 @@ SQLite with WAL mode and busy timeout. Pure Go driver via `modernc.org/sqlite` (
 sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
 ```
 
-Schema applied inline at open time via `CREATE TABLE IF NOT EXISTS` (no versioned migrations). Five tables: `storage_destinations`, `jobs`, `job_items`, `job_runs`, `restore_points`.
+Schema is applied inline at open time via `CREATE TABLE IF NOT EXISTS` (no versioned migrations). Eleven tables: `storage_destinations`, `jobs`, `job_items`, `job_runs`, `restore_points`, `settings`, `activity_log`, `verify_runs`, `replication_sources`, `dedup_packs`, `dedup_chunks`.
+
+### Hybrid snapshot layout
+
+To survive Unraid's USB-backed boot (where writing every commit to flash would wear the drive), the daemon runs in *hybrid* mode by default:
+
+1. **Working DB** — `/var/local/vault/vault.db` (tmpfs-backed; fast, never written to flash directly)
+2. **Primary snapshot** — `<discovered cache pool>/.vault/vault.db` (periodic copies; the authoritative on-disk source)
+3. **USB shadow** — `/boot/config/plugins/vault/vault.db.backup` (refreshed after config changes via the `SetConfigChangeHook` pathway, so the flash copy stays current without per-row writes)
+
+On startup, `internal/db/snapshot.go` restores from the primary snapshot if present, otherwise from the USB shadow — falling back to a fresh DB only if neither exists.
 
 ## Project Structure
 
 ```text
-├── cmd/vault/           # CLI entry point
+├── cmd/vault/             # CLI entry point (main + version ldflags)
 ├── internal/
-│   ├── api/             # HTTP server and REST handlers
-│   │   ├── server.go    # Server struct, ListenAndServe
-│   │   ├── routes.go    # Route definitions
-│   │   └── handlers/    # Job and Storage CRUD handlers
-│   ├── cli/             # Cobra CLI commands
-│   ├── config/          # Enum constants and types
-│   ├── db/              # SQLite database and repositories
-│   │   ├── db.go        # Open, ping, WAL mode, schema
-│   │   ├── migrations.go# Inline schema
-│   │   ├── models.go    # Data models
-│   │   ├── job_repo.go  # Job CRUD
-│   │   └── storage_repo.go # Storage CRUD
-│   ├── engine/          # Backup and restore logic
-│   │   ├── types.go     # BackupItem, BackupResult, Handler interface
-│   │   ├── container.go # Docker SDK backup/restore
-│   │   ├── vm.go        # libvirt backup/restore (Linux only)
-│   │   └── vm_stub.go   # Stub for non-Linux builds
-│   ├── mcp/             # MCP tools and transports
-│   ├── notify/          # Unraid notifications
-│   ├── replication/     # Remote Vault replication
-│   ├── scheduler/       # Cron scheduler
-│   ├── storage/         # Storage backend adapters
-│   │   ├── adapter.go   # Adapter interface
-│   │   ├── factory.go   # NewAdapter() dispatch
-│   │   ├── local.go     # Local filesystem
-│   │   ├── sftp.go      # SFTP
-│   │   ├── smb.go       # SMB
-│   │   └── nfs.go       # NFS
-│   └── ws/              # WebSocket hub
-├── plugin/              # Unraid plugin files (.plg, PHP, JS, CSS)
-├── ansible/             # Deployment automation
-├── scripts/             # Development and verification helpers
-├── web/                 # Svelte 5 frontend
-└── docs/                # Documentation
+│   ├── api/               # HTTP server and REST handlers
+│   │   ├── server.go      # Server struct, StartWithContext
+│   │   ├── routes.go      # Route registration
+│   │   └── handlers/      # Job, Storage, Replication, Settings, Browse, …
+│   ├── cli/               # Cobra subcommands (daemon, replica, mcp, dedup)
+│   ├── config/            # Enum constants and shared types
+│   ├── crypto/            # Server key, AES-256-GCM, passphrase derivation
+│   ├── db/                # SQLite, repos, hybrid snapshot manager
+│   ├── dedup/             # Keyed-FastCDC chunker, repo, index, GC
+│   ├── diagnostics/       # Redacted ZIP bundle for support
+│   ├── engine/            # Per-type handlers (container, VM, ZFS, folder, plugin)
+│   │   ├── container.go   # Docker SDK
+│   │   ├── vm.go          # libvirt (Linux only)
+│   │   ├── vm_stub.go     # Non-Linux stub
+│   │   └── zfs.go         # zfs send/receive
+│   ├── logbuf/            # In-memory ring buffer for daemon-log capture
+│   ├── mcp/               # MCP tools + streamable HTTP / stdio transport
+│   ├── notify/            # Unraid notifications + Discord webhook
+│   ├── replication/       # Pull-mode client + syncer
+│   ├── runner/            # Job orchestration, compression, retention, verify
+│   ├── scheduler/         # Cron scheduler
+│   ├── storage/           # Adapter interface + factory
+│   │   ├── local.go       # Local filesystem
+│   │   ├── sftp.go        # SFTP
+│   │   ├── smb.go         # SMB
+│   │   ├── nfs.go         # NFS
+│   │   ├── webdav.go      # WebDAV (with chunked upload + manifest)
+│   │   └── s3.go          # AWS SDK Go v2 (S3-compatible safe)
+│   ├── unraid/            # Pool discovery, /mnt scanning helpers
+│   └── ws/                # WebSocket hub
+├── plugin/                # Unraid plugin files (.plg, PHP, RC script)
+├── ansible/               # Build / deploy / verify automation
+├── scripts/               # Local dev helpers (stress, fixtures)
+├── web/                   # Svelte 5 frontend (Vite build embedded via go:embed)
+└── docs/                  # Documentation
 ```
 
 ## Build Commands
@@ -172,18 +199,23 @@ See [ansible/README.md](../ansible/README.md) for the full deployment workflow.
 
 ## Key Dependencies
 
-| Package                              | Purpose                            |
-| ------------------------------------ | ---------------------------------- |
-| `github.com/go-chi/chi/v5`           | HTTP router                        |
-| `github.com/spf13/cobra`             | CLI framework                      |
-| `github.com/robfig/cron/v3`          | Cron scheduler                     |
-| `modernc.org/sqlite`                 | Pure Go SQLite driver              |
-| `github.com/docker/docker`           | Docker Engine SDK                  |
-| `github.com/digitalocean/go-libvirt` | Pure Go VM management (Linux only) |
-| `github.com/vmware/go-nfs-client`    | NFS storage adapter                |
-| `github.com/cloudsoda/go-smb2`       | SMB storage adapter                |
-| `github.com/pkg/sftp`                | SFTP storage adapter               |
-| `github.com/coder/websocket`         | WebSocket server                   |
+| Package                                       | Purpose                                                |
+| --------------------------------------------- | ------------------------------------------------------ |
+| `github.com/go-chi/chi/v5`                    | HTTP router                                            |
+| `github.com/spf13/cobra`                      | CLI framework                                          |
+| `github.com/robfig/cron/v3`                   | Cron scheduler                                         |
+| `modernc.org/sqlite`                          | Pure Go SQLite driver (no CGO)                         |
+| `github.com/docker/docker`                    | Docker Engine SDK                                      |
+| `github.com/digitalocean/go-libvirt`          | Pure Go libvirt RPC (Linux only)                       |
+| `github.com/vmware/go-nfs-client`             | NFS storage adapter                                    |
+| `github.com/cloudsoda/go-smb2`                | SMB storage adapter                                    |
+| `github.com/pkg/sftp`                         | SFTP storage adapter                                   |
+| `github.com/studio-b12/gowebdav`              | WebDAV storage adapter                                 |
+| `github.com/aws/aws-sdk-go-v2/...`            | S3 / S3-compatible storage adapter                     |
+| `github.com/PlakarKorp/go-cdc-chunkers`       | Keyed-FastCDC chunker for content-defined dedup        |
+| `github.com/coder/websocket`                  | WebSocket server                                       |
+| `github.com/modelcontextprotocol/go-sdk`      | MCP streamable-HTTP / stdio transport                  |
+| `filippo.io/age`                              | Optional age-encrypted archive layer                   |
 
 ## Version
 

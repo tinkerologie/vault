@@ -43,7 +43,7 @@ Add to your project's `.mcp.json`:
 
 ## Available Tools
 
-The MCP surface is intentionally curated rather than a 1:1 mirror of every REST route. It covers these tool groups:
+The MCP surface is intentionally curated rather than a 1:1 mirror of every REST route. The daemon currently registers 27 tools across the groups below. Settings, encryption, replication mutations, recovery planning, and storage scan/import remain REST-only — see the [API Reference](api.md).
 
 ### Jobs
 

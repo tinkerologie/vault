@@ -9,22 +9,49 @@
 [![GitHub Issues](https://img.shields.io/github/issues/ruaan-deysel/vault)](https://github.com/ruaan-deysel/vault/issues)
 [![GitHub Stars](https://img.shields.io/github/stars/ruaan-deysel/vault?style=flat)](https://github.com/ruaan-deysel/vault/stargazers)
 
-Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. It protects Docker containers, libvirt VMs, folders, and plugins by backing them up to pluggable storage destinations. Vault ships with a REST API, an MCP server for AI assistants, WebSocket progress events, and an integrated web UI built with Svelte 5.
+Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. It protects Docker containers, libvirt VMs, ZFS datasets, folders, and plugins by backing them up to pluggable storage destinations — local disk, SFTP, SMB, NFS, WebDAV, or S3-compatible object storage. Vault ships with a REST API, an MCP server for AI assistants, WebSocket progress streaming, and an integrated web UI built with Svelte 5.
 
 ![Vault Dashboard](docs/screenshots/01-dashboard.png)
 
 ## Features
 
-- Docker container backup and restore with image, config, and appdata handling
-- VM backup and restore with snapshot and cold modes
-- Folder and plugin backup support
-- Full, incremental, and differential backup chains
-- Local, SFTP, SMB, NFS, WebDav and S3 storage backends
-- Cron-based scheduling with retention policies
-- Web UI with Dashboard, Jobs, Restore, Storage, History, Replication, Recovery, and Settings
-- WebSocket progress streaming and runner queue visibility
-- MCP tools for AI assistants and automation
-- Light and dark themes with mobile-responsive layout
+**Backup sources**
+- Docker containers — image, XML template, and every mapped appdata volume; per-container path exclusions
+- libvirt VMs — live snapshot or cold mode, with NVRAM preservation
+- ZFS datasets — native `zfs send`/`receive` with snapshot management
+- Folders and plugins — any path on the host, plus all installed Unraid plugins
+- Stale-item detection — flags items that disappear from the host so jobs stay clean
+
+**Storage destinations**
+- Local, SFTP, SMB, NFS, WebDAV, and S3-compatible (AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi, MEGA, IDrive E2)
+- Bandwidth throttling per remote destination
+- Test-connection and storage-health probes
+- Scan + import for backups produced by other Vault instances or AppData Backup
+
+**Backup strategy**
+- Full, incremental, and differential chains
+- Simple-count retention or Grandfather-Father-Son (`keep_latest`/`daily`/`weekly`/`monthly`/`yearly`)
+- AES-256-GCM encryption with per-passphrase key derivation
+- Content-defined deduplication (Keyed-FastCDC + per-destination dedup repo) with `vault dedup gc`/`repair` CLI helpers
+- Per-run SHA-256 verification and on-demand restore-point verify
+- Per-job notifications (success/failure) via Discord webhook
+
+**Scheduling**
+- Cron, hourly/daily/weekly/monthly/yearly presets, plus "first/last day of month"
+- 4-hour hard timeout and 2-hour stall watchdog per job
+- Cancellation propagated end-to-end (file I/O, traversal, engine handlers)
+
+**Web UI**
+- Dashboard, Jobs, Restore, Storage, History, Replication, Recovery, Logs, Settings
+- Live WebSocket progress streaming and runner queue visibility
+- Light/dark themes with mobile-responsive layout
+- Recovery plan that explains how to rebuild from scratch
+
+**Integration**
+- REST API at `/api/v1` with token-based auth for non-loopback callers
+- MCP server (streamable HTTP + stdio) for Claude Desktop, Claude Code, and other AI tooling
+- Hybrid SQLite snapshot (RAM working DB + persistent snapshot + USB shadow) survives reboots
+- Diagnostics bundle export (redacted) for support requests
 
 ## Installation
 
@@ -42,19 +69,23 @@ https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
 
 ## Quick Start
 
-1. **Add Storage** — Go to the Storage page and configure a backup destination (local path, SFTP, SMB, or NFS)
-2. **Create a Job** — Go to the Jobs page, pick what to back up, choose a schedule, and set retention rules
-3. **Run Backup** — Click "Run Now" or wait for the schedule to kick in
+1. **Add Storage** — Go to the Storage page and configure a backup destination (local, SFTP, SMB, NFS, WebDAV, or S3)
+2. **Create a Job** — Go to the Jobs page, pick what to back up, choose a schedule, and set retention
+3. **Run Backup** — Click *Run Now* or wait for the schedule
 4. **Monitor** — Watch live progress on the Dashboard or check the History page for results
 
 ## Documentation
 
-| Document                                   | Description                                       |
-| ------------------------------------------ | ------------------------------------------------- |
-| [Getting Started](docs/getting-started.md) | Visual walkthrough of the web UI with screenshots |
-| [API Reference](docs/api.md)               | Full REST API endpoint reference                  |
-| [MCP Integration](docs/mcp.md)             | Model Context Protocol server for AI tools        |
-| [Architecture](docs/architecture.md)       | Project structure, build commands, deployment     |
+| Document                                                         | Description                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------- |
+| [Getting Started](docs/getting-started.md)                       | Visual walkthrough of the web UI with screenshots |
+| [Backup Jobs](docs/guides/backup-jobs.md)                        | Job options, scheduling, retention, restore       |
+| [Storage Destinations](docs/guides/storage-destinations.md)      | Per-backend configuration with provider notes     |
+| [API Reference](docs/api.md)                                     | Full REST API endpoint reference                  |
+| [MCP Integration](docs/mcp.md)                                   | Model Context Protocol server for AI tools        |
+| [Home Assistant Integration](docs/home-assistant-integration.md) | Sensors, automations, and dashboard cards         |
+| [Architecture](docs/architecture.md)                             | Project structure, build commands, deployment     |
+| [Changelog](CHANGELOG.md)                                        | Release notes by version                          |
 
 ## Requirements
 

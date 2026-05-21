@@ -31,26 +31,35 @@ For most home server use cases, a weekly **Full** backup with daily **Incrementa
 
 Pick which items to include in this job. Vault discovers items automatically from your server:
 
-| Category             | What's included                                                              |
-| -------------------- | ---------------------------------------------------------------------------- |
-| **Containers**       | Docker containers (image, XML config, and all mapped appdata volumes)        |
-| **Virtual Machines** | libvirt VMs (live snapshot or cold backup depending on running state)        |
-| **Folders**          | Any arbitrary path on your server (e.g. `/mnt/user/appdata`, `/boot/config`) |
-| **Plugins**          | Installed Unraid plugins                                                     |
+| Category             | What's included                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------- |
+| **Containers**       | Docker containers (image, XML template, and all mapped appdata volumes); per-container path excludes |
+| **Virtual Machines** | libvirt VMs (live snapshot or cold backup depending on running state); NVRAM preserved              |
+| **ZFS datasets**     | Native `zfs send`/`receive` with snapshot management                                                |
+| **Folders**          | Any arbitrary path on your server (e.g. `/mnt/user/appdata`, `/boot/config`)                        |
+| **Plugins**          | Installed Unraid plugins                                                                            |
 
 **Notes on containers:**
 
 - Vault backs up the container image, its XML template, and all host paths mapped into the container.
 - Special files (Unix sockets, device nodes, named pipes) are skipped automatically — they cannot be archived and their presence does not fail the backup.
 - Tailscale-enabled containers are fully supported.
+- Bind-mounts that point at the host root (`/` → `/rootfs`, used by Glances, Telegraf, Netdata, cAdvisor, node-exporter) are detected and skipped without walking the host filesystem.
+
+**Excluding container sub-paths:**
+
+You can list paths to exclude from a container backup (e.g. `/config/Library/Application Support/Plex Media Server/Cache` or `/config/Sonarr/MediaCover`). The job wizard exposes a free-text list per container, and Vault ships a `GET /api/v1/presets/exclusions` catalogue of common rules for popular containers (Plex, Sonarr, Radarr, etc.) the UI offers as starting points.
+
+**Notes on ZFS datasets:**
+
+- Vault uses `zfs send` (full) and `zfs send -i` (incremental) under the hood and manages the snapshot lifecycle itself.
+- Restoration goes through `zfs receive`, preserving properties and child datasets.
+- The host `zfs` binary must be on `PATH` — true on any Unraid system with a ZFS pool.
 
 **Notes on folders:**
 
 - You can back up `/mnt/user/appdata` to get all container appdata in one shot without selecting individual containers.
 - Folder backups only wake the destination disk when writing — the source array is read sequentially.
-
-**Excluding container paths (coming soon):**
-The ability to exclude specific sub-directories from container backups (e.g. `/config/Library/Application Support/Plex Media Server/Cache`) is planned. Follow [GitHub issue ruaan-deysel/vault#11](https://github.com/ruaan-deysel/vault/issues/11) for progress.
 
 ---
 
@@ -83,17 +92,35 @@ The schedule UI uses your Unraid time format setting (12-hour or 24-hour) automa
 
 #### Retention
 
-Retention controls how many restore points are kept before the oldest is deleted.
+Retention controls how many restore points are kept before the oldest is deleted. Vault supports two modes; you can use either or both at once.
+
+**Mode 1 — Simple count**
 
 | Field                          | Description                                                                                                                                                                |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Keep last N restore points** | Vault keeps this many restore points per job. When a new backup completes and the count exceeds the limit, the oldest is pruned — including its backup files from storage. |
 
-Set retention based on how much storage you have and how far back you want to be able to restore:
+Good for "always keep my last 7 backups" type policies.
 
-- 7 daily backups → keep 7
-- 4 weekly backups → keep 4
-- A weekly full + 6 daily incrementals → keep 7, run two jobs (one weekly full, one daily incremental)
+**Mode 2 — Grandfather-Father-Son (GFS)**
+
+| Field             | Description                                                                                  |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| **Keep latest**   | Number of *most-recent* restore points kept unconditionally (independent of cadence)         |
+| **Keep daily**   | Number of distinct *days* to retain (one restore point per day)                              |
+| **Keep weekly**  | Number of distinct *weeks* (one restore point per week)                                      |
+| **Keep monthly** | Number of distinct *months* (one restore point per month)                                    |
+| **Keep yearly**  | Number of distinct *years* (one restore point per year)                                      |
+
+GFS lets you keep, say, "last 7 days + last 4 weeks + last 6 months + last 3 years" without paying for hundreds of restore points. The Job UI shows a *retention preview* — exactly which restore points the policy would prune on the next run — before you save.
+
+If you leave the GFS counters at 0 and set only *Keep last N*, classic simple-count retention applies. If both are configured, the union of the two policies wins (a restore point survives if either policy keeps it).
+
+Set retention based on storage budget and how far back you want to be able to restore:
+
+- 7 daily backups → simple count = 7
+- A weekly full + 6 daily incrementals → simple count = 7, two jobs (one weekly full, one daily incremental)
+- Year of history without storage bloat → GFS with `keep_daily=7`, `keep_weekly=4`, `keep_monthly=12`, `keep_yearly=3`
 
 ---
 
@@ -161,4 +188,39 @@ This removes both the backup files from storage and the restore point record fro
 
 ## Managing Stale Items
 
-If a container, VM, or folder is removed from Unraid after a job is created, Vault marks it as **"Not found"** in the job's item list. You can remove stale items from the job by clicking the **remove** button next to the flagged item.
+If a container, VM, ZFS dataset, or folder is removed from Unraid after a job is created, Vault marks it as **"Not found"** in the job's item list. Click the **remove** button next to the flagged item to drop it from the job. The Folder picker performs an async `os.Stat` (via `GET /api/v1/path-exists`) for every custom folder on mount, so legitimately valid paths aren't falsely flagged.
+
+---
+
+## Verification
+
+Every backup item is hashed with SHA-256 during the upload, and Vault stores the digest alongside the restore point. Two verification layers exist on top of that:
+
+- **Per-run verify** — when the job's *Verify backup* setting is on (default), each item is read back from storage at the end of the run and re-hashed. Mismatches fail the run.
+- **On-demand verify** — from the Restore page you can click *Verify* on any individual restore point at any time. The result, including per-item byte counts and errors, is stored under `verify_runs` and listed in the restore point's verify history.
+
+Both paths use the same code, so per-run and on-demand results are directly comparable.
+
+---
+
+## Encryption
+
+If you set a passphrase under **Settings → Security → Encryption**, all backup archives are encrypted with AES-256-GCM before they leave the host. The encryption key is derived from your passphrase and a per-installation salt; without the passphrase, restoring is not possible. Encryption is transparent to storage destinations — it applies equally to local, SFTP, SMB, NFS, WebDAV, and S3.
+
+The encryption status is shown on the Dashboard's 3-2-1 compliance widget, and on each restore point's chain-health badge.
+
+---
+
+## Deduplication
+
+When you enable *Dedup* on a storage destination, Vault chunks every backup with Keyed-FastCDC (256 KiB / 1 MiB / 4 MiB min/avg/max) and stores only one copy of each chunk in a per-destination dedup repo at `<dest>/_vault/packs/` and `<dest>/_vault/index/`. The repo's chunker is keyed off a 32-byte secret per destination, which closes the fingerprinting-attack class described in Truong et al. 2025 — observers without the secret can't recompute chunk boundaries from public corpora.
+
+Operational notes:
+
+- Each backup writes a per-item manifest into the dedup repo. The `manifest_id` (or `item_manifests` map for multi-item jobs) is stored on the restore point so restores can resolve chunks.
+- The Storage card shows live dedup stats (chunks, packs, logical/physical bytes, dedup ratio).
+- `vault dedup gc --dest <id>` (or `POST /api/v1/storage/{id}/gc`) runs mark-and-sweep GC: walks every live restore point's manifest, marks reachable chunks, then deletes packs whose every chunk is unreachable. Mixed packs are left in place.
+- `vault dedup repair --dest <id>` rebuilds the SQLite chunk/pack index from the on-storage `*.idx` blobs — use when the local DB is lost or corrupted but the destination is intact.
+- Dedup-mode and non-dedup destinations can coexist on the same Vault install; the flag is per-destination and immutable after creation.
+
+Imported backups (Storage → *Scan* + *Import*) carry per-item dedup manifest IDs in their `manifest.json`, so dedup restore points produced on one Vault instance can be re-discovered and restored on another.
