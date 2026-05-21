@@ -1,13 +1,17 @@
 package diagnostics
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/logbuf"
 	"github.com/ruaan-deysel/vault/internal/unraid"
 )
 
@@ -31,14 +35,18 @@ type StatusFunc func() RunnerStatus
 type Collector struct {
 	db       *db.DB
 	statusFn StatusFunc
+	logRing  *logbuf.Ring
 	version  string
 }
 
-// NewCollector creates a new diagnostic collector.
-func NewCollector(database *db.DB, statusFn StatusFunc, version string) *Collector {
+// NewCollector creates a new diagnostic collector. logRing may be nil
+// (older daemons that haven't wired the ring buffer); when nil, the
+// produced bundle simply omits the log tail.
+func NewCollector(database *db.DB, statusFn StatusFunc, version string, logRing *logbuf.Ring) *Collector {
 	return &Collector{
 		db:       database,
 		statusFn: statusFn,
+		logRing:  logRing,
 		version:  version,
 	}
 }
@@ -58,6 +66,7 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 			OS:        runtime.GOOS,
 			Arch:      runtime.GOARCH,
 			Hostname:  hostname,
+			Disks:     c.collectDiskUsage(),
 		},
 	}
 
@@ -65,79 +74,83 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 
 	// Database info.
 	bundle.Database = c.collectDatabaseInfo()
-	entries = append(entries, DiagnosticEntry{
-		Timestamp:     now,
-		Level:         LevelInfo,
-		Message:       "Database info collected",
-		CorrelationID: correlationID,
-		Service:       "database",
-		Host:          hostname,
-		Context: map[string]string{
-			"path": bundle.Database.Path,
-			"mode": bundle.Database.Mode,
-		},
-	})
+	entries = append(entries, infoEntry(now, correlationID, hostname, "database",
+		"Database info collected",
+		map[string]string{"path": bundle.Database.Path, "mode": bundle.Database.Mode}))
+
+	// Settings dump — credential-free snapshot of operational config.
+	bundle.Settings = c.collectSettings()
+	entries = append(entries, infoEntry(now, correlationID, hostname, "settings",
+		"Settings snapshot collected", nil))
 
 	// Storage destinations.
 	if dests, err := c.db.ListStorageDestinations(); err == nil {
 		for _, d := range dests {
-			bundle.Storage = append(bundle.Storage, StorageInfo{
-				ID:     d.ID,
-				Name:   d.Name,
-				Type:   d.Type,
-				Config: RedactJSON(d.Config),
-			})
+			si := StorageInfo{
+				ID:                    d.ID,
+				Name:                  d.Name,
+				Type:                  d.Type,
+				Config:                RedactJSON(d.Config),
+				DedupEnabled:          d.DedupEnabled,
+				LastHealthCheckAt:     d.LastHealthCheckAt,
+				LastHealthCheckStatus: d.LastHealthCheckStatus,
+				LastHealthCheckError:  d.LastHealthCheckError,
+			}
+			bundle.Storage = append(bundle.Storage, si)
 		}
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelInfo,
-			Message:       fmt.Sprintf("Found %d storage destination(s)", len(dests)),
-			CorrelationID: correlationID,
-			Service:       "storage",
-			Host:          hostname,
-		})
+		entries = append(entries, infoEntry(now, correlationID, hostname, "storage",
+			fmt.Sprintf("Found %d storage destination(s)", len(dests)), nil))
 	} else {
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelError,
-			Message:       fmt.Sprintf("Failed to list storage destinations: %v", err),
-			CorrelationID: correlationID,
-			Service:       "storage",
-			Host:          hostname,
-		})
+		entries = append(entries, errEntry(now, correlationID, hostname, "storage",
+			fmt.Sprintf("Failed to list storage destinations: %v", err)))
 	}
 
-	// Jobs with item counts.
+	// Jobs + per-job items.
 	if jobs, err := c.db.ListJobs(); err == nil {
 		for _, j := range jobs {
 			ji := JobInfo{
-				ID:       j.ID,
-				Name:     j.Name,
-				Schedule: j.Schedule,
-				Enabled:  j.Enabled,
+				ID:                j.ID,
+				Name:              j.Name,
+				Schedule:          j.Schedule,
+				Enabled:           j.Enabled,
+				BackupTypeChain:   j.BackupTypeChain,
+				Compression:       j.Compression,
+				HasEncryption:     strings.TrimSpace(j.Encryption) != "" && j.Encryption != "none",
+				ContainerMode:     j.ContainerMode,
+				VMMode:            j.VMMode,
+				NotifyOn:          j.NotifyOn,
+				VerifyBackup:      j.VerifyBackup,
+				VerifySchedule:    j.VerifySchedule,
+				VerifyMode:        j.VerifyMode,
+				DeferRemoteUpload: j.DeferRemoteUpload,
+				RetentionCount:    j.RetentionCount,
+				RetentionDays:     j.RetentionDays,
+				KeepLatest:        j.KeepLatest,
+				KeepDaily:         j.KeepDaily,
+				KeepWeekly:        j.KeepWeekly,
+				KeepMonthly:       j.KeepMonthly,
+				KeepYearly:        j.KeepYearly,
+				StorageDestID:     j.StorageDestID,
 			}
 			if items, err := c.db.GetJobItems(j.ID); err == nil {
 				ji.ItemCount = len(items)
+				for _, it := range items {
+					ji.Items = append(ji.Items, JobItemInfo{
+						ID:       it.ID,
+						ItemType: it.ItemType,
+						ItemName: it.ItemName,
+						ItemID:   it.ItemID,
+						Settings: RedactJSON(it.Settings),
+					})
+				}
 			}
 			bundle.Jobs = append(bundle.Jobs, ji)
 		}
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelInfo,
-			Message:       fmt.Sprintf("Found %d job(s)", len(jobs)),
-			CorrelationID: correlationID,
-			Service:       "jobs",
-			Host:          hostname,
-		})
+		entries = append(entries, infoEntry(now, correlationID, hostname, "jobs",
+			fmt.Sprintf("Found %d job(s)", len(jobs)), nil))
 	} else {
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelError,
-			Message:       fmt.Sprintf("Failed to list jobs: %v", err),
-			CorrelationID: correlationID,
-			Service:       "jobs",
-			Host:          hostname,
-		})
+		entries = append(entries, errEntry(now, correlationID, hostname, "jobs",
+			fmt.Sprintf("Failed to list jobs: %v", err)))
 	}
 
 	// Recent runs (last 50 across all jobs).
@@ -147,35 +160,29 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 				ID:           r.ID,
 				JobID:        r.JobID,
 				Status:       r.Status,
+				BackupType:   r.BackupType,
 				RunType:      r.RunType,
 				StartedAt:    r.StartedAt,
 				CompletedAt:  r.CompletedAt,
 				ItemsTotal:   r.ItemsTotal,
 				ItemsSuccess: r.ItemsDone,
 				ItemsFailed:  r.ItemsFailed,
+				SizeBytes:    r.SizeBytes,
+				Log:          r.Log,
 			}
-			if r.Log != "" {
-				ri.ErrorMessage = r.Log
+			if r.CompletedAt != nil {
+				ri.DurationSeconds = int(r.CompletedAt.Sub(r.StartedAt).Seconds())
+			}
+			if r.Status == "failed" {
+				ri.ErrorMessages = extractRunErrors(r.Log)
 			}
 			bundle.Runs = append(bundle.Runs, ri)
 		}
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelInfo,
-			Message:       fmt.Sprintf("Collected %d recent run(s)", len(runs)),
-			CorrelationID: correlationID,
-			Service:       "runner",
-			Host:          hostname,
-		})
+		entries = append(entries, infoEntry(now, correlationID, hostname, "runner",
+			fmt.Sprintf("Collected %d recent run(s)", len(runs)), nil))
 	} else {
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelError,
-			Message:       fmt.Sprintf("Failed to list recent runs: %v", err),
-			CorrelationID: correlationID,
-			Service:       "runner",
-			Host:          hostname,
-		})
+		entries = append(entries, errEntry(now, correlationID, hostname, "runner",
+			fmt.Sprintf("Failed to list recent runs: %v", err)))
 	}
 
 	// Activity logs (last 200).
@@ -184,27 +191,17 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 			bundle.Activity = append(bundle.Activity, ActivityInfo{
 				ID:        l.ID,
 				Level:     l.Level,
+				Category:  l.Category,
 				Message:   l.Message,
+				Details:   l.Details,
 				CreatedAt: l.CreatedAt,
 			})
 		}
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelInfo,
-			Message:       fmt.Sprintf("Collected %d activity log(s)", len(logs)),
-			CorrelationID: correlationID,
-			Service:       "activity",
-			Host:          hostname,
-		})
+		entries = append(entries, infoEntry(now, correlationID, hostname, "activity",
+			fmt.Sprintf("Collected %d activity log(s)", len(logs)), nil))
 	} else {
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelWarn,
-			Message:       fmt.Sprintf("Failed to list activity logs: %v", err),
-			CorrelationID: correlationID,
-			Service:       "activity",
-			Host:          hostname,
-		})
+		entries = append(entries, warnEntry(now, correlationID, hostname, "activity",
+			fmt.Sprintf("Failed to list activity logs: %v", err)))
 	}
 
 	// Runner status.
@@ -224,23 +221,21 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 				Interval: s.Schedule,
 			})
 		}
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelInfo,
-			Message:       fmt.Sprintf("Found %d replication source(s)", len(sources)),
-			CorrelationID: correlationID,
-			Service:       "replication",
-			Host:          hostname,
-		})
+		entries = append(entries, infoEntry(now, correlationID, hostname, "replication",
+			fmt.Sprintf("Found %d replication source(s)", len(sources)), nil))
 	} else {
-		entries = append(entries, DiagnosticEntry{
-			Timestamp:     now,
-			Level:         LevelWarn,
-			Message:       fmt.Sprintf("Failed to list replication sources: %v", err),
-			CorrelationID: correlationID,
-			Service:       "replication",
-			Host:          hostname,
-		})
+		entries = append(entries, warnEntry(now, correlationID, hostname, "replication",
+			fmt.Sprintf("Failed to list replication sources: %v", err)))
+	}
+
+	// Daemon log tail. Always redacted before embedding.
+	if c.logRing != nil {
+		snap := c.logRing.Snapshot()
+		if len(snap) > 0 {
+			bundle.LogTail = string(RedactLogLines(snap))
+			entries = append(entries, infoEntry(now, correlationID, hostname, "logbuf",
+				fmt.Sprintf("Captured %d byte(s) of daemon log", len(bundle.LogTail)), nil))
+		}
 	}
 
 	bundle.Entries = entries
@@ -266,4 +261,145 @@ func (c *Collector) collectDatabaseInfo() DatabaseInfo {
 	}
 
 	return info
+}
+
+// collectSettings extracts an operationally-interesting subset of the
+// settings table with all credentials reduced to existence booleans.
+func (c *Collector) collectSettings() SettingsInfo {
+	get := func(k, def string) string {
+		v, err := c.db.GetSetting(k, def)
+		if err != nil {
+			return def
+		}
+		return v
+	}
+	hasNonempty := func(k string) bool { return strings.TrimSpace(get(k, "")) != "" }
+	asBool := func(k string, def bool) bool {
+		v := get(k, "")
+		if v == "" {
+			return def
+		}
+		// Settings store stringified bools — match the convention used
+		// elsewhere in the codebase ("false" disables the feature).
+		return v != "false" && v != "0" && v != "off"
+	}
+	return SettingsInfo{
+		EncryptionConfigured:   hasNonempty("encryption_passphrase") || hasNonempty("encryption_passphrase_sealed"),
+		APIKeyConfigured:       hasNonempty("api_key_hash"),
+		StagingDirOverride:     get("staging_dir_override", ""),
+		SnapshotPathOverride:   get("snapshot_path_override", ""),
+		ContainerBackupEnabled: asBool("container_backup_enabled", true),
+		VMBackupEnabled:        asBool("vm_backup_enabled", true),
+		FlashBackupEnabled:     asBool("flash_backup_enabled", true),
+		TimeFormat:             get("time_format", ""),
+		NotificationProvider:   get("notification_provider", ""),
+	}
+}
+
+// collectDiskUsage probes the paths Vault depends on. Stat failures
+// produce an entry with Error set so support tickets can tell "not
+// mounted / wrong path" apart from "100 % full".
+func (c *Collector) collectDiskUsage() []DiskUsage {
+	// Build the candidate set lazily from settings so the snapshot
+	// reflects the actual staging dir, not a guess.
+	paths := []string{"/boot", "/tmp", "/var/local/vault"}
+	if dbPath := c.db.Path(); dbPath != "" {
+		paths = append(paths, dbDir(dbPath))
+	}
+	if staging, err := c.db.GetSetting("staging_dir_override", ""); err == nil && staging != "" {
+		paths = append(paths, staging)
+	}
+	if snap, err := c.db.GetSetting("snapshot_path_override", ""); err == nil && snap != "" {
+		paths = append(paths, dbDir(snap))
+	}
+	paths = append(paths, unraid.DiscoverPools()...)
+
+	seen := make(map[string]bool, len(paths))
+	out := make([]DiskUsage, 0, len(paths))
+	for _, p := range paths {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, probeDisk(p))
+	}
+	return out
+}
+
+// probeDisk runs statfs on path and returns capacity, free, and a
+// crude used percentage. Path-missing and permission-denied errors are
+// captured as the entry's Error field rather than swallowed so support
+// reports show the discrepancy.
+func probeDisk(path string) DiskUsage {
+	d := DiskUsage{Path: path}
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		d.Error = err.Error()
+		return d
+	}
+	d.TotalBytes = stat.Blocks * uint64(stat.Bsize) //nolint:gosec // bsize is non-negative
+	d.FreeBytes = stat.Bavail * uint64(stat.Bsize)  //nolint:gosec // bsize is non-negative
+	if d.TotalBytes > 0 {
+		used := d.TotalBytes - d.FreeBytes
+		d.UsedPct = int((used * 100) / d.TotalBytes)
+	}
+	return d
+}
+
+// dbDir returns the directory containing a database file path.
+func dbDir(path string) string {
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' {
+			return path[:i]
+		}
+	}
+	return path
+}
+
+// extractRunErrors pulls error strings out of the run.log column, which
+// is a JSON array of per-item objects. Returns nil if the log isn't
+// valid JSON (older runs may have plain-text logs). Used to surface
+// failure messages without forcing operators to grep through the raw
+// JSON.
+func extractRunErrors(logJSON string) []string {
+	if logJSON == "" {
+		return nil
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(logJSON), &items); err != nil {
+		return nil
+	}
+	var errs []string
+	for _, it := range items {
+		if msg, ok := it["error"].(string); ok && msg != "" {
+			name, _ := it["name"].(string)
+			if name != "" {
+				errs = append(errs, fmt.Sprintf("%s: %s", name, msg))
+			} else {
+				errs = append(errs, msg)
+			}
+		}
+	}
+	return errs
+}
+
+func infoEntry(t time.Time, cid, host, service, msg string, ctx map[string]string) DiagnosticEntry {
+	return DiagnosticEntry{
+		Timestamp: t, Level: LevelInfo, CorrelationID: cid,
+		Service: service, Host: host, Message: msg, Context: ctx,
+	}
+}
+
+func warnEntry(t time.Time, cid, host, service, msg string) DiagnosticEntry {
+	return DiagnosticEntry{
+		Timestamp: t, Level: LevelWarn, CorrelationID: cid,
+		Service: service, Host: host, Message: msg,
+	}
+}
+
+func errEntry(t time.Time, cid, host, service, msg string) DiagnosticEntry {
+	return DiagnosticEntry{
+		Timestamp: t, Level: LevelError, CorrelationID: cid,
+		Service: service, Host: host, Message: msg,
+	}
 }

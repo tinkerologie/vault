@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -18,12 +19,20 @@ import (
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/diagnostics"
 	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/ruaan-deysel/vault/internal/logbuf"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
 	"github.com/ruaan-deysel/vault/internal/unraid"
 	"github.com/spf13/cobra"
 )
+
+// daemonLogBufferBytes caps the in-memory log ring used by the
+// diagnostics bundle. 1 MiB ≈ the last few thousand log lines — enough
+// to cover a typical multi-job nightly run end-to-end while staying
+// well under the daemon's RSS budget. Sized once at package level so
+// tests can override via the unexported var if needed.
+const daemonLogBufferBytes = 1 << 20
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
@@ -33,6 +42,16 @@ var daemonCmd = &cobra.Command{
 		addr, _ := cmd.Flags().GetString("addr")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
+
+		// Tee the standard logger into an in-memory ring buffer so the
+		// diagnostics bundle can include the last ~1 MiB of daemon log
+		// output. Wired here at the very top of RunE so every
+		// subsequent log.Printf is captured, including pool-discovery
+		// and DB-restoration messages that are critical for support
+		// reports. The ring buffer write path is always-nil-safe and
+		// the original stderr destination is preserved.
+		logRing := logbuf.New(daemonLogBufferBytes)
+		log.SetOutput(io.MultiWriter(os.Stderr, logRing))
 
 		// Hybrid mode detection: if a pool drive is mounted, use a RAM-backed
 		// working database with periodic snapshots to the pool drive. This
@@ -311,7 +330,7 @@ var daemonCmd = &cobra.Command{
 				CurrentItem:     s.CurrentItem,
 				CurrentItemType: s.CurrentItemType,
 			}
-		}, version)
+		}, version, logRing)
 		srv.SettingsHandler().SetDiagnosticsCollector(diagCollector)
 
 		// Start the scheduler with the backup runner.

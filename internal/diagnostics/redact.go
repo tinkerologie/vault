@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -124,6 +125,74 @@ func RedactURL(rawURL string) string {
 	}
 	u.User = url.User(redactedPlaceholder)
 	return u.String()
+}
+
+// logRedactPattern bundles a regex with its replacement template so
+// some patterns can preserve more than just the leading capture group
+// (e.g. URL credentials need the trailing `@host` kept).
+type logRedactPattern struct {
+	re   *regexp.Regexp
+	repl string
+}
+
+// logRedactPatterns scrub credentials from captured log lines before
+// embedding them in the diagnostics bundle. Order matters: the
+// `Authorization:` header pattern fires before the more specific
+// `Credential=` pattern would, which is fine because each pass
+// preserves the header name and only the secret value is replaced.
+//
+// IMPORTANT: only add patterns here. Removing one widens what we leak
+// to support tickets. All callers of RedactLogLines depend on this list
+// being complete; a regression test in redact_test.go pins each pattern.
+var logRedactPatterns = []logRedactPattern{
+	// Generic auth headers — value runs to next whitespace/end-of-line.
+	// Run BEFORE the SigV4 Credential= pattern because Authorization
+	// header values often contain `Credential=AKIA...`; redacting the
+	// whole header value here makes the secondary pattern a no-op for
+	// the same line.
+	{regexp.MustCompile(`(?i)(Authorization:\s*).*`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)(X-API-Key:\s*)\S+`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)(Proxy-Authorization:\s*)\S+`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)(Cookie:\s*)[^\r\n]+`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)(Set-Cookie:\s*)[^\r\n]+`), `${1}` + redactedPlaceholder},
+	// AWS SigV4 credential outside Authorization header (e.g. in URL
+	// query strings or debug-dumped canonical requests).
+	{regexp.MustCompile(`(?i)(AWS4-HMAC-SHA256\s+Credential=)[A-Z0-9]+`), `${1}` + redactedPlaceholder},
+	// JSON/query-string credential fields.
+	{regexp.MustCompile(`(?i)("?password"?\s*[:=]\s*"?)[^"\s,&}]+`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)("?secret[_-]?key"?\s*[:=]\s*"?)[^"\s,&}]+`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)("?access[_-]?key"?\s*[:=]\s*"?)[^"\s,&}]+`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)("?api[_-]?key"?\s*[:=]\s*"?)[^"\s,&}]+`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)("?passphrase"?\s*[:=]\s*"?)[^"\s,&}]+`), `${1}` + redactedPlaceholder},
+	{regexp.MustCompile(`(?i)("?token"?\s*[:=]\s*"?)[^"\s,&}]+`), `${1}` + redactedPlaceholder},
+	// Inline URL credentials: `https://user:pass@host/`. Preserve scheme
+	// and the `@host` suffix so the reader can still see which endpoint
+	// was being contacted.
+	{regexp.MustCompile(`(https?://)([^:/@\s]+):([^@\s]+)@`), `${1}` + redactedPlaceholder + `@`},
+	// Discord webhook URLs are sensitive end-to-end (the token IS in
+	// the path). Catch them anywhere in a log line, not just the
+	// structured notification path.
+	{regexp.MustCompile(`(discord(?:app)?\.com/api/webhooks/\d+/)\S+`), `${1}` + redactedPlaceholder},
+}
+
+// RedactLogLines scrubs credentials and secrets from captured log
+// output before it's written into a diagnostics bundle. Operates on
+// the entire buffer in one pass — efficient for the ~1 MiB ring-buffer
+// snapshots the collector produces.
+//
+// Each pattern in logRedactPatterns has its own replacement template
+// so patterns can preserve more than just the prefix (e.g. URL
+// credentials keep the trailing `@host` so the reader can still see
+// which endpoint was being contacted).
+func RedactLogLines(input []byte) []byte {
+	if len(input) == 0 {
+		return input
+	}
+	out := input
+	for _, p := range logRedactPatterns {
+		out = p.re.ReplaceAll(out, []byte(p.repl))
+	}
+	return out
 }
 
 // RedactDiscordWebhook replaces the webhook token in a Discord URL.

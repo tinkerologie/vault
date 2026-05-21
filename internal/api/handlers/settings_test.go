@@ -223,7 +223,7 @@ func TestGetDiagnostics(t *testing.T) {
 	statusFn := func() diagnostics.RunnerStatus {
 		return diagnostics.RunnerStatus{Active: false}
 	}
-	collector := diagnostics.NewCollector(h.db, statusFn, "test-version")
+	collector := diagnostics.NewCollector(h.db, statusFn, "test-version", nil)
 	h.SetDiagnosticsCollector(collector)
 
 	req := httptest.NewRequest("GET", "/api/v1/settings/diagnostics", nil)
@@ -256,11 +256,20 @@ func TestGetDiagnostics(t *testing.T) {
 		t.Fatalf("parsing zip: %v", err)
 	}
 
-	if len(zr.File) != 1 || zr.File[0].Name != "diagnostics.json" {
-		t.Fatalf("unexpected zip contents: got %d files", len(zr.File))
+	// The split layout produces multiple JSON files; find and decode
+	// diagnostics.json as the top-level summary.
+	var summary *zip.File
+	for _, f := range zr.File {
+		if f.Name == "diagnostics.json" {
+			summary = f
+			break
+		}
+	}
+	if summary == nil {
+		t.Fatalf("diagnostics.json missing from zip (got %d files)", len(zr.File))
 	}
 
-	f, err := zr.File[0].Open()
+	f, err := summary.Open()
 	if err != nil {
 		t.Fatalf("opening zip entry: %v", err)
 	}

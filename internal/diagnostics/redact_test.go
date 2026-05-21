@@ -175,3 +175,122 @@ func TestIsSensitiveKey(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactLogLines(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		mustNot []string // substrings that MUST NOT appear in the output
+		must    []string // substrings that MUST appear (preserved prefix etc.)
+	}{
+		// Fixture values are deliberately synthetic (lowercase, dashes)
+		// so the repo's pre-commit secret scanner doesn't flag them as
+		// real credentials. Pattern matching is case-insensitive so
+		// these still exercise the production path.
+		{
+			// Authorization header's whole value gets blanked (preferred —
+			// the value is one big secret), so any access-key buried in
+			// `Credential=` is also gone. The reader still sees the
+			// `Authorization:` prefix and the redacted marker.
+			name:    "Authorization header with sigv4",
+			input:   `Authorization: aws4-hmac-sha256 Credential=fake-access-key-1/20260521/us-east-1/s3/aws4_request, SignedHeaders=host`,
+			mustNot: []string{"fake-access-key-1", "aws4-hmac-sha256", "SignedHeaders=host"},
+			must:    []string{"Authorization:", "[REDACTED]"},
+		},
+		{
+			// Standalone Credential= outside a header (e.g. in a debug
+			// dump of the canonical request) is caught by the secondary
+			// pattern.
+			name:    "standalone sigv4 credential",
+			input:   `canonical request: GET\n/?X-Amz-Algorithm=aws4-hmac-sha256 Credential=fake-access-key-1&X-Amz-Date=...`,
+			mustNot: []string{"fake-access-key-1"},
+			must:    []string{"aws4-hmac-sha256 Credential=", "[REDACTED]"},
+		},
+		{
+			name:    "X-API-Key header",
+			input:   `2026/05/21 10:00:00 X-API-Key: fake-vault-token-1`,
+			mustNot: []string{"fake-vault-token-1"},
+			must:    []string{"X-API-Key:", "[REDACTED]"},
+		},
+		{
+			name:    "JSON password",
+			input:   `{"username":"vault","password":"fake-pass-1","url":"http://x"}`,
+			mustNot: []string{"fake-pass-1"},
+			must:    []string{`"password"`, `"username":"vault"`, "[REDACTED]"},
+		},
+		{
+			name:    "JSON secret_key",
+			input:   `"access_key":"fake-ak","secret_key":"fake-sk-1"`,
+			mustNot: []string{"fake-sk-1"},
+			must:    []string{`"secret_key"`, "[REDACTED]"},
+		},
+		{
+			name:    "inline URL credentials",
+			input:   `dial tcp https://admin:fake-pass-1@nas.local:5000/webdav`,
+			mustNot: []string{"fake-pass-1", "admin:fake-pass-1"},
+			must:    []string{"https://", "@nas.local", "[REDACTED]"},
+		},
+		{
+			name:    "discord webhook in log",
+			input:   `notify: posting to https://discord.com/api/webhooks/123456/fake-discord-token-1`,
+			mustNot: []string{"fake-discord-token-1"},
+			must:    []string{"discord.com/api/webhooks/123456/", "[REDACTED]"},
+		},
+		{
+			name:    "cookie header",
+			input:   `Cookie: session=fake-session-1; other=xyz`,
+			mustNot: []string{"session=fake-session-1"},
+			must:    []string{"Cookie:", "[REDACTED]"},
+		},
+		{
+			name:    "passphrase",
+			input:   `{"passphrase":"fake passphrase value"}`,
+			mustNot: []string{"fake passphrase value"},
+			must:    []string{`"passphrase"`, "[REDACTED]"},
+		},
+		{
+			name:    "no-op when no secrets",
+			input:   `runner: job 24 run 31 finished: completed (done=14, failed=0, size=5462181524)`,
+			mustNot: []string{"[REDACTED]"}, // nothing should be redacted
+			must:    []string{"job 24", "done=14"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := string(RedactLogLines([]byte(tt.input)))
+			for _, s := range tt.mustNot {
+				if contains(got, s) {
+					t.Errorf("output still contains %q\ninput:  %s\noutput: %s", s, tt.input, got)
+				}
+			}
+			for _, s := range tt.must {
+				if !contains(got, s) {
+					t.Errorf("output missing required %q\ninput:  %s\noutput: %s", s, tt.input, got)
+				}
+			}
+		})
+	}
+}
+
+func TestRedactLogLinesEmpty(t *testing.T) {
+	t.Parallel()
+	if got := RedactLogLines(nil); got != nil {
+		t.Fatalf("nil in → got %v, want nil", got)
+	}
+	if got := RedactLogLines([]byte{}); len(got) != 0 {
+		t.Fatalf("empty in → got %v, want empty", got)
+	}
+}
+
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
