@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -504,4 +505,61 @@ func (d *DB) GetLastRestorePoint(jobID int64) (RestorePoint, error) {
 func (d *DB) SetRestorePointManifestID(restorePointID int64, manifestID []byte) error {
 	_, err := d.Exec(`UPDATE restore_points SET manifest_id = ? WHERE id = ?`, manifestID, restorePointID)
 	return err
+}
+
+// DueRetry describes a job_run row that is eligible to be retried.
+type DueRetry struct {
+	OriginalRunID int64
+	JobID         int64
+	AttemptSoFar  int // the retry_attempt value of the original run
+}
+
+// ClaimDueRetries atomically grabs all job_runs whose retry_next_at has
+// expired, clearing their retry_next_at so they cannot be claimed twice.
+// Returns descriptors the scheduler can dispatch.
+//
+// Implementation: SELECT candidates, then UPDATE each one with a WHERE
+// clause that requires retry_next_at to still be non-null. Only the
+// caller that wins the race gets RowsAffected = 1.
+func (d *DB) ClaimDueRetries() ([]DueRetry, error) {
+	rows, err := d.Query(`
+		SELECT id, job_id, COALESCE(retry_attempt, 0)
+		  FROM job_runs
+		 WHERE status = 'failed'
+		   AND retry_next_at IS NOT NULL
+		   AND retry_next_at <= CURRENT_TIMESTAMP
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("listing due retries: %w", err)
+	}
+	var candidates []DueRetry
+	for rows.Next() {
+		var dr DueRetry
+		if err := rows.Scan(&dr.OriginalRunID, &dr.JobID, &dr.AttemptSoFar); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		candidates = append(candidates, dr)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	claimed := make([]DueRetry, 0, len(candidates))
+	for _, c := range candidates {
+		res, err := d.Exec(
+			`UPDATE job_runs SET retry_next_at = NULL
+			  WHERE id = ? AND retry_next_at IS NOT NULL`,
+			c.OriginalRunID,
+		)
+		if err != nil {
+			log.Printf("retry watcher: claim run %d: %v", c.OriginalRunID, err)
+			continue
+		}
+		n, _ := res.RowsAffected()
+		if n == 1 {
+			claimed = append(claimed, c)
+		}
+	}
+	return claimed, nil
 }

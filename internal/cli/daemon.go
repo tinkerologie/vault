@@ -374,6 +374,12 @@ var daemonCmd = &cobra.Command{
 			srv.Runner().RunScheduledVerify(jobID, mode)
 		})
 
+		// Retry watcher dispatcher (Task 8): polls job_runs.retry_next_at
+		// every minute, atomically claims expired rows, and fires retries.
+		sched.SetRetryDispatcher(func(jobID, originalRunID int64, attempt int) {
+			srv.Runner().RunJobRetry(jobID, originalRunID, attempt)
+		})
+
 		if err := sched.Start(); err != nil {
 			log.Printf("Warning: scheduler failed to start: %v", err)
 		}

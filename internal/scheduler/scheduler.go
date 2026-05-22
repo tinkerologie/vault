@@ -27,6 +27,11 @@ type HealthChecker func()
 // not need to depend on the runner package.
 type VerifyRunner func(jobID int64, mode string)
 
+// RetryDispatcher is called once per due retry. The daemon wires this
+// into Runner.RunJobRetry. Kept as a hook so scheduler does not depend
+// on the runner package.
+type RetryDispatcher func(jobID, originalRunID int64, attempt int)
+
 // Scheduler manages cron entries for backup jobs and replication sources.
 type Scheduler struct {
 	cron              *cron.Cron
@@ -35,6 +40,7 @@ type Scheduler struct {
 	replicationRunner ReplicationRunner
 	healthChecker     HealthChecker
 	verifyRunner      VerifyRunner
+	retryDispatcher   RetryDispatcher
 	entries           map[int64]cron.EntryID
 	lastDayEntries    map[int64]cron.EntryID // daily-trigger entries for L (last day) schedules
 	verifyEntries     map[int64]cron.EntryID
@@ -78,6 +84,14 @@ func (s *Scheduler) SetVerifyRunner(fn VerifyRunner) {
 	s.verifyRunner = fn
 }
 
+// SetRetryDispatcher installs the callback used by the retry watcher.
+// Must be called before Start() for the watcher cron entry to register.
+func (s *Scheduler) SetRetryDispatcher(fn RetryDispatcher) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retryDispatcher = fn
+}
+
 func (s *Scheduler) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,6 +122,13 @@ func (s *Scheduler) Start() error {
 	if s.healthChecker != nil {
 		if _, err := s.cron.AddFunc("30 3 * * *", s.healthChecker); err != nil {
 			log.Printf("Warning: failed to schedule daily storage health check: %v", err)
+		}
+	}
+
+	// Retry watcher: every minute, claim due retries and dispatch them.
+	if s.retryDispatcher != nil {
+		if _, err := s.cron.AddFunc("@every 1m", s.fireDueRetries); err != nil {
+			log.Printf("Warning: failed to schedule retry watcher: %v", err)
 		}
 	}
 
@@ -265,6 +286,26 @@ func (s *Scheduler) addReplicationSource(src db.ReplicationSource) {
 		return
 	}
 	s.replEntries[src.ID] = entryID
+}
+
+// fireDueRetries is the cron tick body for the retry watcher. It claims
+// every job_run whose retry_next_at has expired and dispatches each one
+// via the configured RetryDispatcher.
+func (s *Scheduler) fireDueRetries() {
+	claimed, err := s.db.ClaimDueRetries()
+	if err != nil {
+		log.Printf("retry watcher: %v", err)
+		return
+	}
+	for _, c := range claimed {
+		log.Printf("retry watcher: dispatching job %d retry attempt %d (orig run %d)",
+			c.JobID, c.AttemptSoFar+1, c.OriginalRunID)
+		// Goroutine so a slow runner.RunJobRetry doesn't block the cron
+		// loop for other retries. RunJobRetry itself is serialised by
+		// the runner's internal mutex.
+		c := c // capture
+		go s.retryDispatcher(c.JobID, c.OriginalRunID, c.AttemptSoFar+1)
+	}
 }
 
 func (s *Scheduler) NextRun(jobID int64) (string, bool) {
