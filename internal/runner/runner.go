@@ -2994,36 +2994,6 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 	}
 }
 
-// backupDatabase copies the SQLite database file to a centralized location
-// in storage (_vault/vault.db). This protects against database loss and
-// enables disaster recovery from storage alone. A single copy is maintained
-// per storage destination, avoiding duplicate backups across job runs.
-func (r *Runner) backupDatabase(dest db.StorageDestination) {
-	dbPath := r.db.Path()
-	if dbPath == "" || dbPath == ":memory:" {
-		return
-	}
-
-	f, err := os.Open(dbPath) // #nosec G304 — dbPath from r.db.Path(), set at daemon startup
-	if err != nil {
-		log.Printf("runner: failed to open database for backup: %v", err)
-		return
-	}
-	defer f.Close()
-
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
-	if err != nil {
-		log.Printf("runner: failed to create adapter for db backup: %v", err)
-		return
-	}
-	defer storage.CloseAdapter(adapter)
-
-	const destPath = "_vault/vault.db"
-	if err := adapter.Write(destPath, f); err != nil {
-		log.Printf("runner: failed to backup database to %s: %v", destPath, err)
-	}
-}
-
 // enforceRetentionGFS deletes restore points that are not protected by the
 // grandfather-father-son policy. Chain-ancestor protection mirrors the
 // classic enforceRetention path: any parent restore point still required by

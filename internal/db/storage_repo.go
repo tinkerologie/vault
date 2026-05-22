@@ -144,6 +144,23 @@ func (d *DB) DeleteStorageDestination(id int64) error {
 	return err
 }
 
+// ListDBBackupDestinations returns all destinations with
+// backup_database_enabled=1. Used by the runner to fan out the DB
+// backup after each successful job.
+func (d *DB) ListDBBackupDestinations() ([]StorageDestination, error) {
+	all, err := d.ListStorageDestinations()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StorageDestination, 0)
+	for _, dest := range all {
+		if dest.BackupDatabaseEnabled {
+			out = append(out, dest)
+		}
+	}
+	return out, nil
+}
+
 // CountJobsByStorageDestID returns the number of jobs that reference the
 // given storage destination.
 func (d *DB) CountJobsByStorageDestID(storageDestID int64) (int, error) {
