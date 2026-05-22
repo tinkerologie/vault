@@ -3,7 +3,7 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { formatBytes, formatDate, parseConfig, relTime } from '../lib/utils.js'
+  import { formatBytes, formatDate, formatDateCompact, parseConfig, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
@@ -457,8 +457,8 @@
             </div>
           {/if}
 
-          <div class="flex flex-wrap items-center gap-x-2 gap-y-2 pt-3 border-t border-border">
-            <span class="text-xs text-text-dim whitespace-nowrap">{formatDate(dest.created_at)}</span>
+          <div class="flex items-center gap-2 pt-3 border-t border-border">
+            <span class="text-xs text-text-dim whitespace-nowrap" title={formatDate(dest.created_at)}>{formatDateCompact(dest.created_at)}</span>
             {#if jobCount > 0}
               <span class="text-xs px-2.5 py-1 rounded-full bg-vault/10 text-vault font-medium whitespace-nowrap">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
             {:else}
@@ -474,7 +474,7 @@
             <button
               onclick={() => testConnection(dest.id)}
               disabled={testing === dest.id}
-              class="text-xs px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap min-w-[88px] text-center inline-flex items-center justify-center gap-1 ml-auto
+              class="ml-auto shrink-0 text-xs px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap min-w-[88px] text-center inline-flex items-center justify-center gap-1
                 {tr
                   ? (tr.success ? 'bg-success/10 text-success hover:bg-success/20' : 'bg-danger/10 text-danger hover:bg-danger/20')
                   : 'bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text'}"

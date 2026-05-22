@@ -25,6 +25,27 @@ export function formatDate(str) {
   })
 }
 
+/**
+ * Compact variant of formatDate — drops the year and uses a numeric hour
+ * (no leading zero). Roughly 30-40% narrower than formatDate. Useful in
+ * tight horizontal rows like card footers where the full date would push
+ * adjacent elements to wrap. Pair with `title={formatDate(str)}` so the
+ * full date stays available on hover.
+ */
+export function formatDateCompact(str) {
+  if (!str) return '—'
+  const d = new Date(str)
+  if (isNaN(d.getTime())) return '—'
+  const hour12 = getHour12()
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    ...(hour12 !== undefined && { hour12 }),
+  })
+}
+
 /** Format hour + minute into a clock time string respecting the configured time format */
 export function formatClockTime(h, m) {
   const hour12 = getHour12()
