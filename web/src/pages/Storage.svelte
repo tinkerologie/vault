@@ -457,26 +457,24 @@
             </div>
           {/if}
 
-          <div class="flex items-center justify-between gap-3 pt-3 border-t border-border">
-            <div class="flex items-center gap-2 min-w-0">
-              <span class="text-xs text-text-dim whitespace-nowrap">{formatDate(dest.created_at)}</span>
-              {#if jobCount > 0}
-                <span class="text-xs px-2.5 py-1 rounded-full bg-vault/10 text-vault font-medium whitespace-nowrap">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
-              {:else}
-                <span class="text-xs text-text-dim whitespace-nowrap">No jobs</span>
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-2 pt-3 border-t border-border">
+            <span class="text-xs text-text-dim whitespace-nowrap">{formatDate(dest.created_at)}</span>
+            {#if jobCount > 0}
+              <span class="text-xs px-2.5 py-1 rounded-full bg-vault/10 text-vault font-medium whitespace-nowrap">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
+            {:else}
+              <span class="text-xs text-text-dim whitespace-nowrap">No jobs</span>
+            {/if}
+            {#if dest.last_health_check_at}
+              {#if dest.last_health_check_status === 'ok'}
+                <span class="text-xs px-2.5 py-1 rounded-full bg-success/10 text-success font-medium whitespace-nowrap" title={`Last health check: ${formatDate(dest.last_health_check_at)}`}>Healthy</span>
+              {:else if dest.last_health_check_status === 'failed'}
+                <span class="text-xs px-2.5 py-1 rounded-full bg-danger/10 text-danger font-medium whitespace-nowrap" title={dest.last_health_check_error || 'health check failed'}>Unhealthy</span>
               {/if}
-              {#if dest.last_health_check_at}
-                {#if dest.last_health_check_status === 'ok'}
-                  <span class="text-xs px-2.5 py-1 rounded-full bg-success/10 text-success font-medium whitespace-nowrap" title={`Last health check: ${formatDate(dest.last_health_check_at)}`}>Healthy</span>
-                {:else if dest.last_health_check_status === 'failed'}
-                  <span class="text-xs px-2.5 py-1 rounded-full bg-danger/10 text-danger font-medium whitespace-nowrap" title={dest.last_health_check_error || 'health check failed'}>Unhealthy</span>
-                {/if}
-              {/if}
-            </div>
+            {/if}
             <button
               onclick={() => testConnection(dest.id)}
               disabled={testing === dest.id}
-              class="text-xs px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap min-w-[88px] text-center inline-flex items-center justify-center gap-1
+              class="text-xs px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap min-w-[88px] text-center inline-flex items-center justify-center gap-1 ml-auto
                 {tr
                   ? (tr.success ? 'bg-success/10 text-success hover:bg-success/20' : 'bg-danger/10 text-danger hover:bg-danger/20')
                   : 'bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text'}"
