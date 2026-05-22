@@ -12,14 +12,16 @@ func (d *DB) CreateJob(job Job) (int64, error) {
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, storage_dest_id, defer_remote_upload,
 		keep_latest, keep_daily, keep_weekly, keep_monthly, keep_yearly,
-		verify_schedule, verify_mode)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		verify_schedule, verify_mode,
+		retry_max_override, retry_delays_override)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
 		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, job.StorageDestID,
 		job.DeferRemoteUpload,
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 		job.VerifySchedule, job.VerifyMode,
+		job.RetryMaxOverride, job.RetryDelaysOverride,
 	)
 	if err != nil {
 		return 0, err
@@ -37,6 +39,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
+		retry_max_override, retry_delays_override,
 		created_at, updated_at
 		FROM jobs WHERE id = ?`, id,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -45,6 +48,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
 		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 		&job.VerifySchedule, &job.VerifyMode,
+		&job.RetryMaxOverride, &job.RetryDelaysOverride,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
@@ -61,6 +65,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
+		retry_max_override, retry_delays_override,
 		created_at, updated_at
 		FROM jobs ORDER BY name`)
 	if err != nil {
@@ -76,6 +81,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 			&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
 			&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 			&job.VerifySchedule, &job.VerifyMode,
+			&job.RetryMaxOverride, &job.RetryDelaysOverride,
 			&job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -91,6 +97,7 @@ func (d *DB) UpdateJob(job Job) error {
 		post_script=?, notify_on=?, verify_backup=?, storage_dest_id=?, defer_remote_upload=?,
 		keep_latest=?, keep_daily=?, keep_weekly=?, keep_monthly=?, keep_yearly=?,
 		verify_schedule=?, verify_mode=?,
+		retry_max_override=?, retry_delays_override=?,
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
@@ -98,6 +105,7 @@ func (d *DB) UpdateJob(job Job) error {
 		job.DeferRemoteUpload,
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 		job.VerifySchedule, job.VerifyMode,
+		job.RetryMaxOverride, job.RetryDelaysOverride,
 		job.ID,
 	)
 	return err
@@ -120,6 +128,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
+		retry_max_override, retry_delays_override,
 		created_at, updated_at
 		FROM jobs WHERE name = ?`, name,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -128,6 +137,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
 		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 		&job.VerifySchedule, &job.VerifyMode,
+		&job.RetryMaxOverride, &job.RetryDelaysOverride,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
@@ -176,8 +186,11 @@ func (d *DB) CreateJobRun(run JobRun) (int64, error) {
 		runType = "backup"
 	}
 	res, err := d.Exec(
-		"INSERT INTO job_runs (job_id, status, backup_type, run_type, items_total) VALUES (?, ?, ?, ?, ?)",
+		`INSERT INTO job_runs (job_id, status, backup_type, run_type, items_total,
+			retry_of_run_id, retry_attempt)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		run.JobID, run.Status, run.BackupType, runType, run.ItemsTotal,
+		run.RetryOfRunID, run.RetryAttempt,
 	)
 	if err != nil {
 		return 0, err
@@ -201,10 +214,12 @@ func (d *DB) CreateImportedJobRun(run JobRun, ts time.Time) (int64, error) {
 	}
 	res, err := d.Exec(
 		`INSERT INTO job_runs (job_id, status, backup_type, run_type, items_total,
-			items_done, items_failed, size_bytes, started_at, completed_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			items_done, items_failed, size_bytes, started_at, completed_at,
+			retry_of_run_id, retry_attempt)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.JobID, run.Status, run.BackupType, runType, run.ItemsTotal,
 		run.ItemsDone, run.ItemsFailed, run.SizeBytes, ts.UTC(), ts.UTC(),
+		run.RetryOfRunID, run.RetryAttempt,
 	)
 	if err != nil {
 		return 0, err
@@ -215,8 +230,9 @@ func (d *DB) CreateImportedJobRun(run JobRun, ts time.Time) (int64, error) {
 func (d *DB) UpdateJobRun(run JobRun) error {
 	_, err := d.Exec(
 		`UPDATE job_runs SET status=?, completed_at=CURRENT_TIMESTAMP, log=?,
-		items_done=?, items_failed=?, size_bytes=? WHERE id=?`,
-		run.Status, run.Log, run.ItemsDone, run.ItemsFailed, run.SizeBytes, run.ID,
+		items_done=?, items_failed=?, size_bytes=?, retry_next_at=? WHERE id=?`,
+		run.Status, run.Log, run.ItemsDone, run.ItemsFailed, run.SizeBytes,
+		run.RetryNextAt, run.ID,
 	)
 	return err
 }
@@ -265,7 +281,8 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 	rows, err := d.Query(
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
 		items_total, items_done, items_failed, size_bytes,
-		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END
+		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at
 		FROM job_runs ORDER BY started_at DESC LIMIT ?`, limit,
 	)
 	if err != nil {
@@ -277,7 +294,8 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 		var run JobRun
 		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
-			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds); err != nil {
+			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
+			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
@@ -298,7 +316,8 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 	rows, err := d.Query(
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
 		items_total, items_done, items_failed, size_bytes,
-		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END
+		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at
 		FROM job_runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?`, jobID, limit,
 	)
 	if err != nil {
@@ -310,7 +329,8 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 		var run JobRun
 		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
-			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds); err != nil {
+			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
+			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)

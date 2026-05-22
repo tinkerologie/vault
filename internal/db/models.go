@@ -1,6 +1,9 @@
 package db
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 type Job struct {
 	ID                int64  `json:"id"`
@@ -33,10 +36,15 @@ type Job struct {
 	// Scheduled verification (Feature A). VerifySchedule is a cron
 	// expression; empty means no scheduled verification. VerifyMode is
 	// "quick" or "deep".
-	VerifySchedule string    `json:"verify_schedule"`
-	VerifyMode     string    `json:"verify_mode"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	VerifySchedule string `json:"verify_schedule"`
+	VerifyMode     string `json:"verify_mode"`
+	// Retry overrides (Task 7). NULL means "use global default" from
+	// settings (retry_max_default / retry_delays_default).
+	// RetryDelaysOverride stores a JSON array of seconds, e.g. "[60,300]".
+	RetryMaxOverride    sql.NullInt64  `json:"retry_max_override,omitempty"`
+	RetryDelaysOverride sql.NullString `json:"retry_delays_override,omitempty"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
 }
 
 type JobItem struct {
@@ -63,6 +71,13 @@ type JobRun struct {
 	ItemsFailed     int        `json:"items_failed"`
 	SizeBytes       int64      `json:"size_bytes"`
 	DurationSeconds *int       `json:"duration_seconds"`
+	// Retry fields (Task 7). RetryOfRunID identifies the original failed
+	// run this is a retry of (NULL for non-retry runs). RetryAttempt is
+	// 0-indexed (0 = first retry, 1 = second, ...). RetryNextAt is set
+	// on a failed run when the scheduler should re-fire it later.
+	RetryOfRunID sql.NullInt64 `json:"retry_of_run_id,omitempty"`
+	RetryAttempt int           `json:"retry_attempt"`
+	RetryNextAt  sql.NullTime  `json:"retry_next_at,omitempty"`
 }
 
 type RestorePoint struct {
