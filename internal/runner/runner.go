@@ -320,6 +320,40 @@ func (r *Runner) RunJob(jobID int64) {
 		return
 	}
 
+	// Pre-flight: verify the destination is reachable before opening any
+	// backup pipeline. A flaky destination should not consume a 4-hour
+	// job timeout window. Failure records a "skipped" run and returns
+	// early so retry policy can pick it up on the next tick (Task 7).
+	if pfErr := Preflight(context.Background(), dest); pfErr != nil {
+		log.Printf("runner: preflight failed for job %d (%s) -> dest %s: %v",
+			jobID, job.Name, dest.Name, pfErr)
+		skippedRun := db.JobRun{
+			JobID:      job.ID,
+			Status:     "skipped",
+			BackupType: r.resolveBackupType(job).BackupType,
+			ItemsTotal: 0,
+		}
+		runID, createErr := r.db.CreateJobRun(skippedRun)
+		if createErr != nil {
+			log.Printf("runner: failed to create skipped run for job %d: %v", jobID, createErr)
+			return
+		}
+		skippedRun.ID = runID
+		skippedRun.Log = fmt.Sprintf("Pre-flight check failed: %v", pfErr)
+		if updErr := r.db.UpdateJobRun(skippedRun); updErr != nil {
+			log.Printf("runner: failed to update skipped run %d: %v", runID, updErr)
+		}
+		r.broadcast(map[string]any{
+			"type":   "job_run_completed",
+			"job_id": jobID,
+			"run_id": runID,
+			"status": "skipped",
+		})
+		// Marker: Task 6 (breaker) will replace this comment with
+		//   r.breaker.RecordFailure(r.db, dest)
+		return
+	}
+
 	// Resolve the actual backup type for this run (full/incremental/differential).
 	btResult := r.resolveBackupType(job)
 
