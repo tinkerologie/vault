@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -413,6 +414,49 @@ func TestSetSnapshotPath(t *testing.T) {
 	}
 	if len(dests) != 1 || dests[0].Name != "path-change-test" {
 		t.Errorf("got %d destinations, want 1 named 'path-change-test'", len(dests))
+	}
+}
+
+func TestSaveSnapshotRunsWALCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	src, err := Open(filepath.Join(dir, "src.db"))
+	if err != nil {
+		t.Fatalf("open src: %v", err)
+	}
+	defer src.Close()
+
+	// Write rows so there are pages in the WAL.
+	for i := 0; i < 100; i++ {
+		if _, err := src.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`,
+			fmt.Sprintf("wal-test-%d", i), "v"); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	snapPath := filepath.Join(dir, "snap.db")
+	sm := NewSnapshotManager(src, snapPath, snapPath)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// After save with TRUNCATE, the WAL file should be 0 bytes (or absent).
+	walPath := filepath.Join(dir, "src.db-wal")
+	if fi, err := os.Stat(walPath); err == nil && fi.Size() > 0 {
+		t.Errorf("WAL not truncated: size=%d", fi.Size())
+	}
+
+	// Verify snapshot is openable and has the data.
+	dst, err := Open(snapPath)
+	if err != nil {
+		t.Fatalf("open snap: %v", err)
+	}
+	defer dst.Close()
+	var n int
+	if err := dst.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'wal-test-%'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 100 {
+		t.Errorf("got %d rows in snapshot, want 100", n)
 	}
 }
 

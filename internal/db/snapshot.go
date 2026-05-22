@@ -179,6 +179,16 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 	}
 	defer conn.Close()
 
+	// Checkpoint the WAL so the resulting snapshot is self-contained.
+	// TRUNCATE: backfill all frames to main.db, then shrink the WAL file
+	// to 0 bytes. Safe to run here because SaveSnapshot is not on a hot
+	// path. Failure is logged but does not block the snapshot — the
+	// Online Backup API copies WAL frames correctly even without an
+	// explicit checkpoint.
+	if _, ckErr := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); ckErr != nil {
+		log.Printf("snapshot: wal_checkpoint(TRUNCATE) failed: %v (continuing)", ckErr)
+	}
+
 	err = conn.Raw(func(driverConn any) error {
 		type backuper interface {
 			NewBackup(string) (*sqlite.Backup, error)

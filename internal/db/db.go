@@ -40,6 +40,14 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
+	// Bound the WAL file size between checkpoints so a write burst does
+	// not leave a permanently-large WAL on disk. 64 MiB is comfortable
+	// for Vault's write rate.
+	if _, err := sqlDB.Exec(`PRAGMA journal_size_limit = 67108864`); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("setting journal_size_limit: %w", err)
+	}
+
 	if _, err := sqlDB.Exec(schema); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
