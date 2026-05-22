@@ -1,18 +1,37 @@
 name: "Vault CodeQL config"
 
-# Exclude Svelte 5 rune modules (*.svelte.js / *.svelte.ts) from JavaScript /
-# TypeScript analysis. Runes ($state, $derived, $effect, $props, …) are
-# compile-time macros transformed by the Svelte compiler at build time; they
-# are not valid plain JavaScript, so CodeQL's JS parser fails on them and
-# reports a "Could not process some files due to syntax errors" warning
-# (web/src/lib/router.svelte.js was the symptom). The Svelte compiler does
-# the static analysis on these files during the Vite build, and the runtime
-# output that ships to users is plain JS that CodeQL would happily parse —
-# but at scan time the source is rune-flavoured. Excluding them keeps
-# JavaScript scanning clean while still covering the rest of the SPA.
+# Files to skip during analysis. Grouped by reason so future edits stay
+# coherent — don't drop unrelated paths into one bucket.
 paths-ignore:
+  # Svelte 5 rune modules (*.svelte.js / *.svelte.ts / *.svelte) — runes
+  # like $state, $derived, $effect, $props are compile-time macros
+  # transformed by the Svelte compiler. They are not valid plain
+  # JavaScript, so CodeQL's JS parser fails on them and reports a
+  # "Could not process some files due to syntax errors" warning
+  # (web/src/lib/router.svelte.js was the original symptom). The Svelte
+  # compiler does the static analysis on these files during the Vite
+  # build, and the runtime output is plain JS that CodeQL can scan.
   - "web/src/**/*.svelte.js"
   - "web/src/**/*.svelte.ts"
   - "web/src/**/*.svelte"
+
+  # Build output and third-party code — not our source, scanning it
+  # produces noisy alerts against upstream code we don't control.
   - "web/node_modules/**"
   - "web/dist/**"
+  - "vendor/**"
+
+  # Test fixtures and golden files — synthetic inputs that don't reflect
+  # production code paths. Real test source (_test.go, *.test.ts, etc.)
+  # stays in scope because tests can have genuine bugs.
+  - "**/testdata/**"
+  - "**/fixtures/**"
+
+  # Non-Go, non-JS asset directories — CodeQL parses what it can find,
+  # so excluding these avoids spurious YAML/Jinja warnings from the
+  # JavaScript / Actions analysers.
+  - "ansible/**"
+  - "docs/**"
+  - "scripts/**"
+  - "plugin/**/*.php"
+  - "plugin/**/*.css"
