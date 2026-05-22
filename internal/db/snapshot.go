@@ -352,6 +352,12 @@ func (sm *SnapshotManager) saveUSBBackup(force bool) {
 	log.Printf("USB shadow backup saved to %s", validPath)
 }
 
+// IntegrityCheck runs PRAGMA integrity_check on the working database.
+// Convenience for the restore fallback chain.
+func (sm *SnapshotManager) IntegrityCheck() error {
+	return sm.db.IntegrityCheck()
+}
+
 // RestoreFromPath restores the database from the specified source path.
 // Returns an error if the file doesn't exist or restoration fails.
 func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {

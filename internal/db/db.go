@@ -72,6 +72,29 @@ func (d *DB) Vacuum() error {
 	return err
 }
 
+// IntegrityCheck runs PRAGMA integrity_check and returns nil if the
+// result is "ok". Otherwise returns an error containing the first
+// failure line. Use this after restoring a snapshot to confirm the
+// on-disk file is not corrupt before promoting it to the working DB.
+func (d *DB) IntegrityCheck() error {
+	rows, err := d.Query(`PRAGMA integrity_check`)
+	if err != nil {
+		return fmt.Errorf("integrity_check: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return fmt.Errorf("integrity_check: empty result")
+	}
+	var first string
+	if err := rows.Scan(&first); err != nil {
+		return fmt.Errorf("integrity_check scan: %w", err)
+	}
+	if first != "ok" {
+		return fmt.Errorf("integrity_check failed: %s", first)
+	}
+	return nil
+}
+
 // insertDefaultSettings seeds key/value rows for the resilience hardening
 // settings introduced by the 2026-05-22 migration. INSERT OR IGNORE makes
 // this safe to call on every Open.
