@@ -460,6 +460,40 @@ func TestSaveSnapshotRunsWALCheckpoint(t *testing.T) {
 	}
 }
 
+func TestSnapshotRotationKeepsSeven(t *testing.T) {
+	dir := t.TempDir()
+	src, err := Open(filepath.Join(dir, "src.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer src.Close()
+
+	snapPath := filepath.Join(dir, "vault.db")
+	sm := NewSnapshotManager(src, snapPath, snapPath)
+
+	// 9 saves; rotation should keep only 7 in rotated/.
+	for i := 0; i < 9; i++ {
+		if _, err := src.Exec(`INSERT INTO settings (key, value) VALUES (?, '')`,
+			fmt.Sprintf("rotate-test-%d", i)); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		if err := sm.SaveSnapshot(); err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+		// Brief pause so even nanosecond-resolution timestamps differ.
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	rotatedDir := filepath.Join(dir, "rotated")
+	entries, err := os.ReadDir(rotatedDir)
+	if err != nil {
+		t.Fatalf("readdir rotated: %v", err)
+	}
+	if got := len(entries); got != 7 {
+		t.Errorf("rotated count = %d, want 7", got)
+	}
+}
+
 func TestDefaultSnapshotPath(t *testing.T) {
 	d := setupTestDB(t)
 	dir := t.TempDir()
