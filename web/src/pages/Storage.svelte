@@ -366,7 +366,14 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 stagger">
+    <!--
+      Auto-fit columns with a minimum width so each card is wide enough
+      to fit its footer row on a single line (timestamp + 2 status pills
+      + Test button, ~340px content + 40px card padding ≈ 380px). Grids
+      drop from N columns to N-1 when the viewport can't fit N×380px;
+      cards then stretch via 1fr to fill whatever room is available.
+    -->
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] gap-4 stagger">
       {#each destinations as dest (dest.id)}
         {@const cfg = parseConfig(dest.config)}
         {@const tr = testResults.get(dest.id)}
