@@ -22,6 +22,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/logbuf"
 	"github.com/ruaan-deysel/vault/internal/replication"
+	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
 	"github.com/ruaan-deysel/vault/internal/unraid"
@@ -385,9 +386,22 @@ var daemonCmd = &cobra.Command{
 		// /api/v1/jobs/next-runs endpoint returns.
 		diagCollector.SetNextRunFunc(sched.NextRun)
 
+		// Heartbeat for external monitoring. Writes to a RAM-backed dir in
+		// hybrid mode so it doesn't wear flash. Cancelled by the signal ctx
+		// below so it stops cleanly on SIGTERM.
+		var hbDir string
+		if hybridMode {
+			hbDir = "/var/local/vault"
+		} else {
+			hbDir = filepath.Dir(dbPath)
+		}
+		hb := runner.NewHeartbeat(filepath.Join(hbDir, "heartbeat"), version, 30*time.Second)
+
 		// Listen for OS signals for graceful shutdown.
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+
+		hb.Start(ctx)
 
 		err = srv.StartWithContext(ctx)
 		if errors.Is(err, http.ErrServerClosed) {
