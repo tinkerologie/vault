@@ -457,34 +457,34 @@
             </div>
           {/if}
 
-          <div class="flex items-center justify-between pt-3 border-t border-border">
-            <div class="flex items-center gap-3">
-              <span class="text-xs text-text-dim">{formatDate(dest.created_at)}</span>
+          <div class="flex items-center justify-between gap-3 pt-3 border-t border-border">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-xs text-text-dim whitespace-nowrap">{formatDate(dest.created_at)}</span>
               {#if jobCount > 0}
-                <span class="text-xs px-2 py-0.5 rounded-full bg-vault/10 text-vault font-medium">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
+                <span class="text-xs px-2.5 py-1 rounded-full bg-vault/10 text-vault font-medium whitespace-nowrap">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
               {:else}
-                <span class="text-xs text-text-dim">No jobs</span>
+                <span class="text-xs text-text-dim whitespace-nowrap">No jobs</span>
               {/if}
               {#if dest.last_health_check_at}
                 {#if dest.last_health_check_status === 'ok'}
-                  <span class="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success font-medium" title={`Last health check: ${formatDate(dest.last_health_check_at)}`}>Healthy</span>
+                  <span class="text-xs px-2.5 py-1 rounded-full bg-success/10 text-success font-medium whitespace-nowrap" title={`Last health check: ${formatDate(dest.last_health_check_at)}`}>Healthy</span>
                 {:else if dest.last_health_check_status === 'failed'}
-                  <span class="text-xs px-2 py-0.5 rounded-full bg-danger/10 text-danger font-medium" title={dest.last_health_check_error || 'health check failed'}>Unhealthy</span>
+                  <span class="text-xs px-2.5 py-1 rounded-full bg-danger/10 text-danger font-medium whitespace-nowrap" title={dest.last_health_check_error || 'health check failed'}>Unhealthy</span>
                 {/if}
               {/if}
             </div>
             <button
               onclick={() => testConnection(dest.id)}
               disabled={testing === dest.id}
-              class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors min-w-[110px] text-center
+              class="text-xs px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap min-w-[88px] text-center inline-flex items-center justify-center gap-1
                 {tr
-                  ? (tr.success ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger')
+                  ? (tr.success ? 'bg-success/10 text-success hover:bg-success/20' : 'bg-danger/10 text-danger hover:bg-danger/20')
                   : 'bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text'}"
             >
               {#if testing === dest.id}
-                Testing...
+                Testing…
               {:else if tr}
-                {#if tr.success}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> Connected{:else}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> Failed{/if}
+                {#if tr.success}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> Connected{:else}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> Failed{/if}
               {:else}
                 Test
               {/if}
