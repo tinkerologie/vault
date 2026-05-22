@@ -105,6 +105,14 @@ type Runner struct {
 	// queueMu protects the pending job queue.
 	queueMu sync.Mutex
 	queue   []QueueEntry
+
+	// Drain coordination. activeMu guards activeCount and draining.
+	// activeCond is signalled when activeCount transitions to 0 so Drain
+	// wakes without polling.
+	activeMu    sync.Mutex
+	activeCond  *sync.Cond
+	activeCount int
+	draining    bool
 }
 
 // New creates a new Runner.
@@ -117,7 +125,70 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", 3)
 	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", 2)
 	r.breaker = NewBreaker(failThreshold, closeSuccesses)
+	r.activeCond = sync.NewCond(&r.activeMu)
 	return r
+}
+
+// Drain blocks until no job is running or ctx is done. After Drain is
+// called, new RunJob invocations are refused with a logged warning.
+// Intended for the api shutdown sequence: call with a bounded ctx
+// (e.g. 30 s) so a planned restart finishes the active per-file upload
+// cleanly.
+func (r *Runner) Drain(ctx context.Context) error {
+	r.activeMu.Lock()
+	r.draining = true
+	r.activeMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		r.activeMu.Lock()
+		for r.activeCount > 0 {
+			r.activeCond.Wait()
+		}
+		r.activeMu.Unlock()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		// Wake the waiter so it can exit even though we didn't reach 0.
+		r.activeMu.Lock()
+		r.activeCond.Broadcast()
+		r.activeMu.Unlock()
+		return ctx.Err()
+	}
+}
+
+// IsDraining reports whether Drain has been called.
+func (r *Runner) IsDraining() bool {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	return r.draining
+}
+
+// shouldRefuseStart returns true if a new RunJob should refuse to start.
+func (r *Runner) shouldRefuseStart() bool {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	return r.draining
+}
+
+func (r *Runner) markStart() {
+	r.activeMu.Lock()
+	r.activeCount++
+	r.activeMu.Unlock()
+}
+
+func (r *Runner) markFinish() {
+	r.activeMu.Lock()
+	r.activeCount--
+	if r.activeCount <= 0 {
+		r.activeCount = 0
+		r.activeCond.Broadcast()
+	}
+	r.activeMu.Unlock()
 }
 
 // Breaker returns the per-destination circuit breaker.
@@ -316,6 +387,13 @@ func (r *Runner) RunJobRetry(jobID, originalRunID int64, attempt int) {
 // opts carries auxiliary state (retry attempt, manual flag) that affects
 // run-row population and retry scheduling.
 func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
+	if r.shouldRefuseStart() {
+		log.Printf("runner: refusing to start job %d — daemon is draining", jobID)
+		return
+	}
+	r.markStart()
+	defer r.markFinish()
+
 	// Look up the job name before queuing so the queue entry is informative.
 	jobName := fmt.Sprintf("Job #%d", jobID)
 	if j, err := r.db.GetJob(jobID); err == nil {
