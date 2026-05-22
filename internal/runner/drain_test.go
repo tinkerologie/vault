@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -45,11 +46,17 @@ func TestDrainTimesOut(t *testing.T) {
 	r := newDrainRunner()
 	r.markStart() // Active job never finishes.
 
+	before := runtime.NumGoroutine()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	err := r.Drain(ctx)
 	if err == nil {
-		t.Errorf("expected timeout error")
+		t.Fatalf("expected timeout error")
+	}
+	// Allow a brief settle window for the inner goroutine to exit.
+	time.Sleep(100 * time.Millisecond)
+	if after := runtime.NumGoroutine(); after > before {
+		t.Errorf("goroutine leak: before=%d after=%d", before, after)
 	}
 }
 

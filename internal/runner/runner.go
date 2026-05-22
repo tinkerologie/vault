@@ -140,9 +140,10 @@ func (r *Runner) Drain(ctx context.Context) error {
 	r.activeMu.Unlock()
 
 	done := make(chan struct{})
+	stop := false
 	go func() {
 		r.activeMu.Lock()
-		for r.activeCount > 0 {
+		for r.activeCount > 0 && !stop {
 			r.activeCond.Wait()
 		}
 		r.activeMu.Unlock()
@@ -153,10 +154,11 @@ func (r *Runner) Drain(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		// Wake the waiter so it can exit even though we didn't reach 0.
 		r.activeMu.Lock()
+		stop = true
 		r.activeCond.Broadcast()
 		r.activeMu.Unlock()
+		<-done // wait for inner goroutine to finish before returning
 		return ctx.Err()
 	}
 }
