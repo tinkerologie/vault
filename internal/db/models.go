@@ -88,6 +88,10 @@ type StorageDestination struct {
 	LastHealthCheckAt     *time.Time `json:"last_health_check_at"`
 	LastHealthCheckStatus string     `json:"last_health_check_status"`
 	LastHealthCheckError  string     `json:"last_health_check_error"`
+	ConsecutiveFailures   int        `json:"consecutive_failures"`
+	BreakerState          string     `json:"breaker_state"`
+	BreakerOpenedAt       *time.Time `json:"breaker_opened_at,omitempty"`
+	BackupDatabaseEnabled bool       `json:"backup_database_enabled"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }

@@ -258,6 +258,30 @@ func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+// CloseBreaker handles POST /api/v1/storage/{id}/breaker/close.
+// Forcibly resets the destination's circuit breaker to closed.
+func (h *StorageHandler) CloseBreaker(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "destination not found")
+		return
+	}
+	if h.runner == nil {
+		respondError(w, http.StatusInternalServerError, "runner unavailable")
+		return
+	}
+	if err := h.runner.Breaker().ManualClose(h.db, id); err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	log.Printf("breaker: manually closed for dest %d (%s)", id, dest.Name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // HealthCheck is the manual-trigger sibling of the scheduler's daily
 // storage-destination health sweep. Runs TestConnection synchronously,
 // persists the result on the storage_destinations row, and returns it.

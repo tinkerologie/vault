@@ -73,6 +73,7 @@ type Runner struct {
 	hub             *ws.Hub
 	serverKey       []byte // AES-256 key for unsealing secrets.
 	snapshotManager *db.SnapshotManager
+	breaker         *Breaker
 	mu              sync.Mutex
 
 	// statusMu protects the live run status fields below.
@@ -95,12 +96,19 @@ type Runner struct {
 
 // New creates a new Runner.
 func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
-	return &Runner{
+	r := &Runner{
 		db:        database,
 		hub:       hub,
 		serverKey: serverKey,
 	}
+	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", 3)
+	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", 2)
+	r.breaker = NewBreaker(failThreshold, closeSuccesses)
+	return r
 }
+
+// Breaker returns the per-destination circuit breaker.
+func (r *Runner) Breaker() *Breaker { return r.breaker }
 
 // Status returns a snapshot of the currently running backup/restore, or
 // an inactive status if nothing is running. Safe to call concurrently.
@@ -320,6 +328,38 @@ func (r *Runner) RunJob(jobID int64) {
 		return
 	}
 
+	// Circuit breaker: if open for this destination, skip the run.
+	if r.breaker.IsOpen(dest) {
+		log.Printf("runner: breaker open for dest %d (%s) — skipping job %d (%s)",
+			dest.ID, dest.Name, jobID, job.Name)
+		skipped := db.JobRun{
+			JobID:      job.ID,
+			Status:     "skipped",
+			BackupType: r.resolveBackupType(job).BackupType,
+		}
+		runID, createErr := r.db.CreateJobRun(skipped)
+		if createErr != nil {
+			log.Printf("runner: failed to create breaker-skipped run for job %d: %v", jobID, createErr)
+			return
+		}
+		skipped.ID = runID
+		openedAt := ""
+		if dest.BreakerOpenedAt != nil {
+			openedAt = dest.BreakerOpenedAt.Format(time.RFC3339)
+		}
+		skipped.Log = fmt.Sprintf("Breaker open for destination %q since %s", dest.Name, openedAt)
+		if updErr := r.db.UpdateJobRun(skipped); updErr != nil {
+			log.Printf("runner: failed to update breaker-skipped run %d: %v", runID, updErr)
+		}
+		r.broadcast(map[string]any{
+			"type":   "job_run_completed",
+			"job_id": jobID,
+			"run_id": runID,
+			"status": "skipped",
+		})
+		return
+	}
+
 	// Pre-flight: verify the destination is reachable before opening any
 	// backup pipeline. A flaky destination should not consume a 4-hour
 	// job timeout window. Failure records a "skipped" run and returns
@@ -349,8 +389,7 @@ func (r *Runner) RunJob(jobID int64) {
 			"run_id": runID,
 			"status": "skipped",
 		})
-		// Marker: Task 6 (breaker) will replace this comment with
-		//   r.breaker.RecordFailure(r.db, dest)
+		r.breaker.RecordFailure(r.db, dest)
 		return
 	}
 
@@ -398,6 +437,9 @@ func (r *Runner) RunJob(jobID int64) {
 			run.Log = fmt.Sprintf("Internal error (panic): %v", rec)
 			if updateErr := r.db.UpdateJobRun(run); updateErr != nil {
 				log.Printf("runner: failed to mark panicked run %d as failed: %v", runID, updateErr)
+			}
+			if freshDest, ferr := r.db.GetStorageDestination(dest.ID); ferr == nil {
+				r.breaker.RecordFailure(r.db, freshDest)
 			}
 			r.broadcast(map[string]any{
 				"type":   "job_run_completed",
@@ -1087,6 +1129,20 @@ func (r *Runner) RunJob(jobID int64) {
 	run.SizeBytes = totalSize
 	if err := r.db.UpdateJobRun(run); err != nil {
 		log.Printf("runner: failed to update job run %d: %v", runID, err)
+	}
+
+	// Record breaker outcome based on final job status. "completed" or
+	// "partial" runs count as a destination success (the storage was
+	// reachable end-to-end); "failed" counts as a destination failure.
+	// "cancelled" is operator action and does not affect the breaker.
+	// Re-fetch dest so the breaker sees the latest persisted counters.
+	if freshDest, ferr := r.db.GetStorageDestination(dest.ID); ferr == nil {
+		switch status {
+		case "completed", "partial":
+			r.breaker.RecordSuccess(r.db, freshDest)
+		case "failed":
+			r.breaker.RecordFailure(r.db, freshDest)
+		}
 	}
 
 	if itemsDone > 0 {

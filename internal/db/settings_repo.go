@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"strconv"
 )
 
 // GetSetting retrieves a setting value by key. Returns the default if not found.
@@ -26,6 +27,23 @@ func (d *DB) SetSetting(key, value string) error {
 		key, value,
 	)
 	return err
+}
+
+// GetSettingInt retrieves a setting value parsed as int. Returns defaultVal
+// if missing or unparseable.
+func (d *DB) GetSettingInt(key string, defaultVal int) (int, error) {
+	s, err := d.GetSetting(key, "")
+	if err != nil {
+		return defaultVal, err
+	}
+	if s == "" {
+		return defaultVal, nil
+	}
+	v, parseErr := strconv.Atoi(s)
+	if parseErr != nil {
+		return defaultVal, nil // silent fallback — config errors shouldn't crash
+	}
+	return v, nil
 }
 
 // GetAllSettings returns all settings as a key-value map.
