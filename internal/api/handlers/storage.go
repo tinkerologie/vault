@@ -278,7 +278,8 @@ func (h *StorageHandler) CloseBreaker(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	log.Printf("breaker: manually closed for dest %d (%s)", id, dest.Name)
+	log.Printf("breaker: manually closed for dest id=%d", id) // #nosec G706 //nolint:gosec // id is parsed via strconv.ParseInt — already a validated int64
+	_ = dest                                                  // dest fetched only to verify existence
 	w.WriteHeader(http.StatusNoContent)
 }
 
