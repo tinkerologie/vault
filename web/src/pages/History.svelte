@@ -135,6 +135,10 @@
         return { d: 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z', cls: 'text-danger' }
       case 'running':
         return { d: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', cls: 'text-info' }
+      case 'skipped':
+        // Skipped runs are neither failures nor successes — render them
+        // neutrally with a forward-skip icon to make the distinction clear.
+        return { d: 'M13 5l7 7-7 7M5 5l7 7-7 7', cls: 'text-text-muted' }
       default:
         return { d: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', cls: 'text-text-muted' }
     }
@@ -227,7 +231,7 @@
 
       <!-- Status filter pills -->
       <div role="group" aria-label="Filter by status" class="flex items-center gap-2 flex-wrap">
-        {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running']] as [val, label] (val)}
+        {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running'], ['skipped','Skipped']] as [val, label] (val)}
           <button type="button" onclick={() => selectedStatus = val}
             aria-pressed={selectedStatus === val}
             class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {selectedStatus === val ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
@@ -303,6 +307,14 @@
                         <div class="flex items-center gap-2 flex-wrap">
                           <span class="text-sm font-medium text-text">{run.jobName}</span>
                           <span class="{statusBadge(run.status)} text-xs">{run.status}</span>
+                          {#if run.retry_attempt > 0}
+                            <span
+                              class="text-xs px-2 py-0.5 rounded-full font-medium bg-info/15 text-info"
+                              title={run.retry_next_at ? `Next retry at ${formatDate(run.retry_next_at)}` : `Retry attempt ${run.retry_attempt}`}
+                            >
+                              Retry {run.retry_attempt}
+                            </span>
+                          {/if}
                           {#if (run.run_type || 'backup') === 'restore'}
                             <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-500/15 text-purple-400">restore</span>
                           {:else}

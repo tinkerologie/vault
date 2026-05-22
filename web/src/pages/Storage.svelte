@@ -42,6 +42,12 @@
   let dedupStats = $state(new SvelteMap())
   let cleanupBusy = $state(new SvelteSet())
 
+  // Per-destination busy flags for the resilience-hardening controls.
+  // breakerBusy = the "Reset breaker" button is in flight for this id.
+  // dbBackupBusy = the "Include in DB backup" toggle is in flight.
+  let breakerBusy = $state(new SvelteSet())
+  let dbBackupBusy = $state(new SvelteSet())
+
   function defaultForm() {
     return {
       name: '',
@@ -117,6 +123,52 @@
     }
   }
 
+  async function resetBreaker(id) {
+    if (breakerBusy.has(id)) return
+    const next = new SvelteSet(breakerBusy)
+    next.add(id)
+    breakerBusy = next
+    try {
+      await api.closeBreaker(id)
+      showToast('Breaker reset — destination re-enabled', 'success')
+      await loadData()
+    } catch (e) {
+      showToast(`Reset failed: ${e.message}`, 'error')
+    } finally {
+      const after = new SvelteSet(breakerBusy)
+      after.delete(id)
+      breakerBusy = after
+    }
+  }
+
+  async function toggleDBBackup(dest) {
+    if (dbBackupBusy.has(dest.id)) return
+    const next = new SvelteSet(dbBackupBusy)
+    next.add(dest.id)
+    dbBackupBusy = next
+    const newVal = !dest.backup_database_enabled
+    try {
+      // Re-send the existing destination payload with only the toggle
+      // flipped. The backend ignores changes to immutable fields like
+      // dedup_enabled, so this is safe.
+      await api.updateStorage(dest.id, {
+        name: dest.name,
+        type: dest.type,
+        config: dest.config,
+        dedup_enabled: !!dest.dedup_enabled,
+        backup_database_enabled: newVal,
+      })
+      showToast(`DB backup ${newVal ? 'enabled' : 'disabled'} for "${dest.name}"`, 'success')
+      await loadData()
+    } catch (e) {
+      showToast(`Update failed: ${e.message}`, 'error')
+    } finally {
+      const after = new SvelteSet(dbBackupBusy)
+      after.delete(dest.id)
+      dbBackupBusy = after
+    }
+  }
+
   async function loadData() {
     loading = true
     try {
@@ -156,6 +208,10 @@
       type: dest.type,
       config: cfg,
       dedup_enabled: !!dest.dedup_enabled,
+      // Carry the DB-backup fan-out flag through the modal save so editing
+      // an unrelated field doesn't reset it. The dedicated row toggle on
+      // the card is still the primary control.
+      backup_database_enabled: !!dest.backup_database_enabled,
     }
     showModal = true
   }
@@ -171,6 +227,10 @@
         // Top-level: stored as its own column on storage_destinations.
         // Immutable after creation (UI gates the toggle when editing).
         dedup_enabled: !!form.dedup_enabled,
+        // Preserve the current DB fan-out value through modal saves so
+        // editing other fields doesn't accidentally disable it. New
+        // destinations default to false.
+        backup_database_enabled: !!form.backup_database_enabled,
       }
       if (editing) {
         await api.updateStorage(editing.id, payload)
@@ -427,6 +487,30 @@
             {/if}
           </div>
 
+          <!-- DB backup fan-out toggle (Task 11 — resilience hardening).
+               Lets the user opt-in this destination to receive the daily
+               encrypted DB snapshot. Hidden during dbBackupBusy flicker
+               to keep the row from flashing. -->
+          <div class="flex items-center justify-between gap-3 py-2 border-t border-border">
+            <div class="min-w-0">
+              <p class="text-xs font-medium text-text">Include in DB backup</p>
+              <p class="text-[11px] text-text-dim mt-0.5">Receive the daily encrypted Vault database snapshot.</p>
+            </div>
+            <button
+              type="button"
+              onclick={() => toggleDBBackup(dest)}
+              disabled={dbBackupBusy.has(dest.id)}
+              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-50"
+              role="switch"
+              aria-checked={!!dest.backup_database_enabled}
+              aria-label="Toggle database backup fan-out"
+            >
+              <div class="w-9 h-5 rounded-full transition-colors {dest.backup_database_enabled ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-4 h-4 bg-white rounded-full shadow transition-transform {dest.backup_database_enabled ? 'translate-x-4' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+
           {#if dest.dedup_enabled}
             {@const s = dedupStats.get(dest.id)}
             <div class="border-t border-border pt-3 mb-3 text-xs space-y-1">
@@ -477,6 +561,22 @@
               {:else if dest.last_health_check_status === 'failed'}
                 <span class="text-xs px-2.5 py-1 rounded-full bg-danger/10 text-danger font-medium whitespace-nowrap" title={dest.last_health_check_error || 'health check failed'}>Unhealthy</span>
               {/if}
+            {/if}
+            {#if dest.breaker_state === 'open'}
+              <span
+                class="text-xs px-2.5 py-1 rounded-full bg-danger/10 text-danger font-medium whitespace-nowrap"
+                title={dest.breaker_opened_at ? `Breaker open since ${formatDate(dest.breaker_opened_at)}` : 'Circuit breaker is open — scheduled runs skip this destination'}
+              >
+                Breaker open
+              </span>
+              <button
+                type="button"
+                onclick={() => resetBreaker(dest.id)}
+                disabled={breakerBusy.has(dest.id)}
+                class="text-xs px-2.5 py-1 rounded-full font-medium bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text whitespace-nowrap disabled:opacity-50 transition-colors"
+              >
+                {breakerBusy.has(dest.id) ? 'Resetting…' : 'Reset breaker'}
+              </button>
             {/if}
             <button
               onclick={() => testConnection(dest.id)}

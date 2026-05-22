@@ -59,6 +59,30 @@
   // Diagnostics state
   let diagnosticsDownloading = $state(false)
 
+  // Retry policy state (Task 11 — resilience hardening). Backend stores the
+  // delays as a JSON-encoded array string in the settings table, so we keep
+  // it as text in the form and validate on save.
+  let retryMax = $state('')
+  let retryDelays = $state('')
+  let retrySaving = $state(false)
+  // Validate the retry-delays JSON every time it changes so the user gets
+  // immediate feedback. Empty string is treated as valid (the backend
+  // already has a built-in default). Computed via $derived to avoid
+  // assigning $state inside $effect.
+  let retryDelaysError = $derived.by(() => {
+    const raw = (retryDelays || '').trim()
+    if (raw === '') return ''
+    try {
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed) || !parsed.every(n => Number.isFinite(n) && n >= 0)) {
+        return 'Must be a JSON array of non-negative numbers (e.g. [900,3600,14400])'
+      }
+      return ''
+    } catch {
+      return 'Invalid JSON'
+    }
+  })
+
   // API Key state
   let apiKeyEnabled = $state(false)
   let apiKeyRevealed = $state('')
@@ -85,6 +109,8 @@
       discordNotifyOn = s?.discord_notify_on || 'always'
       databaseInfo = dbInfo
       snapshotPathInput = dbInfo?.snapshot_path_override || ''
+      retryMax = s?.retry_max_default ?? ''
+      retryDelays = s?.retry_delays_default ?? ''
     } catch (e) {
       console.error('Settings load error:', e)
     } finally {
@@ -280,6 +306,43 @@
       showToast('Emergency kit downloaded', 'success')
     } catch (e) {
       showToast(e.message, 'error')
+    }
+  }
+
+  async function saveRetryPolicy() {
+    if (retryDelaysError) return
+    retrySaving = true
+    try {
+      const payload = {}
+      const maxStr = String(retryMax).trim()
+      // Allow blank to leave it unchanged (the backend keeps the existing
+      // value). Coerce to a string because settings are stored as strings.
+      if (maxStr !== '') {
+        const n = Number.parseInt(maxStr, 10)
+        if (!Number.isInteger(n) || n < 0 || n > 10) {
+          showToast('Max retries must be between 0 and 10', 'error')
+          retrySaving = false
+          return
+        }
+        payload.retry_max_default = String(n)
+      }
+      const delaysStr = (retryDelays || '').trim()
+      if (delaysStr !== '') {
+        payload.retry_delays_default = delaysStr
+      }
+      if (Object.keys(payload).length === 0) {
+        showToast('Nothing to save', 'info')
+        retrySaving = false
+        return
+      }
+      settings = await api.updateSettings(payload)
+      retryMax = settings?.retry_max_default ?? retryMax
+      retryDelays = settings?.retry_delays_default ?? retryDelays
+      showToast('Retry policy saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      retrySaving = false
     }
   }
 
@@ -593,6 +656,61 @@
               <div class="w-11 h-6 rounded-full transition-colors {flashBackupOn ? 'bg-vault' : 'bg-surface-4'}">
                 <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {flashBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
               </div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Retry policy -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Retry Policy <Tooltip text="Failed runs are retried in the background with the delays below before being marked permanently failed. Individual jobs can override these defaults." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">How failed runs are retried before being marked permanently failed.</p>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label for="retry-max" class="block text-sm font-medium text-text-muted mb-1.5">
+                Max retries
+                <Tooltip text="Maximum number of retry attempts after the initial failure. 0 disables retries entirely. Range: 0–10." />
+              </label>
+              <input
+                id="retry-max"
+                type="number"
+                min="0"
+                max="10"
+                bind:value={retryMax}
+                placeholder="2"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              />
+            </div>
+            <div>
+              <label for="retry-delays" class="block text-sm font-medium text-text-muted mb-1.5">
+                Delays (JSON array, seconds)
+                <Tooltip text='JSON array of delays in seconds between retries. The Nth retry waits for delays[N-1] before running. Example: [900,3600,14400] = 15 min, 1 h, 4 h.' />
+              </label>
+              <input
+                id="retry-delays"
+                type="text"
+                bind:value={retryDelays}
+                placeholder="[900,3600,14400]"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              />
+              {#if retryDelaysError}
+                <p class="text-xs text-danger mt-1">{retryDelaysError}</p>
+              {/if}
+            </div>
+          </div>
+          <div class="flex justify-end">
+            <button
+              onclick={saveRetryPolicy}
+              disabled={retrySaving || !!retryDelaysError}
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {#if retrySaving}
+                <Spinner size="sm" />
+              {/if}
+              Save Retry Policy
             </button>
           </div>
         </div>
