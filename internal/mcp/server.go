@@ -175,7 +175,8 @@ func (s *MCPServer) addRunJobTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("job %d not found: %w", input.ID, err)
 		}
-		go s.runner.RunJob(input.ID)
+		// Manual "run now" invocations bypass automatic retry scheduling.
+		go s.runner.RunJobManual(input.ID)
 		r, _ := textResult(map[string]any{"message": "backup started", "job_id": input.ID})
 		return r, nil, nil
 	})

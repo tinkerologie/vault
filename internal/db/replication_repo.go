@@ -105,7 +105,9 @@ func (d *DB) ListReplicatedJobs(sourceID int64) ([]Job, error) {
 	rows, err := d.Query(
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
-		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0), created_at, updated_at
+		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0),
+		retry_max_override, retry_delays_override,
+		created_at, updated_at
 		FROM jobs WHERE source_id = ? ORDER BY name`, sourceID,
 	)
 	if err != nil {
@@ -118,7 +120,9 @@ func (d *DB) ListReplicatedJobs(sourceID int64) ([]Job, error) {
 		if err := rows.Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
 			&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression,
 			&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
-			&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			&job.VerifyBackup, &job.StorageDestID, &job.SourceID,
+			&job.RetryMaxOverride, &job.RetryDelaysOverride,
+			&job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)

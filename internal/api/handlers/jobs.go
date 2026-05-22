@@ -741,8 +741,9 @@ func (h *JobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run the backup asynchronously.
-	go h.runner.RunJob(id)
+	// Run the backup asynchronously. Manual "run now" invocations bypass
+	// automatic retry scheduling — the user can re-press the button.
+	go h.runner.RunJobManual(id)
 
 	respondJSON(w, http.StatusAccepted, map[string]any{
 		"message": "backup started",
