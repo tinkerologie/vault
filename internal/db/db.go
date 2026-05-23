@@ -40,6 +40,14 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
+	// Bound the WAL file size between checkpoints so a write burst does
+	// not leave a permanently-large WAL on disk. 64 MiB is comfortable
+	// for Vault's write rate.
+	if _, err := sqlDB.Exec(`PRAGMA journal_size_limit = 67108864`); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("setting journal_size_limit: %w", err)
+	}
+
 	if _, err := sqlDB.Exec(schema); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
@@ -50,11 +58,60 @@ func Open(path string) (*DB, error) {
 		_, _ = sqlDB.Exec(m) //nolint:errcheck // duplicate column errors expected
 	}
 
-	return &DB{DB: sqlDB, path: path}, nil
+	d := &DB{DB: sqlDB, path: path}
+	if err := d.insertDefaultSettings(); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("seed default settings: %w", err)
+	}
+	return d, nil
 }
 
 // Vacuum reclaims free space in the database file.
 func (d *DB) Vacuum() error {
 	_, err := d.Exec("VACUUM")
 	return err
+}
+
+// IntegrityCheck runs PRAGMA integrity_check and returns nil if the
+// result is "ok". Otherwise returns an error containing the first
+// failure line. Use this after restoring a snapshot to confirm the
+// on-disk file is not corrupt before promoting it to the working DB.
+func (d *DB) IntegrityCheck() error {
+	rows, err := d.Query(`PRAGMA integrity_check`)
+	if err != nil {
+		return fmt.Errorf("integrity_check: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return fmt.Errorf("integrity_check: empty result")
+	}
+	var first string
+	if err := rows.Scan(&first); err != nil {
+		return fmt.Errorf("integrity_check scan: %w", err)
+	}
+	if first != "ok" {
+		return fmt.Errorf("integrity_check failed: %s", first)
+	}
+	return nil
+}
+
+// insertDefaultSettings seeds key/value rows for the resilience hardening
+// settings introduced by the 2026-05-22 migration. INSERT OR IGNORE makes
+// this safe to call on every Open.
+func (d *DB) insertDefaultSettings() error {
+	defaults := []struct{ key, value string }{
+		{"retry_max_default", "2"},
+		{"retry_delays_default", "[900,3600,14400]"},
+		{"breaker_fail_threshold", "3"},
+		{"breaker_close_successes", "2"},
+	}
+	for _, kv := range defaults {
+		if _, err := d.Exec(
+			`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`,
+			kv.key, kv.value,
+		); err != nil {
+			return fmt.Errorf("seeding setting %s: %w", kv.key, err)
+		}
+	}
+	return nil
 }

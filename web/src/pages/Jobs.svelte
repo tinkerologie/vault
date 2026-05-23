@@ -16,6 +16,7 @@
   import ScriptBrowser from '../components/ScriptBrowser.svelte'
   import TypePicker from '../components/TypePicker.svelte'
   import Tooltip from '../components/Tooltip.svelte'
+  import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
 
   let loading = $state(true)
   let jobs = $state([])
@@ -182,10 +183,17 @@
       defer_remote_upload: false,
       encryption: 'none',
       storage_dest_id: 0,
+      retry_max_override: '',
+      retry_delays_override: '',
       items: [],
       selectedTypes: [],
     }
   }
+
+  // Retry-override JSON validation used to live here; the RetryDelaysEditor
+  // component now handles parsing/serialising and only ever emits a valid
+  // JSON array string (or '' for "use the global default"), so no client-side
+  // validator is needed any more.
 
   const vmRestoreVerifyModes = [
     {
@@ -384,6 +392,11 @@
         defer_remote_upload: data.job.defer_remote_upload ?? false,
         encryption: data.job.encryption || 'none',
         storage_dest_id: data.job.storage_dest_id || 0,
+        // Backend uses null to mean "fall back to the global default". The
+        // form keeps them as strings so the inputs bind cleanly; we round
+        // trip them back to null on save when blank.
+        retry_max_override: data.job.retry_max_override == null ? '' : String(data.job.retry_max_override),
+        retry_delays_override: data.job.retry_delays_override == null ? '' : String(data.job.retry_delays_override),
         items: data.items || [],
         selectedTypes: deriveTypesFromItems(data.items || []),
       }
@@ -400,6 +413,13 @@
       const payload = { ...form }
       delete payload.vm_mode
       delete payload.selectedTypes
+      // Normalise retry overrides: blank → null so the backend falls back
+      // to the global default; otherwise coerce the max to an int and pass
+      // the delays JSON through verbatim (already validated above).
+      const retryMaxStr = String(payload.retry_max_override ?? '').trim()
+      payload.retry_max_override = retryMaxStr === '' ? null : Number.parseInt(retryMaxStr, 10)
+      const retryDelaysStr = String(payload.retry_delays_override ?? '').trim()
+      payload.retry_delays_override = retryDelaysStr === '' ? null : retryDelaysStr
       let jobId
       if (editing) {
         await api.updateJob(editing.id, payload)
@@ -481,6 +501,8 @@
         notify_on: fullJob.notify_on || 'failure',
         verify_backup: fullJob.verify_backup ?? true,
         defer_remote_upload: fullJob.defer_remote_upload ?? false,
+        retry_max_override: fullJob.retry_max_override == null ? '' : String(fullJob.retry_max_override),
+        retry_delays_override: fullJob.retry_delays_override == null ? '' : String(fullJob.retry_delays_override),
         enabled: false,
         items: (data.items || []).map(i => ({
           item_type: i.item_type,
@@ -1096,6 +1118,32 @@
                 <p class="text-sm text-text">Verify backups after writing</p>
                 <p class="text-xs text-text-dim mt-0.5">Reads each file back from storage and validates SHA-256 checksums. Adds a small amount of time but ensures backup integrity.</p>
               </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Advanced: Retry policy override (Task 11 — resilience hardening) -->
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Override retry policy <Tooltip text="Per-job retry settings that override the global defaults in Settings. Leave blank to use the global values. Failed runs are retried in the background after each delay." />
+          </summary>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3 pl-6">
+            <div>
+              <label for="retry-max-override" class="block text-xs font-medium text-text-muted mb-1">Max retries <span class="text-text-dim">(blank = global)</span></label>
+              <input
+                id="retry-max-override"
+                type="number"
+                min="0"
+                max="10"
+                bind:value={form.retry_max_override}
+                placeholder="Global default"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim"
+              />
+            </div>
+            <div>
+              <div class="block text-xs font-medium text-text-muted mb-1">Delays between retries <span class="text-text-dim">(blank = global)</span></div>
+              <RetryDelaysEditor bind:value={form.retry_delays_override} placeholder="Use global default" />
             </div>
           </div>
         </details>

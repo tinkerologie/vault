@@ -1,6 +1,8 @@
 package db
 
-import "time"
+import (
+	"time"
+)
 
 type Job struct {
 	ID                int64  `json:"id"`
@@ -33,10 +35,16 @@ type Job struct {
 	// Scheduled verification (Feature A). VerifySchedule is a cron
 	// expression; empty means no scheduled verification. VerifyMode is
 	// "quick" or "deep".
-	VerifySchedule string    `json:"verify_schedule"`
-	VerifyMode     string    `json:"verify_mode"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	VerifySchedule string `json:"verify_schedule"`
+	VerifyMode     string `json:"verify_mode"`
+	// Retry overrides (Task 7). nil means "use global default" from
+	// settings (retry_max_default / retry_delays_default).
+	// RetryDelaysOverride stores a JSON array of seconds, e.g. "[60,300]".
+	// Pointer types so the JSON API emits null (not {Valid,Int64}) for unset.
+	RetryMaxOverride    *int64    `json:"retry_max_override"`
+	RetryDelaysOverride *string   `json:"retry_delays_override"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type JobItem struct {
@@ -63,6 +71,14 @@ type JobRun struct {
 	ItemsFailed     int        `json:"items_failed"`
 	SizeBytes       int64      `json:"size_bytes"`
 	DurationSeconds *int       `json:"duration_seconds"`
+	// Retry fields (Task 7). RetryOfRunID identifies the original failed
+	// run this is a retry of (nil for non-retry runs). RetryAttempt is
+	// 0-indexed (0 = first retry, 1 = second, ...). RetryNextAt is set
+	// on a failed run when the scheduler should re-fire it later.
+	// Pointer types so the JSON API emits null for unset.
+	RetryOfRunID *int64     `json:"retry_of_run_id"`
+	RetryAttempt int        `json:"retry_attempt"`
+	RetryNextAt  *time.Time `json:"retry_next_at"`
 }
 
 type RestorePoint struct {
@@ -88,6 +104,10 @@ type StorageDestination struct {
 	LastHealthCheckAt     *time.Time `json:"last_health_check_at"`
 	LastHealthCheckStatus string     `json:"last_health_check_status"`
 	LastHealthCheckError  string     `json:"last_health_check_error"`
+	ConsecutiveFailures   int        `json:"consecutive_failures"`
+	BreakerState          string     `json:"breaker_state"`
+	BreakerOpenedAt       *time.Time `json:"breaker_opened_at,omitempty"`
+	BackupDatabaseEnabled bool       `json:"backup_database_enabled"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }

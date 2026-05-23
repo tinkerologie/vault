@@ -43,6 +43,10 @@ export const api = {
     return request('DELETE', `/storage/${id}${qs ? '?' + qs : ''}`)
   },
   testStorage: (id) => request('POST', `/storage/${id}/test`),
+  // Manually close the circuit breaker for a storage destination. The
+  // breaker is otherwise managed automatically by the runner / pre-flight
+  // check. Returns 204 on success and resets consecutive_failures to 0.
+  closeBreaker: (id) => request('POST', `/storage/${id}/breaker/close`),
   scanStorage: (id, path = '') => request('POST', `/storage/${id}/scan${path ? '?path=' + encodeURIComponent(path) : ''}`),
   importBackups: (id, backups) => request('POST', `/storage/${id}/import`, { backups }),
   restoreDB: (id, storagePath) => request('POST', `/storage/${id}/restore-db`, { storage_path: storagePath }),

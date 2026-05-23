@@ -57,6 +57,30 @@ type QueueEntry struct {
 	QueuedAt string `json:"queued_at"`
 }
 
+// runOptions controls auxiliary behaviour for a single job invocation.
+// The zero value represents a normal scheduled run. Manual and retry
+// runs deviate from the default in distinct ways:
+//   - manual runs do NOT have a retry scheduled on failure (the user
+//     can re-press the Run-now button)
+//   - retry runs carry retryOfRunID/retryAttempt forward so the
+//     resulting job_run row links back to the original failure.
+type runOptions struct {
+	retryOfRunID int64
+	retryAttempt int
+	manual       bool
+}
+
+// retryOfRunIDPtr returns the nullable pointer form for db.JobRun. The
+// model uses *int64 so JSON serialises NULL as `null` instead of a
+// {Valid, Int64} struct.
+func (o runOptions) retryOfRunIDPtr() *int64 {
+	if o.retryOfRunID <= 0 {
+		return nil
+	}
+	v := o.retryOfRunID
+	return &v
+}
+
 type restoreProgressReporter struct {
 	JobID       int64
 	RunID       int64
@@ -73,6 +97,7 @@ type Runner struct {
 	hub             *ws.Hub
 	serverKey       []byte // AES-256 key for unsealing secrets.
 	snapshotManager *db.SnapshotManager
+	breaker         *Breaker
 	mu              sync.Mutex
 
 	// statusMu protects the live run status fields below.
@@ -91,16 +116,96 @@ type Runner struct {
 	// queueMu protects the pending job queue.
 	queueMu sync.Mutex
 	queue   []QueueEntry
+
+	// Drain coordination. activeMu guards activeCount and draining.
+	// activeCond is signalled when activeCount transitions to 0 so Drain
+	// wakes without polling.
+	activeMu    sync.Mutex
+	activeCond  *sync.Cond
+	activeCount int
+	draining    bool
 }
 
 // New creates a new Runner.
 func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
-	return &Runner{
+	r := &Runner{
 		db:        database,
 		hub:       hub,
 		serverKey: serverKey,
 	}
+	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", 3)
+	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", 2)
+	r.breaker = NewBreaker(failThreshold, closeSuccesses)
+	r.activeCond = sync.NewCond(&r.activeMu)
+	return r
 }
+
+// Drain blocks until no job is running or ctx is done. After Drain is
+// called, new RunJob invocations are refused with a logged warning.
+// Intended for the api shutdown sequence: call with a bounded ctx
+// (e.g. 30 s) so a planned restart finishes the active per-file upload
+// cleanly.
+func (r *Runner) Drain(ctx context.Context) error {
+	r.activeMu.Lock()
+	r.draining = true
+	r.activeMu.Unlock()
+
+	done := make(chan struct{})
+	stop := false
+	go func() {
+		r.activeMu.Lock()
+		for r.activeCount > 0 && !stop {
+			r.activeCond.Wait()
+		}
+		r.activeMu.Unlock()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		r.activeMu.Lock()
+		stop = true
+		r.activeCond.Broadcast()
+		r.activeMu.Unlock()
+		<-done // wait for inner goroutine to finish before returning
+		return ctx.Err()
+	}
+}
+
+// IsDraining reports whether Drain has been called.
+func (r *Runner) IsDraining() bool {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	return r.draining
+}
+
+// shouldRefuseStart returns true if a new RunJob should refuse to start.
+func (r *Runner) shouldRefuseStart() bool {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	return r.draining
+}
+
+func (r *Runner) markStart() {
+	r.activeMu.Lock()
+	r.activeCount++
+	r.activeMu.Unlock()
+}
+
+func (r *Runner) markFinish() {
+	r.activeMu.Lock()
+	r.activeCount--
+	if r.activeCount <= 0 {
+		r.activeCount = 0
+		r.activeCond.Broadcast()
+	}
+	r.activeMu.Unlock()
+}
+
+// Breaker returns the per-destination circuit breaker.
+func (r *Runner) Breaker() *Breaker { return r.breaker }
 
 // Status returns a snapshot of the currently running backup/restore, or
 // an inactive status if nothing is running. Safe to call concurrently.
@@ -269,7 +374,39 @@ func (r *Runner) SetSnapshotManager(sm *db.SnapshotManager) {
 // RunJob executes a backup for the given job ID. It is safe to call from
 // a goroutine. It creates the job_run record, performs backups for each item,
 // updates progress via WebSocket, and creates restore points on success.
+//
+// Scheduled-cron callers use this entry point. Manual "run now" callers
+// should use RunJobManual to suppress retry scheduling; the retry watcher
+// (Task 8) uses RunJobRetry to fire a delayed retry of a previously
+// failed run.
 func (r *Runner) RunJob(jobID int64) {
+	r.runJobInternal(jobID, runOptions{})
+}
+
+// RunJobManual is invoked by the API "run now" button. Manual runs are
+// NOT retried automatically — the user can re-press the button.
+func (r *Runner) RunJobManual(jobID int64) {
+	r.runJobInternal(jobID, runOptions{manual: true})
+}
+
+// RunJobRetry executes a retry of a previously-failed run. The new
+// job_run row records retry_of_run_id and retry_attempt so the history
+// view can group the retry chain.
+func (r *Runner) RunJobRetry(jobID, originalRunID int64, attempt int) {
+	r.runJobInternal(jobID, runOptions{retryOfRunID: originalRunID, retryAttempt: attempt})
+}
+
+// runJobInternal is the workhorse executed by RunJob/RunJobManual/RunJobRetry.
+// opts carries auxiliary state (retry attempt, manual flag) that affects
+// run-row population and retry scheduling.
+func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
+	if r.shouldRefuseStart() {
+		log.Printf("runner: refusing to start job %d — daemon is draining", jobID)
+		return
+	}
+	r.markStart()
+	defer r.markFinish()
+
 	// Look up the job name before queuing so the queue entry is informative.
 	jobName := fmt.Sprintf("Job #%d", jobID)
 	if j, err := r.db.GetJob(jobID); err == nil {
@@ -320,14 +457,90 @@ func (r *Runner) RunJob(jobID int64) {
 		return
 	}
 
+	// Circuit breaker: if open for this destination, skip the run.
+	if r.breaker.IsOpen(dest) {
+		log.Printf("runner: breaker open for dest %d (%s) — skipping job %d (%s)",
+			dest.ID, dest.Name, jobID, job.Name)
+		skipped := db.JobRun{
+			JobID:        job.ID,
+			Status:       "skipped",
+			BackupType:   r.resolveBackupType(job).BackupType,
+			RetryAttempt: opts.retryAttempt,
+			RetryOfRunID: opts.retryOfRunIDPtr(),
+		}
+		runID, createErr := r.db.CreateJobRun(skipped)
+		if createErr != nil {
+			log.Printf("runner: failed to create breaker-skipped run for job %d: %v", jobID, createErr)
+			return
+		}
+		skipped.ID = runID
+		openedAt := ""
+		if dest.BreakerOpenedAt != nil {
+			openedAt = dest.BreakerOpenedAt.Format(time.RFC3339)
+		}
+		skipped.Log = fmt.Sprintf("Breaker open for destination %q since %s", dest.Name, openedAt)
+		// Breaker-open skip: do NOT schedule retry. The breaker exists
+		// precisely to avoid hammering an unhealthy destination.
+		if updErr := r.db.UpdateJobRun(skipped); updErr != nil {
+			log.Printf("runner: failed to update breaker-skipped run %d: %v", runID, updErr)
+		}
+		r.broadcast(map[string]any{
+			"type":   "job_run_completed",
+			"job_id": jobID,
+			"run_id": runID,
+			"status": "skipped",
+		})
+		return
+	}
+
+	// Pre-flight: verify the destination is reachable before opening any
+	// backup pipeline. A flaky destination should not consume a 4-hour
+	// job timeout window. Failure records a "skipped" run and returns
+	// early so retry policy can pick it up on the next tick (Task 7).
+	if pfErr := Preflight(context.Background(), dest); pfErr != nil {
+		log.Printf("runner: preflight failed for job %d (%s) -> dest %s: %v",
+			jobID, job.Name, dest.Name, pfErr)
+		skippedRun := db.JobRun{
+			JobID:        job.ID,
+			Status:       "skipped",
+			BackupType:   r.resolveBackupType(job).BackupType,
+			ItemsTotal:   0,
+			RetryAttempt: opts.retryAttempt,
+			RetryOfRunID: opts.retryOfRunIDPtr(),
+		}
+		runID, createErr := r.db.CreateJobRun(skippedRun)
+		if createErr != nil {
+			log.Printf("runner: failed to create skipped run for job %d: %v", jobID, createErr)
+			return
+		}
+		skippedRun.ID = runID
+		skippedRun.Log = fmt.Sprintf("Pre-flight check failed: %v", pfErr)
+		// Preflight failure is potentially transient (DNS blip, mount
+		// remount, etc.) — schedule a retry per policy.
+		r.scheduleRetryIfDue(&skippedRun, job, dest, opts)
+		if updErr := r.db.UpdateJobRun(skippedRun); updErr != nil {
+			log.Printf("runner: failed to update skipped run %d: %v", runID, updErr)
+		}
+		r.broadcast(map[string]any{
+			"type":   "job_run_completed",
+			"job_id": jobID,
+			"run_id": runID,
+			"status": "skipped",
+		})
+		r.breaker.RecordFailure(r.db, dest)
+		return
+	}
+
 	// Resolve the actual backup type for this run (full/incremental/differential).
 	btResult := r.resolveBackupType(job)
 
 	run := db.JobRun{
-		JobID:      job.ID,
-		Status:     "running",
-		BackupType: btResult.BackupType,
-		ItemsTotal: len(items),
+		JobID:        job.ID,
+		Status:       "running",
+		BackupType:   btResult.BackupType,
+		ItemsTotal:   len(items),
+		RetryAttempt: opts.retryAttempt,
+		RetryOfRunID: opts.retryOfRunIDPtr(),
 	}
 	runID, err := r.db.CreateJobRun(run)
 	if err != nil {
@@ -362,8 +575,15 @@ func (r *Runner) RunJob(jobID int64) {
 			log.Printf("runner: PANIC during job %d run %d: %v", jobID, runID, rec)
 			run.Status = "failed"
 			run.Log = fmt.Sprintf("Internal error (panic): %v", rec)
+			// Panic is potentially transient; schedule a retry. The
+			// breaker check inside scheduleRetryIfDue prevents storms
+			// against a broken destination.
+			r.scheduleRetryIfDue(&run, job, dest, opts)
 			if updateErr := r.db.UpdateJobRun(run); updateErr != nil {
 				log.Printf("runner: failed to mark panicked run %d as failed: %v", runID, updateErr)
+			}
+			if freshDest, ferr := r.db.GetStorageDestination(dest.ID); ferr == nil {
+				r.breaker.RecordFailure(r.db, freshDest)
 			}
 			r.broadcast(map[string]any{
 				"type":   "job_run_completed",
@@ -450,6 +670,7 @@ func (r *Runner) RunJob(jobID int64) {
 			log.Printf("runner: job %d has encryption=age but no passphrase configured", jobID)
 			run.Status = "failed"
 			run.Log = "Encryption enabled but no passphrase configured in settings\n"
+			r.scheduleRetryIfDue(&run, job, dest, opts)
 			_ = r.db.UpdateJobRun(run)
 			return
 		}
@@ -466,6 +687,7 @@ func (r *Runner) RunJob(jobID int64) {
 			log.Printf("runner: job %d pre-script failed: %v", jobID, err)
 			run.Status = "failed"
 			run.Log = fmt.Sprintf("Pre-script failed: %v\nOutput: %s", err, output)
+			r.scheduleRetryIfDue(&run, job, dest, opts)
 			_ = r.db.UpdateJobRun(run)
 			r.logActivity("error", "backup",
 				fmt.Sprintf("Pre-script failed: %s", job.Name),
@@ -1031,8 +1253,17 @@ func (r *Runner) RunJob(jobID int64) {
 	}
 
 	status := "completed"
+	// userCancelled tells us whether the cancellation came from the API
+	// (operator action) vs. ctx timeout / stall-detector goroutine.
+	// Operator cancels MUST NOT trigger retry; stall/timeout SHOULD.
+	userCancelled := false
 	if ctx.Err() != nil {
 		status = "cancelled"
+		r.statusMu.RLock()
+		if r.currentRun != nil && r.currentRun.Cancelling {
+			userCancelled = true
+		}
+		r.statusMu.RUnlock()
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Printf("runner: job %d timed out after %v", jobID, time.Since(jobStart).Truncate(time.Second))
 			run.Log = fmt.Sprintf("Job timed out after %v", time.Since(jobStart).Truncate(time.Second))
@@ -1051,8 +1282,35 @@ func (r *Runner) RunJob(jobID int64) {
 	run.ItemsDone = itemsDone
 	run.ItemsFailed = itemsFailed
 	run.SizeBytes = totalSize
+	// Schedule a retry on:
+	//   - "failed"    (genuine end-of-pipeline failure)
+	//   - "cancelled" UNLESS the operator pressed Cancel (stall/timeout
+	//     paths set Cancelling=false and benefit from a retry).
+	// "completed" / "partial" / user-cancel → no retry.
+	switch status {
+	case "failed":
+		r.scheduleRetryIfDue(&run, job, dest, opts)
+	case "cancelled":
+		if !userCancelled {
+			r.scheduleRetryIfDue(&run, job, dest, opts)
+		}
+	}
 	if err := r.db.UpdateJobRun(run); err != nil {
 		log.Printf("runner: failed to update job run %d: %v", runID, err)
+	}
+
+	// Record breaker outcome based on final job status. "completed" or
+	// "partial" runs count as a destination success (the storage was
+	// reachable end-to-end); "failed" counts as a destination failure.
+	// "cancelled" is operator action and does not affect the breaker.
+	// Re-fetch dest so the breaker sees the latest persisted counters.
+	if freshDest, ferr := r.db.GetStorageDestination(dest.ID); ferr == nil {
+		switch status {
+		case "completed", "partial":
+			r.breaker.RecordSuccess(r.db, freshDest)
+		case "failed":
+			r.breaker.RecordFailure(r.db, freshDest)
+		}
 	}
 
 	if itemsDone > 0 {
@@ -2744,36 +3002,6 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 	manifestPath := filepath.Join(basePath, "manifest.json")
 	if err := adapter.Write(manifestPath, strings.NewReader(string(data))); err != nil {
 		log.Printf("runner: failed to write manifest to %s: %v", manifestPath, err)
-	}
-}
-
-// backupDatabase copies the SQLite database file to a centralized location
-// in storage (_vault/vault.db). This protects against database loss and
-// enables disaster recovery from storage alone. A single copy is maintained
-// per storage destination, avoiding duplicate backups across job runs.
-func (r *Runner) backupDatabase(dest db.StorageDestination) {
-	dbPath := r.db.Path()
-	if dbPath == "" || dbPath == ":memory:" {
-		return
-	}
-
-	f, err := os.Open(dbPath) // #nosec G304 — dbPath from r.db.Path(), set at daemon startup
-	if err != nil {
-		log.Printf("runner: failed to open database for backup: %v", err)
-		return
-	}
-	defer f.Close()
-
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
-	if err != nil {
-		log.Printf("runner: failed to create adapter for db backup: %v", err)
-		return
-	}
-	defer storage.CloseAdapter(adapter)
-
-	const destPath = "_vault/vault.db"
-	if err := adapter.Write(destPath, f); err != nil {
-		log.Printf("runner: failed to backup database to %s: %v", destPath, err)
 	}
 }
 

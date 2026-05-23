@@ -147,10 +147,11 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// after creation; we reject attempts to change them rather than
 	// silently ignore.
 	var patch struct {
-		Name         *string `json:"name"`
-		Type         *string `json:"type"`
-		Config       *string `json:"config"`
-		DedupEnabled *bool   `json:"dedup_enabled"`
+		Name                  *string `json:"name"`
+		Type                  *string `json:"type"`
+		Config                *string `json:"config"`
+		DedupEnabled          *bool   `json:"dedup_enabled"`
+		BackupDatabaseEnabled *bool   `json:"backup_database_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
@@ -181,6 +182,9 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		storage.CloseAdapter(adapter)
+	}
+	if patch.BackupDatabaseEnabled != nil {
+		existing.BackupDatabaseEnabled = *patch.BackupDatabaseEnabled
 	}
 	if err := h.db.UpdateStorageDestination(existing); err != nil {
 		respondInternalError(w, err)
@@ -256,6 +260,31 @@ func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// CloseBreaker handles POST /api/v1/storage/{id}/breaker/close.
+// Forcibly resets the destination's circuit breaker to closed.
+func (h *StorageHandler) CloseBreaker(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "destination not found")
+		return
+	}
+	if h.runner == nil {
+		respondError(w, http.StatusInternalServerError, "runner unavailable")
+		return
+	}
+	if err := h.runner.Breaker().ManualClose(h.db, id); err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	log.Printf("breaker: manually closed for dest id=%d", id) // #nosec G706 //nolint:gosec // id is parsed via strconv.ParseInt — already a validated int64
+	_ = dest                                                  // dest fetched only to verify existence
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // HealthCheck is the manual-trigger sibling of the scheduler's daily

@@ -21,10 +21,16 @@ func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 	err := d.QueryRow(
 		`SELECT id, name, type, config, COALESCE(dedup_enabled, 0),
 		last_health_check_at, COALESCE(last_health_check_status, ''), COALESCE(last_health_check_error, ''),
+		COALESCE(consecutive_failures, 0),
+		COALESCE(breaker_state, 'closed'),
+		breaker_opened_at,
+		COALESCE(backup_database_enabled, 0),
 		created_at, updated_at
 		FROM storage_destinations WHERE id = ?`, id,
 	).Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config, &dest.DedupEnabled,
 		&dest.LastHealthCheckAt, &dest.LastHealthCheckStatus, &dest.LastHealthCheckError,
+		&dest.ConsecutiveFailures, &dest.BreakerState, &dest.BreakerOpenedAt,
+		&dest.BackupDatabaseEnabled,
 		&dest.CreatedAt, &dest.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return dest, ErrNotFound
@@ -36,6 +42,10 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 	rows, err := d.Query(
 		`SELECT id, name, type, config, COALESCE(dedup_enabled, 0),
 		last_health_check_at, COALESCE(last_health_check_status, ''), COALESCE(last_health_check_error, ''),
+		COALESCE(consecutive_failures, 0),
+		COALESCE(breaker_state, 'closed'),
+		breaker_opened_at,
+		COALESCE(backup_database_enabled, 0),
 		created_at, updated_at
 		FROM storage_destinations ORDER BY name`)
 	if err != nil {
@@ -47,6 +57,8 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 		var dest StorageDestination
 		if err := rows.Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config, &dest.DedupEnabled,
 			&dest.LastHealthCheckAt, &dest.LastHealthCheckStatus, &dest.LastHealthCheckError,
+			&dest.ConsecutiveFailures, &dest.BreakerState, &dest.BreakerOpenedAt,
+			&dest.BackupDatabaseEnabled,
 			&dest.CreatedAt, &dest.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -73,8 +85,58 @@ func (d *DB) UpdateStorageDestinationHealth(id int64, status, errMsg string) err
 
 func (d *DB) UpdateStorageDestination(dest StorageDestination) error {
 	_, err := d.Exec(
-		"UPDATE storage_destinations SET name=?, type=?, config=?, dedup_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.ID,
+		`UPDATE storage_destinations
+		 SET name=?, type=?, config=?, dedup_enabled=?, backup_database_enabled=?, updated_at=CURRENT_TIMESTAMP
+		 WHERE id=?`,
+		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.BackupDatabaseEnabled, dest.ID,
+	)
+	return err
+}
+
+// RecordDestinationFailure increments consecutive_failures and clears
+// success-related fields. Used by the circuit breaker on each failed
+// run, health check, or preflight.
+func (d *DB) RecordDestinationFailure(destID int64, newCount int) error {
+	_, err := d.Exec(
+		`UPDATE storage_destinations SET consecutive_failures=? WHERE id=?`,
+		newCount, destID,
+	)
+	return err
+}
+
+// RecordDestinationSuccess resets consecutive_failures to 0. Does NOT
+// touch breaker_state — that's CloseBreaker's job.
+func (d *DB) RecordDestinationSuccess(destID int64) error {
+	_, err := d.Exec(
+		`UPDATE storage_destinations SET consecutive_failures=0 WHERE id=?`,
+		destID,
+	)
+	return err
+}
+
+// OpenBreaker transitions the breaker to "open" with the given final
+// failure count. Stamps breaker_opened_at.
+func (d *DB) OpenBreaker(destID int64, finalFailureCount int) error {
+	_, err := d.Exec(
+		`UPDATE storage_destinations
+		 SET breaker_state='open',
+		     consecutive_failures=?,
+		     breaker_opened_at=CURRENT_TIMESTAMP
+		 WHERE id=?`,
+		finalFailureCount, destID,
+	)
+	return err
+}
+
+// CloseBreaker transitions the breaker to "closed" and resets counters.
+func (d *DB) CloseBreaker(destID int64) error {
+	_, err := d.Exec(
+		`UPDATE storage_destinations
+		 SET breaker_state='closed',
+		     consecutive_failures=0,
+		     breaker_opened_at=NULL
+		 WHERE id=?`,
+		destID,
 	)
 	return err
 }
@@ -82,6 +144,23 @@ func (d *DB) UpdateStorageDestination(dest StorageDestination) error {
 func (d *DB) DeleteStorageDestination(id int64) error {
 	_, err := d.Exec("DELETE FROM storage_destinations WHERE id = ?", id)
 	return err
+}
+
+// ListDBBackupDestinations returns all destinations with
+// backup_database_enabled=1. Used by the runner to fan out the DB
+// backup after each successful job.
+func (d *DB) ListDBBackupDestinations() ([]StorageDestination, error) {
+	all, err := d.ListStorageDestinations()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StorageDestination, 0)
+	for _, dest := range all {
+		if dest.BackupDatabaseEnabled {
+			out = append(out, dest)
+		}
+	}
+	return out, nil
 }
 
 // CountJobsByStorageDestID returns the number of jobs that reference the

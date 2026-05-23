@@ -136,6 +136,18 @@ func (s *Server) StartWithContext(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
+		// Phase 1: drain the runner — let the active per-file upload finish.
+		// 30 s ceiling; if exceeded, the existing context cancel still kills
+		// mid-flight work.
+		drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		if err := s.runner.Drain(drainCtx); err != nil {
+			log.Printf("server shutdown: runner drain incomplete: %v", err)
+		} else {
+			log.Println("server shutdown: runner drained cleanly")
+		}
+		drainCancel()
+
+		// Phase 2: HTTP server shutdown.
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {

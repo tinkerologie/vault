@@ -144,10 +144,22 @@
     else expandedIds.add(id)
   }
 
+  function formatDuration(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return String(seconds)
+    if (seconds < 1) return `${(seconds * 1000).toFixed(0)} ms`
+    if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`
+    const m = Math.floor(seconds / 60)
+    const s = Math.round(seconds - m * 60)
+    if (m < 60) return s === 0 ? `${m} min` : `${m} min ${s} s`
+    const h = Math.floor(m / 60)
+    const mm = m - h * 60
+    return mm === 0 ? `${h} h` : `${h} h ${mm} min`
+  }
+
   function formatDetailValue(key, value) {
     if (key === 'size_bytes') return formatBytes(value)
-    if (key === 'duration_seconds') return `${value}s`
-    if (key === 'duration_ms') return `${value}ms`
+    if (key === 'duration_seconds') return formatDuration(Number(value))
+    if (key === 'duration_ms') return formatDuration(Number(value) / 1000)
     if (key === 'backup_type') return String(value).charAt(0).toUpperCase() + String(value).slice(1)
     if (key === 'containers_checked') return `${value} checked`
     if (key === 'containers_healthy') return `${value} healthy`

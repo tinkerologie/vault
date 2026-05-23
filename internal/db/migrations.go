@@ -174,4 +174,14 @@ var alterMigrations = []string{
 	// NULL means the restore point is not dedup-backed.
 	"ALTER TABLE storage_destinations ADD COLUMN dedup_enabled INTEGER NOT NULL DEFAULT 0",
 	"ALTER TABLE restore_points       ADD COLUMN manifest_id   BLOB    DEFAULT NULL",
+	// Resilience hardening (spec 2026-05-22) — additive schema.
+	"ALTER TABLE jobs ADD COLUMN retry_max_override INTEGER DEFAULT NULL",
+	"ALTER TABLE jobs ADD COLUMN retry_delays_override TEXT DEFAULT NULL",
+	"ALTER TABLE job_runs ADD COLUMN retry_of_run_id INTEGER DEFAULT NULL",
+	"ALTER TABLE job_runs ADD COLUMN retry_attempt INTEGER DEFAULT 0",
+	"ALTER TABLE job_runs ADD COLUMN retry_next_at TIMESTAMP DEFAULT NULL",
+	"ALTER TABLE storage_destinations ADD COLUMN consecutive_failures INTEGER DEFAULT 0",
+	"ALTER TABLE storage_destinations ADD COLUMN breaker_state TEXT DEFAULT 'closed'",
+	"ALTER TABLE storage_destinations ADD COLUMN breaker_opened_at TIMESTAMP DEFAULT NULL",
+	"ALTER TABLE storage_destinations ADD COLUMN backup_database_enabled INTEGER DEFAULT 0",
 }

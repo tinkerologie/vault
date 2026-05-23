@@ -3,15 +3,21 @@ package db
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"modernc.org/sqlite"
 )
+
+// rotatedSnapshotsKept is the number of timestamped snapshot copies
+// retained under <snapshot_dir>/rotated/. Older files are pruned.
+const rotatedSnapshotsKept = 7
 
 // SnapshotManager handles SQLite backup/restore between the working database
 // and a persistent snapshot file on disk.
@@ -179,6 +185,16 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 	}
 	defer conn.Close()
 
+	// Checkpoint the WAL so the resulting snapshot is self-contained.
+	// TRUNCATE: backfill all frames to main.db, then shrink the WAL file
+	// to 0 bytes. Safe to run here because SaveSnapshot is not on a hot
+	// path. Failure is logged but does not block the snapshot — the
+	// Online Backup API copies WAL frames correctly even without an
+	// explicit checkpoint.
+	if _, ckErr := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); ckErr != nil {
+		log.Printf("snapshot: wal_checkpoint(TRUNCATE) failed: %v (continuing)", ckErr)
+	}
+
 	err = conn.Raw(func(driverConn any) error {
 		type backuper interface {
 			NewBackup(string) (*sqlite.Backup, error)
@@ -202,7 +218,88 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 	sm.mu.Lock()
 	sm.lastSnapshot = time.Now()
 	sm.mu.Unlock()
+
+	// Rotation is best-effort; failure must not surface to the caller.
+	sm.rotateSnapshot()
 	return nil
+}
+
+// rotateSnapshot copies the freshly-saved snapshot to a timestamped file
+// under <snapshot_dir>/rotated/ and prunes the directory to the newest
+// rotatedSnapshotsKept files. Failures are logged but never returned —
+// rotation must not block the snapshot pipeline.
+func (sm *SnapshotManager) rotateSnapshot() {
+	sm.mu.Lock()
+	snapshotPath := sm.snapshotPath
+	sm.mu.Unlock()
+
+	if snapshotPath == "" {
+		return
+	}
+	if _, err := os.Stat(snapshotPath); err != nil {
+		log.Printf("snapshot rotation: source missing: %v", err)
+		return
+	}
+
+	rotatedDir := filepath.Join(filepath.Dir(snapshotPath), "rotated")
+	if err := os.MkdirAll(rotatedDir, 0o750); err != nil {
+		log.Printf("snapshot rotation: mkdir %s: %v", rotatedDir, err)
+		return
+	}
+
+	base := filepath.Base(snapshotPath)
+	// UTC + dashes only — works on every filesystem.
+	stamp := time.Now().UTC().Format("2006-01-02T15-04-05.000000000")
+	dstPath := filepath.Join(rotatedDir, base+"."+stamp)
+
+	// Prefer hardlink (atomic, instant on same FS). Fall back to byte copy
+	// on cross-device failure.
+	if err := os.Link(snapshotPath, dstPath); err != nil {
+		if copyErr := copyFile(snapshotPath, dstPath); copyErr != nil {
+			log.Printf("snapshot rotation: copy %s -> %s failed: %v (link error: %v)",
+				snapshotPath, dstPath, copyErr, err)
+			return
+		}
+	}
+
+	sm.pruneRotated(rotatedDir)
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src) // #nosec G304 — vault-controlled path
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+func (sm *SnapshotManager) pruneRotated(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		log.Printf("snapshot rotation: readdir %s: %v", dir, err)
+		return
+	}
+	if len(entries) <= rotatedSnapshotsKept {
+		return
+	}
+	// Filenames embed a sortable timestamp, so lexical sort = chronological.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	toDelete := entries[:len(entries)-rotatedSnapshotsKept]
+	for _, e := range toDelete {
+		p := filepath.Join(dir, e.Name())
+		if err := os.Remove(p); err != nil {
+			log.Printf("snapshot rotation: remove %s: %v", p, err)
+		}
+	}
 }
 
 // RestoreFromSnapshot copies the snapshot file into the working DB using the
@@ -340,6 +437,12 @@ func (sm *SnapshotManager) saveUSBBackup(force bool) {
 	sm.lastUSBBackup = time.Now()
 	sm.mu.Unlock()
 	log.Printf("USB shadow backup saved to %s", validPath)
+}
+
+// IntegrityCheck runs PRAGMA integrity_check on the working database.
+// Convenience for the restore fallback chain.
+func (sm *SnapshotManager) IntegrityCheck() error {
+	return sm.db.IntegrityCheck()
 }
 
 // RestoreFromPath restores the database from the specified source path.

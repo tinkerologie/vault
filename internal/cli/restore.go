@@ -17,52 +17,44 @@ import (
 //  3. USB backup (/boot/config/plugins/vault/vault.db.backup)
 //  4. Fresh database (no restoration)
 func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePath, usbBackupPath string) *db.RestorationInfo {
-	// 1. Try the configured snapshot path (primary).
-	if configuredPath != "" {
-		if _, err := os.Stat(configuredPath); err == nil {
-			if err := sm.RestoreFromPath(configuredPath); err == nil {
-				return &db.RestorationInfo{
-					Source: "primary",
-					Path:   configuredPath,
-					Reason: "restored from configured snapshot path",
-				}
-			}
-			log.Printf("Warning: failed to restore from configured path %s: %v", configuredPath, err)
+	tryTier := func(label, path, reason string) *db.RestorationInfo {
+		if path == "" {
+			return nil
+		}
+		if _, err := os.Stat(path); err != nil {
+			return nil
+		}
+		if err := sm.RestoreFromPath(path); err != nil {
+			log.Printf("Warning: failed to restore from %s path %s: %v", label, path, err)
+			return nil
+		}
+		if err := sm.IntegrityCheck(); err != nil {
+			log.Printf("Warning: %s snapshot %s failed integrity check: %v", label, path, err)
+			return nil
+		}
+		return &db.RestorationInfo{
+			Source: label,
+			Path:   path,
+			Reason: reason,
 		}
 	}
 
-	// 2. Try the default cache path (if different from configured).
+	if info := tryTier("primary", configuredPath, "restored from configured snapshot path"); info != nil {
+		return info
+	}
 	if defaultCachePath != configuredPath {
-		if _, err := os.Stat(defaultCachePath); err == nil {
-			if err := sm.RestoreFromPath(defaultCachePath); err == nil {
-				return &db.RestorationInfo{
-					Source: "default_cache",
-					Path:   defaultCachePath,
-					Reason: "restored from default cache snapshot (configured path unavailable)",
-				}
-			}
-			log.Printf("Warning: failed to restore from default cache path %s: %v", defaultCachePath, err)
+		if info := tryTier("default_cache", defaultCachePath, "restored from default cache snapshot (configured path unavailable or invalid)"); info != nil {
+			return info
 		}
 	}
-
-	// 3. Try the USB backup.
-	if _, err := os.Stat(usbBackupPath); err == nil {
-		if err := sm.RestoreFromPath(usbBackupPath); err == nil {
-			return &db.RestorationInfo{
-				Source: "usb_backup",
-				Path:   usbBackupPath,
-				Reason: "restored from USB flash backup (cache snapshot unavailable)",
-			}
-		}
-		log.Printf("Warning: failed to restore from USB backup %s: %v", usbBackupPath, err)
+	if info := tryTier("usb_backup", usbBackupPath, "restored from USB flash backup (other snapshots unavailable or invalid)"); info != nil {
+		return info
 	}
-
-	// 4. No source available — start fresh.
-	log.Println("Warning: no snapshot source available — starting with fresh database")
+	log.Println("Warning: no valid snapshot source available — starting with fresh database")
 	return &db.RestorationInfo{
 		Source: "fresh",
 		Path:   "",
-		Reason: "no snapshot files found; configuration will need to be reconfigured",
+		Reason: "no snapshot files passed integrity check; configuration will need to be reconfigured",
 	}
 }
 

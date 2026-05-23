@@ -51,6 +51,7 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	if err != nil {
 		msg := err.Error()
 		_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
+		r.recordBreakerOutcome(dest.ID, false)
 		r.broadcastStorageHealth(dest.ID, "failed", msg)
 		log.Printf("runner: health check FAILED for %q (id=%d): adapter construction: %v", dest.Name, dest.ID, err)
 		return "failed", msg
@@ -67,6 +68,7 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 		if checkErr != nil {
 			msg := checkErr.Error()
 			_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
+			r.recordBreakerOutcome(dest.ID, false)
 			r.broadcastStorageHealth(dest.ID, "failed", msg)
 			log.Printf("runner: health check FAILED for %q (id=%d): %v", dest.Name, dest.ID, checkErr)
 			return "failed", msg
@@ -74,6 +76,7 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	case <-time.After(healthCheckTimeout):
 		msg := "health check timed out after " + healthCheckTimeout.String()
 		_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
+		r.recordBreakerOutcome(dest.ID, false)
 		r.broadcastStorageHealth(dest.ID, "failed", msg)
 		log.Printf("runner: health check TIMEOUT for %q (id=%d)", dest.Name, dest.ID)
 		return "failed", msg
@@ -82,8 +85,30 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	if err := r.db.UpdateStorageDestinationHealth(dest.ID, "ok", ""); err != nil {
 		log.Printf("runner: health check: persisting ok result for %q (id=%d): %v", dest.Name, dest.ID, err)
 	}
+	r.recordBreakerOutcome(dest.ID, true)
 	r.broadcastStorageHealth(dest.ID, "ok", "")
 	return "ok", ""
+}
+
+// recordBreakerOutcome re-fetches the destination so the breaker sees the
+// latest persisted counters, then records a success or failure against the
+// circuit breaker. Health-check failures count against the breaker just
+// like job failures so a sick destination crosses the threshold from
+// either trigger source.
+func (r *Runner) recordBreakerOutcome(destID int64, ok bool) {
+	if r.breaker == nil {
+		return
+	}
+	freshDest, ferr := r.db.GetStorageDestination(destID)
+	if ferr != nil {
+		log.Printf("runner: recordBreakerOutcome: failed to re-fetch dest %d: %v", destID, ferr)
+		return
+	}
+	if ok {
+		r.breaker.RecordSuccess(r.db, freshDest)
+	} else {
+		r.breaker.RecordFailure(r.db, freshDest)
+	}
 }
 
 func (r *Runner) broadcastStorageHealth(id int64, status, errorMsg string) {
