@@ -9,7 +9,7 @@
   import PathBrowser from '../components/PathBrowser.svelte'
   import Tooltip from '../components/Tooltip.svelte'
   import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
-  import AboutCard from '../components/AboutCard.svelte'
+  import ChangelogModal from '../components/ChangelogModal.svelte'
 
   let loading = $state(true)
   let health = $state(null)
@@ -79,13 +79,70 @@
   let apiKeyRevoking = $state(false)
   let confirmApiKeyRevoke = $state(false)
 
+  // About card state (merged into the existing "About Vault" card).
+  /** @type {Array<{ version: string, date?: string, sections: Record<string, string[]> }>} */
+  let releases = $state([])
+  /** @type {{ tag: string, published_at: string, url: string } | null} */
+  let latest = $state(null)
+  let currentVersion = $state('dev')
+  let aboutLoading = $state(true)
+  let aboutModalOpen = $state(false)
+
+  // Strip a leading "v" so a daemon-reported "2026.05.02" matches a
+  // GitHub tag like "v2026.05.02" before comparing.
+  /** @param {string | undefined} v */
+  function normalizeVersion(v) {
+    if (!v) return ''
+    return String(v).replace(/^v/i, '')
+  }
+
+  const aboutStatus = $derived.by(() => {
+    if (currentVersion === 'dev') {
+      return { kind: 'dev', label: 'Development build', note: '' }
+    }
+    if (latest === null) {
+      return { kind: 'unknown', label: '', note: 'Update status unknown.' }
+    }
+    if (normalizeVersion(latest.tag) === normalizeVersion(currentVersion)) {
+      return { kind: 'ok', label: 'Up to date', note: '' }
+    }
+    return { kind: 'update', label: 'Update available', note: `Latest: ${latest.tag}` }
+  })
+
+  const aboutReleasedNote = $derived.by(() => {
+    if (!latest) return ''
+    const d = new Date(latest.published_at)
+    if (Number.isNaN(d.getTime())) return ''
+    const diff = Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000))
+    if (diff === 0) return 'Released today.'
+    if (diff === 1) return 'Released 1 day ago.'
+    return `Released ${diff} days ago.`
+  })
+
+  const aboutBadgeClass = $derived(
+    aboutStatus.kind === 'ok'
+      ? 'bg-emerald-500/15 text-emerald-400'
+      : aboutStatus.kind === 'update'
+        ? 'bg-orange-500/15 text-orange-400'
+        : 'bg-surface text-text-muted',
+  )
+
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
 
   onMount(async () => {
     try {
-      const [h, s, enc, staging, dbInfo, apiKeyStatus] = await Promise.all([api.health(), api.getSettings(), api.getEncryptionStatus(), api.getStagingInfo().catch(() => null), api.getDatabaseInfo().catch(() => null), api.getAPIKeyStatus().catch(() => null)])
+      const [h, s, enc, staging, dbInfo, apiKeyStatus, changelog, latestRelease] = await Promise.all([
+        api.health(),
+        api.getSettings(),
+        api.getEncryptionStatus(),
+        api.getStagingInfo().catch(() => null),
+        api.getDatabaseInfo().catch(() => null),
+        api.getAPIKeyStatus().catch(() => null),
+        api.getChangelog().catch(() => []),
+        api.getLatestRelease().catch(() => null),
+      ])
       health = h
       settings = s || {}
       encryptionEnabled = enc?.encryption_enabled || false
@@ -98,10 +155,14 @@
       snapshotPathInput = dbInfo?.snapshot_path_override || ''
       retryMax = s?.retry_max_default ?? ''
       retryDelays = s?.retry_delays_default ?? ''
+      currentVersion = (h && h.version) || 'dev'
+      releases = changelog
+      latest = latestRelease
     } catch (e) {
       console.error('Settings load error:', e)
     } finally {
       loading = false
+      aboutLoading = false
     }
   })
 
@@ -1450,7 +1511,7 @@
         </div>
       </div>
 
-      <!-- About -->
+      <!-- About Vault — single merged card -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">About Vault</h2>
@@ -1459,7 +1520,31 @@
           <p class="text-sm text-text-muted leading-relaxed">
             Vault is a backup and restore manager for Unraid servers. It automates scheduled, encrypted backups of Docker containers, libvirt VMs, plugins, ZFS datasets, and arbitrary folders (including the Unraid flash drive) to a wide range of storage destinations &mdash; local paths, SFTP, SMB/CIFS, NFS, WebDAV, and S3-compatible object stores (AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi).
           </p>
-          <div class="mt-4 flex items-center gap-4">
+
+          <div class="mt-5 pt-4 border-t border-border">
+            <div class="flex items-center gap-3 flex-wrap">
+              <span class="text-sm font-medium text-text">Version <span class="font-mono">{currentVersion}</span></span>
+              {#if aboutStatus.label}
+                <span class="text-xs px-2 py-0.5 rounded {aboutBadgeClass}">{aboutStatus.label}</span>
+              {/if}
+              {#if aboutStatus.note}
+                <span class="text-xs text-text-muted">{aboutStatus.note}</span>
+              {/if}
+            </div>
+            {#if aboutReleasedNote}
+              <p class="text-xs text-text-muted mt-1">{aboutReleasedNote}</p>
+            {/if}
+          </div>
+
+          <div class="mt-4 flex items-center gap-4 flex-wrap">
+            <button
+              type="button"
+              onclick={() => (aboutModalOpen = true)}
+              disabled={aboutLoading || releases.length === 0}
+              class="px-3 py-1.5 text-sm font-medium text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              View Changelog
+            </button>
             <a href="https://github.com/ruaan-deysel/vault" target="_blank" rel="noopener"
               class="text-sm text-vault hover:text-vault-dark transition-colors flex items-center gap-2">
               <svg aria-hidden="true" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
@@ -1474,7 +1559,13 @@
         </div>
       </div>
 
-      <AboutCard />
+      <ChangelogModal
+        show={aboutModalOpen}
+        onclose={() => (aboutModalOpen = false)}
+        {releases}
+        {currentVersion}
+        latestTag={latest?.tag ?? ''}
+      />
       {/if}
     </div>
   {/if}
