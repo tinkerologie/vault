@@ -36,6 +36,14 @@
     else expanded.add(version)
   }
 
+  // Strip a leading "v" so a daemon-reported "2026.05.02" matches a
+  // GitHub tag like "v2026.05.02" when picking the Current/Latest pill.
+  /** @param {string} v */
+  function norm(v) {
+    if (!v) return ''
+    return String(v).replace(/^v/i, '')
+  }
+
   /** @param {string | undefined} dateStr */
   function daysAgo(dateStr) {
     if (!dateStr) return ''
@@ -55,8 +63,8 @@
     {/if}
     {#each releases as r, i (r.version)}
       {@const isExpanded = expanded.has(r.version)}
-      {@const isLatest = r.version === latestTag || i === 0}
-      {@const isCurrent = r.version === currentVersion}
+      {@const isLatest = norm(r.version) === norm(latestTag) || i === 0}
+      {@const isCurrent = norm(r.version) === norm(currentVersion)}
       <div class="border border-border rounded-lg overflow-hidden">
         <button
           type="button"

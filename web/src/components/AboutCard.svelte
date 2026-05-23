@@ -28,6 +28,16 @@
     }
   })
 
+  // Normalise version strings before comparing — the daemon reports
+  // version without a leading "v" (e.g. "2026.05.02") whereas GitHub
+  // release tags carry the "v" prefix ("v2026.05.02"). Strip it from
+  // both sides so equal versions don't get reported as "Update
+  // available".
+  function normalizeVersion(v) {
+    if (!v) return ''
+    return String(v).replace(/^v/i, '')
+  }
+
   const status = $derived.by(() => {
     if (currentVersion === 'dev') {
       return { kind: 'dev', label: 'Development build', note: '' }
@@ -35,7 +45,7 @@
     if (latest === null) {
       return { kind: 'unknown', label: '', note: 'Update status unknown.' }
     }
-    if (latest.tag === currentVersion) {
+    if (normalizeVersion(latest.tag) === normalizeVersion(currentVersion)) {
       return { kind: 'ok', label: 'Up to date', note: '' }
     }
     return { kind: 'update', label: 'Update available', note: `Latest: ${latest.tag}` }
