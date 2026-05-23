@@ -58,8 +58,11 @@
       .replace(/'/g, '&#39;')
     return escaped
       .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-surface text-text font-mono text-xs">$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold text-text">$1</strong>')
-      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+      // Non-greedy .+? for bold so a single * inside the bolded span
+      // (e.g. "image.tar*" wrapped in an earlier <code> tag) doesn't
+      // truncate the match at the inner asterisk.
+      .replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold text-text">$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, '$1<em>$2</em>')
   }
 
   /** @param {string | undefined} dateStr */
