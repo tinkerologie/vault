@@ -41,10 +41,10 @@ type Job struct {
 	// settings (retry_max_default / retry_delays_default).
 	// RetryDelaysOverride stores a JSON array of seconds, e.g. "[60,300]".
 	// Pointer types so the JSON API emits null (not {Valid,Int64}) for unset.
-	RetryMaxOverride    *int64  `json:"retry_max_override"`
-	RetryDelaysOverride *string `json:"retry_delays_override"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
+	RetryMaxOverride    *int64    `json:"retry_max_override"`
+	RetryDelaysOverride *string   `json:"retry_delays_override"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type JobItem struct {
