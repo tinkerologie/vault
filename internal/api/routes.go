@@ -17,6 +17,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
 	mcpserver "github.com/ruaan-deysel/vault/internal/mcp"
+	"github.com/ruaan-deysel/vault/internal/release"
 	"github.com/ruaan-deysel/vault/web"
 )
 
@@ -52,6 +53,15 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		healthH := handlers.NewHealthHandler(s.db)
 		r.Get("/health/summary", healthH.Summary)
+
+		// Release / About card endpoints. Always accessible (also in replica mode):
+		// these are purely informational metadata, no DB writes.
+		releaseCache := release.NewCache("", "ruaan-deysel/vault", time.Hour)
+		releaseH := handlers.NewReleaseHandler(release.Raw(), releaseCache)
+		r.Route("/release", func(r chi.Router) {
+			r.Get("/changelog", releaseH.Changelog)
+			r.Get("/latest", releaseH.Latest)
+		})
 
 		storageH := handlers.NewStorageHandler(s.db, s.runner)
 		s.storageHandler = storageH
