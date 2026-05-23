@@ -58,19 +58,27 @@ deps:
 	go mod download
 	go mod tidy
 
+# CHANGELOG.md must live next to the //go:embed directive in
+# internal/release/. Go's embed rules forbid parent-directory paths,
+# so we copy from the repo root. The copy is gitignored so the repo
+# root remains the single source of truth.
+internal/release/CHANGELOG.md: CHANGELOG.md
+	@mkdir -p internal/release
+	cp CHANGELOG.md internal/release/CHANGELOG.md
+
 build-web:
 	cd web && npm ci && npm run build
 
-build-local: build-web
+build-local: internal/release/CHANGELOG.md build-web
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64 ./cmd/vault/
 
-test:
+test: internal/release/CHANGELOG.md
 	go test ./... -v
 
-test-short:
+test-short: internal/release/CHANGELOG.md
 	go test ./... -short
 
-test-coverage:
+test-coverage: internal/release/CHANGELOG.md
 	go test ./... -coverprofile=coverage.out -covermode=atomic
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
@@ -82,7 +90,7 @@ clean:
 
 # ── Release packaging ──────────────────────────────────────────────────────────
 
-release: build-web
+release: internal/release/CHANGELOG.md build-web
 	@echo "Cross-compiling for Linux/amd64..."
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64 ./cmd/vault/
 

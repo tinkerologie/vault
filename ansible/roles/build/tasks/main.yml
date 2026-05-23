@@ -40,6 +40,12 @@
         chdir: "{{ playbook_dir }}/../web"
       changed_when: true
 
+    - name: Copy CHANGELOG.md into embed location
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../CHANGELOG.md"
+        dest: "{{ playbook_dir }}/../internal/release/CHANGELOG.md"
+        mode: '0644'
+
     - name: Cross-compile Linux/amd64 binary
       ansible.builtin.command:
         cmd: >
