@@ -271,7 +271,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) // #nosec G304 //nolint:gosec // dst is built from validated snapshotPath + UTC timestamp under <dir>/rotated/ — vault-controlled, not user input
 	if err != nil {
 		return err
 	}

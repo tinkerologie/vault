@@ -657,7 +657,7 @@ func (w *WebDAVAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser
 	}
 
 	target := strings.TrimRight(w.config.URL, "/") + full
-	req, err := http.NewRequest(http.MethodGet, target, nil)
+	req, err := http.NewRequest(http.MethodGet, target, nil) // #nosec G107 //nolint:gosec // w.config.URL is the admin-configured WebDAV destination URL — not user input
 	if err != nil {
 		return nil, fmt.Errorf("webdav: build range request: %w", err)
 	}
