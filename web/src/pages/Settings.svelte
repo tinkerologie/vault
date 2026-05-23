@@ -681,11 +681,8 @@
             <button
               onclick={saveRetryPolicy}
               disabled={retrySaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {#if retrySaving}
-                <Spinner size="sm" />
-              {/if}
               Save Retry Policy
             </button>
           </div>
