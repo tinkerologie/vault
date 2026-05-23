@@ -9,6 +9,7 @@
   import PathBrowser from '../components/PathBrowser.svelte'
   import Tooltip from '../components/Tooltip.svelte'
   import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
+  import AboutCard from '../components/AboutCard.svelte'
 
   let loading = $state(true)
   let health = $state(null)
@@ -1472,6 +1473,8 @@
           </div>
         </div>
       </div>
+
+      <AboutCard />
       {/if}
     </div>
   {/if}

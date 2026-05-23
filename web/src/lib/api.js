@@ -30,6 +30,13 @@ export const api = {
   health: () => request('GET', '/health'),
   getHealthSummary: () => request('GET', '/health/summary'),
 
+  // Release
+  getChangelog: async () => {
+    const body = await request('GET', '/release/changelog')
+    return (body && body.releases) || []
+  },
+  getLatestRelease: () => request('GET', '/release/latest'),
+
   // Storage
   listStorage: () => request('GET', '/storage'),
   getStorage: (id) => request('GET', `/storage/${id}`),
