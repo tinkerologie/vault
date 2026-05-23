@@ -44,6 +44,24 @@
     return String(v).replace(/^v/i, '')
   }
 
+  // Render the inline-markdown subset that actually appears in
+  // CHANGELOG bullets: **bold**, `code`, and *italic*. Source is the
+  // embedded CHANGELOG.md (trusted, ships in the binary) but we still
+  // HTML-escape first to defend against any future authoring slip.
+  /** @param {string} text */
+  function renderInline(text) {
+    const escaped = String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+    return escaped
+      .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-surface text-text font-mono text-xs">$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold text-text">$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+  }
+
   /** @param {string | undefined} dateStr */
   function daysAgo(dateStr) {
     if (!dateStr) return ''
@@ -88,7 +106,7 @@
                 <h4 class="text-sm font-semibold text-text mb-1">{section}</h4>
                 <ul class="text-sm text-text-muted space-y-1 list-disc pl-5">
                   {#each bullets as b, bi (bi)}
-                    <li>{b}</li>
+                    <li>{@html renderInline(b)}</li>
                   {/each}
                 </ul>
               </div>
