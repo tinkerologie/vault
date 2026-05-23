@@ -271,7 +271,11 @@ go test ./internal/db/... -run TestJobCreate -v  # Single test
 2. **Deploy:** Ask the user for confirmation and verify deployment credentials before running `make deploy` (deploys binary + assets to Unraid, starts daemon).
 3. **Verify API:** Run `make verify` (endpoint checks + folder/VM smoke tests against Unraid). Fix any failures before proceeding.
 4. **Verify UI:** Use Playwright, browser MCP tools, or manual testing to navigate affected pages on `http://<unraid-server>:24085`. Take snapshots to confirm the UI renders correctly.
-5. **Update CHANGELOG.md:** Add entries under the `## [Unreleased]` section using [Keep a Changelog](https://keepachangelog.com/) format (`### Added`, `### Fixed`, `### Changed`, `### Removed`). Reference issue numbers where applicable.
+5. **Update CHANGELOG.md (NON-NEGOTIABLE):** Add entries under `## [Unreleased]` using [Keep a Changelog](https://keepachangelog.com/) format. `CHANGELOG.md` is consumed by THREE systems: the in-app View Changelog modal (Settings → About Vault, parser at `internal/release/changelog.go`), the `release.yml` GitHub-release notes extractor, and operator-facing upgrade diffs — a missing or malformed entry breaks all three. Required format:
+   - Section headings (per version): `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security` — any other `### ` heading is silently dropped.
+   - Bullets start with `- ` at column 0. Inline markdown that renders in the modal: `**bold**`, `` `code` ``, `*italic*`. Nothing else is interpreted.
+   - Be concise but descriptive — entries stand alone with no PR context. Reference issue numbers (e.g. `closes #123`) where applicable.
+   - `[Unreleased]` is intentionally hidden from the modal. At release time, promote it to `## [vX.Y.Z] - YYYY-MM-DD` (heading must match the tag exactly) BEFORE pushing the `v*` tag.
 
 **Shortcut:** `make redeploy` (uninstall → build → deploy → verify) replaces steps 1–3, but steps 4 and 5 are still recommended.
 

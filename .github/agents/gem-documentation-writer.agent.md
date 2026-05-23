@@ -29,7 +29,7 @@ Documentation for Vault lives in these places (do not invent new top-level doc d
 | `docs/mcp.md`                        | MCP integration notes                                           |
 | `docs/home-assistant-integration.md` | Home Assistant integration guide                                |
 | `docs/screenshots/`                  | PNGs used by README and docs                                    |
-| `CHANGELOG.md`                       | Keep-a-Changelog entries — `## [Unreleased]` before release cut |
+| `CHANGELOG.md`                       | Keep-a-Changelog entries — `## [Unreleased]` before release cut. Strict format: `## [vX.Y.Z] - YYYY-MM-DD` headings, `### Added/Changed/Fixed/Removed/Security` sections only, `- ` bullets, inline `**bold**`/`` `code` ``/`*italic*`. Parsed by `internal/release/changelog.go` and surfaced in the in-app View Changelog modal (Settings → About Vault) and `release.yml` GitHub-release notes. Other section names are silently dropped. |
 | `ansible/README.md`                  | Deployment automation docs                                      |
 | `plugin/`                            | Unraid plugin metadata — keep any user-visible strings in sync  |
 

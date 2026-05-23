@@ -83,7 +83,13 @@ jobs:
         run: cd web && npm ci && npm run build
 
       - name: Run tests
-        run: go test ./... -v
+        # Route through `make test` (rather than `go test ./... -v` directly)
+        # so the Makefile prerequisite copies CHANGELOG.md into
+        # internal/release/CHANGELOG.md before compilation. The
+        # internal/release package uses //go:embed CHANGELOG.md, which
+        # cannot reach the repo-root file directly because Go forbids
+        # parent-directory paths in embed patterns.
+        run: make test
 
       - name: Build release package
         run: |

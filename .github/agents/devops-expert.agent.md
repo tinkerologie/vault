@@ -88,6 +88,14 @@ Tag-driven via GitHub Actions (`.github/workflows/release.yml`). The pipeline:
 
 Bump `VERSION` (YYYY.M.D format) and `CHANGELOG.md` in the same commit as the feature/fix.
 
+`CHANGELOG.md` is consumed by THREE downstream systems — `release.yml` extracts the matching `## [vX.Y.Z]` section for the GitHub release body, the daemon embeds it via `//go:embed` and serves it at `GET /api/v1/release/changelog` (parser at `internal/release/changelog.go`), and the in-app About Vault card renders it in the View Changelog modal. Format is strict:
+
+- Version heading at release time: `## [vX.Y.Z] - YYYY-MM-DD` (date required; heading MUST match the tag exactly so `release.yml` finds it).
+- Section headings: `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security` — any other `### ` heading is silently dropped by the parser.
+- Bullets start with `- ` at column 0. Inline markdown renders for `**bold**`, `` `code` ``, `*italic*`; nothing else.
+- `## [Unreleased]` is hidden from the in-app modal until promoted at release time. Promote BEFORE pushing the `v*` tag.
+- `release.yml` runs `make test` (which copies CHANGELOG.md → `internal/release/CHANGELOG.md` via Makefile prereq) — do NOT replace this with bare `go test` or the embed will be missing during compile.
+
 ## Conventions
 
 - **Commit messages:** Conventional Commits — `feat(scope):`, `fix(scope):`, `docs(scope):`, `chore(scope):`, `ci(scope):`
