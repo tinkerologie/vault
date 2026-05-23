@@ -147,10 +147,11 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// after creation; we reject attempts to change them rather than
 	// silently ignore.
 	var patch struct {
-		Name         *string `json:"name"`
-		Type         *string `json:"type"`
-		Config       *string `json:"config"`
-		DedupEnabled *bool   `json:"dedup_enabled"`
+		Name                  *string `json:"name"`
+		Type                  *string `json:"type"`
+		Config                *string `json:"config"`
+		DedupEnabled          *bool   `json:"dedup_enabled"`
+		BackupDatabaseEnabled *bool   `json:"backup_database_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
@@ -181,6 +182,9 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		storage.CloseAdapter(adapter)
+	}
+	if patch.BackupDatabaseEnabled != nil {
+		existing.BackupDatabaseEnabled = *patch.BackupDatabaseEnabled
 	}
 	if err := h.db.UpdateStorageDestination(existing); err != nil {
 		respondInternalError(w, err)
