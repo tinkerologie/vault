@@ -277,7 +277,7 @@ go test ./internal/db/... -run TestJobCreate -v  # Single test
    - Be concise but descriptive — entries stand alone with no PR context. Reference issue numbers (e.g. `closes #123`) where applicable.
    - `[Unreleased]` is intentionally hidden from the modal. At release time, promote it to `## [vX.Y.Z] - YYYY-MM-DD` (heading must match the tag exactly) BEFORE pushing the `v*` tag.
 
-**Shortcut:** `make redeploy` (uninstall → build → deploy → verify) replaces steps 1–3, but steps 4 and 5 are still recommended.
+**Shortcut:** `make build deploy verify` (build → deploy → verify) replaces steps 1–3 in one command without uninstalling the plugin, so current Vault settings on the Unraid host are preserved. Steps 4 and 5 are still recommended. Avoid `make redeploy` for routine iteration — it includes an uninstall step that wipes the plugin's configured state.
 
 **Skip when:** Changes are limited to documentation files (`.md`), comments, or files that do not affect the built binary or web UI.
 
