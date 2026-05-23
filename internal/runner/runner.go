@@ -70,6 +70,17 @@ type runOptions struct {
 	manual       bool
 }
 
+// retryOfRunIDPtr returns the nullable pointer form for db.JobRun. The
+// model uses *int64 so JSON serialises NULL as `null` instead of a
+// {Valid, Int64} struct.
+func (o runOptions) retryOfRunIDPtr() *int64 {
+	if o.retryOfRunID <= 0 {
+		return nil
+	}
+	v := o.retryOfRunID
+	return &v
+}
+
 type restoreProgressReporter struct {
 	JobID       int64
 	RunID       int64
@@ -455,7 +466,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			Status:       "skipped",
 			BackupType:   r.resolveBackupType(job).BackupType,
 			RetryAttempt: opts.retryAttempt,
-			RetryOfRunID: sql.NullInt64{Valid: opts.retryOfRunID > 0, Int64: opts.retryOfRunID},
+			RetryOfRunID: opts.retryOfRunIDPtr(),
 		}
 		runID, createErr := r.db.CreateJobRun(skipped)
 		if createErr != nil {
@@ -495,7 +506,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			BackupType:   r.resolveBackupType(job).BackupType,
 			ItemsTotal:   0,
 			RetryAttempt: opts.retryAttempt,
-			RetryOfRunID: sql.NullInt64{Valid: opts.retryOfRunID > 0, Int64: opts.retryOfRunID},
+			RetryOfRunID: opts.retryOfRunIDPtr(),
 		}
 		runID, createErr := r.db.CreateJobRun(skippedRun)
 		if createErr != nil {
@@ -529,7 +540,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		BackupType:   btResult.BackupType,
 		ItemsTotal:   len(items),
 		RetryAttempt: opts.retryAttempt,
-		RetryOfRunID: sql.NullInt64{Valid: opts.retryOfRunID > 0, Int64: opts.retryOfRunID},
+		RetryOfRunID: opts.retryOfRunIDPtr(),
 	}
 	runID, err := r.db.CreateJobRun(run)
 	if err != nil {

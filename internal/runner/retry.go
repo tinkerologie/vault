@@ -38,14 +38,14 @@ func (p RetryPolicy) NextDelay(attempt int) int {
 // override falls back to global with a warning log.
 func resolveRetryPolicy(job db.Job, globalMax int, globalDelays []int) RetryPolicy {
 	p := RetryPolicy{Max: globalMax, Delays: globalDelays}
-	if job.RetryMaxOverride.Valid {
-		p.Max = int(job.RetryMaxOverride.Int64)
+	if job.RetryMaxOverride != nil {
+		p.Max = int(*job.RetryMaxOverride)
 	}
-	if job.RetryDelaysOverride.Valid && job.RetryDelaysOverride.String != "" {
+	if job.RetryDelaysOverride != nil && *job.RetryDelaysOverride != "" {
 		var delays []int
-		if err := json.Unmarshal([]byte(job.RetryDelaysOverride.String), &delays); err != nil {
+		if err := json.Unmarshal([]byte(*job.RetryDelaysOverride), &delays); err != nil {
 			log.Printf("retry: job %d has invalid retry_delays_override %q: %v",
-				job.ID, job.RetryDelaysOverride.String, err)
+				job.ID, *job.RetryDelaysOverride, err)
 		} else {
 			p.Delays = delays
 		}

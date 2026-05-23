@@ -85,8 +85,10 @@ func (d *DB) UpdateStorageDestinationHealth(id int64, status, errMsg string) err
 
 func (d *DB) UpdateStorageDestination(dest StorageDestination) error {
 	_, err := d.Exec(
-		"UPDATE storage_destinations SET name=?, type=?, config=?, dedup_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.ID,
+		`UPDATE storage_destinations
+		 SET name=?, type=?, config=?, dedup_enabled=?, backup_database_enabled=?, updated_at=CURRENT_TIMESTAMP
+		 WHERE id=?`,
+		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.BackupDatabaseEnabled, dest.ID,
 	)
 	return err
 }

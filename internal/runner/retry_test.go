@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,6 +8,11 @@ import (
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
+
+// ptrInt64 / ptrStr are small test helpers that mirror the model's
+// nullable-as-pointer convention.
+func ptrInt64(v int64) *int64    { return &v }
+func ptrStr(s string) *string    { return &s }
 
 func TestResolveRetryPolicyGlobal(t *testing.T) {
 	job := db.Job{}
@@ -23,8 +27,8 @@ func TestResolveRetryPolicyGlobal(t *testing.T) {
 
 func TestResolveRetryPolicyOverride(t *testing.T) {
 	job := db.Job{
-		RetryMaxOverride:    sql.NullInt64{Valid: true, Int64: 1},
-		RetryDelaysOverride: sql.NullString{Valid: true, String: "[60,120]"},
+		RetryMaxOverride:    ptrInt64(1),
+		RetryDelaysOverride: ptrStr("[60,120]"),
 	}
 	p := resolveRetryPolicy(job, 2, []int{900, 3600, 14400})
 	if p.Max != 1 {
@@ -37,7 +41,7 @@ func TestResolveRetryPolicyOverride(t *testing.T) {
 
 func TestResolveRetryPolicyInvalidJSONFallsBack(t *testing.T) {
 	job := db.Job{
-		RetryDelaysOverride: sql.NullString{Valid: true, String: "not json"},
+		RetryDelaysOverride: ptrStr("not json"),
 	}
 	p := resolveRetryPolicy(job, 2, []int{900})
 	if len(p.Delays) != 1 || p.Delays[0] != 900 {
@@ -99,11 +103,11 @@ func TestScheduleRetryIfDueSetsRetryNextAt(t *testing.T) {
 	dest := db.StorageDestination{ID: 1, BreakerState: "closed"}
 	run := db.JobRun{RetryAttempt: 0}
 	r.scheduleRetryIfDue(&run, job, dest, runOptions{})
-	if !run.RetryNextAt.Valid {
+	if run.RetryNextAt == nil {
 		t.Fatalf("RetryNextAt was not set when retries are due")
 	}
-	if !run.RetryNextAt.Time.After(time.Now()) {
-		t.Errorf("RetryNextAt should be in the future, got %v", run.RetryNextAt.Time)
+	if !run.RetryNextAt.After(time.Now()) {
+		t.Errorf("RetryNextAt should be in the future, got %v", *run.RetryNextAt)
 	}
 }
 
@@ -113,8 +117,8 @@ func TestScheduleRetryIfDueManualSuppresses(t *testing.T) {
 	dest := db.StorageDestination{ID: 1, BreakerState: "closed"}
 	run := db.JobRun{RetryAttempt: 0}
 	r.scheduleRetryIfDue(&run, job, dest, runOptions{manual: true})
-	if run.RetryNextAt.Valid {
-		t.Errorf("manual run should not schedule retry, got %v", run.RetryNextAt.Time)
+	if run.RetryNextAt != nil {
+		t.Errorf("manual run should not schedule retry, got %v", *run.RetryNextAt)
 	}
 }
 
@@ -124,8 +128,8 @@ func TestScheduleRetryIfDueBreakerOpenSuppresses(t *testing.T) {
 	dest := db.StorageDestination{ID: 1, BreakerState: "open"}
 	run := db.JobRun{RetryAttempt: 0}
 	r.scheduleRetryIfDue(&run, job, dest, runOptions{})
-	if run.RetryNextAt.Valid {
-		t.Errorf("breaker-open run should not schedule retry, got %v", run.RetryNextAt.Time)
+	if run.RetryNextAt != nil {
+		t.Errorf("breaker-open run should not schedule retry, got %v", *run.RetryNextAt)
 	}
 }
 
@@ -144,19 +148,19 @@ func TestScheduleRetryIfDueExhaustsAtMax(t *testing.T) {
 	// attempt=0 → eligible
 	run := db.JobRun{RetryAttempt: 0}
 	r.scheduleRetryIfDue(&run, job, dest, runOptions{})
-	if !run.RetryNextAt.Valid {
+	if run.RetryNextAt == nil {
 		t.Fatalf("attempt=0 should schedule retry")
 	}
 	// attempt=1 → eligible (< Max=2)
 	run = db.JobRun{RetryAttempt: 1}
 	r.scheduleRetryIfDue(&run, job, dest, runOptions{})
-	if !run.RetryNextAt.Valid {
+	if run.RetryNextAt == nil {
 		t.Fatalf("attempt=1 should schedule retry")
 	}
 	// attempt=2 → exhausted (>= Max=2)
 	run = db.JobRun{RetryAttempt: 2}
 	r.scheduleRetryIfDue(&run, job, dest, runOptions{})
-	if run.RetryNextAt.Valid {
+	if run.RetryNextAt != nil {
 		t.Errorf("attempt=2 should NOT schedule retry (max reached)")
 	}
 }
@@ -209,11 +213,11 @@ func TestScheduleRetryIfDuePersistsViaUpdateJobRun(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("expected 1 run, got %d", len(runs))
 	}
-	if !runs[0].RetryNextAt.Valid {
+	if runs[0].RetryNextAt == nil {
 		t.Fatalf("retry_next_at was not persisted")
 	}
-	if !runs[0].RetryNextAt.Time.After(time.Now()) {
-		t.Errorf("retry_next_at should be in the future, got %v", runs[0].RetryNextAt.Time)
+	if !runs[0].RetryNextAt.After(time.Now()) {
+		t.Errorf("retry_next_at should be in the future, got %v", *runs[0].RetryNextAt)
 	}
 }
 
@@ -246,7 +250,7 @@ func TestCreateJobRunPersistsRetryFields(t *testing.T) {
 		JobID:        jobID,
 		Status:       "running",
 		BackupType:   "full",
-		RetryOfRunID: sql.NullInt64{Valid: true, Int64: parentRunID},
+		RetryOfRunID: ptrInt64(parentRunID),
 		RetryAttempt: 1,
 	})
 	if err != nil {
@@ -267,7 +271,7 @@ func TestCreateJobRunPersistsRetryFields(t *testing.T) {
 	if retry.ID == 0 {
 		t.Fatalf("retry run not found in listing")
 	}
-	if !retry.RetryOfRunID.Valid || retry.RetryOfRunID.Int64 != parentRunID {
+	if retry.RetryOfRunID == nil || *retry.RetryOfRunID != parentRunID {
 		t.Errorf("RetryOfRunID = %+v, want valid=%d", retry.RetryOfRunID, parentRunID)
 	}
 	if retry.RetryAttempt != 1 {

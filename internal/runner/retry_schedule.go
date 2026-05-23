@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"database/sql"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
@@ -33,8 +32,6 @@ func (r *Runner) scheduleRetryIfDue(run *db.JobRun, job db.Job, dest db.StorageD
 		return
 	}
 	delay := policy.NextDelay(run.RetryAttempt)
-	run.RetryNextAt = sql.NullTime{
-		Valid: true,
-		Time:  time.Now().Add(time.Duration(delay) * time.Second),
-	}
+	t := time.Now().Add(time.Duration(delay) * time.Second)
+	run.RetryNextAt = &t
 }
