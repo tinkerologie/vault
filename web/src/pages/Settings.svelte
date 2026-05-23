@@ -8,6 +8,7 @@
   import Spinner from '../components/Spinner.svelte'
   import PathBrowser from '../components/PathBrowser.svelte'
   import Tooltip from '../components/Tooltip.svelte'
+  import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
 
   let loading = $state(true)
   let health = $state(null)
@@ -60,28 +61,13 @@
   let diagnosticsDownloading = $state(false)
 
   // Retry policy state (Task 11 — resilience hardening). Backend stores the
-  // delays as a JSON-encoded array string in the settings table, so we keep
-  // it as text in the form and validate on save.
+  // delays as a JSON-encoded array string in the settings table. The
+  // RetryDelaysEditor component handles parsing/serialising and only ever
+  // emits a valid JSON array string (or '' for "unset"), so no client-side
+  // validator is needed any more.
   let retryMax = $state('')
   let retryDelays = $state('')
   let retrySaving = $state(false)
-  // Validate the retry-delays JSON every time it changes so the user gets
-  // immediate feedback. Empty string is treated as valid (the backend
-  // already has a built-in default). Computed via $derived to avoid
-  // assigning $state inside $effect.
-  let retryDelaysError = $derived.by(() => {
-    const raw = (retryDelays || '').trim()
-    if (raw === '') return ''
-    try {
-      const parsed = JSON.parse(raw)
-      if (!Array.isArray(parsed) || !parsed.every(n => Number.isFinite(n) && n >= 0)) {
-        return 'Must be a JSON array of non-negative numbers (e.g. [900,3600,14400])'
-      }
-      return ''
-    } catch {
-      return 'Invalid JSON'
-    }
-  })
 
   // API Key state
   let apiKeyEnabled = $state(false)
@@ -310,7 +296,6 @@
   }
 
   async function saveRetryPolicy() {
-    if (retryDelaysError) return
     retrySaving = true
     try {
       const payload = {}
@@ -685,26 +670,17 @@
               />
             </div>
             <div>
-              <label for="retry-delays" class="block text-sm font-medium text-text-muted mb-1.5">
-                Delays (JSON array, seconds)
-                <Tooltip text='JSON array of delays in seconds between retries. The Nth retry waits for delays[N-1] before running. Example: [900,3600,14400] = 15 min, 1 h, 4 h.' />
-              </label>
-              <input
-                id="retry-delays"
-                type="text"
-                bind:value={retryDelays}
-                placeholder="[900,3600,14400]"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
-              />
-              {#if retryDelaysError}
-                <p class="text-xs text-danger mt-1">{retryDelaysError}</p>
-              {/if}
+              <div class="flex items-center mb-1.5">
+                <span class="block text-sm font-medium text-text-muted">Delays between retries</span>
+                <Tooltip text='How long to wait before each retry. The Nth retry waits for the Nth delay before running. Defaults to 15 min, 1 h, 4 h.' />
+              </div>
+              <RetryDelaysEditor bind:value={retryDelays} />
             </div>
           </div>
           <div class="flex justify-end">
             <button
               onclick={saveRetryPolicy}
-              disabled={retrySaving || !!retryDelaysError}
+              disabled={retrySaving}
               class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if retrySaving}

@@ -16,6 +16,7 @@
   import ScriptBrowser from '../components/ScriptBrowser.svelte'
   import TypePicker from '../components/TypePicker.svelte'
   import Tooltip from '../components/Tooltip.svelte'
+  import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
 
   let loading = $state(true)
   let jobs = $state([])
@@ -189,22 +190,10 @@
     }
   }
 
-  // Retry-override JSON validation. Empty string is valid — it means
-  // "fall back to the global default in Settings". Computed via $derived
-  // to avoid assigning $state inside $effect.
-  let retryDelaysOverrideError = $derived.by(() => {
-    const raw = (form.retry_delays_override || '').trim()
-    if (raw === '') return ''
-    try {
-      const parsed = JSON.parse(raw)
-      if (!Array.isArray(parsed) || !parsed.every(n => Number.isFinite(n) && n >= 0)) {
-        return 'Must be a JSON array of non-negative numbers (e.g. [60,300,900])'
-      }
-      return ''
-    } catch {
-      return 'Invalid JSON'
-    }
-  })
+  // Retry-override JSON validation used to live here; the RetryDelaysEditor
+  // component now handles parsing/serialising and only ever emits a valid
+  // JSON array string (or '' for "use the global default"), so no client-side
+  // validator is needed any more.
 
   const vmRestoreVerifyModes = [
     {
@@ -419,10 +408,6 @@
   }
 
   async function saveJob(andRun = false) {
-    if (retryDelaysOverrideError) {
-      showToast(`Retry delays override: ${retryDelaysOverrideError}`, 'error')
-      return
-    }
     saving = true
     try {
       const payload = { ...form }
@@ -1157,17 +1142,8 @@
               />
             </div>
             <div>
-              <label for="retry-delays-override" class="block text-xs font-medium text-text-muted mb-1">Delays JSON <span class="text-text-dim">(blank = global)</span></label>
-              <input
-                id="retry-delays-override"
-                type="text"
-                bind:value={form.retry_delays_override}
-                placeholder="[60,300,900]"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder:text-text-dim"
-              />
-              {#if retryDelaysOverrideError}
-                <p class="text-xs text-danger mt-1">{retryDelaysOverrideError}</p>
-              {/if}
+              <div class="block text-xs font-medium text-text-muted mb-1">Delays between retries <span class="text-text-dim">(blank = global)</span></div>
+              <RetryDelaysEditor bind:value={form.retry_delays_override} placeholder="Use global default" />
             </div>
           </div>
         </details>
