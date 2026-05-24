@@ -124,3 +124,35 @@ func TestGCNoLivePacksAreDeleted(t *testing.T) {
 		t.Fatalf("expected no frees with all live, got %+v", res)
 	}
 }
+
+func TestGCStatsVisibleFromFreshRepo(t *testing.T) {
+	r, sk, cleanup := newTestRepo(t)
+	defer cleanup()
+	p := make([]byte, 4096)
+	_, _ = rand.Read(p)
+	id, _ := r.Put(p)
+	m := Manifest{Version: ManifestVersion, Item: "x", Files: map[string]ManifestEntry{"x": {Chunks: []ID{id}}}}
+	_, _ = r.PutManifest("x", m)
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// GC with the manifest unreferenced → its pack is freed.
+	if _, err := RunGC(r, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// A DIFFERENT repo instance (simulating the stats-poll path, which opens
+	// its own repo) must still see the GC result.
+	r2, err := OpenRepo(r.db, r.adapter, r.storageID, sk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := r2.Stats()
+	if s.LastGCAt.IsZero() {
+		t.Fatal("LastGCAt zero on fresh repo — GC result not persisted")
+	}
+	if s.LastGCFreedBytes <= 0 {
+		t.Fatalf("LastGCFreedBytes not persisted, got %d", s.LastGCFreedBytes)
+	}
+}

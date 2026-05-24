@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // GCResult summarises a garbage-collection run.
@@ -90,13 +92,22 @@ func RunGC(r *Repo, live []ID) (GCResult, error) {
 	}
 
 	res.CompletedAt = time.Now().UTC()
-	r.statsMu.Lock()
-	r.stats.LastGCAt = res.CompletedAt
-	r.stats.LastGCFreedBytes = res.FreedBytes
-	r.stats.WastedBytesEstimate = res.RewritableBytes
-	// FreedPacks subtract from TotalPacks; FreedBytes subtract from PhysicalBytes.
-	r.stats.TotalPacks -= res.FreedPacks
-	r.stats.PhysicalBytes -= res.FreedBytes
-	r.statsMu.Unlock()
+
+	// Persist the run so the Storage card (which polls via a *different*,
+	// freshly-opened repo instance) sees real reclaimable / last-GC numbers.
+	// Best-effort: the sweep already succeeded, so a stats-insert failure must
+	// not make the GC look failed — log and carry on.
+	if _, err := r.db.InsertDedupGCRun(db.DedupGCRun{
+		StorageID:       r.storageID,
+		StartedAt:       res.StartedAt,
+		CompletedAt:     res.CompletedAt,
+		Reachable:       res.Reachable,
+		FreedPacks:      res.FreedPacks,
+		FreedBytes:      res.FreedBytes,
+		RewritableBytes: res.RewritableBytes,
+		ErrorCount:      int64(len(res.Errors)),
+	}); err != nil {
+		log.Printf("gc: failed to persist gc run for storage %d: %v", r.storageID, err)
+	}
 	return res, nil
 }
