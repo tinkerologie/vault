@@ -1329,7 +1329,7 @@
               ['POST',   '/storage/{id}/delete-orphans', 'Delete listed orphan files (re-checks before deleting)'],
             ]},
             { group: 'Deduplication', rows: [
-              ['GET',  '/storage/{id}/dedup-stats', 'Per-destination dedup stats (ratio, chunks, packs, wasted bytes)'],
+              ['GET',  '/storage/{id}/dedup-stats', 'Per-destination dedup stats (ratio, chunks, packs, reclaimable bytes)'],
               ['POST', '/storage/{id}/gc', 'Run mark-and-sweep GC (async; broadcasts dedup_gc_complete over WS)'],
             ]},
             { group: 'Settings', rows: [

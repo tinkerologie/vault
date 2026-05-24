@@ -48,3 +48,23 @@ func TestDedupGCRunInsertAndLatest(t *testing.T) {
 		t.Fatalf("expected (found=false, nil) for unknown storage id, got found=%v err=%v", found, err)
 	}
 }
+
+func TestDropDedupStateClearsGCRuns(t *testing.T) {
+	d := setupTestDB(t)
+	destID, err := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: "{}", DedupEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.InsertDedupGCRun(DedupGCRun{StorageID: destID, StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC(), FreedBytes: 1, RewritableBytes: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := d.LatestDedupGCRun(destID); !found {
+		t.Fatal("expected a gc run before drop")
+	}
+	if err := d.DropDedupState(destID); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := d.LatestDedupGCRun(destID); found {
+		t.Fatal("dedup_gc_runs not cleared by DropDedupState")
+	}
+}
