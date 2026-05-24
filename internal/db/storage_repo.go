@@ -290,12 +290,20 @@ func (d *DB) DedupAggregates(storageID int64) (DedupAggregates, error) {
 	// runner persists this on restore_points.size_bytes at backup time, so
 	// it reflects the user's "would-have-cost-without-dedup" total across
 	// every snapshot still present on this destination.
+	//
+	// We must NOT filter on `manifest_id IS NOT NULL`: that column is only set
+	// for single-item dedup jobs; multi-item jobs (e.g. a containers backup)
+	// leave it NULL and record per-item IDs in metadata.item_manifests, so the
+	// old filter zeroed out logical bytes — and the dedup ratio — for every
+	// multi-item dedup destination. The caller has already verified this
+	// destination is dedup-enabled, and dedup mode is immutable per
+	// destination, so every restore point for its jobs is a dedup restore
+	// point. Restore points are hard-deleted, so no soft-delete filter needed.
 	var logical sql.NullInt64
 	if err := d.QueryRow(`
         SELECT COALESCE(SUM(size_bytes), 0)
           FROM restore_points
-         WHERE manifest_id IS NOT NULL
-           AND job_id IN (SELECT id FROM jobs WHERE storage_dest_id=?)`, storageID).Scan(&logical); err != nil {
+         WHERE job_id IN (SELECT id FROM jobs WHERE storage_dest_id=?)`, storageID).Scan(&logical); err != nil {
 		return agg, fmt.Errorf("aggregate logical bytes: %w", err)
 	}
 	agg.LogicalBytes = logical.Int64

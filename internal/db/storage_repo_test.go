@@ -104,3 +104,52 @@ func TestCountJobsByStorageDestID(t *testing.T) {
 		})
 	}
 }
+
+// TestDedupAggregatesLogicalBytesIncludesMultiItem is a regression test:
+// multi-item dedup restore points have a NULL manifest_id (their per-item
+// manifest IDs live in metadata.item_manifests), so a logical-bytes query
+// that filtered on `manifest_id IS NOT NULL` reported 0 for container dedup
+// jobs and the Storage card showed a bogus 0x dedup ratio. LogicalBytes must
+// sum size_bytes across ALL of the destination's restore points.
+func TestDedupAggregatesLogicalBytesIncludesMultiItem(t *testing.T) {
+	d := setupTestDB(t)
+	destID, err := d.CreateStorageDestination(StorageDestination{
+		Name: "dedup", Type: "local", Config: `{"path":"/x"}`, DedupEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := d.CreateJob(Job{Name: "j", StorageDestID: destID, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "completed", BackupType: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Multi-item style: manifest_id stays NULL, manifests in metadata.
+	if _, err := d.CreateRestorePoint(RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "p/multi", SizeBytes: 1000,
+		Metadata: `{"item_manifests":{"a":"00","b":"11"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Single-item style: manifest_id populated.
+	singleID, err := d.CreateRestorePoint(RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "p/single", SizeBytes: 2000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetRestorePointManifestID(singleID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+
+	agg, err := d.DedupAggregates(destID)
+	if err != nil {
+		t.Fatalf("DedupAggregates: %v", err)
+	}
+	if agg.LogicalBytes != 3000 {
+		t.Errorf("LogicalBytes = %d, want 3000 (multi-item NULL-manifest RP must be counted)", agg.LogicalBytes)
+	}
+}
