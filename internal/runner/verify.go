@@ -14,6 +14,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -105,7 +106,11 @@ func (r *Runner) RunVerify(rp db.RestorePoint, mode VerifyMode) (int64, error) {
 // pack of chunks. The dedup branch is in runVerifyLoopDedup; the classic
 // per-file flow below is unchanged.
 func (r *Runner) runVerifyLoop(verifyID int64, rp db.RestorePoint, mode VerifyMode, dest db.StorageDestination) {
-	if len(rp.ManifestID) == 32 {
+	// A dedup restore point is identified by either the single-item
+	// manifest_id shortcut OR per-item IDs in metadata.item_manifests
+	// (multi-item jobs). The classic per-file path below has neither and
+	// relies on metadata.checksums instead.
+	if len(restorePointTopManifestIDs(rp)) > 0 {
 		r.runVerifyLoopDedup(verifyID, rp, mode, dest)
 		return
 	}
@@ -210,13 +215,24 @@ func (r *Runner) runVerifyLoopDedup(verifyID int64, rp db.RestorePoint, mode Ver
 		return
 	}
 
-	var mID dedup.ID
-	copy(mID[:], rp.ManifestID)
-	m, err := repo.GetManifest(mID)
-	if err != nil {
-		r.finishVerify(verifyID, "failed", fmt.Sprintf("manifest unreadable: %v", err))
+	// Collect every top-level manifest for this restore point (one per item
+	// for multi-item jobs) and expand the closure through container-volume
+	// sub-manifests so deep verify re-hashes the actual file data — not just
+	// the manifest pointers. allChunks therefore covers manifest chunks AND
+	// leaf data chunks, exactly what a restore would read.
+	tops := restorePointTopManifestIDs(rp)
+	if len(tops) == 0 {
+		r.finishVerify(verifyID, "failed", "dedup restore point has no manifest IDs")
 		return
 	}
+	manifestChunks, dataChunks, err := engine.WalkManifestClosure(repo, tops)
+	if err != nil {
+		r.finishVerify(verifyID, "failed", fmt.Sprintf("walking manifest closure: %v", err))
+		return
+	}
+	allChunks := make([]dedup.ID, 0, len(manifestChunks)+len(dataChunks))
+	allChunks = append(allChunks, manifestChunks...)
+	allChunks = append(allChunks, dataChunks...)
 
 	var (
 		filesChecked int
@@ -226,25 +242,21 @@ func (r *Runner) runVerifyLoopDedup(verifyID int64, rp db.RestorePoint, mode Ver
 	)
 
 	// totalUnits is what the UI shows as the denominator on the progress bar.
-	// Quick = unique pack count; Deep = total chunk references in the manifest.
+	// Quick = unique pack count; Deep = total chunks across the closure.
 	totalUnits := 0
 	switch mode {
 	case VerifyModeQuick:
 		seen := map[string]struct{}{}
-		for _, f := range m.Files {
-			for _, cid := range f.Chunks {
-				packPath, _, _, locErr := repo.LocateForVerify(cid)
-				if locErr != nil {
-					continue
-				}
-				seen[packPath] = struct{}{}
+		for _, cid := range allChunks {
+			packPath, _, _, locErr := repo.LocateForVerify(cid)
+			if locErr != nil {
+				continue
 			}
+			seen[packPath] = struct{}{}
 		}
 		totalUnits = len(seen)
 	case VerifyModeDeep:
-		for _, f := range m.Files {
-			totalUnits += len(f.Chunks)
-		}
+		totalUnits = len(allChunks)
 	}
 
 	r.broadcast(map[string]any{
@@ -271,20 +283,18 @@ func (r *Runner) runVerifyLoopDedup(verifyID int64, rp db.RestorePoint, mode Ver
 
 	switch mode {
 	case VerifyModeQuick:
-		// Gather unique packs referenced by all chunks in the manifest.
+		// Gather unique packs referenced by every chunk in the closure.
 		// LocateForVerify returns the pack path for each chunk ID; we
 		// dedupe and Stat each pack exactly once.
 		packs := map[string]struct{}{}
-		for path, entry := range m.Files {
-			for _, cid := range entry.Chunks {
-				packPath, _, _, locErr := repo.LocateForVerify(cid)
-				if locErr != nil {
-					filesFailed++
-					failures = append(failures, fmt.Sprintf("locate chunk %x (%s): %v", cid[:8], path, locErr))
-					continue
-				}
-				packs[packPath] = struct{}{}
+		for _, cid := range allChunks {
+			packPath, _, _, locErr := repo.LocateForVerify(cid)
+			if locErr != nil {
+				filesFailed++
+				failures = append(failures, fmt.Sprintf("locate chunk %x: %v", cid[:8], locErr))
+				continue
 			}
+			packs[packPath] = struct{}{}
 		}
 		for p := range packs {
 			if _, statErr := adapter.Stat(p); statErr != nil {
@@ -299,29 +309,27 @@ func (r *Runner) runVerifyLoopDedup(verifyID int64, rp db.RestorePoint, mode Ver
 		}
 
 	case VerifyModeDeep:
-		// For every chunk in every file: range-read from its pack,
-		// decrypt (AEAD tag verifies authenticity), and recompute the
-		// content ID. Any failure increments filesFailed but the loop
-		// continues so we report every bad chunk, not just the first.
-		for filePath, entry := range m.Files {
-			for _, cid := range entry.Chunks {
-				body, getErr := repo.Get(cid)
-				if getErr != nil {
-					filesFailed++
-					failures = append(failures, fmt.Sprintf("get chunk %x for %s: %v", cid[:8], filePath, getErr))
-					continue
-				}
-				got := repo.ChunkID(body)
-				if got != cid {
-					filesFailed++
-					failures = append(failures, fmt.Sprintf("chunk id mismatch for %s: want %x got %x", filePath, cid[:8], got[:8]))
-					continue
-				}
-				bytesRead += int64(len(body))
-				filesChecked++
-				if filesChecked%50 == 0 {
-					emitProgress()
-				}
+		// For every chunk in the closure: range-read from its pack, decrypt
+		// (AEAD tag verifies authenticity), and recompute the content ID.
+		// Any failure increments filesFailed but the loop continues so we
+		// report every bad chunk, not just the first.
+		for _, cid := range allChunks {
+			body, getErr := repo.Get(cid)
+			if getErr != nil {
+				filesFailed++
+				failures = append(failures, fmt.Sprintf("get chunk %x: %v", cid[:8], getErr))
+				continue
+			}
+			got := repo.ChunkID(body)
+			if got != cid {
+				filesFailed++
+				failures = append(failures, fmt.Sprintf("chunk id mismatch: want %x got %x", cid[:8], got[:8]))
+				continue
+			}
+			bytesRead += int64(len(body))
+			filesChecked++
+			if filesChecked%50 == 0 {
+				emitProgress()
 			}
 		}
 
@@ -394,6 +402,47 @@ func (r *Runner) finishVerify(verifyID int64, status, errorSummary string) {
 	if err := r.db.FinishVerifyRun(verifyID, status, errorSummary); err != nil {
 		log.Printf("runner: failed to mark verify run %d as %s: %v", verifyID, status, err)
 	}
+}
+
+// restorePointTopManifestIDs returns every top-level dedup manifest ID for a
+// restore point: the single-item shortcut (restore_points.manifest_id) plus
+// each per-item hex ID under metadata.item_manifests (multi-item jobs). Used
+// both to detect a dedup restore point and to seed the verify closure walk.
+// Returns nil for a classic (non-dedup) restore point.
+func restorePointTopManifestIDs(rp db.RestorePoint) []dedup.ID {
+	var (
+		out  []dedup.ID
+		seen = map[dedup.ID]struct{}{}
+	)
+	add := func(id dedup.ID) {
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(rp.ManifestID) == 32 {
+		var id dedup.ID
+		copy(id[:], rp.ManifestID)
+		add(id)
+	}
+	if rp.Metadata != "" {
+		var meta struct {
+			ItemManifests map[string]string `json:"item_manifests"`
+		}
+		if err := json.Unmarshal([]byte(rp.Metadata), &meta); err == nil {
+			for _, hexID := range meta.ItemManifests {
+				raw, derr := hex.DecodeString(hexID)
+				if derr != nil || len(raw) != 32 {
+					continue
+				}
+				var id dedup.ID
+				copy(id[:], raw)
+				add(id)
+			}
+		}
+	}
+	return out
 }
 
 // recordedChecksum holds what we know about a file from the restore point's

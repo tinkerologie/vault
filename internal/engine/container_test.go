@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"errors"
 	"io"
 	"os"
@@ -778,10 +779,198 @@ func TestContainerChunkedBackupSkipsNonBindMounts(t *testing.T) {
 	}
 }
 
+// TestContainerChunkedHonoursExclusions verifies the dedup container backup
+// path applies user exclude_paths the same way the classic tar Backup does:
+//   - a whole bind mount whose destination matches an exclusion (e.g.
+//     "/rootfs" for host-monitoring containers like Glances/Telegraf) is
+//     recorded as skipped and NOT chunked (shouldExcludeMount, issue #70);
+//   - glob exclusions (e.g. "*.log") are mapped into kept volumes and applied
+//     during the chunked walk (mapExclusionsToVolume → FolderHandler).
+//
+// Regression test: previously BackupChunked ignored exclude_paths entirely, so
+// a "/rootfs" bind mount caused the entire host filesystem to be chunked.
+func TestContainerChunkedHonoursExclusions(t *testing.T) {
+	// Mount #1: simulated host root, must be skipped wholesale.
+	rootfsSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootfsSrc, "huge.bin"), []byte("host filesystem content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Mount #2: kept volume containing one file to keep and one to glob-exclude.
+	keepSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(keepSrc, "config.yml"), []byte("foo: bar\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keepSrc, "app.log"), []byte("noisy log"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "deadbeef",
+				Name:   "/glances",
+				Config: &containertypes.Config{Image: "nicolargo/glances:latest"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: rootfsSrc, Destination: "/rootfs"},
+					{Type: mounttypes.TypeBind, Source: keepSrc, Destination: "/etc/glances"},
+				},
+			},
+		},
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &ContainerHandler{cli: mock}
+	item := BackupItem{
+		Name: "glances",
+		Type: "container",
+		Settings: map[string]any{
+			"id":            "deadbeef",
+			"exclude_paths": []string{"/rootfs", "*.log"},
+		},
+	}
+
+	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	if err != nil {
+		t.Fatalf("BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := r.GetManifest(mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// /rootfs must be recorded as skipped (sentinel size, no chunks).
+	rootEntry, ok := m.Files[containerVolPrefix+"/rootfs"]
+	if !ok {
+		t.Fatalf("manifest missing %s/rootfs entry", containerVolPrefix)
+	}
+	if rootEntry.Size != volumeSkippedSize {
+		t.Errorf("/rootfs Size = %d, want sentinel %d (excluded mount must not be chunked)", rootEntry.Size, volumeSkippedSize)
+	}
+	if len(rootEntry.Chunks) != 0 {
+		t.Errorf("/rootfs has %d chunks, want 0 (excluded mount must not be chunked)", len(rootEntry.Chunks))
+	}
+
+	// /etc/glances must be backed up, but its sub-manifest must honour *.log.
+	keepEntry, ok := m.Files[containerVolPrefix+"/etc/glances"]
+	if !ok {
+		t.Fatalf("manifest missing %s/etc/glances entry", containerVolPrefix)
+	}
+	if len(keepEntry.Chunks) != 1 {
+		t.Fatalf("/etc/glances chunks = %d, want 1 (sub-manifest ID)", len(keepEntry.Chunks))
+	}
+	sub, err := r.GetManifest(keepEntry.Chunks[0])
+	if err != nil {
+		t.Fatalf("GetManifest(sub) error = %v", err)
+	}
+	if _, ok := sub.Files["config.yml"]; !ok {
+		t.Errorf("sub-manifest missing config.yml (have %v)", manifestKeys(sub))
+	}
+	if _, ok := sub.Files["app.log"]; ok {
+		t.Errorf("sub-manifest unexpectedly contains glob-excluded app.log")
+	}
+}
+
 func manifestKeys(m dedup.Manifest) []string {
 	keys := make([]string, 0, len(m.Files))
 	for k := range m.Files {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// TestContainerChunkedGCKeepsNestedVolumeData is an INVESTIGATION test: it
+// confirms whether GC, given only the top-level container manifest as "live"
+// (which is what runner.collectLiveManifestIDs returns), preserves the data
+// chunks that live one level down inside each volume's sub-manifest. A
+// container manifest's __vol__ entries reference a sub-manifest ID, and that
+// sub-manifest references the actual file-data chunks. If GC's mark phase
+// doesn't recurse into sub-manifests, those data chunks are swept → silent
+// data loss on the next container dedup restore.
+func TestContainerChunkedGCKeepsNestedVolumeData(t *testing.T) {
+	volSrc := t.TempDir()
+	// Incompressible, large payload so the volume's data chunks span MANY
+	// 24 MiB packs. Packs that contain only data chunks (no manifest chunk)
+	// are the ones a non-recursive GC mark phase would sweep.
+	payload := make([]byte, 80<<20) // 80 MiB
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(volSrc, "data.bin"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "deadbeef",
+				Name:   "/svc",
+				Config: &containertypes.Config{Image: "redis:7"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: volSrc, Destination: "/data"},
+				},
+			},
+		},
+	}
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+	h := &ContainerHandler{cli: mock}
+	item := BackupItem{Name: "svc", Type: "container", Settings: map[string]any{"id": "deadbeef"}}
+	topID, err := h.BackupChunked(context.Background(), item, r, nil)
+	if err != nil {
+		t.Fatalf("BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Walk top manifest → volume sub-manifest → collect leaf data chunk IDs.
+	top, err := r.GetManifest(topID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	volEntry, ok := top.Files[containerVolPrefix+"/data"]
+	if !ok || len(volEntry.Chunks) != 1 {
+		t.Fatalf("expected one __vol__/data sub-manifest chunk, got %+v", volEntry)
+	}
+	sub, err := r.GetManifest(volEntry.Chunks[0])
+	if err != nil {
+		t.Fatalf("sub-manifest unreadable: %v", err)
+	}
+	var dataChunks []dedup.ID
+	for _, e := range sub.Files {
+		dataChunks = append(dataChunks, e.Chunks...)
+	}
+	if len(dataChunks) == 0 {
+		t.Fatal("sub-manifest had no data chunks — test setup wrong")
+	}
+	// Sanity: data chunks are present before GC.
+	for _, c := range dataChunks {
+		if _, err := r.Get(c); err != nil {
+			t.Fatalf("data chunk %x unreadable before GC: %v", c[:8], err)
+		}
+	}
+
+	// The fix: expand the live set through sub-manifests before GC, exactly
+	// as runner.collectLiveManifestIDs now does. Without this expansion GC
+	// sweeps the data-only packs (the bug this test was written to catch).
+	liveManifests, _, err := WalkManifestClosure(r, []dedup.ID{topID})
+	if err != nil {
+		t.Fatalf("WalkManifestClosure error = %v", err)
+	}
+	if _, err := dedup.RunGC(r, liveManifests); err != nil {
+		t.Fatalf("RunGC error = %v", err)
+	}
+
+	// THE ASSERTION: every leaf data chunk must survive GC.
+	for _, c := range dataChunks {
+		if _, err := r.Get(c); err != nil {
+			t.Fatalf("DATA LOSS: volume data chunk %x was swept by GC: %v", c[:8], err)
+		}
+	}
 }

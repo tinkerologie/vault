@@ -279,3 +279,60 @@ func TestFolderChunkedSkipsNonRegularFiles(t *testing.T) {
 		t.Error("manifest unexpectedly includes symlink")
 	}
 }
+
+// TestFolderChunkedHonoursExclusions verifies BackupChunked skips files and
+// whole directories matching exclude_paths, mirroring the classic tar path
+// (tarDirectoryFiltered). Without this, dedup folder and container-volume
+// backups walk content the user explicitly excluded — e.g. a container that
+// bind-mounts the host root at /rootfs would have its entire filesystem
+// chunked despite a /rootfs exclusion.
+func TestFolderChunkedHonoursExclusions(t *testing.T) {
+	src := t.TempDir()
+	must := func(p string, data []byte) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(filepath.Join(src, "keep.txt"), []byte("keep me"))
+	must(filepath.Join(src, "app.log"), []byte("noisy log"))         // glob excluded
+	must(filepath.Join(src, "logs/debug.txt"), []byte("dir content")) // dir excluded
+	must(filepath.Join(src, "data/blob.bin"), []byte("payload"))      // kept
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	item := BackupItem{
+		Name: "test",
+		Type: "folder",
+		Settings: map[string]any{
+			"path":          src,
+			"exclude_paths": []string{"*.log", "logs"},
+		},
+	}
+	manifestID, err := h.BackupChunked(context.Background(), item, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := r.GetManifest(manifestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, excluded := range []string{"app.log", "logs", "logs/debug.txt"} {
+		if _, ok := m.Files[excluded]; ok {
+			t.Errorf("manifest unexpectedly contains excluded entry %q", excluded)
+		}
+	}
+	for _, included := range []string{"keep.txt", "data/blob.bin"} {
+		if _, ok := m.Files[included]; !ok {
+			t.Errorf("manifest missing expected entry %q (have %v)", included, manifestKeys(m))
+		}
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -177,7 +178,7 @@ func runDedupGC(_ *cobra.Command, _ []string) error {
 	}
 	defer cleanup()
 
-	live, err := collectLiveManifestIDsForCLI(ctx.db, ctx.destID)
+	live, err := collectLiveManifestIDsForCLI(ctx.repo, ctx.db, ctx.destID)
 	if err != nil {
 		return fmt.Errorf("collect live manifest IDs: %w", err)
 	}
@@ -198,8 +199,10 @@ func runDedupGC(_ *cobra.Command, _ []string) error {
 // collectLiveManifestIDsForCLI mirrors runner.collectLiveManifestIDs. We
 // can't call the runner method directly without spinning up a full Runner
 // instance (which would pull in the entire engine + scheduler), so this
-// helper duplicates the (small) query. Keep in lockstep with runner.go.
-func collectLiveManifestIDsForCLI(d *db.DB, destID int64) ([]dedup.ID, error) {
+// helper duplicates the (small) query. Keep in lockstep with runner.go —
+// including the engine.WalkManifestClosure expansion that pulls in
+// container-volume sub-manifests so GC never sweeps nested data chunks.
+func collectLiveManifestIDsForCLI(repo *dedup.Repo, d *db.DB, destID int64) ([]dedup.ID, error) {
 	rows, err := d.Query(`
         SELECT manifest_id, metadata
           FROM restore_points
@@ -209,7 +212,15 @@ func collectLiveManifestIDsForCLI(d *db.DB, destID int64) ([]dedup.ID, error) {
 	}
 	defer rows.Close()
 
-	seen := make(map[dedup.ID]struct{})
+	tops := make([]dedup.ID, 0, 16)
+	seenTop := make(map[dedup.ID]struct{})
+	addTop := func(id dedup.ID) {
+		if _, ok := seenTop[id]; ok {
+			return
+		}
+		seenTop[id] = struct{}{}
+		tops = append(tops, id)
+	}
 	for rows.Next() {
 		var (
 			mID      []byte
@@ -221,7 +232,7 @@ func collectLiveManifestIDsForCLI(d *db.DB, destID int64) ([]dedup.ID, error) {
 		if len(mID) == 32 {
 			var id dedup.ID
 			copy(id[:], mID)
-			seen[id] = struct{}{}
+			addTop(id)
 		}
 		if metadata.Valid && metadata.String != "" {
 			var meta map[string]any
@@ -238,7 +249,7 @@ func collectLiveManifestIDsForCLI(d *db.DB, destID int64) ([]dedup.ID, error) {
 						}
 						var id dedup.ID
 						copy(id[:], raw)
-						seen[id] = struct{}{}
+						addTop(id)
 					}
 				}
 			}
@@ -248,9 +259,27 @@ func collectLiveManifestIDsForCLI(d *db.DB, destID int64) ([]dedup.ID, error) {
 		return nil, err
 	}
 
-	out := make([]dedup.ID, 0, len(seen))
-	for id := range seen {
-		out = append(out, id)
+	// Expand each top-level manifest through its container-volume
+	// sub-manifests so GC marks the nested data chunks too.
+	seen := make(map[dedup.ID]struct{})
+	out := make([]dedup.ID, 0, len(tops))
+	for _, top := range tops {
+		manifests, _, werr := engine.WalkManifestClosure(repo, []dedup.ID{top})
+		if werr != nil {
+			fmt.Fprintf(os.Stderr, "  warning: skipping unreadable manifest %x: %v\n", top[:8], werr)
+			if _, ok := seen[top]; !ok {
+				seen[top] = struct{}{}
+				out = append(out, top)
+			}
+			continue
+		}
+		for _, id := range manifests {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
 	}
 	return out, nil
 }

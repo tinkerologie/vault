@@ -492,6 +492,11 @@
         <!-- Per-item progress list -->
         <div class="p-5 space-y-3 max-h-80 overflow-y-auto">
           {#each progressItems as [name, info] (name)}
+            <!-- A negative percent is the daemon's "indeterminate" sentinel
+                 (e.g. the dedup chunk walk can't cheaply know total size).
+                 Render it as an active pulsing bar with no bogus "-1%". -->
+            {@const indeterminate = info.status === 'running' && (info.percent ?? 0) < 0}
+            {@const pct = Math.max(0, Math.min(100, info.percent ?? 0))}
             <div class="flex items-center gap-3">
               <!-- Status icon -->
               <div class="w-5 h-5 flex items-center justify-center shrink-0">
@@ -516,11 +521,11 @@
                 <div class="flex items-center gap-2 mt-1">
                   <div class="flex-1 h-1.5 bg-surface-4 rounded-full overflow-hidden">
                     <div
-                      class="h-full rounded-full transition-all duration-300 ease-out {info.status === 'done' || (info.percent >= 100 && info.status !== 'failed') ? 'bg-success' : info.status === 'failed' ? 'bg-danger' : 'bg-vault'}"
-                      style="width: {info.percent}%"
+                      class="h-full rounded-full transition-all duration-300 ease-out {info.status === 'done' || (info.percent >= 100 && info.status !== 'failed') ? 'bg-success' : info.status === 'failed' ? 'bg-danger' : 'bg-vault'} {indeterminate ? 'animate-pulse' : ''}"
+                      style="width: {indeterminate ? 100 : pct}%"
                     ></div>
                   </div>
-                  <span class="text-[11px] text-text-dim font-mono w-8 text-right shrink-0">{info.percent}%</span>
+                  <span class="text-[11px] text-text-dim font-mono w-8 text-right shrink-0">{indeterminate ? '···' : pct + '%'}</span>
                 </div>
                 <!-- Status message -->
                 <p class="text-xs text-text-dim mt-0.5 truncate">{info.message}</p>

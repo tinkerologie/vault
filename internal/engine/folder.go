@@ -190,6 +190,10 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	if srcPath == "" {
 		return dedup.ID{}, fmt.Errorf("folder: missing path setting")
 	}
+	// Honour user exclusion patterns, matching the classic tar path
+	// (tarDirectoryFiltered). For container volumes these arrive already
+	// mapped to volume-relative paths via mapExclusionsToVolume.
+	exclusions := extractExcludePaths(item.Settings)
 	chunker, err := dedup.NewChunker(repo.SplitterSecret())
 	if err != nil {
 		return dedup.ID{}, err
@@ -215,6 +219,16 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 		}
 		rel, _ := filepath.Rel(srcPath, p)
 		if rel == "." {
+			return nil
+		}
+		// Skip excluded paths before recording or chunking. A matching
+		// directory is pruned entirely (SkipDir) so its subtree is never
+		// walked — restic/kopia behave the same way (an absolute dir
+		// pattern "is not saved and not traversed").
+		if shouldExcludePath(rel, exclusions) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		entry := dedup.ManifestEntry{
@@ -365,6 +379,31 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 // "extract everything" case so callers can use the result directly.
 func extractRestoreFilePaths(settings map[string]any) []string {
 	raw, ok := settings["restore_file_paths"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// extractExcludePaths reads the "exclude_paths" setting and returns it as a
+// []string. The setting can arrive as []string (delegated from
+// ContainerHandler.BackupChunked, which maps container-side exclusions to
+// volume-relative paths) or []any (decoded straight from a job's JSON
+// settings). Returns nil when absent so callers can use the result directly.
+func extractExcludePaths(settings map[string]any) []string {
+	raw, ok := settings["exclude_paths"]
 	if !ok || raw == nil {
 		return nil
 	}

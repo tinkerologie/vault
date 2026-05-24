@@ -343,3 +343,78 @@ func TestVerifyDedupDeepDetectsTamper(t *testing.T) {
 	}
 }
 
+
+// TestVerifyDedupMultiItemDeep is the regression test for deep verify on
+// MULTI-ITEM dedup jobs. Such restore points have an EMPTY manifest_id
+// (the single-item shortcut only fires for one-item jobs); the per-item
+// manifest IDs live in metadata.item_manifests. Before the fix, verify keyed
+// off rp.ManifestID==32 and fell through to the classic per-file path, which
+// failed with "no recorded file checksums in restore point metadata". It must
+// now route to the dedup path and pass.
+func TestVerifyDedupMultiItemDeep(t *testing.T) {
+	storageDir := t.TempDir()
+	src1 := t.TempDir()
+	src2 := t.TempDir()
+	for dir, name := range map[string]string{src1: "one.txt", src2: "two.txt"} {
+		body := []byte("multi-item dedup verify payload for " + name + " — long enough to chunk")
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatalf("db open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	serverKey := bytes.Repeat([]byte{0xee}, 32)
+	hub := ws.NewHub()
+	go hub.Run()
+	r := New(d, hub, serverKey)
+
+	destCfg, _ := json.Marshal(map[string]string{"path": storageDir})
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "dedup-multi", Type: "local", Config: string(destCfg), DedupEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+	jobID, err := d.CreateJob(db.Job{Name: "dedup-multi-job", StorageDestID: destID, BackupTypeChain: "full", Enabled: true})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	for name, dir := range map[string]string{"item1": src1, "item2": src2} {
+		s, _ := json.Marshal(map[string]any{"path": dir})
+		if _, err := d.AddJobItem(db.JobItem{JobID: jobID, ItemType: "folder", ItemName: name, Settings: string(s)}); err != nil {
+			t.Fatalf("add item: %v", err)
+		}
+	}
+
+	r.RunJob(jobID)
+
+	rps, err := d.ListRestorePoints(jobID)
+	if err != nil || len(rps) != 1 {
+		t.Fatalf("list restore points: err=%v n=%d", err, len(rps))
+	}
+	rp := rps[0]
+	// The crux: a multi-item job does NOT set the single-item shortcut.
+	if len(rp.ManifestID) == 32 {
+		t.Fatalf("expected empty manifest_id for multi-item job, got 32 bytes (test no longer exercises the multi-item path)")
+	}
+
+	verifyID, err := r.RunVerify(rp, VerifyModeDeep)
+	if err != nil {
+		t.Fatalf("RunVerify deep: %v", err)
+	}
+	run := waitForVerifyCompletion(t, d, verifyID, 30*time.Second)
+	if run.Status != "passed" {
+		t.Fatalf("multi-item deep verify status = %q, want passed (error_summary=%q)", run.Status, run.ErrorSummary)
+	}
+	if run.FilesFailed != 0 {
+		t.Fatalf("multi-item deep verify files_failed = %d, want 0", run.FilesFailed)
+	}
+	if run.BytesRead <= 0 {
+		t.Fatalf("multi-item deep verify bytes_read = %d, want > 0", run.BytesRead)
+	}
+}

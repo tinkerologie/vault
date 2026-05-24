@@ -1593,7 +1593,7 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		return
 	}
 
-	live, err := r.collectLiveManifestIDs(dest.ID)
+	live, err := r.collectLiveManifestIDs(repo, dest.ID)
 	if err != nil {
 		log.Printf("gc: live ids for %q: %v", dest.Name, err)
 		r.Broadcast(map[string]any{
@@ -1633,12 +1633,20 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 	r.Broadcast(msg)
 }
 
-// collectLiveManifestIDs returns every dedup manifest ID referenced by a
-// restore point whose owning job targets the given destination. Used by
-// the dedup GC mark phase. Reads both restore_points.manifest_id (the
-// single-item shortcut) and the per-item hex-encoded IDs persisted under
-// restore_points.metadata.item_manifests (multi-item jobs).
-func (r *Runner) collectLiveManifestIDs(destID int64) ([]dedup.ID, error) {
+// collectLiveManifestIDs returns every dedup manifest ID that GC must treat as
+// reachable for the given destination. It reads each restore point's top-level
+// manifest IDs — both restore_points.manifest_id (the single-item shortcut) and
+// the per-item hex IDs under restore_points.metadata.item_manifests (multi-item
+// jobs) — and then expands that set through engine.WalkManifestClosure so that
+// container-volume *sub-manifests* are included too.
+//
+// The expansion is essential: a container manifest references file data only
+// via __vol__ sub-manifests. GC's mark phase only marks the direct chunks of
+// each manifest in this list, so without the sub-manifest IDs here, every
+// data-only pack of a multi-pack container/plugin backup would be swept (silent
+// data loss). A manifest that can't be read (e.g. a partial/corrupt restore
+// point) is skipped rather than aborting GC for the whole destination.
+func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup.ID, error) {
 	rows, err := r.db.Query(`
         SELECT manifest_id, metadata
           FROM restore_points
@@ -1648,7 +1656,15 @@ func (r *Runner) collectLiveManifestIDs(destID int64) ([]dedup.ID, error) {
 	}
 	defer rows.Close()
 
-	seen := make(map[dedup.ID]struct{})
+	tops := make([]dedup.ID, 0, 16)
+	seenTop := make(map[dedup.ID]struct{})
+	addTop := func(id dedup.ID) {
+		if _, ok := seenTop[id]; ok {
+			return
+		}
+		seenTop[id] = struct{}{}
+		tops = append(tops, id)
+	}
 	for rows.Next() {
 		var (
 			mID      []byte
@@ -1660,7 +1676,7 @@ func (r *Runner) collectLiveManifestIDs(destID int64) ([]dedup.ID, error) {
 		if len(mID) == 32 {
 			var id dedup.ID
 			copy(id[:], mID)
-			seen[id] = struct{}{}
+			addTop(id)
 		}
 		if metadata.Valid && metadata.String != "" {
 			var meta map[string]any
@@ -1677,7 +1693,7 @@ func (r *Runner) collectLiveManifestIDs(destID int64) ([]dedup.ID, error) {
 						}
 						var id dedup.ID
 						copy(id[:], raw)
-						seen[id] = struct{}{}
+						addTop(id)
 					}
 				}
 			}
@@ -1687,9 +1703,29 @@ func (r *Runner) collectLiveManifestIDs(destID int64) ([]dedup.ID, error) {
 		return nil, err
 	}
 
-	out := make([]dedup.ID, 0, len(seen))
-	for id := range seen {
-		out = append(out, id)
+	// Expand top-level manifests through their container-volume sub-manifests
+	// so GC marks the nested data chunks too.
+	seen := make(map[dedup.ID]struct{})
+	out := make([]dedup.ID, 0, len(tops))
+	for _, top := range tops {
+		manifests, _, werr := engine.WalkManifestClosure(repo, []dedup.ID{top})
+		if werr != nil {
+			log.Printf("gc: skipping unreadable manifest %x in reachability walk: %v", top[:8], werr)
+			// Still treat the top itself as reachable so we never delete a
+			// pack solely because one restore point's manifest is unreadable.
+			if _, ok := seen[top]; !ok {
+				seen[top] = struct{}{}
+				out = append(out, top)
+			}
+			continue
+		}
+		for _, id := range manifests {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
 	}
 	return out, nil
 }

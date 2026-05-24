@@ -1186,6 +1186,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	//    RestoreChunked can keep the diagnostic entry but not dereference
 	//    a missing sub-manifest.
 	fh := &FolderHandler{}
+	// User exclusion patterns from the job item, applied identically to the
+	// classic tar Backup path: whole excluded mounts are skipped
+	// (shouldExcludeMount) and surviving mounts get their patterns mapped to
+	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
+	exclusions := extractExcludePaths(item.Settings)
 	if progress != nil {
 		progress(item.Name, 50, "backing up volumes")
 	}
@@ -1202,11 +1207,21 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
 			continue
 		}
+		// Honour exclusion patterns at the volume level — for a `/` → `/rootfs`
+		// bind mount (Glances, Telegraf, Netdata) this prevents walking the
+		// entire host filesystem. Recorded as skipped so RestoreChunked keeps
+		// the diagnostic entry without dereferencing a missing sub-manifest.
+		if shouldExcludeMount(exclusions, mnt.Destination) {
+			log.Printf("engine: chunked: skipping volume %s for %s: matches exclusion pattern", mnt.Source, item.Name)
+			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+			continue
+		}
 		volItem := BackupItem{
 			Name: mnt.Destination,
 			Type: "folder",
 			Settings: map[string]any{
-				"path": mnt.Source,
+				"path":          mnt.Source,
+				"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 			},
 		}
 		volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
