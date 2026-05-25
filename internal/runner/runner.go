@@ -1606,7 +1606,7 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		return
 	}
 
-	result, gcErr := dedup.RunGC(repo, live)
+	result, gcErr := dedup.RunGC(repo, live, dedup.GCOptions{})
 	status := "completed"
 	var errMsg string
 	if gcErr != nil {

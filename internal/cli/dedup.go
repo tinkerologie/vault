@@ -193,7 +193,7 @@ func runDedupGC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("collect live manifest IDs: %w", err)
 	}
 
-	result, err := dedup.RunGC(ctx.repo, live)
+	result, err := dedup.RunGC(ctx.repo, live, dedup.GCOptions{})
 	if err != nil {
 		return fmt.Errorf("run gc: %w", err)
 	}

@@ -207,6 +207,12 @@ func (idx *Index) RebuildFromStorage() error {
 // is only one writer per Index at a time; two racing flushes would pick the
 // same sequence number and silently overwrite each other.
 //
+// CAVEAT: compaction (RunGC's compact phase) now writes many index entries
+// per GC run, widening the collision window if a backup runs concurrently
+// against the same destination via a separate Repo instance. Runner-level
+// per-destination serialization is the canonical fix; tracking that as a
+// follow-up rather than landing here.
+//
 // nextIndexSeq returns one greater than the largest existing sequence
 // number under _vault/index/, or 1 if the directory is empty / missing.
 func (idx *Index) nextIndexSeq() (int64, error) {

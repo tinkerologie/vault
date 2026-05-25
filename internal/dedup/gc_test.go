@@ -33,7 +33,7 @@ func TestGCSweepsUnreferenced(t *testing.T) {
 	}
 
 	// RunGC with only manifest B reachable → A's chunk should be reaped.
-	res, err := RunGC(r, []ID{bManifestID})
+	res, err := RunGC(r, []ID{bManifestID}, GCOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestGCConcurrentPutSurvives(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := RunGC(r, []ID{liveManifestID, newManifestID}); err != nil {
+	if _, err := RunGC(r, []ID{liveManifestID, newManifestID}, GCOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Get(newID); err != nil {
@@ -91,7 +91,7 @@ func TestGCUpdatesStats(t *testing.T) {
 
 	// No live manifests → everything reaped.
 	_ = mID
-	res, err := RunGC(r, nil)
+	res, err := RunGC(r, nil, GCOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestGCNoLivePacksAreDeleted(t *testing.T) {
 	if err := r.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	res, err := RunGC(r, []ID{mID})
+	res, err := RunGC(r, []ID{mID}, GCOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestGCStatsVisibleFromFreshRepo(t *testing.T) {
 	}
 
 	// GC with the manifest unreferenced → its pack is freed.
-	if _, err := RunGC(r, nil); err != nil {
+	if _, err := RunGC(r, nil, GCOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,7 +172,7 @@ func TestGCSweptPackDoesNotResurrectOnRebuild(t *testing.T) {
 	}
 
 	// Sweep everything (no live manifests) so the chunk's pack is fully-dead.
-	if _, err := RunGC(r, nil); err != nil {
+	if _, err := RunGC(r, nil, GCOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -213,7 +213,7 @@ func TestGCSweepsEmptyPack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := RunGC(r, nil)
+	res, err := RunGC(r, nil, GCOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
