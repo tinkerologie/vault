@@ -403,3 +403,45 @@ func (d *DB) ListDedupChunksByPack(storageID int64, packID string) ([]DedupChunk
 	}
 	return out, rows.Err()
 }
+
+// RepointDedupChunks updates pack_id / offset / length for a batch of
+// chunks in a single transaction. Used by the compaction path after a new
+// pack is flushed: the surviving chunks are atomically re-pointed from the
+// old pack to the new one before the old pack is deleted. If any row fails
+// the whole batch rolls back so we never partially re-point. No-op on an
+// empty slice.
+func (d *DB) RepointDedupChunks(storageID int64, updates []DedupChunk) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("repoint chunks begin: %w", err)
+	}
+	stmt, err := tx.Prepare(`UPDATE dedup_chunks SET pack_id=?, offset=?, length=? WHERE storage_id=? AND chunk_id=?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("repoint chunks prepare: %w", err)
+	}
+	defer stmt.Close()
+	for _, c := range updates {
+		res, err := stmt.Exec(c.PackID, c.Offset, c.Length, storageID, c.ChunkID)
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("repoint chunk %x: %w", c.ChunkID, err)
+		}
+		// A zero-row UPDATE means the chunk row doesn't exist (stale or
+		// wrong chunkID). The caller will then delete the old pack and
+		// lose the chunk forever, so surface this as a hard error and
+		// roll back the whole batch rather than silently succeeding.
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			_ = tx.Rollback()
+			return fmt.Errorf("repoint chunk %x: no matching row (storage %d)", c.ChunkID, storageID)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("repoint chunks commit: %w", err)
+	}
+	return nil
+}
