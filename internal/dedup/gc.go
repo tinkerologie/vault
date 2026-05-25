@@ -200,6 +200,16 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 // recoverable via `vault dedup repair` (rebuild from on-storage footers).
 // Operator-visible counter `res.Errors` carries the per-chunk failure so
 // retry is informed.
+//
+// Register-failure window (v1): if `idx.Register` returns an error in the
+// packer's onFlush callback (e.g. a SQLite write failure after the new pack
+// blob has been written to storage), the new pack has no `dedup_packs` row.
+// The empty-pack GC rule cannot reap it (the rule walks `ListDedupPacks`,
+// which is row-driven). The orphan blob is only recoverable via
+// `vault dedup repair`, which lists storage and reads pack footers
+// directly. Live data is never lost (the old pack is preserved because
+// `allMoved` is false), but operator action is required to reclaim the
+// orphan's bytes.
 func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res *GCResult) error {
 	// Filter to eligible packs.
 	type drained struct {
