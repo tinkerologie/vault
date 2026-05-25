@@ -67,7 +67,13 @@ func RunGC(r *Repo, live []ID) (GCResult, error) {
 			}
 		}
 		switch {
-		case !anyLive && anyDead:
+		case !anyLive:
+			// Both fully-dead packs (anyDead=true) and empty packs
+			// (anyDead=false, chunk_count=0 — only occurs after a crashed
+			// compaction) take the same deletion path: tombstone, storage
+			// delete, DB delete. Empty packs would otherwise linger because
+			// no chunk references keep them around.
+			//
 			// Tombstone FIRST — a durable intent that survives a crash before
 			// the storage delete. AppendTombstone is idempotent on retry, and
 			// RebuildFromStorage applies tombstones to remove pack rows so a

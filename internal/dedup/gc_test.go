@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/rand"
 	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 func TestGCSweepsUnreferenced(t *testing.T) {
@@ -191,5 +193,41 @@ func TestGCSweptPackDoesNotResurrectOnRebuild(t *testing.T) {
 	}
 	if _, _, _, err := r2.LocateForVerify(id); err == nil {
 		t.Fatal("swept chunk locatable after rebuild (missing GC tombstone)")
+	}
+}
+
+func TestGCSweepsEmptyPack(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+
+	// Manually inject an empty pack: write a tiny blob and register it with
+	// chunk_count = 0 to simulate a crash-orphaned compaction target (Task 4
+	// scenario — new pack written, never re-pointed).
+	emptyPath := "_vault/packs/em/emptypack"
+	if err := r.adapter.Write(emptyPath, bytes.NewReader([]byte("x"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.UpsertDedupPack(db.DedupPack{
+		ID: "emptypack", StorageID: r.storageID, Path: emptyPath, SizeBytes: 1, ChunkCount: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := RunGC(r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FreedPacks < 1 {
+		t.Fatalf("expected empty pack swept, got %+v", res)
+	}
+	// Pack row must be gone.
+	packs, err := r.db.ListDedupPacks(r.storageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range packs {
+		if p.ID == "emptypack" {
+			t.Fatal("empty pack row still present after GC")
+		}
 	}
 }
