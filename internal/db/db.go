@@ -104,6 +104,7 @@ func (d *DB) insertDefaultSettings() error {
 		{"retry_delays_default", "[900,3600,14400]"},
 		{"breaker_fail_threshold", "3"},
 		{"breaker_close_successes", "2"},
+		{"dedup_compaction_min_dead_ratio", "0.5"},
 	}
 	for _, kv := range defaults {
 		if _, err := d.Exec(
