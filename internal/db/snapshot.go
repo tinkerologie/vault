@@ -228,6 +228,15 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 // under <snapshot_dir>/rotated/ and prunes the directory to the newest
 // rotatedSnapshotsKept files. Failures are logged but never returned —
 // rotation must not block the snapshot pipeline.
+//
+// The snapshotPath field is set via SetSnapshotPath (validated) and
+// NewSnapshotManager (admin-configured), so it is trusted at runtime.
+// We nevertheless route through validateSnapshotPath here so the
+// CodeQL go/path-injection sanitiser barrier (see validateSnapshotPath
+// godoc, snapshot.go) fires on this code path — the same shape used by
+// SaveSnapshot / RestoreFromSnapshot. Without it CodeQL flags every
+// downstream os.Stat / os.MkdirAll / os.Link / os.Open / os.ReadDir /
+// os.Remove call as "uncontrolled data used in path expression".
 func (sm *SnapshotManager) rotateSnapshot() {
 	sm.mu.Lock()
 	snapshotPath := sm.snapshotPath
@@ -236,28 +245,33 @@ func (sm *SnapshotManager) rotateSnapshot() {
 	if snapshotPath == "" {
 		return
 	}
-	if _, err := os.Stat(snapshotPath); err != nil {
+	validPath, err := validateSnapshotPath(snapshotPath)
+	if err != nil {
+		log.Printf("snapshot rotation: validate path: %v", err)
+		return
+	}
+	if _, err := os.Stat(validPath); err != nil {
 		log.Printf("snapshot rotation: source missing: %v", err)
 		return
 	}
 
-	rotatedDir := filepath.Join(filepath.Dir(snapshotPath), "rotated")
+	rotatedDir := filepath.Join(filepath.Dir(validPath), "rotated")
 	if err := os.MkdirAll(rotatedDir, 0o750); err != nil {
 		log.Printf("snapshot rotation: mkdir %s: %v", rotatedDir, err)
 		return
 	}
 
-	base := filepath.Base(snapshotPath)
+	base := filepath.Base(validPath)
 	// UTC + dashes only — works on every filesystem.
 	stamp := time.Now().UTC().Format("2006-01-02T15-04-05.000000000")
 	dstPath := filepath.Join(rotatedDir, base+"."+stamp)
 
 	// Prefer hardlink (atomic, instant on same FS). Fall back to byte copy
 	// on cross-device failure.
-	if err := os.Link(snapshotPath, dstPath); err != nil {
-		if copyErr := copyFile(snapshotPath, dstPath); copyErr != nil {
+	if err := os.Link(validPath, dstPath); err != nil {
+		if copyErr := copyFile(validPath, dstPath); copyErr != nil {
 			log.Printf("snapshot rotation: copy %s -> %s failed: %v (link error: %v)",
-				snapshotPath, dstPath, copyErr, err)
+				validPath, dstPath, copyErr, err)
 			return
 		}
 	}
