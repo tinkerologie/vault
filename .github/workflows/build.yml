@@ -32,6 +32,16 @@ jobs:
       - name: Build web assets
         run: cd web && npm ci && npm run build
 
+      - name: Copy CHANGELOG.md into embed location
+        # The `internal/release` package uses //go:embed CHANGELOG.md, but Go's
+        # embed rules forbid parent-directory paths in the pattern, so the
+        # repo-root CHANGELOG.md must be copied next to the directive before
+        # any Go tool (linter, tests, build) sees the package. The Makefile
+        # has this as a prerequisite on every relevant target; this workflow
+        # invokes go/golangci-lint directly so it needs the copy step inline.
+        # Mirror the canonical idiom from Makefile:65-67.
+        run: mkdir -p internal/release && cp CHANGELOG.md internal/release/CHANGELOG.md
+
       - name: Run linter
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
