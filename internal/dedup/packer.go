@@ -93,6 +93,38 @@ func (p *Packer) Add(chunkID ID, plaintext []byte) (PackEntry, error) {
 	return e, nil
 }
 
+// AddRaw appends an already-encrypted on-disk chunk (the flags byte +
+// ciphertext + AEAD tag — exactly the bytes ReadRange returns) verbatim
+// and records its new offset. Used only by the compaction path. Safe
+// because chunk encryption is deterministic and keyed by chunkID — the
+// bytes are identical regardless of pack/offset, and the AEAD still
+// validates on read because both the per-chunk key derivation (HKDF over
+// master + chunkID) and the AAD (= chunkID) are unchanged by the move.
+//
+// raw must already start with the flags byte; AddRaw writes len(raw) bytes
+// (no extra header). Flushes at PackTargetSize like Add.
+func (p *Packer) AddRaw(chunkID ID, raw []byte) (PackEntry, error) {
+	// AddRaw's input is flags(1) + ciphertext + AEAD-tag(16), so the minimum
+	// valid blob is 17 bytes (flags + empty-plaintext ciphertext + tag).
+	// A shorter input would land in the pack and fail authentication at
+	// read time — reject it up front instead.
+	const minRawLen = 1 + 16
+	if len(raw) < minRawLen {
+		return PackEntry{}, fmt.Errorf("dedup: AddRaw: raw too short (%d bytes, need >=%d)", len(raw), minRawLen)
+	}
+	offset := int64(p.buf.Len())
+	p.buf.Write(raw)
+	flags := raw[0]
+	e := PackEntry{ID: chunkID, Offset: offset, Length: int64(len(raw)), Flags: flags}
+	p.entries = append(p.entries, e)
+	if p.buf.Len() >= PackTargetSize {
+		if err := p.Flush(); err != nil {
+			return PackEntry{}, err
+		}
+	}
+	return e, nil
+}
+
 // Flush uploads any pending pack. No-op if the buffer is empty.
 func (p *Packer) Flush() error {
 	if p.buf.Len() == 0 {

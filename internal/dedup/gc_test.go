@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/rand"
 	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 func TestGCSweepsUnreferenced(t *testing.T) {
@@ -31,7 +33,7 @@ func TestGCSweepsUnreferenced(t *testing.T) {
 	}
 
 	// RunGC with only manifest B reachable → A's chunk should be reaped.
-	res, err := RunGC(r, []ID{bManifestID})
+	res, err := RunGC(r, []ID{bManifestID}, GCOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +69,7 @@ func TestGCConcurrentPutSurvives(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := RunGC(r, []ID{liveManifestID, newManifestID}); err != nil {
+	if _, err := RunGC(r, []ID{liveManifestID, newManifestID}, GCOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Get(newID); err != nil {
@@ -89,7 +91,7 @@ func TestGCUpdatesStats(t *testing.T) {
 
 	// No live manifests → everything reaped.
 	_ = mID
-	res, err := RunGC(r, nil)
+	res, err := RunGC(r, nil, GCOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +118,7 @@ func TestGCNoLivePacksAreDeleted(t *testing.T) {
 	if err := r.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	res, err := RunGC(r, []ID{mID})
+	res, err := RunGC(r, []ID{mID}, GCOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +140,7 @@ func TestGCStatsVisibleFromFreshRepo(t *testing.T) {
 	}
 
 	// GC with the manifest unreferenced → its pack is freed.
-	if _, err := RunGC(r, nil); err != nil {
+	if _, err := RunGC(r, nil, GCOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,5 +156,78 @@ func TestGCStatsVisibleFromFreshRepo(t *testing.T) {
 	}
 	if s.LastGCFreedBytes <= 0 {
 		t.Fatalf("LastGCFreedBytes not persisted, got %d", s.LastGCFreedBytes)
+	}
+}
+
+func TestGCSweptPackDoesNotResurrectOnRebuild(t *testing.T) {
+	r, sk, cleanup := newTestRepo(t)
+	defer cleanup()
+	plain := make([]byte, 4096)
+	_, _ = rand.Read(plain)
+	id, _ := r.Put(plain)
+	m := Manifest{Version: ManifestVersion, Item: "x", Files: map[string]ManifestEntry{"x": {Chunks: []ID{id}}}}
+	_, _ = r.PutManifest("x", m)
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sweep everything (no live manifests) so the chunk's pack is fully-dead.
+	if _, err := RunGC(r, nil, GCOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebuild from on-storage state must NOT resurrect the swept pack.
+	if err := r.db.DropDedupState(r.storageID); err != nil {
+		t.Fatal(err)
+	}
+	idx := NewIndex(r.db, r.adapter, r.storageID)
+	if err := idx.RebuildFromStorage(); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := OpenRepo(r.db, r.adapter, r.storageID, sk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.idx.Has(id) {
+		t.Fatal("swept chunk resurrected by rebuild (missing GC tombstone)")
+	}
+	if _, _, _, err := r2.LocateForVerify(id); err == nil {
+		t.Fatal("swept chunk locatable after rebuild (missing GC tombstone)")
+	}
+}
+
+func TestGCSweepsEmptyPack(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+
+	// Manually inject an empty pack: write a tiny blob and register it with
+	// chunk_count = 0 to simulate a crash-orphaned compaction target (Task 4
+	// scenario — new pack written, never re-pointed).
+	emptyPath := "_vault/packs/em/emptypack"
+	if err := r.adapter.Write(emptyPath, bytes.NewReader([]byte("x"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.UpsertDedupPack(db.DedupPack{
+		ID: "emptypack", StorageID: r.storageID, Path: emptyPath, SizeBytes: 1, ChunkCount: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := RunGC(r, nil, GCOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FreedPacks < 1 {
+		t.Fatalf("expected empty pack swept, got %+v", res)
+	}
+	// Pack row must be gone.
+	packs, err := r.db.ListDedupPacks(r.storageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range packs {
+		if p.ID == "emptypack" {
+			t.Fatal("empty pack row still present after GC")
+		}
 	}
 }

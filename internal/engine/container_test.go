@@ -963,7 +963,7 @@ func TestContainerChunkedGCKeepsNestedVolumeData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WalkManifestClosure error = %v", err)
 	}
-	if _, err := dedup.RunGC(r, liveManifests); err != nil {
+	if _, err := dedup.RunGC(r, liveManifests, dedup.GCOptions{}); err != nil {
 		t.Fatalf("RunGC error = %v", err)
 	}
 

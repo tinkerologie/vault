@@ -105,6 +105,84 @@ func TestCountJobsByStorageDestID(t *testing.T) {
 	}
 }
 
+func TestRepointDedupChunksUpdatesPackOffsetLength(t *testing.T) {
+	d := setupTestDB(t)
+	destID, err := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: "{}", DedupEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertDedupPack(DedupPack{ID: "old", StorageID: destID, Path: "old.pack", SizeBytes: 100, ChunkCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertDedupPack(DedupPack{ID: "new", StorageID: destID, Path: "new.pack", SizeBytes: 100, ChunkCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	cid := []byte{0xcc, 0x01, 0x02, 0x03}
+	if err := d.UpsertDedupChunk(DedupChunk{ChunkID: cid, StorageID: destID, PackID: "old", Offset: 0, Length: 50}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.RepointDedupChunks(destID, []DedupChunk{
+		{ChunkID: cid, StorageID: destID, PackID: "new", Offset: 4096, Length: 60},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	path, off, length, err := d.LocateDedupChunk(destID, cid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "new.pack" || off != 4096 || length != 60 {
+		t.Fatalf("re-point mismatch: got (%q, %d, %d)", path, off, length)
+	}
+}
+
+func TestRepointDedupChunksEmptyIsNoop(t *testing.T) {
+	d := setupTestDB(t)
+	destID, err := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: "{}", DedupEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RepointDedupChunks(destID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RepointDedupChunks(destID, []DedupChunk{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRepointDedupChunksFailsOnMissingChunk guards a dangerous silent
+// failure mode: if a caller passes a stale or wrong chunkID, the UPDATE
+// matches zero rows. The previous behaviour would commit nothing and
+// return nil — and the compaction caller would then delete the old pack,
+// losing the chunk forever. We require a hard error and a rolled-back
+// transaction instead.
+func TestRepointDedupChunksFailsOnMissingChunk(t *testing.T) {
+	d := setupTestDB(t)
+	destID, err := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: "{}", DedupEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertDedupPack(DedupPack{ID: "new", StorageID: destID, Path: "new.pack", SizeBytes: 100, ChunkCount: 0}); err != nil {
+		t.Fatal(err)
+	}
+	missing := []byte{0xff, 0xee}
+	err = d.RepointDedupChunks(destID, []DedupChunk{
+		{ChunkID: missing, StorageID: destID, PackID: "new", Offset: 1, Length: 1},
+	})
+	if err == nil {
+		t.Fatal("RepointDedupChunks must error on missing chunk row, got nil")
+	}
+	// And the transaction must have rolled back — no row was inserted by accident.
+	has, hasErr := d.HasDedupChunk(destID, missing)
+	if hasErr != nil {
+		t.Fatal(hasErr)
+	}
+	if has {
+		t.Fatal("missing chunk row should not have been created by RepointDedupChunks")
+	}
+}
+
 // TestDedupAggregatesLogicalBytesIncludesMultiItem is a regression test:
 // multi-item dedup restore points have a NULL manifest_id (their per-item
 // manifest IDs live in metadata.item_manifests), so a logical-bytes query

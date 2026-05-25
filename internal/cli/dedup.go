@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -193,13 +194,21 @@ func runDedupGC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("collect live manifest IDs: %w", err)
 	}
 
-	result, err := dedup.RunGC(ctx.repo, live)
+	ratioStr, _ := ctx.db.GetSetting("dedup_compaction_min_dead_ratio", "0.5")
+	ratio, perr := strconv.ParseFloat(ratioStr, 64)
+	if perr != nil || ratio < 0 || ratio > 1 {
+		fmt.Fprintf(os.Stderr, "warning: invalid dedup_compaction_min_dead_ratio %q, using 0.5 (err: %v)\n", ratioStr, perr)
+		ratio = 0.5
+	}
+	result, err := dedup.RunGC(ctx.repo, live, dedup.GCOptions{CompactMinDeadRatio: ratio})
 	if err != nil {
 		return fmt.Errorf("run gc: %w", err)
 	}
 
-	fmt.Printf("dedup gc: freed %d packs (%d bytes); rewritable=%d bytes; errors=%d\n",
-		result.FreedPacks, result.FreedBytes, result.RewritableBytes, len(result.Errors))
+	fmt.Printf("dedup gc: freed %d packs (%d bytes); compacted %d packs (reclaimed %d bytes); rewritable=%d bytes; errors=%d\n",
+		result.FreedPacks, result.FreedBytes,
+		result.CompactedPacks, result.ReclaimedBytes,
+		result.RewritableBytes, len(result.Errors))
 	for _, e := range result.Errors {
 		fmt.Fprintf(os.Stderr, "  error: %s\n", e)
 	}

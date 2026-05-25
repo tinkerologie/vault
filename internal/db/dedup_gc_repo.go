@@ -20,16 +20,20 @@ type DedupGCRun struct {
 	FreedBytes      int64
 	RewritableBytes int64
 	ErrorCount      int64
+	CompactedPacks  int64
+	ReclaimedBytes  int64
 }
 
 // InsertDedupGCRun records a completed GC run and returns the new row ID.
 func (d *DB) InsertDedupGCRun(run DedupGCRun) (int64, error) {
 	res, err := d.Exec(
 		`INSERT INTO dedup_gc_runs
-		    (storage_id, started_at, completed_at, reachable, freed_packs, freed_bytes, rewritable_bytes, error_count)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		    (storage_id, started_at, completed_at, reachable, freed_packs, freed_bytes,
+		     rewritable_bytes, error_count, compacted_packs, reclaimed_bytes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.StorageID, run.StartedAt, run.CompletedAt, run.Reachable,
 		run.FreedPacks, run.FreedBytes, run.RewritableBytes, run.ErrorCount,
+		run.CompactedPacks, run.ReclaimedBytes,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("inserting dedup gc run: %w", err)
@@ -43,13 +47,15 @@ func (d *DB) LatestDedupGCRun(storageID int64) (DedupGCRun, bool, error) {
 	var r DedupGCRun
 	err := d.QueryRow(
 		`SELECT id, storage_id, started_at, completed_at, reachable,
-		        freed_packs, freed_bytes, rewritable_bytes, error_count
+		        freed_packs, freed_bytes, rewritable_bytes, error_count,
+		        compacted_packs, reclaimed_bytes
 		   FROM dedup_gc_runs
 		  WHERE storage_id = ?
 		  ORDER BY completed_at DESC, id DESC
 		  LIMIT 1`, storageID,
 	).Scan(&r.ID, &r.StorageID, &r.StartedAt, &r.CompletedAt, &r.Reachable,
-		&r.FreedPacks, &r.FreedBytes, &r.RewritableBytes, &r.ErrorCount)
+		&r.FreedPacks, &r.FreedBytes, &r.RewritableBytes, &r.ErrorCount,
+		&r.CompactedPacks, &r.ReclaimedBytes)
 	if err == sql.ErrNoRows {
 		return DedupGCRun{}, false, nil
 	}

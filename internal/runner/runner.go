@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1606,7 +1607,14 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		return
 	}
 
-	result, gcErr := dedup.RunGC(repo, live)
+	ratioStr, _ := r.db.GetSetting("dedup_compaction_min_dead_ratio", "0.5")
+	ratio, perr := strconv.ParseFloat(ratioStr, 64)
+	if perr != nil || ratio < 0 || ratio > 1 {
+		log.Printf("gc: invalid dedup_compaction_min_dead_ratio %q, falling back to 0.5 (err: %v)", ratioStr, perr)
+		ratio = 0.5
+	}
+
+	result, gcErr := dedup.RunGC(repo, live, dedup.GCOptions{CompactMinDeadRatio: ratio})
 	status := "completed"
 	var errMsg string
 	if gcErr != nil {
@@ -1614,8 +1622,10 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		errMsg = gcErr.Error()
 		log.Printf("gc: %q: %v", dest.Name, gcErr)
 	}
-	log.Printf("gc: dest=%q run=%s freed_packs=%d freed_bytes=%d rewritable=%d errors=%d",
-		dest.Name, runID, result.FreedPacks, result.FreedBytes, result.RewritableBytes, len(result.Errors))
+	log.Printf("gc: dest=%q run=%s freed_packs=%d freed_bytes=%d compacted_packs=%d reclaimed_bytes=%d rewritable=%d errors=%d",
+		dest.Name, runID, result.FreedPacks, result.FreedBytes,
+		result.CompactedPacks, result.ReclaimedBytes,
+		result.RewritableBytes, len(result.Errors))
 
 	msg := map[string]any{
 		"type":             "dedup_gc_complete",
@@ -1624,6 +1634,8 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		"status":           status,
 		"freed_packs":      result.FreedPacks,
 		"freed_bytes":      result.FreedBytes,
+		"compacted_packs":  result.CompactedPacks,
+		"reclaimed_bytes":  result.ReclaimedBytes,
 		"rewritable_bytes": result.RewritableBytes,
 		"errors":           result.Errors,
 	}

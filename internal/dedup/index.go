@@ -21,6 +21,12 @@ type indexEntry struct {
 	SizeBytes  int64       `json:"size_bytes"`
 	ChunkCount int         `json:"chunk_count"`
 	Chunks     []PackEntry `json:"chunks"`
+	// Tombstone, when non-empty, marks this line as a delete record for the
+	// named packID — RebuildFromStorage removes the pack row and any chunks
+	// still pointing at it. Compaction (Task 4) and GC's fully-dead-pack
+	// delete (Task 1) both append a tombstone so a later rebuild does not
+	// resurrect the pack.
+	Tombstone string `json:"tombstone,omitempty"`
 }
 
 // Index owns both the SQLite tables and the on-storage JSONL blobs that
@@ -69,6 +75,29 @@ func (idx *Index) Register(info PackInfo) error {
 	return nil
 }
 
+// registerForRebuild mirrors Register but uses REPLACE (ON CONFLICT DO UPDATE)
+// semantics so a later add-line for the same chunk (e.g. compaction moving a
+// chunk to a new pack) wins over an earlier one. Only called by
+// RebuildFromStorage; the live-write Register path keeps INSERT OR IGNORE for
+// crash-retry idempotency.
+func (idx *Index) registerForRebuild(info PackInfo) error {
+	if err := idx.db.ReplaceDedupPack(db.DedupPack{
+		ID: info.ID, StorageID: idx.storageID, Path: info.Path,
+		SizeBytes: info.SizeBytes, ChunkCount: info.ChunkCount,
+	}); err != nil {
+		return fmt.Errorf("dedup: replace pack: %w", err)
+	}
+	for _, e := range info.Entries {
+		if err := idx.db.ReplaceDedupChunk(db.DedupChunk{
+			ChunkID: e.ID[:], StorageID: idx.storageID, PackID: info.ID,
+			Offset: e.Offset, Length: e.Length,
+		}); err != nil {
+			return fmt.Errorf("dedup: replace chunk: %w", err)
+		}
+	}
+	return nil
+}
+
 // AppendStorageIndex writes a JSONL entry for this pack to the next
 // sequence-numbered blob under _vault/index/. The blob contains a single
 // indexEntry per file (one line). RebuildFromStorage concatenates them in
@@ -83,6 +112,24 @@ func (idx *Index) AppendStorageIndex(info PackInfo) error {
 		PackID: info.ID, PackPath: info.Path,
 		SizeBytes: info.SizeBytes, ChunkCount: info.ChunkCount, Chunks: info.Entries,
 	})
+	if err != nil {
+		return err
+	}
+	line = append(line, '\n')
+	return idx.adapter.Write(path.Join(indexRootPath, name), strings.NewReader(string(line)))
+}
+
+// AppendTombstone records that packID has been deleted from storage. The
+// caller writes the tombstone BEFORE deleting the on-storage blob and DB row,
+// so a crash mid-delete still leaves a durable intent that the next rebuild
+// will apply (idempotently — re-applying tombstones is a no-op).
+func (idx *Index) AppendTombstone(packID string) error {
+	seq, err := idx.nextIndexSeq()
+	if err != nil {
+		return err
+	}
+	name := fmt.Sprintf("%010d.idx", seq)
+	line, err := json.Marshal(indexEntry{Tombstone: packID})
 	if err != nil {
 		return err
 	}
@@ -128,12 +175,21 @@ func (idx *Index) RebuildFromStorage() error {
 				_ = rc.Close()
 				return fmt.Errorf("dedup: parse index entry: %w", err)
 			}
+			// Tombstone lines carry zero-valued add fields (no chunks, blank pack ID).
+			// Check this branch first so we never act on those zero values as an add.
+			if entry.Tombstone != "" {
+				if err := idx.db.DeleteDedupPack(idx.storageID, entry.Tombstone); err != nil {
+					_ = rc.Close()
+					return fmt.Errorf("dedup: rebuild tombstone %s: %w", entry.Tombstone, err)
+				}
+				continue
+			}
 			info := PackInfo{
 				ID: entry.PackID, Path: entry.PackPath,
 				SizeBytes: entry.SizeBytes, ChunkCount: entry.ChunkCount,
 				Entries: entry.Chunks,
 			}
-			if err := idx.Register(info); err != nil {
+			if err := idx.registerForRebuild(info); err != nil {
 				_ = rc.Close()
 				return err
 			}
@@ -146,6 +202,17 @@ func (idx *Index) RebuildFromStorage() error {
 	return nil
 }
 
+// nextIndexSeq is not concurrency-safe — it does a list-then-write. Callers
+// (AppendStorageIndex / AppendTombstone) must hold the Repo mutex so there
+// is only one writer per Index at a time; two racing flushes would pick the
+// same sequence number and silently overwrite each other.
+//
+// CAVEAT: compaction (RunGC's compact phase) now writes many index entries
+// per GC run, widening the collision window if a backup runs concurrently
+// against the same destination via a separate Repo instance. Runner-level
+// per-destination serialization is the canonical fix; tracking that as a
+// follow-up rather than landing here.
+//
 // nextIndexSeq returns one greater than the largest existing sequence
 // number under _vault/index/, or 1 if the directory is empty / missing.
 func (idx *Index) nextIndexSeq() (int64, error) {
