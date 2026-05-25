@@ -320,6 +320,9 @@ func (d *DB) DropDedupState(storageID int64) error {
 	if _, err := d.Exec(`DELETE FROM dedup_packs  WHERE storage_id=?`, storageID); err != nil {
 		return err
 	}
+	if _, err := d.Exec(`DELETE FROM dedup_gc_runs WHERE storage_id=?`, storageID); err != nil {
+		return err
+	}
 	return nil
 }
 

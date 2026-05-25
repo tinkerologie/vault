@@ -524,11 +524,11 @@
                   <span>{(s.total_chunks ?? 0).toLocaleString()} · {(s.total_packs ?? 0).toLocaleString()}</span>
                 </div>
                 <div class="flex justify-between text-text-dim">
-                  <span>Wasted</span>
+                  <span>Reclaimable</span>
                   <span>
                     {formatBytes(s.wasted_bytes_estimate)}
                     {#if s.last_gc_at && s.last_gc_at !== '0001-01-01T00:00:00Z'}
-                      <span class="text-text-dim">· last cleanup {relTime(s.last_gc_at)}</span>
+                      <span class="text-text-dim">· as of last cleanup {relTime(s.last_gc_at)}</span>
                     {/if}
                   </span>
                 </div>

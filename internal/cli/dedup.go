@@ -36,7 +36,9 @@ blobs. Use when the local DB is lost or corrupted but the destination's
 packs and index blobs are intact.
 
 The command is read-only against the destination's pack storage; it only
-writes to the local SQLite database.`,
+writes to the local SQLite database.
+
+By default vault.key is read from the same directory as --db; use --key to point at a key restored to a different location (e.g. during disaster recovery).`,
 		RunE: runDedupRepair,
 	}
 
@@ -48,7 +50,9 @@ scripted maintenance. Walks every live restore point's manifest, marks
 reachable chunks, then deletes packs whose every chunk is unreachable.
 
 Mixed packs (some live, some dead chunks) are left in place — reported as
-"rewritable bytes" only. Compaction is a separate future operation.`,
+"rewritable bytes" only. Compaction is a separate future operation.
+
+By default vault.key is read from the same directory as --db; use --key to point at a key restored to a different location (e.g. during disaster recovery).`,
 		RunE: runDedupGC,
 	}
 
@@ -57,15 +61,19 @@ Mixed packs (some live, some dead chunks) are left in place — reported as
 	dedupDestID      int64
 	dedupRepairDBVal string
 	dedupGCDBVal     string
+	dedupRepairKey   string
+	dedupGCKey       string
 )
 
 func init() {
 	dedupRepairCmd.Flags().Int64Var(&dedupDestID, "dest", 0, "storage destination ID (required)")
 	dedupRepairCmd.Flags().StringVar(&dedupRepairDBVal, "db", defaultDedupDBPath, "path to vault.db")
+	dedupRepairCmd.Flags().StringVar(&dedupRepairKey, "key", "", "path to vault.key (default: <dir of --db>/vault.key)")
 	_ = dedupRepairCmd.MarkFlagRequired("dest")
 
 	dedupGCCmd.Flags().Int64Var(&dedupDestID, "dest", 0, "storage destination ID (required)")
 	dedupGCCmd.Flags().StringVar(&dedupGCDBVal, "db", defaultDedupDBPath, "path to vault.db")
+	dedupGCCmd.Flags().StringVar(&dedupGCKey, "key", "", "path to vault.key (default: <dir of --db>/vault.key)")
 	_ = dedupGCCmd.MarkFlagRequired("dest")
 
 	dedupCmd.AddCommand(dedupRepairCmd, dedupGCCmd)
@@ -86,7 +94,7 @@ type dedupContext struct {
 // the dedup repo. The returned cleanup closes the database (the storage
 // Adapter interface has no Close — adapters that hold resources clean up
 // on GC / inside individual operations).
-func openDedupContext(dbPath string) (*dedupContext, func(), error) {
+func openDedupContext(dbPath, keyPath string) (*dedupContext, func(), error) {
 	if dedupDestID == 0 {
 		return nil, nil, fmt.Errorf("--dest is required")
 	}
@@ -106,7 +114,9 @@ func openDedupContext(dbPath string) (*dedupContext, func(), error) {
 		return nil, nil, fmt.Errorf("destination %d (%q) is not dedup-enabled", dedupDestID, dest.Name)
 	}
 
-	keyPath := filepath.Join(filepath.Dir(dbPath), "vault.key")
+	if keyPath == "" {
+		keyPath = filepath.Join(filepath.Dir(dbPath), "vault.key")
+	}
 	serverKey, err := loadServerKeyAtPath(keyPath)
 	if err != nil {
 		database.Close()
@@ -142,7 +152,7 @@ func openDedupContext(dbPath string) (*dedupContext, func(), error) {
 // key — a missing key file is a hard error for CLI flows because writing
 // a fresh random key here would silently break every subsequent unseal.
 func loadServerKeyAtPath(p string) ([]byte, error) {
-	b, err := os.ReadFile(p) // #nosec G304 // path comes from CLI flag --db, not user input
+	b, err := os.ReadFile(p) // #nosec G304 // path is from CLI flags (--key or derived from --db) — admin-supplied, not user input
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +164,7 @@ func loadServerKeyAtPath(p string) ([]byte, error) {
 }
 
 func runDedupRepair(_ *cobra.Command, _ []string) error {
-	ctx, cleanup, err := openDedupContext(dedupRepairDBVal)
+	ctx, cleanup, err := openDedupContext(dedupRepairDBVal, dedupRepairKey)
 	if err != nil {
 		return err
 	}
@@ -172,7 +182,7 @@ func runDedupRepair(_ *cobra.Command, _ []string) error {
 }
 
 func runDedupGC(_ *cobra.Command, _ []string) error {
-	ctx, cleanup, err := openDedupContext(dedupGCDBVal)
+	ctx, cleanup, err := openDedupContext(dedupGCDBVal, dedupGCKey)
 	if err != nil {
 		return err
 	}

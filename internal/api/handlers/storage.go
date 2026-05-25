@@ -731,11 +731,11 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GetDedupStats returns the in-memory dedup stats snapshot for a
-// destination's chunk repository. Returns 404 if the destination is not
-// dedup-enabled — the field-level "enabled" key in the response body lets
-// the UI render a friendly empty state on the same endpoint when
-// 404 handling would be noisy.
+// GetDedupStats returns the dedup stats snapshot for a destination's chunk
+// repository, computed from SQL aggregates and the latest persisted GC run.
+// Returns 404 if the destination is not dedup-enabled — the field-level
+// "enabled" key in the response body lets the UI render a friendly empty
+// state on the same endpoint when 404 handling would be noisy.
 //
 //	GET /api/v1/storage/{id}/dedup-stats
 func (h *StorageHandler) GetDedupStats(w http.ResponseWriter, r *http.Request) {

@@ -75,7 +75,7 @@ SQLite with WAL mode and busy timeout. Pure Go driver via `modernc.org/sqlite` (
 sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
 ```
 
-Schema is applied inline at open time via `CREATE TABLE IF NOT EXISTS` (no versioned migrations). Eleven tables: `storage_destinations`, `jobs`, `job_items`, `job_runs`, `restore_points`, `settings`, `activity_log`, `verify_runs`, `replication_sources`, `dedup_packs`, `dedup_chunks`.
+Schema is applied inline at open time via `CREATE TABLE IF NOT EXISTS` (no versioned migrations). Twelve tables: `storage_destinations`, `jobs`, `job_items`, `job_runs`, `restore_points`, `settings`, `activity_log`, `verify_runs`, `replication_sources`, `dedup_packs`, `dedup_chunks`, `dedup_gc_runs`.
 
 ### Hybrid snapshot layout
 
@@ -216,6 +216,15 @@ See [ansible/README.md](../ansible/README.md) for the full deployment workflow.
 | `github.com/coder/websocket`                  | WebSocket server                                       |
 | `github.com/modelcontextprotocol/go-sdk`      | MCP streamable-HTTP / stdio transport                  |
 | `filippo.io/age`                              | Optional age-encrypted archive layer                   |
+
+## Known Limitations
+
+- **Dedup GC is delete-only.** Garbage collection removes packs whose every chunk is
+  unreferenced. A pack with even one live chunk is kept; its dead bytes are reported as
+  **Reclaimable** ("rewritable bytes") on the Storage card and persisted per GC run in
+  `dedup_gc_runs`, but they are not yet physically reclaimed. Compaction/repacking is
+  tracked in #103. This matches early borg/restic behaviour and is a deliberate v1 choice —
+  small (24 MiB) packs bound the stranded space.
 
 ## Version
 

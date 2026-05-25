@@ -70,7 +70,7 @@ type Repo struct {
 	pending      map[ID]struct{}
 	lastFlushErr error
 
-	// statsMu is a separate RWMutex so Stats() never blocks an in-flight Put.
+	// statsMu guards the LogicalBytes session counter — written in Put(), read by SessionLogicalBytes().
 	statsMu sync.RWMutex
 	stats   Stats
 }
@@ -318,10 +318,10 @@ func (r *Repo) GetManifest(id ID) (Manifest, error) {
 // TotalChunks / TotalPacks / PhysicalBytes / LogicalBytes are read from
 // SQL aggregates (db.DedupAggregates) so the values are correct across
 // daemon restarts and from any goroutine — not just the one that wrote
-// them. WastedBytesEstimate / LastGCAt / LastGCFreedBytes are in-memory
-// since-process-start values, populated by RunGC and reset on daemon
-// restart (acceptable for v1 — these are short-term GC-result indicators,
-// not historical metrics).
+// them. WastedBytesEstimate / LastGCAt / LastGCFreedBytes are sourced
+// from the latest dedup_gc_runs row (durable across restarts), so these
+// fields are visible from any Repo instance — including freshly-opened
+// ones on the stats-poll path — not just the instance that ran GC.
 func (r *Repo) Stats() Stats {
 	out := Stats{}
 	if agg, err := r.db.DedupAggregates(r.storageID); err == nil {
@@ -330,11 +330,11 @@ func (r *Repo) Stats() Stats {
 		out.PhysicalBytes = agg.PhysicalBytes
 		out.LogicalBytes = agg.LogicalBytes
 	}
-	r.statsMu.RLock()
-	out.WastedBytesEstimate = r.stats.WastedBytesEstimate
-	out.LastGCAt = r.stats.LastGCAt
-	out.LastGCFreedBytes = r.stats.LastGCFreedBytes
-	r.statsMu.RUnlock()
+	if run, found, err := r.db.LatestDedupGCRun(r.storageID); err == nil && found {
+		out.WastedBytesEstimate = run.RewritableBytes
+		out.LastGCAt = run.CompletedAt
+		out.LastGCFreedBytes = run.FreedBytes
+	}
 	return out
 }
 

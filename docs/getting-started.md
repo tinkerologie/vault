@@ -143,6 +143,11 @@ Each restore point also shows chain health annotations so you can see if a full 
 | Use the REST API                                | [API Reference](api.md)                                     |
 | Use the MCP server                              | [MCP](mcp.md)                                               |
 
+> **Disaster recovery:** Back up **both** `vault.db` and `vault.key` (siblings in
+> `/boot/config/plugins/vault/`). To rebuild a lost dedup index from intact storage,
+> run `vault dedup repair --dest <id>`. If you restored `vault.key` to a different
+> location, pass `--key /path/to/vault.key`.
+
 ---
 
 ## Troubleshooting

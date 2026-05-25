@@ -131,6 +131,21 @@ CREATE TABLE IF NOT EXISTS dedup_chunks (
 
 CREATE INDEX IF NOT EXISTS idx_dedup_chunks_pack ON dedup_chunks(storage_id, pack_id);
 
+CREATE TABLE IF NOT EXISTS dedup_gc_runs (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	storage_id       INTEGER NOT NULL,
+	started_at       DATETIME NOT NULL,
+	completed_at     DATETIME NOT NULL,
+	reachable        INTEGER NOT NULL DEFAULT 0,
+	freed_packs      INTEGER NOT NULL DEFAULT 0,
+	freed_bytes      INTEGER NOT NULL DEFAULT 0,
+	rewritable_bytes INTEGER NOT NULL DEFAULT 0,
+	error_count      INTEGER NOT NULL DEFAULT 0,
+	FOREIGN KEY (storage_id) REFERENCES storage_destinations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_dedup_gc_runs_storage ON dedup_gc_runs(storage_id, completed_at DESC);
+
 -- Add verify_backup column if it does not exist.
 -- SQLite does not support IF NOT EXISTS for ALTER TABLE, so we
 -- attempt the ALTER in Go and silently ignore "duplicate column" errors.
