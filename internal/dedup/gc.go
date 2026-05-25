@@ -156,9 +156,6 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 	// Best-effort: the sweep already succeeded, so a stats-insert failure must
 	// not make the GC look failed — log and carry on.
 	//
-	// NOTE: CompactedPacks / ReclaimedBytes are intentionally NOT persisted
-	// here yet — Task 5 adds the dedup_gc_runs columns and threads them
-	// through. Tests in this task assert on the returned GCResult value.
 	if _, err := r.db.InsertDedupGCRun(db.DedupGCRun{
 		StorageID:       r.storageID,
 		StartedAt:       res.StartedAt,
@@ -168,6 +165,8 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 		FreedBytes:      res.FreedBytes,
 		RewritableBytes: res.RewritableBytes,
 		ErrorCount:      int64(len(res.Errors)),
+		CompactedPacks:  res.CompactedPacks,
+		ReclaimedBytes:  res.ReclaimedBytes,
 	}); err != nil {
 		log.Printf("gc: failed to persist gc run for storage %d: %v", r.storageID, err)
 	}

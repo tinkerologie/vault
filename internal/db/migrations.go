@@ -141,6 +141,8 @@ CREATE TABLE IF NOT EXISTS dedup_gc_runs (
 	freed_bytes      INTEGER NOT NULL DEFAULT 0,
 	rewritable_bytes INTEGER NOT NULL DEFAULT 0,
 	error_count      INTEGER NOT NULL DEFAULT 0,
+	compacted_packs  INTEGER NOT NULL DEFAULT 0,
+	reclaimed_bytes  INTEGER NOT NULL DEFAULT 0,
 	FOREIGN KEY (storage_id) REFERENCES storage_destinations(id) ON DELETE CASCADE
 );
 
@@ -199,4 +201,8 @@ var alterMigrations = []string{
 	"ALTER TABLE storage_destinations ADD COLUMN breaker_state TEXT DEFAULT 'closed'",
 	"ALTER TABLE storage_destinations ADD COLUMN breaker_opened_at TIMESTAMP DEFAULT NULL",
 	"ALTER TABLE storage_destinations ADD COLUMN backup_database_enabled INTEGER DEFAULT 0",
+	// Dedup GC compaction counters (Task 5). Added after initial dedup_gc_runs
+	// table creation so existing on-disk DBs gain both columns automatically.
+	"ALTER TABLE dedup_gc_runs ADD COLUMN compacted_packs INTEGER NOT NULL DEFAULT 0",
+	"ALTER TABLE dedup_gc_runs ADD COLUMN reclaimed_bytes INTEGER NOT NULL DEFAULT 0",
 }
