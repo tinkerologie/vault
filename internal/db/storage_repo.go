@@ -236,6 +236,37 @@ func (d *DB) UpsertDedupChunk(c DedupChunk) error {
 	return err
 }
 
+// ReplaceDedupPack upserts a pack row using REPLACE semantics — used only by
+// the rebuild path so a later add-line wins over an earlier one (which lets
+// compaction move a chunk to a new pack and have rebuild end with the new
+// location). The live-write path uses UpsertDedupPack (INSERT OR IGNORE),
+// because crash-retry writes identical bytes and identity is correct.
+func (d *DB) ReplaceDedupPack(p DedupPack) error {
+	_, err := d.Exec(`
+        INSERT INTO dedup_packs (id, storage_id, path, size_bytes, chunk_count, created_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            path        = excluded.path,
+            size_bytes  = excluded.size_bytes,
+            chunk_count = excluded.chunk_count`,
+		p.ID, p.StorageID, p.Path, p.SizeBytes, p.ChunkCount)
+	return err
+}
+
+// ReplaceDedupChunk upserts a chunk row using REPLACE semantics (see
+// ReplaceDedupPack). Used only by the rebuild path.
+func (d *DB) ReplaceDedupChunk(c DedupChunk) error {
+	_, err := d.Exec(`
+        INSERT INTO dedup_chunks (chunk_id, storage_id, pack_id, offset, length)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(storage_id, chunk_id) DO UPDATE SET
+            pack_id = excluded.pack_id,
+            offset  = excluded.offset,
+            length  = excluded.length`,
+		c.ChunkID, c.StorageID, c.PackID, c.Offset, c.Length)
+	return err
+}
+
 // HasDedupChunk returns true if the destination already stores this chunk.
 func (d *DB) HasDedupChunk(storageID int64, chunkID []byte) (bool, error) {
 	var one int
@@ -345,7 +376,11 @@ func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
 }
 
 // DeleteDedupPack removes a pack row and (via FK ON DELETE CASCADE) all its
-// chunk rows. Caller is responsible for deleting the on-storage blob first.
+// chunk rows. Live callers (GC, compaction) should append a tombstone via
+// Index.AppendTombstone and delete the on-storage blob BEFORE calling this,
+// so a crash mid-delete is recoverable via Index.RebuildFromStorage. The
+// rebuild path calls this directly to apply a tombstone — no blob delete
+// needed there because the blob is already gone by definition.
 func (d *DB) DeleteDedupPack(storageID int64, packID string) error {
 	_, err := d.Exec(`DELETE FROM dedup_packs WHERE storage_id=? AND id=?`, storageID, packID)
 	return err

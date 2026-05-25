@@ -119,3 +119,61 @@ func TestIndexRebuildFromStorage(t *testing.T) {
 		t.Fatal("Has(id) false after RebuildFromStorage")
 	}
 }
+
+func TestRebuildAppliesTombstone(t *testing.T) {
+	idx, a, _, _, cleanup := newTestIndex(t)
+	defer cleanup()
+	id := ID{0xaa}
+	info := PackInfo{ID: "doomed", Path: "_vault/packs/do/doomed", SizeBytes: 99, ChunkCount: 1,
+		Entries: []PackEntry{{ID: id, Offset: 0, Length: 99}}}
+	_ = a.Write(info.Path, bytes.NewReader(make([]byte, info.SizeBytes)))
+	if err := idx.AppendStorageIndex(info); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.AppendTombstone(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.dropDBState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildFromStorage(); err != nil {
+		t.Fatal(err)
+	}
+	if idx.Has(id) {
+		t.Fatal("chunk resurrected after tombstone+rebuild")
+	}
+}
+
+func TestRebuildLastWriterWinsForMovedChunk(t *testing.T) {
+	idx, a, _, _, cleanup := newTestIndex(t)
+	defer cleanup()
+	id := ID{0xbb}
+	oldInfo := PackInfo{ID: "oldp", Path: "_vault/packs/ol/oldp", SizeBytes: 50, ChunkCount: 1,
+		Entries: []PackEntry{{ID: id, Offset: 0, Length: 50}}}
+	newInfo := PackInfo{ID: "newp", Path: "_vault/packs/ne/newp", SizeBytes: 50, ChunkCount: 1,
+		Entries: []PackEntry{{ID: id, Offset: 0, Length: 50}}}
+	_ = a.Write(oldInfo.Path, bytes.NewReader(make([]byte, oldInfo.SizeBytes)))
+	_ = a.Write(newInfo.Path, bytes.NewReader(make([]byte, newInfo.SizeBytes)))
+	if err := idx.AppendStorageIndex(oldInfo); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.AppendStorageIndex(newInfo); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.AppendTombstone(oldInfo.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.dropDBState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildFromStorage(); err != nil {
+		t.Fatal(err)
+	}
+	path, _, _, err := idx.Locate(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != newInfo.Path {
+		t.Fatalf("chunk landed at %q, want %q (new pack should win)", path, newInfo.Path)
+	}
+}
