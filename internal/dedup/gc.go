@@ -68,6 +68,15 @@ func RunGC(r *Repo, live []ID) (GCResult, error) {
 		}
 		switch {
 		case !anyLive && anyDead:
+			// Tombstone FIRST — a durable intent that survives a crash before
+			// the storage delete. AppendTombstone is idempotent on retry, and
+			// RebuildFromStorage applies tombstones to remove pack rows so a
+			// rebuild after GC does not resurrect swept packs.
+			if err := r.idx.AppendTombstone(p.ID); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("tombstone %s: %v", p.ID, err))
+				log.Printf("gc: failed to write tombstone for pack %s: %v", p.ID, err)
+				continue
+			}
 			// Storage delete BEFORE DB delete — if storage delete fails we
 			// skip this pack and try again next GC. If we deleted DB first
 			// and then storage failed, we'd "lose" the pack from the index

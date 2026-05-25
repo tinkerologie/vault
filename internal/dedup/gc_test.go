@@ -156,3 +156,40 @@ func TestGCStatsVisibleFromFreshRepo(t *testing.T) {
 		t.Fatalf("LastGCFreedBytes not persisted, got %d", s.LastGCFreedBytes)
 	}
 }
+
+func TestGCSweptPackDoesNotResurrectOnRebuild(t *testing.T) {
+	r, sk, cleanup := newTestRepo(t)
+	defer cleanup()
+	plain := make([]byte, 4096)
+	_, _ = rand.Read(plain)
+	id, _ := r.Put(plain)
+	m := Manifest{Version: ManifestVersion, Item: "x", Files: map[string]ManifestEntry{"x": {Chunks: []ID{id}}}}
+	_, _ = r.PutManifest("x", m)
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sweep everything (no live manifests) so the chunk's pack is fully-dead.
+	if _, err := RunGC(r, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebuild from on-storage state must NOT resurrect the swept pack.
+	if err := r.db.DropDedupState(r.storageID); err != nil {
+		t.Fatal(err)
+	}
+	idx := NewIndex(r.db, r.adapter, r.storageID)
+	if err := idx.RebuildFromStorage(); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := OpenRepo(r.db, r.adapter, r.storageID, sk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.idx.Has(id) {
+		t.Fatal("swept chunk resurrected by rebuild (missing GC tombstone)")
+	}
+	if _, _, _, err := r2.LocateForVerify(id); err == nil {
+		t.Fatal("swept chunk locatable after rebuild (missing GC tombstone)")
+	}
+}
