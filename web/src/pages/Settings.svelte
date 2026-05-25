@@ -70,6 +70,11 @@
   let retryDelays = $state('')
   let retrySaving = $state(false)
 
+  // Compaction threshold state. Backend stores as a fractional string "0.0".."1.0";
+  // the UI exposes it as an integer percentage 0..100.
+  let compactionThreshold = $state('')
+  let compactionSaving = $state(false)
+
   // API Key state
   let apiKeyEnabled = $state(false)
   let apiKeyRevealed = $state('')
@@ -155,6 +160,14 @@
       snapshotPathInput = dbInfo?.snapshot_path_override || ''
       retryMax = s?.retry_max_default ?? ''
       retryDelays = s?.retry_delays_default ?? ''
+      // Stored as a fraction "0.0".."1.0"; UI shows it as an integer percentage 0..100.
+      const rawRatio = s?.dedup_compaction_min_dead_ratio
+      if (rawRatio !== undefined && rawRatio !== null && rawRatio !== '') {
+        const f = Number.parseFloat(rawRatio)
+        if (Number.isFinite(f)) {
+          compactionThreshold = String(Math.round(f * 100))
+        }
+      }
       currentVersion = (h && h.version) || 'dev'
       releases = changelog
       latest = latestRelease
@@ -354,6 +367,36 @@
       showToast('Emergency kit downloaded', 'success')
     } catch (e) {
       showToast(e.message, 'error')
+    }
+  }
+
+  async function saveCompactionThreshold() {
+    compactionSaving = true
+    try {
+      const str = String(compactionThreshold).trim()
+      if (str === '') {
+        showToast('Nothing to save', 'info')
+        return
+      }
+      const n = Number.parseInt(str, 10)
+      if (!Number.isInteger(n) || n < 0 || n > 100) {
+        showToast('Compaction threshold must be an integer between 0 and 100', 'error')
+        return
+      }
+      const value = (n / 100).toFixed(2) // "0.50"
+      settings = await api.updateSettings({ dedup_compaction_min_dead_ratio: value })
+      const rawRatio = settings?.dedup_compaction_min_dead_ratio
+      if (rawRatio !== undefined && rawRatio !== null && rawRatio !== '') {
+        const f = Number.parseFloat(rawRatio)
+        if (Number.isFinite(f)) {
+          compactionThreshold = String(Math.round(f * 100))
+        }
+      }
+      showToast('Compaction threshold saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      compactionSaving = false
     }
   }
 
@@ -747,6 +790,46 @@
             >
               Save Retry Policy
             </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dedup Compaction Threshold -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Dedup Compaction <Tooltip text="Controls when mixed dedup packs are rewritten during 'Run cleanup'. Lower values compact more aggressively; 100 disables compaction entirely." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">Threshold for repacking partially-dead dedup packs during cleanup.</p>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="space-y-1">
+            <label for="compaction-threshold" class="block text-sm font-medium text-text-muted">
+              Compaction threshold (% dead bytes)
+            </label>
+            <p class="text-xs text-text-muted">
+              "Run cleanup" repacks a mixed dedup pack when its dead bytes ≥ this percentage of its size.
+              100 disables compaction; smaller values compact more aggressively. Applies to every dedup destination.
+            </p>
+            <div class="flex items-center gap-2 mt-2">
+              <input
+                id="compaction-threshold"
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                bind:value={compactionThreshold}
+                placeholder="50"
+                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              />
+              <span class="text-sm text-text-muted">%</span>
+              <button
+                type="button"
+                onclick={saveCompactionThreshold}
+                disabled={compactionSaving}
+                class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {compactionSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
