@@ -392,8 +392,17 @@ func webDAVChunkDir(full string) string {
 	return path.Join(path.Dir(full), webDAVSidecarStem(full)+".chunks")
 }
 
+// webDAVChunkPath returns the path of the Nth chunk file inside the sidecar
+// chunks directory. The .dat suffix is deliberately chosen to avoid the
+// .part / .filepart filenames that Nextcloud (and other Sabre/DAV-based
+// servers such as ownCloud) reserve for their own in-progress upload
+// mechanism and reject with HTTP 400 via the default
+// forbidden_filename_extensions / blacklisted_files_regex config. Changing
+// this suffix is safe: each chunk's absolute path is stored in the
+// manifest, so historical restore points continue to read correctly from
+// their original .part chunks.
 func webDAVChunkPath(full string, index int) string {
-	return path.Join(webDAVChunkDir(full), fmt.Sprintf("%06d.part", index))
+	return path.Join(webDAVChunkDir(full), fmt.Sprintf("%06d.dat", index))
 }
 
 func isWebDAVSidecarName(name string) bool {
@@ -518,6 +527,15 @@ func (w *WebDAVAdapter) writeChunked(c *gowebdav.Client, logicalPath string, ful
 		}
 		if err := c.Remove(webDAVManifestPath(full)); err != nil && !isWebDAVNotFound(err) {
 			log.Printf("webdav: cleanup: failed to delete chunk manifest %s: %v", webDAVManifestPath(full), err)
+		}
+		// Best-effort: remove the now-empty chunks collection. createParentCollection
+		// inside gowebdav's WriteStreamWithLength creates this directory before the
+		// first PUT, so a failed first-chunk upload (e.g. server-side filename
+		// rejection) would otherwise leave a dangling empty collection on the
+		// remote. Errors here are non-fatal; a stale chunk file elsewhere or
+		// servers that reject DELETE on non-empty collections are tolerated.
+		if err := c.Remove(webDAVChunkDir(full)); err != nil && !isWebDAVNotFound(err) {
+			log.Printf("webdav: cleanup: failed to delete chunk dir %s: %v", webDAVChunkDir(full), err)
 		}
 	}
 

@@ -222,7 +222,7 @@ func TestWebDAVChunkFailureCleansUploadedChunks(t *testing.T) {
 	root := t.TempDir()
 	putCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, ".part") {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, ".dat") {
 			putCount++
 			if putCount >= 2 {
 				http.Error(w, "forced chunk failure", http.StatusInternalServerError)
@@ -241,7 +241,7 @@ func TestWebDAVChunkFailureCleansUploadedChunks(t *testing.T) {
 	if err := a.Write("archive.bin", bytes.NewReader(data)); err == nil {
 		t.Fatal("Write() succeeded, want forced chunk failure")
 	}
-	if got := countFilesWithSuffix(t, root, ".part"); got != 0 {
+	if got := countFilesWithSuffix(t, root, ".dat"); got != 0 {
 		t.Fatalf("partial chunks left behind = %d, want 0", got)
 	}
 }
@@ -253,7 +253,7 @@ func TestWebDAVChunkRetryFailFastOn4xx(t *testing.T) {
 	root := t.TempDir()
 	putCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, ".part") {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, ".dat") {
 			putCount++
 			http.Error(w, "no permission", http.StatusForbidden)
 			return
@@ -581,7 +581,7 @@ func firstWebDAVChunkPath(t *testing.T, root string) string {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && strings.HasSuffix(p, ".part") && found == "" {
+		if !d.IsDir() && strings.HasSuffix(p, ".dat") && found == "" {
 			found = p
 		}
 		return nil
