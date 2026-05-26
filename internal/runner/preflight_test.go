@@ -27,6 +27,9 @@ func (s *stubAdapter) TestConnection() error {
 	}
 	return s.testErr
 }
+func (s *stubAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
+	return storage.Capacity{}, nil
+}
 
 // Compile-time: stub satisfies the interface.
 var _ storage.Adapter = (*stubAdapter)(nil)

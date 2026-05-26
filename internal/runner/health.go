@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -87,6 +88,12 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	}
 	r.recordBreakerOutcome(dest.ID, true)
 	r.broadcastStorageHealth(dest.ID, "ok", "")
+
+	// Capacity probe runs ONLY when TestConnection succeeded. Failures
+	// here NEVER flip the health verdict — capacity is informational.
+	// Uses its own 60s ceiling so a slow probe doesn't extend the sweep.
+	_, _ = r.probeCapacity(context.Background(), dest, adapter)
+
 	return "ok", ""
 }
 
