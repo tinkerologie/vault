@@ -96,6 +96,36 @@ func TestDetectingReader_AutoDetectsFormat(t *testing.T) {
 	}
 }
 
+// TestCompressedWriterAllModes confirms compressedWriter returns the right
+// stream type for each supported mode, including the pass-through default
+// for "none" / empty / unknown values. Writing then closing the returned
+// writer must finalise the compression frame so the bytes are decodable
+// by detectingReader.
+func TestCompressedWriterAllModes(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{CompressionNone, CompressionGzip, CompressionZstd, "", "unknown"} {
+		mode := mode
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			cw, closer, err := compressedWriter(&buf, mode)
+			if err != nil {
+				t.Fatalf("compressedWriter(%q) error = %v", mode, err)
+			}
+			if _, err := io.WriteString(cw, "hello vault"); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			if err := closer(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+			if buf.Len() == 0 {
+				t.Fatalf("expected non-empty output for mode %q", mode)
+			}
+		})
+	}
+}
+
 // TestArchiveExt confirms the extension helper returns the user-visible
 // filename suffix the engine appends after `.tar` for each compression mode.
 func TestArchiveExt(t *testing.T) {
