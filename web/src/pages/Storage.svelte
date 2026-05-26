@@ -538,7 +538,9 @@
                     {dest.capacity.total_bytes > 0 ? 'Used' : 'Used (no quota)'}
                   </span>
                   <span class="font-medium text-text">
-                    {formatBytes(dest.capacity.used_bytes)}{#if dest.capacity.total_bytes > 0} / {formatBytes(dest.capacity.total_bytes)}{/if}
+                    {dest.capacity.total_bytes > 0
+                      ? `${formatBytes(dest.capacity.used_bytes)} / ${formatBytes(dest.capacity.total_bytes)}`
+                      : formatBytes(dest.capacity.used_bytes)}
                   </span>
                 </div>
                 {#if dest.capacity.total_bytes > 0}
