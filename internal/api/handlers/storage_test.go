@@ -361,3 +361,91 @@ func TestRefreshCapacityMissingDest(t *testing.T) {
 		t.Errorf("status = %d, want 404; body = %s", w.Code, w.Body.String())
 	}
 }
+
+// TestPreserveRedactedSecrets locks in the round-trip safety net: when the
+// UI re-submits an edit modal whose password field still holds the
+// "••••••••" marker (because the user changed only the bandwidth limit,
+// say), the Update handler must NOT store the marker bytes as the new
+// password. The helper rewrites those marker values to the existing
+// stored credential before persistence.
+func TestPreserveRedactedSecrets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		incoming  string
+		existing  string
+		wantField string // key whose value we assert
+		wantValue string // "" means we assert the key is missing or empty
+	}{
+		{
+			name:      "marker password is restored from existing",
+			incoming:  `{"url":"https://wd.example.com","username":"u","password":"••••••••","base_path":"/v"}`,
+			existing:  `{"url":"https://wd.example.com","username":"u","password":"real-secret","base_path":""}`,
+			wantField: "password",
+			wantValue: "real-secret",
+		},
+		{
+			name:      "new password overwrites existing",
+			incoming:  `{"url":"x","password":"brand-new"}`,
+			existing:  `{"url":"x","password":"old"}`,
+			wantField: "password",
+			wantValue: "brand-new",
+		},
+		{
+			name:      "marker secret_key is restored",
+			incoming:  `{"bucket":"b","secret_key":"••••••••"}`,
+			existing:  `{"bucket":"b","secret_key":"real-secret-access-key"}`,
+			wantField: "secret_key",
+			wantValue: "real-secret-access-key",
+		},
+		{
+			name:      "marker on key absent from existing stays as marker",
+			incoming:  `{"bucket":"b","secret_key":"••••••••"}`,
+			existing:  `{"bucket":"b"}`,
+			wantField: "secret_key",
+			wantValue: "••••••••",
+		},
+		{
+			name:      "non-marker passthrough",
+			incoming:  `{"url":"x","password":"abc123"}`,
+			existing:  `{"url":"x","password":"old"}`,
+			wantField: "password",
+			wantValue: "abc123",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := preserveRedactedSecrets(tt.incoming, tt.existing)
+			if err != nil {
+				t.Fatalf("preserveRedactedSecrets: %v", err)
+			}
+			var m map[string]any
+			if err := json.Unmarshal([]byte(got), &m); err != nil {
+				t.Fatalf("output not JSON: %v\n%s", err, got)
+			}
+			v, _ := m[tt.wantField].(string)
+			if v != tt.wantValue {
+				t.Errorf("field %q = %q, want %q", tt.wantField, v, tt.wantValue)
+			}
+		})
+	}
+}
+
+// TestPreserveRedactedSecretsInvalidJSONPassesThrough covers the
+// fail-open path: if the incoming JSON is malformed, the function returns
+// the original string so the downstream adapter validator surfaces the
+// real parsing error in context rather than the helper masking it.
+func TestPreserveRedactedSecretsInvalidJSONPassesThrough(t *testing.T) {
+	t.Parallel()
+	got, err := preserveRedactedSecrets("not-json", `{"password":"real"}`)
+	if err != nil {
+		t.Fatalf("expected no error for invalid JSON, got %v", err)
+	}
+	if got != "not-json" {
+		t.Errorf("expected passthrough, got %q", got)
+	}
+}

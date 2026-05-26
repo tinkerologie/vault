@@ -176,7 +176,18 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.Name = name
 	}
 	if patch.Config != nil {
-		existing.Config = *patch.Config
+		// preserveRedactedSecrets carries forward credentials that the
+		// caller (typically the UI's edit modal) round-tripped as the
+		// "••••••••" marker rather than retyping. Without this, editing
+		// any non-credential field on a destination with a password would
+		// silently overwrite the password with the marker bytes and
+		// every subsequent request would 401.
+		merged, mErr := preserveRedactedSecrets(*patch.Config, existing.Config)
+		if mErr != nil {
+			respondInternalError(w, mErr)
+			return
+		}
+		existing.Config = merged
 		// Re-validate; the user may have broken the config blob.
 		adapter, err := storage.NewAdapter(existing.Type, existing.Config)
 		if err != nil {
@@ -832,6 +843,74 @@ var sensitiveConfigKeys = map[string]bool{
 	"client_secret":     true,
 }
 
+// redactionMarker is the placeholder used by redactConfig to mask sensitive
+// values. preserveRedactedSecrets uses it to detect round-tripped values
+// on Update so the API does not silently overwrite the stored credential
+// with the marker bytes when the caller (typically the UI) re-submits a
+// partial edit without touching the password field.
+const redactionMarker = "••••••••"
+
+// preserveRedactedSecrets parses an incoming config JSON and, for any
+// sensitiveConfigKey whose value equals the redactionMarker, replaces the
+// value with the corresponding field from the existing stored config.
+// Returns the (possibly rewritten) incoming JSON.
+//
+// Rationale: redactConfig masks credentials in every read path so the API
+// never leaks them. The UI's edit modal populates its password field with
+// whatever the GET returned — i.e. the literal marker — and Svelte's
+// two-way bind:value posts that marker back verbatim when the user saves
+// after changing an unrelated field (name, bandwidth limit, base path…).
+// Without this helper the server stored the marker as the new password
+// and every subsequent request 401'd. The fix is server-side because the
+// API contract is the one anyone (UI, MCP tools, ansible automation,
+// scripts) can hit; pushing the responsibility to every client is brittle.
+//
+// A non-marker string passes through unchanged, so users who DO want to
+// rotate the credential simply type the new value as before. A marker on
+// a key that has no corresponding value in the existing config is left
+// alone — the adapter validator further down the Update path will reject
+// the empty/marker credential with a clearer error.
+func preserveRedactedSecrets(incoming, existing string) (string, error) {
+	var inMap map[string]any
+	if err := json.Unmarshal([]byte(incoming), &inMap); err != nil {
+		// Not JSON; pass through unchanged. The adapter validator on the
+		// Update path will surface the real parsing error in context.
+		return incoming, nil
+	}
+	var exMap map[string]any
+	if err := json.Unmarshal([]byte(existing), &exMap); err != nil {
+		exMap = nil
+	}
+	changed := false
+	for k := range sensitiveConfigKeys {
+		v, ok := inMap[k]
+		if !ok {
+			continue
+		}
+		s, isStr := v.(string)
+		if !isStr || s != redactionMarker {
+			continue
+		}
+		if exMap == nil {
+			continue
+		}
+		old, ok := exMap[k]
+		if !ok {
+			continue
+		}
+		inMap[k] = old
+		changed = true
+	}
+	if !changed {
+		return incoming, nil
+	}
+	out, err := json.Marshal(inMap)
+	if err != nil {
+		return "", fmt.Errorf("preserve secrets: %w", err)
+	}
+	return string(out), nil
+}
+
 // redactConfig parses a JSON config string and replaces sensitive field
 // values with a redacted placeholder. Returns the original string if
 // parsing fails.
@@ -845,7 +924,7 @@ func redactConfig(configJSON string) string {
 	for k, v := range cfg {
 		if sensitiveConfigKeys[k] {
 			if s, ok := v.(string); ok && s != "" {
-				cfg[k] = "••••••••"
+				cfg[k] = redactionMarker
 				redacted = true
 			}
 		}
