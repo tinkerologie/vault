@@ -86,3 +86,6 @@ test-conn.yml
 # Embed copy of CHANGELOG.md — see internal/release/embed.go.
 # The repo root CHANGELOG.md is the source of truth.
 internal/release/CHANGELOG.md
+
+# Worktrees for parallel/isolated feature work (superpowers)
+.worktrees/
