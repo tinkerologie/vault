@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cloudsoda/go-smb2"
@@ -278,12 +280,79 @@ func (s *SMBAdapter) TestConnection() error {
 	return err
 }
 
-// GetCapacity is a placeholder; Task 5 will implement it via SMB Statfs.
-// Until then it returns a loud error so the runner probe (Task 8) never
-// persists a zero-byte "unknown" row that the UI would render as a
-// meaningless 0 B progress bar.
+// GetCapacity queries the SMB server's filesystem info via the
+// FILE_FS_FULL_SIZE_INFORMATION request (FSCTL_QUERY_INFO with
+// FileFsFullSizeInformation class per [MS-FSCC]). go-smb2's
+// Share.Statfs wraps this. Servers that refuse the query (some
+// Samba ACL configurations) cause Statfs to return an error;
+// we surface that as a zero-Total Capacity with Source="smb-fsctl"
+// rather than failing the whole probe — capacity is informational,
+// not a liveness signal.
+//
+// Context cancellation is checked before connecting so a cancelled
+// caller (e.g. a 60s scheduler probe that has timed out) doesn't
+// pay for the SMB session negotiation.
 func (s *SMBAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
-	return Capacity{}, fmt.Errorf("smb: GetCapacity not yet implemented (Task 5)")
+	if err := ctx.Err(); err != nil {
+		return Capacity{}, err
+	}
+	share, _, err := s.connect()
+	if err != nil {
+		return Capacity{}, fmt.Errorf("smb: connect: %w", err)
+	}
+	defer share.Umount()
+
+	probedAt := time.Now().UTC()
+	probePath := s.basePathOrShareRoot()
+	info, err := share.Statfs(probePath)
+	if err != nil {
+		log.Printf("smb: statfs on %s unsupported or refused: %v", probePath, err)
+		return Capacity{ProbedAt: probedAt, Source: "smb-fsctl"}, nil
+	}
+	cap, err := smbFileFsInfoToCapacity(info, probedAt)
+	if err != nil {
+		return Capacity{}, fmt.Errorf("smb: convert statfs: %w", err)
+	}
+	return cap, nil
+}
+
+// basePathOrShareRoot returns the BasePath as-is when configured, or
+// "." (the share root) when empty. go-smb2 expects paths relative to
+// the mounted share, with "." denoting the share root itself.
+func (s *SMBAdapter) basePathOrShareRoot() string {
+	if p := strings.Trim(s.config.BasePath, "/\\"); p != "" {
+		return p
+	}
+	return "."
+}
+
+// smbFileFsInfoToCapacity converts a go-smb2 FileFsInfo into a Capacity
+// using BlockSize × TotalBlockCount for total and BlockSize ×
+// AvailableBlockCount for free (matches df semantics — Available is
+// the non-root reserved fraction; FreeBlockCount includes root-only
+// space). Extracted from GetCapacity for unit testability without a
+// live SMB server.
+func smbFileFsInfoToCapacity(info smb2.FileFsInfo, probedAt time.Time) (Capacity, error) {
+	if info == nil {
+		return Capacity{}, fmt.Errorf("nil FileFsInfo")
+	}
+	bsize := info.BlockSize()
+	if bsize == 0 {
+		return Capacity{}, fmt.Errorf("BlockSize is 0 — malformed FileFsInfo")
+	}
+	total := int64(info.TotalBlockCount() * bsize) //nolint:gosec // SMB FsInfo values fit int64 in practice
+	free := int64(info.AvailableBlockCount() * bsize) //nolint:gosec
+	used := total - free
+	if used < 0 {
+		used = 0
+	}
+	return Capacity{
+		TotalBytes: total,
+		UsedBytes:  used,
+		FreeBytes:  free,
+		ProbedAt:   probedAt,
+		Source:     "smb-fsctl",
+	}, nil
 }
 
 var _ Adapter = (*SMBAdapter)(nil)
