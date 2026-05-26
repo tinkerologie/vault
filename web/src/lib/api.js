@@ -50,6 +50,9 @@ export const api = {
     return request('DELETE', `/storage/${id}${qs ? '?' + qs : ''}`)
   },
   testStorage: (id) => request('POST', `/storage/${id}/test`),
+  // On-demand storage capacity probe (Task 9 in storage-capacity feature).
+  // 30s ceiling on the server side; returns { capacity: {...} } on success.
+  refreshCapacity: (id) => request('POST', `/storage/${id}/capacity-check`),
   // Manually close the circuit breaker for a storage destination. The
   // breaker is otherwise managed automatically by the runner / pre-flight
   // check. Returns 204 on success and resets consecutive_failures to 0.
