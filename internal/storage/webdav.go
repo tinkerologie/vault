@@ -954,6 +954,23 @@ func (w *WebDAVAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 		// the 501/405 case.
 		return Capacity{ProbedAt: probedAt, Source: "webdav-quota"}, nil
 	}
+	// Nextcloud sentinel values for non-RFC-4331 cases:
+	//   -1 = unlimited (admin has set no per-user quota)
+	//   -2 = "unknown" (the value cannot currently be determined)
+	//   -3 = "unknown" (the user is shared and no quota applies)
+	// In all three cases we still know the real used-bytes count, so
+	// emit Capacity{TotalBytes:0, UsedBytes:used} — the UI's "used-only"
+	// path renders that as "Used: 565 MB (no quota)" rather than hiding
+	// the number entirely. RFC 4331 says quota-available-bytes MUST be
+	// a non-negative integer, so any negative value is a Nextcloud
+	// extension; treat them all as "no quota set".
+	if available < 0 {
+		return Capacity{
+			UsedBytes: used,
+			ProbedAt:  probedAt,
+			Source:    "webdav-quota",
+		}, nil
+	}
 	return Capacity{
 		TotalBytes: used + available,
 		UsedBytes:  used,
@@ -977,15 +994,19 @@ func parseWebDAVQuotaProps(body []byte) (used int64, available int64, ok bool) {
 
 // extractWebDAVPropInt finds the first matching property element by
 // local name (ignoring any namespace prefix) and returns its integer
-// contents. Returns (0, false) if the element is missing, contains
-// non-digits, or the propstat surrounding it carries a non-200 status
+// contents. Negative values are accepted because Nextcloud uses them
+// as sentinels for "no quota" (-1 unlimited, -2 / -3 unknown); the
+// caller decides how to interpret a negative result. Returns
+// (0, false) if the element is missing, contains non-digit characters
+// other than a leading minus, or the propstat surrounding it carries
+// a non-200 status
 // (which servers use to say "this property isn't supported").
 //
 // The regex is bounded ("\d+") and the element name is QuoteMeta'd,
 // so the overall pattern is safe to compile on every call. Avoids
 // pulling in an XML parser for a one-shot two-element extraction.
 func extractWebDAVPropInt(body []byte, localName string) (int64, bool) {
-	re := regexp.MustCompile(`<[^>]*` + regexp.QuoteMeta(localName) + `[^>]*>\s*(\d+)\s*<`)
+	re := regexp.MustCompile(`<[^>]*` + regexp.QuoteMeta(localName) + `[^>]*>\s*(-?\d+)\s*<`)
 	m := re.FindSubmatch(body)
 	if m == nil {
 		return 0, false
