@@ -1,12 +1,14 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,6 +17,13 @@ import (
 
 	"golang.org/x/crypto/ssh"
 )
+
+// encodePEM converts a *pem.Block into its PEM-encoded byte form.
+func encodePEM(b *pem.Block) []byte {
+	var buf bytes.Buffer
+	_ = pem.Encode(&buf, b)
+	return buf.Bytes()
+}
 
 // ---- fullPath ----------------------------------------------------------
 
@@ -236,6 +245,42 @@ func TestSFTPConnect_MalformedKeyErrors(t *testing.T) {
 	}
 	if _, err := a.connect(); err == nil {
 		t.Fatal("expected parse-key error")
+	}
+}
+
+// TestSFTPConnect_ValidKeyParsedThenDialFails exercises the successful
+// key-parse branch (ssh.ParsePrivateKey returns a signer, the auth
+// methods slice gets populated) before the dial inevitably fails at
+// port 1. This lights up the missing 28.6% of connect() beyond the
+// password-only case.
+func TestSFTPConnect_ValidKeyParsedThenDialFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "id.key")
+	// Generate a real ed25519 OpenSSH private key.
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	pem, err := ssh.MarshalPrivateKey(priv, "test")
+	if err != nil {
+		t.Fatalf("MarshalPrivateKey: %v", err)
+	}
+	if err := os.WriteFile(keyPath, encodePEM(pem), 0600); err != nil { // #nosec G306
+		t.Fatal(err)
+	}
+	a, err := NewSFTPAdapter(SFTPConfig{
+		Host: "127.0.0.1", Port: 1, User: "x", KeyFile: keyPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Dial fails (port 1 unreachable), but the key parsing branch
+	// has been exercised.
+	if _, err := a.connect(); err == nil {
+		t.Fatal("expected dial error after parse")
+	} else if !strings.Contains(err.Error(), "ssh dial") {
+		t.Errorf("expected dial-stage failure, got %v", err)
 	}
 }
 

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"bytes"
+	"io"
 	"runtime"
 	"testing"
 )
@@ -69,6 +71,81 @@ func TestNFSClose_AfterFakeMountUnmounts(t *testing.T) {
 	}
 	if a.local != nil {
 		t.Error("local adapter not cleared after Close")
+	}
+}
+
+// newPreMountedNFSAdapter returns an NFSAdapter whose mounted=true bit
+// is forced on and whose `local` field points at a host TempDir. The
+// adapter's operations all call mount() first, which short-circuits
+// when mounted is already true; this lets the delegating I/O paths run
+// against a real filesystem without ever invoking mount(8).
+func newPreMountedNFSAdapter(t *testing.T) (*NFSAdapter, string) {
+	t.Helper()
+	dir := t.TempDir()
+	a := &NFSAdapter{
+		mountDir: dir,
+		local:    NewLocalAdapter(dir),
+		mounted:  true,
+	}
+	return a, dir
+}
+
+// TestNFSDelegates_AllOperations exercises every delegating op so the
+// mount-then-local-call pattern is hit on each.
+func TestNFSDelegates_AllOperations(t *testing.T) {
+	t.Parallel()
+	a, _ := newPreMountedNFSAdapter(t)
+
+	// Write
+	if err := a.Write("a.bin", bytes.NewReader([]byte("hello"))); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	// Read
+	rc, err := a.Read("a.bin")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	body, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(body) != "hello" {
+		t.Errorf("Read body = %q", body)
+	}
+	// Stat
+	info, err := a.Stat("a.bin")
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if info.Size != 5 {
+		t.Errorf("Stat size = %d, want 5", info.Size)
+	}
+	// List
+	entries, err := a.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Error("expected at least one entry after Write")
+	}
+	// ReadRange
+	rrc, err := a.ReadRange("a.bin", 1, 3)
+	if err != nil {
+		t.Fatalf("ReadRange: %v", err)
+	}
+	rng, _ := io.ReadAll(rrc)
+	_ = rrc.Close()
+	if string(rng) != "ell" {
+		t.Errorf("ReadRange = %q, want %q", rng, "ell")
+	}
+	// Delete
+	if err := a.Delete("a.bin"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	// TestConnection: this calls unmount() at the end, which would
+	// try to umount(8) a temp dir — it'll log a warning but return
+	// nil for the adapter (the umount error is non-fatal).
+	a2, _ := newPreMountedNFSAdapter(t)
+	if err := a2.TestConnection(); err != nil {
+		t.Errorf("TestConnection: %v", err)
 	}
 }
 
