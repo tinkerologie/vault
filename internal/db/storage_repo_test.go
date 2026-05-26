@@ -3,6 +3,7 @@ package db
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func setupTestDB(t *testing.T) *DB {
@@ -180,6 +181,42 @@ func TestRepointDedupChunksFailsOnMissingChunk(t *testing.T) {
 	}
 	if has {
 		t.Fatal("missing chunk row should not have been created by RepointDedupChunks")
+	}
+}
+
+func TestUpdateStorageDestinationCapacityRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+	id, err := d.CreateStorageDestination(StorageDestination{
+		Name: "cap-roundtrip", Type: "local", Config: `{"base_path":"/tmp/x"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	cap := CapacityRecord{
+		TotalBytes: 1 << 40, // 1 TiB
+		UsedBytes:  1 << 30, // 1 GiB
+		FreeBytes:  (1 << 40) - (1 << 30),
+		ProbedAt:   now,
+		Source:     "statfs",
+	}
+	if err := d.UpdateStorageDestinationCapacity(id, cap, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := d.GetStorageDestination(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CapacityTotalBytes == nil || *got.CapacityTotalBytes != cap.TotalBytes {
+		t.Errorf("total = %v, want %d", got.CapacityTotalBytes, cap.TotalBytes)
+	}
+	if got.CapacitySource != "statfs" {
+		t.Errorf("source = %q, want statfs", got.CapacitySource)
+	}
+	if got.CapacityError != "" {
+		t.Errorf("error = %q, want empty", got.CapacityError)
 	}
 }
 

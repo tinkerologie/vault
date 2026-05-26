@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 func (d *DB) CreateStorageDestination(dest StorageDestination) (int64, error) {
@@ -25,12 +26,16 @@ func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 		COALESCE(breaker_state, 'closed'),
 		breaker_opened_at,
 		COALESCE(backup_database_enabled, 0),
+		capacity_total_bytes, capacity_used_bytes, capacity_free_bytes, capacity_probed_at,
+		COALESCE(capacity_source, ''), COALESCE(capacity_error, ''),
 		created_at, updated_at
 		FROM storage_destinations WHERE id = ?`, id,
 	).Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config, &dest.DedupEnabled,
 		&dest.LastHealthCheckAt, &dest.LastHealthCheckStatus, &dest.LastHealthCheckError,
 		&dest.ConsecutiveFailures, &dest.BreakerState, &dest.BreakerOpenedAt,
 		&dest.BackupDatabaseEnabled,
+		&dest.CapacityTotalBytes, &dest.CapacityUsedBytes, &dest.CapacityFreeBytes, &dest.CapacityProbedAt,
+		&dest.CapacitySource, &dest.CapacityError,
 		&dest.CreatedAt, &dest.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return dest, ErrNotFound
@@ -46,6 +51,8 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 		COALESCE(breaker_state, 'closed'),
 		breaker_opened_at,
 		COALESCE(backup_database_enabled, 0),
+		capacity_total_bytes, capacity_used_bytes, capacity_free_bytes, capacity_probed_at,
+		COALESCE(capacity_source, ''), COALESCE(capacity_error, ''),
 		created_at, updated_at
 		FROM storage_destinations ORDER BY name`)
 	if err != nil {
@@ -59,6 +66,8 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 			&dest.LastHealthCheckAt, &dest.LastHealthCheckStatus, &dest.LastHealthCheckError,
 			&dest.ConsecutiveFailures, &dest.BreakerState, &dest.BreakerOpenedAt,
 			&dest.BackupDatabaseEnabled,
+			&dest.CapacityTotalBytes, &dest.CapacityUsedBytes, &dest.CapacityFreeBytes, &dest.CapacityProbedAt,
+			&dest.CapacitySource, &dest.CapacityError,
 			&dest.CreatedAt, &dest.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -81,6 +90,71 @@ func (d *DB) UpdateStorageDestinationHealth(id int64, status, errMsg string) err
 		status, errMsg, id,
 	)
 	return err
+}
+
+// CapacityRecord is the flat data type passed to UpdateStorageDestinationCapacity.
+// It mirrors storage.Capacity but lives in the db package so internal/db does
+// not import internal/storage (which has adapter implementations that are
+// intentionally incomplete until Tasks 2–7 land). Callers in the runner and
+// API layers map storage.Capacity → CapacityRecord when persisting.
+type CapacityRecord struct {
+	TotalBytes int64
+	UsedBytes  int64
+	FreeBytes  int64
+	ProbedAt   time.Time
+	Source     string
+}
+
+// IsZero mirrors storage.Capacity.IsZero so the update logic can decide
+// whether to persist only probed_at vs. all six columns.
+func (c CapacityRecord) IsZero() bool {
+	return c.TotalBytes == 0 && c.UsedBytes == 0 && c.FreeBytes == 0 && c.Source == "" && c.ProbedAt.IsZero()
+}
+
+// UpdateStorageDestinationCapacity persists the most recent capacity
+// probe outcome on a destination row. rec is the new accounting; errMsg
+// is the most recent probe failure (empty on success). When rec.IsZero
+// AND errMsg is empty (e.g. a partial result from a cancelled context),
+// we keep the previous numbers and only update probed_at.
+//
+// The parameter is named `rec` rather than the more natural `cap` to
+// avoid shadowing the Go built-in `cap()` — golangci-lint's `predeclared`
+// linter flags the latter.
+func (d *DB) UpdateStorageDestinationCapacity(id int64, rec CapacityRecord, errMsg string) error {
+	if rec.IsZero() && errMsg == "" {
+		_, err := d.Exec(
+			`UPDATE storage_destinations SET capacity_probed_at = ? WHERE id = ?`,
+			rec.ProbedAt, id,
+		)
+		return err
+	}
+	_, err := d.Exec(
+		`UPDATE storage_destinations SET
+		   capacity_total_bytes = ?,
+		   capacity_used_bytes  = ?,
+		   capacity_free_bytes  = ?,
+		   capacity_probed_at   = ?,
+		   capacity_source      = ?,
+		   capacity_error       = ?
+		 WHERE id = ?`,
+		nullableInt64(rec.TotalBytes),
+		nullableInt64(rec.UsedBytes),
+		nullableInt64(rec.FreeBytes),
+		rec.ProbedAt,
+		rec.Source,
+		errMsg,
+		id,
+	)
+	return err
+}
+
+// nullableInt64 returns nil so a zero value (== "unknown") round-trips as
+// SQL NULL rather than 0 (which the UI would render as "0 bytes total").
+func nullableInt64(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
 }
 
 func (d *DB) UpdateStorageDestination(dest StorageDestination) error {

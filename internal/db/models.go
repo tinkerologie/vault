@@ -108,8 +108,19 @@ type StorageDestination struct {
 	BreakerState          string     `json:"breaker_state"`
 	BreakerOpenedAt       *time.Time `json:"breaker_opened_at,omitempty"`
 	BackupDatabaseEnabled bool       `json:"backup_database_enabled"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
+	// Capacity (spec 2026-05-26). Six new columns mirror the
+	// LastHealthCheck* pattern: four nullable numeric/time fields
+	// (pointer types so SQL NULL round-trips cleanly through database/sql)
+	// plus two plain TEXT columns defaulting to ''. CapacityProbedAt == nil
+	// means "never probed"; the API returns capacity:null in that case.
+	CapacityTotalBytes *int64     `json:"capacity_total_bytes,omitempty"`
+	CapacityUsedBytes  *int64     `json:"capacity_used_bytes,omitempty"`
+	CapacityFreeBytes  *int64     `json:"capacity_free_bytes,omitempty"`
+	CapacityProbedAt   *time.Time `json:"capacity_probed_at,omitempty"`
+	CapacitySource     string     `json:"capacity_source"`
+	CapacityError      string     `json:"capacity_error"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 type ActivityLogEntry struct {

@@ -201,6 +201,18 @@ var alterMigrations = []string{
 	"ALTER TABLE storage_destinations ADD COLUMN breaker_state TEXT DEFAULT 'closed'",
 	"ALTER TABLE storage_destinations ADD COLUMN breaker_opened_at TIMESTAMP DEFAULT NULL",
 	"ALTER TABLE storage_destinations ADD COLUMN backup_database_enabled INTEGER DEFAULT 0",
+	// Capacity probe (spec 2026-05-26): per-destination space accounting
+	// refreshed daily alongside the health check. capacity_total_bytes == 0
+	// means "quota unknown" (S3, generic WebDAV). capacity_source identifies
+	// the probe method that produced the numbers (statfs, webdav-quota,
+	// sftp-statvfs, smb-fsctl, s3-list-sum). capacity_error carries the most
+	// recent probe failure for support reports; empty on success.
+	"ALTER TABLE storage_destinations ADD COLUMN capacity_total_bytes INTEGER",
+	"ALTER TABLE storage_destinations ADD COLUMN capacity_used_bytes  INTEGER",
+	"ALTER TABLE storage_destinations ADD COLUMN capacity_free_bytes  INTEGER",
+	"ALTER TABLE storage_destinations ADD COLUMN capacity_probed_at   TIMESTAMP",
+	"ALTER TABLE storage_destinations ADD COLUMN capacity_source      TEXT DEFAULT ''",
+	"ALTER TABLE storage_destinations ADD COLUMN capacity_error       TEXT DEFAULT ''",
 	// Dedup GC compaction counters (Task 5). Added after initial dedup_gc_runs
 	// table creation so existing on-disk DBs gain both columns automatically.
 	"ALTER TABLE dedup_gc_runs ADD COLUMN compacted_packs INTEGER NOT NULL DEFAULT 0",
