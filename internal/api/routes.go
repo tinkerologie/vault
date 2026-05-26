@@ -75,6 +75,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Delete("/{id}", storageH.Delete)
 			r.Post("/{id}/test", storageH.TestConnection)
 			r.Post("/{id}/health-check", storageH.HealthCheck)
+			r.Post("/{id}/capacity-check", storageH.RefreshCapacity)
 			r.Post("/{id}/breaker/close", storageH.CloseBreaker)
 			r.Post("/{id}/scan-orphans", storageH.ScanOrphans)
 			r.Post("/{id}/delete-orphans", storageH.DeleteOrphans)

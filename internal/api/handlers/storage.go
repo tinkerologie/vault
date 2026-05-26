@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +14,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/runner"
@@ -61,10 +64,11 @@ func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	for i := range dests {
-		dests[i].Config = redactConfig(dests[i].Config)
+	out := make([]map[string]any, len(dests))
+	for i, d := range dests {
+		out[i] = storageResponseWithCapacity(d)
 	}
-	respondJSON(w, http.StatusOK, dests)
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +112,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	saved.Config = redactConfig(saved.Config)
-	respondJSON(w, http.StatusCreated, saved)
+	respondJSON(w, http.StatusCreated, storageResponseWithCapacity(saved))
 	h.broadcastConfigChange("storage")
 	h.notifyConfigChange()
 }
@@ -124,8 +127,7 @@ func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
-	dest.Config = redactConfig(dest.Config)
-	respondJSON(w, http.StatusOK, dest)
+	respondJSON(w, http.StatusOK, storageResponseWithCapacity(dest))
 }
 
 func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -195,8 +197,7 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	saved.Config = redactConfig(saved.Config)
-	respondJSON(w, http.StatusOK, saved)
+	respondJSON(w, http.StatusOK, storageResponseWithCapacity(saved))
 	h.broadcastConfigChange("storage")
 	h.notifyConfigChange()
 }
@@ -859,4 +860,118 @@ func redactConfig(configJSON string) string {
 		return configJSON
 	}
 	return string(out)
+}
+
+// storageResponseWithCapacity adapts a StorageDestination into the
+// public JSON shape: it (a) redacts the config blob and (b) hoists the
+// flat capacity_* columns into a single nested "capacity" sub-object.
+// When the destination has never been probed (capacity_probed_at IS NULL),
+// "capacity" is null — the UI uses that to render a "Check now" prompt.
+//
+// The flat columns are still present on the StorageDestination struct
+// (and would otherwise appear in the JSON via the existing tags), so
+// this helper returns a map[string]any rather than mutating the struct
+// in place — JSON-marshalling a map is the cleanest way to omit the
+// flat fields in favour of the nested object.
+func storageResponseWithCapacity(d db.StorageDestination) map[string]any {
+	out := map[string]any{
+		"id":                       d.ID,
+		"name":                     d.Name,
+		"type":                     d.Type,
+		"config":                   redactConfig(d.Config),
+		"dedup_enabled":            d.DedupEnabled,
+		"last_health_check_at":     d.LastHealthCheckAt,
+		"last_health_check_status": d.LastHealthCheckStatus,
+		"last_health_check_error":  d.LastHealthCheckError,
+		"consecutive_failures":     d.ConsecutiveFailures,
+		"breaker_state":            d.BreakerState,
+		"breaker_opened_at":        d.BreakerOpenedAt,
+		"backup_database_enabled":  d.BackupDatabaseEnabled,
+		"created_at":               d.CreatedAt,
+		"updated_at":               d.UpdatedAt,
+	}
+	if d.CapacityProbedAt != nil {
+		cap := map[string]any{
+			"probed_at": *d.CapacityProbedAt,
+			"source":    d.CapacitySource,
+			"error":     d.CapacityError,
+		}
+		if d.CapacityTotalBytes != nil {
+			cap["total_bytes"] = *d.CapacityTotalBytes
+		} else {
+			cap["total_bytes"] = int64(0)
+		}
+		if d.CapacityUsedBytes != nil {
+			cap["used_bytes"] = *d.CapacityUsedBytes
+		} else {
+			cap["used_bytes"] = int64(0)
+		}
+		if d.CapacityFreeBytes != nil {
+			cap["free_bytes"] = *d.CapacityFreeBytes
+		} else {
+			cap["free_bytes"] = int64(0)
+		}
+		out["capacity"] = cap
+	} else {
+		out["capacity"] = nil
+	}
+	return out
+}
+
+// RefreshCapacity runs an on-demand capacity probe against a destination
+// and persists the result. 30s ceiling (tighter than the scheduler's 60s
+// because a human is waiting). Failures store the error in capacity_error
+// but still return a non-2xx so the UI can show a toast.
+//
+// On success, broadcasts storage_capacity_updated on the WebSocket so
+// any open Storage page repaints without a full GET round-trip.
+//
+//	POST /api/v1/storage/{id}/capacity-check
+//	→ 200 { "capacity": { ...Capacity... } }
+//	→ 404 { "error": "not found" }
+//	→ 502 { "error": "<adapter or probe error>" }
+//	→ 504 { "error": "probe timed out" }
+func (h *StorageHandler) RefreshCapacity(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer storage.CloseAdapter(adapter)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	cap, capErr := adapter.GetCapacity(ctx)
+	if capErr != nil {
+		_ = h.db.UpdateStorageDestinationCapacity(id, db.CapacityRecord{}, capErr.Error())
+		if errors.Is(capErr, context.DeadlineExceeded) {
+			respondError(w, http.StatusGatewayTimeout, "probe timed out")
+			return
+		}
+		respondError(w, http.StatusBadGateway, capErr.Error())
+		return
+	}
+	if persistErr := h.db.UpdateStorageDestinationCapacity(id, db.CapacityRecord{
+		TotalBytes: cap.TotalBytes,
+		UsedBytes:  cap.UsedBytes,
+		FreeBytes:  cap.FreeBytes,
+		ProbedAt:   cap.ProbedAt,
+		Source:     cap.Source,
+	}, ""); persistErr != nil {
+		respondInternalError(w, persistErr)
+		return
+	}
+	if h.runner != nil {
+		h.runner.BroadcastStorageCapacity(id, cap)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"capacity": cap})
 }

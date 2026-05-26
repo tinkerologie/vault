@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -273,5 +274,90 @@ func TestRedactConfig(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStorageGetIncludesCapacityWhenProbed(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	// Seed a capacity row directly.
+	rec := db.CapacityRecord{
+		TotalBytes: 1 << 40,
+		UsedBytes:  1 << 30,
+		FreeBytes:  (1 << 40) - (1 << 30),
+		ProbedAt:   time.Now().UTC(),
+		Source:     "statfs",
+	}
+	if err := h.db.UpdateStorageDestinationCapacity(destID, rec, ""); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.Get(w, reqWithID("GET", fmt.Sprintf("/storage/%d", destID), strconv.FormatInt(destID, 10), nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	capObj, ok := body["capacity"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected capacity object, got %T (%v)", body["capacity"], body["capacity"])
+	}
+	if capObj["source"] != "statfs" {
+		t.Errorf("source = %v", capObj["source"])
+	}
+	// JSON numbers come back as float64.
+	if got := capObj["total_bytes"]; got != float64(1<<40) {
+		t.Errorf("total_bytes = %v, want %v", got, float64(1<<40))
+	}
+}
+
+func TestStorageGetCapacityNullWhenNotProbed(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	w := httptest.NewRecorder()
+	h.Get(w, reqWithID("GET", fmt.Sprintf("/storage/%d", destID), strconv.FormatInt(destID, 10), nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["capacity"] != nil {
+		t.Errorf("expected capacity=null for never-probed dest, got %v", body["capacity"])
+	}
+}
+
+func TestRefreshCapacityReturnsFreshNumbers(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	w := httptest.NewRecorder()
+	h.RefreshCapacity(w, reqWithID("POST", fmt.Sprintf("/storage/%d/capacity-check", destID), strconv.FormatInt(destID, 10), nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Capacity storage.Capacity `json:"capacity"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+	if body.Capacity.Source != "statfs" {
+		t.Errorf("source = %q, want statfs", body.Capacity.Source)
+	}
+	if body.Capacity.TotalBytes <= 0 {
+		t.Errorf("total = %d, want > 0", body.Capacity.TotalBytes)
+	}
+}
+
+func TestRefreshCapacityMissingDest(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+	w := httptest.NewRecorder()
+	h.RefreshCapacity(w, reqWithID("POST", "/storage/9999/capacity-check", "9999", nil))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404; body = %s", w.Code, w.Body.String())
 	}
 }
