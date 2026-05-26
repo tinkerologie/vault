@@ -697,6 +697,140 @@ func TestPruneEmpty_EmptyPath(t *testing.T) {
 	pruneEmpty("   ") // whitespace → normalizePath returns "" → early return.
 }
 
+// TestCleanupConfigDir_EmptyConfigDir exercises the early-return branch
+// when ConfigDir is empty.
+func TestCleanupConfigDir_EmptyConfigDir(t *testing.T) {
+	t.Parallel()
+	cfg := uninstallCleanupConfig{ConfigDir: ""}
+	state := uninstallCleanupState{Confident: true}
+	if err := cleanupConfigDir(cfg, state); err != nil {
+		t.Errorf("expected nil error for empty config dir, got %v", err)
+	}
+}
+
+// TestCleanupConfigDir_ExactPreserveRoot — config dir IS the preserve root.
+func TestCleanupConfigDir_ExactPreserveRoot(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Write a file so pruneEmpty leaves dir alone.
+	if err := os.WriteFile(filepath.Join(dir, "x"), []byte("y"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg := uninstallCleanupConfig{ConfigDir: dir}
+	state := uninstallCleanupState{
+		Confident:     true,
+		PreserveRoots: []string{normalizePath(dir)},
+	}
+	if err := cleanupConfigDir(cfg, state); err != nil {
+		t.Errorf("cleanupConfigDir: %v", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("expected config dir to remain (exact preserve), got %v", err)
+	}
+}
+
+// TestCleanupConfigDir_NoPreservedDescendant — removeAll is called.
+func TestCleanupConfigDir_NoPreservedDescendant(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Create a child to ensure removeAll has something to remove.
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg := uninstallCleanupConfig{ConfigDir: dir}
+	state := uninstallCleanupState{
+		Confident:     true,
+		PreserveRoots: []string{"/totally/unrelated/path"},
+	}
+	if err := cleanupConfigDir(cfg, state); err != nil {
+		t.Errorf("cleanupConfigDir: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("expected dir removed, got %v", err)
+	}
+}
+
+// TestNormalizePath_EmptyString returns empty for whitespace-only input.
+func TestNormalizePath_EmptyString(t *testing.T) {
+	t.Parallel()
+	if got := normalizePath(""); got != "" {
+		t.Errorf("normalizePath('') = %q, want ''", got)
+	}
+	if got := normalizePath("   "); got != "" {
+		t.Errorf("normalizePath('   ') = %q, want ''", got)
+	}
+}
+
+// TestRemoveAll_NonexistentPath handles the ErrNotExist branch as
+// a silent no-op.
+func TestRemoveAll_NonexistentPath(t *testing.T) {
+	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if err := removeAll(missing); err != nil {
+		t.Errorf("expected nil for missing path, got %v", err)
+	}
+}
+
+// TestRemoveAll_EmptyPath returns nil silently.
+func TestRemoveAll_EmptyPath(t *testing.T) {
+	t.Parallel()
+	if err := removeAll(""); err != nil {
+		t.Errorf("expected nil for empty path, got %v", err)
+	}
+}
+
+// TestRemoveDatabaseArtifacts_EmptyPath silent no-op.
+func TestRemoveDatabaseArtifacts_EmptyPath(t *testing.T) {
+	t.Parallel()
+	if err := removeDatabaseArtifacts(""); err != nil {
+		t.Errorf("expected nil for empty path, got %v", err)
+	}
+}
+
+// TestRemoveDatabaseArtifacts_WithAllSidecars covers the wal/shm/journal
+// cleanup branches.
+func TestRemoveDatabaseArtifacts_WithAllSidecars(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "vault.db")
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		if err := os.WriteFile(dbPath+suffix, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", suffix, err)
+		}
+	}
+	if err := removeDatabaseArtifacts(dbPath); err != nil {
+		t.Errorf("removeDatabaseArtifacts: %v", err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		if _, err := os.Stat(dbPath + suffix); !os.IsNotExist(err) {
+			t.Errorf("expected %s removed", dbPath+suffix)
+		}
+	}
+}
+
+// TestHasPreservedDescendant covers the false-return branch with no
+// matching descendant.
+func TestHasPreservedDescendant_NoMatch(t *testing.T) {
+	t.Parallel()
+	if hasPreservedDescendant("/a/b", []string{"/c/d"}) {
+		t.Error("expected false for unrelated paths")
+	}
+	if hasPreservedDescendant("", []string{"/a/b"}) {
+		t.Error("expected false for empty path")
+	}
+}
+
+// TestIsExactPreserveRoot covers the true-match and false-match branches.
+func TestIsExactPreserveRoot_Cases(t *testing.T) {
+	t.Parallel()
+	if !isExactPreserveRoot("/a/b", []string{"/a/b"}) {
+		t.Error("expected exact match true")
+	}
+	if isExactPreserveRoot("/a/b", []string{"/c/d"}) {
+		t.Error("expected false for mismatch")
+	}
+}
+
 // TestLocalStorageRoots_NonLocalSkipped ensures the type != "local" branch
 // is exercised and the path is dropped.
 func TestLocalStorageRoots_NonLocalSkipped(t *testing.T) {
