@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/diagnostics"
@@ -297,5 +298,820 @@ func TestGetDiagnosticsNotConfigured(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SetSnapshotManager / SetConfigChangeHook trivial setters
+// ---------------------------------------------------------------------------
+
+// mockSnapshotManager satisfies the snapshotManager interface used by SettingsHandler.
+type mockSnapshotManager struct {
+	snapshotPath string
+}
+
+func (m *mockSnapshotManager) SnapshotPath() string         { return m.snapshotPath }
+func (m *mockSnapshotManager) DefaultSnapshotPath() string  { return "/default/vault.db" }
+func (m *mockSnapshotManager) SetSnapshotPath(p string) error {
+	m.snapshotPath = p
+	return nil
+}
+func (m *mockSnapshotManager) LastSnapshot() time.Time       { return time.Time{} }
+func (m *mockSnapshotManager) RestorationSource() *db.RestorationInfo { return nil }
+
+func TestSetSnapshotManager_NoPanic(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+	sm := &mockSnapshotManager{snapshotPath: "/some/path/vault.db"}
+	h.SetSnapshotManager(sm) // should not panic
+	if h.snapshotManager == nil {
+		t.Error("snapshotManager should be set after SetSnapshotManager")
+	}
+}
+
+func TestSetConfigChangeHook_NoPanic(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+	called := false
+	h.SetConfigChangeHook(func() { called = true })
+	h.notifyConfigChange()
+	if !called {
+		t.Error("config change hook was not called")
+	}
+}
+
+func TestSetConfigChangeHook_Nil(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+	// nil hook must not panic when notifyConfigChange is called
+	h.SetConfigChangeHook(nil)
+	h.notifyConfigChange() // must not panic
+}
+
+// ---------------------------------------------------------------------------
+// List / Update
+// ---------------------------------------------------------------------------
+
+func TestSettingsList_ReturnsDefaults(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Defaults must be present even for a fresh DB.
+	for _, k := range []string{
+		"notifications_enabled",
+		"container_backup_enabled",
+		"vm_backup_enabled",
+		"folder_backup_enabled",
+		"flash_backup_enabled",
+	} {
+		if resp[k] == "" {
+			t.Errorf("key %q missing from defaults", k)
+		}
+	}
+}
+
+func TestSettingsList_SensitiveKeysExcluded(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Seed a sensitive key manually.
+	if err := h.db.SetSetting("api_key_hash", "somehash"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["api_key_hash"]; ok {
+		t.Error("api_key_hash should be excluded from List response")
+	}
+}
+
+func TestSettingsUpdate_HappyPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"notifications_enabled":"false","my_custom_key":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.Update(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify persisted.
+	val, _ := h.db.GetSetting("notifications_enabled", "")
+	if val != "false" {
+		t.Errorf("notifications_enabled = %q, want false", val)
+	}
+	val2, _ := h.db.GetSetting("my_custom_key", "")
+	if val2 != "hello" {
+		t.Errorf("my_custom_key = %q, want hello", val2)
+	}
+}
+
+func TestSettingsUpdate_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader("not-json"))
+	w := httptest.NewRecorder()
+	h.Update(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestSettingsUpdate_ProtectedKeyRejected(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"api_key_hash":"hacker"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.Update(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Encryption lifecycle
+// ---------------------------------------------------------------------------
+
+func TestSetEncryption_HappyPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"passphrase":"hunter42!"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetEncryption(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["encryption_enabled"] != true {
+		t.Errorf("encryption_enabled = %v, want true", resp["encryption_enabled"])
+	}
+
+	// Hash and sealed value must be stored.
+	hash, _ := h.db.GetSetting("encryption_passphrase_hash", "")
+	if hash == "" {
+		t.Error("encryption_passphrase_hash not stored")
+	}
+	sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", "")
+	if sealed == "" {
+		t.Error("encryption_passphrase_sealed not stored")
+	}
+}
+
+func TestSetEncryption_TooShortPassphrase(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"passphrase":"short"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetEncryption(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSetEncryption_EmptyPassphraseDisables(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// First enable it.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
+		strings.NewReader(`{"passphrase":"hunter42!"}`))
+	w1 := httptest.NewRecorder()
+	h.SetEncryption(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("set: status = %d", w1.Code)
+	}
+
+	// Then disable by sending empty passphrase.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
+		strings.NewReader(`{"passphrase":""}`))
+	w2 := httptest.NewRecorder()
+	h.SetEncryption(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("disable: status = %d, want 200; body: %s", w2.Code, w2.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w2.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["encryption_enabled"] != false {
+		t.Errorf("encryption_enabled = %v, want false", resp["encryption_enabled"])
+	}
+}
+
+func TestSetEncryption_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
+		strings.NewReader("not-json"))
+	w := httptest.NewRecorder()
+	h.SetEncryption(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestGetEncryptionStatus_Enabled(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Enable encryption first.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
+		strings.NewReader(`{"passphrase":"hunter42!"}`))
+	h.SetEncryption(httptest.NewRecorder(), req1)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/encryption", nil)
+	w := httptest.NewRecorder()
+	h.GetEncryptionStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["encryption_enabled"] != true {
+		t.Errorf("encryption_enabled = %v, want true", resp["encryption_enabled"])
+	}
+}
+
+func TestGetEncryptionStatus_Disabled(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Fresh DB — no encryption configured.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/encryption", nil)
+	w := httptest.NewRecorder()
+	h.GetEncryptionStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["encryption_enabled"] != false {
+		t.Errorf("encryption_enabled = %v, want false", resp["encryption_enabled"])
+	}
+}
+
+func TestVerifyEncryption_Correct(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Set passphrase first.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
+		strings.NewReader(`{"passphrase":"hunter42!"}`))
+	h.SetEncryption(httptest.NewRecorder(), req1)
+
+	// Verify with correct passphrase.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption/verify",
+		strings.NewReader(`{"passphrase":"hunter42!"}`))
+	w := httptest.NewRecorder()
+	h.VerifyEncryption(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["valid"] != true {
+		t.Errorf("valid = %v, want true", resp["valid"])
+	}
+}
+
+func TestVerifyEncryption_Incorrect(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Set passphrase first.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
+		strings.NewReader(`{"passphrase":"hunter42!"}`))
+	h.SetEncryption(httptest.NewRecorder(), req1)
+
+	// Verify with wrong passphrase.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption/verify",
+		strings.NewReader(`{"passphrase":"wrongpass!"}`))
+	w := httptest.NewRecorder()
+	h.VerifyEncryption(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["valid"] != false {
+		t.Errorf("valid = %v, want false", resp["valid"])
+	}
+}
+
+func TestVerifyEncryption_NoPassphraseConfigured(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption/verify",
+		strings.NewReader(`{"passphrase":"anything"}`))
+	w := httptest.NewRecorder()
+	h.VerifyEncryption(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["valid"] != false {
+		t.Errorf("valid = %v, want false", resp["valid"])
+	}
+}
+
+func TestVerifyEncryption_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption/verify",
+		strings.NewReader("not-json"))
+	w := httptest.NewRecorder()
+	h.VerifyEncryption(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestGetEncryptionPassphrase_HappyPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Set passphrase first.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
+		strings.NewReader(`{"passphrase":"hunter42!"}`))
+	h.SetEncryption(httptest.NewRecorder(), req1)
+
+	// Retrieve it.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/encryption/passphrase", nil)
+	w := httptest.NewRecorder()
+	h.GetEncryptionPassphrase(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["passphrase"] != "hunter42!" {
+		t.Errorf("passphrase = %q, want hunter42!", resp["passphrase"])
+	}
+}
+
+func TestGetEncryptionPassphrase_NotConfigured(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/encryption/passphrase", nil)
+	w := httptest.NewRecorder()
+	h.GetEncryptionPassphrase(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetEncryptionPassphrase_LegacyPlaintext(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Seed a legacy plaintext passphrase directly (no sealed value).
+	if err := h.db.SetSetting("encryption_passphrase", "legacypass"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/encryption/passphrase", nil)
+	w := httptest.NewRecorder()
+	h.GetEncryptionPassphrase(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["passphrase"] != "legacypass" {
+		t.Errorf("passphrase = %q, want legacypass", resp["passphrase"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// API key lifecycle
+// ---------------------------------------------------------------------------
+
+func TestGetAPIKeyStatus_NotConfigured(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/api-key", nil)
+	w := httptest.NewRecorder()
+	h.GetAPIKeyStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["enabled"] != false {
+		t.Errorf("enabled = %v, want false", resp["enabled"])
+	}
+}
+
+func TestGenerateAPIKey_HappyPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/api-key/generate", nil)
+	w := httptest.NewRecorder()
+	h.GenerateAPIKey(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["api_key"] == "" {
+		t.Error("expected non-empty api_key in response")
+	}
+
+	// Verify GetAPIKeyStatus now shows enabled.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/settings/api-key", nil)
+	w2 := httptest.NewRecorder()
+	h.GetAPIKeyStatus(w2, req2)
+
+	var statusResp map[string]any
+	if err := json.NewDecoder(w2.Body).Decode(&statusResp); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if statusResp["enabled"] != true {
+		t.Errorf("enabled = %v, want true after generate", statusResp["enabled"])
+	}
+}
+
+func TestGetAPIKey_AfterGenerate(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Generate a key first.
+	genReq := httptest.NewRequest(http.MethodPost, "/api/v1/settings/api-key/generate", nil)
+	genW := httptest.NewRecorder()
+	h.GenerateAPIKey(genW, genReq)
+	if genW.Code != http.StatusCreated {
+		t.Fatalf("generate: status = %d", genW.Code)
+	}
+	var genResp map[string]string
+	if err := json.NewDecoder(genW.Body).Decode(&genResp); err != nil {
+		t.Fatalf("decode gen: %v", err)
+	}
+	generatedKey := genResp["api_key"]
+
+	// Retrieve it.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/api-key/reveal", nil)
+	w := httptest.NewRecorder()
+	h.GetAPIKey(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["api_key"] != generatedKey {
+		t.Errorf("api_key = %q, want %q", resp["api_key"], generatedKey)
+	}
+}
+
+func TestGetAPIKey_NotConfigured(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/api-key/reveal", nil)
+	w := httptest.NewRecorder()
+	h.GetAPIKey(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRotateAPIKey_ReplacesOldKey(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Generate original.
+	genReq := httptest.NewRequest(http.MethodPost, "/api/v1/settings/api-key/generate", nil)
+	genW := httptest.NewRecorder()
+	h.GenerateAPIKey(genW, genReq)
+	if genW.Code != http.StatusCreated {
+		t.Fatalf("generate: status = %d", genW.Code)
+	}
+	var genResp map[string]string
+	if err := json.NewDecoder(genW.Body).Decode(&genResp); err != nil {
+		t.Fatalf("decode gen: %v", err)
+	}
+	originalKey := genResp["api_key"]
+
+	// Rotate.
+	rotReq := httptest.NewRequest(http.MethodPost, "/api/v1/settings/api-key/rotate", nil)
+	rotW := httptest.NewRecorder()
+	h.RotateAPIKey(rotW, rotReq)
+	if rotW.Code != http.StatusCreated {
+		t.Fatalf("rotate: status = %d, want 201; body: %s", rotW.Code, rotW.Body.String())
+	}
+	var rotResp map[string]string
+	if err := json.NewDecoder(rotW.Body).Decode(&rotResp); err != nil {
+		t.Fatalf("decode rotate: %v", err)
+	}
+	newKey := rotResp["api_key"]
+	if newKey == "" {
+		t.Error("new key should not be empty")
+	}
+	if newKey == originalKey {
+		t.Error("rotated key should differ from original")
+	}
+}
+
+func TestRotateAPIKey_NoExistingKey(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Rotate without any key set should fail.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/api-key/rotate", nil)
+	w := httptest.NewRecorder()
+	h.RotateAPIKey(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRevokeAPIKey_DisablesAuth(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Generate first.
+	genReq := httptest.NewRequest(http.MethodPost, "/api/v1/settings/api-key/generate", nil)
+	h.GenerateAPIKey(httptest.NewRecorder(), genReq)
+
+	// Revoke.
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/settings/api-key", nil)
+	w := httptest.NewRecorder()
+	h.RevokeAPIKey(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	// Status must be disabled now.
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/settings/api-key", nil)
+	statusW := httptest.NewRecorder()
+	h.GetAPIKeyStatus(statusW, statusReq)
+
+	var statusResp map[string]any
+	if err := json.NewDecoder(statusW.Body).Decode(&statusResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if statusResp["enabled"] != false {
+		t.Errorf("enabled = %v after revoke, want false", statusResp["enabled"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestDiscordWebhook
+// ---------------------------------------------------------------------------
+
+func TestTestDiscordWebhook_MissingURL(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"webhook_url":""}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/discord/test", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.TestDiscordWebhook(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTestDiscordWebhook_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/discord/test",
+		strings.NewReader("not-json"))
+	w := httptest.NewRecorder()
+	h.TestDiscordWebhook(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTestDiscordWebhook_InvalidScheme(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"webhook_url":"ftp://discord.com/api/webhooks/123/abc"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/discord/test",
+		strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.TestDiscordWebhook(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTestDiscordWebhook_BadWebhookFormat(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// A valid https URL that is not a Discord webhook format — SendDiscord
+	// will return an error which the handler converts to 502.
+	body := `{"webhook_url":"https://not-discord.example.com/api/webhooks/123/abc"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/discord/test",
+		strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.TestDiscordWebhook(w, req)
+
+	// normalizeDiscordWebhookURL rejects non-discord hosts; expect 502 BadGateway.
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTestDiscordWebhook_InvalidWebhookPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// A Discord URL with an invalid path (no /api/webhooks/<id>/<token>).
+	body := `{"webhook_url":"https://discord.com/not/a/webhook"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/discord/test",
+		strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.TestDiscordWebhook(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGenerateAPIKey_NoServerKey(t *testing.T) {
+	t.Parallel()
+	// Handler with empty server key must return 500.
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	h := NewSettingsHandler(database, nil) // no server key
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/api-key/generate", nil)
+	w := httptest.NewRecorder()
+	h.GenerateAPIKey(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetAPIKey_NoServerKey(t *testing.T) {
+	t.Parallel()
+	// Seed a sealed value directly but give the handler no server key.
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := database.SetSetting("api_key_sealed", "somesealedvalue"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	h := NewSettingsHandler(database, nil) // no server key
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/api-key/reveal", nil)
+	w := httptest.NewRecorder()
+	h.GetAPIKey(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetEncryptionPassphrase_NoServerKey(t *testing.T) {
+	t.Parallel()
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	// Store a fake sealed value so the handler tries to unseal.
+	if err := database.SetSetting("encryption_passphrase_sealed", "somesealedvalue"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	h := NewSettingsHandler(database, nil) // no server key
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/encryption/passphrase", nil)
+	w := httptest.NewRecorder()
+	h.GetEncryptionPassphrase(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetDatabaseInfo with snapshotManager
+// ---------------------------------------------------------------------------
+
+func TestGetDatabaseInfo_WithSnapshotManager(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	// Create a real temp file to back the snapshot path stat call.
+	tmpDir := t.TempDir()
+	snapFile := filepath.Join(tmpDir, "vault.db")
+	if f, err := os.Create(snapFile); err == nil {
+		f.Close()
+	}
+
+	sm := &mockSnapshotManager{snapshotPath: snapFile}
+	h.SetSnapshotManager(sm)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/database", nil)
+	w := httptest.NewRecorder()
+	h.GetDatabaseInfo(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["mode"] != "hybrid" {
+		t.Errorf("mode = %v, want hybrid", resp["mode"])
+	}
+	if resp["snapshot_path"] == nil {
+		t.Error("expected snapshot_path in response")
 	}
 }

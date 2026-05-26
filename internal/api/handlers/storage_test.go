@@ -992,3 +992,146 @@ func TestStorageScanOrphans_Local(t *testing.T) {
 		t.Error("response missing 'orphans' field")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Scan handler
+// ---------------------------------------------------------------------------
+
+func TestStorageScan_EmptyDest(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	w := httptest.NewRecorder()
+	h.Scan(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/scan", idStr, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Empty storage → should return backups array (possibly empty).
+	if resp["backups"] == nil {
+		t.Error("response missing 'backups' field")
+	}
+}
+
+func TestStorageScan_NotFound(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+
+	w := httptest.NewRecorder()
+	h.Scan(w, reqWithID(http.MethodPost, "/api/v1/storage/9999/scan", "9999", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Import handler
+// ---------------------------------------------------------------------------
+
+func TestStorageImport_EmptyList(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	body := []byte(`{"backups":[]}`)
+	w := httptest.NewRecorder()
+	h.Import(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/import", idStr, body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["imported"] == nil {
+		t.Error("response missing 'imported' field")
+	}
+}
+
+func TestStorageImport_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	w := httptest.NewRecorder()
+	h.Import(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/import", idStr, []byte("bad")))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestStorageImport_NotFound(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+
+	body := []byte(`{"backups":[]}`)
+	w := httptest.NewRecorder()
+	h.Import(w, reqWithID(http.MethodPost, "/api/v1/storage/9999/import", "9999", body))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CloseBreaker handler
+// ---------------------------------------------------------------------------
+
+func TestStorageCloseBreaker_NotFound(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+
+	w := httptest.NewRecorder()
+	h.CloseBreaker(w, reqWithID(http.MethodPost, "/api/v1/storage/9999/close-breaker", "9999", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestStorageCloseBreaker_InvalidID(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+
+	w := httptest.NewRecorder()
+	h.CloseBreaker(w, reqWithID(http.MethodPost, "/api/v1/storage/bad/close-breaker", "bad", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// HealthCheck handler
+// ---------------------------------------------------------------------------
+
+func TestStorageHealthCheck_Local(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	w := httptest.NewRecorder()
+	h.HealthCheck(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/health-check", idStr, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] == nil {
+		t.Error("response missing 'status' field")
+	}
+}
+
+func TestStorageHealthCheck_NotFound(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+
+	w := httptest.NewRecorder()
+	h.HealthCheck(w, reqWithID(http.MethodPost, "/api/v1/storage/9999/health-check", "9999", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
