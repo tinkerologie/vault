@@ -578,4 +578,12 @@ func stripPrefix(key, basePf string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(key, basePf), "/")
 }
 
+// GetCapacity is a placeholder; Task 6 will implement it via ListObjectsV2 sum.
+// Until then it returns a loud error so the runner probe (Task 8) never
+// persists a zero-byte "unknown" row that the UI would render as a
+// meaningless 0 B progress bar.
+func (s *S3Adapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	return Capacity{}, fmt.Errorf("s3: GetCapacity not yet implemented (Task 6)")
+}
+
 var _ Adapter = (*S3Adapter)(nil)

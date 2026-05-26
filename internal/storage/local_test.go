@@ -2,6 +2,8 @@ package storage
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -134,6 +136,45 @@ func TestLocalReadRange(t *testing.T) {
 	}
 	if _, err := a.ReadRange("file.bin", int64(len(payload))+100, 5); err == nil {
 		t.Fatal("ReadRange past EOF should error, got nil")
+	}
+}
+
+func TestLocalGetCapacity(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a := NewLocalAdapter(dir)
+	cap, err := a.GetCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("GetCapacity: %v", err)
+	}
+	if cap.Source != "statfs" {
+		t.Errorf("source = %q, want statfs", cap.Source)
+	}
+	if cap.TotalBytes <= 0 {
+		t.Errorf("TotalBytes = %d, want > 0", cap.TotalBytes)
+	}
+	if cap.UsedBytes < 0 {
+		t.Errorf("UsedBytes = %d, want >= 0", cap.UsedBytes)
+	}
+	if cap.UsedBytes > cap.TotalBytes {
+		t.Errorf("UsedBytes %d > TotalBytes %d", cap.UsedBytes, cap.TotalBytes)
+	}
+	if cap.ProbedAt.IsZero() {
+		t.Error("ProbedAt unset")
+	}
+}
+
+func TestLocalGetCapacityContextCancelled(t *testing.T) {
+	t.Parallel()
+	a := NewLocalAdapter(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := a.GetCapacity(ctx)
+	if err == nil {
+		t.Fatal("expected ctx.Err() when context already cancelled")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }
 

@@ -1,10 +1,14 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/ruaan-deysel/vault/internal/safepath"
 )
@@ -163,6 +167,39 @@ func (l *LocalAdapter) TestConnection() error {
 	}
 	_ = os.Remove(testFile)
 	return nil
+}
+
+// GetCapacity reports the filesystem usage of the configured basePath
+// via unix.Statfs. Source is always "statfs" — local mounts always
+// expose a real quota. The context is honoured before the syscall so
+// a caller that has already cancelled its deadline does not pay for
+// the kernel call.
+//
+// The Bsize field is platform-determined and never exceeds int64 in
+// practice; the //nolint:gosec annotations match the same pattern in
+// internal/diagnostics/collector.go's probeDisk.
+func (l *LocalAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	if err := ctx.Err(); err != nil {
+		return Capacity{}, err
+	}
+	var s unix.Statfs_t
+	if err := unix.Statfs(l.basePath, &s); err != nil {
+		return Capacity{}, fmt.Errorf("local: statfs %s: %w", l.basePath, err)
+	}
+	bsize := int64(s.Bsize)            //nolint:gosec // Bsize is platform-determined, fits int64
+	total := int64(s.Blocks) * bsize   //nolint:gosec
+	free := int64(s.Bavail) * bsize    //nolint:gosec
+	used := total - free
+	if used < 0 {
+		used = 0
+	}
+	return Capacity{
+		TotalBytes: total,
+		UsedBytes:  used,
+		FreeBytes:  free,
+		ProbedAt:   time.Now().UTC(),
+		Source:     "statfs",
+	}, nil
 }
 
 var _ Adapter = (*LocalAdapter)(nil)

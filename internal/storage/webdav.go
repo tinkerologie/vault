@@ -870,4 +870,12 @@ func (r *webDAVChunkReader) Close() error {
 	return nil
 }
 
+// GetCapacity is a placeholder; Task 3 will implement it via RFC 4331 PROPFIND.
+// Until then it returns a loud error so the runner probe (Task 8) never
+// persists a zero-byte "unknown" row that the UI would render as a
+// meaningless 0 B progress bar.
+func (w *WebDAVAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	return Capacity{}, fmt.Errorf("webdav: GetCapacity not yet implemented (Task 3)")
+}
+
 var _ Adapter = (*WebDAVAdapter)(nil)

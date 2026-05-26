@@ -278,4 +278,12 @@ func (s *SMBAdapter) TestConnection() error {
 	return err
 }
 
+// GetCapacity is a placeholder; Task 5 will implement it via SMB Statfs.
+// Until then it returns a loud error so the runner probe (Task 8) never
+// persists a zero-byte "unknown" row that the UI would render as a
+// meaningless 0 B progress bar.
+func (s *SMBAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	return Capacity{}, fmt.Errorf("smb: GetCapacity not yet implemented (Task 5)")
+}
+
 var _ Adapter = (*SMBAdapter)(nil)

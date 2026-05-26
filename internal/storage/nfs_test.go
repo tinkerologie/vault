@@ -1,6 +1,31 @@
 package storage
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
+
+func TestNFSGetCapacity(t *testing.T) {
+	t.Parallel()
+	// NFSAdapter delegates GetCapacity to its wrapped *LocalAdapter. We can't
+	// invoke a real NFS mount in CI/macOS, so we wire a LocalAdapter backed by
+	// a temp dir directly into the struct (white-box, same package).
+	dir := t.TempDir()
+	a := &NFSAdapter{
+		local:   NewLocalAdapter(dir),
+		mounted: true,
+	}
+	cap, err := a.GetCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("GetCapacity: %v", err)
+	}
+	if cap.Source != "statfs" {
+		t.Errorf("source = %q, want statfs", cap.Source)
+	}
+	if cap.TotalBytes <= 0 {
+		t.Errorf("TotalBytes = %d, want > 0", cap.TotalBytes)
+	}
+}
 
 func TestNewNFSAdapter(t *testing.T) {
 	t.Parallel()

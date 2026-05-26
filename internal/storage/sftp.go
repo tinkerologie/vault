@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -302,6 +303,14 @@ func (s *SFTPAdapter) TestConnection() error {
 
 	_, err = client.ReadDir(s.config.BasePath)
 	return err
+}
+
+// GetCapacity is a placeholder; Task 4 will implement it via SFTP statvfs.
+// Until then it returns a loud error so the runner probe (Task 8) never
+// persists a zero-byte "unknown" row that the UI would render as a
+// meaningless 0 B progress bar.
+func (s *SFTPAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	return Capacity{}, fmt.Errorf("sftp: GetCapacity not yet implemented (Task 4)")
 }
 
 var _ Adapter = (*SFTPAdapter)(nil)
