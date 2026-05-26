@@ -108,7 +108,15 @@ type S3Adapter struct {
 func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 	cfg.Bucket = strings.TrimSpace(cfg.Bucket)
 	cfg.Region = strings.TrimSpace(cfg.Region)
-	cfg.Endpoint = strings.TrimRight(strings.TrimSpace(cfg.Endpoint), "/")
+	// Stray leading/trailing whitespace in credentials is the single most
+	// common copy-paste mistake we see in support reports — Backblaze B2's
+	// console in particular renders the access key with surrounding padding
+	// that selects with a double-click. The SDK signs with the key bytes
+	// verbatim, so a stray space becomes a 403 SignatureDoesNotMatch with
+	// no obvious cause. Trim here as a defence-in-depth normalisation.
+	cfg.AccessKey = strings.TrimSpace(cfg.AccessKey)
+	cfg.SecretKey = strings.TrimSpace(cfg.SecretKey)
+	cfg.Endpoint = strings.TrimSpace(cfg.Endpoint)
 	cfg.BasePath = strings.Trim(cfg.BasePath, "/")
 
 	if cfg.Bucket == "" {
@@ -117,6 +125,22 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 	if cfg.Region == "" {
 		return nil, fmt.Errorf("s3: region is required")
 	}
+	// Endpoint normalisation: bare hostnames (as shown verbatim in Backblaze
+	// B2's web console, e.g. "s3.us-east-005.backblazeb2.com") must be
+	// promoted to a full URL so the aws-sdk-go-v2 EndpointResolverV2 can
+	// build virtual-host-style URLs correctly. Without a scheme, url.Parse
+	// stores the whole string in Path and leaves Host empty; the resolver
+	// then constructs "<bucket>." + "" + "/<original>" and the underlying
+	// http client rejects it with `unsupported protocol scheme ""`. The
+	// trailing-slash trim runs AFTER normalisation so that a degenerate
+	// "https://" input is not first reduced to "https:" and then re-
+	// promoted to "https://https:" (which would parse with a non-empty
+	// Host and silently mask the misconfiguration).
+	normalized, err := normalizeS3Endpoint(cfg.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Endpoint = strings.TrimRight(normalized, "/")
 	if cfg.UploadTimeoutMinutes < 0 {
 		return nil, fmt.Errorf("s3: upload_timeout_minutes must be >= 0, got %d", cfg.UploadTimeoutMinutes)
 	}
@@ -228,6 +252,45 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 		requestChecksum:  awsCfg.RequestChecksumCalculation,
 		responseChecksum: awsCfg.ResponseChecksumValidation,
 	}, nil
+}
+
+// normalizeS3Endpoint canonicalises a user-supplied S3 endpoint URL.
+//
+// An empty endpoint is returned unchanged so the SDK's default chain
+// targets real AWS S3 for the configured region. For every non-empty
+// input we:
+//
+//   - prepend "https://" when no scheme is present. Backblaze B2's web
+//     console displays endpoints as bare hostnames ("s3.us-east-005.
+//     backblazeb2.com") and operators paste them verbatim. Without a
+//     scheme, neturl.Parse leaves Host empty and the virtual-host
+//     bucket-prefix logic in staticS3EndpointResolver constructs
+//     malformed URLs like "//bucket./s3.us-east-005.backblazeb2.com",
+//     which the http client rejects with `unsupported protocol scheme ""`.
+//   - reject any scheme other than http(s). The SDK only speaks HTTP, so
+//     ftp://, file://, etc. are configuration errors that we want to
+//     catch at construction time rather than at the first request.
+//   - reject endpoints that yield an empty Host after parsing (e.g.
+//     "https://" alone, or "https:///path"), so the misconfiguration
+//     surfaces as a clear error instead of a downstream HTTP failure.
+func normalizeS3Endpoint(endpoint string) (string, error) {
+	if endpoint == "" {
+		return "", nil
+	}
+	if !strings.Contains(endpoint, "://") {
+		endpoint = "https://" + endpoint
+	}
+	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+		return "", fmt.Errorf("s3: endpoint scheme must be http:// or https://, got %q", endpoint)
+	}
+	u, err := neturl.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("s3: parse endpoint %q: %w", endpoint, err)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("s3: endpoint %q has no host", endpoint)
+	}
+	return endpoint, nil
 }
 
 // staticS3EndpointResolver routes every S3 request to a fixed endpoint,
