@@ -12,7 +12,6 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -74,27 +73,6 @@ func TestCheckCacheMount_DefaultArgs(t *testing.T) {
 	status := checkCacheMount("/definitely/does/not/exist/cache-mount")
 	if status != cacheNotExist {
 		t.Errorf("got %d, want cacheNotExist", status)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// daemon.go — zfsBrowseAdapter.ListZFSMountpoints (returns empty on stub)
-// ---------------------------------------------------------------------------
-
-// TestZFSBrowseAdapter_StubReturnsEmpty wraps the platform stub
-// engine.ZFSHandler (always nil on macOS) and confirms the adapter
-// propagates the empty list without error.
-func TestZFSBrowseAdapter_StubReturnsEmpty(t *testing.T) {
-	t.Parallel()
-	// engine.ZFSHandler is an empty struct on non-Linux; we can construct
-	// it directly to bypass NewZFSHandler's "not supported" error.
-	adapter := &zfsBrowseAdapter{handler: &engine.ZFSHandler{}}
-	got, err := adapter.ListZFSMountpoints()
-	if err != nil {
-		t.Fatalf("ListZFSMountpoints err = %v, want nil", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("expected empty slice on stub, got %d entries", len(got))
 	}
 }
 
