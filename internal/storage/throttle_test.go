@@ -49,10 +49,10 @@ func (r *recordingAdapter) ReadRange(p string, offset, length int64) (io.ReadClo
 	}
 	return io.NopCloser(bytes.NewReader(b[offset:end])), nil
 }
-func (r *recordingAdapter) Delete(p string) error                          { delete(r.data, p); return nil }
-func (r *recordingAdapter) List(prefix string) ([]FileInfo, error)         { return nil, nil }
-func (r *recordingAdapter) Stat(p string) (FileInfo, error)                { return FileInfo{}, nil }
-func (r *recordingAdapter) TestConnection() error                          { return nil }
+func (r *recordingAdapter) Delete(p string) error                  { delete(r.data, p); return nil }
+func (r *recordingAdapter) List(prefix string) ([]FileInfo, error) { return nil, nil }
+func (r *recordingAdapter) Stat(p string) (FileInfo, error)        { return FileInfo{}, nil }
+func (r *recordingAdapter) TestConnection() error                  { return nil }
 func (r *recordingAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	return Capacity{}, errors.New("recordingAdapter: GetCapacity not used in throttle tests")
 }

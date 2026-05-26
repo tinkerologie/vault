@@ -14,8 +14,8 @@ func TestSFTPStatVFSToCapacityHappyPath(t *testing.T) {
 	st := &sftp.StatVFS{
 		Bsize:  4096,
 		Frsize: 4096,
-		Blocks: 100 << 20,  // 100 Mi blocks * 4 KiB = 400 GiB
-		Bavail: 25 << 20,   // 25 Mi blocks * 4 KiB = 100 GiB free
+		Blocks: 100 << 20, // 100 Mi blocks * 4 KiB = 400 GiB
+		Bavail: 25 << 20,  // 25 Mi blocks * 4 KiB = 100 GiB free
 	}
 	now := time.Now().UTC()
 	cap, err := sftpStatVFSToCapacity(st, now)

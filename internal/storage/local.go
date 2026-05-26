@@ -186,9 +186,9 @@ func (l *LocalAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	if err := unix.Statfs(l.basePath, &s); err != nil {
 		return Capacity{}, fmt.Errorf("local: statfs %s: %w", l.basePath, err)
 	}
-	bsize := int64(s.Bsize)            //nolint:gosec // Bsize is platform-determined, fits int64
-	total := int64(s.Blocks) * bsize   //nolint:gosec
-	free := int64(s.Bavail) * bsize    //nolint:gosec
+	bsize := int64(s.Bsize)          //nolint:gosec // Bsize is platform-determined, fits int64
+	total := int64(s.Blocks) * bsize //nolint:gosec
+	free := int64(s.Bavail) * bsize  //nolint:gosec
 	used := total - free
 	if used < 0 {
 		used = 0
