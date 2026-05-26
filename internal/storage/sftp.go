@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/ruaan-deysel/vault/internal/safepath"
@@ -305,12 +306,79 @@ func (s *SFTPAdapter) TestConnection() error {
 	return err
 }
 
-// GetCapacity is a placeholder; Task 4 will implement it via SFTP statvfs.
-// Until then it returns a loud error so the runner probe (Task 8) never
-// persists a zero-byte "unknown" row that the UI would render as a
-// meaningless 0 B progress bar.
+// GetCapacity issues an SFTP statvfs@openssh.com call. Servers that
+// don't advertise the extension (some Cisco / SonicWall / hardened
+// SSH deployments) return an error; we surface that as a zero-Total
+// Capacity with Source="sftp-statvfs" rather than failing the whole
+// probe — capacity is informational, not a liveness signal.
+//
+// Context cancellation is checked before dialling so a cancelled
+// caller (e.g. a 60s scheduler probe that has timed out) does not
+// pay for the SSH handshake. pkg/sftp's StatVFS does not take a
+// context; the deadline lives at the dial layer.
 func (s *SFTPAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
-	return Capacity{}, fmt.Errorf("sftp: GetCapacity not yet implemented (Task 4)")
+	if err := ctx.Err(); err != nil {
+		return Capacity{}, err
+	}
+	client, err := s.connect()
+	if err != nil {
+		return Capacity{}, fmt.Errorf("sftp: dial: %w", err)
+	}
+	defer client.Close()
+
+	probedAt := time.Now().UTC()
+	st, err := client.StatVFS(s.basePathOrRoot())
+	if err != nil {
+		// statvfs@openssh.com unsupported by this server. Log once at
+		// the daemon and return a zero-Total Capacity so the UI shows
+		// "no quota reported" rather than a hard failure.
+		log.Printf("sftp: statvfs unsupported on %s: %v", s.config.Host, err)
+		return Capacity{ProbedAt: probedAt, Source: "sftp-statvfs"}, nil
+	}
+	cap, err := sftpStatVFSToCapacity(st, probedAt)
+	if err != nil {
+		return Capacity{}, fmt.Errorf("sftp: convert statvfs: %w", err)
+	}
+	return cap, nil
+}
+
+// basePathOrRoot returns BasePath as an absolute SFTP path, or "/" when
+// BasePath is empty. StatVFS must be called against a real directory
+// the user can stat.
+func (s *SFTPAdapter) basePathOrRoot() string {
+	if p := strings.Trim(s.config.BasePath, "/"); p != "" {
+		return "/" + p
+	}
+	return "/"
+}
+
+// sftpStatVFSToCapacity converts a pkg/sftp StatVFS struct into a
+// Capacity using Frsize (the fundamental block size — matches what df
+// and statvfs(2) report). Extracted from GetCapacity so the conversion
+// can be unit-tested without a live SFTP server. Returns an error if
+// Frsize is 0 (genuinely malformed response — every real server reports
+// a non-zero block size).
+func sftpStatVFSToCapacity(st *sftp.StatVFS, probedAt time.Time) (Capacity, error) {
+	if st == nil {
+		return Capacity{}, fmt.Errorf("nil StatVFS")
+	}
+	if st.Frsize == 0 {
+		return Capacity{}, fmt.Errorf("Frsize is 0 — malformed StatVFS response")
+	}
+	bsize := int64(st.Frsize) //nolint:gosec // Frsize is platform-determined, fits int64
+	total := int64(st.Blocks) * bsize  //nolint:gosec
+	free := int64(st.Bavail) * bsize   //nolint:gosec
+	used := total - free
+	if used < 0 {
+		used = 0
+	}
+	return Capacity{
+		TotalBytes: total,
+		UsedBytes:  used,
+		FreeBytes:  free,
+		ProbedAt:   probedAt,
+		Source:     "sftp-statvfs",
+	}, nil
 }
 
 var _ Adapter = (*SFTPAdapter)(nil)
