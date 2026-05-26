@@ -2,6 +2,10 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -318,5 +322,84 @@ func TestS3AdapterUploadTimeout(t *testing.T) {
 				t.Errorf("ctxUpload deadline = %v from now, want ~%v", remaining, tt.wantTimeout)
 			}
 		})
+	}
+}
+
+func TestS3GetCapacity(t *testing.T) {
+	t.Parallel()
+	page := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("list-type") != "2" {
+			// Anything that isn't a List call — HeadBucket etc. — succeed minimally
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		page++
+		if page == 1 {
+			fmt.Fprintf(w, `<?xml version="1.0"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>b</Name><IsTruncated>true</IsTruncated><NextContinuationToken>tok</NextContinuationToken>
+  <Contents><Key>a</Key><Size>%d</Size></Contents>
+  <Contents><Key>b</Key><Size>%d</Size></Contents>
+</ListBucketResult>`, 1<<30, 1<<30)
+			return
+		}
+		fmt.Fprintf(w, `<?xml version="1.0"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>b</Name><IsTruncated>false</IsTruncated>
+  <Contents><Key>c</Key><Size>%d</Size></Contents>
+</ListBucketResult>`, 1<<30)
+	}))
+	defer server.Close()
+	a, err := NewS3Adapter(S3Config{
+		Bucket:         "b",
+		Region:         "us-east-1",
+		AccessKey:      "AK",
+		SecretKey:      "SK",
+		Endpoint:       server.URL,
+		ForcePathStyle: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap, err := a.GetCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("GetCapacity: %v", err)
+	}
+	if cap.Source != "s3-list-sum" {
+		t.Errorf("source = %q", cap.Source)
+	}
+	if cap.TotalBytes != 0 {
+		t.Errorf("expected TotalBytes=0, got %d", cap.TotalBytes)
+	}
+	if cap.FreeBytes != 0 {
+		t.Errorf("expected FreeBytes=0, got %d", cap.FreeBytes)
+	}
+	if want := int64(3) << 30; cap.UsedBytes != want {
+		t.Errorf("used = %d, want %d", cap.UsedBytes, want)
+	}
+}
+
+func TestS3GetCapacityContextCancelled(t *testing.T) {
+	t.Parallel()
+	a, err := NewS3Adapter(S3Config{
+		Bucket: "b", Region: "us-east-1", AccessKey: "AK", SecretKey: "SK",
+		Endpoint: "http://127.0.0.1:1", ForcePathStyle: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cap, err := a.GetCapacity(ctx)
+	if err == nil {
+		t.Fatal("expected cancelled-context error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+	if cap.Source != "s3-list-sum" {
+		t.Errorf("expected source set on partial result, got %q", cap.Source)
 	}
 }

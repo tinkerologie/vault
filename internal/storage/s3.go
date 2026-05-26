@@ -578,12 +578,64 @@ func stripPrefix(key, basePf string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(key, basePf), "/")
 }
 
-// GetCapacity is a placeholder; Task 6 will implement it via ListObjectsV2 sum.
-// Until then it returns a loud error so the runner probe (Task 8) never
-// persists a zero-byte "unknown" row that the UI would render as a
-// meaningless 0 B progress bar.
-func (s *S3Adapter) GetCapacity(ctx context.Context) (Capacity, error) {
-	return Capacity{}, fmt.Errorf("s3: GetCapacity not yet implemented (Task 6)")
+// GetCapacity reports object-sum usage by paginating ListObjectsV2
+// under the destination's BasePath. S3 has no protocol-level bucket
+// quota (AWS buckets are "unlimited"; Backblaze caps at the account
+// level via a non-S3 API), so TotalBytes is always 0 and FreeBytes
+// is always 0; UsedBytes carries the per-prefix object byte total.
+// Source="s3-list-sum".
+//
+// Honours ctx.Done() between pages. A cancelled context returns the
+// partial accounting accumulated so far PLUS ctx.Err() — that way
+// the daily scheduler's 60s ceiling can be reported as "partial
+// result, 1.2 GB observed" rather than throwing the whole probe away.
+//
+// IMPORTANT: this method does NOT use Delimiter="/" — we want to
+// recurse into every key under BasePath. Using a delimiter would
+// only return CommonPrefixes (subdirectory names) without their
+// nested objects, producing a misleadingly low sum.
+func (a *S3Adapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	probedAt := time.Now().UTC()
+	if err := ctx.Err(); err != nil {
+		return Capacity{ProbedAt: probedAt, Source: "s3-list-sum"}, err
+	}
+	prefix := strings.Trim(a.config.BasePath, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	var (
+		token *string
+		sum   int64
+	)
+	for {
+		if err := ctx.Err(); err != nil {
+			return Capacity{UsedBytes: sum, ProbedAt: probedAt, Source: "s3-list-sum"}, err
+		}
+		out, err := a.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(a.config.Bucket),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			return Capacity{}, fmt.Errorf("s3: list for capacity: %w", err)
+		}
+		for _, obj := range out.Contents {
+			if obj.Size != nil {
+				sum += *obj.Size
+			}
+		}
+		if out.IsTruncated == nil || !*out.IsTruncated {
+			break
+		}
+		token = out.NextContinuationToken
+	}
+	return Capacity{
+		TotalBytes: 0,
+		UsedBytes:  sum,
+		FreeBytes:  0,
+		ProbedAt:   probedAt,
+		Source:     "s3-list-sum",
+	}, nil
 }
 
 var _ Adapter = (*S3Adapter)(nil)
