@@ -40,3 +40,14 @@ func withURLParam(r *http.Request, key, value string) *http.Request {
 	rctx.URLParams.Add(key, value)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
+
+// withURLParams attaches multiple chi URL parameters to a request's context in
+// one call, so none of them are overwritten by successive withURLParam calls.
+// params must be an even-length slice of alternating key, value strings.
+func withURLParams(r *http.Request, params ...string) *http.Request {
+	rctx := chi.NewRouteContext()
+	for i := 0; i+1 < len(params); i += 2 {
+		rctx.URLParams.Add(params[i], params[i+1])
+	}
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
