@@ -2,6 +2,10 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -29,9 +33,27 @@ func TestNewS3Adapter(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			// Backblaze B2's web console displays endpoints as bare hostnames;
+			// pasting that verbatim must be accepted (auto-prefixed to https://)
+			// rather than failing with `unsupported protocol scheme ""`.
+			name:    "valid b2 bare hostname endpoint",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-005", AccessKey: "AK", SecretKey: "SK", Endpoint: "s3.us-east-005.backblazeb2.com"},
+			wantErr: false,
+		},
+		{
 			name:    "valid minio path style",
 			config:  S3Config{Bucket: "vault", Region: "us-east-1", AccessKey: "AK", SecretKey: "SK", Endpoint: "http://minio.local:9000", ForcePathStyle: true},
 			wantErr: false,
+		},
+		{
+			name:    "invalid endpoint scheme",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", AccessKey: "AK", SecretKey: "SK", Endpoint: "ftp://s3.example.com"},
+			wantErr: true,
+		},
+		{
+			name:    "endpoint with no host",
+			config:  S3Config{Bucket: "vault-bk", Region: "us-east-1", AccessKey: "AK", SecretKey: "SK", Endpoint: "https://"},
+			wantErr: true,
 		},
 		{
 			name:    "valid no creds (default chain)",
@@ -91,6 +113,68 @@ func TestNewS3Adapter(t *testing.T) {
 				t.Fatal("adapter is nil")
 			}
 		})
+	}
+}
+
+// TestNormalizeS3Endpoint locks in the regression fix for Backblaze B2 users
+// pasting the bare-hostname endpoint shown in B2's web console. Without
+// normalisation the SDK's url.Parse leaves Host empty and the virtual-host
+// bucket prefix produces "//bucket./<original>: unsupported protocol scheme".
+func TestNormalizeS3Endpoint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"empty stays empty", "", "", false},
+		{"bare hostname gets https", "s3.us-east-005.backblazeb2.com", "https://s3.us-east-005.backblazeb2.com", false},
+		{"bare hostname with port", "minio.local:9000", "https://minio.local:9000", false},
+		{"https unchanged", "https://s3.example.com", "https://s3.example.com", false},
+		{"http unchanged", "http://minio.local:9000", "http://minio.local:9000", false},
+		{"https with path unchanged", "https://r2.example.com/bucket-prefix", "https://r2.example.com/bucket-prefix", false},
+		{"ftp scheme rejected", "ftp://s3.example.com", "", true},
+		{"file scheme rejected", "file:///tmp/x", "", true},
+		{"empty host rejected", "https://", "", true},
+		{"empty host with path rejected", "https:///bucket", "", true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := normalizeS3Endpoint(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("normalizeS3Endpoint(%q) err=%v wantErr=%v", tt.in, err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("normalizeS3Endpoint(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestS3AdapterTrimsCredentials verifies the constructor trims stray
+// whitespace from access/secret keys. Backblaze B2's console renders the
+// access key with surrounding padding that selects on double-click; without
+// trimming the SDK signs with the leading space and the server returns 403.
+func TestS3AdapterTrimsCredentials(t *testing.T) {
+	t.Parallel()
+	a, err := NewS3Adapter(S3Config{
+		Bucket:    "vault-bk",
+		Region:    "us-east-005",
+		AccessKey: "  0053c196b92ee8c0000000001  ",
+		SecretKey: "\tsecret-value\n",
+		Endpoint:  "s3.us-east-005.backblazeb2.com",
+	})
+	if err != nil {
+		t.Fatalf("NewS3Adapter: %v", err)
+	}
+	if a.config.AccessKey != "0053c196b92ee8c0000000001" {
+		t.Errorf("AccessKey not trimmed: got %q", a.config.AccessKey)
+	}
+	if a.config.SecretKey != "secret-value" {
+		t.Errorf("SecretKey not trimmed: got %q", a.config.SecretKey)
 	}
 }
 
@@ -318,5 +402,84 @@ func TestS3AdapterUploadTimeout(t *testing.T) {
 				t.Errorf("ctxUpload deadline = %v from now, want ~%v", remaining, tt.wantTimeout)
 			}
 		})
+	}
+}
+
+func TestS3GetCapacity(t *testing.T) {
+	t.Parallel()
+	page := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("list-type") != "2" {
+			// Anything that isn't a List call — HeadBucket etc. — succeed minimally
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		page++
+		if page == 1 {
+			fmt.Fprintf(w, `<?xml version="1.0"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>b</Name><IsTruncated>true</IsTruncated><NextContinuationToken>tok</NextContinuationToken>
+  <Contents><Key>a</Key><Size>%d</Size></Contents>
+  <Contents><Key>b</Key><Size>%d</Size></Contents>
+</ListBucketResult>`, 1<<30, 1<<30)
+			return
+		}
+		fmt.Fprintf(w, `<?xml version="1.0"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>b</Name><IsTruncated>false</IsTruncated>
+  <Contents><Key>c</Key><Size>%d</Size></Contents>
+</ListBucketResult>`, 1<<30)
+	}))
+	defer server.Close()
+	a, err := NewS3Adapter(S3Config{
+		Bucket:         "b",
+		Region:         "us-east-1",
+		AccessKey:      "AK",
+		SecretKey:      "SK",
+		Endpoint:       server.URL,
+		ForcePathStyle: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap, err := a.GetCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("GetCapacity: %v", err)
+	}
+	if cap.Source != "s3-list-sum" {
+		t.Errorf("source = %q", cap.Source)
+	}
+	if cap.TotalBytes != 0 {
+		t.Errorf("expected TotalBytes=0, got %d", cap.TotalBytes)
+	}
+	if cap.FreeBytes != 0 {
+		t.Errorf("expected FreeBytes=0, got %d", cap.FreeBytes)
+	}
+	if want := int64(3) << 30; cap.UsedBytes != want {
+		t.Errorf("used = %d, want %d", cap.UsedBytes, want)
+	}
+}
+
+func TestS3GetCapacityContextCancelled(t *testing.T) {
+	t.Parallel()
+	a, err := NewS3Adapter(S3Config{
+		Bucket: "b", Region: "us-east-1", AccessKey: "AK", SecretKey: "SK",
+		Endpoint: "http://127.0.0.1:1", ForcePathStyle: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cap, err := a.GetCapacity(ctx)
+	if err == nil {
+		t.Fatal("expected cancelled-context error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+	if cap.Source != "s3-list-sum" {
+		t.Errorf("expected source set on partial result, got %q", cap.Source)
 	}
 }

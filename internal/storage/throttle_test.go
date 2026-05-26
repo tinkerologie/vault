@@ -2,6 +2,8 @@ package storage
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -51,6 +53,9 @@ func (r *recordingAdapter) Delete(p string) error                  { delete(r.da
 func (r *recordingAdapter) List(prefix string) ([]FileInfo, error) { return nil, nil }
 func (r *recordingAdapter) Stat(p string) (FileInfo, error)        { return FileInfo{}, nil }
 func (r *recordingAdapter) TestConnection() error                  { return nil }
+func (r *recordingAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	return Capacity{}, errors.New("recordingAdapter: GetCapacity not used in throttle tests")
+}
 
 func TestWrapThrottled_ZeroPassThrough(t *testing.T) {
 	inner := newRecordingAdapter()
@@ -114,5 +119,46 @@ func TestThrottled_MetadataNotThrottled(t *testing.T) {
 	elapsed := time.Since(start)
 	if elapsed > 100*time.Millisecond {
 		t.Errorf("metadata ops should not be throttled; took %s for 400 calls", elapsed)
+	}
+}
+
+// capacityStubAdapter is a minimal Adapter that returns a pre-configured
+// Capacity from GetCapacity. Used only by the throttle passthrough test;
+// recordingAdapter intentionally errors from GetCapacity to make any
+// accidental "throttle returns garbage" bug loud, which would mask the
+// pure passthrough property this test wants to assert.
+type capacityStubAdapter struct {
+	recordingAdapter
+	cap Capacity
+}
+
+func (s *capacityStubAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	return s.cap, nil
+}
+
+func TestThrottled_GetCapacityPassthrough(t *testing.T) {
+	// Capacity is a metadata operation: it must propagate the inner
+	// adapter's value byte-for-byte without consuming the byte bucket
+	// or mutating the result. A bandwidth cap of 5 Mbps would otherwise
+	// be tempted to "scale" or transform the number — that's the bug
+	// this test exists to catch.
+	want := Capacity{
+		TotalBytes: 1 << 40, // 1 TiB
+		UsedBytes:  1 << 30, // 1 GiB
+		FreeBytes:  (1 << 40) - (1 << 30),
+		Source:     "stub",
+		// ProbedAt left zero — equality compares the time-zero literal
+	}
+	inner := &capacityStubAdapter{
+		recordingAdapter: *newRecordingAdapter(),
+		cap:              want,
+	}
+	throttled := WrapThrottled(inner, 5) // 5 Mbps; should not affect Capacity
+	got, err := throttled.GetCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("GetCapacity: %v", err)
+	}
+	if got != want {
+		t.Errorf("Capacity mutated by throttle:\n got:  %+v\n want: %+v", got, want)
 	}
 }

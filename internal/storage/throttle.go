@@ -100,3 +100,11 @@ func (trc *throttledReadCloser) Read(p []byte) (int, error) {
 }
 
 func (trc *throttledReadCloser) Close() error { return trc.rc.Close() }
+
+// GetCapacity delegates to the inner adapter unchanged. Capacity is a
+// metadata operation and is not subject to the throttle's byte budget.
+//
+// This is the final form (no further changes in Task 7).
+func (t *throttledAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	return t.inner.GetCapacity(ctx)
+}

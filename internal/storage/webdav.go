@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -391,8 +392,17 @@ func webDAVChunkDir(full string) string {
 	return path.Join(path.Dir(full), webDAVSidecarStem(full)+".chunks")
 }
 
+// webDAVChunkPath returns the path of the Nth chunk file inside the sidecar
+// chunks directory. The .dat suffix is deliberately chosen to avoid the
+// .part / .filepart filenames that Nextcloud (and other Sabre/DAV-based
+// servers such as ownCloud) reserve for their own in-progress upload
+// mechanism and reject with HTTP 400 via the default
+// forbidden_filename_extensions / blacklisted_files_regex config. Changing
+// this suffix is safe: each chunk's absolute path is stored in the
+// manifest, so historical restore points continue to read correctly from
+// their original .part chunks.
 func webDAVChunkPath(full string, index int) string {
-	return path.Join(webDAVChunkDir(full), fmt.Sprintf("%06d.part", index))
+	return path.Join(webDAVChunkDir(full), fmt.Sprintf("%06d.dat", index))
 }
 
 func isWebDAVSidecarName(name string) bool {
@@ -517,6 +527,15 @@ func (w *WebDAVAdapter) writeChunked(c *gowebdav.Client, logicalPath string, ful
 		}
 		if err := c.Remove(webDAVManifestPath(full)); err != nil && !isWebDAVNotFound(err) {
 			log.Printf("webdav: cleanup: failed to delete chunk manifest %s: %v", webDAVManifestPath(full), err)
+		}
+		// Best-effort: remove the now-empty chunks collection. createParentCollection
+		// inside gowebdav's WriteStreamWithLength creates this directory before the
+		// first PUT, so a failed first-chunk upload (e.g. server-side filename
+		// rejection) would otherwise leave a dangling empty collection on the
+		// remote. Errors here are non-fatal; a stale chunk file elsewhere or
+		// servers that reject DELETE on non-empty collections are tolerated.
+		if err := c.Remove(webDAVChunkDir(full)); err != nil && !isWebDAVNotFound(err) {
+			log.Printf("webdav: cleanup: failed to delete chunk dir %s: %v", webDAVChunkDir(full), err)
 		}
 	}
 
@@ -868,6 +887,135 @@ func (r *webDAVChunkReader) Close() error {
 		return r.current.Close()
 	}
 	return nil
+}
+
+const webdavQuotaPropfindBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:quota-available-bytes/>
+    <d:quota-used-bytes/>
+  </d:prop>
+</d:propfind>`
+
+// GetCapacity issues a Depth:0 PROPFIND requesting the RFC 4331 quota
+// properties. Nextcloud, ownCloud, and any Sabre/DAV-based server
+// supports these. Servers that don't (apache mod_dav default, some
+// hand-rolled servers) return a 207 multistatus with absent or "404"
+// property statuses; we return a zero-Total Capacity with Source set
+// so consumers can render the "no quota reported" path without
+// treating the destination as failed.
+//
+// Network / transport errors and non-207/200 HTTP statuses DO surface
+// as errors so support reports show real connectivity problems.
+func (w *WebDAVAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	if err := ctx.Err(); err != nil {
+		return Capacity{}, err
+	}
+	target := strings.TrimRight(w.config.URL, "/")
+	if bp := strings.Trim(w.config.BasePath, "/"); bp != "" {
+		target += "/" + bp
+	}
+	target += "/"
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", target, strings.NewReader(webdavQuotaPropfindBody)) // #nosec G107 — URL is admin-configured
+	if err != nil {
+		return Capacity{}, fmt.Errorf("webdav: build propfind: %w", err)
+	}
+	req.Header.Set("Depth", "0")
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+	if w.config.Username != "" || w.config.Password != "" {
+		req.SetBasicAuth(w.config.Username, w.config.Password)
+	}
+	httpClient := &http.Client{Transport: w.transport()}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return Capacity{}, fmt.Errorf("webdav: propfind: %w", err)
+	}
+	defer resp.Body.Close()
+
+	probedAt := time.Now().UTC()
+	// Servers that don't implement the quota props commonly return one
+	// of these codes. Treat them as "no quota reported" and return a
+	// zero-Total Capacity rather than a hard error.
+	if resp.StatusCode == http.StatusNotImplemented ||
+		resp.StatusCode == http.StatusMethodNotAllowed {
+		return Capacity{ProbedAt: probedAt, Source: "webdav-quota"}, nil
+	}
+	if resp.StatusCode != http.StatusMultiStatus && resp.StatusCode != http.StatusOK {
+		return Capacity{}, fmt.Errorf("webdav: propfind status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Capacity{}, fmt.Errorf("webdav: read propfind body: %w", err)
+	}
+	used, available, ok := parseWebDAVQuotaProps(body)
+	if !ok {
+		// Server returned 207 multistatus but didn't carry both quota
+		// props (or wrapped them in a 404 propstat). Same fallback as
+		// the 501/405 case.
+		return Capacity{ProbedAt: probedAt, Source: "webdav-quota"}, nil
+	}
+	// Nextcloud sentinel values for non-RFC-4331 cases:
+	//   -1 = unlimited (admin has set no per-user quota)
+	//   -2 = "unknown" (the value cannot currently be determined)
+	//   -3 = "unknown" (the user is shared and no quota applies)
+	// In all three cases we still know the real used-bytes count, so
+	// emit Capacity{TotalBytes:0, UsedBytes:used} — the UI's "used-only"
+	// path renders that as "Used: 565 MB (no quota)" rather than hiding
+	// the number entirely. RFC 4331 says quota-available-bytes MUST be
+	// a non-negative integer, so any negative value is a Nextcloud
+	// extension; treat them all as "no quota set".
+	if available < 0 {
+		return Capacity{
+			UsedBytes: used,
+			ProbedAt:  probedAt,
+			Source:    "webdav-quota",
+		}, nil
+	}
+	return Capacity{
+		TotalBytes: used + available,
+		UsedBytes:  used,
+		FreeBytes:  available,
+		ProbedAt:   probedAt,
+		Source:     "webdav-quota",
+	}, nil
+}
+
+// parseWebDAVQuotaProps extracts <d:quota-used-bytes> and
+// <d:quota-available-bytes> from a PROPFIND multistatus body. Returns
+// (used, available, true) on success or (0, 0, false) when either is
+// missing or unparseable. Tolerant of mixed namespace prefixes
+// (Nextcloud emits "d:", some servers use "D:" or no prefix at all)
+// by matching on the local element name only.
+func parseWebDAVQuotaProps(body []byte) (used int64, available int64, ok bool) {
+	used, uok := extractWebDAVPropInt(body, "quota-used-bytes")
+	available, aok := extractWebDAVPropInt(body, "quota-available-bytes")
+	return used, available, uok && aok
+}
+
+// extractWebDAVPropInt finds the first matching property element by
+// local name (ignoring any namespace prefix) and returns its integer
+// contents. Negative values are accepted because Nextcloud uses them
+// as sentinels for "no quota" (-1 unlimited, -2 / -3 unknown); the
+// caller decides how to interpret a negative result. Returns
+// (0, false) if the element is missing, contains non-digit characters
+// other than a leading minus, or the propstat surrounding it carries
+// a non-200 status
+// (which servers use to say "this property isn't supported").
+//
+// The regex is bounded ("\d+") and the element name is QuoteMeta'd,
+// so the overall pattern is safe to compile on every call. Avoids
+// pulling in an XML parser for a one-shot two-element extraction.
+func extractWebDAVPropInt(body []byte, localName string) (int64, bool) {
+	re := regexp.MustCompile(`<[^>]*` + regexp.QuoteMeta(localName) + `[^>]*>\s*(-?\d+)\s*<`)
+	m := re.FindSubmatch(body)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(string(m[1]), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 var _ Adapter = (*WebDAVAdapter)(nil)

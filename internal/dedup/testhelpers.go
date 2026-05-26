@@ -8,6 +8,7 @@ package dedup
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"path/filepath"
@@ -87,6 +88,11 @@ func (f *FakeAdapter) Stat(path string) (storage.FileInfo, error) {
 
 // TestConnection is a no-op (in-memory adapter is always reachable).
 func (f *FakeAdapter) TestConnection() error { return nil }
+
+// GetCapacity is a no-op (in-memory adapter reports no quota).
+func (f *FakeAdapter) GetCapacity(ctx context.Context) (storage.Capacity, error) {
+	return storage.Capacity{Source: "fake"}, nil
+}
 
 // NewTestRepoForEngine spins up a fresh DB + in-memory adapter + InitRepo'd
 // Repo for cross-package tests (e.g. internal/engine/folder_test.go). Returns

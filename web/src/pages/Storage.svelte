@@ -48,6 +48,9 @@
   let breakerBusy = $state(new SvelteSet())
   let dbBackupBusy = $state(new SvelteSet())
 
+  // Tracks the destination id currently being capacity-probed. null when idle.
+  let refreshingCapacityId = $state(null)
+
   function defaultForm() {
     return {
       name: '',
@@ -71,6 +74,12 @@
       // waiting for the 30s poll cycle.
       if (msg.type === 'dedup_gc_complete' && msg.destination) {
         refreshOneDedupStats(msg.destination)
+      }
+      // NEW — capacity probe completed on the server side; patch the
+      // affected card in place instead of re-fetching the whole list.
+      if (msg.type === 'storage_capacity_updated' && msg.storage_id != null) {
+        const dest = destinations.find((d) => d.id === msg.storage_id)
+        if (dest) dest.capacity = msg.capacity
       }
     })
     // Refresh dedup stats every 30s for dedup-enabled destinations.
@@ -120,6 +129,20 @@
       cleanupBusy.delete(id)
       cleanupBusy = new SvelteSet(cleanupBusy)
       showToast(`Cleanup failed: ${e.message}`, 'error')
+    }
+  }
+
+  async function refreshCapacity(id) {
+    refreshingCapacityId = id
+    try {
+      const { capacity } = await api.refreshCapacity(id)
+      const dest = destinations.find((d) => d.id === id)
+      if (dest) dest.capacity = capacity
+      showToast('Capacity refreshed', 'success')
+    } catch (e) {
+      showToast(`Capacity refresh failed: ${e.message}`, 'error')
+    } finally {
+      refreshingCapacityId = null
     }
   }
 
@@ -484,6 +507,79 @@
               <p>Bucket: {cfg.bucket || '—'}</p>
               <p>Region: {cfg.region || '—'}</p>
               {#if cfg.endpoint}<p class="truncate">Endpoint: {cfg.endpoint}</p>{/if}
+            {/if}
+          </div>
+
+          <!-- Capacity block (Task 10 — storage-capacity feature).
+               Sits between the destination's identity (config summary) and
+               its operational toggles (DB backup, dedup stats). Reads the
+               "capacity" sub-object on every destination — null when never
+               probed; { total_bytes: 0, ... } when the provider has no
+               protocol-level quota (S3, generic WebDAV).
+               All byte values go through formatBytes() per the spec — users
+               see KB/MB/GB/TB, never raw int64. -->
+          <div class="border-t border-border pt-3 mb-3 text-xs">
+            {#if dest.capacity == null}
+              <div class="flex items-center justify-between text-text-dim italic">
+                <span>Capacity not yet probed.</span>
+                <button
+                  type="button"
+                  onclick={() => refreshCapacity(dest.id)}
+                  disabled={refreshingCapacityId === dest.id}
+                  class="text-vault hover:underline disabled:opacity-50 not-italic"
+                >
+                  {refreshingCapacityId === dest.id ? 'Checking…' : 'Check now'}
+                </button>
+              </div>
+            {:else}
+              <div class="space-y-1.5">
+                <div class="flex justify-between">
+                  <span class="text-text-muted">
+                    {dest.capacity.total_bytes > 0 ? 'Used' : 'Used (no quota)'}
+                  </span>
+                  <span class="font-medium text-text">
+                    {dest.capacity.total_bytes > 0
+                      ? `${formatBytes(dest.capacity.used_bytes)} / ${formatBytes(dest.capacity.total_bytes)}`
+                      : formatBytes(dest.capacity.used_bytes)}
+                  </span>
+                </div>
+                {#if dest.capacity.total_bytes > 0}
+                  {@const pct = (dest.capacity.used_bytes / dest.capacity.total_bytes) * 100}
+                  <div class="h-2 bg-surface-3 rounded-full overflow-hidden">
+                    <div
+                      class="h-full rounded-full transition-all"
+                      class:bg-vault={pct < 80}
+                      class:bg-amber-500={pct >= 80 && pct < 90}
+                      class:bg-rose-500={pct >= 90}
+                      style="width: {Math.min(pct, 100).toFixed(1)}%"
+                    ></div>
+                  </div>
+                  <div class="flex justify-between text-text-muted">
+                    <span>{pct.toFixed(1)}% used</span>
+                    <span>{formatBytes(dest.capacity.free_bytes)} free</span>
+                  </div>
+                {:else}
+                  <div class="text-text-muted italic">
+                    {dest.type === 's3' ? 'Bucket has no protocol-level quota' : 'Quota not reported by server'}
+                  </div>
+                {/if}
+                <div class="flex items-center justify-between text-text-dim">
+                  <span>Updated {relTime(dest.capacity.probed_at)}</span>
+                  <button
+                    type="button"
+                    onclick={() => refreshCapacity(dest.id)}
+                    disabled={refreshingCapacityId === dest.id}
+                    class="text-vault hover:underline disabled:opacity-50"
+                  >
+                    {refreshingCapacityId === dest.id ? 'Refreshing…' : 'Refresh'}
+                  </button>
+                </div>
+                {#if dest.capacity.error}
+                  <div class="text-rose-500" title={dest.capacity.error}>
+                    ⚠ Last probe failed
+                  </div>
+                {/if}
+              </div>
             {/if}
           </div>
 

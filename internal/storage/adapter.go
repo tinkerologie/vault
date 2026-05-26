@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"io"
 	"time"
 )
@@ -30,6 +31,16 @@ type Adapter interface {
 	List(prefix string) ([]FileInfo, error)
 	Stat(path string) (FileInfo, error)
 	TestConnection() error
+	// GetCapacity returns the destination's space accounting. The
+	// implementation MUST use the cheapest native API available to the
+	// provider (statfs / RFC 4331 PROPFIND / SFTP statvfs / etc.).
+	// Adapters whose protocol has no quota concept return a Capacity
+	// with TotalBytes == 0; UsedBytes MAY still be populated via a
+	// fallback (S3 sums object sizes via ListObjectsV2 pagination).
+	//
+	// The context honours the caller's deadline so callers can cap the
+	// probe (the scheduler uses 60 s; ad-hoc UI refreshes use 30 s).
+	GetCapacity(ctx context.Context) (Capacity, error)
 }
 
 // rangeReader pairs a length-limited reader with the closer for the

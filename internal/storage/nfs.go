@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -171,6 +172,17 @@ func (n *NFSAdapter) TestConnection() error {
 func (n *NFSAdapter) Close() error {
 	n.unmount()
 	return nil
+}
+
+// GetCapacity returns the underlying NFS mount's filesystem usage.
+// NFS mounts behave as local paths on the host, so this delegates
+// directly to the wrapped LocalAdapter, which calls unix.Statfs on
+// the mount point. The share is mounted on demand if it is not already.
+func (n *NFSAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+	if err := n.mount(); err != nil {
+		return Capacity{}, err
+	}
+	return n.local.GetCapacity(ctx)
 }
 
 var _ Adapter = (*NFSAdapter)(nil)

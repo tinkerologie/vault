@@ -2,7 +2,9 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -220,7 +222,7 @@ func TestWebDAVChunkFailureCleansUploadedChunks(t *testing.T) {
 	root := t.TempDir()
 	putCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, ".part") {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, ".dat") {
 			putCount++
 			if putCount >= 2 {
 				http.Error(w, "forced chunk failure", http.StatusInternalServerError)
@@ -239,7 +241,7 @@ func TestWebDAVChunkFailureCleansUploadedChunks(t *testing.T) {
 	if err := a.Write("archive.bin", bytes.NewReader(data)); err == nil {
 		t.Fatal("Write() succeeded, want forced chunk failure")
 	}
-	if got := countFilesWithSuffix(t, root, ".part"); got != 0 {
+	if got := countFilesWithSuffix(t, root, ".dat"); got != 0 {
 		t.Fatalf("partial chunks left behind = %d, want 0", got)
 	}
 }
@@ -251,7 +253,7 @@ func TestWebDAVChunkRetryFailFastOn4xx(t *testing.T) {
 	root := t.TempDir()
 	putCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, ".part") {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, ".dat") {
 			putCount++
 			http.Error(w, "no permission", http.StatusForbidden)
 			return
@@ -579,7 +581,7 @@ func firstWebDAVChunkPath(t *testing.T, root string) string {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && strings.HasSuffix(p, ".part") && found == "" {
+		if !d.IsDir() && strings.HasSuffix(p, ".dat") && found == "" {
 			found = p
 		}
 		return nil
@@ -609,4 +611,140 @@ func countFilesWithSuffix(t *testing.T, root, suffix string) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+func TestWebDAVGetCapacityWithQuota(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PROPFIND" {
+			body, _ := io.ReadAll(r.Body)
+			if bytes.Contains(body, []byte("quota-available-bytes")) {
+				w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+				w.WriteHeader(207)
+				fmt.Fprintf(w, `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:quota-available-bytes>113013082759</d:quota-available-bytes>
+        <d:quota-used-bytes>230584300921</d:quota-used-bytes>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)
+				return
+			}
+		}
+		testWebDAVHandler(root).ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap, err := a.GetCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("GetCapacity: %v", err)
+	}
+	if cap.Source != "webdav-quota" {
+		t.Errorf("source = %q, want webdav-quota", cap.Source)
+	}
+	if cap.UsedBytes != 230584300921 {
+		t.Errorf("used = %d", cap.UsedBytes)
+	}
+	if cap.FreeBytes != 113013082759 {
+		t.Errorf("free = %d", cap.FreeBytes)
+	}
+	if want := int64(230584300921) + int64(113013082759); cap.TotalBytes != want {
+		t.Errorf("total = %d, want %d", cap.TotalBytes, want)
+	}
+}
+
+func TestWebDAVGetCapacityNoQuotaServer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	// The default xwebdav handler doesn't return quota props.
+	server := httptest.NewServer(testWebDAVHandler(root))
+	defer server.Close()
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap, err := a.GetCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("GetCapacity: %v", err)
+	}
+	if cap.Source != "webdav-quota" {
+		t.Errorf("source = %q, want webdav-quota", cap.Source)
+	}
+	if cap.TotalBytes != 0 {
+		t.Errorf("expected TotalBytes=0 fallback, got %d", cap.TotalBytes)
+	}
+}
+
+// TestWebDAVGetCapacityNextcloudSentinel locks in the Nextcloud / ownCloud
+// "no per-user quota" convention: the server returns
+// <d:quota-available-bytes>-3</d:quota-available-bytes> (or -1 for
+// "unlimited") together with a real <d:quota-used-bytes> count. The
+// adapter must emit UsedBytes=<real number> with TotalBytes=0 so the
+// UI's "used-only" path renders "Used: 565 MB (no quota)" rather
+// than hiding the real number behind a "no quota reported" fallback.
+//
+// This case is the most common Nextcloud configuration in the wild —
+// admins frequently don't set per-user quotas, so every Nextcloud
+// destination would otherwise look identical to a server that
+// genuinely doesn't implement RFC 4331.
+func TestWebDAVGetCapacityNextcloudSentinel(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PROPFIND" {
+			body, _ := io.ReadAll(r.Body)
+			if bytes.Contains(body, []byte("quota-available-bytes")) {
+				w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+				w.WriteHeader(207)
+				// -3 is Nextcloud's "unknown" sentinel; -1 would be "unlimited".
+				// Same handling either way — both are < 0.
+				fmt.Fprintf(w, `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:quota-available-bytes>-3</d:quota-available-bytes>
+        <d:quota-used-bytes>593184297</d:quota-used-bytes>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)
+				return
+			}
+		}
+		testWebDAVHandler(root).ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap, err := a.GetCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("GetCapacity: %v", err)
+	}
+	if cap.Source != "webdav-quota" {
+		t.Errorf("source = %q, want webdav-quota", cap.Source)
+	}
+	if cap.TotalBytes != 0 {
+		t.Errorf("expected TotalBytes=0 (no quota), got %d", cap.TotalBytes)
+	}
+	if cap.UsedBytes != 593184297 {
+		t.Errorf("expected UsedBytes=593184297 (real number kept), got %d", cap.UsedBytes)
+	}
+	if cap.FreeBytes != 0 {
+		t.Errorf("expected FreeBytes=0 when no quota, got %d", cap.FreeBytes)
+	}
 }
