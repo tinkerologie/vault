@@ -1,12 +1,14 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/engine"
 )
 
 var runRestoreSeq int64
@@ -126,6 +128,41 @@ func TestRunRestore_IncrementalTriggersChainBranch(t *testing.T) {
 	}
 
 	r.RunRestore(rp, []RestoreTarget{{Name: "missing", Type: "folder"}}, "/tmp/restore-dest", "")
+}
+
+// TestStageItemLocally_UnknownType drives the default branch of the
+// item-type switch in stageItemLocally, which surfaces an "unknown
+// item type" error before any handler is constructed.
+func TestStageItemLocally_UnknownType(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+	_, _, cleanup, err := r.stageItemLocally(
+		context.Background(),
+		engine.BackupItem{Name: "unknown-x", Type: "definitely-not-a-real-type"},
+		db.StorageDestination{Type: "local"},
+	)
+	defer cleanup()
+	if err == nil {
+		t.Fatal("expected unknown-item-type error")
+	}
+}
+
+// TestStageItemLocally_VMHandlerError drives the "creating handler"
+// error branch on a non-Linux host. NewVMHandler is a stub on macOS
+// and returns an error immediately, so the function unwinds via the
+// "creating %s handler" error wrap.
+func TestStageItemLocally_VMHandlerError(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+	_, _, cleanup, err := r.stageItemLocally(
+		context.Background(),
+		engine.BackupItem{Name: "any-vm", Type: "vm"},
+		db.StorageDestination{Type: "local"},
+	)
+	defer cleanup()
+	if err == nil {
+		t.Fatal("expected VMHandler init error on non-Linux")
+	}
 }
 
 // TestRunRestore_ContainerTriggersMergedChain drives the

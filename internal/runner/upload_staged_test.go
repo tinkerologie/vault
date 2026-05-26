@@ -1,0 +1,124 @@
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/db"
+)
+
+// TestUploadStagedFiles_BadAdapterConfig drives the storage.NewAdapter
+// error branch by feeding a corrupt JSON config.
+func TestUploadStagedFiles_BadAdapterConfig(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+
+	dest := db.StorageDestination{
+		Type:   "local",
+		Config: `{not valid json`,
+	}
+	_, err := r.uploadStagedFiles(context.Background(), t.TempDir(), dest, "rp", false, "", "none", "folder", "Test Folder")
+	if err == nil {
+		t.Fatal("expected NewAdapter error for corrupt config")
+	}
+}
+
+// TestUploadStagedFiles_MissingTmpDir drives the os.ReadDir error branch
+// by pointing tmpDir at a path that doesn't exist.
+func TestUploadStagedFiles_MissingTmpDir(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+
+	cfg, _ := json.Marshal(map[string]string{"path": filepath.Join(t.TempDir(), "store")})
+	dest := db.StorageDestination{
+		Type:   "local",
+		Config: string(cfg),
+	}
+	_, err := r.uploadStagedFiles(context.Background(), filepath.Join(t.TempDir(), "no-such-dir"), dest, "rp", false, "", "none", "folder", "Test")
+	if err == nil {
+		t.Fatal("expected ReadDir error for missing tmpDir")
+	}
+}
+
+// TestUploadStagedFiles_EmptyTmpDirReturnsEmptyChecksums drives the
+// happy path where tmpDir exists but is empty: the for-loop is a no-op
+// and the function returns an empty checksums map with no error.
+func TestUploadStagedFiles_EmptyTmpDirReturnsEmptyChecksums(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+
+	storageDir := filepath.Join(t.TempDir(), "store")
+	cfg, _ := json.Marshal(map[string]string{"path": storageDir})
+	dest := db.StorageDestination{
+		Type:   "local",
+		Config: string(cfg),
+	}
+	checksums, err := r.uploadStagedFiles(context.Background(), t.TempDir(), dest, "rp", false, "", "none", "folder", "Test")
+	if err != nil {
+		t.Fatalf("uploadStagedFiles(empty tmpDir): %v", err)
+	}
+	if len(checksums) != 0 {
+		t.Errorf("expected empty checksums for empty tmpDir, got %d entries", len(checksums))
+	}
+}
+
+// TestUploadStagedFiles_HappyPath_NoEncryption drives the file-upload
+// loop body: a small file is uploaded, a SHA-256 checksum is computed
+// and recorded, and the resulting checksums map contains exactly one
+// entry. No encryption (passphrase=""), no verify.
+func TestUploadStagedFiles_HappyPath_NoEncryption(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+
+	tmpDir := t.TempDir()
+	if err := writeFileSafe(t, filepath.Join(tmpDir, "volume_0.tar"), []byte("payload-A")); err != nil {
+		t.Fatalf("setup file: %v", err)
+	}
+
+	storageDir := filepath.Join(t.TempDir(), "store")
+	cfg, _ := json.Marshal(map[string]string{"path": storageDir})
+	dest := db.StorageDestination{
+		Type:   "local",
+		Config: string(cfg),
+	}
+	checksums, err := r.uploadStagedFiles(context.Background(), tmpDir, dest, "rp-x", false, "", "none", "folder", "Test")
+	if err != nil {
+		t.Fatalf("uploadStagedFiles: %v", err)
+	}
+	if len(checksums) != 1 {
+		t.Errorf("expected exactly 1 checksum entry, got %d", len(checksums))
+	}
+	if _, ok := checksums["volume_0.tar"]; !ok {
+		t.Errorf("expected checksums key 'volume_0.tar', got %v", checksums)
+	}
+}
+
+// TestUploadStagedFiles_HappyPath_WithEncryption drives the same path
+// but with a passphrase set: the storage filename gets a `.age` suffix
+// and the on-disk file is age-encrypted.
+func TestUploadStagedFiles_HappyPath_WithEncryption(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+
+	tmpDir := t.TempDir()
+	if err := writeFileSafe(t, filepath.Join(tmpDir, "image.tar"), []byte("encrypted-payload")); err != nil {
+		t.Fatalf("setup file: %v", err)
+	}
+
+	storageDir := filepath.Join(t.TempDir(), "store")
+	cfg, _ := json.Marshal(map[string]string{"path": storageDir})
+	dest := db.StorageDestination{
+		Type:   "local",
+		Config: string(cfg),
+	}
+	checksums, err := r.uploadStagedFiles(context.Background(), tmpDir, dest, "rp-y", false, "secret", "none", "container", "MyContainer")
+	if err != nil {
+		t.Fatalf("uploadStagedFiles: %v", err)
+	}
+	// Filename in checksums map should carry the .age suffix.
+	if _, ok := checksums["image.tar.age"]; !ok {
+		t.Errorf("expected checksums key 'image.tar.age', got %v", checksums)
+	}
+}
