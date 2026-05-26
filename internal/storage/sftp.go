@@ -365,9 +365,9 @@ func sftpStatVFSToCapacity(st *sftp.StatVFS, probedAt time.Time) (Capacity, erro
 	if st.Frsize == 0 {
 		return Capacity{}, fmt.Errorf("frsize is 0 — malformed StatVFS response")
 	}
-	bsize := int64(st.Frsize)         //nolint:gosec // Frsize is platform-determined, fits int64
-	total := int64(st.Blocks) * bsize //nolint:gosec
-	free := int64(st.Bavail) * bsize  //nolint:gosec
+	bsize := int64(st.Frsize)         //nolint:gosec,unconvert // Frsize varies by platform; cast is required on Darwin, redundant on Linux
+	total := int64(st.Blocks) * bsize //nolint:gosec,unconvert
+	free := int64(st.Bavail) * bsize  //nolint:gosec,unconvert
 	used := total - free
 	if used < 0 {
 		used = 0

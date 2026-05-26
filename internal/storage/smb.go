@@ -341,7 +341,7 @@ func smbFileFsInfoToCapacity(info smb2.FileFsInfo, probedAt time.Time) (Capacity
 		return Capacity{}, fmt.Errorf("BlockSize is 0 — malformed FileFsInfo")
 	}
 	total := int64(info.TotalBlockCount() * bsize)    //nolint:gosec // SMB FsInfo values fit int64 in practice
-	free := int64(info.AvailableBlockCount() * bsize) //nolint:gosec
+	free := int64(info.AvailableBlockCount() * bsize) //nolint:gosec,unconvert
 	used := total - free
 	if used < 0 {
 		used = 0
