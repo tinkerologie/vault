@@ -150,10 +150,19 @@ func TestOpenDedupContext_BadDBPath(t *testing.T) {
 	t.Cleanup(func() { dedupDestID = prev })
 	dedupDestID = 1
 
-	// Empty path is invalid for db.Open.
-	_, _, err := openDedupContext("", "")
+	// A path inside a non-existent parent makes db.Open's Ping fail with
+	// "unable to open database file". Passing "" here would NOT work —
+	// SQLite happily creates a file in CWD with the DSN appended as the
+	// literal filename, so the test would only fail later inside
+	// GetStorageDestination instead of exercising the open-db branch
+	// (and would leak ?_journal_mode=WAL&… in the test directory).
+	badPath := filepath.Join(t.TempDir(), "missing-parent", "vault.db")
+	_, _, err := openDedupContext(badPath, "")
 	if err == nil {
 		t.Fatal("expected open-db error, got nil")
+	}
+	if !strings.Contains(err.Error(), "open db") {
+		t.Errorf("expected error wrapped with %q, got %v", "open db", err)
 	}
 }
 
