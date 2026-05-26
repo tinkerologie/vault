@@ -18,12 +18,14 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Core
 
-| Method | Endpoint          | Description                                            |
-| ------ | ----------------- | ------------------------------------------------------ |
-| GET    | `/health`         | Basic health, version, and mode                        |
-| GET    | `/health/summary` | Aggregated dashboard health metrics                    |
-| GET    | `/ws`             | WebSocket event stream                                 |
-| GET    | `/runner/status`  | Current backup or restore state, including queued jobs |
+| Method | Endpoint             | Description                                                              |
+| ------ | -------------------- | ------------------------------------------------------------------------ |
+| GET    | `/health`            | Basic health, version, and mode                                          |
+| GET    | `/health/summary`    | Aggregated dashboard health metrics                                      |
+| GET    | `/ws`                | WebSocket event stream                                                   |
+| GET    | `/runner/status`     | Current backup or restore state, including queued jobs                   |
+| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)  |
+| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)     |
 
 ## Jobs
 
@@ -59,6 +61,8 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 | DELETE | `/storage/{id}`                   | Delete storage destination; `?force=true` drops dependent-job guard; `?deleteFiles=true` also removes backup files |
 | POST   | `/storage/{id}/test`              | Test storage connection                                                                |
 | POST   | `/storage/{id}/health-check`      | Run the storage health probe (used by the Dashboard health widget)                     |
+| POST   | `/storage/{id}/capacity-check`    | Refresh used / total / free capacity (broadcasts `storage_capacity_updated` over WS)   |
+| POST   | `/storage/{id}/breaker/close`     | Manually close the destination circuit breaker — clears sticky failure state           |
 | POST   | `/storage/{id}/scan-orphans`      | Scan storage for orphaned files (no matching restore point)                            |
 | POST   | `/storage/{id}/delete-orphans`    | Delete files surfaced by `scan-orphans`                                                |
 | GET    | `/storage/{id}/dedup-stats`       | Dedup repo statistics (chunks, packs, logical/physical bytes, dedup ratio)             |
@@ -116,8 +120,9 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 | Method | Endpoint   | Description                                      |
 | ------ | ---------- | ------------------------------------------------ |
-| GET    | `/history` | All job run records across all jobs              |
 | DELETE | `/history` | Purge all job run history records (irreversible) |
+
+> Per-job history is available at `GET /jobs/{id}/history`. There is no global `GET /history` endpoint; query individual jobs and merge client-side.
 
 ## Replication
 

@@ -39,6 +39,8 @@ The HA integration should:
 >
 > If you keep the loopback-only default, Home Assistant must use some kind of forward or tunnel to reach the daemon.
 >
+> **Authentication:** Loopback requests (`127.0.0.1`, `::1`) are unauthenticated. Any non-loopback request must carry the API key as `X-API-Key: <key>` once one has been generated under **Settings → Security → API Access**. The integration's config flow should accept this key and the daemon will return `401 Unauthorized` if it is missing or invalid for a LAN address.
+>
 > **Request body size limit:** 1 MB for all API endpoints.
 >
 > **Storage credential redaction:** `GET /storage` and `GET /storage/{id}` redact sensitive config fields (passwords, secret keys) with `••••••••` in responses.
@@ -77,25 +79,29 @@ The integration should use HA's config flow UI:
 ### User Input
 
 - `base_url` (string, required): Vault API URL ending in `/api/v1`; use a direct LAN URL or a forwarded URL
+- `api_key` (string, optional): the `X-API-Key` value generated in Vault under **Settings → Security → API Access**. Required for any non-loopback `base_url`.
 - `verify_ssl` (bool, default `true`): verify the TLS certificate when using HTTPS
 
 ### Validation Step
 
 During config flow validation:
 
-1. Validate connectivity:
+1. Validate connectivity (send `X-API-Key` if the user provided one):
 
 ```http
 GET {base_url}/health
+X-API-Key: <api_key>
 ```
 
 Expected response:
 
 ```json
-{ "status": "ok", "version": "2026.3.0" }
+{ "status": "ok", "version": "2026.05.02", "mode": "daemon" }
 ```
 
-If this returns 200 with `status: "ok"`, config is valid. Store the `version` for display.
+If this returns 200 with `status: "ok"`, config is valid. Store the `version` and `mode` for display. `mode` is `"daemon"` on the primary node and `"replica"` on read-only replicas — the integration should disable write services (`run_backup`, `restore`) when `mode == "replica"`.
+
+A `401 Unauthorized` here means the daemon expects an API key for this address; re-prompt the user.
 
 ---
 
@@ -106,15 +112,17 @@ All responses are JSON. Errors return `{"error": "message"}`.
 
 ### Health
 
-| Method | Path      | Description      |
-| ------ | --------- | ---------------- |
-| GET    | `/health` | Health + version |
+| Method | Path      | Description             |
+| ------ | --------- | ----------------------- |
+| GET    | `/health` | Health, version, + mode |
 
 **Response:**
 
 ```json
-{ "status": "ok", "version": "2026.3.0" }
+{ "status": "ok", "version": "2026.05.02", "mode": "daemon" }
 ```
+
+`mode` is `"daemon"` for the primary instance and `"replica"` for read-only replicas (which reject most POST/PUT/DELETE traffic — surface this as a sensor and disable write-side automations when in replica mode).
 
 ### Ping
 
@@ -317,7 +325,7 @@ Progress is streamed via WebSocket (see below).
 ]
 ```
 
-**Storage types:** `"local"`, `"sftp"`, `"smb"`, `"nfs"`
+**Storage types:** `"local"`, `"sftp"`, `"smb"`, `"nfs"`, `"webdav"`, `"s3"` (covers AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi via S3-compatible endpoints)
 
 #### POST `/storage/{id}/test` — Test Connection
 
@@ -479,6 +487,35 @@ All messages have a `"type"` field:
 }
 ```
 
+### Other Event Types
+
+The daemon also broadcasts these — handle the ones relevant to your sensors / automations and ignore the rest:
+
+| Type                       | When fired                                                                              |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `item_restore_start`       | Single-item restore begins                                                              |
+| `item_restore_done`        | Single-item restore finishes successfully                                               |
+| `item_restore_failed`      | Single-item restore fails                                                               |
+| `restore_progress`         | Restore-side companion to `backup_progress`                                             |
+| `item_upload_start`        | Staged-upload mode: local stage complete, remote upload starting                        |
+| `item_staged`              | Staged-upload mode: item written to local stage                                         |
+| `backup_phase`             | Phase change (e.g., `stop → snapshot → tar → upload`)                                   |
+| `phase_message`            | Free-text progress note inside the current phase                                        |
+| `verify_started`           | On-demand verification of a restore point started                                       |
+| `verify_progress`          | Verification streaming progress                                                         |
+| `verify_complete`          | Verification finished — has `passed: true/false`                                        |
+| `queue_update`             | Runner queue changed (job enqueued / dequeued)                                          |
+| `job_cancelling`           | Cancel request received; the job is winding down                                        |
+| `containers_stopping_all`  | Bulk-stop phase for `container_mode: "stop_all"` jobs                                   |
+| `containers_restarting_all`| Bulk-restart phase after `container_mode: "stop_all"` jobs                              |
+| `container_health_check`   | Per-container HEALTHY / UNHEALTHY transition after restore                              |
+| `storage_health`           | Daily storage probe finished — push into `sensor.vault_storage_{name}_status`           |
+| `storage_capacity_updated` | Capacity probe finished — push into a `sensor.vault_storage_{name}_used_bytes` entity   |
+| `dedup_gc_complete`        | Dedup garbage collection finished — exposes `bytes_freed`                               |
+| `import_completed`         | Storage → Import scan finished                                                          |
+| `config_changed`           | Any CRUD mutation (jobs, storage, settings, replication) — cheap way to refetch state   |
+| `activity`                 | New activity log row was written                                                        |
+
 ### HA Integration Approach
 
 1. Maintain a persistent WebSocket connection (reconnect on disconnect)
@@ -487,7 +524,10 @@ All messages have a `"type"` field:
    - `vault_backup_progress` — when `backup_progress` received
    - `vault_backup_completed` — when `job_run_completed` received
    - `vault_backup_failed` — when `job_run_completed` with `status: "failed"` received
-3. Update entity states immediately on WebSocket events (don't wait for poll)
+   - `vault_storage_health` — when `storage_health` received (push to `sensor.vault_storage_{name}_status`)
+   - `vault_storage_capacity` — when `storage_capacity_updated` received (push to capacity sensors)
+3. On `config_changed`, refetch `/jobs` and `/storage` to update entity rosters
+4. Update entity states immediately on WebSocket events (don't wait for poll)
 
 ---
 
@@ -942,18 +982,20 @@ async def websocket_listener(hass, ws_url):
 
 ## Summary of Key Endpoints for HA
 
-| Use Case                  | Method | Endpoint                     | Notes                     |
-| ------------------------- | ------ | ---------------------------- | ------------------------- |
-| Check if Vault is alive   | GET    | `/health`                    | Poll every 60s            |
-| List all jobs             | GET    | `/jobs`                      | For entity creation       |
-| Get job details + items   | GET    | `/jobs/{id}`                 | Items list for restore UI |
-| Trigger backup            | POST   | `/jobs/{id}/run`             | Returns 202, runs async   |
-| Get last run status       | GET    | `/jobs/{id}/history?limit=1` | Most recent run           |
-| List restore points       | GET    | `/jobs/{id}/restore-points`  | For restore service       |
-| Trigger restore           | POST   | `/jobs/{id}/restore`         | Returns 202, runs async   |
-| List storage destinations | GET    | `/storage`                   | For status sensors        |
-| Test storage connection   | POST   | `/storage/{id}/test`         | For health monitoring     |
-| Check encryption status   | GET    | `/settings/encryption`       | Informational sensor      |
-| Activity log              | GET    | `/activity`                  | For recent events sensor  |
-| Check auth requirement    | GET    | `/auth/status`               | Public, no auth needed    |
-| Real-time events          | WS     | `/ws`                        | Persistent connection     |
+| Use Case                  | Method | Endpoint                       | Notes                                                                                    |
+| ------------------------- | ------ | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| Check if Vault is alive   | GET    | `/health`                      | Poll every 60s. Returns `{status, version, mode}`. `mode=="replica"` ⇒ disable writes.   |
+| Runner state              | GET    | `/runner/status`               | Currently running job + queue. Cheap to poll when WS isn't available.                    |
+| List all jobs             | GET    | `/jobs`                        | For entity creation                                                                      |
+| Get job details + items   | GET    | `/jobs/{id}`                   | Items list for restore UI                                                                |
+| Trigger backup            | POST   | `/jobs/{id}/run`               | Returns 202, runs async                                                                  |
+| Get last run status       | GET    | `/jobs/{id}/history?limit=1`   | Most recent run                                                                          |
+| List restore points       | GET    | `/jobs/{id}/restore-points`    | For restore service                                                                      |
+| Trigger restore           | POST   | `/jobs/{id}/restore`           | Returns 202, runs async                                                                  |
+| List storage destinations | GET    | `/storage`                     | For status sensors (credentials redacted)                                                |
+| Storage capacity probe    | POST   | `/storage/{id}/capacity-check` | Refresh used / total / free; broadcasts `storage_capacity_updated` over WS               |
+| Test storage connection   | POST   | `/storage/{id}/test`           | For health monitoring                                                                    |
+| Check encryption status   | GET    | `/settings/encryption`         | Informational sensor                                                                     |
+| Activity log              | GET    | `/activity`                    | For recent events sensor                                                                 |
+| Authentication            | header | `X-API-Key`                    | Required on every request when `base_url` is not loopback; otherwise `401 Unauthorized`. |
+| Real-time events          | WS     | `/ws`                          | Persistent connection                                                                    |

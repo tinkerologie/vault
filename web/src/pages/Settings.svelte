@@ -1367,10 +1367,12 @@
         <div class="p-5 space-y-5">
           {#each [
             { group: 'Health & Realtime', rows: [
-              ['GET', '/health', 'Liveness check'],
+              ['GET', '/health', 'Liveness check (mode + version)'],
               ['GET', '/health/summary', 'Aggregate system health'],
               ['GET', '/runner/status', 'Backup runner status'],
               ['WS',  '/ws', 'WebSocket event stream'],
+              ['GET', '/release/changelog', 'Embedded CHANGELOG.md (drives the About modal)'],
+              ['GET', '/release/latest', 'Latest GitHub release metadata (drives the update badge)'],
             ]},
             { group: 'Jobs', rows: [
               ['GET',    '/jobs', 'List backup jobs'],
@@ -1402,6 +1404,8 @@
               ['DELETE', '/storage/{id}', 'Delete storage destination'],
               ['POST',   '/storage/{id}/test', 'Test connection'],
               ['POST',   '/storage/{id}/health-check', 'Run on-demand health check (returns {status, error})'],
+              ['POST',   '/storage/{id}/capacity-check', 'Refresh used / total / free capacity for this destination'],
+              ['POST',   '/storage/{id}/breaker/close', 'Manually close the destination circuit breaker (clear sticky failure state)'],
               ['POST',   '/storage/{id}/scan', 'Scan for existing backups'],
               ['POST',   '/storage/{id}/import', 'Import discovered backups'],
               ['POST',   '/storage/{id}/restore-db', 'Restore Vault database from this destination'],
@@ -1445,6 +1449,7 @@
               ['GET', '/plugins', 'List Unraid plugins'],
               ['GET', '/zfs', 'List ZFS datasets'],
               ['GET', '/browse', 'Browse filesystem paths'],
+              ['GET', '/path-exists', 'Safepath-gated existence check (used by the folder picker)'],
               ['GET', '/presets/exclusions', 'Built-in exclusion presets'],
             ]},
             { group: 'Replication', rows: [
