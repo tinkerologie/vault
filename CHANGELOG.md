@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.05.03] - 2026-05-27
+
 ### Added
 
 - **Per-destination storage capacity on the Storage page.** Every backup destination now shows how much space it has left, refreshed daily alongside the 03:30 health-check sweep. Quota-aware providers (`local` and `nfs` via `unix.Statfs`; `webdav` via RFC 4331 PROPFIND on Nextcloud / ownCloud; `sftp` via the `statvfs@openssh.com` extension; `smb` via `FileFsFullSizeInformation`) render a coloured progress bar — Vault brand below 80 %, amber 80–90 %, rose ≥ 90 %. Providers without a protocol-level quota (S3 / Backblaze B2) render a "used-only" line whose number comes from a paginated `ListObjectsV2` sum under the destination's base path. New endpoint `POST /api/v1/storage/{id}/capacity-check` runs an on-demand probe with a 30 s ceiling and broadcasts `storage_capacity_updated` on the WebSocket so any open Storage page repaints live. Six new nullable columns on `storage_destinations` (`capacity_total_bytes`, `capacity_used_bytes`, `capacity_free_bytes`, `capacity_probed_at`, `capacity_source`, `capacity_error`) carry the persisted reading; the daily scheduler ceiling is 60 s; failures are stored in `capacity_error` for support reports but never affect the health-check verdict or breaker. All values render through the existing `formatBytes()` helper so operators see KB / MB / GB / TB / PB, never raw `int64`. The API returns raw `int64` bytes for machine consumers (MCP tools, scripts, diagnostics bundle); only the UI does the conversion.

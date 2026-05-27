@@ -84,6 +84,7 @@ func EncryptChunk(master []byte, chunkID ID, plaintext []byte) ([]byte, error) {
 		return nil, fmt.Errorf("dedup: gcm new: %w", err)
 	}
 	nonce := make([]byte, aead.NonceSize()) // 12 zero bytes — safe because of per-chunk key
+	// #nosec G407 -- per-chunk AES-GCM key is HKDF-derived from master ‖ chunkID, so the (key, nonce) pair is unique per chunk; nonce-reuse-with-same-key is impossible by construction.
 	return aead.Seal(nil, nonce, plaintext, chunkID[:]), nil
 }
 
