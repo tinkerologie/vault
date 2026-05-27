@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docker (`vault-replica`) build now copies `CHANGELOG.md` into `internal/release/` before `go build`.** The 2026.05.03 Docker workflow failed with `internal/release/embed.go:7: pattern CHANGELOG.md: no matching files found` because the `//go:embed` directive added with the About card requires the file next to `embed.go` at build time. The Makefile and the Ansible build role already do that copy; the Dockerfile didn't (the embed-location copy is gitignored). The published GitHub release (`vault-2026.05.03.txz`) was unaffected because it ships through the Makefile path. Adds the `cp` step in the builder stage of `Dockerfile`.
+
+### Known issues (not yet shipped)
+
+- **Settings → About card shows "Update available" when the daemon is *ahead* of the latest GitHub release** (running a freshly-tagged build before the corresponding release publishes, or a development build). `web/src/pages/Settings.svelte:111` falls through to "Update available" on any inequality, including newer-than-latest. Pending follow-up: replace the equality check with an ordering comparison so `daemon > latest` is treated as "Up to date" or "Pre-release", `daemon < latest` as "Update available", and `daemon === latest` as "Up to date". YYYY.MM.PATCH versions sort correctly with simple string comparison because the patch is 0-padded.
+
 ## [v2026.05.03] - 2026-05-27
 
 ### Added

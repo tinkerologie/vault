@@ -108,6 +108,11 @@
     if (latest === null) {
       return { kind: 'unknown', label: '', note: 'Update status unknown.' }
     }
+    // TODO(follow-up): replace this equality check with an ordering comparison
+    // so a daemon ahead of `latest` (freshly-tagged build before the GitHub
+    // release publishes, or a dev build) isn't labelled "Update available".
+    // YYYY.MM.PATCH versions sort correctly with plain string compare because
+    // the patch is 0-padded. Tracked in CHANGELOG [Unreleased] Known issues.
     if (normalizeVersion(latest.tag) === normalizeVersion(currentVersion)) {
       return { kind: 'ok', label: 'Up to date', note: '' }
     }
