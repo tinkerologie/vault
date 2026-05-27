@@ -9,6 +9,23 @@ description: Guide for writing ast-grep rules to perform structural code search 
 
 This skill helps translate natural language queries into ast-grep rules for structural code search. ast-grep uses Abstract Syntax Tree (AST) patterns to match code based on its structure rather than just text, enabling powerful and precise code search across large codebases.
 
+## When NOT to Use ast-grep
+
+Before reaching for ast-grep, confirm the query genuinely needs AST awareness. `rg` (ripgrep) is typically 5–10× faster and is the better tool for:
+
+- Literal strings (log messages, error strings, URLs)
+- Definitions by name (use `rg -n '^func .*Name\b'` style anchors)
+- Comments and TODOs
+- Per-file counts and lists (`rg -c`, `rg -l`)
+- Anything in `.svelte` files (ast-grep 0.42.x does not recognise `svelte` as a language; `sh` also unsupported, but `bash` works)
+
+## Known Limitations (verified on ast-grep 0.42.x)
+
+- **Go package-qualified calls return zero matches** with the obvious pattern, because the Go Tree-sitter parser treats `pkg.Func(...)` as a type conversion. Examples that look correct but match nothing: `db.Open($$$ARGS)`, `runner.New($$$ARGS)`, `fmt.Println($$$ARGS)`. **Workaround:** use a YAML rule with `kind: call_expression` (see `references/rule_reference.md`), or anchor in surrounding context (e.g. `_, _ := db.Open($X)`). For "find every call to X" without further structural constraint, `rg 'X\('` is faster and more reliable.
+- **Variadic metavariables must be named** and usually preceded by a positional: write `fmt.Errorf($FMT, $$$ARGS)`, not `fmt.Errorf($$$)`.
+- **No comment matching from a plain pattern** — use a YAML rule with `kind: comment`, or use `rg`.
+- **Supported languages** include `go`, `ts`, `tsx`, `js`, `html`, `css`, `yaml`, `json`, `bash`, `python`, `rust`, `java`. **Not** `svelte`, **not** `sh` (use `bash`).
+
 ## When to Use This Skill
 
 Use this skill when users:

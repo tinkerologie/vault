@@ -172,6 +172,30 @@ make pre-commit-run      # Run all pre-commit checks
 
 Defaults: DB at `/boot/config/plugins/vault/vault.db`, API on port 24085.
 
+## Code Search
+
+Both `rg` (ripgrep) and `ast-grep` are available. **Default to `rg` for most queries** (~5–20 ms on this repo, handles every file type, no parser surprises). Reach for `ast-grep` (~30–130 ms) only when you need AST-aware matching — typically a structural refactor or a pattern whose meaning depends on syntactic context.
+
+**Use `rg` for:**
+- Literal strings (log messages, error strings, URLs, JSON keys)
+- Definitions by name: `rg -n '^func .*FolderHandler.* Backup\b' --type go`
+- **Package-qualified call sites**: `rg -n 'runner\.New\(' --type go` — ast-grep returns zero matches for this; see Gotchas
+- Comments and TODOs
+- Per-file counts and lists (`rg -c '%w' --type go`, `rg -l 'panic\(' --type go`)
+- Svelte files: `rg --type-add 'svelte:*.svelte' --type svelte 'pattern'` — **ast-grep does not support svelte** (0.42.3)
+
+**Use `ast-grep` for:**
+- Function definitions matching a structural shape: `ast-grep run -p 'func ($H *FolderHandler) Backup($$$ARGS) $$$RET { $$$BODY }' -l go`
+- All `fmt.Errorf(...)` calls without false-positive matches in strings/comments
+- Struct/interface declarations
+- Multi-clause queries via `ast-grep scan --rule rule.yml` (`has` / `inside` / `where`)
+
+**Verified gotchas:**
+- Package-qualified calls (`db.Open(...)`, `runner.New(...)`) return **zero** matches with the obvious pattern because the Go parser treats them as type conversions. Workaround: a YAML rule with `kind: call_expression`, or use `rg`.
+- Languages confirmed working: `go`, `ts`, `tsx`, `js`, `html`, `css`, `yaml`, `json`, `bash`, `python`, `rust`, `java`. **Not** `svelte` or `sh`.
+- Variadic metavariables must be **named** and usually preceded by a positional: `fmt.Errorf($FMT, $$$ARGS)`, not `fmt.Errorf($$$)`.
+- Full ast-grep skill: `.agents/skills/ast-grep/SKILL.md`.
+
 ## Code Style and Conventions
 
 - **Standard Go**: `gofmt` and `goimports` enforced. Zero tolerance for linting errors.
