@@ -18,6 +18,9 @@ RUN cd web && npm ci && npm run build
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
+# internal/release/embed.go requires CHANGELOG.md next to it; the repo-root
+# copy is gitignored (Makefile + Ansible build role do the same copy).
+RUN cp CHANGELOG.md internal/release/CHANGELOG.md
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w -X main.version=${VERSION} -X main.buildDate=${BUILD_DATE} -X main.commit=${COMMIT}" \
     -o vault cmd/vault/main.go
