@@ -108,13 +108,19 @@
     if (latest === null) {
       return { kind: 'unknown', label: '', note: 'Update status unknown.' }
     }
-    // TODO(follow-up): replace this equality check with an ordering comparison
-    // so a daemon ahead of `latest` (freshly-tagged build before the GitHub
-    // release publishes, or a dev build) isn't labelled "Update available".
-    // YYYY.MM.PATCH versions sort correctly with plain string compare because
-    // the patch is 0-padded. Tracked in CHANGELOG [Unreleased] Known issues.
-    if (normalizeVersion(latest.tag) === normalizeVersion(currentVersion)) {
+    // YYYY.MM.PATCH versions are zero-padded so plain string compare is
+    // chronologically correct (e.g. "2026.05.03" < "2026.05.10"). Use
+    // ordering instead of equality so a daemon ahead of the latest
+    // GitHub release (freshly-tagged build before the release publishes,
+    // or a development build) is treated as up-to-date / pre-release
+    // rather than the misleading "Update available".
+    const cur = normalizeVersion(currentVersion)
+    const tag = normalizeVersion(latest.tag)
+    if (cur === tag) {
       return { kind: 'ok', label: 'Up to date', note: '' }
+    }
+    if (cur > tag) {
+      return { kind: 'ok', label: 'Pre-release', note: `Latest published: ${latest.tag}` }
     }
     return { kind: 'update', label: 'Update available', note: `Latest: ${latest.tag}` }
   })

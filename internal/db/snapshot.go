@@ -36,9 +36,9 @@ type SnapshotManager struct {
 // RestorationInfo records which source was used to restore the database at
 // startup. This is used by the health endpoint to report degraded state.
 type RestorationInfo struct {
-	Source string // "primary", "default_cache", "usb_backup", "fresh"
-	Path   string // filesystem path used for restoration
-	Reason string // human-readable explanation
+	Source string `json:"source"` // "primary", "default_cache", "usb_backup", "fresh"
+	Path   string `json:"path"`   // filesystem path used for restoration
+	Reason string `json:"reason"` // human-readable explanation
 }
 
 // NewSnapshotManager creates a SnapshotManager that will save/restore snapshots

@@ -89,7 +89,7 @@ resolve_pid() {
 
 wait_for_stop() {
     local pid="$1"
-    local attempts=15
+    local attempts="${2:-45}"
 
     while [ "$attempts" -gt 0 ]; do
         if ! kill -0 "$pid" 2>/dev/null; then
@@ -107,6 +107,26 @@ start() {
         echo "Vault daemon is already running"
         return 1
     fi
+
+    # Belt-and-braces startup delay at boot only. Unraid launches
+    # plugin services before the array/pool drives are guaranteed to
+    # be mounted, which is exactly what causes the daemon to fall
+    # through to USB-direct mode and recreate an empty database on
+    # the next restart (issue #108). The daemon has its own 30 s
+    # in-process retry loop, but a short pre-launch sleep at system
+    # boot lets the array finish mounting and lets hybrid mode engage
+    # cleanly on the first attempt. Detected by uptime: only sleep
+    # when the kernel has been up less than 120 s, so manual restarts
+    # (deploy, plugin upgrade) skip the delay.
+    if [ -r /proc/uptime ]; then
+        read -r UPTIME_RAW _ < /proc/uptime
+        UPTIME_SECS=${UPTIME_RAW%%.*}
+        if [ -n "$UPTIME_SECS" ] && [ "$UPTIME_SECS" -lt 120 ] 2>/dev/null; then
+            echo "Boot-time start (uptime ${UPTIME_SECS}s); waiting 8 s for array/pool mount..."
+            sleep 8
+        fi
+    fi
+
     echo "Starting Vault daemon on ${ADDR}..."
     mkdir -p "$(dirname "$LOG")"
     touch "$LOG"
@@ -131,15 +151,29 @@ stop() {
         return 0
     fi
 
+    # Graceful stop: SIGTERM first, then wait up to 45 s. The daemon's
+    # shutdown sequence is (pre-drain flush → runner drain ≤ 30 s →
+    # HTTP shutdown 5 s → final snapshot save), so 45 s gives headroom
+    # without leaving an extracted backup orphaned. Configuration is
+    # flushed to flash on the FIRST step, so even if the timeout fires
+    # the user's settings already survive (issue #108).
     echo "Stopping Vault daemon..."
-    kill "$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
 
-    if ! wait_for_stop "$pid"; then
-        echo "Vault daemon did not stop gracefully; forcing shutdown..."
-        kill -9 "$pid" 2>/dev/null || true
-        if ! wait_for_stop "$pid"; then
-            echo "Vault daemon could not be stopped"
-            return 1
+    if ! wait_for_stop "$pid" 45; then
+        # Intermediate SIGINT before the SIGKILL escalation. Some Go
+        # binaries treat SIGINT identically to SIGTERM but the second
+        # signal often nudges a stuck syscall loose where SIGTERM was
+        # masked. Give it 5 s, then escalate.
+        echo "Vault daemon did not stop within 45 s of SIGTERM; sending SIGINT..."
+        kill -INT "$pid" 2>/dev/null || true
+        if ! wait_for_stop "$pid" 5; then
+            echo "Vault daemon still running after SIGINT; escalating to SIGKILL (configuration was flushed to flash on SIGTERM)..."
+            kill -9 "$pid" 2>/dev/null || true
+            if ! wait_for_stop "$pid" 5; then
+                echo "Vault daemon could not be stopped"
+                return 1
+            fi
         fi
     fi
 

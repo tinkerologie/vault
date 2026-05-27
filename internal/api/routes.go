@@ -242,11 +242,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	if s.config.ReadOnly {
 		mode = "replica"
 	}
-	respondJSON(w, http.StatusOK, map[string]string{
+	resp := map[string]any{
 		"status":  "ok",
 		"version": s.config.Version,
 		"mode":    mode,
-	})
+	}
+	// Surface boot-time persistence diagnostics so operators (and
+	// `make verify`) can confirm at a glance whether configuration
+	// survived a restart or upgrade. Field is omitted entirely when
+	// the daemon hasn't recorded any startup info yet (defensive —
+	// in normal operation it's always set during daemon.RunE).
+	if s.startupDiagnostics != nil {
+		resp["startup"] = s.startupDiagnostics
+	}
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // buildInjectedIndex reads index.html from the embedded SPA filesystem and

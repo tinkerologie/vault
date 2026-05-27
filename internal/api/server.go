@@ -46,6 +46,33 @@ type Server struct {
 	// configChangeHook is called after any handler mutates persistent
 	// configuration. It flushes the DB to USB flash.
 	configChangeHook handlers.ConfigChangeHook
+
+	// preShutdownHook is called immediately upon SIGTERM, before the
+	// runner drain begins. Used by the daemon to flush the DB snapshot
+	// + USB backup so configuration is safely on flash even if the
+	// rc.vault SIGKILL escalation fires during the drain window
+	// (issue #108).
+	preShutdownHook func()
+
+	// startupDiagnostics is a snapshot of startup-time facts (pool
+	// mount status, hybrid mode, configuration validation result).
+	// Exposed via /api/v1/health so support can diagnose persistence
+	// issues from a single endpoint (issue #108).
+	startupDiagnostics *StartupDiagnostics
+}
+
+// StartupDiagnostics carries the facts daemon startup learned about
+// the environment and database state at boot. Read-only after the
+// daemon finishes initialisation; surfaced verbatim by /health.
+type StartupDiagnostics struct {
+	HybridMode       bool                     `json:"hybrid_mode"`
+	DetectedPool     string                   `json:"detected_pool,omitempty"`
+	PoolMounted      bool                     `json:"pool_mounted"`
+	PoolRetryWaitMs  int64                    `json:"pool_retry_wait_ms"`
+	RestorationInfo  *db.RestorationInfo      `json:"restoration,omitempty"`
+	HasConfiguration bool                     `json:"has_configuration"`
+	Configuration    *db.ConfigurationSummary `json:"configuration,omitempty"`
+	UnraidBootKind   string                   `json:"unraid_boot_kind,omitempty"` // "flash" | "internal" | "unknown"
 }
 
 func NewServer(database *db.DB, cfg ServerConfig) *Server {
@@ -94,6 +121,23 @@ func (s *Server) SetConfigChangeHook(fn handlers.ConfigChangeHook) {
 	}
 }
 
+// SetPreShutdownHook registers a function called immediately on SIGTERM,
+// before the runner drain. The daemon uses this to flush the DB snapshot
+// and USB backup so configuration survives even when rc.vault escalates
+// to SIGKILL during a long-running drain (issue #108). The hook runs
+// synchronously in the shutdown goroutine; keep it under a few seconds.
+func (s *Server) SetPreShutdownHook(fn func()) {
+	s.preShutdownHook = fn
+}
+
+// SetStartupDiagnostics records boot-time persistence facts that the
+// daemon learned during initialisation. Exposed via /api/v1/health so
+// support can verify configuration survived an Unraid restart/upgrade
+// without parsing the daemon log (issue #108).
+func (s *Server) SetStartupDiagnostics(d *StartupDiagnostics) {
+	s.startupDiagnostics = d
+}
+
 // Hub returns the WebSocket hub for external use (e.g., scheduler).
 func (s *Server) Hub() *ws.Hub {
 	return s.hub
@@ -136,6 +180,18 @@ func (s *Server) StartWithContext(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
+		// Phase 0: persist configuration to flash immediately. The
+		// runner drain below can take up to 30 s, and rc.vault may
+		// escalate to SIGKILL before drain completes; flushing the DB
+		// snapshot and USB backup first guarantees that even a hard
+		// kill leaves a current configuration on the /boot/ flash drive
+		// (issue #108).
+		if s.preShutdownHook != nil {
+			start := time.Now()
+			s.preShutdownHook()
+			log.Printf("server shutdown: pre-drain flush completed in %v", time.Since(start).Round(time.Millisecond))
+		}
+
 		// Phase 1: drain the runner — let the active per-file upload finish.
 		// 30 s ceiling; if exceeded, the existing context cancel still kills
 		// mid-flight work.

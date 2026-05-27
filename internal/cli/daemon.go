@@ -72,10 +72,43 @@ var daemonCmd = &cobra.Command{
 		// Determine the vault.cfg path (same directory as the DB flag).
 		cfgPath := filepath.Join(filepath.Dir(dbPath), "vault.cfg")
 
-		detectedPool = unraid.PreferredPool()
-		// Log all discovered pools and their mount status — helps diagnose
-		// "No cache drive detected" reports where a pool exists under
-		// /mnt/ but isn't mounted (issue #69).
+		// Pool detection with retry — Unraid's boot sequence can launch
+		// plugins before the array/pool drives are fully mounted. Without
+		// a retry window, the daemon falls through to boot-device-direct
+		// mode for its entire lifetime (and on the first start after a
+		// hybrid-migrated install, the primary DB has already been
+		// renamed to vault.db.backup, so a fresh empty schema is created
+		// and configuration appears lost — issue #108). Wait up to 30 s
+		// for a pool to appear mounted before giving up.
+		const (
+			poolDetectionMaxAttempts = 15
+			poolDetectionInterval    = 2 * time.Second
+		)
+		poolRetryStart := time.Now()
+		for attempt := 1; attempt <= poolDetectionMaxAttempts; attempt++ {
+			detectedPool = unraid.PreferredPool()
+			if detectedPool != "" && unraid.IsMountedPool(detectedPool) {
+				if attempt > 1 {
+					log.Printf("Pool %s became available after %v (attempt %d/%d)",
+						detectedPool,
+						time.Duration(attempt-1)*poolDetectionInterval,
+						attempt, poolDetectionMaxAttempts)
+				}
+				break
+			}
+			if attempt == 1 {
+				log.Printf("No mounted pool detected yet, waiting up to %v for array startup...",
+					time.Duration(poolDetectionMaxAttempts)*poolDetectionInterval)
+			}
+			if attempt < poolDetectionMaxAttempts {
+				time.Sleep(poolDetectionInterval)
+			}
+		}
+		poolRetryWait := time.Since(poolRetryStart)
+
+		// Log final discovered-pools state — helps diagnose "No cache
+		// drive detected" reports where a pool exists under /mnt/ but
+		// isn't mounted (issue #69).
 		if pools := unraid.DiscoverPools(); len(pools) > 0 {
 			for _, p := range pools {
 				if unraid.IsMountedPool(p) {
@@ -153,6 +186,40 @@ var daemonCmd = &cobra.Command{
 			}
 
 			log.Printf("Hybrid mode: working DB at %s, snapshots at %s", actualDBPath, snapshotPath)
+		} else {
+			// Non-hybrid (USB-direct) restoration fallback. If the
+			// primary DB at /boot/.../vault.db is missing — typical
+			// after a hybrid-mode first-run migration renamed it to
+			// vault.db.backup, then the pool drive failed to mount on
+			// a later boot (e.g. Unraid upgrade restart) — but the USB
+			// safety-net backup exists, copy it back into place BEFORE
+			// db.Open creates a fresh empty schema. Without this step,
+			// db.Open would silently produce a brand-new empty database
+			// and every saved job, destination, and setting would be
+			// invisible to the running daemon, exactly matching the
+			// "configuration lost after Unraid upgrade/restart" symptom
+			// (issue #108).
+			primaryExists := false
+			if fi, err := os.Stat(actualDBPath); err == nil && fi.Size() > 0 {
+				primaryExists = true
+			}
+			backupExists := false
+			var backupSize int64
+			if fi, err := os.Stat(usbBackupPath); err == nil && fi.Size() > 0 {
+				backupExists = true
+				backupSize = fi.Size()
+			}
+			if !primaryExists && backupExists {
+				log.Printf("Non-hybrid mode: primary DB %s missing or empty; restoring from USB backup %s (%d bytes)",
+					actualDBPath, usbBackupPath, backupSize)
+				if err := copyFile(usbBackupPath, actualDBPath); err != nil {
+					log.Printf("Warning: USB backup restore failed: %v — daemon will start with a fresh database", err)
+				} else {
+					log.Printf("Configuration restored from USB backup at %s", usbBackupPath)
+				}
+			} else if !primaryExists && !backupExists {
+				log.Printf("Warning: neither primary DB nor USB backup found — daemon will start with a fresh database (configuration will need to be reconfigured)")
+			}
 		}
 
 		database, err := db.Open(actualDBPath)
@@ -203,6 +270,45 @@ var daemonCmd = &cobra.Command{
 				}
 			}
 		}
+
+		// Validate that the database contains operator configuration
+		// (≥1 job or ≥1 storage destination). If not, log a prominent
+		// warning so an empty start after a failed restoration is
+		// obvious in the support log and via /api/v1/health (issue #108).
+		var configSummary *db.ConfigurationSummary
+		if summary, validateErr := database.ValidateHasConfiguration(context.Background()); validateErr != nil {
+			log.Printf("Warning: failed to validate database configuration: %v", validateErr)
+		} else {
+			configSummary = summary
+			if summary.HasConfiguration {
+				log.Printf("Database configuration validated: %d jobs, %d storage destinations, %d settings",
+					summary.Jobs, summary.StorageDests, summary.Settings)
+			} else {
+				log.Printf("WARNING: database contains no jobs or storage destinations — this is normal for a fresh install, but unexpected after an upgrade/restart. Fallback paths attempted: snapshot=%q usb_backup=%s. If you expected your previous configuration, see https://github.com/ruaan-deysel/vault/issues/108",
+					snapshotPath, usbBackupPath)
+			}
+		}
+
+		// Build startup diagnostics snapshot exposed via /api/v1/health
+		// so `make verify`, the Settings page, and support tooling can
+		// confirm persistence end-to-end without parsing the daemon log.
+		startupDiag := &api.StartupDiagnostics{
+			HybridMode:      hybridMode,
+			DetectedPool:    detectedPool,
+			PoolMounted:     detectedPool != "" && unraid.IsMountedPool(detectedPool),
+			PoolRetryWaitMs: poolRetryWait.Milliseconds(),
+			UnraidBootKind:  detectBootKind(),
+			Configuration:   configSummary,
+		}
+		if configSummary != nil {
+			startupDiag.HasConfiguration = configSummary.HasConfiguration
+		}
+		if snapshotMgr != nil {
+			startupDiag.RestorationInfo = snapshotMgr.RestorationSource()
+		}
+		log.Printf("Startup diagnostics: hybrid=%v pool=%q pool_mounted=%v wait=%v boot_kind=%s has_config=%v",
+			startupDiag.HybridMode, startupDiag.DetectedPool, startupDiag.PoolMounted,
+			poolRetryWait.Round(time.Millisecond), startupDiag.UnraidBootKind, startupDiag.HasConfiguration)
 
 		// Prune activity log entries older than 90 days on startup.
 		if err := database.DeleteOldActivityLogs(90); err != nil {
@@ -275,6 +381,7 @@ var daemonCmd = &cobra.Command{
 			Version:   version,
 		}
 		srv := api.NewServer(database, cfg)
+		srv.SetStartupDiagnostics(startupDiag)
 
 		// Discover NVMe-backed ZFS pools and wire them into the staging
 		// cascade and browse handler for ZFS-aware path browsing.
@@ -311,6 +418,19 @@ var daemonCmd = &cobra.Command{
 			srv.SetConfigChangeHook(func() {
 				if err := snapshotMgr.FlushToUSB(); err != nil {
 					log.Printf("Warning: config change USB flush failed: %v", err)
+				}
+			})
+
+			// Pre-drain shutdown flush: ensure the working DB is on
+			// flash BEFORE we wait up to 30 s for runner.Drain to
+			// complete. Without this, an in-progress backup that
+			// straddles a SIGTERM can leave fresh configuration only
+			// in RAM, and rc.vault's SIGKILL escalation 15 s later
+			// (extended to 45 s in this same fix) would kill the
+			// process before snapshotMgr.Close() ran (issue #108).
+			srv.SetPreShutdownHook(func() {
+				if err := snapshotMgr.FlushToUSB(); err != nil {
+					log.Printf("Warning: pre-shutdown USB flush failed: %v", err)
 				}
 			})
 		}
@@ -409,6 +529,35 @@ var daemonCmd = &cobra.Command{
 
 		hb.Start(ctx)
 
+		// Periodic USB safety-net refresh. Belt-and-braces for the
+		// case where event-driven flushes (configChangeHook on every
+		// mutation, post-backup snapshot, SIGTERM pre-drain) all
+		// happen to be quiet for a long stretch — e.g. a system that
+		// has been idle for hours then loses power unexpectedly. The
+		// ticker fires every 30 min; the underlying USB write is
+		// gated by the existing 1 h usbMinInterval throttle, so wear
+		// is bounded to one write per hour regardless. The
+		// pool-snapshot half always runs (zero flash cost). Hybrid
+		// mode only; in USB-direct mode the working DB IS the USB
+		// file so a "USB backup" would be a no-op self-copy
+		// (issue #108).
+		if hybridMode && snapshotMgr != nil {
+			go func() {
+				ticker := time.NewTicker(30 * time.Minute)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if err := snapshotMgr.SaveSnapshotAndUSBBackup(); err != nil {
+							log.Printf("Warning: periodic snapshot save failed: %v", err)
+						}
+					}
+				}
+			}()
+		}
+
 		err = srv.StartWithContext(ctx)
 		if errors.Is(err, http.ErrServerClosed) {
 			// Flush the working DB to the persistent snapshot before exiting.
@@ -430,6 +579,138 @@ func init() {
 	daemonCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	daemonCmd.Flags().String("tls-key", "", "Path to TLS private key file")
 	rootCmd.AddCommand(daemonCmd)
+}
+
+// detectBootKind classifies the /boot mount on Unraid as "flash"
+// (traditional USB FAT32) or "internal" (Unraid 7.3+ internal-boot
+// pool, backed by ZFS). Returns "unknown" when the mount can't be
+// classified (non-Linux dev hosts, unusual mounts, etc.). Used only
+// to enrich the /api/v1/health response and the startup log; the
+// vault.db.backup path is /boot/config/plugins/vault/vault.db.backup
+// on both kinds, so persistence behaviour is identical either way.
+func detectBootKind() string {
+	mi, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return "unknown"
+	}
+	// Each line: <id> <parent> <maj:min> <root> <mount-point> ... - <fstype> <source> ...
+	for _, line := range splitLines(mi) {
+		// Tokenise; mount point is field 5 (1-indexed), separator " - "
+		// then fstype follows. Avoid pulling in regexp for a hot path.
+		// Coarse but reliable: look for " /boot " followed by " - <fs>".
+		idx := indexOfMountPoint(line, "/boot")
+		if idx < 0 {
+			continue
+		}
+		fstype := fstypeAfterSep(line)
+		if fstype == "" {
+			return "unknown"
+		}
+		switch fstype {
+		case "vfat", "msdos":
+			return "flash"
+		case "zfs", "btrfs", "ext4", "xfs":
+			return "internal"
+		default:
+			return "unknown"
+		}
+	}
+	return "unknown"
+}
+
+// splitLines splits a byte slice on '\n' without allocating per-line
+// substrings beyond the slice header. Empty trailing line is skipped.
+func splitLines(b []byte) []string {
+	out := make([]string, 0, 32)
+	start := 0
+	for i, c := range b {
+		if c == '\n' {
+			if i > start {
+				out = append(out, string(b[start:i]))
+			}
+			start = i + 1
+		}
+	}
+	if start < len(b) {
+		out = append(out, string(b[start:]))
+	}
+	return out
+}
+
+// indexOfMountPoint returns a non-negative offset if the line's
+// mount-point field (5th whitespace-separated token) equals target.
+// Returns -1 otherwise.
+func indexOfMountPoint(line, target string) int {
+	fields := splitFields(line)
+	if len(fields) < 5 {
+		return -1
+	}
+	if fields[4] == target {
+		return 4
+	}
+	return -1
+}
+
+// fstypeAfterSep returns the token immediately after the " - "
+// separator that mountinfo uses to delimit per-mount and per-fs
+// data. Empty string if absent.
+func fstypeAfterSep(line string) string {
+	fields := splitFields(line)
+	for i, f := range fields {
+		if f == "-" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+// splitFields splits on any whitespace, like strings.Fields but
+// allocation-light for the mountinfo hot path. Returns at most 64
+// fields, which is well above mountinfo's worst case.
+func splitFields(s string) []string {
+	out := make([]string, 0, 16)
+	start := -1
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isSpace := c == ' ' || c == '\t'
+		if !isSpace && start == -1 {
+			start = i
+		} else if isSpace && start != -1 {
+			out = append(out, s[start:i])
+			start = -1
+			if len(out) >= 64 {
+				return out
+			}
+		}
+	}
+	if start != -1 {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+// copyFile copies src to dst with O_TRUNC+0o600 perms and fsyncs before
+// returning. Used by the non-hybrid USB-backup restoration fallback so the
+// restored vault.db lands durably on flash before db.Open sees it.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src) // #nosec G304 — vault-controlled USB backup path
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()                                       // #nosec G104 — best-effort
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) // #nosec G304 — vault-controlled DB path
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close() // #nosec G104 — error path
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close() // #nosec G104 — error path
+		return err
+	}
+	return out.Close()
 }
 
 // zfsBrowseAdapter bridges engine.ZFSHandler to the browse handler's
