@@ -164,14 +164,7 @@ func (e *Evaluator) logActivity(a Anomaly, transition string) {
 	e.db.LogActivity(level, "anomaly", msg, a.Details)
 }
 
-// maybeNotify is a stub for severity-gated notification routing.
-// Task 16 implements the full notification pipeline; this call site exists so
-// the wiring is in place and Task 16 only needs to fill the body.
-//
-// isUpdate is true when the anomaly has been seen before (refresh/escalation);
-// false for the initial raise.
-func (e *Evaluator) maybeNotify(_ Anomaly, _ bool) {
-	// TODO(Task 16): route notification based on severity threshold, dedup
-	// window, and user-configured channels. Stamp notified_at on the row via
-	// db.MarkAnomalyNotified after a successful dispatch.
-}
+// maybeNotify is implemented in notify.go (Task 16).
+// The stub below is intentionally removed; the real implementation lives in
+// (*Evaluator).maybeNotify defined in notify.go and handles severity gating,
+// dedup via notified_at, per-job overrides, and Unraid + Discord dispatch.

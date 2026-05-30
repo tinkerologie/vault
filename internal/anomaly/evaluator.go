@@ -41,10 +41,11 @@ type broadcaster interface {
 //     if Start is called more than once.
 //   - Drain closes the done channel exactly once via drainOnce.
 type Evaluator struct {
-	db    *db.DB
-	hub   broadcaster
-	reg   *Registry
-	clock Clock
+	db       *db.DB
+	hub      broadcaster
+	reg      *Registry
+	clock    Clock
+	notifier AnomalyNotifier
 
 	ch   chan int64
 	done chan struct{}

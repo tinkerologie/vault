@@ -762,7 +762,18 @@ func buildAnomalyEvaluator(database *db.DB, srv *api.Server) *anomaly.Evaluator 
 	reg.Register(anomaly.NewReliabilityDetector(database))
 	reg.Register(anomaly.NewCapacityTrajectoryDetector(database))
 
-	return anomaly.NewEvaluator(database, srv.Hub(), reg, anomaly.RealClock{})
+	ev := anomaly.NewEvaluator(database, srv.Hub(), reg, anomaly.RealClock{})
+
+	// Wire the notifier so anomaly raise/escalation events are dispatched to
+	// Unraid + Discord. The webhook URL closure reads the DB at send time so
+	// settings changes take effect without restarting the daemon.
+	notifier := anomaly.NewRealNotifier(func() string {
+		url, _ := database.GetSetting("discord_webhook_url", "")
+		return url
+	})
+	ev.SetNotifier(notifier)
+
+	return ev
 }
 
 // runAnomalyTrendTicker fires EvaluateTrendDetectors and pruneOldAnomalies every
