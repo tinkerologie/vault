@@ -378,6 +378,9 @@ func (s *SMBAdapter) Usage() (free, total int64, err error) {
 	}
 	total = int64(info.TotalBlockCount() * bsize)    //nolint:gosec
 	free = int64(info.AvailableBlockCount() * bsize) //nolint:gosec,unconvert
+	if free > total {
+		free = total
+	}
 	return free, total, nil
 }
 

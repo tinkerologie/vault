@@ -404,6 +404,9 @@ func (s *SFTPAdapter) Usage() (free, total int64, err error) {
 	bsize := int64(st.Frsize)        //nolint:gosec,unconvert
 	total = int64(st.Blocks) * bsize //nolint:gosec,unconvert
 	free = int64(st.Bavail) * bsize  //nolint:gosec,unconvert
+	if free > total {
+		free = total
+	}
 	return free, total, nil
 }
 

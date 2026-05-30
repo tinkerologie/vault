@@ -50,7 +50,7 @@ func Resolve(jobOverride, globalDefault string) Sensitivity {
 // K returns the MAD multiplier threshold for this sensitivity level.
 func (s Sensitivity) K() float64 { return madK[s] }
 
-// Streak returns the minimum consecutive-success streak threshold.
+// Streak returns the minimum consecutive-failure streak length before a reliability anomaly is raised.
 func (s Sensitivity) Streak() int { return reliabilityStreak[s] }
 
 // WarnDays returns the capacity runway warning threshold in days.

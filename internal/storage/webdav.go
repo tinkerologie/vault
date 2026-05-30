@@ -1031,6 +1031,9 @@ func (w *WebDAVAdapter) Usage() (free, total int64, err error) {
 	defer cancel()
 	cap, err := w.GetCapacity(ctx)
 	if err != nil {
+		// Intentional graceful degradation: all GetCapacity errors (including
+		// transient network/auth failures) are mapped to ErrUsageNotSupported.
+		// Callers cannot distinguish transient from permanent unavailability.
 		return 0, 0, ErrUsageNotSupported
 	}
 	// TotalBytes == 0 means the server didn't report quota (or it's unlimited).

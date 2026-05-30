@@ -175,7 +175,7 @@ func buildDetails(zScore, growthFactor float64, windowSize int) string {
 		WindowSize:   windowSize,
 	})
 	if err != nil {
-		log.Printf("WARN anomaly: size_drift buildDetails marshal: %v", err)
+		log.Printf("WARN anomaly: buildDetails marshal: %v", err)
 		return "{}"
 	}
 	return string(b)

@@ -11,6 +11,10 @@ import "math"
 //
 // Returns ("", 0) when neither rule fires (no signal).
 // zA is always finite: 0 when mad==0, otherwise the real modified z-score.
+//
+// Precondition: callers must handle low-side (shrinkage) anomalies before
+// calling this; evaluateHighSide uses |z| and will fire Rule A even when
+// observed < median.
 func evaluateHighSide(observed, median, mad, k, multiplier float64) (severity Severity, zA float64) {
 	// Rule A: modified z-score (disabled when mad == 0).
 	if mad != 0 {

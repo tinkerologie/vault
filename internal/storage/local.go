@@ -206,11 +206,11 @@ func (l *LocalAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 // basePath by delegating to GetCapacity. The context used internally
 // is background with no deadline — Usage is a fast syscall.
 func (l *LocalAdapter) Usage() (free, total int64, err error) {
-	cap, err := l.GetCapacity(context.Background())
+	info, err := l.GetCapacity(context.Background())
 	if err != nil {
 		return 0, 0, err
 	}
-	return cap.FreeBytes, cap.TotalBytes, nil
+	return info.FreeBytes, info.TotalBytes, nil
 }
 
 var _ Adapter = (*LocalAdapter)(nil)

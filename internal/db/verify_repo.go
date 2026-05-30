@@ -98,7 +98,7 @@ func (d *DB) ListRecentVerifyRuns(limit int) ([]VerifyRun, error) {
 //
 // Verify runs are linked to jobs indirectly:
 //
-//	verify_runs → restore_points.restore_point_id → restore_points.job_id
+//	verify_runs.restore_point_id → restore_points.id → restore_points.job_id
 //
 // Status values observed in practice: "running", "passed", "failed",
 // "cancelled". The detector compares the newest two completed (non-running)
