@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"runtime/debug"
 	"sync"
@@ -222,12 +223,12 @@ func (e *Evaluator) broadcastData(eventType string, data any) {
 func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 	run, err := e.db.GetJobRun(runID)
 	if err != nil {
-		return EvalContext{}, err
+		return EvalContext{}, fmt.Errorf("get job run %d: %w", runID, err)
 	}
 
 	job, err := e.db.GetJob(run.JobID)
 	if err != nil {
-		return EvalContext{}, err
+		return EvalContext{}, fmt.Errorf("get job %d: %w", run.JobID, err)
 	}
 
 	// Destination: tolerate not-found (job may have had its dest deleted).
@@ -236,13 +237,13 @@ func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 	if err == nil {
 		destPtr = &dest
 	} else if !errors.Is(err, db.ErrNotFound) {
-		return EvalContext{}, err
+		return EvalContext{}, fmt.Errorf("get storage destination %d: %w", job.StorageDestID, err)
 	}
 
 	// Most recent runs for this job, newest first.
 	recentRuns, err := e.db.GetJobRuns(run.JobID, recentRunsWindow)
 	if err != nil {
-		return EvalContext{}, err
+		return EvalContext{}, fmt.Errorf("get job runs for job %d: %w", run.JobID, err)
 	}
 
 	// Baseline — tolerate not-found (no baseline yet for this job).
@@ -251,7 +252,7 @@ func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 	if err == nil {
 		baselinePtr = &baseline
 	} else if !errors.Is(err, db.ErrNotFound) {
-		return EvalContext{}, err
+		return EvalContext{}, fmt.Errorf("get job baseline for job %d: %w", run.JobID, err)
 	}
 
 	// Global sensitivity setting ("balanced" is the seeded default).

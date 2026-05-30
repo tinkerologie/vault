@@ -94,7 +94,7 @@ func (f *FakeAdapter) GetCapacity(ctx context.Context) (storage.Capacity, error)
 	return storage.Capacity{Source: "fake"}, nil
 }
 
-// Usage is a no-op (in-memory adapter has no filesystem notion).
+// Usage is unsupported for the in-memory adapter (returns ErrUsageNotSupported).
 func (f *FakeAdapter) Usage() (int64, int64, error) {
 	return 0, 0, storage.ErrUsageNotSupported
 }

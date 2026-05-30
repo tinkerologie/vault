@@ -38,6 +38,9 @@
   /** @type {Record<number, {sample_count: number}|null>} */
   let baselines = $state({})
 
+  // Monotonic counter to discard out-of-order baseline fetch responses.
+  let baselineLoadId = 0
+
   // Count open anomalies per job from shared state
   /** @type {(jobId: number) => number} */
   function jobAnomalyCount(jobId) {
@@ -390,6 +393,7 @@
   }
 
   async function loadBaselines(jobList) {
+    const reqId = ++baselineLoadId
     const results = await Promise.all(
       jobList.map(async (j) => {
         try {
@@ -400,6 +404,7 @@
         }
       })
     )
+    if (reqId !== baselineLoadId) return // stale response — discard
     const map = {}
     for (const [id, b] of results) map[id] = b
     baselines = map

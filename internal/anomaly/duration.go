@@ -45,6 +45,11 @@ func (d *DurationDriftDetector) Kind() Kind   { return KindPerRun }
 //   - DurationSeconds is nil (run not yet completed).
 //   - ItemsDone == 0 (no work was performed — not a meaningful duration signal).
 func (d *DurationDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
+	// Nil guard: EvalContext fields must be populated before dereferencing.
+	if ec.Job == nil || ec.JobRun == nil {
+		return nil, nil
+	}
+
 	// Cold-start guard.
 	if ec.Baseline == nil || ec.Baseline.SampleCount < 10 {
 		return nil, nil

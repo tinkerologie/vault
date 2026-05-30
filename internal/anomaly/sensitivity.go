@@ -18,7 +18,7 @@ var madK = map[Sensitivity]float64{
 }
 
 // reliabilityStreak maps a sensitivity level to the minimum consecutive
-// successful runs required before flagging a reliability regression.
+// failed runs required before flagging a reliability regression.
 var reliabilityStreak = map[Sensitivity]int{
 	SensStrict:     1,
 	SensBalanced:   2,

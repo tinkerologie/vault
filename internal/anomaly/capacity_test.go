@@ -22,7 +22,7 @@ func makeDest(id int64) *db.StorageDestination {
 
 // buildSamples constructs n capacity samples spaced 1 day apart, starting at
 // t0. freeFunc maps sample index (0=oldest) to a free-bytes value.
-// totalBytes is constant across all samples unless totalFunc is non-nil.
+// totalBytes is constant across all samples.
 func buildSamples(t0 time.Time, n int, totalBytes int64, freeFunc func(i int) int64) []db.CapacitySample {
 	s := make([]db.CapacitySample, n)
 	for i := range s {

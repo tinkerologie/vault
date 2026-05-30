@@ -18,6 +18,9 @@
   let anomalies  = $state([])
   let nextCursor = $state('')
   let loading    = $state(true)
+
+  // Monotonic counter to discard out-of-order async responses.
+  let listRequestId = 0
   let loadingMore = $state(false)
   let error      = $state('')
 
@@ -92,8 +95,10 @@
   /** Refetch the first page from the current filters and swap the list once
    *  fresh data arrives, avoiding any flash-to-empty. */
   async function refetchInPlace() {
+    const reqId = ++listRequestId
     try {
       const res = await api.listAnomalies(buildFilter(undefined))
+      if (reqId !== listRequestId) return // stale response — discard
       anomalies = res?.anomalies ?? []
       nextCursor = res?.next_cursor ?? ''
       // Drop selections that no longer exist.
@@ -116,6 +121,7 @@
   }
 
   async function loadAnomalies(reset = false) {
+    const reqId = ++listRequestId
     if (reset) {
       loading = true
       anomalies = []
@@ -127,14 +133,18 @@
     error = ''
     try {
       const res = await api.listAnomalies(buildFilter(reset ? undefined : nextCursor))
+      if (reqId !== listRequestId) return // stale response — discard
       const rows = res?.anomalies ?? []
       anomalies = reset ? rows : [...anomalies, ...rows]
       nextCursor = res?.next_cursor ?? ''
     } catch (e) {
+      if (reqId !== listRequestId) return
       error = e.message || 'Failed to load anomalies'
     } finally {
-      loading = false
-      loadingMore = false
+      if (reqId === listRequestId) {
+        loading = false
+        loadingMore = false
+      }
     }
   }
 

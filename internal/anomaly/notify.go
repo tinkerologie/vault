@@ -120,6 +120,13 @@ func (e *Evaluator) maybeNotify(a Anomaly, isUpdate bool) {
 		return
 	}
 
+	// Without a real DB id we cannot stamp notified_at, so a duplicate send on
+	// the next observation is possible. Skip rather than accept the risk.
+	if a.ID == 0 {
+		log.Printf("WARN anomaly: maybeNotify: skipping send for anomaly with id=0 (fingerprint %q)", a.Fingerprint)
+		return
+	}
+
 	// Resolve a human-readable scope name for the notification payload.
 	scopeName := resolveAnomalyScopeName(e, a)
 
@@ -127,10 +134,8 @@ func (e *Evaluator) maybeNotify(a Anomaly, isUpdate bool) {
 	e.notifier.SendAnomaly(a, scopeName, isUpdate)
 
 	// Stamp notified_at to prevent re-sends.
-	if a.ID != 0 {
-		if err := e.db.MarkAnomalyNotified(a.ID, e.clock.Now()); err != nil {
-			log.Printf("WARN anomaly: MarkAnomalyNotified(%d): %v", a.ID, err)
-		}
+	if err := e.db.MarkAnomalyNotified(a.ID, e.clock.Now()); err != nil {
+		log.Printf("WARN anomaly: MarkAnomalyNotified(%d): %v", a.ID, err)
 	}
 }
 

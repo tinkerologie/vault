@@ -55,7 +55,14 @@ func (e *Evaluator) persist(a Anomaly) {
 
 	escalated := a.Severity == SeverityCritical && Severity(existing.Severity) != SeverityCritical
 
-	if err := e.db.RefreshOpenAnomaly(existing.ID, a.Observed, a.Deviation, a.LastSeenAt, string(a.Severity)); err != nil {
+	// Never downgrade an already-open anomaly's severity. Compute the effective
+	// severity as the MAX of the existing row's severity and the new observation.
+	effectiveSeverity := a.Severity
+	if severityRank(Severity(existing.Severity)) > severityRank(a.Severity) {
+		effectiveSeverity = Severity(existing.Severity)
+	}
+
+	if err := e.db.RefreshOpenAnomaly(existing.ID, a.Observed, a.Deviation, a.LastSeenAt, string(effectiveSeverity)); err != nil {
 		log.Printf("WARN anomaly: persist refresh %d (%q): %v", existing.ID, a.Fingerprint, err)
 		return
 	}
@@ -65,7 +72,7 @@ func (e *Evaluator) persist(a Anomaly) {
 	updated.Observed = a.Observed
 	updated.Deviation = a.Deviation
 	updated.LastSeenAt = a.LastSeenAt
-	updated.Severity = a.Severity
+	updated.Severity = effectiveSeverity
 
 	e.broadcastAnomaly("anomaly.updated", updated)
 	e.logActivity(updated, "refreshed")

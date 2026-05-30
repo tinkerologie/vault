@@ -101,6 +101,59 @@ func TestLifecyclePersistEscalation(t *testing.T) {
 	assertEventCount(t, eventTypes, "anomaly.updated", 1)
 }
 
+// ── TestLifecyclePersistDowngrade ────────────────────────────────────────────
+
+// TestLifecyclePersistDowngrade: open an anomaly as critical, then persist the
+// same fingerprint with a lower severity (warning). The DB row must remain
+// critical — severity is never downgraded. last_seen_at must advance and an
+// anomaly.updated event must be broadcast.
+func TestLifecyclePersistDowngrade(t *testing.T) {
+	d := openTestDB(t)
+	clk := NewFakeClock(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC))
+	hub := &recordingBroadcaster{}
+	ev := newEvaluatorWithBroadcaster(d, hub, &Registry{}, clk)
+
+	_, runID := seedJobAndRun(t, d)
+	a := makeTestAnomaly(1, runID, "downgrade_metric")
+	a.Severity = SeverityCritical
+
+	// First persist: critical.
+	ev.persist(a)
+	row, err := d.GetOpenAnomalyByFingerprint(a.Fingerprint)
+	if err != nil {
+		t.Fatalf("GetOpenAnomalyByFingerprint after first persist: %v", err)
+	}
+	if row.Severity != "critical" {
+		t.Errorf("after first persist severity = %q, want 'critical'", row.Severity)
+	}
+	firstLastSeen := row.LastSeenAt
+
+	// Advance clock and persist same fingerprint with a lower severity.
+	clk.Advance(10 * time.Minute)
+	a.Severity = SeverityWarning
+	ev.persist(a)
+
+	row2, err := d.GetOpenAnomalyByFingerprint(a.Fingerprint)
+	if err != nil {
+		t.Fatalf("GetOpenAnomalyByFingerprint after second persist: %v", err)
+	}
+
+	// Severity must NOT have been downgraded.
+	if row2.Severity != "critical" {
+		t.Errorf("severity after downgrade attempt = %q, want 'critical' (must not downgrade)", row2.Severity)
+	}
+
+	// last_seen_at must have advanced.
+	if !row2.LastSeenAt.After(firstLastSeen) {
+		t.Errorf("last_seen_at not advanced: first=%v second=%v", firstLastSeen, row2.LastSeenAt)
+	}
+
+	// anomaly.updated must have been broadcast.
+	eventTypes := extractEventTypes(t, hub)
+	assertEventCount(t, eventTypes, "anomaly.raised", 1)
+	assertEventCount(t, eventTypes, "anomaly.updated", 1)
+}
+
 // ── TestLifecycleResolveSoftAnomalies ────────────────────────────────────────
 
 // TestLifecycleResolveSoftAnomalies: open info + warning + critical for a run.

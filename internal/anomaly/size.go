@@ -42,6 +42,11 @@ func (d *SizeDriftDetector) Kind() Kind   { return KindPerRun }
 // rules described above.  Returns nil, nil (no signal) when the baseline is
 // absent, has fewer than 10 samples, or when the median is 0.
 func (d *SizeDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
+	// Nil guard: EvalContext fields must be populated before dereferencing.
+	if ec.Job == nil || ec.JobRun == nil {
+		return nil, nil
+	}
+
 	// Cold-start guard.
 	if ec.Baseline == nil || ec.Baseline.SampleCount < 10 {
 		return nil, nil

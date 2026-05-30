@@ -190,6 +190,7 @@ func (n *NFSAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 // The share is mounted on demand if not already mounted.
 func (n *NFSAdapter) Usage() (free, total int64, err error) {
 	if err := n.mount(); err != nil {
+		log.Printf("WARN nfs: Usage: mount failed: %v", err)
 		return 0, 0, ErrUsageNotSupported
 	}
 	return n.local.Usage()

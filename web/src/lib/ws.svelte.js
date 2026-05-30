@@ -29,7 +29,13 @@ export function onWsMessage(fn) {
 }
 
 function emitMessage(msg) {
-  listeners.forEach((fn) => fn(msg))
+  listeners.forEach((fn) => {
+    try {
+      fn(msg)
+    } catch (err) {
+      console.error('ws listener error', err, msg)
+    }
+  })
   // Dispatch anomaly events directly into the shared reactive state so all
   // components see live updates without subscribing individually.
   switch (msg.type) {

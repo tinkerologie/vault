@@ -135,7 +135,8 @@ func (c *CapacityTrajectoryDetector) Evaluate(ec EvalContext) ([]Anomaly, error)
 
 	// --- Independent low-free floor anomaly ---
 	// Fires regardless of slope when free/total < 5%.
-	if latestTotal > 0 && latestFree/latestTotal < lowFreeFraction {
+	// Guard against negative/bogus free values (bad stat) to avoid spurious criticals.
+	if latestTotal > 0 && latestFree >= 0 && latestFree/latestTotal < lowFreeFraction {
 		fp := Fingerprint("capacity_trajectory", ScopeDestination, destID, "free_bytes_low")
 		pct := latestFree / latestTotal * 100
 		details := buildLowFreeDetails(latestFree, latestTotal, pct)
