@@ -330,8 +330,12 @@ func (e *Evaluator) refreshBaseline(ec EvalContext) {
 
 	if err := e.db.UpsertJobBaseline(baseline); err != nil {
 		log.Printf("WARN anomaly: upsert baseline for job %d: %v", ec.Job.ID, err)
+		return
 	}
-	// TODO(Task 15): broadcast a typed "baseline.updated" event.
+	e.broadcastData("baseline.updated", map[string]any{
+		"job_id":   ec.Job.ID,
+		"baseline": baseline,
+	})
 }
 
 // Ensure *ws.Hub satisfies the broadcaster interface at compile time.

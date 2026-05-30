@@ -473,3 +473,110 @@ func TestEvaluatorRefreshBaseline(t *testing.T) {
 		t.Fatal("baseline was not upserted after enough completed runs")
 	}
 }
+
+// TestEvaluatorBaselineUpdatedEvent: after refreshBaseline upserts a baseline,
+// a "baseline.updated" WebSocket event must be broadcast carrying the job_id.
+// The too-few-samples early-return path must NOT emit any event.
+func TestEvaluatorBaselineUpdatedEvent(t *testing.T) {
+	d := openTestDB(t)
+	clk := NewFakeClock(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+	hub := &recordingBroadcaster{}
+	reg := &Registry{} // no detectors needed; we drive refreshBaseline via EnqueueRun
+
+	// Create destination and job.
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{}`})
+	if err != nil {
+		t.Fatalf("CreateStorageDestination: %v", err)
+	}
+	jobID, err := d.CreateJob(db.Job{Name: "baseline-event-job", Enabled: true, StorageDestID: destID})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	// Seed only (minBaselineSamples - 1) runs → too few samples, no event expected.
+	var shortRunID int64
+	for i := 0; i < minBaselineSamples-1; i++ {
+		rid, _ := d.CreateJobRun(db.JobRun{
+			JobID: jobID, Status: "running", BackupType: "full", RunType: "backup",
+		})
+		_ = d.UpdateJobRun(db.JobRun{
+			ID: rid, Status: "success", ItemsDone: 1, SizeBytes: int64(100 + i*10),
+		})
+		shortRunID = rid
+	}
+
+	ev := newEvaluatorWithBroadcaster(d, hub, reg, clk)
+	ev.Start()
+	ev.EnqueueRun(shortRunID)
+
+	// Drain to let the worker finish before we check for absence of event.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := ev.Drain(ctx); err != nil {
+		t.Fatalf("drain (short): %v", err)
+	}
+
+	// No baseline.updated should have been emitted yet.
+	if types := extractEventTypes(t, hub); countEvent(types, "baseline.updated") != 0 {
+		t.Errorf("expected no baseline.updated for too-few-samples; got events: %v", types)
+	}
+
+	// Now add the remaining runs to reach minBaselineSamples.
+	var lastRunID int64
+	for i := minBaselineSamples - 1; i < minBaselineSamples; i++ {
+		rid, _ := d.CreateJobRun(db.JobRun{
+			JobID: jobID, Status: "running", BackupType: "full", RunType: "backup",
+		})
+		_ = d.UpdateJobRun(db.JobRun{
+			ID: rid, Status: "success", ItemsDone: 1, SizeBytes: int64(100 + i*10),
+		})
+		lastRunID = rid
+	}
+
+	// Restart evaluator (already drained) — create a fresh one sharing the same hub.
+	ev2 := newEvaluatorWithBroadcaster(d, hub, reg, clk)
+	ev2.Start()
+	ev2.EnqueueRun(lastRunID)
+
+	// Poll until baseline.updated appears.
+	deadline := time.Now().Add(2 * time.Second)
+	var found bool
+	for time.Now().Before(deadline) {
+		if countEvent(extractEventTypes(t, hub), "baseline.updated") > 0 {
+			found = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	if err := ev2.Drain(ctx2); err != nil {
+		t.Fatalf("drain (full): %v", err)
+	}
+
+	if !found {
+		t.Fatal("baseline.updated event was not broadcast after baseline upsert")
+	}
+
+	// Verify the payload carries the correct job_id.
+	var baselineJobID float64 // JSON numbers decode to float64
+	for _, m := range hub.messages() {
+		var env struct {
+			Type string `json:"type"`
+			Data struct {
+				JobID float64 `json:"job_id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(m, &env); err != nil {
+			continue
+		}
+		if env.Type == "baseline.updated" {
+			baselineJobID = env.Data.JobID
+			break
+		}
+	}
+	if int64(baselineJobID) != jobID {
+		t.Errorf("baseline.updated job_id = %v, want %d", baselineJobID, jobID)
+	}
+}
