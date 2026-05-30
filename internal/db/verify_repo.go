@@ -91,6 +91,49 @@ func (d *DB) ListRecentVerifyRuns(limit int) ([]VerifyRun, error) {
 	return out, rows.Err()
 }
 
+// ListVerifyRunsForJob returns the most recent verify runs across all restore
+// points that belong to the given job, newest first. This is used by the
+// ReliabilityDetector to detect a pass→fail regression in scheduled
+// verification runs.
+//
+// Verify runs are linked to jobs indirectly:
+//
+//	verify_runs → restore_points.restore_point_id → restore_points.job_id
+//
+// Status values observed in practice: "running", "passed", "failed",
+// "cancelled". The detector compares the newest two completed (non-running)
+// runs to detect a regression.
+func (d *DB) ListVerifyRunsForJob(jobID int64, limit int) ([]VerifyRun, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := d.Query(
+		`SELECT vr.id, vr.restore_point_id, vr.mode, vr.status,
+		        vr.files_checked, vr.files_failed, vr.bytes_read,
+		        vr.started_at, vr.completed_at, COALESCE(vr.error_summary, '')
+		FROM verify_runs vr
+		JOIN restore_points rp ON rp.id = vr.restore_point_id
+		WHERE rp.job_id = ?
+		ORDER BY vr.started_at DESC LIMIT ?`,
+		jobID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	out := make([]VerifyRun, 0, limit)
+	for rows.Next() {
+		var v VerifyRun
+		if err := rows.Scan(&v.ID, &v.RestorePointID, &v.Mode, &v.Status,
+			&v.FilesChecked, &v.FilesFailed, &v.BytesRead,
+			&v.StartedAt, &v.CompletedAt, &v.ErrorSummary); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // ListVerifyRunsForRestorePoint returns the most recent verify runs for a
 // given restore point, newest first.
 func (d *DB) ListVerifyRunsForRestorePoint(restorePointID int64, limit int) ([]VerifyRun, error) {
