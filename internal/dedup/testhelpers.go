@@ -94,6 +94,11 @@ func (f *FakeAdapter) GetCapacity(ctx context.Context) (storage.Capacity, error)
 	return storage.Capacity{Source: "fake"}, nil
 }
 
+// Usage is a no-op (in-memory adapter has no filesystem notion).
+func (f *FakeAdapter) Usage() (int64, int64, error) {
+	return 0, 0, storage.ErrUsageNotSupported
+}
+
 // NewTestRepoForEngine spins up a fresh DB + in-memory adapter + InitRepo'd
 // Repo for cross-package tests (e.g. internal/engine/folder_test.go). Returns
 // the Repo, the underlying fake adapter, and a cleanup callback. The caller

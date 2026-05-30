@@ -29,12 +29,17 @@ func (s *stubCapacityAdapter) Read(_ string) (io.ReadCloser, error) {
 func (s *stubCapacityAdapter) ReadRange(_ string, _, _ int64) (io.ReadCloser, error) {
 	return io.NopCloser(nil), nil
 }
-func (s *stubCapacityAdapter) Delete(_ string) error                      { return nil }
-func (s *stubCapacityAdapter) List(_ string) ([]storage.FileInfo, error)  { return nil, nil }
-func (s *stubCapacityAdapter) Stat(_ string) (storage.FileInfo, error)    { return storage.FileInfo{}, nil }
-func (s *stubCapacityAdapter) TestConnection() error                      { return s.testConnErr }
+func (s *stubCapacityAdapter) Delete(_ string) error                     { return nil }
+func (s *stubCapacityAdapter) List(_ string) ([]storage.FileInfo, error) { return nil, nil }
+func (s *stubCapacityAdapter) Stat(_ string) (storage.FileInfo, error) {
+	return storage.FileInfo{}, nil
+}
+func (s *stubCapacityAdapter) TestConnection() error { return s.testConnErr }
 func (s *stubCapacityAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
 	return s.cap, nil
+}
+func (s *stubCapacityAdapter) Usage() (int64, int64, error) {
+	return 0, 0, storage.ErrUsageNotSupported
 }
 
 // errCapacityAdapter is like stubCapacityAdapter but GetCapacity returns an error.
@@ -49,13 +54,14 @@ func (e *errCapacityAdapter) Read(_ string) (io.ReadCloser, error) {
 func (e *errCapacityAdapter) ReadRange(_ string, _, _ int64) (io.ReadCloser, error) {
 	return io.NopCloser(nil), nil
 }
-func (e *errCapacityAdapter) Delete(_ string) error                      { return nil }
-func (e *errCapacityAdapter) List(_ string) ([]storage.FileInfo, error)  { return nil, nil }
-func (e *errCapacityAdapter) Stat(_ string) (storage.FileInfo, error)    { return storage.FileInfo{}, nil }
-func (e *errCapacityAdapter) TestConnection() error                      { return nil }
+func (e *errCapacityAdapter) Delete(_ string) error                     { return nil }
+func (e *errCapacityAdapter) List(_ string) ([]storage.FileInfo, error) { return nil, nil }
+func (e *errCapacityAdapter) Stat(_ string) (storage.FileInfo, error)   { return storage.FileInfo{}, nil }
+func (e *errCapacityAdapter) TestConnection() error                     { return nil }
 func (e *errCapacityAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
 	return storage.Capacity{}, errors.New(e.msg)
 }
+func (e *errCapacityAdapter) Usage() (int64, int64, error) { return 0, 0, storage.ErrUsageNotSupported }
 
 // TestProbeCapacityPersistsAndBroadcasts verifies that a successful
 // GetCapacity probe stores the result in the DB and fires a

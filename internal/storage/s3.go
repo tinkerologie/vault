@@ -701,4 +701,12 @@ func (a *S3Adapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	}, nil
 }
 
+// Usage always returns ErrUsageNotSupported. S3 has no per-bucket free/total
+// space concept: AWS S3 buckets are effectively unlimited, and Backblaze B2 /
+// other S3-compatible services expose account-level quotas only through their
+// proprietary APIs, not the S3 protocol.
+func (a *S3Adapter) Usage() (free, total int64, err error) {
+	return 0, 0, ErrUsageNotSupported
+}
+
 var _ Adapter = (*S3Adapter)(nil)
