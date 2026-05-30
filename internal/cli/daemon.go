@@ -521,6 +521,7 @@ var daemonCmd = &cobra.Command{
 		if anomalyEvaluator != nil {
 			anomalyEvaluator.Start()
 			srv.Runner().SetEvaluator(anomalyEvaluator)
+			srv.SetAnomalyEvaluator(anomalyEvaluator)
 		}
 
 		// Heartbeat for external monitoring. Writes to a RAM-backed dir in

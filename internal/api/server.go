@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ruaan-deysel/vault/internal/anomaly"
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/replication"
@@ -42,6 +43,7 @@ type Server struct {
 	jobHandler         *handlers.JobHandler
 	storageHandler     *handlers.StorageHandler
 	replicationHandler *handlers.ReplicationHandler
+	anomalyHandler     *handlers.AnomalyHandler
 
 	// configChangeHook is called after any handler mutates persistent
 	// configuration. It flushes the DB to USB flash.
@@ -166,6 +168,17 @@ func (s *Server) SettingsHandler() *handlers.SettingsHandler {
 // BrowseHandler returns the browse handler for external configuration.
 func (s *Server) BrowseHandler() *handlers.BrowseHandler {
 	return s.browseHandler
+}
+
+// SetAnomalyEvaluator wires an anomaly.Evaluator into the anomaly handler
+// so that Ack/AckBulk endpoints also broadcast WebSocket events. Called from
+// daemon.go after buildAnomalyEvaluator returns a non-nil evaluator, during
+// synchronous startup before StartWithContext, so no mutex is needed on the
+// handler's acker field (matches the SetReplicationSyncer convention).
+func (s *Server) SetAnomalyEvaluator(ev *anomaly.Evaluator) {
+	if s.anomalyHandler != nil && ev != nil {
+		s.anomalyHandler.SetEvaluator(ev)
+	}
 }
 
 func (s *Server) StartWithContext(ctx context.Context) error {
