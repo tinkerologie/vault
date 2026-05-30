@@ -312,6 +312,26 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 	return runs, rows.Err()
 }
 
+// GetJobRun returns a single job run row by primary key.
+// Returns ErrNotFound when no row matches.
+func (d *DB) GetJobRun(id int64) (JobRun, error) {
+	var run JobRun
+	err := d.QueryRow(
+		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
+		items_total, items_done, items_failed, size_bytes,
+		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at
+		FROM job_runs WHERE id = ?`, id,
+	).Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
+		&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
+		&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
+		&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt)
+	if err == sql.ErrNoRows {
+		return run, ErrNotFound
+	}
+	return run, err
+}
+
 // PurgeJobRuns deletes all job run records and returns the count of deleted rows.
 func (d *DB) PurgeJobRuns() (int64, error) {
 	res, err := d.Exec("DELETE FROM job_runs")
