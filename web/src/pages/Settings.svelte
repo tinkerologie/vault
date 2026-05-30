@@ -905,7 +905,7 @@
             <select
               id="anomaly-sensitivity"
               bind:value={anomalySensitivityDefault}
-              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
             >
               <option value="strict">Strict — flag small deviations</option>
               <option value="balanced">Balanced — moderate threshold (recommended)</option>
@@ -921,7 +921,7 @@
             <select
               id="anomaly-notify-severity"
               bind:value={anomalyNotifyMinSeverity}
-              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
             >
               <option value="info">Info — notify on all anomalies</option>
               <option value="warning">Warning — skip informational</option>

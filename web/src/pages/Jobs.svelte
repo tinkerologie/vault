@@ -741,7 +741,7 @@
         <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 hover:shadow-sm transition-all {selectedJobs.has(job.id) ? 'ring-1 ring-vault/40' : ''}">
           <div class="flex items-start justify-between">
             <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-3">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <!-- Bulk checkbox -->
                 <input
                   type="checkbox"
