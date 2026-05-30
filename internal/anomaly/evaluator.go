@@ -140,7 +140,8 @@ func (e *Evaluator) Drain(ctx context.Context) error {
 }
 
 // evaluateRun is the main per-run pipeline: build context, run detectors,
-// refresh baseline. All errors are logged; none propagate to the caller.
+// resolve stale soft anomalies on a clean pass, then refresh baseline.
+// All errors are logged; none propagate to the caller.
 func (e *Evaluator) evaluateRun(runID int64) {
 	ec, err := e.buildContext(runID)
 	if err != nil {
@@ -148,8 +149,16 @@ func (e *Evaluator) evaluateRun(runID int64) {
 		return
 	}
 
+	var raised int
 	for _, det := range e.reg.PerRun() {
-		e.runDetector(det, ec)
+		raised += e.runDetector(det, ec)
+	}
+
+	// Auto-resolve stale info/warning anomalies only when this pass was clean
+	// (no detector raised a new anomaly). A run that fires detectors is not
+	// clean, so we preserve the newly-raised rows.
+	if raised == 0 {
+		e.resolveSoftAnomalies(runID)
 	}
 
 	e.refreshBaseline(ec)
@@ -157,7 +166,8 @@ func (e *Evaluator) evaluateRun(runID int64) {
 
 // runDetector calls a single detector, recovering from panics so that one
 // broken detector cannot prevent the others from running.
-func (e *Evaluator) runDetector(det Detector, ec EvalContext) {
+// Returns len(anomalies) as reported by Evaluate(); 0 on error or panic.
+func (e *Evaluator) runDetector(det Detector, ec EvalContext) (raised int) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("ERROR anomaly: detector %q panicked: %v\n%s",
@@ -168,62 +178,35 @@ func (e *Evaluator) runDetector(det Detector, ec EvalContext) {
 	anomalies, err := det.Evaluate(ec)
 	if err != nil {
 		log.Printf("WARN anomaly: detector %q: %v", det.Name(), err)
-		return
+		return 0
 	}
 	for _, a := range anomalies {
 		e.persist(a)
 	}
+	return len(anomalies)
 }
 
-// persist saves a newly-detected anomaly.
+// broadcastAnomaly broadcasts a single-anomaly event to the WebSocket hub.
+func (e *Evaluator) broadcastAnomaly(eventType string, a Anomaly) {
+	e.broadcastData(eventType, a)
+}
+
+// broadcastData marshals an arbitrary event payload as {"type": eventType,
+// "data": data} and sends it to the WebSocket hub. Used for both single-anomaly
+// events and summary events (e.g. bulk acknowledge/resolve) so the latter don't
+// have to ship a mostly-empty Anomaly struct.
 //
-// MINIMAL implementation for Task 5: sets State=open and timestamps, then
-// calls InsertOpenAnomaly. On a fresh insert it broadcasts "anomaly.raised".
-// If the row already exists (already-open conflict), this is a no-op here —
-// Task 6 will add refresh + escalation logic.
-func (e *Evaluator) persist(a Anomaly) {
-	now := e.clock.Now()
-
-	a.State = StateOpen
-	if a.FirstSeenAt.IsZero() {
-		a.FirstSeenAt = now
-	}
-	a.LastSeenAt = now
-
-	inserted, err := e.db.InsertOpenAnomaly(ToDB(a))
-	if err != nil {
-		log.Printf("ERROR anomaly: persist %q: %v", a.Fingerprint, err)
-		return
-	}
-
-	if !inserted {
-		// Already-open conflict: no-op. Task 6 adds refresh + escalation.
-		return
-	}
-
-	// Fetch the persisted row to get the auto-assigned primary key ID.
-	row, fetchErr := e.db.GetOpenAnomalyByFingerprint(a.Fingerprint)
-	if fetchErr != nil {
-		// Non-fatal: broadcast with the data we have (ID will be 0).
-		log.Printf("WARN anomaly: persist fetch after insert %q: %v", a.Fingerprint, fetchErr)
-		e.broadcastAnomaly("anomaly.raised", a)
-		return
-	}
-	e.broadcastAnomaly("anomaly.raised", FromDB(row))
-}
-
-// broadcastAnomaly marshals an anomaly event and sends it to the WebSocket hub.
 // The real *ws.Hub.Broadcast sends on a buffered channel (cap 256); it only
 // blocks when 256 messages are already queued, an extremely rare scenario.
 // In tests, the stub broadcaster is always non-blocking.
-func (e *Evaluator) broadcastAnomaly(eventType string, a Anomaly) {
+func (e *Evaluator) broadcastData(eventType string, data any) {
 	if e.hub == nil {
 		return
 	}
 
 	payload := map[string]any{
 		"type": eventType,
-		"data": a,
+		"data": data,
 	}
 	msg, err := json.Marshal(payload)
 	if err != nil {
@@ -285,6 +268,10 @@ func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 		CapacitySamples:   nil, // per-run detectors don't need capacity samples
 		GlobalSensitivity: sensitivity,
 		Clock:             e.clock,
+		floorLookup: func(fp string) float64 {
+			f, _ := e.db.ExpectedFloor(fp)
+			return f
+		},
 	}, nil
 }
 
