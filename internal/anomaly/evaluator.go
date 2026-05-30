@@ -268,11 +268,18 @@ func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 		CapacitySamples:   nil, // per-run detectors don't need capacity samples
 		GlobalSensitivity: sensitivity,
 		Clock:             e.clock,
-		floorLookup: func(fp string) float64 {
-			f, _ := e.db.ExpectedFloor(fp)
-			return f
-		},
+		floorLookup:       e.floorLookupFunc(),
 	}, nil
+}
+
+// floorLookupFunc returns the closure used to populate EvalContext.floorLookup.
+// Shared by buildContext (per-run) and EvaluateTrendDetectors (trend) so both
+// paths resolve the user-acknowledged "expected" floor identically.
+func (e *Evaluator) floorLookupFunc() func(string) float64 {
+	return func(fp string) float64 {
+		f, _ := e.db.ExpectedFloor(fp)
+		return f
+	}
 }
 
 // refreshBaseline recomputes and upserts the job baseline from recent runs.
