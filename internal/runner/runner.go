@@ -92,6 +92,17 @@ type restoreProgressReporter struct {
 	ItemsTotal  int
 }
 
+// anomalyEnqueuer is the subset of *anomaly.Evaluator used by Runner.
+// Defined as an interface so:
+//   - runner does not need to import the anomaly package (avoiding a potential
+//     import cycle if anomaly ever needs something from runner in the future),
+//   - tests can inject a lightweight fake without spinning up a real Evaluator.
+//
+// The real *anomaly.Evaluator satisfies this interface automatically.
+type anomalyEnqueuer interface {
+	EnqueueRun(runID int64)
+}
+
 // Runner executes backup and restore operations for jobs.
 type Runner struct {
 	db              *db.DB
@@ -100,6 +111,12 @@ type Runner struct {
 	snapshotManager *db.SnapshotManager
 	breaker         *Breaker
 	mu              sync.Mutex
+
+	// evaluator is an optional anomaly evaluator. When non-nil, EnqueueRun is
+	// called (non-blocking) after every run completes so the anomaly engine can
+	// inspect the run asynchronously. Nil means anomaly detection is disabled
+	// for this Runner (e.g. in unit tests that don't need it).
+	evaluator anomalyEnqueuer
 
 	// statusMu protects the live run status fields below.
 	statusMu   sync.RWMutex
@@ -372,6 +389,18 @@ func (r *Runner) SetSnapshotManager(sm *db.SnapshotManager) {
 	r.snapshotManager = sm
 }
 
+// SetEvaluator wires an anomaly evaluator into the runner. After each
+// completed run (success, failure, partial, cancelled, or panic), the
+// runner calls e.EnqueueRun(runID) so the anomaly engine can inspect the
+// run asynchronously. The call is non-blocking by contract (the real
+// *anomaly.Evaluator.EnqueueRun uses a buffered channel with drop-oldest
+// semantics). Passing nil disables anomaly evaluation (the default).
+func (r *Runner) SetEvaluator(e anomalyEnqueuer) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.evaluator = e
+}
+
 // RunJob executes a backup for the given job ID. It is safe to call from
 // a goroutine. It creates the job_run record, performs backups for each item,
 // updates progress via WebSocket, and creates restore points on success.
@@ -592,6 +621,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				"run_id": runID,
 				"status": "failed",
 			})
+			// Trigger anomaly evaluation even for panicked runs; the
+			// reliability detector needs to know about all failures.
+			// EnqueueRun is non-blocking by contract.
+			if r.evaluator != nil {
+				r.evaluator.EnqueueRun(runID)
+			}
 		}
 	}()
 
@@ -1439,6 +1474,17 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		"items_failed": itemsFailed,
 		"size_bytes":   totalSize,
 	})
+
+	// Trigger anomaly evaluation for this run. The evaluator inspects the
+	// persisted run record asynchronously (on its own worker goroutine) so it
+	// sees completed, failed, partial, and cancelled runs alike — the
+	// reliability detector in particular needs failure runs to build its
+	// signal. EnqueueRun is non-blocking by contract (buffered channel send
+	// with drop-oldest semantics), so calling it directly here does not delay
+	// the runner.
+	if r.evaluator != nil {
+		r.evaluator.EnqueueRun(runID)
+	}
 
 	log.Printf("runner: job %d run %d finished: %s (done=%d, failed=%d, size=%d)",
 		jobID, runID, status, itemsDone, itemsFailed, totalSize)
