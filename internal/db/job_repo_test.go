@@ -32,6 +32,72 @@ func TestCreateAndGetJob(t *testing.T) {
 	}
 }
 
+func TestJobAnomalySensitivityRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})
+
+	id, err := d.CreateJob(Job{
+		Name: "anomaly-job", StorageDestID: destID, BackupTypeChain: "full",
+	})
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+
+	// Defaults to "" on create (DB column DEFAULT '').
+	got, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("Get error = %v", err)
+	}
+	if got.AnomalySensitivity != "" {
+		t.Errorf("AnomalySensitivity after create = %q, want \"\"", got.AnomalySensitivity)
+	}
+
+	// Set via UpdateJob and confirm it round-trips through GetJob.
+	got.AnomalySensitivity = "strict"
+	if err := d.UpdateJob(got); err != nil {
+		t.Fatalf("Update error = %v", err)
+	}
+	got2, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("GetJob after update error = %v", err)
+	}
+	if got2.AnomalySensitivity != "strict" {
+		t.Errorf("AnomalySensitivity after update = %q, want \"strict\"", got2.AnomalySensitivity)
+	}
+
+	// A subsequent unrelated update (changing the name) must preserve the
+	// previously-set sensitivity, not clobber it back to "".
+	got2.Name = "anomaly-job-renamed"
+	if err := d.UpdateJob(got2); err != nil {
+		t.Fatalf("Update (rename) error = %v", err)
+	}
+	got3, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("GetJob after rename error = %v", err)
+	}
+	if got3.AnomalySensitivity != "strict" {
+		t.Errorf("AnomalySensitivity after unrelated update = %q, want \"strict\" (clobbered)", got3.AnomalySensitivity)
+	}
+
+	// ListJobs round-trip also returns the value.
+	jobs, err := d.ListJobs()
+	if err != nil {
+		t.Fatalf("ListJobs error = %v", err)
+	}
+	found := false
+	for _, j := range jobs {
+		if j.ID == id {
+			found = true
+			if j.AnomalySensitivity != "strict" {
+				t.Errorf("ListJobs AnomalySensitivity = %q, want \"strict\"", j.AnomalySensitivity)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("ListJobs did not return job with ID %d", id)
+	}
+}
+
 func TestJobDeferRemoteUploadRoundTrip(t *testing.T) {
 	d := setupTestDB(t)
 	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})

@@ -28,6 +28,7 @@ func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 		COALESCE(backup_database_enabled, 0),
 		capacity_total_bytes, capacity_used_bytes, capacity_free_bytes, capacity_probed_at,
 		COALESCE(capacity_source, ''), COALESCE(capacity_error, ''),
+		COALESCE(anomaly_sensitivity, ''),
 		created_at, updated_at
 		FROM storage_destinations WHERE id = ?`, id,
 	).Scan(&dest.ID, &dest.Name, &dest.Type, &dest.Config, &dest.DedupEnabled,
@@ -36,6 +37,7 @@ func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 		&dest.BackupDatabaseEnabled,
 		&dest.CapacityTotalBytes, &dest.CapacityUsedBytes, &dest.CapacityFreeBytes, &dest.CapacityProbedAt,
 		&dest.CapacitySource, &dest.CapacityError,
+		&dest.AnomalySensitivity,
 		&dest.CreatedAt, &dest.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return dest, ErrNotFound
@@ -53,6 +55,7 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 		COALESCE(backup_database_enabled, 0),
 		capacity_total_bytes, capacity_used_bytes, capacity_free_bytes, capacity_probed_at,
 		COALESCE(capacity_source, ''), COALESCE(capacity_error, ''),
+		COALESCE(anomaly_sensitivity, ''),
 		created_at, updated_at
 		FROM storage_destinations ORDER BY name`)
 	if err != nil {
@@ -68,6 +71,7 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 			&dest.BackupDatabaseEnabled,
 			&dest.CapacityTotalBytes, &dest.CapacityUsedBytes, &dest.CapacityFreeBytes, &dest.CapacityProbedAt,
 			&dest.CapacitySource, &dest.CapacityError,
+			&dest.AnomalySensitivity,
 			&dest.CreatedAt, &dest.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -160,9 +164,11 @@ func nullableInt64(v int64) any {
 func (d *DB) UpdateStorageDestination(dest StorageDestination) error {
 	_, err := d.Exec(
 		`UPDATE storage_destinations
-		 SET name=?, type=?, config=?, dedup_enabled=?, backup_database_enabled=?, updated_at=CURRENT_TIMESTAMP
+		 SET name=?, type=?, config=?, dedup_enabled=?, backup_database_enabled=?,
+		     anomaly_sensitivity=?, updated_at=CURRENT_TIMESTAMP
 		 WHERE id=?`,
-		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.BackupDatabaseEnabled, dest.ID,
+		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.BackupDatabaseEnabled,
+		dest.AnomalySensitivity, dest.ID,
 	)
 	return err
 }
