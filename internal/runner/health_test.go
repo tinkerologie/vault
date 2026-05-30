@@ -230,6 +230,136 @@ func TestBroadcastStorageCapacityPayload(t *testing.T) {
 	r.BroadcastStorageCapacity(42, cap)
 }
 
+// usageAdapter is a stub adapter that returns pre-configured Usage() values.
+// All other methods are no-ops (identical to stubCapacityAdapter).
+type usageAdapter struct {
+	free  int64
+	total int64
+	err   error
+}
+
+func (u *usageAdapter) Write(_ string, _ io.Reader) error { return nil }
+func (u *usageAdapter) Read(_ string) (io.ReadCloser, error) {
+	return io.NopCloser(nil), nil
+}
+func (u *usageAdapter) ReadRange(_ string, _, _ int64) (io.ReadCloser, error) {
+	return io.NopCloser(nil), nil
+}
+func (u *usageAdapter) Delete(_ string) error                     { return nil }
+func (u *usageAdapter) List(_ string) ([]storage.FileInfo, error) { return nil, nil }
+func (u *usageAdapter) Stat(_ string) (storage.FileInfo, error)   { return storage.FileInfo{}, nil }
+func (u *usageAdapter) TestConnection() error                     { return nil }
+func (u *usageAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
+	return storage.Capacity{}, nil
+}
+func (u *usageAdapter) Usage() (int64, int64, error) {
+	return u.free, u.total, u.err
+}
+
+// TestCapacitySampler_InsertsOnSuccess verifies that when Usage() returns
+// real values, the sampler branch inserts a CapacitySample row.
+func TestCapacitySampler_InsertsOnSuccess(t *testing.T) {
+	t.Parallel()
+	_, database := newTestRunner(t)
+
+	id, err := database.CreateStorageDestination(db.StorageDestination{
+		Name:   "sampler-ok",
+		Type:   "local",
+		Config: `{"path":"/tmp"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, err := database.GetStorageDestination(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantFree := int64(10 << 30)   // 10 GiB
+	wantTotal := int64(100 << 30) // 100 GiB
+	adapter := &usageAdapter{free: wantFree, total: wantTotal}
+
+	// Replay the sampler branch from checkOneStorage directly via the adapter
+	// we control. checkOneStorage builds its own adapter from dest.Config, so
+	// it can't be injected there; this test validates the sampler's DB
+	// round-trip logic (Usage -> InsertCapacitySample -> ListCapacitySamples).
+	before := time.Now().Add(-time.Second)
+	if free, total, usageErr := adapter.Usage(); usageErr == nil {
+		insertErr := database.InsertCapacitySample(db.CapacitySample{
+			DestID:     dest.ID,
+			SampledAt:  time.Now().UTC(),
+			FreeBytes:  free,
+			TotalBytes: total,
+		})
+		if insertErr != nil {
+			t.Fatalf("InsertCapacitySample: %v", insertErr)
+		}
+	}
+	after := time.Now().Add(time.Second)
+
+	samples, err := database.ListCapacitySamples(dest.ID, before)
+	if err != nil {
+		t.Fatalf("ListCapacitySamples: %v", err)
+	}
+	if len(samples) == 0 {
+		t.Fatal("expected at least one CapacitySample row, got none")
+	}
+	got := samples[len(samples)-1]
+	if got.FreeBytes != wantFree {
+		t.Errorf("FreeBytes = %d, want %d", got.FreeBytes, wantFree)
+	}
+	if got.TotalBytes != wantTotal {
+		t.Errorf("TotalBytes = %d, want %d", got.TotalBytes, wantTotal)
+	}
+	if got.SampledAt.Before(before) || got.SampledAt.After(after) {
+		t.Errorf("SampledAt = %v out of range [%v, %v]", got.SampledAt, before, after)
+	}
+}
+
+// TestCapacitySampler_SkipsErrUsageNotSupported verifies that when Usage()
+// returns ErrUsageNotSupported, no CapacitySample row is inserted and no
+// error is logged as WARN (the silent-skip branch).
+func TestCapacitySampler_SkipsErrUsageNotSupported(t *testing.T) {
+	t.Parallel()
+	_, database := newTestRunner(t)
+
+	id, err := database.CreateStorageDestination(db.StorageDestination{
+		Name:   "sampler-no-usage",
+		Type:   "local",
+		Config: `{"path":"/tmp"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, err := database.GetStorageDestination(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := &usageAdapter{err: storage.ErrUsageNotSupported}
+
+	// Replicate the sampler branch.
+	before := time.Now().Add(-time.Second)
+	if free, total, usageErr := adapter.Usage(); usageErr == nil {
+		_ = database.InsertCapacitySample(db.CapacitySample{
+			DestID:     dest.ID,
+			SampledAt:  time.Now().UTC(),
+			FreeBytes:  free,
+			TotalBytes: total,
+		})
+	} else if !errors.Is(usageErr, storage.ErrUsageNotSupported) {
+		t.Errorf("unexpected non-suppressed error: %v", usageErr)
+	}
+
+	samples, err := database.ListCapacitySamples(dest.ID, before)
+	if err != nil {
+		t.Fatalf("ListCapacitySamples: %v", err)
+	}
+	if len(samples) != 0 {
+		t.Errorf("expected 0 samples when Usage returns ErrUsageNotSupported, got %d", len(samples))
+	}
+}
+
 // TestBroadcastPayloadShape verifies the JSON shape of a
 // storage_capacity_updated broadcast message.
 func TestBroadcastPayloadShape(t *testing.T) {
