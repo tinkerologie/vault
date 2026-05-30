@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 type Importance string
@@ -19,6 +21,23 @@ const (
 )
 
 const notifyScriptPath = "/usr/local/emhttp/webGui/scripts/notify"
+
+// notifyExecTimeout bounds how long we wait for the Unraid notify helper
+// process to complete. Without a timeout, a wedged helper would block the
+// caller (the backup runner) indefinitely, keeping the dashboard stuck in
+// "Backup in Progress" and preventing all future jobs from starting (issue #112).
+const notifyExecTimeout = 30 * time.Second
+
+// runNotifyCommand executes the notify helper at path with args, bounded by
+// ctx. Extracted so tests can exercise the timeout path without a real Unraid
+// host.
+//
+// aikido-ignore-next-line AIK_go_G204 -- argv-style invocation of a constant binary path; no shell.
+func runNotifyCommand(ctx context.Context, path string, args []string) error {
+	// #nosec G204 //nolint:gosec // path is a compile-time constant (notifyScriptPath); args are argv entries
+	cmd := exec.CommandContext(ctx, path, args...)
+	return cmd.Run()
+}
 
 func Send(event, subject, description string, importance Importance) error {
 	if runtime.GOOS != "linux" {
@@ -45,9 +64,14 @@ func Send(event, subject, description string, importance Importance) error {
 		"-d", description,
 		"-i", string(importance),
 	}
-	// aikido-ignore-next-line AIK_go_G204 -- argv-style invocation of a constant binary path; no shell.
-	cmd := exec.Command(notifyScriptPath, args...) // #nosec G204 //nolint:gosec // notifyScriptPath is a compile-time constant; args are argv entries
-	if err := cmd.Run(); err != nil {
+
+	ctx, cancel := context.WithTimeout(context.Background(), notifyExecTimeout)
+	defer cancel()
+
+	if err := runNotifyCommand(ctx, notifyScriptPath, args); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("notify helper timed out after %s: %w", notifyExecTimeout, err)
+		}
 		return fmt.Errorf("send notification: %w", err)
 	}
 	return nil

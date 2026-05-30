@@ -14,6 +14,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 ## Features
 
 **Backup sources**
+
 - Docker containers — image, XML template, and every mapped appdata volume; per-container path exclusions
 - libvirt VMs — live snapshot or cold mode, with NVRAM preservation
 - ZFS datasets — native `zfs send`/`receive` with snapshot management
@@ -21,12 +22,14 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 - Stale-item detection — flags items that disappear from the host so jobs stay clean
 
 **Storage destinations**
+
 - Local, SFTP, SMB, NFS, WebDAV, and S3-compatible (AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi, MEGA, IDrive E2)
 - Bandwidth throttling per remote destination
 - Test-connection and storage-health probes
 - Scan + import for backups produced by other Vault instances or AppData Backup
 
 **Backup strategy**
+
 - Full, incremental, and differential chains
 - Simple-count retention or Grandfather-Father-Son (`keep_latest`/`daily`/`weekly`/`monthly`/`yearly`)
 - AES-256-GCM encryption with per-passphrase key derivation
@@ -35,17 +38,20 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 - Per-job notifications (success/failure) via Discord webhook
 
 **Scheduling**
+
 - Cron, hourly/daily/weekly/monthly/yearly presets, plus "first/last day of month"
 - 4-hour hard timeout and 2-hour stall watchdog per job
 - Cancellation propagated end-to-end (file I/O, traversal, engine handlers)
 
 **Web UI**
+
 - Dashboard, Jobs, Restore, Storage, History, Replication, Recovery, Logs, Settings
 - Live WebSocket progress streaming and runner queue visibility
 - Light/dark themes with mobile-responsive layout
 - Recovery plan that explains how to rebuild from scratch
 
 **Integration**
+
 - REST API at `/api/v1` with token-based auth for non-loopback callers
 - MCP server (streamable HTTP + stdio) for Claude Desktop, Claude Code, and other AI tooling
 - Hybrid SQLite snapshot (RAM working DB + persistent snapshot + USB shadow) survives reboots
@@ -69,21 +75,22 @@ https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
 
 1. **Add Storage** — Go to the Storage page and configure a backup destination (local, SFTP, SMB, NFS, WebDAV, or S3)
 2. **Create a Job** — Go to the Jobs page, pick what to back up, choose a schedule, and set retention
-3. **Run Backup** — Click *Run Now* or wait for the schedule
+3. **Run Backup** — Click _Run Now_ or wait for the schedule
 4. **Monitor** — Watch live progress on the Dashboard or check the History page for results
 
 ## Documentation
 
-| Document                                                         | Description                                       |
-| ---------------------------------------------------------------- | ------------------------------------------------- |
-| [Getting Started](docs/getting-started.md)                       | Visual walkthrough of the web UI with screenshots |
-| [Backup Jobs](docs/guides/backup-jobs.md)                        | Job options, scheduling, retention, restore       |
-| [Storage Destinations](docs/guides/storage-destinations.md)      | Per-backend configuration with provider notes     |
-| [API Reference](docs/api.md)                                     | Full REST API endpoint reference                  |
-| [MCP Integration](docs/mcp.md)                                   | Model Context Protocol server for AI tools        |
-| [Home Assistant Integration](docs/home-assistant-integration.md) | Sensors, automations, and dashboard cards         |
-| [Architecture](docs/architecture.md)                             | Project structure, build commands, deployment     |
-| [Changelog](CHANGELOG.md)                                        | Release notes by version                          |
+| Document                                                         | Description                                           |
+| ---------------------------------------------------------------- | ----------------------------------------------------- |
+| [Getting Started](docs/getting-started.md)                       | Visual walkthrough of the web UI with screenshots     |
+| [Backup Jobs](docs/guides/backup-jobs.md)                        | Job options, scheduling, retention, restore           |
+| [Storage Destinations](docs/guides/storage-destinations.md)      | Per-backend configuration with provider notes         |
+| [Anomaly Detection](docs/guides/anomaly-detection.md)            | Drift/reliability/capacity alerts + baseline learning |
+| [API Reference](docs/api.md)                                     | Full REST API endpoint reference                      |
+| [MCP Integration](docs/mcp.md)                                   | Model Context Protocol server for AI tools            |
+| [Home Assistant Integration](docs/home-assistant-integration.md) | Sensors, automations, and dashboard cards             |
+| [Architecture](docs/architecture.md)                             | Project structure, build commands, deployment         |
+| [Changelog](CHANGELOG.md)                                        | Release notes by version                              |
 
 ## Requirements
 

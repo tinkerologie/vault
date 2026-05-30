@@ -144,6 +144,19 @@ type Runner struct {
 	draining    bool
 }
 
+// Finalization step timeouts (issue #112). Each blocking call that runs after
+// a backup completes is wrapped with runFinalizationStep so a single hung step
+// cannot hold the run-slot mutex indefinitely. These constants name the
+// per-step limits: generous enough for normal slow storage but bounded so the
+// runner always eventually releases r.mu and lets the next job proceed.
+const (
+	finalizeManifestTimeout  = 5 * time.Minute
+	finalizeDBBackupTimeout  = 5 * time.Minute
+	finalizeSnapshotTimeout  = 5 * time.Minute
+	finalizeRetentionTimeout = 10 * time.Minute
+	finalizeNotifyTimeout    = 2 * time.Minute
+)
+
 // New creates a new Runner.
 func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 	r := &Runner{
@@ -399,6 +412,25 @@ func (r *Runner) SetEvaluator(e anomalyEnqueuer) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.evaluator = e
+}
+
+// runFinalizationStep runs a post-backup finalization step with a hard
+// timeout so a single wedged step (e.g. a hung USB flush, dead remote
+// storage, or stuck notify helper) cannot hold the run-slot lock — and
+// thus block every future job — indefinitely. On timeout it logs a clear
+// ERROR naming the step and returns; the step's goroutine is abandoned
+// (the underlying op may still complete or leak, but the runner proceeds
+// and releases the slot). Components used by steps (SnapshotManager via its
+// own mutex, the DB pool, per-job retention) are safe for this.
+func (r *Runner) runFinalizationStep(name string, jobID, runID int64, timeout time.Duration, fn func()) {
+	done := make(chan struct{})
+	go func() { defer close(done); fn() }()
+	select {
+	case <-done:
+		return
+	case <-time.After(timeout):
+		log.Printf("ERROR runner: finalization step %q for job %d run %d exceeded %s; abandoning and continuing so the run slot is not held indefinitely (issue #112)", name, jobID, runID, timeout)
+	}
 }
 
 // RunJob executes a backup for the given job ID. It is safe to call from
@@ -1335,6 +1367,15 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		log.Printf("runner: failed to update job run %d: %v", runID, err)
 	}
 
+	// Fix #112 — clear the live "in progress" dashboard status the moment the
+	// run is logically complete and persisted to the DB. The deferred
+	// setRunStatus(nil) at the top of this function remains as an idempotent
+	// safety net, but clearing here ensures the Dashboard reflects completion
+	// even if a slow or stuck finalization step (database backup, snapshot
+	// flush, retention enforcement, or notification) delays the function return.
+	log.Printf("runner: job %d run %d logically complete (%s); finalizing", jobID, runID, status)
+	r.setRunStatus(nil)
+
 	// Record breaker outcome based on final job status. "completed" or
 	// "partial" runs count as a destination success (the storage was
 	// reachable end-to-end); "failed" counts as a destination failure.
@@ -1425,30 +1466,57 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		// Write manifest.json to storage for out-of-band recovery. For dedup
 		// destinations we include itemManifests so a re-import on another
 		// instance can resolve per-item chunks via the dedup repo.
-		r.writeManifest(dest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, itemManifests, timestamp)
+		// Wrapped with a hard timeout (Fix #112): writeManifest opens its own
+		// storage adapter and could hang on a dead remote, which would hold the
+		// run-slot mutex indefinitely. The restore point row is already
+		// persisted (CreateRestorePoint above), so a bounded/abandoned manifest
+		// write only degrades out-of-band recovery, not normal DB-driven restore.
+		manifestDest := dest // stable copy for closure
+		r.runFinalizationStep("manifest", jobID, runID, finalizeManifestTimeout, func() {
+			r.writeManifest(manifestDest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, itemManifests, timestamp)
+		})
 
-		// Auto-backup the SQLite database to a centralized storage location.
-		r.backupDatabase(dest)
+		// Auto-backup the SQLite database to a centralised storage location.
+		// Wrapped with a hard timeout (Fix #112) so a stuck remote write cannot
+		// hold the run-slot mutex indefinitely.
+		localDest := dest // stable copy for closure
+		r.runFinalizationStep("database-backup", jobID, runID, finalizeDBBackupTimeout, func() {
+			r.backupDatabase(localDest)
+		})
 
 		// Persist database to cache drive and USB backup after successful backup.
 		// r.mu is already held by RunJob (line 289), so access snapshotManager
-		// directly without re-locking.
+		// directly without re-locking. Wrapped with a hard timeout (Fix #112).
 		sm := r.snapshotManager
 		if sm != nil {
-			if err := sm.SaveSnapshotAndUSBBackup(); err != nil {
-				log.Printf("runner: snapshot save error: %v", err)
-			}
+			r.runFinalizationStep("snapshot-usb", jobID, runID, finalizeSnapshotTimeout, func() {
+				if err := sm.SaveSnapshotAndUSBBackup(); err != nil {
+					log.Printf("runner: snapshot save error: %v", err)
+				}
+			})
 		}
 	}
 
 	gfs := gfsPolicyFromJob(job)
 	if gfs.IsActive() {
-		r.enforceRetentionGFS(dest, jobID, gfs)
+		// Wrapped with a hard timeout (Fix #112).
+		localDest := dest
+		localGFS := gfs
+		r.runFinalizationStep("retention-gfs", jobID, runID, finalizeRetentionTimeout, func() {
+			r.enforceRetentionGFS(localDest, jobID, localGFS)
+		})
 	} else if job.RetentionCount > 0 || job.RetentionDays > 0 {
-		r.enforceRetention(dest, jobID, job.RetentionCount, job.RetentionDays)
+		// Wrapped with a hard timeout (Fix #112).
+		localDest := dest
+		keepCount := job.RetentionCount
+		keepDays := job.RetentionDays
+		r.runFinalizationStep("retention", jobID, runID, finalizeRetentionTimeout, func() {
+			r.enforceRetention(localDest, jobID, keepCount, keepDays)
+		})
 	}
 
-	// Execute post-script if configured.
+	// Execute post-script if configured. runScript already enforces
+	// defaultScriptTimeout internally — no additional wrapper needed.
 	if job.PostScript != "" {
 		log.Printf("runner: job %d executing post-script: %s", jobID, job.PostScript)
 		output, err := runScript(job.PostScript, defaultScriptTimeout)
@@ -1465,6 +1533,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}
 	}
 
+	// broadcast, EnqueueRun, and logActivity are non-blocking / fast — no
+	// timeout wrapper needed.
 	r.broadcast(map[string]any{
 		"type":         "job_run_completed",
 		"job_id":       jobID,
@@ -1500,8 +1570,20 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			"failed_items": failedNames,
 		}))
 
-	// Send Unraid + Discord notifications based on job's notify_on setting.
-	r.sendNotification(job, status, itemsDone, itemsFailed, totalSize, int(time.Since(jobStart).Seconds()), failedNames)
+	// Send Unraid + Discord notifications. notify.Send is now bounded (30s
+	// exec timeout). Belt-and-braces: wrap the whole sendNotification call in
+	// runFinalizationStep so any other delay (Discord HTTP, DB lookup) is also
+	// bounded. Captures all needed locals in stable copies.
+	localJob := job
+	localStatus := status
+	localDone := itemsDone
+	localFailed := itemsFailed
+	localSize := totalSize
+	localDurationSec := int(time.Since(jobStart).Seconds())
+	localFailedNames := failedNames
+	r.runFinalizationStep("notify", jobID, runID, finalizeNotifyTimeout, func() {
+		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDurationSec, localFailedNames)
+	})
 }
 
 // newHandler instantiates the engine handler for the given backup item type.
