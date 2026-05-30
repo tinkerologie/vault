@@ -211,6 +211,7 @@
       storage_dest_id: 0,
       retry_max_override: '',
       retry_delays_override: '',
+      anomaly_sensitivity: '',
       items: [],
       selectedTypes: [],
     }
@@ -446,6 +447,7 @@
         // trip them back to null on save when blank.
         retry_max_override: data.job.retry_max_override == null ? '' : String(data.job.retry_max_override),
         retry_delays_override: data.job.retry_delays_override == null ? '' : String(data.job.retry_delays_override),
+        anomaly_sensitivity: data.job.anomaly_sensitivity || '',
         items: data.items || [],
         selectedTypes: deriveTypesFromItems(data.items || []),
       }
@@ -552,6 +554,7 @@
         defer_remote_upload: fullJob.defer_remote_upload ?? false,
         retry_max_override: fullJob.retry_max_override == null ? '' : String(fullJob.retry_max_override),
         retry_delays_override: fullJob.retry_delays_override == null ? '' : String(fullJob.retry_delays_override),
+        anomaly_sensitivity: fullJob.anomaly_sensitivity || '',
         enabled: false,
         items: (data.items || []).map(i => ({
           item_type: i.item_type,
@@ -1204,6 +1207,29 @@
               <div class="block text-xs font-medium text-text-muted mb-1">Delays between retries <span class="text-text-dim">(blank = global)</span></div>
               <RetryDelaysEditor bind:value={form.retry_delays_override} placeholder="Use global default" />
             </div>
+          </div>
+        </details>
+
+        <!-- Advanced: Anomaly sensitivity override (Task 19) -->
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Anomaly sensitivity <Tooltip text="Override the global anomaly detection sensitivity for this job. '(default)' uses the value configured in Settings → General." />
+          </summary>
+          <div class="mt-3 pl-6">
+            <label for="anomaly-sensitivity-override" class="block text-xs font-medium text-text-muted mb-1">
+              Sensitivity <span class="text-text-dim">(blank = global default)</span>
+            </label>
+            <select
+              id="anomaly-sensitivity-override"
+              bind:value={form.anomaly_sensitivity}
+              class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+            >
+              <option value="">(default)</option>
+              <option value="strict">Strict — flag small deviations</option>
+              <option value="balanced">Balanced</option>
+              <option value="permissive">Permissive — flag large deviations only</option>
+            </select>
           </div>
         </details>
 

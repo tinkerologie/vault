@@ -171,6 +171,10 @@
       snapshotPathInput = dbInfo?.snapshot_path_override || ''
       retryMax = s?.retry_max_default ?? ''
       retryDelays = s?.retry_delays_default ?? ''
+      // Anomaly detection settings (Task 19)
+      anomalyEnabled = s?.anomaly_detection_enabled !== 'false'
+      anomalySensitivityDefault = s?.anomaly_sensitivity_default || 'balanced'
+      anomalyNotifyMinSeverity = s?.anomaly_notify_min_severity || 'critical'
       // Stored as a fraction "0.0".."1.0"; UI shows it as an integer percentage 0..100.
       const rawRatio = s?.dedup_compaction_min_dead_ratio
       if (rawRatio !== undefined && rawRatio !== null && rawRatio !== '') {
@@ -601,6 +605,28 @@
   let folderBackupOn = $derived(settings.folder_backup_enabled !== 'false')
   let flashBackupOn = $derived(settings.flash_backup_enabled !== 'false')
 
+  // Anomaly detection settings state (Task 19)
+  let anomalyEnabled = $state(true)
+  let anomalySensitivityDefault = $state('balanced')
+  let anomalyNotifyMinSeverity = $state('critical')
+  let anomalySaving = $state(false)
+
+  async function saveAnomalySettings() {
+    anomalySaving = true
+    try {
+      settings = await api.updateSettings({
+        anomaly_detection_enabled: anomalyEnabled ? 'true' : 'false',
+        anomaly_sensitivity_default: anomalySensitivityDefault,
+        anomaly_notify_min_severity: anomalyNotifyMinSeverity,
+      })
+      showToast('Anomaly detection settings saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      anomalySaving = false
+    }
+  }
+
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
@@ -841,6 +867,79 @@
                 {compactionSaving ? 'Saving…' : 'Save'}
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Anomaly Detection -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Anomaly Detection <Tooltip text="Vault monitors backup size, duration, and reliability for statistical anomalies. Anomalies are surfaced in the Anomalies page and optionally sent as notifications." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">Automatically detect unusual patterns in backup behaviour.</p>
+        </div>
+        <div class="divide-y divide-border">
+          <!-- Enabled toggle -->
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">Anomaly detection enabled</p>
+              <p class="text-xs text-text-muted mt-0.5">Evaluate each completed backup run for statistical anomalies.</p>
+            </div>
+            <button
+              onclick={() => anomalyEnabled = !anomalyEnabled}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={anomalyEnabled}
+              aria-label="Toggle anomaly detection"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {anomalyEnabled ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {anomalyEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+          <!-- Default sensitivity -->
+          <div class="px-5 py-4">
+            <label for="anomaly-sensitivity" class="block text-sm font-medium text-text mb-1.5">
+              Default sensitivity
+              <Tooltip text="Controls how aggressively anomalies are raised. Strict raises anomalies at small deviations (more alerts). Permissive only raises anomalies at large deviations (fewer alerts). Individual jobs can override this." />
+            </label>
+            <select
+              id="anomaly-sensitivity"
+              bind:value={anomalySensitivityDefault}
+              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+            >
+              <option value="strict">Strict — flag small deviations</option>
+              <option value="balanced">Balanced — moderate threshold (recommended)</option>
+              <option value="permissive">Permissive — flag large deviations only</option>
+            </select>
+          </div>
+          <!-- Notify minimum severity -->
+          <div class="px-5 py-4">
+            <label for="anomaly-notify-severity" class="block text-sm font-medium text-text mb-1.5">
+              Notify minimum severity
+              <Tooltip text="Only send notifications for anomalies at or above this severity level. Lower severities are still recorded but won't trigger a notification." />
+            </label>
+            <select
+              id="anomaly-notify-severity"
+              bind:value={anomalyNotifyMinSeverity}
+              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+            >
+              <option value="info">Info — notify on all anomalies</option>
+              <option value="warning">Warning — skip informational</option>
+              <option value="critical">Critical — only urgent anomalies</option>
+            </select>
+          </div>
+          <!-- Save button -->
+          <div class="px-5 py-3 flex justify-end">
+            <button
+              onclick={saveAnomalySettings}
+              disabled={anomalySaving}
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {#if anomalySaving}
+                <Spinner size="sm" />
+              {/if}
+              Save Anomaly Settings
+            </button>
           </div>
         </div>
       </div>
