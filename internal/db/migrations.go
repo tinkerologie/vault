@@ -148,6 +148,57 @@ CREATE TABLE IF NOT EXISTS dedup_gc_runs (
 
 CREATE INDEX IF NOT EXISTS idx_dedup_gc_runs_storage ON dedup_gc_runs(storage_id, completed_at DESC);
 
+CREATE TABLE IF NOT EXISTS anomalies (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	fingerprint     TEXT NOT NULL,
+	detector        TEXT NOT NULL,
+	severity        TEXT NOT NULL,
+	scope_kind      TEXT NOT NULL,
+	scope_id        INTEGER NOT NULL,
+	metric          TEXT NOT NULL,
+	observed        REAL NOT NULL,
+	expected        REAL,
+	deviation       REAL,
+	job_run_id      INTEGER,
+	summary         TEXT NOT NULL,
+	details         TEXT NOT NULL DEFAULT '',
+	state           TEXT NOT NULL,
+	first_seen_at   DATETIME NOT NULL,
+	last_seen_at    DATETIME NOT NULL,
+	resolved_at     DATETIME,
+	acknowledged_at DATETIME,
+	ack_action      TEXT,
+	ack_by          TEXT,
+	ack_reason      TEXT,
+	notified_at     DATETIME
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_anomalies_open_fingerprint ON anomalies(fingerprint) WHERE state = 'open';
+CREATE INDEX IF NOT EXISTS idx_anomalies_state_severity ON anomalies(state, severity, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_anomalies_scope ON anomalies(scope_kind, scope_id, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_anomalies_job_run ON anomalies(job_run_id) WHERE job_run_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS job_baselines (
+	job_id          INTEGER PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+	sample_count    INTEGER NOT NULL,
+	bytes_median    REAL NOT NULL,
+	bytes_mad       REAL NOT NULL,
+	duration_median REAL NOT NULL,
+	duration_mad    REAL NOT NULL,
+	failure_rate    REAL NOT NULL,
+	updated_at      DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS destination_capacity_samples (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	dest_id     INTEGER NOT NULL REFERENCES storage_destinations(id) ON DELETE CASCADE,
+	sampled_at  DATETIME NOT NULL,
+	free_bytes  INTEGER NOT NULL,
+	total_bytes INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_capacity_samples_dest_time ON destination_capacity_samples(dest_id, sampled_at DESC);
+
 -- Add verify_backup column if it does not exist.
 -- SQLite does not support IF NOT EXISTS for ALTER TABLE, so we
 -- attempt the ALTER in Go and silently ignore "duplicate column" errors.
@@ -217,4 +268,8 @@ var alterMigrations = []string{
 	// table creation so existing on-disk DBs gain both columns automatically.
 	"ALTER TABLE dedup_gc_runs ADD COLUMN compacted_packs INTEGER NOT NULL DEFAULT 0",
 	"ALTER TABLE dedup_gc_runs ADD COLUMN reclaimed_bytes INTEGER NOT NULL DEFAULT 0",
+	// Anomaly detection (2026-05-30): per-job and per-destination sensitivity
+	// override. Empty string means "use the global anomaly_sensitivity_default".
+	"ALTER TABLE jobs ADD COLUMN anomaly_sensitivity TEXT NOT NULL DEFAULT ''",
+	"ALTER TABLE storage_destinations ADD COLUMN anomaly_sensitivity TEXT NOT NULL DEFAULT ''",
 }

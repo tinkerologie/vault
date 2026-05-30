@@ -2,9 +2,15 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 )
+
+// ErrUsageNotSupported is returned by Usage() on adapters whose protocol or
+// backend does not expose free/total space information (e.g. S3).
+// Callers must use errors.Is to test for this sentinel.
+var ErrUsageNotSupported = errors.New("storage: usage not supported by this adapter")
 
 type FileInfo struct {
 	Path    string    `json:"path"`
@@ -41,6 +47,20 @@ type Adapter interface {
 	// The context honours the caller's deadline so callers can cap the
 	// probe (the scheduler uses 60 s; ad-hoc UI refreshes use 30 s).
 	GetCapacity(ctx context.Context) (Capacity, error)
+
+	// Usage returns the raw free and total bytes of the underlying
+	// storage medium. It is a lightweight probe used by the capacity
+	// trajectory detector: free = bytes available to unprivileged
+	// processes, total = full filesystem/quota size.
+	//
+	// Adapters that cannot determine free/total space (e.g. S3, which
+	// has no per-bucket quota API) return ErrUsageNotSupported. Callers
+	// MUST test for this sentinel with errors.Is and handle it as a
+	// "no data available" signal rather than a hard failure.
+	//
+	// Both free and total are in bytes. free <= total is guaranteed when
+	// err == nil.
+	Usage() (free, total int64, err error)
 }
 
 // rangeReader pairs a length-limited reader with the closer for the

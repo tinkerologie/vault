@@ -381,4 +381,33 @@ func sftpStatVFSToCapacity(st *sftp.StatVFS, probedAt time.Time) (Capacity, erro
 	}, nil
 }
 
+// Usage attempts the SFTP statvfs@openssh.com extension. When the server
+// supports it, free and total are computed from the Bavail and Blocks
+// fields using Frsize as the block size. When the server doesn't advertise
+// the extension, or if dialling fails, ErrUsageNotSupported is returned so
+// callers can degrade gracefully.
+func (s *SFTPAdapter) Usage() (free, total int64, err error) {
+	client, err := s.connect()
+	if err != nil {
+		return 0, 0, ErrUsageNotSupported
+	}
+	defer client.Close()
+
+	st, err := client.StatVFS(s.basePathOrRoot())
+	if err != nil {
+		// Server does not support the statvfs@openssh.com extension.
+		return 0, 0, ErrUsageNotSupported
+	}
+	if st.Frsize == 0 {
+		return 0, 0, ErrUsageNotSupported
+	}
+	bsize := int64(st.Frsize)        //nolint:gosec,unconvert
+	total = int64(st.Blocks) * bsize //nolint:gosec,unconvert
+	free = int64(st.Bavail) * bsize  //nolint:gosec,unconvert
+	if free > total {
+		free = total
+	}
+	return free, total, nil
+}
+
 var _ Adapter = (*SFTPAdapter)(nil)

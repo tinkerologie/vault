@@ -119,6 +119,9 @@ func (s *MCPServer) registerTools() {
 	s.addListReplicationTool()
 	s.addGetReplicationTool()
 	s.addDeleteReplicationTool()
+
+	// Anomaly tools
+	s.addAnomalyTools()
 }
 
 // --- Job Tools ---

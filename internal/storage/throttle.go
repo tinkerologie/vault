@@ -108,3 +108,9 @@ func (trc *throttledReadCloser) Close() error { return trc.rc.Close() }
 func (t *throttledAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	return t.inner.GetCapacity(ctx)
 }
+
+// Usage delegates to the inner adapter unchanged. Like GetCapacity, this is
+// a metadata operation not subject to the bandwidth throttle.
+func (t *throttledAdapter) Usage() (free, total int64, err error) {
+	return t.inner.Usage()
+}

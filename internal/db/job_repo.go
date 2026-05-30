@@ -41,6 +41,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
+		COALESCE(anomaly_sensitivity, ''),
 		created_at, updated_at
 		FROM jobs WHERE id = ?`, id,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -50,6 +51,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 		&job.VerifySchedule, &job.VerifyMode,
 		&job.RetryMaxOverride, &job.RetryDelaysOverride,
+		&job.AnomalySensitivity,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
@@ -67,6 +69,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
+		COALESCE(anomaly_sensitivity, ''),
 		created_at, updated_at
 		FROM jobs ORDER BY name`)
 	if err != nil {
@@ -83,6 +86,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 			&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 			&job.VerifySchedule, &job.VerifyMode,
 			&job.RetryMaxOverride, &job.RetryDelaysOverride,
+			&job.AnomalySensitivity,
 			&job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -99,6 +103,7 @@ func (d *DB) UpdateJob(job Job) error {
 		keep_latest=?, keep_daily=?, keep_weekly=?, keep_monthly=?, keep_yearly=?,
 		verify_schedule=?, verify_mode=?,
 		retry_max_override=?, retry_delays_override=?,
+		anomaly_sensitivity=?,
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
@@ -107,6 +112,7 @@ func (d *DB) UpdateJob(job Job) error {
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 		job.VerifySchedule, job.VerifyMode,
 		job.RetryMaxOverride, job.RetryDelaysOverride,
+		job.AnomalySensitivity,
 		job.ID,
 	)
 	return err
@@ -130,6 +136,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
+		COALESCE(anomaly_sensitivity, ''),
 		created_at, updated_at
 		FROM jobs WHERE name = ?`, name,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -139,6 +146,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
 		&job.VerifySchedule, &job.VerifyMode,
 		&job.RetryMaxOverride, &job.RetryDelaysOverride,
+		&job.AnomalySensitivity,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
@@ -302,6 +310,26 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
+}
+
+// GetJobRun returns a single job run row by primary key.
+// Returns ErrNotFound when no row matches.
+func (d *DB) GetJobRun(id int64) (JobRun, error) {
+	var run JobRun
+	err := d.QueryRow(
+		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
+		items_total, items_done, items_failed, size_bytes,
+		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at
+		FROM job_runs WHERE id = ?`, id,
+	).Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
+		&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
+		&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
+		&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt)
+	if err == sql.ErrNoRows {
+		return run, ErrNotFound
+	}
+	return run, err
 }
 
 // PurgeJobRuns deletes all job run records and returns the count of deleted rows.

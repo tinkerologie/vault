@@ -41,10 +41,11 @@ func (a *recordingAdapter) ReadRange(string, int64, int64) (io.ReadCloser, error
 func (a *recordingAdapter) Delete(string) error                     { return nil }
 func (a *recordingAdapter) List(string) ([]storage.FileInfo, error) { return nil, nil }
 func (a *recordingAdapter) Stat(string) (storage.FileInfo, error)   { return storage.FileInfo{}, nil }
-func (a *recordingAdapter) TestConnection() error                               { return nil }
+func (a *recordingAdapter) TestConnection() error                   { return nil }
 func (a *recordingAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
 	return storage.Capacity{}, nil
 }
+func (a *recordingAdapter) Usage() (int64, int64, error) { return 0, 0, storage.ErrUsageNotSupported }
 
 var _ storage.Adapter = (*recordingAdapter)(nil)
 

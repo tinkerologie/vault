@@ -30,6 +30,7 @@ func (s *stubAdapter) TestConnection() error {
 func (s *stubAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
 	return storage.Capacity{}, nil
 }
+func (s *stubAdapter) Usage() (int64, int64, error) { return 0, 0, storage.ErrUsageNotSupported }
 
 // Compile-time: stub satisfies the interface.
 var _ storage.Adapter = (*stubAdapter)(nil)

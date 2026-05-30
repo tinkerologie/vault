@@ -355,4 +355,33 @@ func smbFileFsInfoToCapacity(info smb2.FileFsInfo, probedAt time.Time) (Capacity
 	}, nil
 }
 
+// Usage queries the SMB server's filesystem info via share.Statfs. When the
+// server supports the FILE_FS_FULL_SIZE_INFORMATION request, free and total
+// are computed from AvailableBlockCount and TotalBlockCount × BlockSize. When
+// the server refuses the query (some Samba ACL configurations), or if
+// connecting fails, ErrUsageNotSupported is returned.
+func (s *SMBAdapter) Usage() (free, total int64, err error) {
+	share, session, err := s.connect()
+	if err != nil {
+		return 0, 0, ErrUsageNotSupported
+	}
+	defer session.Logoff()
+	defer share.Umount()
+
+	info, err := share.Statfs(s.basePathOrShareRoot())
+	if err != nil {
+		return 0, 0, ErrUsageNotSupported
+	}
+	bsize := info.BlockSize()
+	if bsize == 0 {
+		return 0, 0, ErrUsageNotSupported
+	}
+	total = int64(info.TotalBlockCount() * bsize)    //nolint:gosec
+	free = int64(info.AvailableBlockCount() * bsize) //nolint:gosec,unconvert
+	if free > total {
+		free = total
+	}
+	return free, total, nil
+}
+
 var _ Adapter = (*SMBAdapter)(nil)

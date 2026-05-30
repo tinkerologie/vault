@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ruaan-deysel/vault/internal/anomaly"
 	"github.com/ruaan-deysel/vault/internal/api"
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
 	"github.com/ruaan-deysel/vault/internal/config"
@@ -512,6 +513,17 @@ var daemonCmd = &cobra.Command{
 		// /api/v1/jobs/next-runs endpoint returns.
 		diagCollector.SetNextRunFunc(sched.NextRun)
 
+		// Anomaly detection evaluator. Gated by the anomaly_detection_enabled
+		// setting (default "true") so operators can disable it via Settings.
+		// buildAnomalyEvaluator is a testable helper that constructs the
+		// evaluator and registers the four built-in detectors.
+		anomalyEvaluator := buildAnomalyEvaluator(database, srv)
+		if anomalyEvaluator != nil {
+			anomalyEvaluator.Start()
+			srv.Runner().SetEvaluator(anomalyEvaluator)
+			srv.SetAnomalyEvaluator(anomalyEvaluator)
+		}
+
 		// Heartbeat for external monitoring. Writes to a RAM-backed dir in
 		// hybrid mode so it doesn't wear flash. Cancelled by the signal ctx
 		// below so it stops cleanly on SIGTERM.
@@ -558,8 +570,27 @@ var daemonCmd = &cobra.Command{
 			}()
 		}
 
+		// Anomaly trend ticker: runs EvaluateTrendDetectors every 5 minutes
+		// and prunes old terminal anomalies on each tick. Cancelled by ctx
+		// (the same signal context used for all other goroutines).
+		if anomalyEvaluator != nil {
+			go runAnomalyTrendTicker(ctx, anomalyEvaluator)
+		}
+
 		err = srv.StartWithContext(ctx)
 		if errors.Is(err, http.ErrServerClosed) {
+			// Drain the anomaly evaluator so any in-flight per-run evaluations
+			// complete before we exit. Uses a 5-second timeout; on timeout we
+			// log a warning and continue with shutdown — the runner has already
+			// drained at this point so no new work can arrive.
+			if anomalyEvaluator != nil {
+				drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if drainErr := anomalyEvaluator.Drain(drainCtx); drainErr != nil {
+					log.Printf("WARN anomaly: drain incomplete at shutdown: %v", drainErr)
+				}
+				drainCancel()
+			}
+
 			// Flush the working DB to the persistent snapshot before exiting.
 			if hybridMode && snapshotMgr != nil {
 				if snapErr := snapshotMgr.Close(); snapErr != nil {
@@ -711,6 +742,57 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
+}
+
+// buildAnomalyEvaluator constructs and wires the anomaly Evaluator when the
+// anomaly_detection_enabled setting is "true" (the default). Returns nil when
+// detection is disabled — the caller must treat nil as a no-op.
+//
+// The helper is extracted from RunE so the gating logic is unit-testable
+// without spinning up the full daemon (see daemon_test.go).
+func buildAnomalyEvaluator(database *db.DB, srv *api.Server) *anomaly.Evaluator {
+	enabled, _ := database.GetSetting("anomaly_detection_enabled", "true")
+	if enabled != "true" {
+		return nil
+	}
+
+	reg := &anomaly.Registry{}
+	reg.Register(anomaly.NewSizeDriftDetector())
+	reg.Register(anomaly.NewDurationDriftDetector())
+	reg.Register(anomaly.NewReliabilityDetector(database))
+	reg.Register(anomaly.NewCapacityTrajectoryDetector(database))
+
+	ev := anomaly.NewEvaluator(database, srv.Hub(), reg, anomaly.RealClock{})
+
+	// Wire the notifier so anomaly raise/escalation events are dispatched to
+	// Unraid + Discord. The webhook URL closure reads the DB at send time so
+	// settings changes take effect without restarting the daemon.
+	notifier := anomaly.NewRealNotifier(func() string {
+		url, _ := database.GetSetting("discord_webhook_url", "")
+		return url
+	})
+	ev.SetNotifier(notifier)
+
+	return ev
+}
+
+// runAnomalyTrendTicker fires EvaluateTrendDetectors and pruneOldAnomalies every
+// 5 minutes until ctx is cancelled. The ticker is stopped cleanly on cancellation.
+//
+// Pruning is piggybacked onto the trend tick (no separate maintenance ticker
+// exists in daemon.go); both operations are fast enough to run on every tick.
+func runAnomalyTrendTicker(ctx context.Context, ev *anomaly.Evaluator) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			ev.EvaluateTrendDetectors()
+			ev.PruneOldAnomalies()
+		}
+	}
 }
 
 // zfsBrowseAdapter bridges engine.ZFSHandler to the browse handler's

@@ -193,6 +193,17 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/{id}/jobs", replH.ListReplicatedJobs)
 		})
 
+		anomalyH := handlers.NewAnomalyHandler(s.db)
+		s.anomalyHandler = anomalyH
+		r.Route("/anomalies", func(r chi.Router) {
+			r.Get("/", anomalyH.List)
+			r.Post("/ack-bulk", anomalyH.AckBulk)
+			r.Get("/{id}", anomalyH.Get)
+			r.Post("/{id}/ack", anomalyH.Ack)
+		})
+		r.Get("/jobs/{id}/baseline", anomalyH.GetBaseline)
+		r.Get("/destinations/{id}/capacity-trajectory", anomalyH.GetTrajectory)
+
 		recoveryH := handlers.NewRecoveryHandler(s.db, s.config.Version)
 		r.Get("/recovery/plan", recoveryH.GetPlan)
 

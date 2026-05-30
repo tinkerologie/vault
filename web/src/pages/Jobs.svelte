@@ -10,6 +10,8 @@
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import AnomalyBadge from '../components/AnomalyBadge.svelte'
+  import { getAnomalies, onBaselineUpdated } from '../lib/anomalies.svelte.js'
   import ItemPicker from '../components/ItemPicker.svelte'
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import BackupModeSelector from '../components/BackupModeSelector.svelte'
@@ -30,6 +32,33 @@
   let nextRuns = $state({})
   let editingNameId = $state(null)
   let editName = $state('')
+
+  // Anomaly / baseline per-job data
+  const anomalyState = getAnomalies()
+  /** @type {Record<number, {sample_count: number}|null>} */
+  let baselines = $state({})
+
+  // Monotonic counter to discard out-of-order baseline fetch responses.
+  let baselineLoadId = 0
+
+  // Count open anomalies per job from shared state
+  /** @type {(jobId: number) => number} */
+  function jobAnomalyCount(jobId) {
+    return anomalyState.openList.filter(a => a.scope_kind === 'job' && a.scope_id === jobId).length
+  }
+
+  /** @type {(jobId: number) => string} */
+  function jobWorstSeverity(jobId) {
+    const anomalies = anomalyState.openList.filter(a => a.scope_kind === 'job' && a.scope_id === jobId)
+    for (const sev of ['critical', 'warning', 'info']) {
+      if (anomalies.some(a => a.severity === sev)) return sev
+    }
+    return 'info'
+  }
+
+  function baselineSamples(jobId) {
+    return baselines[jobId]?.sample_count ?? 0
+  }
 
   // Bulk selection
   let selectedJobs = $state(new SvelteSet())
@@ -185,6 +214,7 @@
       storage_dest_id: 0,
       retry_max_override: '',
       retry_delays_override: '',
+      anomaly_sensitivity: '',
       items: [],
       selectedTypes: [],
     }
@@ -333,12 +363,17 @@
 
   onMount(() => {
     loadData()
-    const unsub = onWsMessage((msg) => {
+    const unsubWs = onWsMessage((msg) => {
       if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed') {
         loadData()
       }
     })
-    return unsub
+    const unsubBaseline = onBaselineUpdated((data) => {
+      if (data?.job_id && data?.baseline) {
+        baselines = { ...baselines, [data.job_id]: data.baseline }
+      }
+    })
+    return () => { unsubWs(); unsubBaseline() }
   })
 
   async function loadData() {
@@ -348,11 +383,31 @@
       jobs = j || []
       storageList = s || []
       nextRuns = nr || {}
+      // Fetch baselines for all jobs in parallel; always returns 200 (sample_count=0 when still learning).
+      void loadBaselines(jobs)
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
       loading = false
     }
+  }
+
+  async function loadBaselines(jobList) {
+    const reqId = ++baselineLoadId
+    const results = await Promise.all(
+      jobList.map(async (j) => {
+        try {
+          const b = await api.getJobBaseline(j.id)
+          return [j.id, b]
+        } catch {
+          return [j.id, null]
+        }
+      })
+    )
+    if (reqId !== baselineLoadId) return // stale response — discard
+    const map = {}
+    for (const [id, b] of results) map[id] = b
+    baselines = map
   }
 
   function openCreate() {
@@ -397,6 +452,7 @@
         // trip them back to null on save when blank.
         retry_max_override: data.job.retry_max_override == null ? '' : String(data.job.retry_max_override),
         retry_delays_override: data.job.retry_delays_override == null ? '' : String(data.job.retry_delays_override),
+        anomaly_sensitivity: data.job.anomaly_sensitivity || '',
         items: data.items || [],
         selectedTypes: deriveTypesFromItems(data.items || []),
       }
@@ -503,6 +559,7 @@
         defer_remote_upload: fullJob.defer_remote_upload ?? false,
         retry_max_override: fullJob.retry_max_override == null ? '' : String(fullJob.retry_max_override),
         retry_delays_override: fullJob.retry_delays_override == null ? '' : String(fullJob.retry_delays_override),
+        anomaly_sensitivity: fullJob.anomaly_sensitivity || '',
         enabled: false,
         items: (data.items || []).map(i => ({
           item_type: i.item_type,
@@ -717,6 +774,16 @@
                   <h2 ondblclick={() => startNameEdit(job)} class="text-sm font-semibold text-text truncate cursor-text" title="Double-click to rename">
                     {job.name}
                   </h2>
+                {/if}
+                <!-- Anomaly badge for this job -->
+                {#if jobAnomalyCount(job.id) > 0}
+                  <AnomalyBadge count={jobAnomalyCount(job.id)} severity={jobWorstSeverity(job.id)} />
+                {/if}
+                <!-- Baseline learning indicator -->
+                {#if baselineSamples(job.id) < 10}
+                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-4 text-text-dim font-medium shrink-0">
+                    Learning baseline ({baselineSamples(job.id)}/10)
+                  </span>
                 {/if}
               </div>
               {#if job.description}
@@ -1145,6 +1212,29 @@
               <div class="block text-xs font-medium text-text-muted mb-1">Delays between retries <span class="text-text-dim">(blank = global)</span></div>
               <RetryDelaysEditor bind:value={form.retry_delays_override} placeholder="Use global default" />
             </div>
+          </div>
+        </details>
+
+        <!-- Advanced: Anomaly sensitivity override (Task 19) -->
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Anomaly sensitivity <Tooltip text="Override the global anomaly detection sensitivity for this job. '(default)' uses the value configured in Settings → General." />
+          </summary>
+          <div class="mt-3 pl-6">
+            <label for="anomaly-sensitivity-override" class="block text-xs font-medium text-text-muted mb-1">
+              Sensitivity <span class="text-text-dim">(blank = global default)</span>
+            </label>
+            <select
+              id="anomaly-sensitivity-override"
+              bind:value={form.anomaly_sensitivity}
+              class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+            >
+              <option value="">(default)</option>
+              <option value="strict">Strict — flag small deviations</option>
+              <option value="balanced">Balanced</option>
+              <option value="permissive">Permissive — flag large deviations only</option>
+            </select>
           </div>
         </details>
 

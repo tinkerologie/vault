@@ -10,21 +10,22 @@ import (
 // noCloseAdapter is an Adapter that does NOT implement io.Closer.
 type noCloseAdapter struct{}
 
-func (noCloseAdapter) Write(string, io.Reader) error                       { return nil }
-func (noCloseAdapter) Read(string) (io.ReadCloser, error)                  { return nil, nil }
+func (noCloseAdapter) Write(string, io.Reader) error      { return nil }
+func (noCloseAdapter) Read(string) (io.ReadCloser, error) { return nil, nil }
 func (noCloseAdapter) ReadRange(string, int64, int64) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (noCloseAdapter) Delete(string) error                            { return nil }
-func (noCloseAdapter) List(string) ([]FileInfo, error)                { return nil, nil }
-func (noCloseAdapter) Stat(string) (FileInfo, error)                  { return FileInfo{}, nil }
-func (noCloseAdapter) TestConnection() error                          { return nil }
+func (noCloseAdapter) Delete(string) error                           { return nil }
+func (noCloseAdapter) List(string) ([]FileInfo, error)               { return nil, nil }
+func (noCloseAdapter) Stat(string) (FileInfo, error)                 { return FileInfo{}, nil }
+func (noCloseAdapter) TestConnection() error                         { return nil }
 func (noCloseAdapter) GetCapacity(context.Context) (Capacity, error) { return Capacity{}, nil }
+func (noCloseAdapter) Usage() (int64, int64, error)                  { return 0, 0, ErrUsageNotSupported }
 
 // closableAdapter implements both Adapter and io.Closer, with a flag.
 type closableAdapter struct {
 	noCloseAdapter
-	closed bool
+	closed   bool
 	closeErr error
 }
 

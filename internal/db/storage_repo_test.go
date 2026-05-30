@@ -32,6 +32,49 @@ func TestCreateAndGetStorageDestination(t *testing.T) {
 	}
 }
 
+func TestStorageDestinationAnomalySensitivityRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+	id, err := d.CreateStorageDestination(StorageDestination{Name: "anomaly-dest", Type: "local", Config: "{}"})
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+
+	// Defaults to "" on create (DB column DEFAULT '').
+	got, err := d.GetStorageDestination(id)
+	if err != nil {
+		t.Fatalf("Get error = %v", err)
+	}
+	if got.AnomalySensitivity != "" {
+		t.Errorf("AnomalySensitivity after create = %q, want \"\"", got.AnomalySensitivity)
+	}
+
+	// Set via UpdateStorageDestination and confirm it round-trips.
+	got.AnomalySensitivity = "permissive"
+	if err := d.UpdateStorageDestination(got); err != nil {
+		t.Fatalf("Update error = %v", err)
+	}
+	got2, err := d.GetStorageDestination(id)
+	if err != nil {
+		t.Fatalf("GetStorageDestination after update error = %v", err)
+	}
+	if got2.AnomalySensitivity != "permissive" {
+		t.Errorf("AnomalySensitivity after update = %q, want \"permissive\"", got2.AnomalySensitivity)
+	}
+
+	// A subsequent unrelated update (rename) must preserve the value.
+	got2.Name = "anomaly-dest-renamed"
+	if err := d.UpdateStorageDestination(got2); err != nil {
+		t.Fatalf("Update (rename) error = %v", err)
+	}
+	got3, err := d.GetStorageDestination(id)
+	if err != nil {
+		t.Fatalf("GetStorageDestination after rename error = %v", err)
+	}
+	if got3.AnomalySensitivity != "permissive" {
+		t.Errorf("AnomalySensitivity after unrelated update = %q, want \"permissive\" (clobbered)", got3.AnomalySensitivity)
+	}
+}
+
 func TestListStorageDestinations(t *testing.T) {
 	d := setupTestDB(t)
 	d.CreateStorageDestination(StorageDestination{Name: "a", Type: "local", Config: "{}"})

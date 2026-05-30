@@ -18,3 +18,17 @@ func textResult(v any) (*mcp.CallToolResult, error) {
 		},
 	}, nil
 }
+
+// compactTextResult marshals v to compact JSON (no indentation) and wraps it
+// in a CallToolResult. Used for list responses where payload size matters.
+func compactTextResult(v any) (*mcp.CallToolResult, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(data)},
+		},
+	}, nil
+}

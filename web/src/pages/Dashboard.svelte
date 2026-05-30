@@ -13,6 +13,7 @@
   import ComplianceBadge from '../components/ComplianceBadge.svelte'
   import ActivityTimeline from '../components/ActivityTimeline.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
+  import AnomalyCard from '../components/AnomalyCard.svelte'
 
   let loading = $state(true)
   let error = $state('')
@@ -702,6 +703,11 @@
           </div>
         </div>
       </div>
+    {/if}
+
+    <!-- Anomaly Card -->
+    {#if jobs.length > 0}
+      <AnomalyCard />
     {/if}
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">

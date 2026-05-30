@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -93,6 +94,19 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	// here NEVER flip the health verdict — capacity is informational.
 	// Uses its own 60s ceiling so a slow probe doesn't extend the sweep.
 	_, _ = r.probeCapacity(context.Background(), dest, adapter)
+
+	// Sample free/total for capacity trajectory detection. Silent skip on
+	// adapters that don't expose usage (e.g. S3).
+	if free, total, usageErr := adapter.Usage(); usageErr == nil {
+		_ = r.db.InsertCapacitySample(db.CapacitySample{
+			DestID:     dest.ID,
+			SampledAt:  time.Now().UTC(),
+			FreeBytes:  free,
+			TotalBytes: total,
+		})
+	} else if !errors.Is(usageErr, storage.ErrUsageNotSupported) {
+		log.Printf("WARN capacity sampler: dest %q: %v", dest.Name, usageErr)
+	}
 
 	return "ok", ""
 }

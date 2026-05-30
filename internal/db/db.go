@@ -95,9 +95,8 @@ func (d *DB) IntegrityCheck() error {
 	return nil
 }
 
-// insertDefaultSettings seeds key/value rows for the resilience hardening
-// settings introduced by the 2026-05-22 migration. INSERT OR IGNORE makes
-// this safe to call on every Open.
+// insertDefaultSettings seeds key/value rows for settings introduced by schema
+// migrations. INSERT OR IGNORE makes this safe to call on every Open.
 func (d *DB) insertDefaultSettings() error {
 	defaults := []struct{ key, value string }{
 		{"retry_max_default", "2"},
@@ -105,6 +104,10 @@ func (d *DB) insertDefaultSettings() error {
 		{"breaker_fail_threshold", "3"},
 		{"breaker_close_successes", "2"},
 		{"dedup_compaction_min_dead_ratio", "0.5"},
+		// Anomaly detection defaults (2026-05-30).
+		{"anomaly_detection_enabled", "true"},
+		{"anomaly_sensitivity_default", "balanced"},
+		{"anomaly_notify_min_severity", "critical"},
 	}
 	for _, kv := range defaults {
 		if _, err := d.Exec(

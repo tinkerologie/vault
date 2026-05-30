@@ -983,7 +983,7 @@ func (w *WebDAVAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 // parseWebDAVQuotaProps extracts <d:quota-used-bytes> and
 // <d:quota-available-bytes> from a PROPFIND multistatus body. Returns
 // (used, available, true) on success or (0, 0, false) when either is
-// missing or unparseable. Tolerant of mixed namespace prefixes
+// missing or unparsable. Tolerant of mixed namespace prefixes
 // (Nextcloud emits "d:", some servers use "D:" or no prefix at all)
 // by matching on the local element name only.
 func parseWebDAVQuotaProps(body []byte) (used int64, available int64, ok bool) {
@@ -1016,6 +1016,31 @@ func extractWebDAVPropInt(body []byte, localName string) (int64, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// Usage queries the WebDAV server's RFC 4331 quota properties via PROPFIND.
+// Servers that support quota-available-bytes and quota-used-bytes return real
+// free/total values. Servers that don't (apache mod_dav default, generic
+// WebDAV servers) return ErrUsageNotSupported.
+//
+// Nextcloud servers that have set unlimited quota (-1) or report "unknown"
+// (-2, -3) also return ErrUsageNotSupported since no useful free/total can
+// be derived.
+func (w *WebDAVAdapter) Usage() (free, total int64, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cap, err := w.GetCapacity(ctx)
+	if err != nil {
+		// Intentional graceful degradation: all GetCapacity errors (including
+		// transient network/auth failures) are mapped to ErrUsageNotSupported.
+		// Callers cannot distinguish transient from permanent unavailability.
+		return 0, 0, ErrUsageNotSupported
+	}
+	// TotalBytes == 0 means the server didn't report quota (or it's unlimited).
+	if cap.TotalBytes == 0 {
+		return 0, 0, ErrUsageNotSupported
+	}
+	return cap.FreeBytes, cap.TotalBytes, nil
 }
 
 var _ Adapter = (*WebDAVAdapter)(nil)

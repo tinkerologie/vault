@@ -6,11 +6,267 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
+
+// fakeEnqueuer records every RunID enqueued for anomaly evaluation.
+// Satisfies the unexported anomalyEnqueuer interface. The runner calls
+// EnqueueRun synchronously, so EnqueueRun returns immediately and the
+// recorded ids are observable as soon as RunJob returns.
+type fakeEnqueuer struct {
+	mu  sync.Mutex
+	ids []int64
+}
+
+func (f *fakeEnqueuer) EnqueueRun(runID int64) {
+	f.mu.Lock()
+	f.ids = append(f.ids, runID)
+	f.mu.Unlock()
+}
+
+func (f *fakeEnqueuer) enqueuedIDs() []int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make([]int64, len(f.ids))
+	copy(cp, f.ids)
+	return cp
+}
+
+// boundedEnqueuer mimics the real *anomaly.Evaluator.EnqueueRun contract: a
+// buffered channel with drop-oldest semantics on full, so EnqueueRun never
+// blocks the caller. The runner relies on exactly this contract when it calls
+// EnqueueRun directly (synchronously) on its own goroutine.
+type boundedEnqueuer struct {
+	ch chan int64
+}
+
+func newBoundedEnqueuer() *boundedEnqueuer {
+	return &boundedEnqueuer{ch: make(chan int64, 64)}
+}
+
+func (b *boundedEnqueuer) EnqueueRun(runID int64) {
+	select {
+	case b.ch <- runID:
+		// Fast path: room in the buffer.
+	default:
+		// Full — drop the oldest, then enqueue the new id. Never blocks.
+		select {
+		case <-b.ch:
+		default:
+		}
+		select {
+		case b.ch <- runID:
+		default:
+		}
+	}
+}
+
+func (b *boundedEnqueuer) drain() []int64 {
+	var out []int64
+	for {
+		select {
+		case id := <-b.ch:
+			out = append(out, id)
+		default:
+			return out
+		}
+	}
+}
+
+// newSuccessJob creates a Job + one folder item pointing at a real directory.
+// RunJob on this job should always complete successfully.
+func newSuccessJob(t *testing.T, d *db.DB, storageDir, sourceDir string) int64 {
+	t.Helper()
+	destCfg, _ := json.Marshal(map[string]string{"path": storageDir})
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "test-local", Type: "local", Config: string(destCfg),
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+	jobID, err := d.CreateJob(db.Job{
+		Name: "test-job", StorageDestID: destID,
+		BackupTypeChain: "full", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	itemSettings, _ := json.Marshal(map[string]any{"path": sourceDir})
+	if _, err := d.AddJobItem(db.JobItem{
+		JobID: jobID, ItemType: "folder", ItemName: "src",
+		Settings: string(itemSettings),
+	}); err != nil {
+		t.Fatalf("add item: %v", err)
+	}
+	return jobID
+}
+
+// newFailJob creates a Job + one folder item pointing at a non-existent path
+// so the backup always fails (itemsDone=0, itemsFailed=1 → status="failed").
+func newFailJob(t *testing.T, d *db.DB, storageDir string) int64 {
+	t.Helper()
+	destCfg, _ := json.Marshal(map[string]string{"path": storageDir})
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "test-local-fail", Type: "local", Config: string(destCfg),
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+	jobID, err := d.CreateJob(db.Job{
+		Name: "test-fail-job", StorageDestID: destID,
+		BackupTypeChain: "full", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	// Use a path that is guaranteed not to exist.
+	itemSettings, _ := json.Marshal(map[string]any{"path": "/nonexistent/path/that/does/not/exist"})
+	if _, err := d.AddJobItem(db.JobItem{
+		JobID: jobID, ItemType: "folder", ItemName: "missing",
+		Settings: string(itemSettings),
+	}); err != nil {
+		t.Fatalf("add item: %v", err)
+	}
+	return jobID
+}
+
+// TestEvaluatorEnqueuedOnSuccess verifies that SetEvaluator + RunJob calls
+// EnqueueRun exactly once with the persisted run ID on the success path.
+func TestEvaluatorEnqueuedOnSuccess(t *testing.T) {
+	storageDir := t.TempDir()
+	sourceDir := t.TempDir()
+	// Write a real file so the folder backup has content to archive.
+	if err := os.WriteFile(filepath.Join(sourceDir, "data.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	r, d := newTestRunner(t)
+	fake := &fakeEnqueuer{}
+	r.SetEvaluator(fake)
+
+	jobID := newSuccessJob(t, d, storageDir, sourceDir)
+	r.RunJob(jobID) // synchronous; EnqueueRun is called inline before it returns
+
+	ids := fake.enqueuedIDs()
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 enqueued run, got %d (%v)", len(ids), ids)
+	}
+
+	// Confirm the enqueued ID matches the persisted run record.
+	runs, err := d.GetJobRuns(jobID, 5)
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("no job runs found: err=%v", err)
+	}
+	if ids[0] != runs[0].ID {
+		t.Errorf("enqueued run ID %d != persisted run ID %d", ids[0], runs[0].ID)
+	}
+}
+
+// TestEvaluatorEnqueuedOnFailure verifies that EnqueueRun is called even when
+// a job fails (all items fail, status="failed"). The reliability detector
+// feeds off failure runs, so we must not skip them.
+func TestEvaluatorEnqueuedOnFailure(t *testing.T) {
+	storageDir := t.TempDir()
+
+	r, d := newTestRunner(t)
+	fake := &fakeEnqueuer{}
+	r.SetEvaluator(fake)
+
+	jobID := newFailJob(t, d, storageDir)
+	r.RunJob(jobID)
+
+	ids := fake.enqueuedIDs()
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 enqueued run on failure, got %d (%v)", len(ids), ids)
+	}
+
+	runs, err := d.GetJobRuns(jobID, 5)
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("no job runs found: err=%v", err)
+	}
+	if ids[0] != runs[0].ID {
+		t.Errorf("enqueued run ID %d != persisted run ID %d", ids[0], runs[0].ID)
+	}
+	if runs[0].Status != "failed" {
+		t.Errorf("expected status=failed, got %q", runs[0].Status)
+	}
+}
+
+// TestEvaluatorEnqueueNonBlocking injects a boundedEnqueuer that mimics the
+// real *anomaly.Evaluator.EnqueueRun contract (buffered channel, drop-oldest
+// on full, never blocks). The runner calls EnqueueRun directly (synchronously)
+// and relies on that contract. This test asserts the run completes well within
+// a deadline AND that the enqueue actually happened — i.e. the contract the
+// runner depends on holds.
+func TestEvaluatorEnqueueNonBlocking(t *testing.T) {
+	storageDir := t.TempDir()
+	sourceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, "data.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	r, d := newTestRunner(t)
+	bounded := newBoundedEnqueuer()
+	r.SetEvaluator(bounded)
+
+	jobID := newSuccessJob(t, d, storageDir, sourceDir)
+
+	done := make(chan struct{})
+	go func() {
+		r.RunJob(jobID)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Runner returned promptly — the non-blocking enqueue contract holds.
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunJob did not return within 5s — EnqueueRun appears to be blocking the runner")
+	}
+
+	// The run's id must have been enqueued via the non-blocking path.
+	ids := bounded.drain()
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 enqueued run, got %d (%v)", len(ids), ids)
+	}
+	runs, err := d.GetJobRuns(jobID, 5)
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("no job runs found: err=%v", err)
+	}
+	if ids[0] != runs[0].ID {
+		t.Errorf("enqueued run ID %d != persisted run ID %d", ids[0], runs[0].ID)
+	}
+}
+
+// TestEvaluatorNilSafe confirms that runners without a configured evaluator
+// (evaluator == nil) behave identically to pre-feature runners. No panic,
+// no behavioral change.
+func TestEvaluatorNilSafe(t *testing.T) {
+	storageDir := t.TempDir()
+	sourceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, "data.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	r, d := newTestRunner(t)
+	// Intentionally do NOT call SetEvaluator — evaluator stays nil.
+
+	jobID := newSuccessJob(t, d, storageDir, sourceDir)
+	r.RunJob(jobID) // must not panic
+
+	runs, err := d.GetJobRuns(jobID, 5)
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("no job runs found: err=%v", err)
+	}
+	if runs[0].Status != "completed" {
+		t.Errorf("expected status=completed, got %q", runs[0].Status)
+	}
+}
 
 func TestStructuredDetails(t *testing.T) {
 	t.Parallel()
