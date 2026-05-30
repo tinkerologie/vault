@@ -68,6 +68,7 @@ func TestListTools(t *testing.T) {
 		"get_health", "get_health_summary", "get_runner_status", "get_activity_log",
 		"list_restore_points", "restore_item",
 		"list_replication", "get_replication", "delete_replication",
+		"list_anomalies", "get_anomaly", "acknowledge_anomaly",
 	}
 
 	got := make(map[string]bool)
