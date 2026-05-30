@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 )
 
 // Rule thresholds.
@@ -101,30 +100,7 @@ func (d *SizeDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 	// --- Rules A + B: high-side anomaly detection ---
 	// The high side fires ONLY on a real rule. The floor is a pure suppressor
 	// applied after a rule fires, never a trigger.
-
-	// Rule A: modified z-score (disabled when mad == 0 to avoid ±Inf).
-	var severityA Severity
-	var zA float64
-	if mad != 0 {
-		zA = ModifiedZScore(observed, median, mad)
-		absZ := math.Abs(zA)
-		switch {
-		case absZ >= 2*k:
-			severityA = SeverityCritical
-		case absZ > k:
-			severityA = SeverityWarning
-		}
-	}
-
-	// Rule B: median multiplier (growth).
-	var severityB Severity
-	if observed > sizeGrowthMultiplier*median {
-		severityB = SeverityWarning
-	}
-
-	// Determine the dominant high-side severity. If neither rule fired, there
-	// is no signal — the linear band (median+k*mad) is NOT a trigger.
-	severity := higherSeverity(severityA, severityB)
+	severity, zA := evaluateHighSide(observed, median, mad, k, sizeGrowthMultiplier)
 	if severity == "" {
 		return nil, nil
 	}
