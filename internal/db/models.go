@@ -148,6 +148,57 @@ type VerifyRun struct {
 	ErrorSummary   string     `json:"error_summary"`
 }
 
+// Anomaly represents a detected anomaly event in the system.
+// state is one of: open, resolved, acknowledged, expected.
+type Anomaly struct {
+	ID             int64      `json:"id"`
+	Fingerprint    string     `json:"fingerprint"`
+	Detector       string     `json:"detector"`
+	Severity       string     `json:"severity"`
+	ScopeKind      string     `json:"scope_kind"`
+	ScopeID        int64      `json:"scope_id"`
+	Metric         string     `json:"metric"`
+	Observed       float64    `json:"observed"`
+	Expected       *float64   `json:"expected,omitempty"`
+	Deviation      *float64   `json:"deviation,omitempty"`
+	JobRunID       *int64     `json:"job_run_id,omitempty"`
+	Summary        string     `json:"summary"`
+	Details        string     `json:"details"`
+	State          string     `json:"state"`
+	FirstSeenAt    time.Time  `json:"first_seen_at"`
+	LastSeenAt     time.Time  `json:"last_seen_at"`
+	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	AckAction      string     `json:"ack_action,omitempty"`
+	AckBy          string     `json:"ack_by,omitempty"`
+	AckReason      string     `json:"ack_reason,omitempty"`
+	NotifiedAt     *time.Time `json:"notified_at,omitempty"`
+}
+
+// JobBaseline holds the statistical baseline for a single job, computed
+// from its historical run samples. Used by drift detectors to score new runs.
+type JobBaseline struct {
+	JobID          int64     `json:"job_id"`
+	SampleCount    int       `json:"sample_count"`
+	BytesMedian    float64   `json:"bytes_median"`
+	BytesMAD       float64   `json:"bytes_mad"`
+	DurationMedian float64   `json:"duration_median"`
+	DurationMAD    float64   `json:"duration_mad"`
+	FailureRate    float64   `json:"failure_rate"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// CapacitySample is a single point-in-time capacity measurement for a
+// storage destination. The sampler appends rows; the detector reads them
+// to compute a linear regression over a rolling window.
+type CapacitySample struct {
+	ID         int64     `json:"id"`
+	DestID     int64     `json:"dest_id"`
+	SampledAt  time.Time `json:"sampled_at"`
+	FreeBytes  int64     `json:"free_bytes"`
+	TotalBytes int64     `json:"total_bytes"`
+}
+
 // ReplicationSource represents a replication target (remote Vault server)
 // where local backups are pushed for disaster recovery.
 type ReplicationSource struct {
