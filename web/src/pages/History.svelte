@@ -9,6 +9,23 @@
   import SizeChart from '../components/SizeChart.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import AnomalyBadge from '../components/AnomalyBadge.svelte'
+  import { getAnomalies } from '../lib/anomalies.svelte.js'
+
+  const anomalyState = getAnomalies()
+
+  /** Count open anomalies associated with a specific job run. */
+  function runAnomalyCount(runId) {
+    return anomalyState.openList.filter(a => a.job_run_id === runId).length
+  }
+
+  function runWorstSeverity(runId) {
+    const anomalies = anomalyState.openList.filter(a => a.job_run_id === runId)
+    for (const sev of ['critical', 'warning', 'info']) {
+      if (anomalies.some(a => a.severity === sev)) return sev
+    }
+    return 'info'
+  }
 
   let loading = $state(true)
   let error = $state('')
@@ -289,6 +306,7 @@
             <div class="ml-1 border-l-2 border-border pl-5 space-y-3">
               {#each runs as run (run.id)}
                 {@const icon = statusIcon(run.status)}
+                {@const anomalyCount = runAnomalyCount(run.id)}
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                 <div
                   class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all {hasLogDetails(run) ? 'cursor-pointer' : ''}"
@@ -322,6 +340,10 @@
                           {/if}
                           {#if run.backup_type}
                             <span class="text-xs text-text-dim capitalize">{run.backup_type}</span>
+                          {/if}
+                          <!-- Anomaly badge for this run -->
+                          {#if anomalyCount > 0}
+                            <AnomalyBadge count={anomalyCount} severity={runWorstSeverity(run.id)} />
                           {/if}
                         </div>
                         <div class="flex items-center gap-4 mt-1.5 text-xs text-text-dim">

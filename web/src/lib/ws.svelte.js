@@ -1,6 +1,13 @@
 /** WebSocket client with auto-reconnect */
 
 import { buildApiRequest, getLiveMode } from './runtime-config.js'
+import {
+  handleAnomalyRaised,
+  handleAnomalyUpdated,
+  handleBulkResolved,
+  handleBulkAcked,
+  notifyBaselineUpdated,
+} from './anomalies.svelte.js'
 
 let ws = null
 let listeners = []
@@ -23,6 +30,25 @@ export function onWsMessage(fn) {
 
 function emitMessage(msg) {
   listeners.forEach((fn) => fn(msg))
+  // Dispatch anomaly events directly into the shared reactive state so all
+  // components see live updates without subscribing individually.
+  switch (msg.type) {
+    case 'anomaly.raised':
+      handleAnomalyRaised(msg.data)
+      break
+    case 'anomaly.updated':
+      handleAnomalyUpdated(msg.data)
+      break
+    case 'anomaly.bulk_resolved':
+      handleBulkResolved(msg.data)
+      break
+    case 'anomaly.bulk_acked':
+      handleBulkAcked(msg.data)
+      break
+    case 'baseline.updated':
+      notifyBaselineUpdated(msg.data)
+      break
+  }
 }
 
 async function pollRunnerStatus() {

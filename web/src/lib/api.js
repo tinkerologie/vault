@@ -177,6 +177,27 @@ export const api = {
   // Recovery
   getRecoveryPlan: () => request('GET', '/recovery/plan'),
 
+  // Anomalies
+  listAnomalies: (filter = {}) => {
+    const params = new URLSearchParams()
+    if (filter.state) params.set('state', filter.state)
+    if (filter.severity) params.set('severity', filter.severity)
+    if (filter.scope_kind) params.set('scope_kind', filter.scope_kind)
+    if (filter.scope_id) params.set('scope_id', String(filter.scope_id))
+    if (filter.since) params.set('since', filter.since)
+    if (filter.limit) params.set('limit', String(filter.limit))
+    if (filter.cursor) params.set('cursor', filter.cursor)
+    const qs = params.toString()
+    return request('GET', `/anomalies${qs ? '?' + qs : ''}`)
+  },
+  getAnomaly: (id) => request('GET', `/anomalies/${id}`),
+  ackAnomaly: (id, action, reason = '', by = '') =>
+    request('POST', `/anomalies/${id}/ack`, { action, reason, by }),
+  bulkAckAnomalies: (ids, action, reason = '', by = '') =>
+    request('POST', '/anomalies/ack-bulk', { ids, action, reason, by }),
+  getJobBaseline: (jobId) => request('GET', `/jobs/${jobId}/baseline`),
+  getCapacityTrajectory: (destId) => request('GET', `/destinations/${destId}/capacity-trajectory`),
+
   // Replication
   listReplicationSources: () => request('GET', '/replication'),
   getReplicationSource: (id) => request('GET', `/replication/${id}`),

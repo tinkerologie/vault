@@ -10,6 +10,8 @@
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import AnomalyBadge from '../components/AnomalyBadge.svelte'
+  import { getAnomalies, onBaselineUpdated } from '../lib/anomalies.svelte.js'
   import ItemPicker from '../components/ItemPicker.svelte'
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import BackupModeSelector from '../components/BackupModeSelector.svelte'
@@ -30,6 +32,30 @@
   let nextRuns = $state({})
   let editingNameId = $state(null)
   let editName = $state('')
+
+  // Anomaly / baseline per-job data
+  const anomalyState = getAnomalies()
+  /** @type {Record<number, {sample_count: number}|null>} */
+  let baselines = $state({})
+
+  // Count open anomalies per job from shared state
+  /** @type {(jobId: number) => number} */
+  function jobAnomalyCount(jobId) {
+    return anomalyState.openList.filter(a => a.scope_kind === 'job' && a.scope_id === jobId).length
+  }
+
+  /** @type {(jobId: number) => string} */
+  function jobWorstSeverity(jobId) {
+    const anomalies = anomalyState.openList.filter(a => a.scope_kind === 'job' && a.scope_id === jobId)
+    for (const sev of ['critical', 'warning', 'info']) {
+      if (anomalies.some(a => a.severity === sev)) return sev
+    }
+    return 'info'
+  }
+
+  function baselineSamples(jobId) {
+    return baselines[jobId]?.sample_count ?? 0
+  }
 
   // Bulk selection
   let selectedJobs = $state(new SvelteSet())
@@ -333,12 +359,17 @@
 
   onMount(() => {
     loadData()
-    const unsub = onWsMessage((msg) => {
+    const unsubWs = onWsMessage((msg) => {
       if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed') {
         loadData()
       }
     })
-    return unsub
+    const unsubBaseline = onBaselineUpdated((data) => {
+      if (data?.job_id && data?.baseline) {
+        baselines = { ...baselines, [data.job_id]: data.baseline }
+      }
+    })
+    return () => { unsubWs(); unsubBaseline() }
   })
 
   async function loadData() {
@@ -348,11 +379,29 @@
       jobs = j || []
       storageList = s || []
       nextRuns = nr || {}
+      // Fetch baselines for all jobs in parallel; 404 = not yet established (0 samples).
+      void loadBaselines(jobs)
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
       loading = false
     }
+  }
+
+  async function loadBaselines(jobList) {
+    const results = await Promise.all(
+      jobList.map(async (j) => {
+        try {
+          const b = await api.getJobBaseline(j.id)
+          return [j.id, b]
+        } catch {
+          return [j.id, null]
+        }
+      })
+    )
+    const map = {}
+    for (const [id, b] of results) map[id] = b
+    baselines = map
   }
 
   function openCreate() {
@@ -717,6 +766,16 @@
                   <h2 ondblclick={() => startNameEdit(job)} class="text-sm font-semibold text-text truncate cursor-text" title="Double-click to rename">
                     {job.name}
                   </h2>
+                {/if}
+                <!-- Anomaly badge for this job -->
+                {#if jobAnomalyCount(job.id) > 0}
+                  <AnomalyBadge count={jobAnomalyCount(job.id)} severity={jobWorstSeverity(job.id)} />
+                {/if}
+                <!-- Baseline learning indicator -->
+                {#if baselineSamples(job.id) < 10}
+                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-4 text-text-dim font-medium shrink-0">
+                    Learning baseline ({baselineSamples(job.id)}/10)
+                  </span>
                 {/if}
               </div>
               {#if job.description}
