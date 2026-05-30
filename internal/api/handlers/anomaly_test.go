@@ -708,8 +708,24 @@ func TestAnomalyGetBaseline_NoBaseline(t *testing.T) {
 	r := withURLParam(newReq(http.MethodGet, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/baseline", nil), "id", strconv.FormatInt(jobID, 10))
 	h.GetBaseline(w, r)
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	// A missing baseline is "still learning" — not an error. Must return 200
+	// with a zero-valued payload so the UI can show "Learning baseline (0/10)"
+	// without logging a console 404.
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["job_id"] == nil {
+		t.Error("response missing 'job_id'")
+	}
+	if sc, _ := resp["sample_count"].(float64); sc != 0 {
+		t.Errorf("sample_count = %.0f, want 0", sc)
+	}
+	if jid, _ := resp["job_id"].(float64); int64(jid) != jobID {
+		t.Errorf("job_id = %.0f, want %d", jid, jobID)
 	}
 }
 

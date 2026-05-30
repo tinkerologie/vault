@@ -383,7 +383,7 @@
       jobs = j || []
       storageList = s || []
       nextRuns = nr || {}
-      // Fetch baselines for all jobs in parallel; 404 = not yet established (0 samples).
+      // Fetch baselines for all jobs in parallel; always returns 200 (sample_count=0 when still learning).
       void loadBaselines(jobs)
     } catch (e) {
       showToast(e.message, 'error')

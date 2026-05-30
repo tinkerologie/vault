@@ -334,6 +334,9 @@ func (h *AnomalyHandler) AckBulk(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 // GetBaseline returns the anomaly-detection baseline for a job.
+// When no baseline row exists yet (the job is still learning), a 200 with a
+// zero-valued baseline (sample_count: 0) is returned so callers can render a
+// "Learning baseline (0/N)" state without treating it as an error.
 func (h *AnomalyHandler) GetBaseline(w http.ResponseWriter, r *http.Request) {
 	jobID, ok := parseID(w, r, "id")
 	if !ok {
@@ -342,7 +345,9 @@ func (h *AnomalyHandler) GetBaseline(w http.ResponseWriter, r *http.Request) {
 	baseline, err := h.db.GetJobBaseline(jobID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			respondError(w, http.StatusNotFound, "no baseline computed for this job yet")
+			// Still learning — return a zero baseline so the UI can show
+			// "Learning baseline (0/10)" without logging a console 404.
+			respondJSON(w, http.StatusOK, db.JobBaseline{JobID: jobID})
 			return
 		}
 		respondInternalError(w, err)
