@@ -49,12 +49,12 @@ func TestSFTPPoolCloseAllClosesIdle(t *testing.T) {
 	if !c.(*fakeSFTPConn).closed {
 		t.Error("closeAll should close idle connections")
 	}
-	// After close, putting a connection back closes it instead of pooling.
-	// Acquire a semaphore slot via get() so put() can release it properly.
-	_, _ = p.get() // consumes a slot; we intentionally discard this conn
-	c2 := &fakeSFTPConn{}
-	p.put(c2, nil) // releases the slot; closes c2 because pool is closed
-	if !c2.closed {
+	// After close, returning a connection closes it instead of pooling it.
+	// get() pairs with put() so the semaphore slot is balanced and the dialed
+	// connection isn't leaked.
+	c2, _ := p.get()
+	p.put(c2, nil) // pool is closed → put closes c2 instead of pooling
+	if !c2.(*fakeSFTPConn).closed {
 		t.Error("put after closeAll should close the connection")
 	}
 }
