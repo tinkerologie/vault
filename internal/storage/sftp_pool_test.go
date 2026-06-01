@@ -72,8 +72,10 @@ func TestSFTPPoolGetUnblocksOnClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	errCh := make(chan error, 1)
-	go func() { _, err := p.get(); errCh <- err }() // blocks: sem full
-	time.Sleep(50 * time.Millisecond)               // let the goroutine block
+	go func() { _, err := p.get(); errCh <- err }() // sem is full, so this waits
+	// No sleep needed: closeAll unblocks get() whether it is already parked on
+	// the semaphore (done fires) or reaches the select after close (done is
+	// already closed). Either way the get must return promptly with an error.
 	p.closeAll()
 	select {
 	case err := <-errCh:
