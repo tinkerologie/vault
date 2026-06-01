@@ -124,6 +124,10 @@ func (n *NFSAdapter) Write(path string, reader io.Reader) error {
 	return n.local.Write(path, reader)
 }
 
+func (n *NFSAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(n, path, open)
+}
+
 func (n *NFSAdapter) Read(path string) (io.ReadCloser, error) {
 	if err := n.mount(); err != nil {
 		return nil, err

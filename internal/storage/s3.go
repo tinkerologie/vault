@@ -425,6 +425,10 @@ func (a *S3Adapter) Write(p string, reader io.Reader) error {
 	return nil
 }
 
+func (a *S3Adapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(a, p, open)
+}
+
 func (a *S3Adapter) Read(p string) (io.ReadCloser, error) {
 	key, err := a.keyFor(p, false)
 	if err != nil {

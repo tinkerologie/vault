@@ -641,6 +641,10 @@ func (w *WebDAVAdapter) Write(p string, reader io.Reader) error {
 	return w.writeChunked(c, cleanWebDAVLogicalPath(p), full, firstChunk, reader, chunkSize)
 }
 
+func (w *WebDAVAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(w, p, open)
+}
+
 func (w *WebDAVAdapter) Read(p string) (io.ReadCloser, error) {
 	full, err := w.fullPath(p, false)
 	if err != nil {

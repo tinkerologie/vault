@@ -21,6 +21,11 @@ type FileInfo struct {
 
 type Adapter interface {
 	Write(path string, reader io.Reader) error
+	// WriteFrom writes the object at path, obtaining its content from open().
+	// open() MUST return a fresh stream on every call so a wrapper (the retry
+	// layer) can re-issue a failed write from the beginning. Used by the
+	// backup upload path, where the source is a staged local file.
+	WriteFrom(path string, open func() (io.ReadCloser, error)) error
 	Read(path string) (io.ReadCloser, error)
 	// ReadRange returns a stream limited to `length` bytes starting at
 	// `offset`. Used by the dedup layer to fetch small slices of multi-MiB
@@ -85,4 +90,16 @@ func CloseAdapter(a Adapter) {
 	if closer, ok := a.(io.Closer); ok {
 		_ = closer.Close()
 	}
+}
+
+// streamWriteFrom is the default WriteFrom for providers that have no native
+// retry: open the source once and stream it through Write. Wrappers that add
+// retry override WriteFrom instead of using this helper.
+func streamWriteFrom(a Adapter, path string, open func() (io.ReadCloser, error)) error {
+	rc, err := open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close() //nolint:errcheck
+	return a.Write(path, rc)
 }

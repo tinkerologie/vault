@@ -69,6 +69,10 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	return nil
 }
 
+func (l *LocalAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(l, path, open)
+}
+
 func (l *LocalAdapter) Read(path string) (io.ReadCloser, error) {
 	fullPath, err := l.fullPath(path, false)
 	if err != nil {

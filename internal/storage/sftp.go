@@ -158,6 +158,10 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) error {
 	return nil
 }
 
+func (s *SFTPAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(s, path, open)
+}
+
 func (s *SFTPAdapter) Read(path string) (io.ReadCloser, error) {
 	client, err := s.connect()
 	if err != nil {

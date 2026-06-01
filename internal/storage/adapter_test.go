@@ -10,8 +10,9 @@ import (
 // noCloseAdapter is an Adapter that does NOT implement io.Closer.
 type noCloseAdapter struct{}
 
-func (noCloseAdapter) Write(string, io.Reader) error      { return nil }
-func (noCloseAdapter) Read(string) (io.ReadCloser, error) { return nil, nil }
+func (noCloseAdapter) Write(string, io.Reader) error                         { return nil }
+func (noCloseAdapter) WriteFrom(string, func() (io.ReadCloser, error)) error { return nil }
+func (noCloseAdapter) Read(string) (io.ReadCloser, error)                    { return nil, nil }
 func (noCloseAdapter) ReadRange(string, int64, int64) (io.ReadCloser, error) {
 	return nil, nil
 }

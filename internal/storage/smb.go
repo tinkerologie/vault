@@ -117,6 +117,10 @@ func (s *SMBAdapter) Write(path string, reader io.Reader) error {
 	return nil
 }
 
+func (s *SMBAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(s, path, open)
+}
+
 func (s *SMBAdapter) Read(path string) (io.ReadCloser, error) {
 	share, session, err := s.connect()
 	if err != nil {

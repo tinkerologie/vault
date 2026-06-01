@@ -42,6 +42,16 @@ func (t *throttledAdapter) Write(p string, reader io.Reader) error {
 	return t.inner.Write(p, &throttledReader{r: reader, limiter: t.limiter})
 }
 
+func (t *throttledAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
+	return t.inner.WriteFrom(p, func() (io.ReadCloser, error) {
+		rc, err := open()
+		if err != nil {
+			return nil, err
+		}
+		return &throttledReadCloser{rc: rc, limiter: t.limiter}, nil
+	})
+}
+
 func (t *throttledAdapter) Read(p string) (io.ReadCloser, error) {
 	rc, err := t.inner.Read(p)
 	if err != nil {
