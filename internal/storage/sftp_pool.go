@@ -1,38 +1,49 @@
 package storage
 
 import (
-	"context"
+	"errors"
 	"sync"
 )
 
-// sftpConn is the subset of a pooled SFTP connection the pool manages. Real
-// connections (ssh+sftp clients) satisfy it; tests provide a fake.
+// errSFTPPoolClosed is returned by get when the pool has been closed.
+var errSFTPPoolClosed = errors.New("sftp: connection pool closed")
+
 type sftpConn interface {
 	Close() error
 }
 
-// sftpPool is a bounded pool of reusable SFTP connections. A connection
-// returned with a non-nil error is closed and discarded rather than reused.
 type sftpPool struct {
 	dial   func() (sftpConn, error)
 	sem    chan struct{}
 	mu     sync.Mutex
 	idle   []sftpConn
 	closed bool
+	done   chan struct{} // closed by closeAll to unblock waiters in get
 }
 
 func newSFTPPool(size int, dial func() (sftpConn, error)) *sftpPool {
 	if size < 1 {
 		size = 1
 	}
-	return &sftpPool{dial: dial, sem: make(chan struct{}, size)}
+	return &sftpPool{dial: dial, sem: make(chan struct{}, size), done: make(chan struct{})}
 }
 
-func (p *sftpPool) get(ctx context.Context) (sftpConn, error) {
+// get borrows a connection, blocking until a slot frees. It returns
+// errSFTPPoolClosed if the pool is closed while waiting (or already closed),
+// so a backup whose adapter is torn down on cancellation does not block forever.
+func (p *sftpPool) get() (sftpConn, error) {
+	// Fast-path: if the pool is already closed, don't even try to acquire the
+	// semaphore. This makes get() deterministically return an error when called
+	// after closeAll(), regardless of whether a semaphore slot is free.
+	select {
+	case <-p.done:
+		return nil, errSFTPPoolClosed
+	default:
+	}
 	select {
 	case p.sem <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case <-p.done:
+		return nil, errSFTPPoolClosed
 	}
 	p.mu.Lock()
 	if n := len(p.idle); n > 0 {
@@ -69,9 +80,16 @@ func (p *sftpPool) put(c sftpConn, opErr error) {
 	p.mu.Unlock()
 }
 
+// closeAll closes the pool: it signals waiters via done (once), then closes all
+// idle connections. Idempotent.
 func (p *sftpPool) closeAll() {
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
 	p.closed = true
+	close(p.done)
 	idle := p.idle
 	p.idle = nil
 	p.mu.Unlock()

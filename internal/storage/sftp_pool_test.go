@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"context"
 	"testing"
+	"time"
 )
 
 func TestSFTPPoolReusesConnections(t *testing.T) {
@@ -11,12 +11,12 @@ func TestSFTPPoolReusesConnections(t *testing.T) {
 		dials++
 		return &fakeSFTPConn{}, nil
 	})
-	c1, err := p.get(context.Background())
+	c1, err := p.get()
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.put(c1, nil) // healthy return
-	c2, err := p.get(context.Background())
+	c2, err := p.get()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,9 +32,9 @@ func TestSFTPPoolDiscardsOnError(t *testing.T) {
 		dials++
 		return &fakeSFTPConn{}, nil
 	})
-	c, _ := p.get(context.Background())
+	c, _ := p.get()
 	p.put(c, errSomeOpFailure) // returned with error => discarded
-	c2, _ := p.get(context.Background())
+	c2, _ := p.get()
 	p.put(c2, nil)
 	if dials != 2 {
 		t.Errorf("dials = %d, want 2 (broken conn discarded, new one dialed)", dials)
@@ -46,31 +46,42 @@ func TestSFTPPoolDiscardsOnError(t *testing.T) {
 
 func TestSFTPPoolCloseAllClosesIdle(t *testing.T) {
 	p := newSFTPPool(2, func() (sftpConn, error) { return &fakeSFTPConn{}, nil })
-	c, _ := p.get(context.Background())
+	c, _ := p.get()
 	p.put(c, nil)
 	p.closeAll()
 	if !c.(*fakeSFTPConn).closed {
 		t.Error("closeAll should close idle connections")
 	}
-	// After close, returning a connection closes it instead of pooling it.
-	// get() pairs with put() so the semaphore slot is balanced and the dialed
-	// connection isn't leaked.
-	c2, _ := p.get(context.Background())
-	p.put(c2, nil) // pool is closed → put closes c2 instead of pooling
-	if !c2.(*fakeSFTPConn).closed {
-		t.Error("put after closeAll should close the connection")
+	// After close, get() returns an error so put() must not be called.
+	if _, err := p.get(); err == nil {
+		t.Error("get after closeAll must return an error")
 	}
 }
 
-func TestSFTPPoolGetCancelled(t *testing.T) {
+func TestSFTPPoolGetAfterCloseErrors(t *testing.T) {
 	p := newSFTPPool(1, func() (sftpConn, error) { return &fakeSFTPConn{}, nil })
-	if _, err := p.get(context.Background()); err != nil { // take the only slot
+	p.closeAll()
+	if _, err := p.get(); err == nil {
+		t.Error("get after closeAll must return an error, not block or succeed")
+	}
+}
+
+func TestSFTPPoolGetUnblocksOnClose(t *testing.T) {
+	p := newSFTPPool(1, func() (sftpConn, error) { return &fakeSFTPConn{}, nil })
+	if _, err := p.get(); err != nil { // hold the only slot, never return it
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := p.get(ctx); err == nil {
-		t.Error("get with cancelled ctx and no free slot must return an error")
+	errCh := make(chan error, 1)
+	go func() { _, err := p.get(); errCh <- err }() // blocks: sem full
+	time.Sleep(50 * time.Millisecond)               // let the goroutine block
+	p.closeAll()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Error("blocked get must return an error after closeAll")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("blocked get did not unblock after closeAll")
 	}
 }
 
