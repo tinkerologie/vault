@@ -45,9 +45,28 @@ type Job struct {
 	RetryDelaysOverride *string `json:"retry_delays_override"`
 	// AnomalySensitivity is a per-job sensitivity override ("strict",
 	// "balanced", "permissive"). Empty string means use the global default.
-	AnomalySensitivity string    `json:"anomaly_sensitivity"`
+	AnomalySensitivity string `json:"anomaly_sensitivity"`
+	// MaxParallelUploads is the maximum number of concurrent upload workers
+	// for this job. 0 is a sentinel meaning "use the default" (resolved via
+	// EffectiveUploadConcurrency). Existing rows default to 1 (serial) via the
+	// DB column DEFAULT; new rows that don't set this field get 3 from the
+	// method.
+	MaxParallelUploads int       `json:"max_parallel_uploads"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// EffectiveUploadConcurrency returns the upload concurrency to use, mapping the
+// 0 sentinel ("unset") to the default of 3 and clamping to [1,16].
+func (j Job) EffectiveUploadConcurrency() int {
+	n := j.MaxParallelUploads
+	if n <= 0 {
+		n = 3
+	}
+	if n > 16 {
+		n = 16
+	}
+	return n
 }
 
 type JobItem struct {

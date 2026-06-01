@@ -25,8 +25,9 @@ func (d *DB) CreateJob(job Job) (int64, error) {
 		post_script, notify_on, verify_backup, storage_dest_id, defer_remote_upload,
 		keep_latest, keep_daily, keep_weekly, keep_monthly, keep_yearly,
 		verify_schedule, verify_mode,
-		retry_max_override, retry_delays_override)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		retry_max_override, retry_delays_override,
+		max_parallel_uploads)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
 		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, nullableID(job.StorageDestID),
@@ -34,6 +35,7 @@ func (d *DB) CreateJob(job Job) (int64, error) {
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 		job.VerifySchedule, job.VerifyMode,
 		job.RetryMaxOverride, job.RetryDelaysOverride,
+		job.MaxParallelUploads,
 	)
 	if err != nil {
 		return 0, err
@@ -53,6 +55,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
 		COALESCE(anomaly_sensitivity, ''),
+		COALESCE(max_parallel_uploads, 1),
 		created_at, updated_at
 		FROM jobs WHERE id = ?`, id,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -63,6 +66,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		&job.VerifySchedule, &job.VerifyMode,
 		&job.RetryMaxOverride, &job.RetryDelaysOverride,
 		&job.AnomalySensitivity,
+		&job.MaxParallelUploads,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
@@ -81,6 +85,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
 		COALESCE(anomaly_sensitivity, ''),
+		COALESCE(max_parallel_uploads, 1),
 		created_at, updated_at
 		FROM jobs ORDER BY name`)
 	if err != nil {
@@ -98,6 +103,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 			&job.VerifySchedule, &job.VerifyMode,
 			&job.RetryMaxOverride, &job.RetryDelaysOverride,
 			&job.AnomalySensitivity,
+			&job.MaxParallelUploads,
 			&job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -115,6 +121,7 @@ func (d *DB) UpdateJob(job Job) error {
 		verify_schedule=?, verify_mode=?,
 		retry_max_override=?, retry_delays_override=?,
 		anomaly_sensitivity=?,
+		max_parallel_uploads=?,
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
@@ -124,6 +131,7 @@ func (d *DB) UpdateJob(job Job) error {
 		job.VerifySchedule, job.VerifyMode,
 		job.RetryMaxOverride, job.RetryDelaysOverride,
 		job.AnomalySensitivity,
+		job.MaxParallelUploads,
 		job.ID,
 	)
 	return err
@@ -148,6 +156,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
 		COALESCE(anomaly_sensitivity, ''),
+		COALESCE(max_parallel_uploads, 1),
 		created_at, updated_at
 		FROM jobs WHERE name = ?`, name,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -158,6 +167,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		&job.VerifySchedule, &job.VerifyMode,
 		&job.RetryMaxOverride, &job.RetryDelaysOverride,
 		&job.AnomalySensitivity,
+		&job.MaxParallelUploads,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
