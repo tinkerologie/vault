@@ -215,6 +215,7 @@
       retry_max_override: '',
       retry_delays_override: '',
       anomaly_sensitivity: '',
+      max_parallel_uploads: 3,
       items: [],
       selectedTypes: [],
     }
@@ -453,6 +454,7 @@
         retry_max_override: data.job.retry_max_override == null ? '' : String(data.job.retry_max_override),
         retry_delays_override: data.job.retry_delays_override == null ? '' : String(data.job.retry_delays_override),
         anomaly_sensitivity: data.job.anomaly_sensitivity || '',
+        max_parallel_uploads: data.job.max_parallel_uploads || 3,
         items: data.items || [],
         selectedTypes: deriveTypesFromItems(data.items || []),
       }
@@ -560,6 +562,7 @@
         retry_max_override: fullJob.retry_max_override == null ? '' : String(fullJob.retry_max_override),
         retry_delays_override: fullJob.retry_delays_override == null ? '' : String(fullJob.retry_delays_override),
         anomaly_sensitivity: fullJob.anomaly_sensitivity || '',
+        max_parallel_uploads: fullJob.max_parallel_uploads || 3,
         enabled: false,
         items: (data.items || []).map(i => ({
           item_type: i.item_type,
@@ -1235,6 +1238,28 @@
               <option value="balanced">Balanced</option>
               <option value="permissive">Permissive — flag large deviations only</option>
             </select>
+          </div>
+        </details>
+
+        <!-- Advanced: Max parallel uploads (Task 12 — storage resilience) -->
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Upload concurrency <Tooltip text="How many files upload to the destination at once. Higher is faster on fast links; set to 1 for fragile or rate-limited remotes." />
+          </summary>
+          <div class="mt-3 pl-6">
+            <label for="job_parallel" class="block text-xs font-medium text-text-muted mb-1">
+              Max parallel uploads <span class="text-text-dim">(1–16)</span>
+            </label>
+            <input
+              id="job_parallel"
+              type="number"
+              min="1"
+              max="16"
+              bind:value={form.max_parallel_uploads}
+              class="w-full sm:w-32 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+            />
+            <p class="text-xs text-text-dim mt-1">Higher values are faster on reliable high-bandwidth links. Lower to 1 for slow or rate-limited remotes to avoid dropped connections.</p>
           </div>
         </details>
 
