@@ -61,11 +61,19 @@ func (r *retryAdapter) backoff(attempt int) time.Duration {
 	if r.policy.BaseDelay <= 0 {
 		return 0
 	}
-	exp := float64(r.policy.BaseDelay) * math.Pow(2, float64(attempt-1))
-	if r.policy.MaxDelay > 0 && exp > float64(r.policy.MaxDelay) {
-		exp = float64(r.policy.MaxDelay)
+	maxDelay := r.policy.MaxDelay
+	if maxDelay <= 0 {
+		maxDelay = 30 * time.Second // safe cap when unset, prevents overflow
 	}
-	return time.Duration(rand.Int63n(int64(exp) + 1)) // #nosec G404 //nolint:gosec // jitter, not security
+	expF := float64(r.policy.BaseDelay) * math.Pow(2, float64(attempt-1))
+	if expF > float64(maxDelay) {
+		expF = float64(maxDelay)
+	}
+	exp := int64(expF)
+	if exp <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Int63n(exp + 1)) // #nosec G404 //nolint:gosec // jitter, not security
 }
 
 // Write passes through directly without retry: the caller supplies a

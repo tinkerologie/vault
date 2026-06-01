@@ -977,7 +977,7 @@
               <p class="text-xs text-text-muted mt-0.5">Per-operation trace in the daemon log; off by default.</p>
             </div>
             <button
-              onclick={() => { storageVerboseLogging = !storageVerboseLogging }}
+              onclick={() => storageVerboseLogging = !storageVerboseLogging}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={storageVerboseLogging}

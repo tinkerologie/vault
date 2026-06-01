@@ -11,10 +11,11 @@ type sftpConn interface {
 // sftpPool is a bounded pool of reusable SFTP connections. A connection
 // returned with a non-nil error is closed and discarded rather than reused.
 type sftpPool struct {
-	dial func() (sftpConn, error)
-	sem  chan struct{}
-	mu   sync.Mutex
-	idle []sftpConn
+	dial   func() (sftpConn, error)
+	sem    chan struct{}
+	mu     sync.Mutex
+	idle   []sftpConn
+	closed bool
 }
 
 func newSFTPPool(size int, dial func() (sftpConn, error)) *sftpPool {
@@ -52,15 +53,22 @@ func (p *sftpPool) put(c sftpConn, opErr error) {
 		return
 	}
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		_ = c.Close()
+		return
+	}
 	p.idle = append(p.idle, c)
 	p.mu.Unlock()
 }
 
 func (p *sftpPool) closeAll() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, c := range p.idle {
+	p.closed = true
+	idle := p.idle
+	p.idle = nil
+	p.mu.Unlock()
+	for _, c := range idle {
 		_ = c.Close()
 	}
-	p.idle = nil
 }

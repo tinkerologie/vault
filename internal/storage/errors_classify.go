@@ -54,10 +54,10 @@ func classify(err error) bool {
 	var hse *httpStatusError
 	if errors.As(err, &hse) {
 		switch hse.code {
-		case http.StatusRequestTimeout, http.StatusTooManyRequests: // 408, 429
+		case 408, 429, 500, 502, 503, 504:
 			return true
 		}
-		return hse.code >= 500 && hse.code <= 599
+		return false
 	}
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {

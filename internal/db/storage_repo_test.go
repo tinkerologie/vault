@@ -114,7 +114,8 @@ func TestDeleteStorageDestinationOrphansDependents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateJob error = %v", err)
 	}
-	if _, err := d.CreateReplicationSource(ReplicationSource{Name: "peer", Type: "vault", URL: "http://x", StorageDestID: destID}); err != nil {
+	rsID, err := d.CreateReplicationSource(ReplicationSource{Name: "peer", Type: "vault", URL: "http://x", StorageDestID: destID})
+	if err != nil {
 		t.Fatalf("CreateReplicationSource error = %v", err)
 	}
 
@@ -134,6 +135,15 @@ func TestDeleteStorageDestinationOrphansDependents(t *testing.T) {
 	}
 	if job.StorageDestID != 0 {
 		t.Errorf("orphaned job StorageDestID = %d, want 0", job.StorageDestID)
+	}
+
+	// The replication source must also survive but be orphaned (StorageDestID == 0).
+	src, err := d.GetReplicationSource(rsID)
+	if err != nil {
+		t.Fatalf("GetReplicationSource after delete: %v", err)
+	}
+	if src.StorageDestID != 0 {
+		t.Errorf("replication source StorageDestID = %d, want 0 (orphaned)", src.StorageDestID)
 	}
 
 	// An orphaned job must still survive a round-trip update without

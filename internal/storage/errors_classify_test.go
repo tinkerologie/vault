@@ -28,6 +28,7 @@ func TestClassify(t *testing.T) {
 		{"http 408", &httpStatusError{code: 408}, true},
 		{"http 403", &httpStatusError{code: 403}, false},
 		{"http 404", &httpStatusError{code: 404}, false},
+		{"http 501", &httpStatusError{code: 501}, false},
 		{"forced retryable", &retryableError{err: errors.New("x")}, true},
 		{"plain error", errors.New("boom"), false},
 	}

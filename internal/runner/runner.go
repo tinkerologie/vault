@@ -2112,13 +2112,15 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.
 			defer wg.Done()
 			defer func() { <-sem }()
 			storageName, checksum, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, itemType, itemName, progress)
+			if storageName != "" {
+				mu.Lock()
+				checksums[storageName] = checksum // checksum is "" on error; key still enables cleanup
+				mu.Unlock()
+			}
 			if upErr != nil {
 				errOnce.Do(func() { firstErr = upErr })
 				return
 			}
-			mu.Lock()
-			checksums[storageName] = checksum
-			mu.Unlock()
 		}(entry.Name())
 	}
 	wg.Wait()

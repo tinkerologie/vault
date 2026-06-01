@@ -41,6 +41,24 @@ func TestSFTPPoolDiscardsOnError(t *testing.T) {
 	}
 }
 
+func TestSFTPPoolCloseAllClosesIdle(t *testing.T) {
+	p := newSFTPPool(2, func() (sftpConn, error) { return &fakeSFTPConn{}, nil })
+	c, _ := p.get()
+	p.put(c, nil)
+	p.closeAll()
+	if !c.(*fakeSFTPConn).closed {
+		t.Error("closeAll should close idle connections")
+	}
+	// After close, putting a connection back closes it instead of pooling.
+	// Acquire a semaphore slot via get() so put() can release it properly.
+	_, _ = p.get() // consumes a slot; we intentionally discard this conn
+	c2 := &fakeSFTPConn{}
+	p.put(c2, nil) // releases the slot; closes c2 because pool is closed
+	if !c2.closed {
+		t.Error("put after closeAll should close the connection")
+	}
+}
+
 var errSomeOpFailure = errTest("op failed")
 
 type errTest string

@@ -369,11 +369,11 @@ func TestMaxParallelUploadsRoundTrip(t *testing.T) {
 	if got.MaxParallelUploads != 5 {
 		t.Errorf("MaxParallelUploads = %d, want 5", got.MaxParallelUploads)
 	}
-	if (Job{MaxParallelUploads: 0}).EffectiveUploadConcurrency() != 3 {
-		t.Errorf("EffectiveUploadConcurrency(0) = %d, want 3", (Job{}).EffectiveUploadConcurrency())
+	if got := (Job{MaxParallelUploads: 0}).EffectiveUploadConcurrency(); got != 3 {
+		t.Errorf("EffectiveUploadConcurrency(0) = %d, want 3", got)
 	}
-	if (Job{MaxParallelUploads: 99}).EffectiveUploadConcurrency() != 16 {
-		t.Errorf("EffectiveUploadConcurrency(99) should clamp to 16")
+	if got := (Job{MaxParallelUploads: 99}).EffectiveUploadConcurrency(); got != 16 {
+		t.Errorf("EffectiveUploadConcurrency(99) = %d, want 16", got)
 	}
 }
 
