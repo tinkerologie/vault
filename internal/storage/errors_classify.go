@@ -12,32 +12,32 @@ import (
 // httpStatusError carries an HTTP status code so the classifier can decide
 // retryability. Providers that speak HTTP wrap transport errors in this type
 // when they can extract a status.
-type httpStatusError struct { //nolint:unused // consumed by classify and by retry middleware
+type httpStatusError struct {
 	code int
 	err  error
 }
 
-func (e *httpStatusError) Error() string { //nolint:unused
+func (e *httpStatusError) Error() string {
 	if e.err != nil {
 		return e.err.Error()
 	}
 	return http.StatusText(e.code)
 }
 
-func (e *httpStatusError) Unwrap() error { return e.err } //nolint:unused
+func (e *httpStatusError) Unwrap() error { return e.err }
 
 // retryableError forces the classifier to treat the wrapped error as
 // retryable, for protocol-specific transient conditions that aren't otherwise
 // detectable.
-type retryableError struct{ err error } //nolint:unused // consumed by classify and by retry middleware
+type retryableError struct{ err error }
 
-func (e *retryableError) Error() string { return e.err.Error() } //nolint:unused
-func (e *retryableError) Unwrap() error { return e.err }         //nolint:unused
+func (e *retryableError) Error() string { return e.err.Error() }
+func (e *retryableError) Unwrap() error { return e.err }
 
 // classify reports whether err represents a transient failure worth retrying.
 // The default is false: when in doubt, do not retry — a wrong retry wastes time
 // and can amplify load on a struggling destination.
-func classify(err error) bool { //nolint:unused // called by retry middleware
+func classify(err error) bool {
 	if err == nil {
 		return false
 	}

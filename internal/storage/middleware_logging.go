@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-type loggingAdapter struct { //nolint:unused // wired into factory in Task 7; used directly from tests
+type loggingAdapter struct {
 	inner   Adapter
 	dest    string
 	enabled bool
@@ -15,11 +15,11 @@ type loggingAdapter struct { //nolint:unused // wired into factory in Task 7; us
 
 // withLogging wraps inner with a structured-logging adapter tagged by dest.
 // When enabled is false the wrapper is a thin pass-through with no allocations.
-func withLogging(inner Adapter, dest string, enabled bool) Adapter { //nolint:unused // wired into factory in Task 7; used directly from tests
+func withLogging(inner Adapter, dest string, enabled bool) Adapter {
 	return &loggingAdapter{inner: inner, dest: dest, enabled: enabled}
 }
 
-func (l *loggingAdapter) trace(op, path string, start time.Time, err error) { //nolint:unused
+func (l *loggingAdapter) trace(op, path string, start time.Time, err error) {
 	if !l.enabled {
 		return
 	}
@@ -31,7 +31,7 @@ func (l *loggingAdapter) trace(op, path string, start time.Time, err error) { //
 		l.dest, op, path, time.Since(start).Truncate(time.Millisecond), status)
 }
 
-func (l *loggingAdapter) Write(p string, r io.Reader) error { //nolint:unused
+func (l *loggingAdapter) Write(p string, r io.Reader) error {
 	if !l.enabled {
 		return l.inner.Write(p, r)
 	}
@@ -41,7 +41,7 @@ func (l *loggingAdapter) Write(p string, r io.Reader) error { //nolint:unused
 	return err
 }
 
-func (l *loggingAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error { //nolint:unused
+func (l *loggingAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
 	if !l.enabled {
 		return l.inner.WriteFrom(p, open)
 	}
@@ -51,7 +51,7 @@ func (l *loggingAdapter) WriteFrom(p string, open func() (io.ReadCloser, error))
 	return err
 }
 
-func (l *loggingAdapter) Read(p string) (io.ReadCloser, error) { //nolint:unused
+func (l *loggingAdapter) Read(p string) (io.ReadCloser, error) {
 	if !l.enabled {
 		return l.inner.Read(p)
 	}
@@ -61,7 +61,7 @@ func (l *loggingAdapter) Read(p string) (io.ReadCloser, error) { //nolint:unused
 	return rc, err
 }
 
-func (l *loggingAdapter) ReadRange(p string, off, length int64) (io.ReadCloser, error) { //nolint:unused
+func (l *loggingAdapter) ReadRange(p string, off, length int64) (io.ReadCloser, error) {
 	if !l.enabled {
 		return l.inner.ReadRange(p, off, length)
 	}
@@ -71,7 +71,7 @@ func (l *loggingAdapter) ReadRange(p string, off, length int64) (io.ReadCloser, 
 	return rc, err
 }
 
-func (l *loggingAdapter) Delete(p string) error { //nolint:unused
+func (l *loggingAdapter) Delete(p string) error {
 	if !l.enabled {
 		return l.inner.Delete(p)
 	}
@@ -81,7 +81,7 @@ func (l *loggingAdapter) Delete(p string) error { //nolint:unused
 	return err
 }
 
-func (l *loggingAdapter) List(p string) ([]FileInfo, error) { //nolint:unused
+func (l *loggingAdapter) List(p string) ([]FileInfo, error) {
 	if !l.enabled {
 		return l.inner.List(p)
 	}
@@ -91,7 +91,7 @@ func (l *loggingAdapter) List(p string) ([]FileInfo, error) { //nolint:unused
 	return out, err
 }
 
-func (l *loggingAdapter) Stat(p string) (FileInfo, error) { //nolint:unused
+func (l *loggingAdapter) Stat(p string) (FileInfo, error) {
 	if !l.enabled {
 		return l.inner.Stat(p)
 	}
@@ -101,12 +101,12 @@ func (l *loggingAdapter) Stat(p string) (FileInfo, error) { //nolint:unused
 	return fi, err
 }
 
-func (l *loggingAdapter) TestConnection() error { //nolint:unused
+func (l *loggingAdapter) TestConnection() error {
 	return l.inner.TestConnection()
 }
 
-func (l *loggingAdapter) GetCapacity(ctx context.Context) (Capacity, error) { //nolint:unused
+func (l *loggingAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	return l.inner.GetCapacity(ctx)
 }
 
-func (l *loggingAdapter) Usage() (int64, int64, error) { return l.inner.Usage() } //nolint:unused
+func (l *loggingAdapter) Usage() (int64, int64, error) { return l.inner.Usage() }
