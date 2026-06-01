@@ -217,4 +217,15 @@ func (l *LocalAdapter) Usage() (free, total int64, err error) {
 	return info.FreeBytes, info.TotalBytes, nil
 }
 
+// RemoveEmptyDir removes dir if it is empty. os.Remove fails on a non-empty
+// directory, which is the desired guard — callers use this to sweep parent
+// directories left vacant after the last object under them is deleted.
+func (l *LocalAdapter) RemoveEmptyDir(dir string) error {
+	full, err := l.fullPath(dir, false)
+	if err != nil {
+		return err
+	}
+	return os.Remove(full)
+}
+
 var _ Adapter = (*LocalAdapter)(nil)

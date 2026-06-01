@@ -414,4 +414,20 @@ func (s *SFTPAdapter) Usage() (free, total int64, err error) {
 	return free, total, nil
 }
 
+// RemoveEmptyDir removes dir if it is empty. sftp.Client.RemoveDirectory wraps
+// the SSH_FXP_RMDIR request, which the SFTP server rejects when the directory
+// is not empty — that rejection is the desired guard for the cleanup sweep.
+func (s *SFTPAdapter) RemoveEmptyDir(dir string) error {
+	client, err := s.connect()
+	if err != nil {
+		return err
+	}
+	defer client.Close() //nolint:errcheck
+	fullPath, err := s.fullPath(dir, false)
+	if err != nil {
+		return err
+	}
+	return client.RemoveDirectory(fullPath)
+}
+
 var _ Adapter = (*SFTPAdapter)(nil)

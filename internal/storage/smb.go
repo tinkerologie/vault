@@ -388,4 +388,22 @@ func (s *SMBAdapter) Usage() (free, total int64, err error) {
 	return free, total, nil
 }
 
+// RemoveEmptyDir removes dir if it is empty. SMB's Remove operation fails with
+// STATUS_DIRECTORY_NOT_EMPTY when the directory contains files, which is the
+// desired guard — callers use this to sweep parent directories left vacant
+// after the last object under them is deleted.
+func (s *SMBAdapter) RemoveEmptyDir(dir string) error {
+	share, session, err := s.connect()
+	if err != nil {
+		return err
+	}
+	defer session.Logoff()
+	defer share.Umount()
+	fullPath, err := s.fullPath(dir, false)
+	if err != nil {
+		return err
+	}
+	return share.Remove(fullPath)
+}
+
 var _ Adapter = (*SMBAdapter)(nil)

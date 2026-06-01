@@ -14,6 +14,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -3379,7 +3380,25 @@ func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) error 
 		log.Printf("runner: failed to remove storage directory %s: %v", prefix, e)
 		errs = append(errs, fmt.Errorf("delete %s: %w", prefix, e))
 	}
+	r.sweepEmptyParents(adapter, prefix, "")
 	return errors.Join(errs...)
+}
+
+// sweepEmptyParents removes now-empty directories from start's parent upward,
+// stopping at root or the first non-empty directory. No-op for adapters that do
+// not implement the optional dir-removal interface (object stores, WebDAV).
+func (r *Runner) sweepEmptyParents(adapter storage.Adapter, start, root string) {
+	dr, ok := adapter.(interface{ RemoveEmptyDir(string) error })
+	if !ok {
+		return
+	}
+	dir := path.Dir(start)
+	for dir != "" && dir != "." && dir != "/" && dir != root {
+		if err := dr.RemoveEmptyDir(dir); err != nil {
+			return // non-empty or unsupported: stop walking up
+		}
+		dir = path.Dir(dir)
+	}
 }
 
 // CleanupJobStorage deletes all backup files on storage for the given job.

@@ -200,4 +200,14 @@ func (n *NFSAdapter) Usage() (free, total int64, err error) {
 	return n.local.Usage()
 }
 
+// RemoveEmptyDir removes dir if it is empty by delegating to the underlying
+// LocalAdapter. The NFS share is mounted on demand if not already mounted.
+// os.Remove fails on a non-empty directory, which is the desired guard.
+func (n *NFSAdapter) RemoveEmptyDir(dir string) error {
+	if err := n.mount(); err != nil {
+		return err
+	}
+	return n.local.RemoveEmptyDir(dir)
+}
+
 var _ Adapter = (*NFSAdapter)(nil)
