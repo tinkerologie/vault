@@ -1,6 +1,9 @@
 package storage
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // sftpConn is the subset of a pooled SFTP connection the pool manages. Real
 // connections (ssh+sftp clients) satisfy it; tests provide a fake.
@@ -25,8 +28,12 @@ func newSFTPPool(size int, dial func() (sftpConn, error)) *sftpPool {
 	return &sftpPool{dial: dial, sem: make(chan struct{}, size)}
 }
 
-func (p *sftpPool) get() (sftpConn, error) {
-	p.sem <- struct{}{}
+func (p *sftpPool) get(ctx context.Context) (sftpConn, error) {
+	select {
+	case p.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	p.mu.Lock()
 	if n := len(p.idle); n > 0 {
 		c := p.idle[n-1]

@@ -46,14 +46,18 @@ func (d *DB) GetSettingInt(key string, defaultVal int) (int, error) {
 	return v, nil
 }
 
-// GetSettingBool reads a boolean setting, returning def when the key is absent
-// or unparsable.
-func (d *DB) GetSettingBool(key string, def bool) bool {
+// GetSettingBool reads a boolean setting. It returns (def, nil) when the key is
+// absent, the parsed value with nil error when present, and (def, err) when the
+// underlying read fails so callers can surface genuine DB errors.
+func (d *DB) GetSettingBool(key string, def bool) (bool, error) {
 	v, err := d.GetSetting(key, "")
-	if err != nil || v == "" {
-		return def
+	if err != nil {
+		return def, err
 	}
-	return v == "true" || v == "1"
+	if v == "" {
+		return def, nil
+	}
+	return v == "true" || v == "1", nil
 }
 
 // GetAllSettings returns all settings as a key-value map.

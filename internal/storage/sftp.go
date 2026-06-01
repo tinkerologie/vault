@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -54,8 +55,11 @@ func (c *sftpConnection) Close() error {
 }
 
 type SFTPAdapter struct {
-	config SFTPConfig
-	pool   *sftpPool
+	config    SFTPConfig
+	pool      *sftpPool
+	baseCtx   context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
 }
 
 func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
@@ -67,6 +71,7 @@ func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
 		config.BasePath = config.Path
 	}
 	a := &SFTPAdapter{config: config}
+	a.baseCtx, a.cancel = context.WithCancel(context.Background())
 	a.pool = newSFTPPool(sftpPoolSize, func() (sftpConn, error) {
 		return a.dialConnection()
 	})
@@ -76,7 +81,10 @@ func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
 // Close drains the idle connection pool, closing every pooled ssh+sftp pair.
 // CloseAdapter calls this when the adapter is no longer needed.
 func (s *SFTPAdapter) Close() error {
-	s.pool.closeAll()
+	s.closeOnce.Do(func() {
+		s.cancel()
+		s.pool.closeAll()
+	})
 	return nil
 }
 
@@ -164,7 +172,7 @@ func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
 }
 
 func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return err
 	}
@@ -206,7 +214,7 @@ func (s *SFTPAdapter) WriteFrom(path string, open func() (io.ReadCloser, error))
 // when the caller closes the ReadCloser. A nil op-error is passed on close
 // because a successful read-to-EOF is not a reason to discard the connection.
 func (s *SFTPAdapter) Read(path string) (io.ReadCloser, error) {
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +258,7 @@ func (s *SFTPAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, 
 	if offset < 0 || length < 0 {
 		return nil, fmt.Errorf("invalid range offset=%d length=%d", offset, length)
 	}
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +292,7 @@ func (s *SFTPAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, 
 }
 
 func (s *SFTPAdapter) Delete(path string) (retErr error) {
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return err
 	}
@@ -298,7 +306,7 @@ func (s *SFTPAdapter) Delete(path string) (retErr error) {
 }
 
 func (s *SFTPAdapter) List(prefix string) (_ []FileInfo, retErr error) {
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +335,7 @@ func (s *SFTPAdapter) List(prefix string) (_ []FileInfo, retErr error) {
 }
 
 func (s *SFTPAdapter) Stat(path string) (_ FileInfo, retErr error) {
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -351,7 +359,7 @@ func (s *SFTPAdapter) Stat(path string) (_ FileInfo, retErr error) {
 }
 
 func (s *SFTPAdapter) TestConnection() (retErr error) {
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return err
 	}
@@ -376,7 +384,7 @@ func (s *SFTPAdapter) GetCapacity(ctx context.Context) (_ Capacity, retErr error
 	if err := ctx.Err(); err != nil {
 		return Capacity{}, err
 	}
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return Capacity{}, fmt.Errorf("sftp: dial: %w", err)
 	}
@@ -445,7 +453,7 @@ func sftpStatVFSToCapacity(st *sftp.StatVFS, probedAt time.Time) (Capacity, erro
 // the extension, or if dialling fails, ErrUsageNotSupported is returned so
 // callers can degrade gracefully.
 func (s *SFTPAdapter) Usage() (free, total int64, retErr error) {
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return 0, 0, ErrUsageNotSupported
 	}
@@ -475,7 +483,7 @@ func (s *SFTPAdapter) Usage() (free, total int64, retErr error) {
 // the SSH_FXP_RMDIR request, which the SFTP server rejects when the directory
 // is not empty — that rejection is the desired guard for the cleanup sweep.
 func (s *SFTPAdapter) RemoveEmptyDir(dir string) (retErr error) {
-	conn, err := s.pool.get()
+	conn, err := s.pool.get(s.baseCtx)
 	if err != nil {
 		return err
 	}

@@ -47,7 +47,7 @@ func (l *loggingAdapter) WriteFrom(p string, open func() (io.ReadCloser, error))
 	}
 	start := time.Now()
 	err := l.inner.WriteFrom(p, open)
-	l.trace("write", p, start, err)
+	l.trace("write_from", p, start, err)
 	return err
 }
 
@@ -110,3 +110,12 @@ func (l *loggingAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 }
 
 func (l *loggingAdapter) Usage() (int64, int64, error) { return l.inner.Usage() }
+
+// Close forwards to the wrapped adapter so CloseAdapter on the chain reaches a
+// provider that holds resources (e.g. the SFTP connection pool).
+func (l *loggingAdapter) Close() error {
+	if c, ok := l.inner.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}

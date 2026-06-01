@@ -2074,14 +2074,22 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.
 		})
 	}
 
+	verbose, vErr := r.db.GetSettingBool("storage_verbose_logging", false)
+	if vErr != nil {
+		log.Printf("runner: reading storage_verbose_logging setting: %v", vErr)
+	}
 	adapter, err := storage.NewAdapterWithOptions(dest.Type, dest.Config, storage.Options{
-		VerboseLogging: r.db.GetSettingBool("storage_verbose_logging", false),
+		VerboseLogging: verbose,
 		DestLabel:      dest.Name,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating storage adapter: %w", err)
 	}
 	defer storage.CloseAdapter(adapter)
+	// If the job context is cancelled, close the adapter so any storage
+	// operation blocked acquiring a pooled connection unblocks promptly.
+	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
+	defer stopOnCancel()
 
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {

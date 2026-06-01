@@ -110,3 +110,12 @@ func (m *metricsAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 }
 
 func (m *metricsAdapter) Usage() (int64, int64, error) { return m.inner.Usage() }
+
+// Close forwards to the wrapped adapter so CloseAdapter on the chain reaches a
+// provider that holds resources (e.g. the SFTP connection pool).
+func (m *metricsAdapter) Close() error {
+	if c, ok := m.inner.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}

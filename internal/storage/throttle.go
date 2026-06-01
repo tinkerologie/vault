@@ -124,3 +124,12 @@ func (t *throttledAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 func (t *throttledAdapter) Usage() (free, total int64, err error) {
 	return t.inner.Usage()
 }
+
+// Close forwards to the wrapped adapter so CloseAdapter on the chain reaches a
+// provider that holds resources (e.g. the SFTP connection pool).
+func (t *throttledAdapter) Close() error {
+	if c, ok := t.inner.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}

@@ -1,6 +1,9 @@
 package storage
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestSFTPPoolReusesConnections(t *testing.T) {
 	dials := 0
@@ -8,12 +11,12 @@ func TestSFTPPoolReusesConnections(t *testing.T) {
 		dials++
 		return &fakeSFTPConn{}, nil
 	})
-	c1, err := p.get()
+	c1, err := p.get(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.put(c1, nil) // healthy return
-	c2, err := p.get()
+	c2, err := p.get(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,9 +32,9 @@ func TestSFTPPoolDiscardsOnError(t *testing.T) {
 		dials++
 		return &fakeSFTPConn{}, nil
 	})
-	c, _ := p.get()
+	c, _ := p.get(context.Background())
 	p.put(c, errSomeOpFailure) // returned with error => discarded
-	c2, _ := p.get()
+	c2, _ := p.get(context.Background())
 	p.put(c2, nil)
 	if dials != 2 {
 		t.Errorf("dials = %d, want 2 (broken conn discarded, new one dialed)", dials)
@@ -43,7 +46,7 @@ func TestSFTPPoolDiscardsOnError(t *testing.T) {
 
 func TestSFTPPoolCloseAllClosesIdle(t *testing.T) {
 	p := newSFTPPool(2, func() (sftpConn, error) { return &fakeSFTPConn{}, nil })
-	c, _ := p.get()
+	c, _ := p.get(context.Background())
 	p.put(c, nil)
 	p.closeAll()
 	if !c.(*fakeSFTPConn).closed {
@@ -52,10 +55,22 @@ func TestSFTPPoolCloseAllClosesIdle(t *testing.T) {
 	// After close, returning a connection closes it instead of pooling it.
 	// get() pairs with put() so the semaphore slot is balanced and the dialed
 	// connection isn't leaked.
-	c2, _ := p.get()
+	c2, _ := p.get(context.Background())
 	p.put(c2, nil) // pool is closed → put closes c2 instead of pooling
 	if !c2.(*fakeSFTPConn).closed {
 		t.Error("put after closeAll should close the connection")
+	}
+}
+
+func TestSFTPPoolGetCancelled(t *testing.T) {
+	p := newSFTPPool(1, func() (sftpConn, error) { return &fakeSFTPConn{}, nil })
+	if _, err := p.get(context.Background()); err != nil { // take the only slot
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.get(ctx); err == nil {
+		t.Error("get with cancelled ctx and no free slot must return an error")
 	}
 }
 
