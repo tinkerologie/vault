@@ -14,8 +14,8 @@ import (
 )
 
 // PackTargetSize is the buffer threshold at which the packer flushes a pack.
-// 24 MiB matches Kopia's default — small enough for adapters to retry on
-// transient failure, large enough that S3 PUT amortises well.
+// 24 MiB is a common content-addressable pack default — small enough for
+// adapters to retry on transient failure, large enough that S3 PUT amortises well.
 const PackTargetSize = 24 * 1024 * 1024
 
 // PackVersion is the on-disk pack format version. Bump on incompatible

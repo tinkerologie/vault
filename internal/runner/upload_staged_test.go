@@ -1,13 +1,49 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 )
+
+// TestUploadStagedFiles_UpdatesLastProgress verifies the upload path heartbeats
+// the stall watchdog as bytes flow (issue #110). Before the fix lastProgress
+// only advanced on a retry, so a long blocking upload froze the no-progress
+// timer and the watchdog cancelled healthy backups.
+func TestUploadStagedFiles_UpdatesLastProgress(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "archive.tar"), bytes.Repeat([]byte("x"), 1<<20), 0600); err != nil {
+		t.Fatalf("stage file: %v", err)
+	}
+	cfg, _ := json.Marshal(map[string]string{"path": filepath.Join(t.TempDir(), "store")})
+	dest := db.StorageDestination{Type: "local", Config: string(cfg)}
+
+	// Force the progress timestamp into the past; a working upload must move it.
+	stale := time.Now().Add(-3 * time.Hour)
+	r.lastProgressMu.Lock()
+	r.lastProgress = stale
+	r.lastProgressMu.Unlock()
+
+	if _, err := r.uploadStagedFiles(context.Background(), tmpDir, dest, "rp", false, "", "none", "folder", "Test"); err != nil {
+		t.Fatalf("uploadStagedFiles: %v", err)
+	}
+
+	r.lastProgressMu.Lock()
+	got := r.lastProgress
+	r.lastProgressMu.Unlock()
+	if !got.After(stale) {
+		t.Errorf("lastProgress not advanced during upload (still %v) — stall watchdog would fire on a long upload", got)
+	}
+}
 
 // TestUploadStagedFiles_BadAdapterConfig drives the storage.NewAdapter
 // error branch by feeding a corrupt JSON config.

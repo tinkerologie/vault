@@ -100,6 +100,50 @@ func TestDeleteStorageDestination(t *testing.T) {
 	}
 }
 
+// TestDeleteStorageDestinationOrphansDependents reproduces issue #113: a
+// storage destination that still has dependent jobs (or replication sources)
+// could not be deleted because jobs.storage_dest_id has a FK with no ON DELETE
+// rule, so a bare DELETE raised a constraint violation -> "internal error" in
+// the UI. The force-delete path must orphan the dependents (null their
+// reference) and still delete the destination, matching the UI warning that
+// "those jobs will no longer have a storage destination and will fail to run".
+func TestDeleteStorageDestinationOrphansDependents(t *testing.T) {
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "webdav", Type: "webdav", Config: "{}"})
+	jobID, err := d.CreateJob(Job{Name: "nextcloud-backup", StorageDestID: destID, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatalf("CreateJob error = %v", err)
+	}
+	if _, err := d.CreateReplicationSource(ReplicationSource{Name: "peer", Type: "vault", URL: "http://x", StorageDestID: destID}); err != nil {
+		t.Fatalf("CreateReplicationSource error = %v", err)
+	}
+
+	// This is the operation that failed in #113.
+	if err := d.DeleteStorageDestination(destID); err != nil {
+		t.Fatalf("DeleteStorageDestination with dependents error = %v", err)
+	}
+
+	if _, err := d.GetStorageDestination(destID); err == nil {
+		t.Error("destination should be gone after delete")
+	}
+
+	// The dependent job must survive but be orphaned (storage_dest_id == 0).
+	job, err := d.GetJob(jobID)
+	if err != nil {
+		t.Fatalf("GetJob after delete error = %v (orphaned job must remain readable)", err)
+	}
+	if job.StorageDestID != 0 {
+		t.Errorf("orphaned job StorageDestID = %d, want 0", job.StorageDestID)
+	}
+
+	// An orphaned job must still survive a round-trip update without
+	// re-introducing the FK violation (0 must be written back as NULL).
+	job.Description = "re-saved while orphaned"
+	if err := d.UpdateJob(job); err != nil {
+		t.Fatalf("UpdateJob on orphaned job error = %v", err)
+	}
+}
+
 func TestCountJobsByStorageDestID(t *testing.T) {
 	d := setupTestDB(t)
 	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})

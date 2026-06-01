@@ -209,11 +209,54 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optionally delete backup files from storage.
-	if r.URL.Query().Get("deleteFiles") == "true" {
-		if err := h.runner.CleanupJobStorage(id); err != nil {
-			log.Printf("Warning: failed to clean up storage for job %d: %s", id, err.Error()) // #nosec G706 //nolint:gosec // id is int64 from URL param
-			// Continue with DB deletion even if storage cleanup fails.
+	// When deleting backup files too, capture everything the cleanup needs
+	// BEFORE removing the job row — the job and its restore points cascade-
+	// delete, so they're gone once DeleteJob runs. The actual remote cleanup
+	// then happens asynchronously (issue #111): a large backup on a slow
+	// remote can take far longer than an HTTP client will wait, which used to
+	// surface as a spurious "daemon unavailable" even though the server kept
+	// working and eventually returned 204. We now delete the DB row, respond
+	// immediately (202 Accepted), and sweep storage in the background.
+	deleteFiles := r.URL.Query().Get("deleteFiles") == "true"
+	var (
+		cleanupJobName string
+		cleanupDest    db.StorageDestination
+		cleanupPaths   []string
+		doCleanup      bool
+	)
+	if deleteFiles {
+		job, jErr := h.db.GetJob(id)
+		switch {
+		case jErr == nil:
+			dest, dErr := h.db.GetStorageDestination(job.StorageDestID)
+			switch {
+			case dErr == nil:
+				rps, rErr := h.db.ListRestorePoints(id)
+				if rErr != nil {
+					// A real DB error here means we can't enumerate what to
+					// clean; fail loudly rather than silently leaking files.
+					respondInternalError(w, rErr)
+					return
+				}
+				for _, rp := range rps {
+					if rp.StoragePath != "" {
+						cleanupPaths = append(cleanupPaths, rp.StoragePath)
+					}
+				}
+				cleanupJobName, cleanupDest, doCleanup = job.Name, dest, true
+			case errors.Is(dErr, db.ErrNotFound):
+				// Orphaned job (issue #113): no destination to clean. Proceed
+				// with a record-only delete.
+				log.Printf("job %d has no storage destination; deleting record only", id) // #nosec G706 //nolint:gosec // id is int64 from URL param
+			default:
+				respondInternalError(w, dErr)
+				return
+			}
+		case errors.Is(jErr, db.ErrNotFound):
+			// Job already gone; DeleteJob below is idempotent.
+		default:
+			respondInternalError(w, jErr)
+			return
 		}
 	}
 
@@ -221,7 +264,13 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+
+	status := http.StatusNoContent
+	if doCleanup {
+		h.runner.CleanupJobStorageAsync(id, cleanupJobName, cleanupDest, cleanupPaths)
+		status = http.StatusAccepted
+	}
+	w.WriteHeader(status)
 	h.reloadScheduler()
 	h.notifyConfigChange()
 	h.broadcastConfigChange("job")
@@ -700,20 +749,34 @@ func (h *JobHandler) DeleteRestorePoint(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Delete the backup files from storage if a path is recorded.
+	// Capture the storage destination before deleting the DB row, then sweep
+	// the files asynchronously (issue #111) — deleting a large restore point on
+	// a slow remote can outlast the HTTP client and surface as a spurious
+	// "daemon unavailable" even though the delete succeeds.
+	var (
+		cleanupDest db.StorageDestination
+		doCleanup   bool
+	)
 	if rp.StoragePath != "" {
-		job, err := h.db.GetJob(jobID)
-		if err == nil {
-			dest, err := h.db.GetStorageDestination(job.StorageDestID)
-			if err == nil {
-				adapter, err := storage.NewAdapter(dest.Type, dest.Config)
-				if err == nil {
-					defer storage.CloseAdapter(adapter)
-					h.runner.DeleteStorageDir(adapter, rp.StoragePath)
-				} else {
-					log.Printf("handlers: failed to create adapter for restore point deletion (job %d, rp %d): %v", jobID, rpID, err) // #nosec G706 //nolint:gosec // jobID and rpID are int64 from URL params
-				}
+		job, jErr := h.db.GetJob(jobID)
+		switch {
+		case jErr == nil:
+			dest, dErr := h.db.GetStorageDestination(job.StorageDestID)
+			switch {
+			case dErr == nil:
+				cleanupDest, doCleanup = dest, true
+			case errors.Is(dErr, db.ErrNotFound):
+				// Orphaned job (issue #113): no destination to clean.
+				log.Printf("handlers: restore point %d's job %d has no storage destination; deleting record only", rpID, jobID) // #nosec G706 //nolint:gosec // jobID and rpID are int64 from URL params
+			default:
+				respondInternalError(w, dErr)
+				return
 			}
+		case errors.Is(jErr, db.ErrNotFound):
+			// Job gone but the restore point row lingers; delete the record only.
+		default:
+			respondInternalError(w, jErr)
+			return
 		}
 	}
 
@@ -724,6 +787,12 @@ func (h *JobHandler) DeleteRestorePoint(w http.ResponseWriter, r *http.Request) 
 
 	h.db.LogActivity("info", "system", fmt.Sprintf("Restore point #%d deleted", rpID),
 		fmt.Sprintf(`{"restore_point_id":%d,"job_id":%d}`, rpID, jobID))
+
+	if doCleanup {
+		h.runner.CleanupRestorePointStorageAsync(jobID, rpID, cleanupDest, rp.StoragePath)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -160,6 +161,15 @@ func TestWebDAVChunkedWriteReadListStatDelete(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("List() after delete = %+v, want empty", entries)
 	}
+	// The chunk sidecar directory and manifest must also be gone from disk —
+	// List() hides sidecar entries, so a leftover .chunks dir would be an
+	// invisible artifact (issue #111).
+	_ = filepath.WalkDir(root, func(path string, dEntry fs.DirEntry, _ error) error {
+		if dEntry != nil && isWebDAVSidecarName(dEntry.Name()) {
+			t.Errorf("sidecar artifact left behind after Delete: %s", path)
+		}
+		return nil
+	})
 }
 
 func TestWebDAVSmallWriteUsesLogicalFile(t *testing.T) {

@@ -301,8 +301,14 @@ func TestDeleteRestorePoint_WithStoragePath_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.DeleteRestorePoint(w, req)
 
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204; body: %s", w.Code, w.Body.String())
+	// With a recorded StoragePath and a valid destination, file cleanup is now
+	// handed off to a background goroutine, so the handler returns 202 Accepted
+	// (issue #111). The DB row is still removed synchronously.
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", w.Code, w.Body.String())
+	}
+	if _, err := d.GetRestorePoint(rpID); err == nil {
+		t.Error("restore point should be deleted from DB synchronously")
 	}
 }
 
@@ -603,7 +609,7 @@ func TestSetSnapshotPath_InvalidJSON(t *testing.T) {
 }
 
 // TestSetSnapshotPath_EmptyClearsOverride passes an empty string to
-// exercise the "if req.SnapshotPath != ''" false branch.
+// exercise the "if req.SnapshotPath != ”" false branch.
 func TestSetSnapshotPath_EmptyClearsOverride(t *testing.T) {
 	t.Parallel()
 	h := newTestSettingsHandler(t)

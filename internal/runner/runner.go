@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -556,8 +557,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	}
 
 	// Pre-flight: verify the destination is reachable before opening any
-	// backup pipeline. A flaky destination should not consume a 4-hour
-	// job timeout window. Failure records a "skipped" run and returns
+	// backup pipeline. A flaky destination should not tie up the run slot.
+	// Failure records a "skipped" run and returns
 	// early so retry policy can pick it up on the next tick (Task 7).
 	if pfErr := Preflight(context.Background(), dest); pfErr != nil {
 		log.Printf("runner: preflight failed for job %d (%s) -> dest %s: %v",
@@ -611,10 +612,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	}
 	run.ID = runID
 
-	// Create a cancellable context with a 4-hour timeout.
-	// The cancel function is stored so CancelJob() can trigger it.
-	const jobTimeout = 4 * time.Hour
-	ctx, cancel := context.WithTimeout(context.Background(), jobTimeout)
+	// Create a cancellable context with NO wall-clock timeout (issue #110).
+	// A backup that is actively transferring data must never be killed by an
+	// elapsed-time cap — a legitimate initial backup over a slow WAN link can
+	// run for many hours. The no-progress stall watchdog below is the sole
+	// automatic canceller (it fires only when zero bytes flow for
+	// stallCancelTimeout), and CancelJob() triggers the stored cancel func on
+	// demand — per-request stall detection rather than a total-job deadline.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	r.cancelMu.Lock()
@@ -1332,12 +1337,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			userCancelled = true
 		}
 		r.statusMu.RUnlock()
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("runner: job %d timed out after %v", jobID, time.Since(jobStart).Truncate(time.Second))
-			run.Log = fmt.Sprintf("Job timed out after %v", time.Since(jobStart).Truncate(time.Second))
-		} else {
-			log.Printf("runner: job %d was cancelled after %v", jobID, time.Since(jobStart).Truncate(time.Second))
+		if userCancelled {
+			log.Printf("runner: job %d was cancelled by user after %v", jobID, time.Since(jobStart).Truncate(time.Second))
 			run.Log = "Job was cancelled by user"
+		} else {
+			// There is no longer a wall-clock deadline (issue #110); the only
+			// other automatic canceller is the no-progress stall watchdog.
+			log.Printf("runner: job %d cancelled by stall watchdog (no progress for %v) after %v", jobID, stallCancelTimeout, time.Since(jobStart).Truncate(time.Second))
+			run.Log = fmt.Sprintf("Job cancelled: no data transferred for %v (stall watchdog)", stallCancelTimeout)
 		}
 	} else if itemsFailed > 0 && itemsDone == 0 {
 		status = "failed"
@@ -2077,6 +2084,13 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 	// selection entirely.
 	uploadOnce := func(entryName string) (string, string, error) {
 		filePath := filepath.Join(tmpDir, entryName)
+		// Stat for the source size so we can report an upload percentage.
+		// A failure here is non-fatal: we fall back to size 0, which disables
+		// the percentage but still heartbeats the stall watchdog.
+		var fileSize int64
+		if fi, statErr := os.Stat(filePath); statErr == nil {
+			fileSize = fi.Size()
+		}
 		f, openErr := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entryName from os.ReadDir
 		if openErr != nil {
 			return "", "", fmt.Errorf("opening backup file %s: %w", entryName, openErr)
@@ -2098,8 +2112,37 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 			storageName += ".age"
 		}
 
+		// Wrap the upload stream so the stall watchdog sees bytes moving during
+		// the (potentially multi-hour) blocking adapter.Write (issue #110).
+		// Previously lastProgress only advanced on a retry, so a healthy upload
+		// froze the timer and the no-progress watchdog cancelled it. We update
+		// lastProgress on every read and rate-limit the user-facing broadcast
+		// to ~1/second to avoid flooding clients.
+		var uploaded int64
+		var lastBroadcast time.Time
+		counting := &countingReader{
+			reader: reader,
+			onRead: func(n int64) {
+				uploaded += n
+				r.lastProgressMu.Lock()
+				r.lastProgress = time.Now()
+				r.lastProgressMu.Unlock()
+				if time.Since(lastBroadcast) >= time.Second {
+					lastBroadcast = time.Now()
+					pct := 0
+					if fileSize > 0 {
+						pct = int(uploaded * 100 / fileSize)
+						if pct > 100 {
+							pct = 100
+						}
+					}
+					progress(pct, fmt.Sprintf("Uploading %s", entryName))
+				}
+			},
+		}
+
 		hasher := sha256.New()
-		tee := io.TeeReader(reader, hasher)
+		tee := io.TeeReader(counting, hasher)
 
 		destPath := filepath.Join(storagePath, storageName)
 		if writeErr := adapter.Write(destPath, tee); writeErr != nil {
@@ -2200,7 +2243,23 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 				return nil, fmt.Errorf("verification read %s: %w", fileName, err)
 			}
 			verifyHasher := sha256.New()
-			if _, err := io.Copy(verifyHasher, reader); err != nil {
+			// Heartbeat the stall watchdog while reading the file back — a
+			// large verify read is just as long-running as the upload and
+			// would otherwise re-freeze the progress timer (issue #110).
+			var verifyBroadcast time.Time
+			verifyReader := &countingReader{
+				reader: reader,
+				onRead: func(int64) {
+					r.lastProgressMu.Lock()
+					r.lastProgress = time.Now()
+					r.lastProgressMu.Unlock()
+					if time.Since(verifyBroadcast) >= time.Second {
+						verifyBroadcast = time.Now()
+						progress(0, fmt.Sprintf("Verifying %s", fileName))
+					}
+				},
+			}
+			if _, err := io.Copy(verifyHasher, verifyReader); err != nil {
 				_ = reader.Close()
 				cleanupPartial()
 				return nil, fmt.Errorf("verification hash %s: %w", fileName, err)
@@ -3285,32 +3344,42 @@ func (r *Runner) deleteVMCheckpointsForRP(rp db.RestorePoint) {
 
 // deleteStorageDir recursively deletes all files under a storage path prefix.
 func (r *Runner) deleteStorageDir(adapter storage.Adapter, prefix string) {
-	r.DeleteStorageDir(adapter, prefix)
+	_ = r.DeleteStorageDir(adapter, prefix)
 }
 
 // DeleteStorageDir recursively deletes all files under a storage path prefix,
-// then removes the directory itself.
-func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) {
+// then removes the directory itself. It returns a joined error describing every
+// list/delete operation that failed (nil when the subtree was removed cleanly)
+// so callers that report completion status — e.g. the async cleanup goroutines
+// — can tell success from partial failure rather than always claiming success.
+// Errors are also logged for operators tailing the daemon log.
+func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) error {
 	files, err := adapter.List(prefix)
 	if err != nil {
 		log.Printf("runner: failed to list storage dir %s for cleanup: %v", prefix, err)
-		return
+		return fmt.Errorf("list %s: %w", prefix, err)
 	}
 
+	var errs []error
 	for _, fi := range files {
 		if fi.IsDir {
-			r.DeleteStorageDir(adapter, fi.Path)
+			if e := r.DeleteStorageDir(adapter, fi.Path); e != nil {
+				errs = append(errs, e)
+			}
 			continue
 		}
-		if err := adapter.Delete(fi.Path); err != nil {
-			log.Printf("runner: failed to delete storage file %s: %v", fi.Path, err)
+		if e := adapter.Delete(fi.Path); e != nil {
+			log.Printf("runner: failed to delete storage file %s: %v", fi.Path, e)
+			errs = append(errs, fmt.Errorf("delete %s: %w", fi.Path, e))
 		}
 	}
 
 	// Remove the now-empty directory itself.
-	if err := adapter.Delete(prefix); err != nil {
-		log.Printf("runner: failed to remove storage directory %s: %v", prefix, err)
+	if e := adapter.Delete(prefix); e != nil {
+		log.Printf("runner: failed to remove storage directory %s: %v", prefix, e)
+		errs = append(errs, fmt.Errorf("delete %s: %w", prefix, e))
 	}
+	return errors.Join(errs...)
 }
 
 // CleanupJobStorage deletes all backup files on storage for the given job.
@@ -3340,15 +3409,100 @@ func (r *Runner) CleanupJobStorage(jobID int64) error {
 
 	for _, rp := range rps {
 		if rp.StoragePath != "" {
-			r.DeleteStorageDir(adapter, rp.StoragePath)
+			_ = r.DeleteStorageDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
 		}
 	}
 
 	// Also clean up the top-level job directory.
 	jobDir := job.Name
-	r.DeleteStorageDir(adapter, jobDir)
+	_ = r.DeleteStorageDir(adapter, jobDir) // best-effort; errors are logged inside
 
 	return nil
+}
+
+// CleanupJobStorageAsync deletes a job's backup files on remote storage in a
+// background goroutine, then broadcasts a job_cleanup_complete (or
+// job_cleanup_failed) WebSocket event. Cleanup of a large backup on a slow
+// remote (e.g. ~30 GB on a Hetzner Storage Box) can take far longer than an
+// HTTP client is willing to wait, which previously surfaced as a spurious
+// "daemon unavailable" error even though the server eventually returned 204
+// (issue #111). The caller deletes the DB row first and passes the details
+// here because the job (and its restore points) are gone by the time this runs.
+func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.StorageDestination, storagePaths []string) {
+	go func() {
+		adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+		if err != nil {
+			log.Printf("runner: async cleanup for job %d: creating storage adapter: %v", jobID, err)
+			r.broadcast(map[string]any{
+				"type": "job_cleanup_failed", "job_id": jobID, "job_name": jobName, "error": err.Error(),
+			})
+			return
+		}
+		defer storage.CloseAdapter(adapter)
+
+		// The recorded restore-point paths are authoritative backup data; a
+		// failure to delete any of them is a real cleanup failure.
+		var errs []error
+		for _, p := range storagePaths {
+			if p != "" {
+				if e := r.DeleteStorageDir(adapter, p); e != nil {
+					errs = append(errs, e)
+				}
+			}
+		}
+		// Sweep the top-level job directory to catch anything the per-restore-
+		// point paths missed (orphaned partial uploads, sidecar dirs, etc.).
+		// This is best-effort: a job that never wrote a top-level dir would
+		// surface a benign "not found", so its error does not fail the cleanup.
+		_ = r.DeleteStorageDir(adapter, jobName)
+
+		if err := errors.Join(errs...); err != nil {
+			log.Printf("runner: async cleanup for job %d (%q) failed: %v", jobID, jobName, err)
+			r.broadcast(map[string]any{
+				"type": "job_cleanup_failed", "job_id": jobID, "job_name": jobName, "error": err.Error(),
+			})
+			return
+		}
+
+		log.Printf("runner: async cleanup for job %d (%q) complete", jobID, jobName)
+		r.broadcast(map[string]any{
+			"type": "job_cleanup_complete", "job_id": jobID, "job_name": jobName,
+		})
+	}()
+}
+
+// CleanupRestorePointStorageAsync deletes a single restore point's files on
+// remote storage in a background goroutine, mirroring CleanupJobStorageAsync.
+// Deleting a large restore point on a slow remote suffers the same HTTP-timeout
+// problem as job deletion (issue #111), so the caller removes the DB row first
+// and the remote sweep happens here.
+func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.StorageDestination, storagePath string) {
+	go func() {
+		adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+		if err != nil {
+			log.Printf("runner: async cleanup for restore point %d: creating storage adapter: %v", rpID, err)
+			r.broadcast(map[string]any{
+				"type": "restore_point_cleanup_failed", "job_id": jobID, "restore_point_id": rpID, "error": err.Error(),
+			})
+			return
+		}
+		defer storage.CloseAdapter(adapter)
+
+		if storagePath != "" {
+			if e := r.DeleteStorageDir(adapter, storagePath); e != nil {
+				log.Printf("runner: async cleanup for restore point %d failed: %v", rpID, e)
+				r.broadcast(map[string]any{
+					"type": "restore_point_cleanup_failed", "job_id": jobID, "restore_point_id": rpID, "error": e.Error(),
+				})
+				return
+			}
+		}
+
+		log.Printf("runner: async cleanup for restore point %d complete", rpID)
+		r.broadcast(map[string]any{
+			"type": "restore_point_cleanup_complete", "job_id": jobID, "restore_point_id": rpID,
+		})
+	}()
 }
 
 // CleanupStorageDestination deletes all Vault backup files from a storage
@@ -3365,7 +3519,7 @@ func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 	if listErr == nil {
 		for _, entry := range topEntries {
 			if entry.IsDir {
-				r.DeleteStorageDir(adapter, entry.Path)
+				_ = r.DeleteStorageDir(adapter, entry.Path) // best-effort; errors are logged inside
 			}
 		}
 	}

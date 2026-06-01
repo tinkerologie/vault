@@ -526,17 +526,40 @@ func TestJobDelete_WithDeleteFilesFlag(t *testing.T) {
 	h, d := newJobHandlerDB(t)
 	id := seedJob(t, d)
 
-	// deleteFiles=true is passed. The runner's CleanupJobStorage will fail
-	// (no real storage configured) but that's OK — it just logs and continues.
+	// deleteFiles=true on a job with a valid storage destination now returns
+	// 202 Accepted — the DB row is deleted synchronously and the remote file
+	// cleanup is handed off to a background goroutine (issue #111).
 	w := httptest.NewRecorder()
 	r := withURLParam(newReq(http.MethodDelete, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"?deleteFiles=true", nil), "id", strconv.FormatInt(id, 10))
 	r.URL.RawQuery = "deleteFiles=true"
 	h.Delete(w, r)
 
-	// May be 204 (delete succeeded) or 500 (storage error), either is fine
-	// for a unit test — we just verify no panic and a reasonable status.
-	if w.Code != http.StatusNoContent && w.Code != http.StatusInternalServerError {
-		t.Fatalf("unexpected status = %d", w.Code)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", w.Code, w.Body.String())
+	}
+	// The job row must be gone immediately regardless of background cleanup.
+	if _, err := d.GetJob(id); err == nil {
+		t.Error("job should be deleted from DB synchronously")
+	}
+}
+
+// TestJobDelete_DeleteFilesOrphanedJob covers an orphaned job (issue #113:
+// storage_dest_id == 0). There is no destination to clean, so the handler must
+// fall back to a synchronous 204 rather than spawning a no-op cleanup.
+func TestJobDelete_DeleteFilesOrphanedJob(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	id, err := d.CreateJob(db.Job{Name: "orphan-job-" + nextUnique(), Compression: "none", Encryption: "none"})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodDelete, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"?deleteFiles=true", nil), "id", strconv.FormatInt(id, 10))
+	r.URL.RawQuery = "deleteFiles=true"
+	h.Delete(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (no destination to clean); body: %s", w.Code, w.Body.String())
 	}
 }
 
