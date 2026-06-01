@@ -1494,6 +1494,87 @@ func TestAllNextRuns_NilResolver(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// max_parallel_uploads clamping
+// ---------------------------------------------------------------------------
+
+func TestJobCreate_ClampsParallelUploads(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	destID := seedStorageDest(t, d)
+	body, _ := json.Marshal(map[string]any{
+		"name":                 "clamp-" + nextUnique(),
+		"backup_type_chain":    "full",
+		"compression":          "none",
+		"storage_dest_id":      destID,
+		"max_parallel_uploads": 99,
+		"items":                []any{},
+	})
+	w := httptest.NewRecorder()
+	h.Create(w, newReq(http.MethodPost, "/api/v1/jobs", body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d; body %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	job, _ := d.GetJob(resp.ID)
+	if job.MaxParallelUploads != 16 {
+		t.Errorf("stored MaxParallelUploads = %d, want clamped 16", job.MaxParallelUploads)
+	}
+}
+
+func TestJobCreate_PreservesZeroParallelUploads(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	destID := seedStorageDest(t, d)
+	body, _ := json.Marshal(map[string]any{
+		"name":                 "zero-" + nextUnique(),
+		"backup_type_chain":    "full",
+		"compression":          "none",
+		"storage_dest_id":      destID,
+		"max_parallel_uploads": 0,
+		"items":                []any{},
+	})
+	w := httptest.NewRecorder()
+	h.Create(w, newReq(http.MethodPost, "/api/v1/jobs", body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d; body %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	job, _ := d.GetJob(resp.ID)
+	if job.MaxParallelUploads != 0 {
+		t.Errorf("stored MaxParallelUploads = %d, want 0 (sentinel preserved)", job.MaxParallelUploads)
+	}
+}
+
+func TestJobUpdate_ClampsParallelUploads(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	id := seedJob(t, d)
+	job, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"name":                 "clamp-update-" + nextUnique(),
+		"compression":          "none",
+		"storage_dest_id":      job.StorageDestID,
+		"max_parallel_uploads": 99,
+	})
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPut, "/api/v1/jobs/"+strconv.FormatInt(id, 10), body), "id", strconv.FormatInt(id, 10))
+	h.Update(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body %s", w.Code, w.Body.String())
+	}
+	updated, _ := d.GetJob(id)
+	if updated.MaxParallelUploads != 16 {
+		t.Errorf("stored MaxParallelUploads = %d, want clamped 16", updated.MaxParallelUploads)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // sortRestorePointsNewestFirst
 // ---------------------------------------------------------------------------
 

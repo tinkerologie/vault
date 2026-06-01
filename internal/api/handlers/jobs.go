@@ -121,6 +121,12 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	if req.MaxParallelUploads > 16 {
+		req.MaxParallelUploads = 16
+	}
+	if req.MaxParallelUploads < 0 {
+		req.MaxParallelUploads = 0
+	}
 	id, err := h.db.CreateJob(req.Job)
 	if err != nil {
 		respondInternalError(w, err)
@@ -174,6 +180,12 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+	if req.MaxParallelUploads > 16 {
+		req.MaxParallelUploads = 16
+	}
+	if req.MaxParallelUploads < 0 {
+		req.MaxParallelUploads = 0
 	}
 	req.Job.ID = id
 	if err := h.db.UpdateJob(req.Job); err != nil {

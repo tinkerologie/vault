@@ -30,7 +30,7 @@ func (d *DB) SetSetting(key, value string) error {
 }
 
 // GetSettingInt retrieves a setting value parsed as int. Returns defaultVal
-// if missing or unparseable.
+// if missing or unparsable.
 func (d *DB) GetSettingInt(key string, defaultVal int) (int, error) {
 	s, err := d.GetSetting(key, "")
 	if err != nil {
@@ -44,6 +44,16 @@ func (d *DB) GetSettingInt(key string, defaultVal int) (int, error) {
 		return defaultVal, nil // silent fallback — config errors shouldn't crash
 	}
 	return v, nil
+}
+
+// GetSettingBool reads a boolean setting, returning def when the key is absent
+// or unparsable.
+func (d *DB) GetSettingBool(key string, def bool) bool {
+	v, err := d.GetSetting(key, "")
+	if err != nil || v == "" {
+		return def
+	}
+	return v == "true" || v == "1"
 }
 
 // GetAllSettings returns all settings as a key-value map.
