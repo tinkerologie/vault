@@ -69,6 +69,10 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	return nil
 }
 
+func (l *LocalAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(l, path, open)
+}
+
 func (l *LocalAdapter) Read(path string) (io.ReadCloser, error) {
 	fullPath, err := l.fullPath(path, false)
 	if err != nil {
@@ -211,6 +215,17 @@ func (l *LocalAdapter) Usage() (free, total int64, err error) {
 		return 0, 0, err
 	}
 	return info.FreeBytes, info.TotalBytes, nil
+}
+
+// RemoveEmptyDir removes dir if it is empty. os.Remove fails on a non-empty
+// directory, which is the desired guard — callers use this to sweep parent
+// directories left vacant after the last object under them is deleted.
+func (l *LocalAdapter) RemoveEmptyDir(dir string) error {
+	full, err := l.fullPath(dir, false)
+	if err != nil {
+		return err
+	}
+	return os.Remove(full)
 }
 
 var _ Adapter = (*LocalAdapter)(nil)

@@ -124,6 +124,10 @@ func (n *NFSAdapter) Write(path string, reader io.Reader) error {
 	return n.local.Write(path, reader)
 }
 
+func (n *NFSAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(n, path, open)
+}
+
 func (n *NFSAdapter) Read(path string) (io.ReadCloser, error) {
 	if err := n.mount(); err != nil {
 		return nil, err
@@ -194,6 +198,16 @@ func (n *NFSAdapter) Usage() (free, total int64, err error) {
 		return 0, 0, ErrUsageNotSupported
 	}
 	return n.local.Usage()
+}
+
+// RemoveEmptyDir removes dir if it is empty by delegating to the underlying
+// LocalAdapter. The NFS share is mounted on demand if not already mounted.
+// os.Remove fails on a non-empty directory, which is the desired guard.
+func (n *NFSAdapter) RemoveEmptyDir(dir string) error {
+	if err := n.mount(); err != nil {
+		return err
+	}
+	return n.local.RemoveEmptyDir(dir)
 }
 
 var _ Adapter = (*NFSAdapter)(nil)

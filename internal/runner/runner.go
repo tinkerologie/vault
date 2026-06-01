@@ -9,10 +9,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -556,8 +558,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	}
 
 	// Pre-flight: verify the destination is reachable before opening any
-	// backup pipeline. A flaky destination should not consume a 4-hour
-	// job timeout window. Failure records a "skipped" run and returns
+	// backup pipeline. A flaky destination should not tie up the run slot.
+	// Failure records a "skipped" run and returns
 	// early so retry policy can pick it up on the next tick (Task 7).
 	if pfErr := Preflight(context.Background(), dest); pfErr != nil {
 		log.Printf("runner: preflight failed for job %d (%s) -> dest %s: %v",
@@ -611,10 +613,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	}
 	run.ID = runID
 
-	// Create a cancellable context with a 4-hour timeout.
-	// The cancel function is stored so CancelJob() can trigger it.
-	const jobTimeout = 4 * time.Hour
-	ctx, cancel := context.WithTimeout(context.Background(), jobTimeout)
+	// Create a cancellable context with NO wall-clock timeout (issue #110).
+	// A backup that is actively transferring data must never be killed by an
+	// elapsed-time cap — a legitimate initial backup over a slow WAN link can
+	// run for many hours. The no-progress stall watchdog below is the sole
+	// automatic canceller (it fires only when zero bytes flow for
+	// stallCancelTimeout), and CancelJob() triggers the stored cancel func on
+	// demand — per-request stall detection rather than a total-job deadline.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	r.cancelMu.Lock()
@@ -1017,7 +1023,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			continue
 		}
 
-		result, checksums, backupErr := r.backupItem(ctx, backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression)
+		result, checksums, backupErr := r.backupItem(ctx, backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression, job.EffectiveUploadConcurrency())
 		if backupErr != nil {
 			// If the context was cancelled, stop processing remaining items.
 			if ctx.Err() != nil {
@@ -1243,7 +1249,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				"item_name": s.dbItem.ItemName,
 				"item_type": s.dbItem.ItemType,
 			})
-			checksums, uploadErr := r.uploadStagedFiles(ctx, s.tmpDir, dest, s.itemPath, job.VerifyBackup, encryptPassphrase, job.Compression, s.dbItem.ItemType, s.dbItem.ItemName)
+			checksums, uploadErr := r.uploadStagedFilesN(ctx, s.tmpDir, dest, s.itemPath, job.VerifyBackup, encryptPassphrase, job.Compression, s.dbItem.ItemType, s.dbItem.ItemName, job.EffectiveUploadConcurrency())
 			if uploadErr != nil {
 				if ctx.Err() != nil {
 					log.Printf("runner: job %d upload of %s cancelled: %v", jobID, s.dbItem.ItemName, uploadErr)
@@ -1332,12 +1338,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			userCancelled = true
 		}
 		r.statusMu.RUnlock()
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("runner: job %d timed out after %v", jobID, time.Since(jobStart).Truncate(time.Second))
-			run.Log = fmt.Sprintf("Job timed out after %v", time.Since(jobStart).Truncate(time.Second))
-		} else {
-			log.Printf("runner: job %d was cancelled after %v", jobID, time.Since(jobStart).Truncate(time.Second))
+		if userCancelled {
+			log.Printf("runner: job %d was cancelled by user after %v", jobID, time.Since(jobStart).Truncate(time.Second))
 			run.Log = "Job was cancelled by user"
+		} else {
+			// There is no longer a wall-clock deadline (issue #110); the only
+			// other automatic canceller is the no-progress stall watchdog.
+			log.Printf("runner: job %d cancelled by stall watchdog (no progress for %v) after %v", jobID, stallCancelTimeout, time.Since(jobStart).Truncate(time.Second))
+			run.Log = fmt.Sprintf("Job cancelled: no data transferred for %v (stall watchdog)", stallCancelTimeout)
 		}
 	} else if itemsFailed > 0 && itemsDone == 0 {
 		status = "failed"
@@ -1879,7 +1887,7 @@ func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup
 // engine.ChunkedHandler, the call is routed to backupItemChunked instead of
 // the classic tar pipeline. Handlers that don't support chunking (vm, zfs)
 // transparently fall through to the classic path even on dedup destinations.
-func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string) (*engine.BackupResult, map[string]string, error) {
+func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, concurrency int) (*engine.BackupResult, map[string]string, error) {
 	if dest.DedupEnabled {
 		handler, err := newHandler(item.Type)
 		if err != nil {
@@ -1897,7 +1905,7 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 	}
 	defer cleanup()
 
-	checksums, err := r.uploadStagedFiles(ctx, tmpDir, dest, storagePath, verify, passphrase, compression, item.Type, item.Name)
+	checksums, err := r.uploadStagedFilesN(ctx, tmpDir, dest, storagePath, verify, passphrase, compression, item.Type, item.Name, concurrency)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2032,12 +2040,25 @@ func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, d
 	return tmpDir, result, cleanup, nil
 }
 
-// uploadStagedFiles streams every regular file in tmpDir through the
-// compression/encryption pipeline to the storage adapter, computes SHA-256
-// checksums during upload, and (optionally) verifies by re-reading. Each
-// per-file upload is retried with exponential backoff (5s, 30s, 2m) for up
-// to 4 attempts to tolerate transient remote-storage failures (#77).
-func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, itemType string, itemName string) (map[string]string, error) {
+// uploadStagedFilesN streams every regular file in tmpDir through the
+// encryption pipeline to the storage adapter, computes SHA-256 checksums during
+// upload, and (optionally) verifies by re-reading. Files are uploaded through a
+// bounded worker pool of size concurrency (clamped to >=1).
+//
+// Transient remote-storage failures are retried inside the storage layer via
+// adapter.WriteFrom: the per-file reopen closure re-opens the staged file and
+// re-applies encryption each attempt, so the retry layer can replay the upload
+// from a fresh stream. The runner no longer runs its own per-file backoff loop.
+//
+// Compression is applied by the engine when it produces the archive so the
+// runner does not wrap the upload stream — historically the engine always
+// emitted .tar.gz and the runner added a second transport-layer compression on
+// top, which yielded double-compressed files and ignored the user's "None"
+// selection entirely. The compression parameter is retained for the call
+// signature but intentionally unused here.
+func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, itemType string, itemName string, concurrency int) (map[string]string, error) {
+	_ = compression // applied by the engine; see doc comment
+
 	progress := func(pct int, msg string) {
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
@@ -2053,141 +2074,71 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 		})
 	}
 
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	verbose, vErr := r.db.GetSettingBool("storage_verbose_logging", false)
+	if vErr != nil {
+		log.Printf("runner: reading storage_verbose_logging setting: %v", vErr)
+	}
+	adapter, err := storage.NewAdapterWithOptions(dest.Type, dest.Config, storage.Options{
+		VerboseLogging: verbose,
+		DestLabel:      dest.Name,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("creating storage adapter: %w", err)
 	}
 	defer storage.CloseAdapter(adapter)
+	// If the job context is cancelled, close the adapter so any storage
+	// operation blocked acquiring a pooled connection unblocks promptly.
+	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
+	defer stopOnCancel()
 
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return nil, fmt.Errorf("reading backup dir: %w", err)
 	}
 
-	// uploadOnce opens the source file, encrypts it (if a passphrase is
-	// configured), streams to storage with a SHA-256 tee, and returns
-	// (storageName, checksumHex, err). The hasher is local so a retry never
-	// inherits partial state from a failed attempt.
-	//
-	// Compression is applied by the engine when it produces the archive so
-	// the runner no longer wraps the upload stream — historically the engine
-	// always emitted .tar.gz and the runner added a second transport-layer
-	// compression on top, which yielded double-compressed files such as
-	// `volume_0.tar.gz.zst` for zstd jobs and ignored the user's "None"
-	// selection entirely.
-	uploadOnce := func(entryName string) (string, string, error) {
-		filePath := filepath.Join(tmpDir, entryName)
-		f, openErr := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entryName from os.ReadDir
-		if openErr != nil {
-			return "", "", fmt.Errorf("opening backup file %s: %w", entryName, openErr)
-		}
-		defer f.Close()
-
-		var reader io.Reader = f
-		var readerCloser io.Closer
-		storageName := entryName
-
-		if passphrase != "" {
-			encrypted, encErr := crypto.EncryptReader(passphrase, reader)
-			if encErr != nil {
-				return "", "", fmt.Errorf("encrypting %s: %w", entryName, encErr)
-			}
-			defer encrypted.Close()
-			reader = encrypted
-			readerCloser = encrypted
-			storageName += ".age"
-		}
-
-		hasher := sha256.New()
-		tee := io.TeeReader(reader, hasher)
-
-		destPath := filepath.Join(storagePath, storageName)
-		if writeErr := adapter.Write(destPath, tee); writeErr != nil {
-			if readerCloser != nil {
-				_ = readerCloser.Close()
-			}
-			return storageName, "", fmt.Errorf("writing %s to storage: %w", storageName, writeErr)
-		}
-		return storageName, hex.EncodeToString(hasher.Sum(nil)), nil
+	if concurrency < 1 {
+		concurrency = 1
 	}
-
-	backoffs := []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
-	// Total attempts = len(backoffs)+1: one initial try plus one retry per
-	// backoff entry (so 3 backoff entries == 4 attempts).
-	maxAttempts := len(backoffs) + 1
-	checksums := make(map[string]string)
-	// Best-effort cleanup of partially-uploaded files when the overall upload
-	// fails (transient errors exhausted, ctx cancelled, or verify mismatch).
-	// Leaving these behind wastes remote storage quota and confuses the next
-	// run because the storagePath looks "half done". We log but do not surface
-	// delete errors — the original upload failure is what the caller cares
-	// about. See issue #83 follow-up.
-	cleanupPartial := func(extra ...string) {
-		seen := make(map[string]struct{}, len(checksums)+len(extra))
-		paths := make([]string, 0, len(checksums)+len(extra))
-		for name := range checksums {
-			if _, dup := seen[name]; dup {
-				continue
-			}
-			seen[name] = struct{}{}
-			paths = append(paths, name)
-		}
-		for _, name := range extra {
-			if name == "" {
-				continue
-			}
-			if _, dup := seen[name]; dup {
-				continue
-			}
-			seen[name] = struct{}{}
-			paths = append(paths, name)
-		}
-		if len(paths) == 0 {
-			return
-		}
-		log.Printf("runner: cleaning up %d partial upload(s) under %s after failure", len(paths), storagePath)
-		for _, name := range paths {
-			p := filepath.Join(storagePath, name)
-			if delErr := adapter.Delete(p); delErr != nil {
-				log.Printf("runner: cleanup: failed to delete orphaned %s: %v", p, delErr)
-			}
-		}
-	}
+	var (
+		mu        sync.Mutex
+		checksums = make(map[string]string)
+		sem       = make(chan struct{}, concurrency)
+		wg        sync.WaitGroup
+		firstErr  error
+		errOnce   sync.Once
+	)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		var (
-			storageName string
-			checksum    string
-			lastErr     error
-		)
-		for attempt := 0; attempt < maxAttempts; attempt++ {
-			if attempt > 0 {
-				wait := backoffs[attempt-1]
-				progress(0, fmt.Sprintf("Retrying %s in %s (attempt %d/%d): %v", entry.Name(), wait, attempt+1, maxAttempts, lastErr))
-				select {
-				case <-ctx.Done():
-					cleanupPartial(storageName)
-					return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
-				case <-time.After(wait):
-				}
-			}
-			storageName, checksum, lastErr = uploadOnce(entry.Name())
-			if lastErr == nil {
-				break
-			}
-			if ctx.Err() != nil {
-				cleanupPartial(storageName)
-				return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
-			}
-			log.Printf("runner: upload attempt %d/%d for %s failed: %v", attempt+1, maxAttempts, entry.Name(), lastErr)
+		if ctx.Err() != nil {
+			break
 		}
-		if lastErr != nil {
-			cleanupPartial(storageName)
-			return nil, lastErr
-		}
-		checksums[storageName] = checksum
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(entryName string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			storageName, checksum, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, itemType, itemName, progress)
+			if storageName != "" {
+				mu.Lock()
+				checksums[storageName] = checksum // checksum is "" on error; key still enables cleanup
+				mu.Unlock()
+			}
+			if upErr != nil {
+				errOnce.Do(func() { firstErr = upErr })
+				return
+			}
+		}(entry.Name())
+	}
+	wg.Wait()
+	if firstErr != nil {
+		r.cleanupPartialUploads(adapter, storagePath, checksums)
+		return nil, firstErr
+	}
+	if ctx.Err() != nil {
+		r.cleanupPartialUploads(adapter, storagePath, checksums)
+		return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
 	}
 
 	// Verify: read files back from storage and re-compute SHA-256.
@@ -2196,25 +2147,165 @@ func (r *Runner) uploadStagedFiles(ctx context.Context, tmpDir string, dest db.S
 			destPath := filepath.Join(storagePath, fileName)
 			reader, err := adapter.Read(destPath)
 			if err != nil {
-				cleanupPartial()
+				r.cleanupPartialUploads(adapter, storagePath, checksums)
 				return nil, fmt.Errorf("verification read %s: %w", fileName, err)
 			}
 			verifyHasher := sha256.New()
-			if _, err := io.Copy(verifyHasher, reader); err != nil {
+			// Heartbeat the stall watchdog while reading the file back — a
+			// large verify read is just as long-running as the upload and
+			// would otherwise re-freeze the progress timer (issue #110).
+			var verifyBroadcast time.Time
+			verifyReader := &countingReader{
+				reader: reader,
+				onRead: func(int64) {
+					r.lastProgressMu.Lock()
+					r.lastProgress = time.Now()
+					r.lastProgressMu.Unlock()
+					if time.Since(verifyBroadcast) >= time.Second {
+						verifyBroadcast = time.Now()
+						progress(0, fmt.Sprintf("Verifying %s", fileName))
+					}
+				},
+			}
+			if _, err := io.Copy(verifyHasher, verifyReader); err != nil {
 				_ = reader.Close()
-				cleanupPartial()
+				r.cleanupPartialUploads(adapter, storagePath, checksums)
 				return nil, fmt.Errorf("verification hash %s: %w", fileName, err)
 			}
 			_ = reader.Close()
 			actualHash := hex.EncodeToString(verifyHasher.Sum(nil))
 			if actualHash != expectedHash {
-				cleanupPartial()
+				r.cleanupPartialUploads(adapter, storagePath, checksums)
 				return nil, fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash)
 			}
 		}
 	}
 
 	return checksums, nil
+}
+
+// uploadOneStaged uploads one staged file via the adapter's retry-aware
+// WriteFrom. The reopen closure yields a fresh (re-encrypted) stream each
+// attempt; the sha256 hasher is reset at the start of every attempt and tees
+// the bytes actually sent, so after a successful WriteFrom it holds the digest
+// of the bytes that were stored — correct even if the storage layer retried.
+// It returns (storageName, checksumHex, err). All per-attempt state (hasher,
+// uploaded counter, broadcast timer) is local so concurrent calls never share
+// mutable state.
+func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, itemType, itemName string, progress func(int, string)) (string, string, error) {
+	_ = itemType
+	_ = itemName
+
+	filePath := filepath.Join(tmpDir, entryName)
+	// Stat for the source size so we can report an upload percentage. A failure
+	// here is non-fatal: we fall back to size 0, which disables the percentage
+	// but still heartbeats the stall watchdog.
+	var fileSize int64
+	if fi, err := os.Stat(filePath); err == nil {
+		fileSize = fi.Size()
+	}
+
+	storageName := entryName
+	if passphrase != "" {
+		storageName += ".age"
+	}
+	destPath := filepath.Join(storagePath, storageName)
+
+	hasher := sha256.New()
+	var uploaded int64
+	var lastBroadcast time.Time
+
+	// reopen yields a fresh source stream for each WriteFrom attempt. It resets
+	// the hasher and byte counter first so a replayed attempt re-hashes from the
+	// start and the digest matches exactly the bytes of the successful attempt.
+	reopen := func() (io.ReadCloser, error) {
+		hasher.Reset()
+		uploaded = 0
+		f, err := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entryName from os.ReadDir
+		if err != nil {
+			return nil, err
+		}
+		var src io.Reader = f
+		closers := []io.Closer{f}
+		if passphrase != "" {
+			enc, encErr := crypto.EncryptReader(passphrase, f)
+			if encErr != nil {
+				_ = f.Close()
+				return nil, fmt.Errorf("encrypting %s: %w", entryName, encErr)
+			}
+			src = enc
+			closers = append(closers, enc)
+		}
+		// Tee the bytes-to-be-sent into the hasher, then count them so the stall
+		// watchdog (issue #110) sees bytes moving during the blocking write and
+		// the user-facing broadcast is rate-limited to ~1/second.
+		tee := io.TeeReader(src, hasher)
+		counted := &countingReader{
+			reader: tee,
+			onRead: func(n int64) {
+				uploaded += n
+				r.lastProgressMu.Lock()
+				r.lastProgress = time.Now()
+				r.lastProgressMu.Unlock()
+				if time.Since(lastBroadcast) >= time.Second {
+					lastBroadcast = time.Now()
+					pct := 0
+					if fileSize > 0 {
+						pct = int(uploaded * 100 / fileSize)
+						if pct > 100 {
+							pct = 100
+						}
+					}
+					progress(pct, fmt.Sprintf("Uploading %s", entryName))
+				}
+			},
+		}
+		return &multiCloseReader{Reader: counted, closers: closers}, nil
+	}
+
+	if err := adapter.WriteFrom(destPath, reopen); err != nil {
+		if ctx.Err() != nil {
+			return storageName, "", fmt.Errorf("upload cancelled: %w", ctx.Err())
+		}
+		return storageName, "", fmt.Errorf("writing %s to storage: %w", storageName, err)
+	}
+	return storageName, hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// cleanupPartialUploads best-effort deletes the files named in checksums under
+// storagePath after an overall upload/verify failure. Leaving partials behind
+// wastes remote storage quota and makes the next run look "half done". Delete
+// errors are logged but not surfaced — the original failure is what the caller
+// cares about (see issue #83 follow-up).
+func (r *Runner) cleanupPartialUploads(adapter storage.Adapter, storagePath string, checksums map[string]string) {
+	if len(checksums) == 0 {
+		return
+	}
+	log.Printf("runner: cleaning up %d partial upload(s) under %s after failure", len(checksums), storagePath)
+	for name := range checksums {
+		p := filepath.Join(storagePath, name)
+		if delErr := adapter.Delete(p); delErr != nil {
+			log.Printf("runner: cleanup: failed to delete orphaned %s: %v", p, delErr)
+		}
+	}
+}
+
+// multiCloseReader wraps a reader together with the closers that must be
+// released when the upload stream is done, closing them in reverse order so
+// the encryption pipe is unblocked before the underlying file.
+type multiCloseReader struct {
+	io.Reader
+	closers []io.Closer
+}
+
+func (m *multiCloseReader) Close() error {
+	var err error
+	for i := len(m.closers) - 1; i >= 0; i-- {
+		if e := m.closers[i].Close(); e != nil && err == nil {
+			err = e
+		}
+	}
+	return err
 }
 
 // RestoreTarget describes a single item to restore. When FilePaths is non-nil
@@ -3285,31 +3376,59 @@ func (r *Runner) deleteVMCheckpointsForRP(rp db.RestorePoint) {
 
 // deleteStorageDir recursively deletes all files under a storage path prefix.
 func (r *Runner) deleteStorageDir(adapter storage.Adapter, prefix string) {
-	r.DeleteStorageDir(adapter, prefix)
+	_ = r.DeleteStorageDir(adapter, prefix)
 }
 
 // DeleteStorageDir recursively deletes all files under a storage path prefix,
-// then removes the directory itself.
-func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) {
+// then removes the directory itself. It returns a joined error describing every
+// list/delete operation that failed (nil when the subtree was removed cleanly)
+// so callers that report completion status — e.g. the async cleanup goroutines
+// — can tell success from partial failure rather than always claiming success.
+// Errors are also logged for operators tailing the daemon log.
+func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) error {
 	files, err := adapter.List(prefix)
 	if err != nil {
 		log.Printf("runner: failed to list storage dir %s for cleanup: %v", prefix, err)
-		return
+		return fmt.Errorf("list %s: %w", prefix, err)
 	}
 
+	var errs []error
 	for _, fi := range files {
 		if fi.IsDir {
-			r.DeleteStorageDir(adapter, fi.Path)
+			if e := r.DeleteStorageDir(adapter, fi.Path); e != nil {
+				errs = append(errs, e)
+			}
 			continue
 		}
-		if err := adapter.Delete(fi.Path); err != nil {
-			log.Printf("runner: failed to delete storage file %s: %v", fi.Path, err)
+		if e := adapter.Delete(fi.Path); e != nil {
+			log.Printf("runner: failed to delete storage file %s: %v", fi.Path, e)
+			errs = append(errs, fmt.Errorf("delete %s: %w", fi.Path, e))
 		}
 	}
 
 	// Remove the now-empty directory itself.
-	if err := adapter.Delete(prefix); err != nil {
-		log.Printf("runner: failed to remove storage directory %s: %v", prefix, err)
+	if e := adapter.Delete(prefix); e != nil {
+		log.Printf("runner: failed to remove storage directory %s: %v", prefix, e)
+		errs = append(errs, fmt.Errorf("delete %s: %w", prefix, e))
+	}
+	r.sweepEmptyParents(adapter, prefix, "")
+	return errors.Join(errs...)
+}
+
+// sweepEmptyParents removes now-empty directories from start's parent upward,
+// stopping at root or the first non-empty directory. No-op for adapters that do
+// not implement the optional dir-removal interface (object stores, WebDAV).
+func (r *Runner) sweepEmptyParents(adapter storage.Adapter, start, root string) {
+	dr, ok := adapter.(interface{ RemoveEmptyDir(string) error })
+	if !ok {
+		return
+	}
+	dir := path.Dir(start)
+	for dir != "" && dir != "." && dir != "/" && dir != root {
+		if err := dr.RemoveEmptyDir(dir); err != nil {
+			return // non-empty or unsupported: stop walking up
+		}
+		dir = path.Dir(dir)
 	}
 }
 
@@ -3340,15 +3459,100 @@ func (r *Runner) CleanupJobStorage(jobID int64) error {
 
 	for _, rp := range rps {
 		if rp.StoragePath != "" {
-			r.DeleteStorageDir(adapter, rp.StoragePath)
+			_ = r.DeleteStorageDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
 		}
 	}
 
 	// Also clean up the top-level job directory.
 	jobDir := job.Name
-	r.DeleteStorageDir(adapter, jobDir)
+	_ = r.DeleteStorageDir(adapter, jobDir) // best-effort; errors are logged inside
 
 	return nil
+}
+
+// CleanupJobStorageAsync deletes a job's backup files on remote storage in a
+// background goroutine, then broadcasts a job_cleanup_complete (or
+// job_cleanup_failed) WebSocket event. Cleanup of a large backup on a slow
+// remote (e.g. ~30 GB on a Hetzner Storage Box) can take far longer than an
+// HTTP client is willing to wait, which previously surfaced as a spurious
+// "daemon unavailable" error even though the server eventually returned 204
+// (issue #111). The caller deletes the DB row first and passes the details
+// here because the job (and its restore points) are gone by the time this runs.
+func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.StorageDestination, storagePaths []string) {
+	go func() {
+		adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+		if err != nil {
+			log.Printf("runner: async cleanup for job %d: creating storage adapter: %v", jobID, err)
+			r.broadcast(map[string]any{
+				"type": "job_cleanup_failed", "job_id": jobID, "job_name": jobName, "error": err.Error(),
+			})
+			return
+		}
+		defer storage.CloseAdapter(adapter)
+
+		// The recorded restore-point paths are authoritative backup data; a
+		// failure to delete any of them is a real cleanup failure.
+		var errs []error
+		for _, p := range storagePaths {
+			if p != "" {
+				if e := r.DeleteStorageDir(adapter, p); e != nil {
+					errs = append(errs, e)
+				}
+			}
+		}
+		// Sweep the top-level job directory to catch anything the per-restore-
+		// point paths missed (orphaned partial uploads, sidecar dirs, etc.).
+		// This is best-effort: a job that never wrote a top-level dir would
+		// surface a benign "not found", so its error does not fail the cleanup.
+		_ = r.DeleteStorageDir(adapter, jobName)
+
+		if err := errors.Join(errs...); err != nil {
+			log.Printf("runner: async cleanup for job %d (%q) failed: %v", jobID, jobName, err)
+			r.broadcast(map[string]any{
+				"type": "job_cleanup_failed", "job_id": jobID, "job_name": jobName, "error": err.Error(),
+			})
+			return
+		}
+
+		log.Printf("runner: async cleanup for job %d (%q) complete", jobID, jobName)
+		r.broadcast(map[string]any{
+			"type": "job_cleanup_complete", "job_id": jobID, "job_name": jobName,
+		})
+	}()
+}
+
+// CleanupRestorePointStorageAsync deletes a single restore point's files on
+// remote storage in a background goroutine, mirroring CleanupJobStorageAsync.
+// Deleting a large restore point on a slow remote suffers the same HTTP-timeout
+// problem as job deletion (issue #111), so the caller removes the DB row first
+// and the remote sweep happens here.
+func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.StorageDestination, storagePath string) {
+	go func() {
+		adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+		if err != nil {
+			log.Printf("runner: async cleanup for restore point %d: creating storage adapter: %v", rpID, err)
+			r.broadcast(map[string]any{
+				"type": "restore_point_cleanup_failed", "job_id": jobID, "restore_point_id": rpID, "error": err.Error(),
+			})
+			return
+		}
+		defer storage.CloseAdapter(adapter)
+
+		if storagePath != "" {
+			if e := r.DeleteStorageDir(adapter, storagePath); e != nil {
+				log.Printf("runner: async cleanup for restore point %d failed: %v", rpID, e)
+				r.broadcast(map[string]any{
+					"type": "restore_point_cleanup_failed", "job_id": jobID, "restore_point_id": rpID, "error": e.Error(),
+				})
+				return
+			}
+		}
+
+		log.Printf("runner: async cleanup for restore point %d complete", rpID)
+		r.broadcast(map[string]any{
+			"type": "restore_point_cleanup_complete", "job_id": jobID, "restore_point_id": rpID,
+		})
+	}()
 }
 
 // CleanupStorageDestination deletes all Vault backup files from a storage
@@ -3365,7 +3569,7 @@ func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 	if listErr == nil {
 		for _, entry := range topEntries {
 			if entry.IsDir {
-				r.DeleteStorageDir(adapter, entry.Path)
+				_ = r.DeleteStorageDir(adapter, entry.Path) // best-effort; errors are logged inside
 			}
 		}
 	}

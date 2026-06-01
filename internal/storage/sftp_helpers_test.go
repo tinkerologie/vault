@@ -207,7 +207,7 @@ func unreachableSFTP(t *testing.T) *SFTPAdapter {
 func TestSFTPConnect_BadHostErrors(t *testing.T) {
 	t.Parallel()
 	a := unreachableSFTP(t)
-	_, err := a.connect()
+	_, err := a.dialConnection()
 	if err == nil {
 		t.Fatal("expected dial error on unreachable host")
 	}
@@ -225,7 +225,7 @@ func TestSFTPConnect_BadKeyFileErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.connect(); err == nil {
+	if _, err := a.dialConnection(); err == nil {
 		t.Fatal("expected error from missing key file")
 	}
 }
@@ -243,7 +243,7 @@ func TestSFTPConnect_MalformedKeyErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.connect(); err == nil {
+	if _, err := a.dialConnection(); err == nil {
 		t.Fatal("expected parse-key error")
 	}
 }
@@ -277,7 +277,7 @@ func TestSFTPConnect_ValidKeyParsedThenDialFails(t *testing.T) {
 	}
 	// Dial fails (port 1 unreachable), but the key parsing branch
 	// has been exercised.
-	if _, err := a.connect(); err == nil {
+	if _, err := a.dialConnection(); err == nil {
 		t.Fatal("expected dial error after parse")
 	} else if !strings.Contains(err.Error(), "ssh dial") {
 		t.Errorf("expected dial-stage failure, got %v", err)

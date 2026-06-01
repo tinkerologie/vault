@@ -105,8 +105,9 @@ func (d *DB) ListReplicatedJobs(sourceID int64) ([]Job, error) {
 	rows, err := d.Query(
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
-		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0),
+		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
 		retry_max_override, retry_delays_override,
+		COALESCE(max_parallel_uploads, 1),
 		created_at, updated_at
 		FROM jobs WHERE source_id = ? ORDER BY name`, sourceID,
 	)
@@ -122,6 +123,7 @@ func (d *DB) ListReplicatedJobs(sourceID int64) ([]Job, error) {
 			&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
 			&job.VerifyBackup, &job.StorageDestID, &job.SourceID,
 			&job.RetryMaxOverride, &job.RetryDelaysOverride,
+			&job.MaxParallelUploads,
 			&job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -141,7 +143,7 @@ func (d *DB) CreateReplicatedJob(job Job) (int64, error) {
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption,
 		job.ContainerMode, job.VMMode, job.PreScript, job.PostScript, job.NotifyOn,
-		job.VerifyBackup, job.StorageDestID, job.SourceID,
+		job.VerifyBackup, nullableID(job.StorageDestID), job.SourceID,
 	)
 	if err != nil {
 		return 0, err

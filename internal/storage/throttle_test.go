@@ -56,6 +56,9 @@ func (r *recordingAdapter) TestConnection() error                  { return nil 
 func (r *recordingAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	return Capacity{}, errors.New("recordingAdapter: GetCapacity not used in throttle tests")
 }
+func (r *recordingAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(r, p, open)
+}
 func (r *recordingAdapter) Usage() (int64, int64, error) { return 0, 0, ErrUsageNotSupported }
 
 func TestWrapThrottled_ZeroPassThrough(t *testing.T) {

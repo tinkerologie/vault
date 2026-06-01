@@ -42,6 +42,16 @@ func (t *throttledAdapter) Write(p string, reader io.Reader) error {
 	return t.inner.Write(p, &throttledReader{r: reader, limiter: t.limiter})
 }
 
+func (t *throttledAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
+	return t.inner.WriteFrom(p, func() (io.ReadCloser, error) {
+		rc, err := open()
+		if err != nil {
+			return nil, err
+		}
+		return &throttledReadCloser{rc: rc, limiter: t.limiter}, nil
+	})
+}
+
 func (t *throttledAdapter) Read(p string) (io.ReadCloser, error) {
 	rc, err := t.inner.Read(p)
 	if err != nil {
@@ -113,4 +123,13 @@ func (t *throttledAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 // a metadata operation not subject to the bandwidth throttle.
 func (t *throttledAdapter) Usage() (free, total int64, err error) {
 	return t.inner.Usage()
+}
+
+// Close forwards to the wrapped adapter so CloseAdapter on the chain reaches a
+// provider that holds resources (e.g. the SFTP connection pool).
+func (t *throttledAdapter) Close() error {
+	if c, ok := t.inner.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }

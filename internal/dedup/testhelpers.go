@@ -99,6 +99,16 @@ func (f *FakeAdapter) Usage() (int64, int64, error) {
 	return 0, 0, storage.ErrUsageNotSupported
 }
 
+// WriteFrom opens the source via open() once and delegates to Write.
+func (f *FakeAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
+	rc, err := open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close() //nolint:errcheck
+	return f.Write(path, rc)
+}
+
 // NewTestRepoForEngine spins up a fresh DB + in-memory adapter + InitRepo'd
 // Repo for cross-package tests (e.g. internal/engine/folder_test.go). Returns
 // the Repo, the underlying fake adapter, and a cleanup callback. The caller

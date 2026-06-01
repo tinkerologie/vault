@@ -223,7 +223,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 		}
 		// Skip excluded paths before recording or chunking. A matching
 		// directory is pruned entirely (SkipDir) so its subtree is never
-		// walked — restic/kopia behave the same way (an absolute dir
+		// walked — common backup tools behave the same way (an absolute dir
 		// pattern "is not saved and not traversed").
 		if shouldExcludePath(rel, exclusions) {
 			if info.IsDir() {

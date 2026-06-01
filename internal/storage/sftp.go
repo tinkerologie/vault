@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -32,8 +31,31 @@ type SFTPConfig struct {
 	KnownHostsFile string `json:"known_hosts_file"` // Path to OpenSSH known_hosts file
 }
 
+// sftpPoolSize is the maximum number of concurrent SSH+SFTP connections
+// the pool holds open per adapter instance.
+const sftpPoolSize = 4
+
+// sftpConnection holds both halves of a live SSH+SFTP session so both are
+// closed together when the connection is discarded from the pool. The
+// existing connect() path leaked the *ssh.Client because callers only closed
+// the *sftp.Client; this struct fixes that.
+type sftpConnection struct {
+	ssh  *ssh.Client
+	sftp *sftp.Client
+}
+
+// Close closes the SFTP session and the underlying SSH transport.
+func (c *sftpConnection) Close() error {
+	sErr := c.sftp.Close()
+	if c.ssh != nil {
+		_ = c.ssh.Close()
+	}
+	return sErr
+}
+
 type SFTPAdapter struct {
 	config SFTPConfig
+	pool   *sftpPool
 }
 
 func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
@@ -44,10 +66,25 @@ func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
 	if config.BasePath == "" && config.Path != "" {
 		config.BasePath = config.Path
 	}
-	return &SFTPAdapter{config: config}, nil
+	a := &SFTPAdapter{config: config}
+	a.pool = newSFTPPool(sftpPoolSize, func() (sftpConn, error) {
+		return a.dialConnection()
+	})
+	return a, nil
 }
 
-func (s *SFTPAdapter) connect() (*sftp.Client, error) {
+// Close drains the connection pool, closing every pooled ssh+sftp pair and
+// unblocking any operation waiting to borrow a connection. Idempotent.
+func (s *SFTPAdapter) Close() error {
+	s.pool.closeAll()
+	return nil
+}
+
+// dialConnection opens a fresh SSH transport and SFTP session, returning a
+// combined sftpConnection that owns both. Both halves are closed together when
+// the connection is discarded from the pool, preventing the ssh.Client TCP
+// leak that occurred when callers only closed the *sftp.Client.
+func (s *SFTPAdapter) dialConnection() (*sftpConnection, error) {
 	var authMethods []ssh.AuthMethod
 	if s.config.Password != "" {
 		authMethods = append(authMethods, ssh.Password(s.config.Password))
@@ -71,17 +108,17 @@ func (s *SFTPAdapter) connect() (*sftp.Client, error) {
 	}
 
 	addr := net.JoinHostPort(s.config.Host, fmt.Sprintf("%d", s.config.Port))
-	conn, err := ssh.Dial("tcp", addr, sshConfig)
+	sshConn, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
 
-	client, err := sftp.NewClient(conn)
+	sftpClient, err := sftp.NewClient(sshConn)
 	if err != nil {
-		_ = conn.Close()
+		_ = sshConn.Close()
 		return nil, fmt.Errorf("sftp client: %w", err)
 	}
-	return client, nil
+	return &sftpConnection{ssh: sshConn, sftp: sftpClient}, nil
 }
 
 func (s *SFTPAdapter) fullPath(path string, allowRoot bool) (string, error) {
@@ -126,12 +163,13 @@ func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
 	return ssh.InsecureIgnoreHostKey() // #nosec G106 //nolint:gosec // user chose not to configure host key
 }
 
-func (s *SFTPAdapter) Write(path string, reader io.Reader) error {
-	client, err := s.connect()
+func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
+	conn, err := s.pool.get()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
 
 	full, err := s.fullPath(path, false)
 	if err != nil {
@@ -158,85 +196,100 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) error {
 	return nil
 }
 
+func (s *SFTPAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(s, path, open)
+}
+
+// Read opens path for reading. The returned ReadCloser's lifetime extends past
+// this function's return (the caller streams from it), so we cannot use a
+// simple defer-put pattern here. Instead the connection is returned to the pool
+// when the caller closes the ReadCloser. A nil op-error is passed on close
+// because a successful read-to-EOF is not a reason to discard the connection.
 func (s *SFTPAdapter) Read(path string) (io.ReadCloser, error) {
-	client, err := s.connect()
+	conn, err := s.pool.get()
 	if err != nil {
 		return nil, err
 	}
-	// Note: caller must close the returned ReadCloser. We wrap to also close the sftp client.
+	client := conn.(*sftpConnection).sftp
 	fullPath, err := s.fullPath(path, false)
 	if err != nil {
-		_ = client.Close()
+		s.pool.put(conn, err)
 		return nil, err
 	}
 	f, err := client.Open(fullPath)
 	if err != nil {
-		_ = client.Close()
+		s.pool.put(conn, err)
 		return nil, err
 	}
-	return &sftpReadCloser{file: f, client: client}, nil
+	return &sftpReadCloser{file: f, pool: s.pool, conn: conn}, nil
 }
 
+// sftpReadCloser wraps an open remote file and returns the pooled connection
+// when the caller closes the reader. Using the pool field (rather than storing
+// the *sftp.Client directly) lets the close correctly signal op-success so the
+// connection is reused.
 type sftpReadCloser struct {
-	file   *sftp.File
-	client *sftp.Client
+	file *sftp.File
+	pool *sftpPool
+	conn sftpConn
 }
 
 func (r *sftpReadCloser) Read(p []byte) (int, error) { return r.file.Read(p) }
 func (r *sftpReadCloser) Close() error {
 	fileErr := r.file.Close()
-	clientErr := r.client.Close()
-	if fileErr != nil && clientErr != nil {
-		return errors.Join(fileErr, clientErr)
-	}
-	if fileErr != nil {
-		return fileErr
-	}
-	return clientErr
+	// Return the connection to the pool. We treat a file-close error as a
+	// connection-level error to be safe (the remote state is uncertain).
+	r.pool.put(r.conn, fileErr)
+	return fileErr
 }
 
+// ReadRange opens a length-limited slice of path starting at offset. Like
+// Read, the returned ReadCloser's lifetime extends past this function's return,
+// so the pool connection is returned only when the caller closes the reader.
 func (s *SFTPAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
 	if offset < 0 || length < 0 {
 		return nil, fmt.Errorf("invalid range offset=%d length=%d", offset, length)
 	}
-	client, err := s.connect()
+	conn, err := s.pool.get()
 	if err != nil {
 		return nil, err
 	}
+	client := conn.(*sftpConnection).sftp
 	fullPath, err := s.fullPath(p, false)
 	if err != nil {
-		_ = client.Close()
+		s.pool.put(conn, err)
 		return nil, err
 	}
 	info, err := client.Stat(fullPath)
 	if err != nil {
-		_ = client.Close()
+		s.pool.put(conn, err)
 		return nil, err
 	}
 	if offset >= info.Size() {
-		_ = client.Close()
+		s.pool.put(conn, nil) // not an op error — caller asked for out-of-range
 		return nil, fmt.Errorf("offset %d at or past EOF (size=%d)", offset, info.Size())
 	}
 	f, err := client.Open(fullPath)
 	if err != nil {
-		_ = client.Close()
+		s.pool.put(conn, err)
 		return nil, err
 	}
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		_ = f.Close()
-		_ = client.Close()
+		s.pool.put(conn, err)
 		return nil, err
 	}
-	rc := &sftpReadCloser{file: f, client: client}
+	rc := &sftpReadCloser{file: f, pool: s.pool, conn: conn}
 	return &rangeReader{Reader: io.LimitReader(rc, length), closer: rc}, nil
 }
 
-func (s *SFTPAdapter) Delete(path string) error {
-	client, err := s.connect()
+func (s *SFTPAdapter) Delete(path string) (retErr error) {
+	conn, err := s.pool.get()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
 	fullPath, err := s.fullPath(path, false)
 	if err != nil {
 		return err
@@ -244,12 +297,13 @@ func (s *SFTPAdapter) Delete(path string) error {
 	return client.Remove(fullPath)
 }
 
-func (s *SFTPAdapter) List(prefix string) ([]FileInfo, error) {
-	client, err := s.connect()
+func (s *SFTPAdapter) List(prefix string) (_ []FileInfo, retErr error) {
+	conn, err := s.pool.get()
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
 
 	fullPath, err := s.fullPath(prefix, true)
 	if err != nil {
@@ -272,12 +326,13 @@ func (s *SFTPAdapter) List(prefix string) ([]FileInfo, error) {
 	return files, nil
 }
 
-func (s *SFTPAdapter) Stat(path string) (FileInfo, error) {
-	client, err := s.connect()
+func (s *SFTPAdapter) Stat(path string) (_ FileInfo, retErr error) {
+	conn, err := s.pool.get()
 	if err != nil {
 		return FileInfo{}, err
 	}
-	defer client.Close()
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
 
 	fullPath, err := s.fullPath(path, false)
 	if err != nil {
@@ -295,12 +350,13 @@ func (s *SFTPAdapter) Stat(path string) (FileInfo, error) {
 	}, nil
 }
 
-func (s *SFTPAdapter) TestConnection() error {
-	client, err := s.connect()
+func (s *SFTPAdapter) TestConnection() (retErr error) {
+	conn, err := s.pool.get()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
 
 	_, err = client.ReadDir(s.config.BasePath)
 	return err
@@ -316,15 +372,16 @@ func (s *SFTPAdapter) TestConnection() error {
 // caller (e.g. a 60s scheduler probe that has timed out) does not
 // pay for the SSH handshake. pkg/sftp's StatVFS does not take a
 // context; the deadline lives at the dial layer.
-func (s *SFTPAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
+func (s *SFTPAdapter) GetCapacity(ctx context.Context) (_ Capacity, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return Capacity{}, err
 	}
-	client, err := s.connect()
+	conn, err := s.pool.get()
 	if err != nil {
 		return Capacity{}, fmt.Errorf("sftp: dial: %w", err)
 	}
-	defer client.Close()
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
 
 	probedAt := time.Now().UTC()
 	st, err := client.StatVFS(s.basePathOrRoot())
@@ -333,6 +390,7 @@ func (s *SFTPAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 		// the daemon and return a zero-Total Capacity so the UI shows
 		// "no quota reported" rather than a hard failure.
 		log.Printf("sftp: statvfs unsupported on %s: %v", s.config.Host, err)
+		// Not a connection-level error; return the conn healthy.
 		return Capacity{ProbedAt: probedAt, Source: "sftp-statvfs"}, nil
 	}
 	cap, err := sftpStatVFSToCapacity(st, probedAt)
@@ -386,12 +444,15 @@ func sftpStatVFSToCapacity(st *sftp.StatVFS, probedAt time.Time) (Capacity, erro
 // fields using Frsize as the block size. When the server doesn't advertise
 // the extension, or if dialling fails, ErrUsageNotSupported is returned so
 // callers can degrade gracefully.
-func (s *SFTPAdapter) Usage() (free, total int64, err error) {
-	client, err := s.connect()
+func (s *SFTPAdapter) Usage() (free, total int64, retErr error) {
+	conn, err := s.pool.get()
 	if err != nil {
 		return 0, 0, ErrUsageNotSupported
 	}
-	defer client.Close()
+	// statvfs errors are not connection-level faults; always return the conn
+	// healthy so it can be reused for the next probe.
+	defer func() { s.pool.put(conn, nil) }()
+	client := conn.(*sftpConnection).sftp
 
 	st, err := client.StatVFS(s.basePathOrRoot())
 	if err != nil {
@@ -408,6 +469,23 @@ func (s *SFTPAdapter) Usage() (free, total int64, err error) {
 		free = total
 	}
 	return free, total, nil
+}
+
+// RemoveEmptyDir removes dir if it is empty. sftp.Client.RemoveDirectory wraps
+// the SSH_FXP_RMDIR request, which the SFTP server rejects when the directory
+// is not empty — that rejection is the desired guard for the cleanup sweep.
+func (s *SFTPAdapter) RemoveEmptyDir(dir string) (retErr error) {
+	conn, err := s.pool.get()
+	if err != nil {
+		return err
+	}
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
+	fullPath, err := s.fullPath(dir, false)
+	if err != nil {
+		return err
+	}
+	return client.RemoveDirectory(fullPath)
 }
 
 var _ Adapter = (*SFTPAdapter)(nil)

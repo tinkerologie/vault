@@ -1,13 +1,50 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 )
+
+// TestUploadStagedFiles_UpdatesLastProgress verifies the upload path heartbeats
+// the stall watchdog as bytes flow (issue #110). Before the fix lastProgress
+// only advanced on a retry, so a long blocking upload froze the no-progress
+// timer and the watchdog cancelled healthy backups.
+func TestUploadStagedFiles_UpdatesLastProgress(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "archive.tar"), bytes.Repeat([]byte("x"), 1<<20), 0600); err != nil {
+		t.Fatalf("stage file: %v", err)
+	}
+	cfg, _ := json.Marshal(map[string]string{"path": filepath.Join(t.TempDir(), "store")})
+	dest := db.StorageDestination{Type: "local", Config: string(cfg)}
+
+	// Force the progress timestamp into the past; a working upload must move it.
+	stale := time.Now().Add(-3 * time.Hour)
+	r.lastProgressMu.Lock()
+	r.lastProgress = stale
+	r.lastProgressMu.Unlock()
+
+	if _, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp", false, "", "none", "folder", "Test", 1); err != nil {
+		t.Fatalf("uploadStagedFiles: %v", err)
+	}
+
+	r.lastProgressMu.Lock()
+	got := r.lastProgress
+	r.lastProgressMu.Unlock()
+	if !got.After(stale) {
+		t.Errorf("lastProgress not advanced during upload (still %v) — stall watchdog would fire on a long upload", got)
+	}
+}
 
 // TestUploadStagedFiles_BadAdapterConfig drives the storage.NewAdapter
 // error branch by feeding a corrupt JSON config.
@@ -19,7 +56,7 @@ func TestUploadStagedFiles_BadAdapterConfig(t *testing.T) {
 		Type:   "local",
 		Config: `{not valid json`,
 	}
-	_, err := r.uploadStagedFiles(context.Background(), t.TempDir(), dest, "rp", false, "", "none", "folder", "Test Folder")
+	_, err := r.uploadStagedFilesN(context.Background(), t.TempDir(), dest, "rp", false, "", "none", "folder", "Test Folder", 1)
 	if err == nil {
 		t.Fatal("expected NewAdapter error for corrupt config")
 	}
@@ -36,7 +73,7 @@ func TestUploadStagedFiles_MissingTmpDir(t *testing.T) {
 		Type:   "local",
 		Config: string(cfg),
 	}
-	_, err := r.uploadStagedFiles(context.Background(), filepath.Join(t.TempDir(), "no-such-dir"), dest, "rp", false, "", "none", "folder", "Test")
+	_, err := r.uploadStagedFilesN(context.Background(), filepath.Join(t.TempDir(), "no-such-dir"), dest, "rp", false, "", "none", "folder", "Test", 1)
 	if err == nil {
 		t.Fatal("expected ReadDir error for missing tmpDir")
 	}
@@ -55,7 +92,7 @@ func TestUploadStagedFiles_EmptyTmpDirReturnsEmptyChecksums(t *testing.T) {
 		Type:   "local",
 		Config: string(cfg),
 	}
-	checksums, err := r.uploadStagedFiles(context.Background(), t.TempDir(), dest, "rp", false, "", "none", "folder", "Test")
+	checksums, err := r.uploadStagedFilesN(context.Background(), t.TempDir(), dest, "rp", false, "", "none", "folder", "Test", 1)
 	if err != nil {
 		t.Fatalf("uploadStagedFiles(empty tmpDir): %v", err)
 	}
@@ -83,7 +120,7 @@ func TestUploadStagedFiles_HappyPath_NoEncryption(t *testing.T) {
 		Type:   "local",
 		Config: string(cfg),
 	}
-	checksums, err := r.uploadStagedFiles(context.Background(), tmpDir, dest, "rp-x", false, "", "none", "folder", "Test")
+	checksums, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp-x", false, "", "none", "folder", "Test", 1)
 	if err != nil {
 		t.Fatalf("uploadStagedFiles: %v", err)
 	}
@@ -113,12 +150,38 @@ func TestUploadStagedFiles_HappyPath_WithEncryption(t *testing.T) {
 		Type:   "local",
 		Config: string(cfg),
 	}
-	checksums, err := r.uploadStagedFiles(context.Background(), tmpDir, dest, "rp-y", false, "secret", "none", "container", "MyContainer")
+	checksums, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp-y", false, "secret", "none", "container", "MyContainer", 1)
 	if err != nil {
 		t.Fatalf("uploadStagedFiles: %v", err)
 	}
 	// Filename in checksums map should carry the .age suffix.
 	if _, ok := checksums["image.tar.age"]; !ok {
 		t.Errorf("expected checksums key 'image.tar.age', got %v", checksums)
+	}
+}
+
+// TestUploadStagedFiles_ParallelAllChecksums verifies that with a concurrency
+// of N every staged file is uploaded and its checksum recorded, regardless of
+// completion order. Exercises the bounded worker pool added for parallel
+// uploads.
+func TestUploadStagedFiles_ParallelAllChecksums(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+	tmp := t.TempDir()
+	for i := 0; i < 6; i++ {
+		name := filepath.Join(tmp, "vol"+strconv.Itoa(i)+".tar")
+		if err := os.WriteFile(name, bytes.Repeat([]byte{byte(i)}, 4096), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, _ := json.Marshal(map[string]string{"path": filepath.Join(t.TempDir(), "store")})
+	dest := db.StorageDestination{Type: "local", Config: string(cfg)}
+
+	sums, err := r.uploadStagedFilesN(context.Background(), tmp, dest, "rp", false, "", "none", "folder", "Test", 3)
+	if err != nil {
+		t.Fatalf("uploadStagedFilesN: %v", err)
+	}
+	if len(sums) != 6 {
+		t.Errorf("checksums = %d, want 6", len(sums))
 	}
 }

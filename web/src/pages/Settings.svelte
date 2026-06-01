@@ -175,6 +175,8 @@
       anomalyEnabled = s?.anomaly_detection_enabled !== 'false'
       anomalySensitivityDefault = s?.anomaly_sensitivity_default || 'balanced'
       anomalyNotifyMinSeverity = s?.anomaly_notify_min_severity || 'critical'
+      // Storage verbose logging (Task 12 — storage resilience)
+      storageVerboseLogging = s?.storage_verbose_logging === 'true'
       // Stored as a fraction "0.0".."1.0"; UI shows it as an integer percentage 0..100.
       const rawRatio = s?.dedup_compaction_min_dead_ratio
       if (rawRatio !== undefined && rawRatio !== null && rawRatio !== '') {
@@ -611,6 +613,10 @@
   let anomalyNotifyMinSeverity = $state('critical')
   let anomalySaving = $state(false)
 
+  // Storage verbose logging (Task 12 — storage resilience)
+  let storageVerboseLogging = $state(false)
+  let storageVerboseSaving = $state(false)
+
   async function saveAnomalySettings() {
     anomalySaving = true
     try {
@@ -624,6 +630,20 @@
       showToast(e.message, 'error')
     } finally {
       anomalySaving = false
+    }
+  }
+
+  async function saveStorageVerboseLogging() {
+    storageVerboseSaving = true
+    try {
+      settings = await api.updateSettings({
+        storage_verbose_logging: storageVerboseLogging ? 'true' : 'false',
+      })
+      showToast(storageVerboseLogging ? 'Verbose storage logging enabled' : 'Verbose storage logging disabled', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      storageVerboseSaving = false
     }
   }
 
@@ -939,6 +959,45 @@
                 <Spinner size="sm" />
               {/if}
               Save Anomaly Settings
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Storage Verbose Logging (Task 12 — storage resilience) -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Storage Logging <Tooltip text="When enabled, every file-level storage operation (upload, download, delete) is traced to the daemon log. Useful for diagnosing intermittent transfer failures; off by default to avoid log noise." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">Per-operation trace logging for storage adapters.</p>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">Verbose storage logging</p>
+              <p class="text-xs text-text-muted mt-0.5">Per-operation trace in the daemon log; off by default.</p>
+            </div>
+            <button
+              onclick={() => storageVerboseLogging = !storageVerboseLogging}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={storageVerboseLogging}
+              aria-label="Toggle verbose storage logging"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {storageVerboseLogging ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {storageVerboseLogging ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+          <div class="px-5 py-3 flex justify-end">
+            <button
+              onclick={saveStorageVerboseLogging}
+              disabled={storageVerboseSaving}
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {#if storageVerboseSaving}
+                <Spinner size="sm" />
+              {/if}
+              Save
             </button>
           </div>
         </div>

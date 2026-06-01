@@ -355,6 +355,28 @@ func TestGetJobRunsDurationSeconds(t *testing.T) {
 	}
 }
 
+func TestMaxParallelUploadsRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: "{}"})
+	id, err := d.CreateJob(Job{Name: "mp", StorageDestID: destID, BackupTypeChain: "full", MaxParallelUploads: 5})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	got, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.MaxParallelUploads != 5 {
+		t.Errorf("MaxParallelUploads = %d, want 5", got.MaxParallelUploads)
+	}
+	if got := (Job{MaxParallelUploads: 0}).EffectiveUploadConcurrency(); got != 3 {
+		t.Errorf("EffectiveUploadConcurrency(0) = %d, want 3", got)
+	}
+	if got := (Job{MaxParallelUploads: 99}).EffectiveUploadConcurrency(); got != 16 {
+		t.Errorf("EffectiveUploadConcurrency(99) = %d, want 16", got)
+	}
+}
+
 func TestRetentionCount(t *testing.T) {
 	d := setupTestDB(t)
 	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})

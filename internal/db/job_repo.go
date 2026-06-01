@@ -7,6 +7,17 @@ import (
 	"time"
 )
 
+// nullableID maps the sentinel 0 ("no storage destination") to a SQL NULL so
+// writes satisfy the storage_dest_id foreign key. Orphaned jobs (whose
+// destination was deleted — issue #113) carry a 0 here and must round-trip
+// without re-introducing a FK violation. Reads map NULL back to 0 via COALESCE.
+func nullableID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
+
 func (d *DB) CreateJob(job Job) (int64, error) {
 	res, err := d.Exec(
 		`INSERT INTO jobs (name, description, enabled, schedule, backup_type_chain,
@@ -14,15 +25,17 @@ func (d *DB) CreateJob(job Job) (int64, error) {
 		post_script, notify_on, verify_backup, storage_dest_id, defer_remote_upload,
 		keep_latest, keep_daily, keep_weekly, keep_monthly, keep_yearly,
 		verify_schedule, verify_mode,
-		retry_max_override, retry_delays_override)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		retry_max_override, retry_delays_override,
+		max_parallel_uploads)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
-		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, job.StorageDestID,
+		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, nullableID(job.StorageDestID),
 		job.DeferRemoteUpload,
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 		job.VerifySchedule, job.VerifyMode,
 		job.RetryMaxOverride, job.RetryDelaysOverride,
+		job.MaxParallelUploads,
 	)
 	if err != nil {
 		return 0, err
@@ -35,13 +48,14 @@ func (d *DB) GetJob(id int64) (Job, error) {
 	err := d.QueryRow(
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
-		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0),
+		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
 		COALESCE(defer_remote_upload, 0),
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
 		COALESCE(anomaly_sensitivity, ''),
+		COALESCE(max_parallel_uploads, 1),
 		created_at, updated_at
 		FROM jobs WHERE id = ?`, id,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -52,6 +66,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		&job.VerifySchedule, &job.VerifyMode,
 		&job.RetryMaxOverride, &job.RetryDelaysOverride,
 		&job.AnomalySensitivity,
+		&job.MaxParallelUploads,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
@@ -63,13 +78,14 @@ func (d *DB) ListJobs() ([]Job, error) {
 	rows, err := d.Query(
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
-		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0),
+		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
 		COALESCE(defer_remote_upload, 0),
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
 		COALESCE(anomaly_sensitivity, ''),
+		COALESCE(max_parallel_uploads, 1),
 		created_at, updated_at
 		FROM jobs ORDER BY name`)
 	if err != nil {
@@ -87,6 +103,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 			&job.VerifySchedule, &job.VerifyMode,
 			&job.RetryMaxOverride, &job.RetryDelaysOverride,
 			&job.AnomalySensitivity,
+			&job.MaxParallelUploads,
 			&job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -104,15 +121,17 @@ func (d *DB) UpdateJob(job Job) error {
 		verify_schedule=?, verify_mode=?,
 		retry_max_override=?, retry_delays_override=?,
 		anomaly_sensitivity=?,
+		max_parallel_uploads=?,
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
-		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, job.StorageDestID,
+		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, nullableID(job.StorageDestID),
 		job.DeferRemoteUpload,
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 		job.VerifySchedule, job.VerifyMode,
 		job.RetryMaxOverride, job.RetryDelaysOverride,
 		job.AnomalySensitivity,
+		job.MaxParallelUploads,
 		job.ID,
 	)
 	return err
@@ -130,13 +149,14 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 	err := d.QueryRow(
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
-		post_script, notify_on, verify_backup, storage_dest_id, COALESCE(source_id, 0),
+		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
 		COALESCE(defer_remote_upload, 0),
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
 		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
 		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
 		retry_max_override, retry_delays_override,
 		COALESCE(anomaly_sensitivity, ''),
+		COALESCE(max_parallel_uploads, 1),
 		created_at, updated_at
 		FROM jobs WHERE name = ?`, name,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -147,6 +167,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		&job.VerifySchedule, &job.VerifyMode,
 		&job.RetryMaxOverride, &job.RetryDelaysOverride,
 		&job.AnomalySensitivity,
+		&job.MaxParallelUploads,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound

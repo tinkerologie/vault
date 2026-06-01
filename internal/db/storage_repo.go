@@ -221,9 +221,34 @@ func (d *DB) CloseBreaker(destID int64) error {
 	return err
 }
 
+// DeleteStorageDestination removes a storage destination. Dependent rows that
+// reference it through a FK without an ON DELETE rule (jobs.storage_dest_id and
+// replication_sources.storage_dest_id) would otherwise make the DELETE fail
+// with a FOREIGN KEY constraint violation (issue #113). We orphan those rows
+// instead — setting the reference to NULL so the records survive but lose their
+// destination — then delete the row, all in one transaction. Tables that
+// reference the destination with ON DELETE CASCADE (dedup_*, capacity samples)
+// are cleaned up automatically.
 func (d *DB) DeleteStorageDestination(id int64) error {
-	_, err := d.Exec("DELETE FROM storage_destinations WHERE id = ?", id)
-	return err
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("delete storage destination: begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
+
+	if _, err := tx.Exec("UPDATE jobs SET storage_dest_id = NULL WHERE storage_dest_id = ?", id); err != nil {
+		return fmt.Errorf("delete storage destination: orphan jobs: %w", err)
+	}
+	if _, err := tx.Exec("UPDATE replication_sources SET storage_dest_id = NULL WHERE storage_dest_id = ?", id); err != nil {
+		return fmt.Errorf("delete storage destination: orphan replication sources: %w", err)
+	}
+	if _, err := tx.Exec("DELETE FROM storage_destinations WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete storage destination: delete row: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete storage destination: commit: %w", err)
+	}
+	return nil
 }
 
 // ListDBBackupDestinations returns all destinations with

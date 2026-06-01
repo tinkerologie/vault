@@ -41,6 +41,9 @@ func (s *stubCapacityAdapter) GetCapacity(_ context.Context) (storage.Capacity, 
 func (s *stubCapacityAdapter) Usage() (int64, int64, error) {
 	return 0, 0, storage.ErrUsageNotSupported
 }
+func (s *stubCapacityAdapter) WriteFrom(_ string, _ func() (io.ReadCloser, error)) error {
+	return nil
+}
 
 // errCapacityAdapter is like stubCapacityAdapter but GetCapacity returns an error.
 type errCapacityAdapter struct {
@@ -62,6 +65,9 @@ func (e *errCapacityAdapter) GetCapacity(_ context.Context) (storage.Capacity, e
 	return storage.Capacity{}, errors.New(e.msg)
 }
 func (e *errCapacityAdapter) Usage() (int64, int64, error) { return 0, 0, storage.ErrUsageNotSupported }
+func (e *errCapacityAdapter) WriteFrom(_ string, _ func() (io.ReadCloser, error)) error {
+	return nil
+}
 
 // TestProbeCapacityPersistsAndBroadcasts verifies that a successful
 // GetCapacity probe stores the result in the DB and fires a
@@ -255,6 +261,7 @@ func (u *usageAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) 
 func (u *usageAdapter) Usage() (int64, int64, error) {
 	return u.free, u.total, u.err
 }
+func (u *usageAdapter) WriteFrom(_ string, _ func() (io.ReadCloser, error)) error { return nil }
 
 // TestCapacitySampler_InsertsOnSuccess verifies that when Usage() returns
 // real values, the sampler branch inserts a CapacitySample row.

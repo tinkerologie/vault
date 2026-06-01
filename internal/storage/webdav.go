@@ -604,6 +604,15 @@ func (w *WebDAVAdapter) deleteChunkSidecars(c *gowebdav.Client, full string) err
 	if err := c.Remove(webDAVManifestPath(full)); err != nil && !isWebDAVNotFound(err) {
 		return fmt.Errorf("webdav: delete chunk manifest %s: %w", webDAVManifestPath(full), err)
 	}
+	// Remove the now-empty chunk sidecar directory. List() hides sidecar
+	// entries, so the recursive cleanup walk never sees this directory — if we
+	// don't delete it here it lingers forever as an empty artifact, including
+	// for partial/interrupted uploads whose manifest was never written
+	// (issue #111). A DELETE on the collection removes it recursively, which
+	// also sweeps any orphaned chunk files left by an aborted upload.
+	if err := c.Remove(webDAVChunkDir(full)); err != nil && !isWebDAVNotFound(err) {
+		return fmt.Errorf("webdav: delete chunk dir %s: %w", webDAVChunkDir(full), err)
+	}
 	return nil
 }
 
@@ -630,6 +639,10 @@ func (w *WebDAVAdapter) Write(p string, reader io.Reader) error {
 		return w.writeBufferedSingle(c, full, firstChunk)
 	}
 	return w.writeChunked(c, cleanWebDAVLogicalPath(p), full, firstChunk, reader, chunkSize)
+}
+
+func (w *WebDAVAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
+	return streamWriteFrom(w, p, open)
 }
 
 func (w *WebDAVAdapter) Read(p string) (io.ReadCloser, error) {

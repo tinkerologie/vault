@@ -272,4 +272,8 @@ var alterMigrations = []string{
 	// override. Empty string means "use the global anomaly_sensitivity_default".
 	"ALTER TABLE jobs ADD COLUMN anomaly_sensitivity TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE storage_destinations ADD COLUMN anomaly_sensitivity TEXT NOT NULL DEFAULT ''",
+	// Per-job upload concurrency (storage resilience). DEFAULT 1 means serial for
+	// existing rows; new jobs that don't set the field explicitly get the default
+	// of 3 from EffectiveUploadConcurrency (0 sentinel → 3).
+	"ALTER TABLE jobs ADD COLUMN max_parallel_uploads INTEGER DEFAULT 1",
 }

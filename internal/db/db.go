@@ -108,6 +108,8 @@ func (d *DB) insertDefaultSettings() error {
 		{"anomaly_detection_enabled", "true"},
 		{"anomaly_sensitivity_default", "balanced"},
 		{"anomaly_notify_min_severity", "critical"},
+		// Storage resilience defaults (2026-06-01).
+		{"storage_verbose_logging", "false"},
 	}
 	for _, kv := range defaults {
 		if _, err := d.Exec(
