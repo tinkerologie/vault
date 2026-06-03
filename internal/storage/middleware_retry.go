@@ -76,8 +76,7 @@ func jitteredBackoff(p RetryPolicy, attempt int) time.Duration {
 	return time.Duration(rand.Int63n(exp + 1)) // #nosec G404 //nolint:gosec // jitter, not security
 }
 
-// backoff computes the jittered exponential delay for the given attempt number
-// (1-based). Returns 0 when BaseDelay is unset so tests complete instantly.
+// backoff is a convenience wrapper around jitteredBackoff for retryAdapter.
 func (r *retryAdapter) backoff(attempt int) time.Duration {
 	return jitteredBackoff(r.policy, attempt)
 }

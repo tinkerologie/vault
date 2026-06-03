@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"testing"
@@ -89,5 +90,49 @@ func TestResumableReaderBoundedByMaxAttempts(t *testing.T) {
 	}
 	if fa.opens > 4 { // 3 attempts + small slack
 		t.Fatalf("expected bounded opens (~3), got %d", fa.opens)
+	}
+}
+
+// fatalAdapter's ReadRange returns a non-transient error (classify == false) on
+// the first open, recording how many opens occurred so the test can assert the
+// reader does not resume.
+type fatalAdapter struct {
+	mockAdapter
+	opens int
+}
+
+func (f *fatalAdapter) ReadRange(_ string, _, _ int64) (io.ReadCloser, error) {
+	f.opens++
+	return nil, errors.New("not found") // non-transient: classify returns false
+}
+
+func TestResumableReaderPropagatesFatalError(t *testing.T) {
+	fa := &fatalAdapter{}
+	rr := NewResumableReader(t.Context(), fa, "obj", 10000, RetryPolicy{MaxAttempts: 5})
+	_, err := io.ReadAll(rr)
+	if err == nil {
+		t.Fatal("expected fatal error to propagate, got nil")
+	}
+	if err.Error() != "not found" {
+		t.Fatalf("expected the underlying non-transient error, got %v", err)
+	}
+	if fa.opens != 1 {
+		t.Fatalf("expected exactly one open (no resume on fatal error), got %d", fa.opens)
+	}
+}
+
+func TestResumableReaderHonoursContextCancellation(t *testing.T) {
+	// A cancelled context must abort the next read. Note: time.Sleep-based
+	// backoff only observes cancellation at the next loop iteration, so we
+	// cancel before reading to keep this deterministic.
+	want := bytes.Repeat([]byte("data"), 1000)
+	fa := &flakyAdapter{data: want} // healthy source, no injected failures
+	ctx, cancel := context.WithCancel(context.Background())
+	rr := NewResumableReader(ctx, fa, "obj", int64(len(want)), RetryPolicy{MaxAttempts: 5})
+
+	cancel() // cancel before any Read
+	_, err := rr.Read(make([]byte, 64))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
