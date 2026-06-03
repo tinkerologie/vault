@@ -55,17 +55,17 @@ func (r *retryAdapter) do(label string, op func() error) error {
 	return err
 }
 
-// backoff computes the jittered exponential delay for the given attempt number
-// (1-based). Returns 0 when BaseDelay is unset so tests complete instantly.
-func (r *retryAdapter) backoff(attempt int) time.Duration {
-	if r.policy.BaseDelay <= 0 {
+// jitteredBackoff computes the jittered exponential delay for the given
+// 1-based attempt. Returns 0 when BaseDelay is unset so tests run instantly.
+func jitteredBackoff(p RetryPolicy, attempt int) time.Duration {
+	if p.BaseDelay <= 0 {
 		return 0
 	}
-	maxDelay := r.policy.MaxDelay
+	maxDelay := p.MaxDelay
 	if maxDelay <= 0 {
-		maxDelay = 30 * time.Second // safe cap when unset, prevents overflow
+		maxDelay = 30 * time.Second
 	}
-	expF := float64(r.policy.BaseDelay) * math.Pow(2, float64(attempt-1))
+	expF := float64(p.BaseDelay) * math.Pow(2, float64(attempt-1))
 	if expF > float64(maxDelay) {
 		expF = float64(maxDelay)
 	}
@@ -74,6 +74,12 @@ func (r *retryAdapter) backoff(attempt int) time.Duration {
 		return 0
 	}
 	return time.Duration(rand.Int63n(exp + 1)) // #nosec G404 //nolint:gosec // jitter, not security
+}
+
+// backoff computes the jittered exponential delay for the given attempt number
+// (1-based). Returns 0 when BaseDelay is unset so tests complete instantly.
+func (r *retryAdapter) backoff(attempt int) time.Duration {
+	return jitteredBackoff(r.policy, attempt)
 }
 
 // Write passes through directly without retry: the caller supplies a
