@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"sync"
 	"time"
 )
@@ -16,6 +17,8 @@ const defaultRestorePartSize = 32 * 1024 * 1024 // 32 MiB
 const RestorePartSize = defaultRestorePartSize
 
 // parallelDownloadPolicy bounds per-part retries on transient mid-stream errors.
+// It mirrors DefaultRetryPolicy's bounds today but is kept as a separate name so
+// the parallel-download path can be tuned independently in the future.
 var parallelDownloadPolicy = RetryPolicy{MaxAttempts: 5, BaseDelay: time.Second, MaxDelay: 30 * time.Second}
 
 // ParallelRangeDownload downloads [0,size) of path concurrently in parts of
@@ -72,6 +75,10 @@ func ParallelRangeDownload(ctx context.Context, adapter Adapter, path string, ou
 		if failed() || ctx.Err() != nil {
 			break
 		}
+		// One extra part may start if a failure is recorded (or ctx is
+		// cancelled) while this send is blocked on a full semaphore; that part
+		// aborts quickly on its own ctx check in downloadPart. Deliberate
+		// trade-off to keep the dispatch loop simple.
 		sem <- struct{}{}
 		wg.Add(1)
 		go func(pt part) {
@@ -103,6 +110,8 @@ func downloadPart(ctx context.Context, adapter Adapter, path string, out io.Writ
 		rc, err := adapter.ReadRange(path, off, length)
 		if err != nil {
 			if classify(err) && attempt < parallelDownloadPolicy.MaxAttempts {
+				log.Printf("storage: parallel download part %d-%d failed (attempt %d/%d), retrying: %v",
+					off, off+length, attempt, parallelDownloadPolicy.MaxAttempts, err)
 				time.Sleep(jitteredBackoff(parallelDownloadPolicy, attempt))
 				continue
 			}
@@ -115,6 +124,8 @@ func downloadPart(ctx context.Context, adapter Adapter, path string, out io.Writ
 			return nil
 		}
 		if classify(copyErr) && attempt < parallelDownloadPolicy.MaxAttempts {
+			log.Printf("storage: parallel download part %d-%d failed (attempt %d/%d), retrying: %v",
+				off, off+length, attempt, parallelDownloadPolicy.MaxAttempts, copyErr)
 			time.Sleep(jitteredBackoff(parallelDownloadPolicy, attempt))
 			continue // restart whole part from off; WriteAt overwrites idempotently
 		}

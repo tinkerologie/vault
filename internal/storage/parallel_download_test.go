@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -58,6 +59,11 @@ func downloadToTemp(t *testing.T, a Adapter, size, partSize int64, conc int) []b
 		func(n int64) { atomic.AddInt64(&got, n) }); err != nil {
 		t.Fatalf("ParallelRangeDownload: %v", err)
 	}
+	// onBytes must report at least the full object; a retried part may push it
+	// slightly over (documented over-count), so assert >=.
+	if atomic.LoadInt64(&got) < size {
+		t.Errorf("onBytes total = %d, want >= %d", got, size)
+	}
 	out, err := os.ReadFile(filepath.Clean(f.Name()))
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +93,12 @@ func TestParallelRangeDownloadAssembly(t *testing.T) {
 }
 
 func TestParallelRangeDownloadRetriesPart(t *testing.T) {
+	// Make the per-part backoff instant so the retry path doesn't sleep ~1s.
+	// These storage tests don't run in parallel, so the save/restore is safe.
+	orig := parallelDownloadPolicy
+	parallelDownloadPolicy = RetryPolicy{MaxAttempts: 5} // BaseDelay 0 → instant
+	t.Cleanup(func() { parallelDownloadPolicy = orig })
+
 	data := bytes.Repeat([]byte("Z"), 30000)
 	a := &rangeAdapter{data: data, failAtOffset: 10000}
 	got := downloadToTemp(t, a, int64(len(data)), 10000, 3)
@@ -100,5 +112,53 @@ func TestParallelRangeDownloadZeroSize(t *testing.T) {
 	got := downloadToTemp(t, a, 0, 1<<20, 4)
 	if len(got) != 0 {
 		t.Fatalf("expected empty, got %d bytes", len(got))
+	}
+}
+
+func TestParallelRangeDownloadCancelledCtx(t *testing.T) {
+	data := bytes.Repeat([]byte("Q"), 30000)
+	a := &rangeAdapter{data: data}
+	f, err := os.CreateTemp(t.TempDir(), "dl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before the call → must abort immediately
+
+	err = ParallelRangeDownload(ctx, a, "obj", f, int64(len(data)), 10000, 3, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+// permanentAdapter records ReadRange calls and always returns a non-transient
+// error (classify → false), so the part must fail fast without retrying.
+type permanentAdapter struct {
+	mockAdapter
+	calls atomic.Int64
+}
+
+func (a *permanentAdapter) ReadRange(_ string, _, _ int64) (io.ReadCloser, error) {
+	a.calls.Add(1)
+	return nil, errors.New("permanent")
+}
+
+func TestParallelRangeDownloadNonTransientFailsFast(t *testing.T) {
+	a := &permanentAdapter{}
+	f, err := os.CreateTemp(t.TempDir(), "dl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// Single part so the call count maps directly to attempts for that part.
+	err = ParallelRangeDownload(t.Context(), a, "obj", f, 5000, 1<<20, 1, nil)
+	if err == nil {
+		t.Fatal("expected error from non-transient failure, got nil")
+	}
+	if got := a.calls.Load(); got != 1 {
+		t.Fatalf("expected ReadRange called once (no retry), got %d", got)
 	}
 }
