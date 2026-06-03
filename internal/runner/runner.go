@@ -31,6 +31,14 @@ import (
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
 
+// Stall watchdog intervals, shared by the backup and restore run paths so the
+// two cannot silently diverge. The watchdog warns after stallWarnInterval of
+// no progress and cancels the run after stallCancelTimeout.
+const (
+	stallWarnInterval  = 30 * time.Minute
+	stallCancelTimeout = 2 * time.Hour
+)
+
 // Runner executes backup and restore operations for jobs.
 // RunStatus holds the state of the currently executing backup/restore.
 // It is returned by Runner.Status() so the API can inform late-joining
@@ -694,8 +702,6 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 	// Start a stall detector goroutine. It warns when no progress is received
 	// for stallWarnInterval, and cancels the job after stallCancelTimeout.
-	const stallWarnInterval = 30 * time.Minute
-	const stallCancelTimeout = 2 * time.Hour
 	r.startStallWatchdog(ctx, cancel, jobID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	startedDetails := map[string]any{
@@ -2371,7 +2377,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	r.lastProgressMu.Lock()
 	r.lastProgress = time.Now()
 	r.lastProgressMu.Unlock()
-	r.startStallWatchdog(ctx, cancel, restorePoint.JobID, 5*time.Minute, 30*time.Minute, 2*time.Hour)
+	r.startStallWatchdog(ctx, cancel, restorePoint.JobID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	targetNames := make([]string, 0, len(targets))
 	for _, t := range targets {
@@ -2558,6 +2564,9 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 // For incremental/differential restore points, the full chain is restored
 // in order (base full → incremental/differential overlays).
 func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string) error {
+	// Deliberately context.Background(): this is the un-tracked scripted/MCP
+	// entry point with no registered cancel func or stall watchdog. The tracked
+	// RunRestore path threads its own cancellable ctx through the chain.
 	return r.restoreItemWithReporter(context.Background(), restorePoint, itemName, itemType, destination, passphrase, nil, restoreProgressReporter{})
 }
 
@@ -2962,7 +2971,7 @@ func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, i
 		backupItem.Settings["restore_file_paths"] = filePaths
 	}
 
-	restoreErr := handler.Restore(context.Background(), backupItem, tmpDir, progress)
+	restoreErr := handler.Restore(ctx, backupItem, tmpDir, progress)
 	r.sendRestoreNotification(itemName, itemType, restoreErr)
 	return restoreErr
 }
