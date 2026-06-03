@@ -7,6 +7,7 @@ import (
 )
 
 func TestStallWatchdogCancelsOnNoProgress(t *testing.T) {
+	t.Parallel()
 	r := &Runner{}
 	r.lastProgressMu.Lock()
 	r.lastProgress = time.Now().Add(-time.Hour) // already stale
@@ -25,6 +26,7 @@ func TestStallWatchdogCancelsOnNoProgress(t *testing.T) {
 }
 
 func TestStallWatchdogHeartbeatPreventsCancel(t *testing.T) {
+	t.Parallel()
 	r := &Runner{}
 	r.lastProgressMu.Lock()
 	r.lastProgress = time.Now()

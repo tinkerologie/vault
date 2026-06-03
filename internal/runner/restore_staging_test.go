@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -76,11 +77,20 @@ func (a *stagingAdapter) GetCapacity(_ context.Context) (storage.Capacity, error
 func (a *stagingAdapter) Usage() (int64, int64, error) { return 0, 0, fmt.Errorf("not impl") }
 
 // writeZstd compresses b with zstd and returns the compressed bytes.
-func writeZstd(b []byte) []byte {
+// t is used to fail fast on any compression error.
+func writeZstd(t *testing.T, b []byte) []byte {
+	t.Helper()
 	var buf bytes.Buffer
-	w, _ := zstd.NewWriter(&buf)
-	_, _ = w.Write(b)
-	_ = w.Close()
+	w, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatalf("zstd.NewWriter: %v", err)
+	}
+	if _, err := w.Write(b); err != nil {
+		t.Fatalf("zstd Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("zstd Close: %v", err)
+	}
 	return buf.Bytes()
 }
 
@@ -160,21 +170,25 @@ func buildChecksumsMetadata(t *testing.T, itemName, fileName, checksum string) s
 // TestLooksCompressed verifies the looksCompressed helper.
 func TestLooksCompressed(t *testing.T) {
 	t.Parallel()
-	if !looksCompressed([]byte{0x1f, 0x8b, 0x00, 0x00}) {
-		t.Error("expected gzip magic to be detected as compressed")
+	cases := []struct {
+		name   string
+		input  []byte
+		expect bool
+	}{
+		{"gzip magic", []byte{0x1f, 0x8b, 0x00, 0x00}, true},
+		{"zstd magic", []byte{0x28, 0xb5, 0x2f, 0xfd}, true},
+		{"plain", []byte("plain data"), false},
+		{"nil", nil, false},
+		{"1-byte gzip prefix", []byte{0x1f}, false},
 	}
-	if !looksCompressed([]byte{0x28, 0xb5, 0x2f, 0xfd}) {
-		t.Error("expected zstd magic to be detected as compressed")
-	}
-	if looksCompressed([]byte("plain data")) {
-		t.Error("expected plain data to NOT be detected as compressed")
-	}
-	if looksCompressed(nil) {
-		t.Error("expected nil to NOT be detected as compressed")
-	}
-	// 1-byte gzip prefix is insufficient
-	if looksCompressed([]byte{0x1f}) {
-		t.Error("expected 1-byte gzip prefix NOT to be detected as compressed")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := looksCompressed(tc.input)
+			if got != tc.expect {
+				t.Errorf("looksCompressed(%v) = %v, want %v", tc.input, got, tc.expect)
+			}
+		})
 	}
 }
 
@@ -246,7 +260,7 @@ func TestStagePlainLargeFileParallelPath(t *testing.T) {
 func TestStageCompressedFileSequentialPath(t *testing.T) {
 	t.Parallel()
 	raw := bytes.Repeat([]byte("compressed-content"), 100)
-	compressed := writeZstd(raw)
+	compressed := writeZstd(t, raw)
 
 	// Stored checksum is of the compressed bytes (what's on storage).
 	checksumOfCompressed := sha256hexBytes(compressed)
@@ -339,7 +353,20 @@ func TestDownloadRestoreFileRouting(t *testing.T) {
 	const smallPartSize = 512 // KiB-level threshold for the test
 
 	plain := bytes.Repeat([]byte("X"), 3*smallPartSize) // > 2*512, not compressed
-	compressed := writeZstd(plain)
+
+	// "compressed-large": use a random (incompressible) source so the zstd
+	// output stays >= 2*smallPartSize. Repeated bytes compress to ~15 bytes,
+	// which falls below the size threshold and would be routed by size rather
+	// than by objectIsCompressed — defeating the purpose of this case.
+	randSrc := make([]byte, 4*smallPartSize) // 2048 random bytes → zstd overhead keeps output large
+	if _, err := rand.Read(randSrc); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	compressed := writeZstd(t, randSrc)
+	if len(compressed) < 2*smallPartSize {
+		t.Fatalf("compressed payload too small (%d bytes < %d = 2*smallPartSize); increase randSrc size so objectIsCompressed — not the size check — governs routing",
+			len(compressed), 2*smallPartSize)
+	}
 
 	r, _ := newTestRunner(t)
 
@@ -350,7 +377,7 @@ func TestDownloadRestoreFileRouting(t *testing.T) {
 	}{
 		// plain-large: parallel path; checksum of raw bytes is correct.
 		{"plain-large", plain, false},
-		// compressed-large: sequential path; checksum stored is of compressed bytes.
+		// compressed-large: large AND compressed → sequential path (objectIsCompressed=true).
 		// Sequential path hashes storage bytes → matches compressed checksum.
 		{"compressed-large", compressed, false},
 		// plain-small: sequential path (size < 2*512); checksum of raw bytes.

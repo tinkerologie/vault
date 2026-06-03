@@ -18,6 +18,12 @@ import (
 // each ReadRange call; resumableReader adds recovery from a drop that occurs
 // while bytes are flowing, which the middleware cannot provide.
 type resumableReader struct {
+	// ctx is stored intentionally — an exception to the usual "don't store a
+	// Context in a struct" guidance. resumableReader implements io.ReadCloser
+	// and spans multiple Read calls, so there is no per-call context to thread
+	// through. The stored ctx is used strictly for cancellation (ctx.Err()
+	// checks at the top of each Read iteration) and is never forwarded to any
+	// downstream call.
 	ctx     context.Context
 	adapter Adapter
 	path    string
