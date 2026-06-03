@@ -38,6 +38,9 @@
   let pageSize = 20
   let visibleCount = $state(pageSize)
   let expandedRunIds = $state(new SvelteSet())
+  // Runs we've already auto-expanded once, so a user collapsing a failed run
+  // isn't undone on the next refresh.
+  const autoExpandedRunIds = new Set()
   let confirmPurge = $state(false)
   let purging = $state(false)
 
@@ -75,6 +78,7 @@
       })
       const results = await Promise.all(promises)
       allRuns = results.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+      autoExpandRecentFailures()
     } catch (e) {
       error = e.message || 'Failed to load history'
     } finally {
@@ -133,6 +137,20 @@
   function tryParseJSON(str) {
     if (!str) return null
     try { return JSON.parse(str) } catch { return null }
+  }
+
+  // Auto-expand the most recent failed/partial runs (once each) so operators
+  // immediately see the per-item breakdown and error messages without hunting.
+  // Capped at the five newest to avoid expanding a wall of historical failures.
+  function autoExpandRecentFailures() {
+    const recent = allRuns
+      .filter(r => (r.status === 'failed' || r.status === 'error' || r.status === 'partial') && hasLogDetails(r))
+      .slice(0, 5)
+    for (const r of recent) {
+      if (autoExpandedRunIds.has(r.id)) continue
+      autoExpandedRunIds.add(r.id)
+      expandedRunIds.add(r.id)
+    }
   }
 
   function toggleRunExpand(runId) {
@@ -364,8 +382,8 @@
                             <span>{formatSpeed(run.size_bytes, run.duration_seconds)}</span>
                           {/if}
                         </div>
-                        {#if run.status === 'failed' && getFailureReason(run)}
-                          <p class="text-xs text-danger mt-1.5 truncate max-w-md" title={getFailureReason(run)}>{getFailureReason(run)}</p>
+                        {#if getFailureReason(run)}
+                          <p class="text-xs text-danger mt-1.5 max-w-xl whitespace-pre-wrap break-words line-clamp-3" title={getFailureReason(run)}>{getFailureReason(run)}</p>
                         {/if}
                       </div>
                     </div>

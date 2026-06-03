@@ -174,22 +174,34 @@ export function relTimeUntil(dateStr) {
   return `in ${days}d`
 }
 
-/** Extract a failure reason from a job run's log */
+/**
+ * Extract a failure reason from a job run's log.
+ *
+ * Surfaces the full per-item error (e.g. the libvirt/QEMU message behind a
+ * failed VM backup) rather than a truncated snippet — operators need the whole
+ * message to diagnose why a backup failed. Also covers 'partial' runs, where
+ * some items succeeded but at least one failed.
+ */
 export function getFailureReason(run) {
-  if (run.status !== 'failed' && run.status !== 'error') return null
-  if (!run.log) return 'Unknown error'
+  if (run.status !== 'failed' && run.status !== 'error' && run.status !== 'partial') return null
+  if (!run.log) return run.status === 'partial' ? null : 'Unknown error'
   try {
     const items = JSON.parse(run.log)
     if (Array.isArray(items)) {
       const failed = items.filter(i => i.status === 'error' || i.status === 'failed')
-      if (failed.length > 0 && failed[0].error) return failed[0].error
+      if (failed.length > 0 && failed[0].error) {
+        const reason = failed[0].error
+        return failed.length > 1 ? `${reason} (+${failed.length - 1} more failed)` : reason
+      }
       if (failed.length > 0) return `${failed.length} item(s) failed`
     }
   } catch {
     const lines = run.log.split('\n').filter(l => l.toLowerCase().includes('error') || l.toLowerCase().includes('fail'))
-    if (lines.length > 0) return lines[0].substring(0, 120)
+    // Keep the full error line (capped generously to guard against pathological
+    // multi-kilobyte log lines) instead of clipping at 120 chars.
+    if (lines.length > 0) return lines[0].slice(0, 500)
   }
-  return 'Backup failed — expand for details'
+  return run.status === 'partial' ? null : 'Backup failed — expand for details'
 }
 
 /** Format seconds into human-readable duration (e.g. "11m 4s", "2h 15m") */

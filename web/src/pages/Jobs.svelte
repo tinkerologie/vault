@@ -440,7 +440,10 @@
         verify_mode: data.job.verify_mode || 'quick',
         compression: data.job.compression || 'zstd',
         container_mode: data.job.container_mode || 'one_by_one',
-        vm_mode: 'snapshot',
+        // Read the saved VM backup mode so editing a job preserves the user's
+        // choice (snapshot vs cold). Falls back to 'snapshot' for jobs created
+        // before this column existed.
+        vm_mode: data.job.vm_mode || 'snapshot',
         pre_script: data.job.pre_script || '',
         post_script: data.job.post_script || '',
         notify_on: data.job.notify_on || 'failure',
@@ -469,7 +472,6 @@
     saving = true
     try {
       const payload = { ...form }
-      delete payload.vm_mode
       delete payload.selectedTypes
       // Normalise retry overrides: blank → null so the backend falls back
       // to the global default; otherwise coerce the max to an int and pass
