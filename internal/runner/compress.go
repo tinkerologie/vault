@@ -19,6 +19,16 @@ var (
 	zstdMagic = []byte{0x28, 0xb5, 0x2f, 0xfd}
 )
 
+// looksCompressed reports whether head (the first bytes of a stored object)
+// begins with a gzip or zstd container magic number. It is the single source
+// of truth for "is this object transport-compressed", shared by the restore
+// decompression step and the parallel-download eligibility predicate so the
+// two can never diverge.
+func looksCompressed(head []byte) bool {
+	return (len(head) >= 2 && bytes.Equal(head[:2], gzipMagic)) ||
+		(len(head) >= 4 && bytes.Equal(head[:4], zstdMagic))
+}
+
 // decompressStoredReader unwraps one layer of transport compression from a
 // restored file. The engine is the single source of truth for archive-level
 // compression since 2026.05.03, so newly produced backups never get a

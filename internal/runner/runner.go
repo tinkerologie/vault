@@ -2827,87 +2827,184 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 
 	r.reportRestoreProgress(reporter, phaseStart, "Preparing restore data")
 
-	var downloadedBytes int64
+	concurrency := job.EffectiveUploadConcurrency()
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	var (
+		dlMu     sync.Mutex
+		dl       int64 // bytes downloaded across all files (for progress)
+		sem      = make(chan struct{}, concurrency)
+		wg       sync.WaitGroup
+		firstErr error
+		errOnce  sync.Once
+	)
+	heartbeat := func(n int64) {
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
+		dlMu.Lock()
+		dl += n
+		cur := dl
+		dlMu.Unlock()
+		if totalBytes > 0 {
+			r.reportRestoreProgress(reporter, scaleRestorePhaseProgress(phaseStart, phaseEnd, cur, totalBytes), "Downloading")
+		}
+	}
 
 	for _, fi := range restoreFiles {
-		reader, err := adapter.Read(fi.Path)
-		if err != nil {
-			return fmt.Errorf("reading %s from storage: %w", fi.Path, err)
+		if ctx.Err() != nil {
+			break
 		}
-
-		// Compute SHA-256 on the raw storage content for checksum verification.
-		storageHasher := sha256.New()
-		var fileBytes int64
-		hashingReader := io.TeeReader(&countingReader{
-			reader: reader,
-			onRead: func(n int64) {
-				r.lastProgressMu.Lock()
-				r.lastProgress = time.Now()
-				r.lastProgressMu.Unlock()
-				fileBytes += n
-				if totalBytes > 0 {
-					pct := scaleRestorePhaseProgress(phaseStart, phaseEnd, downloadedBytes+fileBytes, totalBytes)
-					r.reportRestoreProgress(reporter, pct, fmt.Sprintf("Downloading %s", filepath.Base(fi.Path)))
-				}
-			},
-		}, storageHasher)
-
-		// Decrypt .age files if a passphrase is provided.
-		dataReader := hashingReader
-		localName := filepath.Base(fi.Path)
-		if strings.HasSuffix(localName, ".age") && passphrase != "" {
-			decrypted, decErr := crypto.DecryptReader(passphrase, hashingReader)
-			if decErr != nil {
-				_ = reader.Close()
-				return fmt.Errorf("decrypting %s: %w", fi.Path, decErr)
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(fi storage.FileInfo) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := r.downloadRestoreFile(ctx, adapter, fi, tmpDir, passphrase, job.Compression, expectedChecksums, heartbeat, storage.RestorePartSize, concurrency); err != nil {
+				errOnce.Do(func() { firstErr = err })
 			}
-			dataReader = decrypted
-			localName = strings.TrimSuffix(localName, ".age")
-		}
+		}(fi)
+	}
+	wg.Wait()
 
-		// Decompress the transport layer using the job's configured compression.
-		decompressed, closeDecompress, restoredName, decmpErr := decompressStoredReader(dataReader, localName, job.Compression)
-		if decmpErr != nil {
-			_ = reader.Close()
-			return fmt.Errorf("decompressing %s: %w", fi.Path, decmpErr)
-		}
-		dataReader = decompressed
-		localName = restoredName
-
-		localPath := filepath.Join(tmpDir, localName)
-		out, err := os.Create(localPath) // #nosec G304 — tmpDir is vault-controlled; localName derived from storage entry name
-		if err != nil {
-			_ = reader.Close()
-			return fmt.Errorf("creating local file %s: %w", localPath, err)
-		}
-		if _, copyErr := io.Copy(out, dataReader); copyErr != nil {
-			_ = closeDecompress()
-			_ = out.Close()
-			_ = reader.Close()
-			return fmt.Errorf("downloading %s: %w", fi.Path, copyErr)
-		}
-		_ = closeDecompress()
-		_ = out.Close()
-		_ = reader.Close()
-		downloadedBytes += fileBytes
-		if totalBytes > 0 {
-			pct := scaleRestorePhaseProgress(phaseStart, phaseEnd, downloadedBytes, totalBytes)
-			r.reportRestoreProgress(reporter, pct, fmt.Sprintf("Prepared %s", filepath.Base(localPath)))
-		}
-
-		// Verify checksum if available.
-		storageName := filepath.Base(fi.Path)
-		if expected, ok := expectedChecksums[storageName]; ok {
-			actual := hex.EncodeToString(storageHasher.Sum(nil))
-			if actual != expected {
-				return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", storageName, expected, actual)
-			}
-		}
+	if firstErr != nil {
+		return firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	r.reportRestoreProgress(reporter, phaseEnd, "Restore data ready")
 
 	return nil
+}
+
+// downloadRestoreFile fetches one stored object into tmpDir, choosing the
+// parallel-range path for plain large objects and the sequential resumable path
+// otherwise, then verifies the checksum when one is recorded.
+//
+// partSize and concurrency are passed explicitly so tests can exercise the
+// parallel path without large allocations; production callers use
+// storage.RestorePartSize and job.EffectiveUploadConcurrency().
+func (r *Runner) downloadRestoreFile(ctx context.Context, adapter storage.Adapter, fi storage.FileInfo, tmpDir, passphrase, compression string, expected map[string]string, onBytes func(int64), partSize int64, concurrency int) error {
+	storageName := filepath.Base(fi.Path)
+	encrypted := strings.HasSuffix(storageName, ".age") && passphrase != ""
+
+	if !encrypted && fi.Size >= 2*partSize && !r.objectIsCompressed(adapter, fi.Path) {
+		return r.downloadParallelPlain(ctx, adapter, fi, tmpDir, expected, onBytes, partSize, concurrency)
+	}
+	return r.downloadSequentialResumable(ctx, adapter, fi, tmpDir, passphrase, compression, expected, onBytes)
+}
+
+// objectIsCompressed peeks the first 4 bytes to detect gzip/zstd transport
+// compression — the same content-based test decompressStoredReader uses via
+// looksCompressed. On any peek error it conservatively returns true (forcing
+// the safe sequential path).
+func (r *Runner) objectIsCompressed(adapter storage.Adapter, path string) bool {
+	rc, err := adapter.ReadRange(path, 0, 4)
+	if err != nil {
+		return true // conservative: use sequential path
+	}
+	defer rc.Close()
+	head := make([]byte, 4)
+	n, _ := io.ReadFull(rc, head)
+	return looksCompressed(head[:n])
+}
+
+// downloadParallelPlain assembles a plain (unencrypted, uncompressed) object
+// via concurrent ranged GETs, then verifies the whole-file SHA-256 against the
+// stored checksum when one is present.
+func (r *Runner) downloadParallelPlain(ctx context.Context, adapter storage.Adapter, fi storage.FileInfo, tmpDir string, expected map[string]string, onBytes func(int64), partSize int64, concurrency int) error {
+	storageName := filepath.Base(fi.Path)
+	localPath := filepath.Join(tmpDir, storageName)
+	out, err := os.Create(localPath) // #nosec G304 — tmpDir is vault-controlled
+	if err != nil {
+		return fmt.Errorf("creating local file %s: %w", localPath, err)
+	}
+	if err := storage.ParallelRangeDownload(ctx, adapter, fi.Path, out, fi.Size, partSize, concurrency, onBytes); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("downloading %s: %w", fi.Path, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", localPath, err)
+	}
+	if want, ok := expected[storageName]; ok {
+		got, hashErr := sha256File(localPath)
+		if hashErr != nil {
+			return fmt.Errorf("verifying %s: %w", storageName, hashErr)
+		}
+		if got != want {
+			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", storageName, want, got)
+		}
+	}
+	return nil
+}
+
+// downloadSequentialResumable streams a (possibly encrypted/compressed) object
+// through the resumable reader and the decrypt→decompress→write pipeline,
+// verifying the storage-content SHA-256 inline.
+func (r *Runner) downloadSequentialResumable(ctx context.Context, adapter storage.Adapter, fi storage.FileInfo, tmpDir, passphrase, compression string, expected map[string]string, onBytes func(int64)) error {
+	reader := storage.NewResumableReader(ctx, adapter, fi.Path, fi.Size, storage.DefaultRetryPolicy)
+	defer reader.Close()
+
+	storageHasher := sha256.New()
+	hashingReader := io.TeeReader(&countingReader{reader: reader, onRead: onBytes}, storageHasher)
+
+	dataReader := hashingReader
+	localName := filepath.Base(fi.Path)
+	if strings.HasSuffix(localName, ".age") && passphrase != "" {
+		decrypted, decErr := crypto.DecryptReader(passphrase, hashingReader)
+		if decErr != nil {
+			return fmt.Errorf("decrypting %s: %w", fi.Path, decErr)
+		}
+		dataReader = decrypted
+		localName = strings.TrimSuffix(localName, ".age")
+	}
+
+	decompressed, closeDecompress, restoredName, decmpErr := decompressStoredReader(dataReader, localName, compression)
+	if decmpErr != nil {
+		return fmt.Errorf("decompressing %s: %w", fi.Path, decmpErr)
+	}
+	defer closeDecompress() //nolint:errcheck
+	localName = restoredName
+
+	localPath := filepath.Join(tmpDir, localName)
+	out, err := os.Create(localPath) // #nosec G304 — tmpDir is vault-controlled
+	if err != nil {
+		return fmt.Errorf("creating local file %s: %w", localPath, err)
+	}
+	if _, copyErr := io.Copy(out, decompressed); copyErr != nil {
+		_ = out.Close()
+		return fmt.Errorf("downloading %s: %w", fi.Path, copyErr)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", localPath, err)
+	}
+
+	storageName := filepath.Base(fi.Path)
+	if want, ok := expected[storageName]; ok {
+		got := hex.EncodeToString(storageHasher.Sum(nil))
+		if got != want {
+			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", storageName, want, got)
+		}
+	}
+	return nil
+}
+
+// sha256File computes the SHA-256 of a local file by streaming it.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, itemType, destination, tmpDir string, filePaths []string, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
