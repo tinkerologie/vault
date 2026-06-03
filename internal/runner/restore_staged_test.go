@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"testing"
 )
 
@@ -10,7 +11,7 @@ func TestRestoreStagedItem_UnknownType(t *testing.T) {
 	t.Parallel()
 	r, _ := newTestRunner(t)
 	err := r.restoreStagedItem(
-		1, "noname", "weird-unknown-type",
+		context.Background(), 1, "noname", "weird-unknown-type",
 		"", t.TempDir(), nil,
 		restoreProgressReporter{}, 0, 100,
 	)
@@ -25,7 +26,7 @@ func TestRestoreStagedItem_VMHandlerError(t *testing.T) {
 	t.Parallel()
 	r, _ := newTestRunner(t)
 	err := r.restoreStagedItem(
-		1, "any", "vm",
+		context.Background(), 1, "any", "vm",
 		"", t.TempDir(), nil,
 		restoreProgressReporter{}, 0, 100,
 	)
@@ -40,7 +41,7 @@ func TestRestoreStagedItem_PluginHandlerError(t *testing.T) {
 	t.Parallel()
 	r, _ := newTestRunner(t)
 	err := r.restoreStagedItem(
-		1, "any", "plugin",
+		context.Background(), 1, "any", "plugin",
 		"", t.TempDir(), nil,
 		restoreProgressReporter{}, 0, 100,
 	)
@@ -54,7 +55,7 @@ func TestRestoreStagedItem_ZFSHandlerError(t *testing.T) {
 	t.Parallel()
 	r, _ := newTestRunner(t)
 	err := r.restoreStagedItem(
-		1, "any", "zfs",
+		context.Background(), 1, "any", "zfs",
 		"", t.TempDir(), nil,
 		restoreProgressReporter{}, 0, 100,
 	)
@@ -72,7 +73,7 @@ func TestRestoreStagedItem_FolderHappyPath(t *testing.T) {
 	t.Parallel()
 	r, _ := newTestRunner(t)
 	err := r.restoreStagedItem(
-		1, "Test Folder", "folder",
+		context.Background(), 1, "Test Folder", "folder",
 		t.TempDir(), t.TempDir(), nil,
 		restoreProgressReporter{}, 0, 100,
 	)
