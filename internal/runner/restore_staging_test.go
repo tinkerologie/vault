@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
@@ -43,6 +44,9 @@ func (a *stagingAdapter) ReadRange(path string, offset, length int64) (io.ReadCl
 	data, ok := a.files[path]
 	if !ok {
 		return nil, fmt.Errorf("stagingAdapter: not found: %s", path)
+	}
+	if length < 0 {
+		return nil, fmt.Errorf("stagingAdapter: bad length %d for %s", length, path)
 	}
 	if offset < 0 || offset > int64(len(data)) {
 		return nil, fmt.Errorf("stagingAdapter: bad offset %d for %s (len=%d)", offset, path, len(data))
@@ -74,7 +78,9 @@ func (a *stagingAdapter) TestConnection() error { return nil }
 func (a *stagingAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
 	return storage.Capacity{}, nil
 }
-func (a *stagingAdapter) Usage() (int64, int64, error) { return 0, 0, fmt.Errorf("not impl") }
+func (a *stagingAdapter) Usage() (int64, int64, error) {
+	return 0, 0, fmt.Errorf("stagingAdapter: not impl")
+}
 
 // writeZstd compresses b with zstd and returns the compressed bytes.
 // t is used to fail fast on any compression error.
@@ -398,7 +404,7 @@ func TestDownloadRestoreFileRouting(t *testing.T) {
 			tmpDir := t.TempDir()
 			err := r.downloadRestoreFile(
 				context.Background(), sa, fi, tmpDir,
-				"" /* no passphrase */, "none" /* no compression */,
+				"" /* no passphrase */, "none", /* no compression */
 				expected,
 				func(_ int64) {},
 				smallPartSize,
