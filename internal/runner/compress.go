@@ -51,20 +51,24 @@ func decompressStoredReader(r io.Reader, fileName, compression string) (io.Reade
 		return nil, nil, "", fmt.Errorf("peeking %s: %w", fileName, err)
 	}
 
-	switch {
-	case len(peek) >= 2 && bytes.Equal(peek[:2], gzipMagic):
+	// Gate the compressed-vs-plain decision on looksCompressed so the
+	// decompression decision and the parallel-download eligibility predicate can
+	// never diverge. Codec discrimination (gzip vs zstd) stays here.
+	if !looksCompressed(peek) {
+		return br, func() error { return nil }, fileName, nil
+	}
+
+	if len(peek) >= 2 && bytes.Equal(peek[:2], gzipMagic) {
 		gr, gerr := gzip.NewReader(br)
 		if gerr != nil {
 			return nil, nil, "", fmt.Errorf("creating gzip reader: %w", gerr)
 		}
 		return gr, gr.Close, strings.TrimSuffix(fileName, ".gz"), nil
-	case len(peek) >= 4 && bytes.Equal(peek[:4], zstdMagic):
-		zr, zerr := zstd.NewReader(br)
-		if zerr != nil {
-			return nil, nil, "", fmt.Errorf("creating zstd reader: %w", zerr)
-		}
-		return zr, func() error { zr.Close(); return nil }, strings.TrimSuffix(fileName, ".zst"), nil
-	default:
-		return br, func() error { return nil }, fileName, nil
 	}
+	// zstd — the only other codec looksCompressed recognises.
+	zr, zerr := zstd.NewReader(br)
+	if zerr != nil {
+		return nil, nil, "", fmt.Errorf("creating zstd reader: %w", zerr)
+	}
+	return zr, func() error { zr.Close(); return nil }, strings.TrimSuffix(fileName, ".zst"), nil
 }

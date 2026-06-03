@@ -302,6 +302,35 @@ func TestStageChecksumMismatchFails(t *testing.T) {
 	}
 }
 
+// TestStageParallelChecksumMismatchFails verifies the PARALLEL download path
+// (downloadParallelPlain) returns a "checksum mismatch" error when the stored
+// checksum does not match the assembled file. The sequential-path mismatch is
+// covered by TestStageChecksumMismatchFails.
+func TestStageParallelChecksumMismatchFails(t *testing.T) {
+	t.Parallel()
+	data := bytes.Repeat([]byte("VAULTDATA"), 1000) // ~9 KB plain payload
+	wrongChecksum := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	r, _ := newTestRunner(t)
+	sa := &stagingAdapter{
+		files: map[string][]byte{"rp/item/disk.qcow2": data},
+	}
+	fi := storage.FileInfo{Path: "rp/item/disk.qcow2", Size: int64(len(data))}
+
+	const smallPartSize = 1024 // forces multi-part parallel download
+	err := r.downloadParallelPlain(
+		context.Background(), sa, fi, t.TempDir(),
+		map[string]string{"disk.qcow2": wrongChecksum},
+		func(_ int64) {}, smallPartSize, 4,
+	)
+	if err == nil {
+		t.Fatal("expected parallel-path checksum mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Errorf("error should mention 'checksum mismatch', got: %v", err)
+	}
+}
+
 // TestDownloadRestoreFileRouting verifies the parallel vs sequential predicate
 // using a small controllable partSize. This exercises the routing logic
 // (objectIsCompressed, size threshold, encryption check) without 64 MiB allocs.
