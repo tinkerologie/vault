@@ -2902,6 +2902,12 @@ func (r *Runner) downloadRestoreFile(ctx context.Context, adapter storage.Adapte
 // compression — the same content-based test decompressStoredReader uses via
 // looksCompressed. On any peek error it conservatively returns true (forcing
 // the safe sequential path).
+//
+// It takes no context: the ReadRange call is not cancellable directly. To
+// unblock a stuck peek on cancellation it relies on the caller having installed
+// context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) }) — closing the
+// adapter aborts the in-flight ReadRange. stageRestorePointItem (the only
+// caller) installs that hook, so callers needing cancellation must do the same.
 func (r *Runner) objectIsCompressed(adapter storage.Adapter, path string) bool {
 	rc, err := adapter.ReadRange(path, 0, 4)
 	if err != nil {
@@ -2925,6 +2931,8 @@ func (r *Runner) downloadParallelPlain(ctx context.Context, adapter storage.Adap
 	}
 	if err := storage.ParallelRangeDownload(ctx, adapter, fi.Path, out, fi.Size, partSize, concurrency, onBytes); err != nil {
 		_ = out.Close()
+		// The partial file is left in tmpDir on purpose: the caller's deferred
+		// cleanup (RemoveAll on tmpDir) reclaims it, so no explicit remove here.
 		return fmt.Errorf("downloading %s: %w", fi.Path, err)
 	}
 	if err := out.Close(); err != nil {
