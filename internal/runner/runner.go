@@ -31,6 +31,14 @@ import (
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
 
+// Stall watchdog intervals, shared by the backup and restore run paths so the
+// two cannot silently diverge. The watchdog warns after stallWarnInterval of
+// no progress and cancels the run after stallCancelTimeout.
+const (
+	stallWarnInterval  = 30 * time.Minute
+	stallCancelTimeout = 2 * time.Hour
+)
+
 // Runner executes backup and restore operations for jobs.
 // RunStatus holds the state of the currently executing backup/restore.
 // It is returned by Runner.Status() so the API can inform late-joining
@@ -694,31 +702,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 	// Start a stall detector goroutine. It warns when no progress is received
 	// for stallWarnInterval, and cancels the job after stallCancelTimeout.
-	const stallWarnInterval = 30 * time.Minute
-	const stallCancelTimeout = 2 * time.Hour
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				r.lastProgressMu.Lock()
-				idle := time.Since(r.lastProgress)
-				r.lastProgressMu.Unlock()
-
-				if idle >= stallCancelTimeout {
-					log.Printf("runner: job %d stalled for %v — cancelling", jobID, idle.Truncate(time.Minute))
-					cancel()
-					return
-				}
-				if idle >= stallWarnInterval {
-					log.Printf("runner: WARNING job %d no progress for %v", jobID, idle.Truncate(time.Minute))
-				}
-			}
-		}
-	}()
+	r.startStallWatchdog(ctx, cancel, jobID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	startedDetails := map[string]any{
 		"job_id": jobID, "run_id": runID, "items": len(items),
@@ -2319,6 +2303,34 @@ type RestoreTarget struct {
 	FilePaths []string
 }
 
+// startStallWatchdog launches a goroutine that cancels ctx when no progress
+// (r.lastProgress) has advanced for cancelAfter, warning at warn. It returns
+// when ctx is done. Shared by backup and restore runs.
+func (r *Runner) startStallWatchdog(ctx context.Context, cancel context.CancelFunc, jobID int64, tick, warn, cancelAfter time.Duration) {
+	go func() {
+		ticker := time.NewTicker(tick)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				r.lastProgressMu.Lock()
+				idle := time.Since(r.lastProgress)
+				r.lastProgressMu.Unlock()
+				if idle >= cancelAfter {
+					log.Printf("runner: job %d stalled for %v — cancelling", jobID, idle.Truncate(time.Minute))
+					cancel()
+					return
+				}
+				if idle >= warn {
+					log.Printf("runner: WARNING job %d no progress for %v", jobID, idle.Truncate(time.Minute))
+				}
+			}
+		}
+	}()
+}
+
 // RunRestore executes a tracked restore operation. It creates a job_run
 // record with run_type="restore", restores each target item, updates
 // progress via WebSocket, and finalises the run record.
@@ -2344,6 +2356,28 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		return
 	}
 	run.ID = runID
+
+	// Create a cancellable context for the restore run. Like the backup path,
+	// there is no wall-clock deadline — the stall watchdog is the sole
+	// automatic canceller. CancelJob() triggers the stored cancel func on demand.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r.cancelMu.Lock()
+	r.cancelFn = cancel
+	r.cancellingJobID = restorePoint.JobID
+	r.cancelMu.Unlock()
+	defer func() {
+		r.cancelMu.Lock()
+		r.cancelFn = nil
+		r.cancellingJobID = 0
+		r.cancelMu.Unlock()
+	}()
+
+	r.lastProgressMu.Lock()
+	r.lastProgress = time.Now()
+	r.lastProgressMu.Unlock()
+	r.startStallWatchdog(ctx, cancel, restorePoint.JobID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	targetNames := make([]string, 0, len(targets))
 	for _, t := range targets {
@@ -2430,7 +2464,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		r.reportRestoreProgress(reporter, 0, "Starting...")
 
 		start := time.Now()
-		restoreErr := r.restoreItemWithReporter(restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, reporter)
+		restoreErr := r.restoreItemWithReporter(ctx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, reporter)
 		elapsed := time.Since(start)
 
 		result := map[string]any{
@@ -2530,10 +2564,13 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 // For incremental/differential restore points, the full chain is restored
 // in order (base full → incremental/differential overlays).
 func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string) error {
-	return r.restoreItemWithReporter(restorePoint, itemName, itemType, destination, passphrase, nil, restoreProgressReporter{})
+	// Deliberately context.Background(): this is the un-tracked scripted/MCP
+	// entry point with no registered cancel func or stall watchdog. The tracked
+	// RunRestore path threads its own cancellable ctx through the chain.
+	return r.restoreItemWithReporter(context.Background(), restorePoint, itemName, itemType, destination, passphrase, nil, restoreProgressReporter{})
 }
 
-func (r *Runner) restoreItemWithReporter(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreItemWithReporter(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
 		chain, err := r.buildRestoreChain(restorePoint)
@@ -2541,18 +2578,18 @@ func (r *Runner) restoreItemWithReporter(restorePoint db.RestorePoint, itemName,
 			return fmt.Errorf("building restore chain: %w", err)
 		}
 		if usesMergedRestoreChain(itemType) {
-			return r.restoreMergedChain(chain, itemName, itemType, destination, passphrase, filePaths, reporter)
+			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, reporter)
 		}
 		for i, rp := range chain {
 			log.Printf("runner: restoring chain step %d/%d (type=%s, id=%d)",
 				i+1, len(chain), rp.BackupType, rp.ID)
-			if err := r.restoreSinglePoint(rp, itemName, itemType, destination, passphrase, filePaths, reporter); err != nil {
+			if err := r.restoreSinglePoint(ctx, rp, itemName, itemType, destination, passphrase, filePaths, reporter); err != nil {
 				return fmt.Errorf("restoring chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
 		}
 		return nil
 	}
-	return r.restoreSinglePoint(restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
 }
 
 func usesMergedRestoreChain(itemType string) bool {
@@ -2564,7 +2601,7 @@ func usesMergedRestoreChain(itemType string) bool {
 	}
 }
 
-func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
@@ -2587,7 +2624,7 @@ func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType,
 			}
 			phaseStart := (i * 30) / len(chain)
 			phaseEnd := ((i + 1) * 30) / len(chain)
-			if err := r.stageRestorePointItem(rp, itemName, stepDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
+			if err := r.stageRestorePointItem(ctx, rp, itemName, stepDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
 				return fmt.Errorf("staging VM chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
 			stepDirs = append(stepDirs, stepDir)
@@ -2598,27 +2635,27 @@ func (r *Runner) restoreMergedChain(chain []db.RestorePoint, itemName, itemType,
 		if err := flattenVMChain(stepDirs, flattenedDir); err != nil {
 			return fmt.Errorf("flattening VM chain: %w", err)
 		}
-		return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100)
+		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100)
 	}
 
 	for i, rp := range chain {
 		log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
 		phaseStart := (i * 40) / len(chain)
 		phaseEnd := ((i + 1) * 40) / len(chain)
-		if err := r.stageRestorePointItem(rp, itemName, tmpDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
+		if err := r.stageRestorePointItem(ctx, rp, itemName, tmpDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
 			return fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
 		}
 	}
 
-	return r.restoreStagedItem(chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+	return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
 }
 
 // restoreSinglePoint restores a single restore point (without chain logic).
 // For dedup restore points (manifest_id set, or item_manifests in metadata),
 // the chunked restore path is taken instead of the classic stage + restore.
-func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
 	if manifestID, ok := resolveManifestID(restorePoint, itemName); ok {
-		return r.restoreSinglePointChunked(restorePoint, manifestID, itemName, itemType, destination, reporter)
+		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, reporter)
 	}
 
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
@@ -2628,11 +2665,11 @@ func (r *Runner) restoreSinglePoint(restorePoint db.RestorePoint, itemName, item
 	}
 	defer cleanup()
 
-	if err := r.stageRestorePointItem(restorePoint, itemName, tmpDir, passphrase, 0, 40, reporter); err != nil {
+	if err := r.stageRestorePointItem(ctx, restorePoint, itemName, tmpDir, passphrase, 0, 40, reporter); err != nil {
 		return err
 	}
 
-	return r.restoreStagedItem(restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+	return r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
 }
 
 // resolveManifestID returns the dedup manifest ID for itemName from a
@@ -2669,7 +2706,7 @@ func resolveManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool) {
 // manifest_id was persisted for a handler that can't chunk), and invokes
 // RestoreChunked. destPath is passed through to the handler so it can write
 // directly to the target — no local staging required.
-func (r *Runner) restoreSinglePointChunked(rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, reporter restoreProgressReporter) error {
 	job, err := r.db.GetJob(rp.JobID)
 	if err != nil {
 		return fmt.Errorf("getting job: %w", err)
@@ -2737,12 +2774,12 @@ func (r *Runner) restoreSinglePointChunked(rp db.RestorePoint, manifestID dedup.
 		r.reportRestoreProgress(reporter, pct, msg)
 	}
 
-	restoreErr := chunked.RestoreChunked(context.Background(), item, repo, manifestID, destPath, progress)
+	restoreErr := chunked.RestoreChunked(ctx, item, repo, manifestID, destPath, progress)
 	r.sendRestoreNotification(itemName, itemType, restoreErr)
 	return restoreErr
 }
 
-func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter) error {
+func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter) error {
 	job, err := r.db.GetJob(restorePoint.JobID)
 	if err != nil {
 		return fmt.Errorf("getting job: %w", err)
@@ -2758,6 +2795,8 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
 	defer storage.CloseAdapter(adapter)
+	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
+	defer stopOnCancel()
 
 	itemStoragePath := filepath.Join(restorePoint.StoragePath, itemName)
 
@@ -2788,79 +2827,53 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 
 	r.reportRestoreProgress(reporter, phaseStart, "Preparing restore data")
 
-	var downloadedBytes int64
+	concurrency := job.EffectiveUploadConcurrency()
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	var (
+		dlMu     sync.Mutex
+		dl       int64 // bytes downloaded across all files (for progress)
+		sem      = make(chan struct{}, concurrency)
+		wg       sync.WaitGroup
+		firstErr error
+		errOnce  sync.Once
+	)
+	heartbeat := func(n int64) {
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
+		dlMu.Lock()
+		dl += n
+		cur := dl
+		dlMu.Unlock()
+		if totalBytes > 0 {
+			r.reportRestoreProgress(reporter, scaleRestorePhaseProgress(phaseStart, phaseEnd, cur, totalBytes), "Downloading")
+		}
+	}
 
 	for _, fi := range restoreFiles {
-		reader, err := adapter.Read(fi.Path)
-		if err != nil {
-			return fmt.Errorf("reading %s from storage: %w", fi.Path, err)
+		if ctx.Err() != nil {
+			break
 		}
-
-		// Compute SHA-256 on the raw storage content for checksum verification.
-		storageHasher := sha256.New()
-		var fileBytes int64
-		hashingReader := io.TeeReader(&countingReader{
-			reader: reader,
-			onRead: func(n int64) {
-				fileBytes += n
-				if totalBytes > 0 {
-					pct := scaleRestorePhaseProgress(phaseStart, phaseEnd, downloadedBytes+fileBytes, totalBytes)
-					r.reportRestoreProgress(reporter, pct, fmt.Sprintf("Downloading %s", filepath.Base(fi.Path)))
-				}
-			},
-		}, storageHasher)
-
-		// Decrypt .age files if a passphrase is provided.
-		dataReader := hashingReader
-		localName := filepath.Base(fi.Path)
-		if strings.HasSuffix(localName, ".age") && passphrase != "" {
-			decrypted, decErr := crypto.DecryptReader(passphrase, hashingReader)
-			if decErr != nil {
-				_ = reader.Close()
-				return fmt.Errorf("decrypting %s: %w", fi.Path, decErr)
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(fi storage.FileInfo) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := r.downloadRestoreFile(ctx, adapter, fi, tmpDir, passphrase, job.Compression, expectedChecksums, heartbeat, storage.RestorePartSize, concurrency); err != nil {
+				errOnce.Do(func() { firstErr = err })
 			}
-			dataReader = decrypted
-			localName = strings.TrimSuffix(localName, ".age")
-		}
+		}(fi)
+	}
+	wg.Wait()
 
-		// Decompress the transport layer using the job's configured compression.
-		decompressed, closeDecompress, restoredName, decmpErr := decompressStoredReader(dataReader, localName, job.Compression)
-		if decmpErr != nil {
-			_ = reader.Close()
-			return fmt.Errorf("decompressing %s: %w", fi.Path, decmpErr)
-		}
-		dataReader = decompressed
-		localName = restoredName
-
-		localPath := filepath.Join(tmpDir, localName)
-		out, err := os.Create(localPath) // #nosec G304 — tmpDir is vault-controlled; localName derived from storage entry name
-		if err != nil {
-			_ = reader.Close()
-			return fmt.Errorf("creating local file %s: %w", localPath, err)
-		}
-		if _, copyErr := io.Copy(out, dataReader); copyErr != nil {
-			_ = closeDecompress()
-			_ = out.Close()
-			_ = reader.Close()
-			return fmt.Errorf("downloading %s: %w", fi.Path, copyErr)
-		}
-		_ = closeDecompress()
-		_ = out.Close()
-		_ = reader.Close()
-		downloadedBytes += fileBytes
-		if totalBytes > 0 {
-			pct := scaleRestorePhaseProgress(phaseStart, phaseEnd, downloadedBytes, totalBytes)
-			r.reportRestoreProgress(reporter, pct, fmt.Sprintf("Prepared %s", filepath.Base(localPath)))
-		}
-
-		// Verify checksum if available.
-		storageName := filepath.Base(fi.Path)
-		if expected, ok := expectedChecksums[storageName]; ok {
-			actual := hex.EncodeToString(storageHasher.Sum(nil))
-			if actual != expected {
-				return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", storageName, expected, actual)
-			}
-		}
+	if firstErr != nil {
+		return firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	r.reportRestoreProgress(reporter, phaseEnd, "Restore data ready")
@@ -2868,7 +2881,141 @@ func (r *Runner) stageRestorePointItem(restorePoint db.RestorePoint, itemName, t
 	return nil
 }
 
-func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination, tmpDir string, filePaths []string, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
+// downloadRestoreFile fetches one stored object into tmpDir, choosing the
+// parallel-range path for plain large objects and the sequential resumable path
+// otherwise, then verifies the checksum when one is recorded.
+//
+// partSize and concurrency are passed explicitly so tests can exercise the
+// parallel path without large allocations; production callers use
+// storage.RestorePartSize and job.EffectiveUploadConcurrency().
+func (r *Runner) downloadRestoreFile(ctx context.Context, adapter storage.Adapter, fi storage.FileInfo, tmpDir, passphrase, compression string, expected map[string]string, onBytes func(int64), partSize int64, concurrency int) error {
+	storageName := filepath.Base(fi.Path)
+	encrypted := strings.HasSuffix(storageName, ".age") && passphrase != ""
+
+	if !encrypted && fi.Size >= 2*partSize && !r.objectIsCompressed(adapter, fi.Path) {
+		return r.downloadParallelPlain(ctx, adapter, fi, tmpDir, expected, onBytes, partSize, concurrency)
+	}
+	return r.downloadSequentialResumable(ctx, adapter, fi, tmpDir, passphrase, compression, expected, onBytes)
+}
+
+// objectIsCompressed peeks the first 4 bytes to detect gzip/zstd transport
+// compression — the same content-based test decompressStoredReader uses via
+// looksCompressed. On any peek error it conservatively returns true (forcing
+// the safe sequential path).
+//
+// It takes no context: the ReadRange call is not cancellable directly. To
+// unblock a stuck peek on cancellation it relies on the caller having installed
+// context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) }) — closing the
+// adapter aborts the in-flight ReadRange. stageRestorePointItem (the only
+// caller) installs that hook, so callers needing cancellation must do the same.
+func (r *Runner) objectIsCompressed(adapter storage.Adapter, path string) bool {
+	rc, err := adapter.ReadRange(path, 0, 4)
+	if err != nil {
+		return true // conservative: use sequential path
+	}
+	defer rc.Close()
+	head := make([]byte, 4)
+	n, _ := io.ReadFull(rc, head)
+	return looksCompressed(head[:n])
+}
+
+// downloadParallelPlain assembles a plain (unencrypted, uncompressed) object
+// via concurrent ranged GETs, then verifies the whole-file SHA-256 against the
+// stored checksum when one is present.
+func (r *Runner) downloadParallelPlain(ctx context.Context, adapter storage.Adapter, fi storage.FileInfo, tmpDir string, expected map[string]string, onBytes func(int64), partSize int64, concurrency int) error {
+	storageName := filepath.Base(fi.Path)
+	localPath := filepath.Join(tmpDir, storageName)
+	out, err := os.Create(localPath) // #nosec G304 — tmpDir is vault-controlled
+	if err != nil {
+		return fmt.Errorf("creating local file %s: %w", localPath, err)
+	}
+	if err := storage.ParallelRangeDownload(ctx, adapter, fi.Path, out, fi.Size, partSize, concurrency, onBytes); err != nil {
+		_ = out.Close()
+		// The partial file is left in tmpDir on purpose: the caller's deferred
+		// cleanup (RemoveAll on tmpDir) reclaims it, so no explicit remove here.
+		return fmt.Errorf("downloading %s: %w", fi.Path, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", localPath, err)
+	}
+	if want, ok := expected[storageName]; ok {
+		got, hashErr := sha256File(localPath)
+		if hashErr != nil {
+			return fmt.Errorf("verifying %s: %w", storageName, hashErr)
+		}
+		if got != want {
+			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", storageName, want, got)
+		}
+	}
+	return nil
+}
+
+// downloadSequentialResumable streams a (possibly encrypted/compressed) object
+// through the resumable reader and the decrypt→decompress→write pipeline,
+// verifying the storage-content SHA-256 inline.
+func (r *Runner) downloadSequentialResumable(ctx context.Context, adapter storage.Adapter, fi storage.FileInfo, tmpDir, passphrase, compression string, expected map[string]string, onBytes func(int64)) error {
+	reader := storage.NewResumableReader(ctx, adapter, fi.Path, fi.Size, storage.DefaultRetryPolicy)
+	defer reader.Close()
+
+	storageHasher := sha256.New()
+	hashingReader := io.TeeReader(&countingReader{reader: reader, onRead: onBytes}, storageHasher)
+
+	dataReader := hashingReader
+	localName := filepath.Base(fi.Path)
+	if strings.HasSuffix(localName, ".age") && passphrase != "" {
+		decrypted, decErr := crypto.DecryptReader(passphrase, hashingReader)
+		if decErr != nil {
+			return fmt.Errorf("decrypting %s: %w", fi.Path, decErr)
+		}
+		dataReader = decrypted
+		localName = strings.TrimSuffix(localName, ".age")
+	}
+
+	decompressed, closeDecompress, restoredName, decmpErr := decompressStoredReader(dataReader, localName, compression)
+	if decmpErr != nil {
+		return fmt.Errorf("decompressing %s: %w", fi.Path, decmpErr)
+	}
+	defer closeDecompress() //nolint:errcheck
+	localName = restoredName
+
+	localPath := filepath.Join(tmpDir, localName)
+	out, err := os.Create(localPath) // #nosec G304 — tmpDir is vault-controlled
+	if err != nil {
+		return fmt.Errorf("creating local file %s: %w", localPath, err)
+	}
+	if _, copyErr := io.Copy(out, decompressed); copyErr != nil {
+		_ = out.Close()
+		return fmt.Errorf("downloading %s: %w", fi.Path, copyErr)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", localPath, err)
+	}
+
+	storageName := filepath.Base(fi.Path)
+	if want, ok := expected[storageName]; ok {
+		got := hex.EncodeToString(storageHasher.Sum(nil))
+		if got != want {
+			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", storageName, want, got)
+		}
+	}
+	return nil
+}
+
+// sha256File computes the SHA-256 of a local file by streaming it.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, itemType, destination, tmpDir string, filePaths []string, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
 	var handler engine.Handler
 	var err error
 	switch itemType {
@@ -2929,7 +3076,7 @@ func (r *Runner) restoreStagedItem(jobID int64, itemName, itemType, destination,
 		backupItem.Settings["restore_file_paths"] = filePaths
 	}
 
-	restoreErr := handler.Restore(context.Background(), backupItem, tmpDir, progress)
+	restoreErr := handler.Restore(ctx, backupItem, tmpDir, progress)
 	r.sendRestoreNotification(itemName, itemType, restoreErr)
 	return restoreErr
 }

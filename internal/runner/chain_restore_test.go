@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -85,10 +86,10 @@ func TestStageRestorePointItemOverlaysChainFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	reporter := restoreProgressReporter{ItemName: "my-item", ItemType: "container", ItemsTotal: 1}
 
-	if err := r.stageRestorePointItem(baseRP, "my-item", tmpDir, "", 0, 50, reporter); err != nil {
+	if err := r.stageRestorePointItem(context.Background(), baseRP, "my-item", tmpDir, "", 0, 50, reporter); err != nil {
 		t.Fatalf("stageRestorePointItem(base) error = %v", err)
 	}
-	if err := r.stageRestorePointItem(childRP, "my-item", tmpDir, "", 50, 100, reporter); err != nil {
+	if err := r.stageRestorePointItem(context.Background(), childRP, "my-item", tmpDir, "", 50, 100, reporter); err != nil {
 		t.Fatalf("stageRestorePointItem(child) error = %v", err)
 	}
 
