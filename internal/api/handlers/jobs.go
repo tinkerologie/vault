@@ -1034,6 +1034,10 @@ func (h *JobHandler) GetStaleItems(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, err := h.db.GetJob(id); err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
 	stale, err := h.scanStale(id)
 	if err != nil {
 		respondInternalError(w, err)
@@ -1092,6 +1096,10 @@ func (h *JobHandler) DeleteJobItem(w http.ResponseWriter, r *http.Request) {
 func (h *JobHandler) RemoveStaleItems(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
 	if !ok {
+		return
+	}
+	if _, err := h.db.GetJob(id); err != nil {
+		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
 	stale, err := h.scanStale(id)
