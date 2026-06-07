@@ -343,7 +343,6 @@ func TestVerifyDedupDeepDetectsTamper(t *testing.T) {
 	}
 }
 
-
 // TestVerifyDedupMultiItemDeep is the regression test for deep verify on
 // MULTI-ITEM dedup jobs. Such restore points have an EMPTY manifest_id
 // (the single-item shortcut only fires for one-item jobs); the per-item

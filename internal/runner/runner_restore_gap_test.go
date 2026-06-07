@@ -24,8 +24,8 @@ func TestRestoreSinglePointDedupRouteToChunkedMissingJob(t *testing.T) {
 	// errors on r.db.GetJob.
 	const hexID = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 	rp := db.RestorePoint{
-		ID:    1,
-		JobID: 9999, // unknown
+		ID:       1,
+		JobID:    9999, // unknown
 		Metadata: `{"item_manifests":{"plex":"` + hexID + `"}}`,
 	}
 

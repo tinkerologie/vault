@@ -47,11 +47,11 @@ func TestScanStorageOrphansHappyPath(t *testing.T) {
 	mustMkdir(filepath.Join(storageDir, "_vault"))
 	mustMkdir(filepath.Join(storageDir, "leftover"))
 
-	mustWrite(filepath.Join(storageDir, "my-job", "1_run", "data.tar"), 50)  // known
+	mustWrite(filepath.Join(storageDir, "my-job", "1_run", "data.tar"), 50)      // known
 	mustWrite(filepath.Join(storageDir, "my-job", "1_run", "manifest.json"), 30) // known
-	mustWrite(filepath.Join(storageDir, "_vault", "vault.db"), 10)           // internal — excluded
-	mustWrite(filepath.Join(storageDir, "leftover", "old.tar"), 25)          // ORPHAN
-	mustWrite(filepath.Join(storageDir, "stray.bin"), 7)                     // ORPHAN
+	mustWrite(filepath.Join(storageDir, "_vault", "vault.db"), 10)               // internal — excluded
+	mustWrite(filepath.Join(storageDir, "leftover", "old.tar"), 25)              // ORPHAN
+	mustWrite(filepath.Join(storageDir, "stray.bin"), 7)                         // ORPHAN
 
 	orphans, total, err := r.ScanStorageOrphans(dest)
 	if err != nil {

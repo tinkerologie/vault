@@ -11,8 +11,8 @@ import (
 
 // ptrInt64 / ptrStr are small test helpers that mirror the model's
 // nullable-as-pointer convention.
-func ptrInt64(v int64) *int64    { return &v }
-func ptrStr(s string) *string    { return &s }
+func ptrInt64(v int64) *int64 { return &v }
+func ptrStr(s string) *string { return &s }
 
 func TestResolveRetryPolicyGlobal(t *testing.T) {
 	job := db.Job{}
