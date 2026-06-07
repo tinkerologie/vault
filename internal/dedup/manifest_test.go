@@ -38,7 +38,7 @@ func TestManifestRoundTrip(t *testing.T) {
 }
 
 func TestIsSegmentedManifest(t *testing.T) {
-	env, err := json.Marshal(SegmentedManifest{Type: "segmented", Segments: []ID{{0x01}}})
+	env, err := json.Marshal(SegmentedManifest{Type: segmentedManifestType, Segments: []ID{{0x01}}})
 	if err != nil {
 		t.Fatal(err)
 	}

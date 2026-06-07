@@ -352,7 +352,11 @@ func (r *Repo) GetManifest(id ID) (Manifest, error) {
 		return Manifest{}, err
 	}
 	if !isSegmentedManifest(body) {
-		return DecodeManifest(body)
+		m, err := DecodeManifest(body)
+		if err != nil {
+			return Manifest{}, fmt.Errorf("dedup: decode manifest: %w", err)
+		}
+		return m, nil
 	}
 	var env SegmentedManifest
 	if err := json.Unmarshal(body, &env); err != nil {
@@ -366,7 +370,11 @@ func (r *Repo) GetManifest(id ID) (Manifest, error) {
 		}
 		buf.Write(seg)
 	}
-	return DecodeManifest(buf.Bytes())
+	m, err := DecodeManifest(buf.Bytes())
+	if err != nil {
+		return Manifest{}, fmt.Errorf("dedup: decode reassembled manifest: %w", err)
+	}
+	return m, nil
 }
 
 // Stats returns a snapshot of dedup metrics for this destination. Cheap;
