@@ -50,7 +50,7 @@ const ManifestSegmentSize = 4 * 1024 * 1024
 // segmentedManifestType is the Type discriminator value carried by a
 // SegmentedManifest envelope. A v1 Manifest blob has no "type" field, so its
 // presence unambiguously identifies the segmented layout.
-const segmentedManifestType = "segmented" //nolint:unused // consumed by Task 2 (PutManifest/GetManifest)
+const segmentedManifestType = "segmented"
 
 // SegmentedManifest is the small envelope stored in place of an oversized
 // manifest. Segments lists the chunk IDs of the manifest-JSON pieces in order;
@@ -66,7 +66,7 @@ type SegmentedManifest struct {
 // discriminator, so it is cheap and tolerant of the larger fields. Malformed
 // or empty input returns false — the caller then attempts a v1 decode, which
 // surfaces a precise JSON error.
-func isSegmentedManifest(data []byte) bool { //nolint:unused // consumed by Task 2 (GetManifest)
+func isSegmentedManifest(data []byte) bool {
 	var probe struct {
 		Type string `json:"type"`
 	}
