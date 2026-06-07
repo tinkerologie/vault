@@ -299,6 +299,7 @@ func (d *DB) ListAnomalies(filter AnomalyFilter) ([]Anomaly, error) {
 
 	query := `SELECT ` + anomalyColumns + ` FROM anomalies`
 	if len(conditions) > 0 {
+		// aikido-ignore-next-line AIK_go_G202 -- conditions are constant column predicates (e.g. "scope_id=?"); every filter value is bound via args and is never interpolated into the SQL string.
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	query += " ORDER BY last_seen_at DESC, id DESC LIMIT ?"
