@@ -1018,10 +1018,14 @@ func (h *JobHandler) scanStale(jobID int64) ([]db.JobItem, error) {
 		}
 	}
 	if len(markIDs) > 0 {
-		_ = h.db.MarkJobItemsMissing(markIDs, time.Now().UTC().Format(time.RFC3339))
+		if err := h.db.MarkJobItemsMissing(markIDs, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			log.Printf("Warning: failed to mark job items missing %v: %v", markIDs, err)
+		}
 	}
 	if len(clearIDs) > 0 {
-		_ = h.db.ClearJobItemsMissing(clearIDs)
+		if err := h.db.ClearJobItemsMissing(clearIDs); err != nil {
+			log.Printf("Warning: failed to clear missing_since on %v: %v", clearIDs, err)
+		}
 	}
 	return stale, nil
 }
