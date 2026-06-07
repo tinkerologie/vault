@@ -125,8 +125,8 @@ func (c *CapacityTrajectoryDetector) Evaluate(ec EvalContext) ([]Anomaly, error)
 				Expected:    &expected,
 				Deviation:   &deviation,
 				Summary: fmt.Sprintf(
-					"storage %q free space projected to run out in %.1f days (%.0f bytes/day drain)",
-					ec.Destination.Name, etaDays, -slope,
+					"storage %q free space projected to run out in %.1f days (%s/day drain)",
+					ec.Destination.Name, etaDays, humanizeBytes(-slope),
 				),
 				Details: details,
 			})
@@ -149,8 +149,8 @@ func (c *CapacityTrajectoryDetector) Evaluate(ec EvalContext) ([]Anomaly, error)
 			Metric:      "free_bytes_low",
 			Observed:    latestFree,
 			Summary: fmt.Sprintf(
-				"storage %q is critically low: %.1f%% free (%.0f bytes)",
-				ec.Destination.Name, pct, latestFree,
+				"storage %q is critically low: %.1f%% free (%s)",
+				ec.Destination.Name, pct, humanizeBytes(latestFree),
 			),
 			Details: details,
 		})
