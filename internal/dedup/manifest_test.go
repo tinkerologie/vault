@@ -1,6 +1,7 @@
 package dedup
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -33,5 +34,33 @@ func TestManifestRoundTrip(t *testing.T) {
 		if got.Size != v.Size || len(got.Chunks) != len(v.Chunks) {
 			t.Fatalf("file %q mismatch", k)
 		}
+	}
+}
+
+func TestIsSegmentedManifest(t *testing.T) {
+	env, err := json.Marshal(SegmentedManifest{Type: "segmented", Segments: []ID{{0x01}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1, err := Manifest{Version: ManifestVersion, Item: "x", Files: map[string]ManifestEntry{}}.EncodeJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		in   []byte
+		want bool
+	}{
+		{"envelope", env, true},
+		{"v1 manifest", v1, false},
+		{"malformed", []byte("{not json"), false},
+		{"empty", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isSegmentedManifest(c.in); got != c.want {
+				t.Fatalf("isSegmentedManifest(%s) = %v, want %v", c.name, got, c.want)
+			}
+		})
 	}
 }
