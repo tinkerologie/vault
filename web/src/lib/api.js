@@ -68,6 +68,9 @@ export const api = {
   createJob: (data) => request('POST', '/jobs', data),
   updateJob: (id, data) => request('PUT', `/jobs/${id}`, data),
   deleteJob: (id, deleteFiles = false) => request('DELETE', `/jobs/${id}${deleteFiles ? '?deleteFiles=true' : ''}`),
+  getStaleItems: (id) => request('GET', `/jobs/${id}/stale-items`),
+  deleteJobItem: (id, itemId) => request('DELETE', `/jobs/${id}/items/${itemId}`),
+  removeStaleItems: (id) => request('POST', `/jobs/${id}/stale-items/remove`),
   getJobHistory: (id, limit = 50) => request('GET', `/jobs/${id}/history?limit=${limit}`),
   // Manually trigger a storage destination health check; returns
   // {status: "ok"|"failed", error: string}.
