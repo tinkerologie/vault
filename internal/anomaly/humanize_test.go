@@ -6,6 +6,7 @@ import (
 )
 
 func TestHumanizeBytes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   float64
@@ -25,6 +26,7 @@ func TestHumanizeBytes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := humanizeBytes(c.in); got != c.want {
 				t.Errorf("humanizeBytes(%v) = %q, want %q", c.in, got, c.want)
 			}
@@ -33,6 +35,7 @@ func TestHumanizeBytes(t *testing.T) {
 }
 
 func TestHumanizeDuration(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   float64
@@ -52,6 +55,7 @@ func TestHumanizeDuration(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := humanizeDuration(c.in); got != c.want {
 				t.Errorf("humanizeDuration(%v) = %q, want %q", c.in, got, c.want)
 			}
