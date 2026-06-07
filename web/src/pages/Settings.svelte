@@ -1559,6 +1559,9 @@
               ['POST',   '/jobs/{id}/run', 'Run job now'],
               ['POST',   '/jobs/{id}/cancel', 'Cancel running job'],
               ['POST',   '/jobs/{id}/restore', 'Restore from a restore point'],
+              ['GET',    '/jobs/{id}/stale-items', 'List items whose backing resource no longer exists (live scan)'],
+              ['POST',   '/jobs/{id}/stale-items/remove', 'Remove all still-missing items from the job (re-validates first)'],
+              ['DELETE', '/jobs/{id}/items/{itemId}', 'Remove a single item from the job (existing restore points are kept)'],
             ]},
             { group: 'Verify', rows: [
               ['POST', '/jobs/{id}/restore-points/{rpid}/verify', 'Start a verify run (mode: quick or deep)'],
@@ -1587,6 +1590,14 @@
             { group: 'Deduplication', rows: [
               ['GET',  '/storage/{id}/dedup-stats', 'Per-destination dedup stats (ratio, chunks, packs, reclaimable bytes)'],
               ['POST', '/storage/{id}/gc', 'Run mark-and-sweep GC (async; broadcasts dedup_gc_complete over WS)'],
+            ]},
+            { group: 'Anomalies', rows: [
+              ['GET',  '/anomalies', 'List detected anomalies (filters: state, severity, scope; keyset paginated)'],
+              ['POST', '/anomalies/ack-bulk', 'Acknowledge several anomalies at once'],
+              ['GET',  '/anomalies/{id}', 'Get one anomaly'],
+              ['POST', '/anomalies/{id}/ack', 'Acknowledge / dismiss / mark-expected one anomaly'],
+              ['GET',  '/jobs/{id}/baseline', 'Per-job learned baseline (size/duration median + MAD, sample count)'],
+              ['GET',  '/destinations/{id}/capacity-trajectory', 'Capacity samples + projected runway for a destination'],
             ]},
             { group: 'Settings', rows: [
               ['GET', '/settings', 'Get settings'],

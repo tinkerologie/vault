@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.06.00] - 2026-06-07
+
 ### Fixed
 
 - **Large backups no longer fail with `dedup: pack size … exceeds safety bound` when an item contains a very large number of files (#118).** Backup manifests (the per-item index of every file and its chunks) were stored as a single JSON blob; for a directory with an enormous number of files — e.g. a Plex appdata `/tmp` tree — that blob grew past the packer's 96 MiB safety bound and the whole backup aborted. Oversized manifests are now split through the same content-defined chunker used for file data and stored as ordered segments behind a small envelope, so no single chunk approaches the bound regardless of file count. The split is transparent on restore, existing (v1) single-blob manifests still read unchanged, and because near-identical manifests now mostly re-reference existing segments, manifest storage also deduplicates across snapshots. A clearer early error also replaces the opaque packer failure if any oversized chunk is ever stored.
@@ -19,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **In-app API Endpoint Reference (Settings → API Endpoints) now lists the anomaly-detection and stale-item remediation endpoints**, so the documented surface matches the daemon's actual routes (`/anomalies*`, `/jobs/{id}/baseline`, `/destinations/{id}/capacity-trajectory`, and the new `/jobs/{id}/stale-items*` + `/jobs/{id}/items/{itemId}`).
 - **Storage layer rebuilt as a composable middleware chain for uniform reliability across all backends.** Every storage destination (local, SMB, NFS, SFTP, WebDAV, S3) is now a thin provider wrapped in a chain — throttle → retry → metrics → logging — so cross-cutting behaviour is identical everywhere instead of hand-rolled per provider. A single transient-error **retry layer** with jittered exponential backoff (5 attempts, 1s→30s, full jitter) now sits in front of **all** backends; it classifies timeouts, connection resets, broken pipes, unexpected EOF, and transient HTTP statuses (408/429/500/502/503/504) as retryable while failing fast on auth/permission, 4xx, and user cancellation. This replaces the previous WebDAV-only retry loop and gives S3 and SFTP automatic retry they never had. A new retry-aware `WriteFrom` write path re-opens the staged source per attempt so a partially-failed upload replays cleanly from the start.
 
 ### Added
