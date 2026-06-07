@@ -24,6 +24,13 @@ const (
 	encryptionAlgo = "aes-256-gcm"
 )
 
+// maxChunkPlaintext bounds a single Put. Nothing legitimate reaches it —
+// content chunks are bounded by ChunkMax (4 MiB) and manifest segments by
+// ManifestSegmentSize (4 MiB) — so this is a guard that turns an oversized
+// Put into a clear, early error instead of the packer's opaque Flush-time
+// "pack size exceeds safety bound" failure.
+const maxChunkPlaintext = PackTargetSize
+
 // repoConfig is the on-disk JSON envelope at _vault/repo.json. Every
 // destination has exactly one. The only secret inside is SealedMaster —
 // safe to leave on untrusted storage because unsealing requires the
@@ -207,6 +214,9 @@ func (r *Repo) Has(id ID) bool { return r.idx.Has(id) }
 // crosses PackTargetSize. The caller must invoke Flush() at the end of a
 // backup pass to drain any pending pack.
 func (r *Repo) Put(plaintext []byte) (ID, error) {
+	if len(plaintext) > maxChunkPlaintext {
+		return ID{}, fmt.Errorf("dedup: chunk too large (%d bytes, limit %d) — data must be chunked before storage", len(plaintext), maxChunkPlaintext)
+	}
 	id := r.ChunkID(plaintext)
 	// Track every Put's plaintext size on the session counter regardless of
 	// dedup outcome — this is what the runner uses to populate
@@ -291,25 +301,80 @@ func (r *Repo) Flush() error {
 	return nil
 }
 
-// PutManifest serialises m and stores it as a chunk. Returns the
-// manifest's chunk ID — callers persist this as restore_point.manifest_id
-// via db.SetRestorePointManifestID. The item argument is informational;
-// the canonical name lives inside m.Item.
+// PutManifest serialises m and stores it as a chunk. Returns the manifest's
+// chunk ID — callers persist this as restore_point.manifest_id via
+// db.SetRestorePointManifestID. The item argument is informational; the
+// canonical name lives inside m.Item.
+//
+// Manifests at or below ManifestSegmentSize are stored as a single chunk (v1
+// layout). Larger manifests are split via the same content-defined chunker
+// used for file data, each chunk stored as a normal dedup'd chunk, with a small
+// SegmentedManifest envelope stored as the root — keeping every chunk well under
+// the packer's safety bound regardless of how many files the item contains, and
+// letting near-identical manifests dedup across snapshots. The approach matches
+// restic and borg's handling of large metadata.
 func (r *Repo) PutManifest(item string, m Manifest) (ID, error) {
 	body, err := m.EncodeJSON()
 	if err != nil {
 		return ID{}, fmt.Errorf("dedup: encode manifest: %w", err)
 	}
-	return r.Put(body)
+	if len(body) <= ManifestSegmentSize {
+		return r.Put(body)
+	}
+	chunker, err := NewChunker(r.splitterKey)
+	if err != nil {
+		return ID{}, fmt.Errorf("dedup: manifest chunker: %w", err)
+	}
+	var segments []ID
+	if err := chunker.Split(bytes.NewReader(body), func(chunk []byte) error {
+		segID, err := r.Put(chunk)
+		if err != nil {
+			return fmt.Errorf("dedup: put manifest segment: %w", err)
+		}
+		segments = append(segments, segID)
+		return nil
+	}); err != nil {
+		return ID{}, err
+	}
+	envelope, err := json.Marshal(SegmentedManifest{Type: segmentedManifestType, Segments: segments})
+	if err != nil {
+		return ID{}, fmt.Errorf("dedup: encode manifest envelope: %w", err)
+	}
+	return r.Put(envelope)
 }
 
-// GetManifest fetches and parses a manifest stored via PutManifest.
+// GetManifest fetches and parses a manifest stored via PutManifest. It
+// transparently handles both layouts: a v1 single-chunk manifest, and a
+// SegmentedManifest envelope whose segments are reassembled before decoding.
 func (r *Repo) GetManifest(id ID) (Manifest, error) {
 	body, err := r.Get(id)
 	if err != nil {
 		return Manifest{}, err
 	}
-	return DecodeManifest(body)
+	if !isSegmentedManifest(body) {
+		m, err := DecodeManifest(body)
+		if err != nil {
+			return Manifest{}, fmt.Errorf("dedup: decode manifest: %w", err)
+		}
+		return m, nil
+	}
+	var env SegmentedManifest
+	if err := json.Unmarshal(body, &env); err != nil {
+		return Manifest{}, fmt.Errorf("dedup: decode manifest envelope: %w", err)
+	}
+	var buf bytes.Buffer
+	for i, segID := range env.Segments {
+		seg, err := r.Get(segID)
+		if err != nil {
+			return Manifest{}, fmt.Errorf("dedup: get manifest segment %d/%d: %w", i+1, len(env.Segments), err)
+		}
+		buf.Write(seg)
+	}
+	m, err := DecodeManifest(buf.Bytes())
+	if err != nil {
+		return Manifest{}, fmt.Errorf("dedup: decode reassembled manifest: %w", err)
+	}
+	return m, nil
 }
 
 // Stats returns a snapshot of dedup metrics for this destination. Cheap;

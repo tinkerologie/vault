@@ -39,3 +39,39 @@ func DecodeManifest(b []byte) (Manifest, error) {
 	}
 	return m, nil
 }
+
+// ManifestSegmentSize is the threshold above which a serialised manifest is
+// split into multiple chunk-sized segments before storage. Manifests at or
+// below this size are stored as a single chunk (v1 layout). 4 MiB aligns with
+// ChunkMax so every segment is a normal-sized chunk, well under the packer's
+// safety bound.
+const ManifestSegmentSize = 4 * 1024 * 1024
+
+// segmentedManifestType is the Type discriminator value carried by a
+// SegmentedManifest envelope. A v1 Manifest blob has no "type" field, so its
+// presence unambiguously identifies the segmented layout.
+const segmentedManifestType = "segmented"
+
+// SegmentedManifest is the small envelope stored in place of an oversized
+// manifest. Segments lists the chunk IDs of the manifest-JSON pieces in order;
+// concatenating their plaintexts and JSON-decoding the result reproduces the
+// Manifest.
+type SegmentedManifest struct {
+	Type     string `json:"type"`
+	Segments []ID   `json:"segments"`
+}
+
+// isSegmentedManifest reports whether data is a SegmentedManifest envelope (as
+// opposed to a v1 Manifest blob). It probe-decodes only the "type"
+// discriminator, so it is cheap and tolerant of the larger fields. Malformed
+// or empty input returns false — the caller then attempts a v1 decode, which
+// surfaces a precise JSON error.
+func isSegmentedManifest(data []byte) bool {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false
+	}
+	return probe.Type == segmentedManifestType
+}
