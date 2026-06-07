@@ -276,4 +276,9 @@ var alterMigrations = []string{
 	// existing rows; new jobs that don't set the field explicitly get the default
 	// of 3 from EffectiveUploadConcurrency (0 sentinel → 3).
 	"ALTER TABLE jobs ADD COLUMN max_parallel_uploads INTEGER DEFAULT 1",
+	// Stale-item remediation (#119). missing_since is set (RFC3339) when a
+	// backup run detects the item no longer exists on the system; NULL means
+	// present/healthy. Never auto-removed — the user clears it by removing
+	// the item via the remediation endpoint.
+	"ALTER TABLE job_items ADD COLUMN missing_since TEXT",
 }

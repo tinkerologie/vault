@@ -77,6 +77,11 @@ type JobItem struct {
 	ItemID    string `json:"item_id"`
 	Settings  string `json:"settings"`
 	SortOrder int    `json:"sort_order"`
+	// MissingSince is set (RFC3339) when a backup run detected this item no
+	// longer exists on the system; nil means present/healthy. Drives the
+	// stale-item remediation badge. Never auto-removed — the user clears it
+	// by removing the item.
+	MissingSince *string `json:"missing_since,omitempty"`
 }
 
 type JobRun struct {
