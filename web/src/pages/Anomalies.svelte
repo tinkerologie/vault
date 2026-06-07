@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
-  import { relTime } from '../lib/utils.js'
+  import { relTime, formatBytes, formatDuration, prettyAnomalySummary } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
   import Toast from '../components/Toast.svelte'
@@ -218,6 +218,33 @@
     try { return JSON.parse(anomaly.details) } catch { return null }
   }
 
+  // Metric → friendly value formatting for the anomaly detail block.
+  const BYTE_METRICS = new Set(['total_bytes', 'total_bytes_low', 'free_bytes', 'free_bytes_low'])
+  const DURATION_METRICS = new Set(['duration_seconds'])
+  const DAY_METRICS = new Set(['free_bytes_eta_days'])
+
+  function trimNum(n, dp) {
+    return String(parseFloat(Number(n).toFixed(dp)))
+  }
+
+  // Render observed/expected values in units appropriate to the metric:
+  // bytes → KB/MB/GB, seconds → m/s/h, ETA → days, everything else a trimmed number.
+  function formatMetricValue(metric, value) {
+    if (value == null) return '—'
+    if (BYTE_METRICS.has(metric)) return formatBytes(value)
+    if (DURATION_METRICS.has(metric)) return formatDuration(value)
+    if (DAY_METRICS.has(metric)) return `${trimNum(value, 1)} days`
+    return trimNum(value, 2)
+  }
+
+  // Deviation is a modified z-score (or growth factor); show ~2 dp instead of a
+  // long float like -27.28833643436231.
+  function formatDeviation(value) {
+    if (value == null) return '—'
+    if (!isFinite(value)) return value > 0 ? '∞' : '−∞'
+    return trimNum(value, 2)
+  }
+
   // --- Display helpers ---
   const stateLabel = {
     open:         'Open',
@@ -365,36 +392,79 @@
 
       <div class="divide-y divide-border">
         {#each anomalies as anomaly (anomaly.id)}
-          <div class="px-4 py-3 flex items-start gap-3 hover:bg-surface-3 transition-colors {selected.has(anomaly.id) ? 'bg-vault/5' : ''}">
-            <!-- Checkbox -->
-            <input
-              type="checkbox"
-              checked={selected.has(anomaly.id)}
-              onchange={() => toggleSelect(anomaly.id)}
-              onclick={(e) => e.stopPropagation()}
-              class="accent-vault w-3.5 h-3.5 shrink-0 mt-0.5 cursor-pointer"
-              aria-label="Select anomaly {anomaly.id}"
-            />
+          <div class="hover:bg-surface-3 transition-colors {selected.has(anomaly.id) ? 'bg-vault/5' : ''}">
+            <div class="px-4 py-3 flex items-start gap-3">
+              <!-- Checkbox -->
+              <input
+                type="checkbox"
+                checked={selected.has(anomaly.id)}
+                onchange={() => toggleSelect(anomaly.id)}
+                onclick={(e) => e.stopPropagation()}
+                class="accent-vault w-3.5 h-3.5 shrink-0 mt-0.5 cursor-pointer"
+                aria-label="Select anomaly {anomaly.id}"
+              />
 
-            <!-- Severity badge -->
-            <div class="w-20 shrink-0">
-              <AnomalyBadge count={1} severity={anomaly.severity} />
+              <!-- Severity badge -->
+              <div class="w-20 shrink-0">
+                <AnomalyBadge count={1} severity={anomaly.severity} />
+              </div>
+
+              <!-- Summary + detector (click to expand inline) -->
+              <button
+                class="flex-1 min-w-0 text-left"
+                onclick={() => toggleDetail(anomaly.id)}
+                aria-expanded={expandedId === anomaly.id}
+              >
+                <p class="text-sm text-text leading-snug">{prettyAnomalySummary(anomaly.summary)}</p>
+                <p class="text-xs text-text-dim mt-0.5">{anomaly.detector}</p>
+              </button>
+
+              <!-- Scope -->
+              <span class="w-24 shrink-0 text-xs text-text-dim hidden sm:block">{scopeLabel(anomaly)}</span>
+
+              <!-- State -->
+              <span class="w-20 shrink-0 hidden md:block">
+                <span class="text-[11px] px-2 py-0.5 rounded-full font-medium {stateBadgeClass(anomaly.state)}">
+                  {stateLabel[anomaly.state] ?? anomaly.state}
+                </span>
+              </span>
+
+              <!-- First seen -->
+              <span class="w-24 shrink-0 text-xs text-text-dim hidden lg:block">{relTime(anomaly.first_seen_at)}</span>
+
+              <!-- Per-row ack actions (only for open) -->
+              <div class="w-32 shrink-0 flex items-center gap-1">
+                {#if anomaly.state === 'open'}
+                  <button
+                    onclick={() => ackRow(anomaly, 'dismiss')}
+                    disabled={ackingId === anomaly.id}
+                    class="text-xs px-2 py-1 rounded-lg bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text transition-colors disabled:opacity-40"
+                    title="Dismiss"
+                  >
+                    Dismiss
+                  </button>
+                  <button
+                    onclick={() => ackRow(anomaly, 'mark_expected')}
+                    disabled={ackingId === anomaly.id}
+                    class="text-xs px-2 py-1 rounded-lg bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text transition-colors disabled:opacity-40"
+                    title="Mark as expected"
+                  >
+                    Expected
+                  </button>
+                {:else}
+                  <span class="text-xs text-text-dim italic">—</span>
+                {/if}
+              </div>
             </div>
 
-            <!-- Summary + detector (click to expand inline) -->
-            <button
-              class="flex-1 min-w-0 text-left"
-              onclick={() => toggleDetail(anomaly.id)}
-            >
-              <p class="text-sm text-text leading-snug">{anomaly.summary}</p>
-              <p class="text-xs text-text-dim mt-0.5">{anomaly.detector}</p>
-              {#if expandedId === anomaly.id}
-                {@const details = parsedDetails(anomaly)}
-                <div class="mt-2 bg-surface-3 rounded-lg p-3 text-xs text-text-muted space-y-1 text-left">
+            {#if expandedId === anomaly.id}
+              {@const details = parsedDetails(anomaly)}
+              <div class="px-4 pb-3">
+                <div class="bg-surface-3 rounded-lg p-3 text-xs text-text-muted space-y-1 text-left">
                   <p><span class="font-medium text-text-dim">Metric:</span> {anomaly.metric}</p>
-                  <p><span class="font-medium text-text-dim">Observed:</span> {anomaly.observed}</p>
-                  <p><span class="font-medium text-text-dim">Expected:</span> {anomaly.expected}</p>
-                  <p><span class="font-medium text-text-dim">Deviation:</span> {anomaly.deviation}</p>
+                  <p><span class="font-medium text-text-dim">Observed:</span> {formatMetricValue(anomaly.metric, anomaly.observed)}</p>
+                  <p><span class="font-medium text-text-dim">Expected:</span> {formatMetricValue(anomaly.metric, anomaly.expected)}</p>
+                  <p><span class="font-medium text-text-dim">Deviation:</span> {formatDeviation(anomaly.deviation)}</p>
                   {#if anomaly.ack_reason}
                     <p><span class="font-medium text-text-dim">Ack reason:</span> {anomaly.ack_reason}</p>
                   {/if}
@@ -405,45 +475,8 @@
                     </details>
                   {/if}
                 </div>
-              {/if}
-            </button>
-
-            <!-- Scope -->
-            <span class="w-24 shrink-0 text-xs text-text-dim hidden sm:block">{scopeLabel(anomaly)}</span>
-
-            <!-- State -->
-            <span class="w-20 shrink-0 hidden md:block">
-              <span class="text-[11px] px-2 py-0.5 rounded-full font-medium {stateBadgeClass(anomaly.state)}">
-                {stateLabel[anomaly.state] ?? anomaly.state}
-              </span>
-            </span>
-
-            <!-- First seen -->
-            <span class="w-24 shrink-0 text-xs text-text-dim hidden lg:block">{relTime(anomaly.first_seen_at)}</span>
-
-            <!-- Per-row ack actions (only for open) -->
-            <div class="w-32 shrink-0 flex items-center gap-1">
-              {#if anomaly.state === 'open'}
-                <button
-                  onclick={() => ackRow(anomaly, 'dismiss')}
-                  disabled={ackingId === anomaly.id}
-                  class="text-xs px-2 py-1 rounded-lg bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text transition-colors disabled:opacity-40"
-                  title="Dismiss"
-                >
-                  Dismiss
-                </button>
-                <button
-                  onclick={() => ackRow(anomaly, 'mark_expected')}
-                  disabled={ackingId === anomaly.id}
-                  class="text-xs px-2 py-1 rounded-lg bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text transition-colors disabled:opacity-40"
-                  title="Mark as expected"
-                >
-                  Expected
-                </button>
-              {:else}
-                <span class="text-xs text-text-dim italic">—</span>
-              {/if}
-            </div>
+              </div>
+            {/if}
           </div>
         {/each}
       </div>

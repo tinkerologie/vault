@@ -117,8 +117,8 @@ func (d *DurationDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 				Deviation:   &dev,
 				JobRunID:    &runID,
 				Summary: fmt.Sprintf(
-					"job was cancelled after %.0fs (%.1fx median — possible stall/timeout)",
-					observed, growthFactor,
+					"job was cancelled after %s (%.1fx median — possible stall/timeout)",
+					humanizeDuration(observed), growthFactor,
 				),
 				Details: details,
 			},
@@ -163,8 +163,8 @@ func (d *DurationDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 			Deviation:   &dev,
 			JobRunID:    &runID,
 			Summary: fmt.Sprintf(
-				"backup duration anomaly: %.0fs (%.1fx median)",
-				observed, growthFactor,
+				"backup duration anomaly: %s (%.1fx median)",
+				humanizeDuration(observed), growthFactor,
 			),
 			Details: details,
 		},
