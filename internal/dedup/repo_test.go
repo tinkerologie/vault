@@ -128,6 +128,115 @@ func TestRepoManifestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRepoLargeManifestSegmentation(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	// Build a manifest whose JSON exceeds ManifestSegmentSize.
+	m := Manifest{Version: ManifestVersion, Item: "big", Files: map[string]ManifestEntry{}}
+	for i := 0; i < 60000; i++ {
+		m.Files[fmt.Sprintf("very/long/path/to/file/number_%06d.bin", i)] = ManifestEntry{
+			Size:   int64(i),
+			Chunks: []ID{{byte(i % 256), byte((i / 256) % 256)}},
+		}
+	}
+	body, err := m.EncodeJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) <= ManifestSegmentSize {
+		t.Fatalf("test manifest too small (%d bytes) to exercise segmentation", len(body))
+	}
+	id, err := r.PutManifest("big", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isSegmentedManifest(root) {
+		t.Fatal("expected segmented envelope for oversized manifest")
+	}
+	out, err := r.GetManifest(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Files) != len(m.Files) {
+		t.Fatalf("got %d files, want %d", len(out.Files), len(m.Files))
+	}
+	for k, v := range m.Files {
+		got, ok := out.Files[k]
+		if !ok {
+			t.Fatalf("missing file %q after round-trip", k)
+		}
+		if got.Size != v.Size || len(got.Chunks) != len(v.Chunks) {
+			t.Fatalf("file %q mismatch after round-trip", k)
+		}
+	}
+}
+
+func TestRepoSmallManifestStaysSingleChunk(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	m := Manifest{Version: ManifestVersion, Item: "small", Files: map[string]ManifestEntry{
+		"a.txt": {Size: 1, Chunks: []ID{{0x01}}},
+	}}
+	id, err := r.PutManifest("small", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isSegmentedManifest(root) {
+		t.Fatal("small manifest should be a single v1 chunk, not an envelope")
+	}
+}
+
+func TestRepoGetManifestReadsV1Chunk(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	m := Manifest{Version: ManifestVersion, Item: "legacy", Files: map[string]ManifestEntry{
+		"x": {Size: 7, Chunks: []ID{{0x09}}},
+	}}
+	body, err := m.EncodeJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Store the manifest JSON directly via Put — exactly how v1 PutManifest did
+	// — bypassing the new segmentation path.
+	id, err := r.Put(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.GetManifest(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Item != "legacy" || len(out.Files) != 1 {
+		t.Fatalf("v1 manifest not read back correctly: %+v", out)
+	}
+}
+
+func TestRepoPutRejectsOversized(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	big := make([]byte, maxChunkPlaintext+1)
+	if _, err := r.Put(big); err == nil {
+		t.Fatal("Put accepted an oversized chunk")
+	}
+}
+
 func TestRepoOpenAfterInit(t *testing.T) {
 	r, sk, cleanup := newTestRepo(t)
 	defer cleanup()
