@@ -80,6 +80,33 @@ func (s *SFTPAdapter) Close() error {
 	return nil
 }
 
+// validateKeyFilePath sanitises an admin-configured SSH private-key path before
+// it is read from disk. It rejects path-traversal (".." components) both before
+// and after normalisation and returns the cleaned absolute path. The double
+// element-wise ".." check (not a substring check, so names like "id..rsa" are
+// allowed) is the same sanitiser barrier used by validateSnapshotPath and is
+// recognised by CodeQL's go/path-injection query.
+func validateKeyFilePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("key file path must not be empty")
+	}
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".." {
+			return "", fmt.Errorf("path traversal not allowed in key file path")
+		}
+	}
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve key file path: %w", err)
+	}
+	for _, part := range strings.Split(filepath.ToSlash(absPath), "/") {
+		if part == ".." {
+			return "", fmt.Errorf("path traversal not allowed in key file path")
+		}
+	}
+	return absPath, nil
+}
+
 // dialConnection opens a fresh SSH transport and SFTP session, returning a
 // combined sftpConnection that owns both. Both halves are closed together when
 // the connection is discarded from the pool, preventing the ssh.Client TCP
@@ -90,7 +117,11 @@ func (s *SFTPAdapter) dialConnection() (*sftpConnection, error) {
 		authMethods = append(authMethods, ssh.Password(s.config.Password))
 	}
 	if s.config.KeyFile != "" {
-		key, err := os.ReadFile(s.config.KeyFile) // #nosec G304 — KeyFile is admin-configured storage config
+		keyPath, err := validateKeyFilePath(s.config.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("invalid key file path: %w", err)
+		}
+		key, err := os.ReadFile(keyPath) // #nosec G304 — keyPath validated by validateKeyFilePath (no traversal; CodeQL sanitiser barrier)
 		if err != nil {
 			return nil, fmt.Errorf("read key file: %w", err)
 		}

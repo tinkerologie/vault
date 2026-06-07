@@ -229,6 +229,7 @@ func (d *DB) DeleteJobItemsByIDs(ids []int64) error {
 		placeholders[i] = "?"
 		args[i] = id
 	}
+	// aikido-ignore-next-line AIK_go_G202 -- placeholders are constant "?" tokens; the id values are bound via args and are never interpolated into the SQL string.
 	q := "DELETE FROM job_items WHERE id IN (" + strings.Join(placeholders, ",") + ")"
 	_, err := d.Exec(q, args...)
 	return err
@@ -248,6 +249,7 @@ func (d *DB) MarkJobItemsMissing(ids []int64, ts string) error {
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
+	// aikido-ignore-next-line AIK_go_G202 -- placeholders are constant "?" tokens; ts and the id values are bound via args and are never interpolated into the SQL string.
 	q := "UPDATE job_items SET missing_since = ? WHERE missing_since IS NULL AND id IN (" + strings.Join(placeholders, ",") + ")"
 	_, err := d.Exec(q, args...)
 	return err
@@ -265,6 +267,7 @@ func (d *DB) ClearJobItemsMissing(ids []int64) error {
 		placeholders[i] = "?"
 		args[i] = id
 	}
+	// aikido-ignore-next-line AIK_go_G202 -- placeholders are constant "?" tokens; the id values are bound via args and are never interpolated into the SQL string.
 	q := "UPDATE job_items SET missing_since = NULL WHERE id IN (" + strings.Join(placeholders, ",") + ")"
 	_, err := d.Exec(q, args...)
 	return err
