@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
-  import { relTime, formatBytes, formatDuration } from '../lib/utils.js'
+  import { relTime, formatBytes, formatDuration, prettyAnomalySummary } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
   import Toast from '../components/Toast.svelte'
@@ -415,7 +415,7 @@
                 onclick={() => toggleDetail(anomaly.id)}
                 aria-expanded={expandedId === anomaly.id}
               >
-                <p class="text-sm text-text leading-snug">{anomaly.summary}</p>
+                <p class="text-sm text-text leading-snug">{prettyAnomalySummary(anomaly.summary)}</p>
                 <p class="text-xs text-text-dim mt-0.5">{anomaly.detector}</p>
               </button>
 

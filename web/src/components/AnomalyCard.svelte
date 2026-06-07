@@ -5,6 +5,7 @@
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import AnomalyBadge from './AnomalyBadge.svelte'
+  import { prettyAnomalySummary } from '../lib/utils.js'
 
   const anomalies = getAnomalies()
 
@@ -133,7 +134,7 @@
                   <span class="text-xs text-text-dim">{scopeLabel(anomaly)}</span>
                   <span class="text-xs text-text-dim">&middot; {anomaly.detector}</span>
                 </div>
-                <p class="text-sm text-text mt-1 leading-snug">{anomaly.summary}</p>
+                <p class="text-sm text-text mt-1 leading-snug">{prettyAnomalySummary(anomaly.summary)}</p>
               </div>
               <!-- Ack actions -->
               <div class="flex items-center gap-1 shrink-0">

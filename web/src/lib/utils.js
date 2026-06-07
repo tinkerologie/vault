@@ -213,6 +213,23 @@ export function formatDuration(seconds) {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
 }
 
+/**
+ * Humanize the numbers embedded in an anomaly summary string for display.
+ * Detectors store summaries like "backup size anomaly: 4258918530 bytes
+ * (0.8x median)" and "backup duration anomaly: 326s (0.8x median)"; this
+ * rewrites the raw byte counts to KB/MB/GB and bare second durations to
+ * m/s/h so the headline reads "4 GB" / "5m 26s". Applied at render time so
+ * it fixes anomalies stored before the backend started humanizing summaries.
+ * Idempotent: already-friendly summaries ("4 GB", "5m 26s") contain no
+ * "<n> bytes" / bare "<n>s" tokens to rewrite.
+ */
+export function prettyAnomalySummary(summary) {
+  if (!summary) return summary
+  return summary
+    .replace(/(\d+)\s*bytes/g, (_, n) => formatBytes(Number(n)))
+    .replace(/\b(\d+)s\b/g, (_, n) => formatDuration(Number(n)))
+}
+
 /** Format a start/end date pair into human-readable duration */
 export function formatDurationFromDates(startedAt, completedAt) {
   if (!startedAt || !completedAt) return '—'
