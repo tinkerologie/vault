@@ -420,6 +420,7 @@ func TestRetentionCount(t *testing.T) {
 // TestJobItemMissingSince exercises the stale-item remediation DB methods:
 // MarkJobItemsMissing, ClearJobItemsMissing, DeleteJobItem, DeleteJobItemsByIDs.
 func TestJobItemMissingSince(t *testing.T) {
+	t.Parallel()
 	d := setupTestDB(t)
 	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test-stale", Type: "local", Config: "{}"})
 	jobID, _ := d.CreateJob(Job{Name: "stale-job", StorageDestID: destID, BackupTypeChain: "full"})

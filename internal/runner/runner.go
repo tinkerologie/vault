@@ -618,8 +618,11 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		kept := items[:0]
 		for _, item := range items {
 			var settings map[string]any
-			_ = json.Unmarshal([]byte(item.Settings), &settings)
-			if inv.Status(item.ItemType, item.ItemName, settings) == engine.StatusMissing {
+			if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
+				log.Printf("runner: job %d: item %d malformed settings JSON: %v", jobID, item.ID, err)
+			}
+			status := inv.Status(item.ItemType, item.ItemName, settings)
+			if status == engine.StatusMissing {
 				staleIDs = append(staleIDs, item.ID)
 				staleInfo = append(staleInfo, map[string]any{
 					"item_id":   item.ID,
@@ -629,7 +632,10 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				log.Printf("runner: job %d: stale %s item %q skipped (no longer exists)", jobID, item.ItemType, item.ItemName)
 				continue
 			}
-			if item.MissingSince != nil {
+			// Only clear the missing flag when the item is confirmed PRESENT.
+			// StatusUnknown (e.g. Docker/libvirt temporarily down) must leave the
+			// flag untouched so a transient outage can't clear a real stale mark.
+			if status == engine.StatusPresent && item.MissingSince != nil {
 				reappearedIDs = append(reappearedIDs, item.ID)
 			}
 			kept = append(kept, item)

@@ -1598,6 +1598,7 @@ func seedJobItem(t *testing.T, d *db.DB, jobID int64, itemType, itemName string)
 }
 
 func TestDeleteJobItem_ValidItem(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 	item1 := seedJobItem(t, d, jobID, "folder", "/mnt/data")
@@ -1633,6 +1634,7 @@ func TestDeleteJobItem_ValidItem(t *testing.T) {
 }
 
 func TestDeleteJobItem_NotFound(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 	_ = seedJobItem(t, d, jobID, "folder", "/mnt/data")
@@ -1649,6 +1651,7 @@ func TestDeleteJobItem_NotFound(t *testing.T) {
 }
 
 func TestDeleteJobItem_WrongJob(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID1 := seedJob(t, d)
 	jobID2 := seedJob(t, d)
@@ -1671,6 +1674,7 @@ func TestDeleteJobItem_WrongJob(t *testing.T) {
 }
 
 func TestDeleteJobItem_InvalidJobID(t *testing.T) {
+	t.Parallel()
 	h := newJobHandler(t)
 	w := httptest.NewRecorder()
 	r := newReq(http.MethodDelete, "/api/v1/jobs/bad/items/1", nil)
@@ -1682,6 +1686,7 @@ func TestDeleteJobItem_InvalidJobID(t *testing.T) {
 }
 
 func TestDeleteJobItem_InvalidItemID(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 	w := httptest.NewRecorder()
@@ -1700,6 +1705,7 @@ func TestDeleteJobItem_InvalidItemID(t *testing.T) {
 // TestGetStaleItems_EmptyItems exercises the happy path when a job has no items
 // at all — engine is not consulted and the response must be an empty array (not null).
 func TestGetStaleItems_EmptyItems(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 
@@ -1726,6 +1732,7 @@ func TestGetStaleItems_EmptyItems(t *testing.T) {
 // TestGetStaleItems_FolderMissing adds a folder item with a non-existent path
 // and asserts it is returned as stale (StatusMissing via StatExists).
 func TestGetStaleItems_FolderMissing(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 
@@ -1779,6 +1786,7 @@ func TestGetStaleItems_FolderMissing(t *testing.T) {
 // TestGetStaleItems_FolderPresent adds a folder item whose path EXISTS and
 // asserts it is NOT returned as stale.
 func TestGetStaleItems_FolderPresent(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 
@@ -1812,6 +1820,7 @@ func TestGetStaleItems_FolderPresent(t *testing.T) {
 
 // TestGetStaleItems_InvalidJobID tests that a non-integer job ID returns 400.
 func TestGetStaleItems_InvalidJobID(t *testing.T) {
+	t.Parallel()
 	h := newJobHandler(t)
 	w := httptest.NewRecorder()
 	r := withURLParam(newReq(http.MethodGet, "/api/v1/jobs/bad/stale-items", nil), "id", "bad")
@@ -1824,6 +1833,7 @@ func TestGetStaleItems_InvalidJobID(t *testing.T) {
 // TestRemoveStaleItems_NoStale calls RemoveStaleItems on a job with no items;
 // the response must be count=0 and an empty array (not null).
 func TestRemoveStaleItems_NoStale(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 
@@ -1850,6 +1860,7 @@ func TestRemoveStaleItems_NoStale(t *testing.T) {
 // TestRemoveStaleItems_MissingFolder adds a folder item with a non-existent
 // path, then calls RemoveStaleItems. The item should be deleted and returned.
 func TestRemoveStaleItems_MissingFolder(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 
@@ -1893,6 +1904,7 @@ func TestRemoveStaleItems_MissingFolder(t *testing.T) {
 // TestRemoveStaleItems_PresentFolderNotRemoved ensures a present folder is
 // never deleted even if RemoveStaleItems is called.
 func TestRemoveStaleItems_PresentFolderNotRemoved(t *testing.T) {
+	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
 
@@ -1930,6 +1942,7 @@ func TestRemoveStaleItems_PresentFolderNotRemoved(t *testing.T) {
 
 // TestRemoveStaleItems_InvalidJobID tests that a non-integer job ID returns 400.
 func TestRemoveStaleItems_InvalidJobID(t *testing.T) {
+	t.Parallel()
 	h := newJobHandler(t)
 	w := httptest.NewRecorder()
 	r := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/bad/stale-items/remove", nil), "id", "bad")
