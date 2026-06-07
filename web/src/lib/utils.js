@@ -227,7 +227,7 @@ export function prettyAnomalySummary(summary) {
   if (!summary) return summary
   return summary
     .replace(/(\d+)\s*bytes/g, (_, n) => formatBytes(Number(n)))
-    .replace(/\b(\d+)s\b/g, (_, n) => formatDuration(Number(n)))
+    .replace(/\b(\d+)s\b(?=\s|$|[),.])/g, (_, n) => formatDuration(Number(n)))
 }
 
 /** Format a start/end date pair into human-readable duration */
