@@ -40,7 +40,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 **Scheduling**
 
 - Cron, hourly/daily/weekly/monthly/yearly presets, plus "first/last day of month"
-- No-progress stall watchdog per job — cancels only after ~2 hours of zero bytes moved (heartbeats on every chunk during staging, upload, and verify), so long-running backups that keep transferring are never killed by elapsed time; there is no fixed total-job time cap
+- No-progress stall watchdog per job (cancels only after ~2h of zero bytes moved); no fixed total-job time cap, so long backups that keep transferring are never killed
 - Cancellation propagated end-to-end (file I/O, traversal, engine handlers)
 
 **Web UI**
