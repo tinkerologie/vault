@@ -121,6 +121,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/{id}/cancel", jobH.Cancel)
 			r.Post("/{id}/restore", jobH.Restore)
 			r.Get("/{id}/next-run", jobH.NextRun)
+			r.Get("/{id}/stale-items", jobH.GetStaleItems)
+			r.Post("/{id}/stale-items/remove", jobH.RemoveStaleItems)
+			r.Delete("/{id}/items/{itemId}", jobH.DeleteJobItem)
 		})
 
 		r.Get("/runner/status", jobH.RunnerStatus)

@@ -1,6 +1,9 @@
 package db
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestCreateAndGetJob(t *testing.T) {
 	d := setupTestDB(t)
@@ -411,5 +414,131 @@ func TestRetentionCount(t *testing.T) {
 	remaining, _ := d.ListRestorePoints(jobID)
 	if len(remaining) != 3 {
 		t.Errorf("got %d remaining restore points, want 3", len(remaining))
+	}
+}
+
+// TestJobItemMissingSince exercises the stale-item remediation DB methods:
+// MarkJobItemsMissing, ClearJobItemsMissing, DeleteJobItem, DeleteJobItemsByIDs.
+func TestJobItemMissingSince(t *testing.T) {
+	t.Parallel()
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test-stale", Type: "local", Config: "{}"})
+	jobID, _ := d.CreateJob(Job{Name: "stale-job", StorageDestID: destID, BackupTypeChain: "full"})
+
+	id1, err := d.AddJobItem(JobItem{JobID: jobID, ItemType: "container", ItemName: "alpha", ItemID: "aaa", Settings: "{}"})
+	if err != nil {
+		t.Fatalf("AddJobItem 1: %v", err)
+	}
+	id2, err := d.AddJobItem(JobItem{JobID: jobID, ItemType: "container", ItemName: "beta", ItemID: "bbb", Settings: "{}"})
+	if err != nil {
+		t.Fatalf("AddJobItem 2: %v", err)
+	}
+	id3, err := d.AddJobItem(JobItem{JobID: jobID, ItemType: "container", ItemName: "gamma", ItemID: "ccc", Settings: "{}"})
+	if err != nil {
+		t.Fatalf("AddJobItem 3: %v", err)
+	}
+
+	// --- MarkJobItemsMissing ---
+	ts := time.Now().UTC().Format(time.RFC3339)
+	if err := d.MarkJobItemsMissing([]int64{id1}, ts); err != nil {
+		t.Fatalf("MarkJobItemsMissing: %v", err)
+	}
+
+	items, err := d.GetJobItems(jobID)
+	if err != nil {
+		t.Fatalf("GetJobItems after mark: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
+	}
+	byID := make(map[int64]JobItem, len(items))
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	if byID[id1].MissingSince == nil {
+		t.Errorf("item %d: MissingSince should be non-nil after mark", id1)
+	} else if *byID[id1].MissingSince != ts {
+		t.Errorf("item %d: MissingSince = %q, want %q", id1, *byID[id1].MissingSince, ts)
+	}
+	if byID[id2].MissingSince != nil {
+		t.Errorf("item %d: MissingSince should be nil (unmarked)", id2)
+	}
+	if byID[id3].MissingSince != nil {
+		t.Errorf("item %d: MissingSince should be nil (unmarked)", id3)
+	}
+
+	// Second call with a different timestamp must NOT overwrite the original
+	// (only NULL rows are updated).
+	ts2 := time.Now().UTC().Add(time.Minute).Format(time.RFC3339)
+	if err := d.MarkJobItemsMissing([]int64{id1}, ts2); err != nil {
+		t.Fatalf("MarkJobItemsMissing (second call): %v", err)
+	}
+	items2, _ := d.GetJobItems(jobID)
+	byID2 := make(map[int64]JobItem, len(items2))
+	for _, it := range items2 {
+		byID2[it.ID] = it
+	}
+	if byID2[id1].MissingSince == nil || *byID2[id1].MissingSince != ts {
+		t.Errorf("item %d: MissingSince should still be original ts %q, got %v", id1, ts, byID2[id1].MissingSince)
+	}
+
+	// No-op on empty slice.
+	if err := d.MarkJobItemsMissing(nil, ts); err != nil {
+		t.Errorf("MarkJobItemsMissing(nil): unexpected error: %v", err)
+	}
+
+	// --- ClearJobItemsMissing ---
+	if err := d.ClearJobItemsMissing([]int64{id1}); err != nil {
+		t.Fatalf("ClearJobItemsMissing: %v", err)
+	}
+	items3, _ := d.GetJobItems(jobID)
+	byID3 := make(map[int64]JobItem, len(items3))
+	for _, it := range items3 {
+		byID3[it.ID] = it
+	}
+	if byID3[id1].MissingSince != nil {
+		t.Errorf("item %d: MissingSince should be nil after clear, got %v", id1, byID3[id1].MissingSince)
+	}
+
+	// No-op on empty slice.
+	if err := d.ClearJobItemsMissing(nil); err != nil {
+		t.Errorf("ClearJobItemsMissing(nil): unexpected error: %v", err)
+	}
+
+	// --- DeleteJobItem ---
+	if err := d.DeleteJobItem(id2); err != nil {
+		t.Fatalf("DeleteJobItem: %v", err)
+	}
+	items4, _ := d.GetJobItems(jobID)
+	for _, it := range items4 {
+		if it.ID == id2 {
+			t.Errorf("item %d should have been deleted by DeleteJobItem", id2)
+		}
+	}
+	if len(items4) != 2 {
+		t.Errorf("expected 2 items after DeleteJobItem, got %d", len(items4))
+	}
+
+	// --- DeleteJobItemsByIDs (no-op nil) ---
+	if err := d.DeleteJobItemsByIDs(nil); err != nil {
+		t.Errorf("DeleteJobItemsByIDs(nil): unexpected error: %v", err)
+	}
+	items5, _ := d.GetJobItems(jobID)
+	if len(items5) != 2 {
+		t.Errorf("no-op DeleteJobItemsByIDs(nil) changed row count to %d, expected 2", len(items5))
+	}
+
+	// --- DeleteJobItemsByIDs (remove id3) ---
+	if err := d.DeleteJobItemsByIDs([]int64{id3}); err != nil {
+		t.Fatalf("DeleteJobItemsByIDs: %v", err)
+	}
+	items6, _ := d.GetJobItems(jobID)
+	for _, it := range items6 {
+		if it.ID == id3 {
+			t.Errorf("item %d should have been deleted by DeleteJobItemsByIDs", id3)
+		}
+	}
+	if len(items6) != 1 {
+		t.Errorf("expected 1 item after DeleteJobItemsByIDs, got %d", len(items6))
 	}
 }

@@ -41,6 +41,13 @@
   // Monotonic counter to discard out-of-order baseline fetch responses.
   let baselineLoadId = 0
 
+  // Stale-item remediation (#119): items whose underlying container/VM/folder
+  // no longer exists on the system (persisted missing_since on the job item).
+  let staleItems = $state({})          // jobId -> array of stale job items (persisted missing_since)
+  let staleLoadId = 0
+  let remediating = $state(null)       // the job currently shown in the remediation dialog (or null)
+  let remediateBusy = $state(false)
+
   // Count open anomalies per job from shared state
   /** @type {(jobId: number) => number} */
   function jobAnomalyCount(jobId) {
@@ -58,6 +65,10 @@
 
   function baselineSamples(jobId) {
     return baselines[jobId]?.sample_count ?? 0
+  }
+
+  function jobStaleCount(jobId) {
+    return (staleItems[jobId] || []).length
   }
 
   // Bulk selection
@@ -365,7 +376,7 @@
   onMount(() => {
     loadData()
     const unsubWs = onWsMessage((msg) => {
-      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed') {
+      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed' || msg.type === 'stale_items_detected') {
         loadData()
       }
     })
@@ -386,6 +397,8 @@
       nextRuns = nr || {}
       // Fetch baselines for all jobs in parallel; always returns 200 (sample_count=0 when still learning).
       void loadBaselines(jobs)
+      // Fetch persisted stale items per job (no live inventory scan).
+      void loadStaleItems(jobs)
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -409,6 +422,67 @@
     const map = {}
     for (const [id, b] of results) map[id] = b
     baselines = map
+  }
+
+  // Mirror loadBaselines: uses api.getJob (persisted items, no live Docker/
+  // libvirt scan) and keeps only items the backend has already flagged with a
+  // missing_since timestamp.
+  async function loadStaleItems(jobList) {
+    const reqId = ++staleLoadId
+    const results = await Promise.all(
+      jobList.map(async (j) => {
+        try {
+          const d = await api.getJob(j.id)
+          const stale = (d.items || []).filter((it) => it.missing_since)
+          return [j.id, stale]
+        } catch {
+          return [j.id, []]
+        }
+      })
+    )
+    if (reqId !== staleLoadId) return // stale response — discard
+    const map = {}
+    for (const [id, s] of results) map[id] = s
+    staleItems = map
+  }
+
+  function openRemediate(job) {
+    remediating = job
+  }
+
+  async function refreshStaleForJob(jobId) {
+    try {
+      const d = await api.getJob(jobId)
+      staleItems = { ...staleItems, [jobId]: (d.items || []).filter((it) => it.missing_since) }
+    } catch { /* ignore */ }
+  }
+
+  async function removeStaleItem(job, item) {
+    remediateBusy = true
+    try {
+      await api.deleteJobItem(job.id, item.id)
+      await refreshStaleForJob(job.id)
+      showToast(`Removed ${item.item_name} from ${job.name}`, 'success')
+      if (jobStaleCount(job.id) === 0) remediating = null
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      remediateBusy = false
+    }
+  }
+
+  async function removeAllStale(job) {
+    remediateBusy = true
+    try {
+      const res = await api.removeStaleItems(job.id)
+      await refreshStaleForJob(job.id)
+      showToast(`Removed ${res?.count ?? 0} missing item(s) from ${job.name}`, 'success')
+      remediating = null
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      remediateBusy = false
+    }
   }
 
   function openCreate() {
@@ -783,6 +857,18 @@
                 <!-- Anomaly badge for this job -->
                 {#if jobAnomalyCount(job.id) > 0}
                   <AnomalyBadge count={jobAnomalyCount(job.id)} severity={jobWorstSeverity(job.id)} />
+                {/if}
+                <!-- Missing-item remediation pill (#119) -->
+                {#if jobStaleCount(job.id) > 0}
+                  <button
+                    type="button"
+                    onclick={() => openRemediate(job)}
+                    class="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-500 font-medium shrink-0 hover:bg-amber-500/25 transition-colors"
+                    title="Some items in this job no longer exist on the system"
+                  >
+                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                    {jobStaleCount(job.id)} missing
+                  </button>
                 {/if}
                 <!-- Baseline learning indicator -->
                 {#if baselineSamples(job.id) < 10}
@@ -1564,6 +1650,68 @@
       </div>
     </div>
   </form>
+</Modal>
+
+<!-- Missing-item remediation dialog (#119) -->
+<Modal
+  show={!!remediating}
+  title={remediating ? `Review missing items — ${remediating.name}` : 'Review missing items'}
+  onclose={() => { remediating = null }}
+>
+  {#if remediating}
+    {@const items = staleItems[remediating.id] || []}
+    {#if items.length === 0}
+      <p class="text-sm text-text-muted">No missing items.</p>
+      <div class="flex justify-end mt-6">
+        <button
+          type="button"
+          onclick={() => { remediating = null }}
+          class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors"
+        >
+          Close
+        </button>
+      </div>
+    {:else}
+      <p class="text-sm text-text-muted">
+        These items no longer exist on this server. Removing one keeps its existing backups/restore points — it only stops future backups from trying to include it.
+      </p>
+      <ul class="mt-4 space-y-2">
+        {#each items as item (item.id)}
+          <li class="flex items-center justify-between gap-3 p-3 rounded-lg border border-border bg-surface-3">
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-text truncate">{item.item_name}</p>
+              <p class="text-xs text-text-dim mt-0.5 capitalize">{item.item_type}</p>
+            </div>
+            <button
+              type="button"
+              onclick={() => removeStaleItem(remediating, item)}
+              disabled={remediateBusy}
+              class="shrink-0 px-3 py-1.5 text-xs font-medium text-danger border border-danger/40 hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Remove
+            </button>
+          </li>
+        {/each}
+      </ul>
+      <div class="flex justify-end gap-3 mt-6">
+        <button
+          type="button"
+          onclick={() => { remediating = null }}
+          class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors"
+        >
+          Close
+        </button>
+        <button
+          type="button"
+          onclick={() => removeAllStale(remediating)}
+          disabled={remediateBusy}
+          class="px-4 py-2 text-sm font-medium text-white bg-danger hover:bg-danger/90 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Remove all
+        </button>
+      </div>
+    {/if}
+  {/if}
 </Modal>
 
 {#if confirmDelete.show}

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -187,7 +188,7 @@ func (d *DB) AddJobItem(item JobItem) (int64, error) {
 }
 
 func (d *DB) GetJobItems(jobID int64) ([]JobItem, error) {
-	rows, err := d.Query("SELECT id, job_id, item_type, item_name, item_id, settings, sort_order FROM job_items WHERE job_id = ? ORDER BY sort_order ASC", jobID)
+	rows, err := d.Query("SELECT id, job_id, item_type, item_name, item_id, settings, sort_order, missing_since FROM job_items WHERE job_id = ? ORDER BY sort_order ASC", jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +196,7 @@ func (d *DB) GetJobItems(jobID int64) ([]JobItem, error) {
 	var items []JobItem
 	for rows.Next() {
 		var item JobItem
-		if err := rows.Scan(&item.ID, &item.JobID, &item.ItemType, &item.ItemName, &item.ItemID, &item.Settings, &item.SortOrder); err != nil {
+		if err := rows.Scan(&item.ID, &item.JobID, &item.ItemType, &item.ItemName, &item.ItemID, &item.Settings, &item.SortOrder, &item.MissingSince); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -205,6 +206,67 @@ func (d *DB) GetJobItems(jobID int64) ([]JobItem, error) {
 
 func (d *DB) DeleteJobItems(jobID int64) error {
 	_, err := d.Exec("DELETE FROM job_items WHERE job_id = ?", jobID)
+	return err
+}
+
+// DeleteJobItem removes a single job item by its primary key. Used by the
+// stale-item remediation endpoint; does not touch restore points (those
+// reference the job, not the item, so existing backups stay restorable).
+func (d *DB) DeleteJobItem(id int64) error {
+	_, err := d.Exec("DELETE FROM job_items WHERE id = ?", id)
+	return err
+}
+
+// DeleteJobItemsByIDs removes several job items by primary key in one
+// statement. No-op for an empty slice.
+func (d *DB) DeleteJobItemsByIDs(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	q := "DELETE FROM job_items WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	_, err := d.Exec(q, args...)
+	return err
+}
+
+// MarkJobItemsMissing stamps missing_since=ts on the given items (only those
+// not already marked, so the original detection time is preserved). No-op for
+// an empty slice.
+func (d *DB) MarkJobItemsMissing(ids []int64, ts string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, ts)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	q := "UPDATE job_items SET missing_since = ? WHERE missing_since IS NULL AND id IN (" + strings.Join(placeholders, ",") + ")"
+	_, err := d.Exec(q, args...)
+	return err
+}
+
+// ClearJobItemsMissing resets missing_since to NULL on the given items (used
+// when a previously-missing item reappears). No-op for an empty slice.
+func (d *DB) ClearJobItemsMissing(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	q := "UPDATE job_items SET missing_since = NULL WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	_, err := d.Exec(q, args...)
 	return err
 }
 

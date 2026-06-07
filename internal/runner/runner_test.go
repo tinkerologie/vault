@@ -106,8 +106,10 @@ func newSuccessJob(t *testing.T, d *db.DB, storageDir, sourceDir string) int64 {
 	return jobID
 }
 
-// newFailJob creates a Job + one folder item pointing at a non-existent path
-// so the backup always fails (itemsDone=0, itemsFailed=1 → status="failed").
+// newFailJob creates a Job + one folder item whose "path" setting is empty so
+// the engine rejects it ("folder path not specified in settings"). An empty
+// path returns StatusUnknown from stale detection, so the item is NOT skipped
+// by the stale filter and reaches the engine, producing status="failed".
 func newFailJob(t *testing.T, d *db.DB, storageDir string) int64 {
 	t.Helper()
 	destCfg, _ := json.Marshal(map[string]string{"path": storageDir})
@@ -124,10 +126,11 @@ func newFailJob(t *testing.T, d *db.DB, storageDir string) int64 {
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}
-	// Use a path that is guaranteed not to exist.
-	itemSettings, _ := json.Marshal(map[string]any{"path": "/nonexistent/path/that/does/not/exist"})
+	// Empty path → engine fails with "folder path not specified" (item-level
+	// failure, not a stale skip, because StatusUnknown is never skipped).
+	itemSettings, _ := json.Marshal(map[string]any{"path": ""})
 	if _, err := d.AddJobItem(db.JobItem{
-		JobID: jobID, ItemType: "folder", ItemName: "missing",
+		JobID: jobID, ItemType: "folder", ItemName: "no-path",
 		Settings: string(itemSettings),
 	}); err != nil {
 		t.Fatalf("add item: %v", err)

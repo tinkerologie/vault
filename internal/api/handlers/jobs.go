@@ -994,6 +994,147 @@ func (h *JobHandler) NextRun(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"scheduled": true, "next_run": next})
 }
 
+// scanStale loads the job's items, classifies each against live inventory,
+// persists missing_since (marking newly-missing, clearing reappeared), and
+// returns the items currently classified Missing.
+func (h *JobHandler) scanStale(jobID int64) ([]db.JobItem, error) {
+	items, err := h.db.GetJobItems(jobID)
+	if err != nil {
+		return nil, err
+	}
+	inv := engine.GatherInventory()
+	var stale []db.JobItem
+	var markIDs, clearIDs []int64
+	for _, item := range items {
+		var settings map[string]any
+		if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
+			log.Printf("Warning: job item %d has malformed settings JSON: %v", item.ID, err)
+		}
+		status := inv.Status(item.ItemType, item.ItemName, settings)
+		if status == engine.StatusMissing {
+			stale = append(stale, item)
+			if item.MissingSince == nil {
+				markIDs = append(markIDs, item.ID)
+			}
+		} else if status == engine.StatusPresent && item.MissingSince != nil {
+			// Only clear when confirmed PRESENT — StatusUnknown (engine down)
+			// must not clear a real stale mark.
+			clearIDs = append(clearIDs, item.ID)
+		}
+	}
+	if len(markIDs) > 0 {
+		if err := h.db.MarkJobItemsMissing(markIDs, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			log.Printf("Warning: failed to mark job items missing %v: %v", markIDs, err)
+		}
+	}
+	if len(clearIDs) > 0 {
+		if err := h.db.ClearJobItemsMissing(clearIDs); err != nil {
+			log.Printf("Warning: failed to clear missing_since on %v: %v", clearIDs, err)
+		}
+	}
+	return stale, nil
+}
+
+// GetStaleItems runs a live scan and returns the job's currently-missing items.
+//
+//	GET /api/v1/jobs/{id}/stale-items
+func (h *JobHandler) GetStaleItems(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if _, err := h.db.GetJob(id); err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	stale, err := h.scanStale(id)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	if stale == nil {
+		stale = []db.JobItem{}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"stale_items": stale, "count": len(stale)})
+}
+
+// DeleteJobItem removes a single item from a job (per-item remediation). Only
+// the item row is deleted; existing restore points are preserved.
+//
+//	DELETE /api/v1/jobs/{id}/items/{itemId}
+func (h *JobHandler) DeleteJobItem(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	itemID, ok := parseID(w, r, "itemId")
+	if !ok {
+		return
+	}
+	items, err := h.db.GetJobItems(id)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	found := false
+	for _, it := range items {
+		if it.ID == itemID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		respondError(w, http.StatusNotFound, "item not found in job")
+		return
+	}
+	if err := h.db.DeleteJobItem(itemID); err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"deleted": itemID})
+	h.reloadScheduler()
+	h.notifyConfigChange()
+	h.broadcastConfigChange("job")
+}
+
+// RemoveStaleItems re-validates and deletes all items that are STILL missing,
+// returning what was removed. Re-validation avoids removing an item that
+// reappeared between the scan and the click.
+//
+//	POST /api/v1/jobs/{id}/stale-items/remove
+func (h *JobHandler) RemoveStaleItems(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if _, err := h.db.GetJob(id); err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	stale, err := h.scanStale(id)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	ids := make([]int64, 0, len(stale))
+	for _, it := range stale {
+		ids = append(ids, it.ID)
+	}
+	if err := h.db.DeleteJobItemsByIDs(ids); err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	if stale == nil {
+		stale = []db.JobItem{}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"removed": stale, "count": len(stale)})
+	if len(ids) > 0 {
+		h.reloadScheduler()
+		h.notifyConfigChange()
+		h.broadcastConfigChange("job")
+	}
+}
+
 // AllNextRuns returns next scheduled run times for all jobs.
 //
 //	GET /api/v1/jobs/next-runs

@@ -1578,6 +1578,384 @@ func TestJobUpdate_ClampsParallelUploads(t *testing.T) {
 // sortRestorePointsNewestFirst
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// DeleteJobItem
+// ---------------------------------------------------------------------------
+
+// seedJobItem adds a job item to the DB and returns its ID.
+func seedJobItem(t *testing.T, d *db.DB, jobID int64, itemType, itemName string) int64 {
+	t.Helper()
+	id, err := d.AddJobItem(db.JobItem{
+		JobID:    jobID,
+		ItemType: itemType,
+		ItemName: itemName,
+		Settings: "{}",
+	})
+	if err != nil {
+		t.Fatalf("seedJobItem: %v", err)
+	}
+	return id
+}
+
+func TestDeleteJobItem_ValidItem(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+	item1 := seedJobItem(t, d, jobID, "folder", "/mnt/data")
+	item2 := seedJobItem(t, d, jobID, "folder", "/mnt/backup")
+
+	w := httptest.NewRecorder()
+	r := newReq(http.MethodDelete, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/items/"+strconv.FormatInt(item1, 10), nil)
+	r = withURLParams(r, "id", strconv.FormatInt(jobID, 10), "itemId", strconv.FormatInt(item1, 10))
+	h.DeleteJobItem(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["deleted"].(float64) != float64(item1) {
+		t.Errorf("deleted = %v, want %d", resp["deleted"], item1)
+	}
+
+	// item1 should be gone; item2 should survive.
+	remaining, err := d.GetJobItems(jobID)
+	if err != nil {
+		t.Fatalf("GetJobItems: %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Errorf("remaining items = %d, want 1", len(remaining))
+	}
+	if remaining[0].ID != item2 {
+		t.Errorf("surviving item ID = %d, want %d", remaining[0].ID, item2)
+	}
+}
+
+func TestDeleteJobItem_NotFound(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+	_ = seedJobItem(t, d, jobID, "folder", "/mnt/data")
+
+	// itemId 9999 does not belong to this job.
+	w := httptest.NewRecorder()
+	r := newReq(http.MethodDelete, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/items/9999", nil)
+	r = withURLParams(r, "id", strconv.FormatInt(jobID, 10), "itemId", "9999")
+	h.DeleteJobItem(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteJobItem_WrongJob(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID1 := seedJob(t, d)
+	jobID2 := seedJob(t, d)
+	item := seedJobItem(t, d, jobID1, "folder", "/mnt/data")
+
+	// Try to delete an item belonging to job1 via job2's URL.
+	w := httptest.NewRecorder()
+	r := newReq(http.MethodDelete, "/api/v1/jobs/"+strconv.FormatInt(jobID2, 10)+"/items/"+strconv.FormatInt(item, 10), nil)
+	r = withURLParams(r, "id", strconv.FormatInt(jobID2, 10), "itemId", strconv.FormatInt(item, 10))
+	h.DeleteJobItem(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+	// Item should still exist in job1.
+	items, _ := d.GetJobItems(jobID1)
+	if len(items) != 1 {
+		t.Errorf("item should still exist in job1, got %d items", len(items))
+	}
+}
+
+func TestDeleteJobItem_InvalidJobID(t *testing.T) {
+	t.Parallel()
+	h := newJobHandler(t)
+	w := httptest.NewRecorder()
+	r := newReq(http.MethodDelete, "/api/v1/jobs/bad/items/1", nil)
+	r = withURLParams(r, "id", "bad", "itemId", "1")
+	h.DeleteJobItem(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteJobItem_InvalidItemID(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+	w := httptest.NewRecorder()
+	r := newReq(http.MethodDelete, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/items/nope", nil)
+	r = withURLParams(r, "id", strconv.FormatInt(jobID, 10), "itemId", "nope")
+	h.DeleteJobItem(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetStaleItems / RemoveStaleItems
+// ---------------------------------------------------------------------------
+
+// TestGetStaleItems_EmptyItems exercises the happy path when a job has no items
+// at all — engine is not consulted and the response must be an empty array (not null).
+func TestGetStaleItems_EmptyItems(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodGet, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/stale-items", nil), "id", strconv.FormatInt(jobID, 10))
+	h.GetStaleItems(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["count"].(float64) != 0 {
+		t.Errorf("count = %v, want 0", resp["count"])
+	}
+	items, _ := resp["stale_items"].([]any)
+	if len(items) != 0 {
+		t.Errorf("stale_items len = %d, want 0", len(items))
+	}
+}
+
+// TestGetStaleItems_FolderMissing adds a folder item with a non-existent path
+// and asserts it is returned as stale (StatusMissing via StatExists).
+func TestGetStaleItems_FolderMissing(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+
+	// Use a path that certainly doesn't exist on this host.
+	missingPath := t.TempDir() + "/definitely-does-not-exist-subfolder"
+	settings, _ := json.Marshal(map[string]string{"path": missingPath})
+	itemID, err := d.AddJobItem(db.JobItem{
+		JobID:    jobID,
+		ItemType: "folder",
+		ItemName: "Missing Folder",
+		Settings: string(settings),
+	})
+	if err != nil {
+		t.Fatalf("AddJobItem: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodGet, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/stale-items", nil), "id", strconv.FormatInt(jobID, 10))
+	h.GetStaleItems(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["count"].(float64) != 1 {
+		t.Errorf("count = %v, want 1", resp["count"])
+	}
+
+	// missing_since should have been persisted by the handler.
+	items, err := d.GetJobItems(jobID)
+	if err != nil {
+		t.Fatalf("GetJobItems: %v", err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.ID == itemID {
+			found = true
+			if it.MissingSince == nil {
+				t.Error("MissingSince should be non-nil after GetStaleItems scan")
+			}
+		}
+	}
+	if !found {
+		t.Error("item not found in GetJobItems after scan")
+	}
+}
+
+// TestGetStaleItems_FolderPresent adds a folder item whose path EXISTS and
+// asserts it is NOT returned as stale.
+func TestGetStaleItems_FolderPresent(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+
+	existingPath := t.TempDir() // TempDir() is guaranteed to exist.
+	settings, _ := json.Marshal(map[string]string{"path": existingPath})
+	_, err := d.AddJobItem(db.JobItem{
+		JobID:    jobID,
+		ItemType: "folder",
+		ItemName: "Present Folder",
+		Settings: string(settings),
+	})
+	if err != nil {
+		t.Fatalf("AddJobItem: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodGet, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/stale-items", nil), "id", strconv.FormatInt(jobID, 10))
+	h.GetStaleItems(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["count"].(float64) != 0 {
+		t.Errorf("count = %v, want 0 (folder exists)", resp["count"])
+	}
+}
+
+// TestGetStaleItems_InvalidJobID tests that a non-integer job ID returns 400.
+func TestGetStaleItems_InvalidJobID(t *testing.T) {
+	t.Parallel()
+	h := newJobHandler(t)
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodGet, "/api/v1/jobs/bad/stale-items", nil), "id", "bad")
+	h.GetStaleItems(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestRemoveStaleItems_NoStale calls RemoveStaleItems on a job with no items;
+// the response must be count=0 and an empty array (not null).
+func TestRemoveStaleItems_NoStale(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/stale-items/remove", nil), "id", strconv.FormatInt(jobID, 10))
+	h.RemoveStaleItems(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["count"].(float64) != 0 {
+		t.Errorf("count = %v, want 0", resp["count"])
+	}
+	removed, _ := resp["removed"].([]any)
+	if len(removed) != 0 {
+		t.Errorf("removed len = %d, want 0", len(removed))
+	}
+}
+
+// TestRemoveStaleItems_MissingFolder adds a folder item with a non-existent
+// path, then calls RemoveStaleItems. The item should be deleted and returned.
+func TestRemoveStaleItems_MissingFolder(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+
+	missingPath := t.TempDir() + "/gone"
+	settings, _ := json.Marshal(map[string]string{"path": missingPath})
+	_, err := d.AddJobItem(db.JobItem{
+		JobID:    jobID,
+		ItemType: "folder",
+		ItemName: "Gone Folder",
+		Settings: string(settings),
+	})
+	if err != nil {
+		t.Fatalf("AddJobItem: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/stale-items/remove", nil), "id", strconv.FormatInt(jobID, 10))
+	h.RemoveStaleItems(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["count"].(float64) != 1 {
+		t.Errorf("count = %v, want 1", resp["count"])
+	}
+
+	// Item must be gone from the DB.
+	remaining, err := d.GetJobItems(jobID)
+	if err != nil {
+		t.Fatalf("GetJobItems: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Errorf("remaining items = %d, want 0 after RemoveStaleItems", len(remaining))
+	}
+}
+
+// TestRemoveStaleItems_PresentFolderNotRemoved ensures a present folder is
+// never deleted even if RemoveStaleItems is called.
+func TestRemoveStaleItems_PresentFolderNotRemoved(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+
+	existingPath := t.TempDir()
+	settings, _ := json.Marshal(map[string]string{"path": existingPath})
+	_, err := d.AddJobItem(db.JobItem{
+		JobID:    jobID,
+		ItemType: "folder",
+		ItemName: "Still Here",
+		Settings: string(settings),
+	})
+	if err != nil {
+		t.Fatalf("AddJobItem: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(jobID, 10)+"/stale-items/remove", nil), "id", strconv.FormatInt(jobID, 10))
+	h.RemoveStaleItems(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["count"].(float64) != 0 {
+		t.Errorf("count = %v, want 0 (present folder must not be removed)", resp["count"])
+	}
+	remaining, _ := d.GetJobItems(jobID)
+	if len(remaining) != 1 {
+		t.Errorf("remaining items = %d, want 1 (item must survive)", len(remaining))
+	}
+}
+
+// TestRemoveStaleItems_InvalidJobID tests that a non-integer job ID returns 400.
+func TestRemoveStaleItems_InvalidJobID(t *testing.T) {
+	t.Parallel()
+	h := newJobHandler(t)
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/bad/stale-items/remove", nil), "id", "bad")
+	h.RemoveStaleItems(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// sortRestorePointsNewestFirst
+// ---------------------------------------------------------------------------
+
 func TestSortRestorePointsNewestFirst_Empty(t *testing.T) {
 	out := sortRestorePointsNewestFirst(nil)
 	if len(out) != 0 {

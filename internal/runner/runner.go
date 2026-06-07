@@ -606,6 +606,65 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// Resolve the actual backup type for this run (full/incremental/differential).
 	btResult := r.resolveBackupType(job)
 
+	// Stale-item detection (#119). Items whose backing container/VM/folder/
+	// plugin/dataset no longer exists are SKIPPED (not failed) and flagged in
+	// the DB for user-triggered remediation — Vault never auto-removes them.
+	// This runs BEFORE the run record is created so ItemsTotal and the
+	// job_run_started broadcast reflect the items we actually process.
+	{
+		inv := engine.GatherInventory()
+		var staleIDs, reappearedIDs []int64
+		var staleInfo []map[string]any
+		kept := items[:0]
+		for _, item := range items {
+			var settings map[string]any
+			if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
+				log.Printf("runner: job %d: item %d malformed settings JSON: %v", jobID, item.ID, err)
+			}
+			status := inv.Status(item.ItemType, item.ItemName, settings)
+			if status == engine.StatusMissing {
+				staleIDs = append(staleIDs, item.ID)
+				staleInfo = append(staleInfo, map[string]any{
+					"item_id":   item.ID,
+					"item_type": item.ItemType,
+					"item_name": item.ItemName,
+				})
+				log.Printf("runner: job %d: stale %s item %q skipped (no longer exists)", jobID, item.ItemType, item.ItemName)
+				continue
+			}
+			// Only clear the missing flag when the item is confirmed PRESENT.
+			// StatusUnknown (e.g. Docker/libvirt temporarily down) must leave the
+			// flag untouched so a transient outage can't clear a real stale mark.
+			if status == engine.StatusPresent && item.MissingSince != nil {
+				reappearedIDs = append(reappearedIDs, item.ID)
+			}
+			kept = append(kept, item)
+		}
+		items = kept
+		if len(staleIDs) > 0 {
+			if err := r.db.MarkJobItemsMissing(staleIDs, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				log.Printf("runner: job %d: mark stale items: %v", jobID, err)
+			}
+			if err := notify.Send("Vault",
+				fmt.Sprintf("Backup job %q has %d missing item(s)", job.Name, len(staleIDs)),
+				"Some backed-up items no longer exist on this server and were skipped. Open Vault → Jobs to review and remove them.",
+				notify.ImportanceWarning); err != nil {
+				log.Printf("runner: job %d: stale notify: %v", jobID, err)
+			}
+			r.broadcast(map[string]any{
+				"type":   "stale_items_detected",
+				"job_id": jobID,
+				"count":  len(staleIDs),
+				"items":  staleInfo,
+			})
+		}
+		if len(reappearedIDs) > 0 {
+			if err := r.db.ClearJobItemsMissing(reappearedIDs); err != nil {
+				log.Printf("runner: job %d: clear stale flags: %v", jobID, err)
+			}
+		}
+	}
+
 	run := db.JobRun{
 		JobID:        job.ID,
 		Status:       "running",
