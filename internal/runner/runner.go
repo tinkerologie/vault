@@ -799,6 +799,57 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}
 	}
 
+	// Stale-item detection (#119). Items whose backing container/VM/folder/
+	// plugin/dataset no longer exists are SKIPPED (not failed) and flagged in
+	// the DB for user-triggered remediation — Vault never auto-removes them.
+	{
+		inv := engine.GatherInventory()
+		var staleIDs, reappearedIDs []int64
+		var staleInfo []map[string]any
+		kept := items[:0]
+		for _, item := range items {
+			var settings map[string]any
+			_ = json.Unmarshal([]byte(item.Settings), &settings)
+			if inv.Status(item.ItemType, item.ItemName, settings) == engine.StatusMissing {
+				staleIDs = append(staleIDs, item.ID)
+				staleInfo = append(staleInfo, map[string]any{
+					"item_id":   item.ID,
+					"item_type": item.ItemType,
+					"item_name": item.ItemName,
+				})
+				log.Printf("runner: job %d: stale %s item %q skipped (no longer exists)", jobID, item.ItemType, item.ItemName)
+				continue
+			}
+			if item.MissingSince != nil {
+				reappearedIDs = append(reappearedIDs, item.ID)
+			}
+			kept = append(kept, item)
+		}
+		items = kept
+		if len(staleIDs) > 0 {
+			if err := r.db.MarkJobItemsMissing(staleIDs, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				log.Printf("runner: job %d: mark stale items: %v", jobID, err)
+			}
+			if err := notify.Send("Vault",
+				fmt.Sprintf("Backup job %q has %d missing item(s)", job.Name, len(staleIDs)),
+				"Some backed-up items no longer exist on this server and were skipped. Open Vault → Jobs to review and remove them.",
+				notify.ImportanceWarning); err != nil {
+				log.Printf("runner: job %d: stale notify: %v", jobID, err)
+			}
+			r.broadcast(map[string]any{
+				"type":   "stale_items_detected",
+				"job_id": jobID,
+				"count":  len(staleIDs),
+				"items":  staleInfo,
+			})
+		}
+		if len(reappearedIDs) > 0 {
+			if err := r.db.ClearJobItemsMissing(reappearedIDs); err != nil {
+				log.Printf("runner: job %d: clear stale flags: %v", jobID, err)
+			}
+		}
+	}
+
 	// stop_all mode: stop all container items up-front, set no_stop so the
 	// individual handler skips stop/start, then restart them all after the loop.
 	var stoppedContainerIDs []string
