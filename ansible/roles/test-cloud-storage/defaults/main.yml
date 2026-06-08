@@ -1,8 +1,0 @@
----
-# Image tags for the cloud-storage smoke test. Defaults are :latest for
-# convenience; pin to a specific release/digest in inventory or with -e
-# (e.g. test_minio_image: "minio/minio:RELEASE.2025-04-22T22-12-26Z") for
-# reproducible CI runs. Verify the tag exists on Docker Hub before pinning.
-test_minio_image: "minio/minio:latest"
-test_mc_image: "minio/mc:latest"
-test_webdav_image: "ghcr.io/hacdias/webdav:latest"
