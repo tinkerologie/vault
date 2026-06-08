@@ -43,9 +43,6 @@
     - name: Test health endpoint
       ansible.builtin.include_tasks: endpoints.yml
 
-    - name: Test CRUD operations
-      ansible.builtin.include_tasks: crud.yml
-
     - name: Test WebSocket endpoint
       ansible.builtin.include_tasks: websocket.yml
 

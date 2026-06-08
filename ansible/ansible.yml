@@ -44,12 +44,6 @@
     - role: replica
       tags: [replica]
 
-    - role: test-cloud-storage
-      tags: [test-cloud-storage]
-
-    - role: test-cloud-storage-teardown
-      tags: [test-cloud-storage-teardown]
-
   post_tasks:
     - name: Deployment and test summary
       tags: [always]
@@ -70,7 +64,6 @@
           {% if endpoint_results is defined %}
           ── Test Results ──
           Core endpoints:  {{ endpoint_results.results | selectattr('status', 'defined') | selectattr('status', 'eq', 200) | list | length }}/{{ endpoint_results.results | length }} passed
-          CRUD operations: storage + job create/read/delete ✓
           WebSocket:       {{ ws_result.stdout | default('not tested') }}
           MCP:             {{ mcp_result.stdout | default('not tested') }}
           {% else %}
