@@ -49,14 +49,14 @@ Vault needs somewhere to write your backups before you can create any jobs.
 3. Give it a name (e.g. "NAS Backups")
 4. Choose a type:
 
-   | Type       | Use case                                                                                    |
-   | ---------- | ------------------------------------------------------------------------------------------- |
-   | **Local**  | A path on your Unraid array or a directly attached drive                                    |
-   | **SFTP**   | Any server reachable by SSH (another NAS, a VPS, …)                                         |
-   | **SMB**    | Windows shares and Samba servers on your LAN (Synology, TrueNAS SCALE, Windows Server)      |
-   | **NFS**    | Linux/NAS NFS exports                                                                       |
-   | **WebDAV** | Stateless HTTP target — Nextcloud, ownCloud, Synology WebDAV, generic servers               |
-   | **S3**     | AWS S3 and S3-compatible object storage — Backblaze B2, MinIO, Cloudflare R2, Wasabi, MEGA  |
+   | Type       | Use case                                                                                   |
+   | ---------- | ------------------------------------------------------------------------------------------ |
+   | **Local**  | A path on your Unraid array or a directly attached drive                                   |
+   | **SFTP**   | Any server reachable by SSH (another NAS, a VPS, …)                                        |
+   | **SMB**    | Windows shares and Samba servers on your LAN (Synology, TrueNAS SCALE, Windows Server)     |
+   | **NFS**    | Linux/NAS NFS exports                                                                      |
+   | **WebDAV** | Stateless HTTP target — Nextcloud, ownCloud, Synology WebDAV, generic servers              |
+   | **S3**     | AWS S3 and S3-compatible object storage — Backblaze B2, MinIO, Cloudflare R2, Wasabi, MEGA |
 
 5. Fill in the connection details. See [Storage Destinations](guides/storage-destinations.md) for field-by-field guidance.
 6. Click **Test Connection** to verify Vault can reach the destination.
@@ -92,7 +92,7 @@ A job defines _what_ to back up, _where_ to put it, _when_ to run, and how many 
    **Step 4 — Schedule & Retention**
 
    - Set a cron schedule (hourly, daily, weekly, monthly, yearly, or custom cron)
-   - Choose retention: either *keep last N restore points* or a Grandfather-Father-Son policy that keeps a tunable number of daily / weekly / monthly / yearly snapshots
+   - Choose retention: either _keep last N restore points_ or a Long-Term Retention (LTR) policy that keeps a tunable number of daily / weekly / monthly / yearly snapshots
 
 4. Review the summary and click **Save**.
 
@@ -129,19 +129,19 @@ Each restore point also shows chain health annotations so you can see if a full 
 
 ## What's Next
 
-| Goal                                            | Where to look                                               |
-| ----------------------------------------------- | ----------------------------------------------------------- |
-| Configure SFTP, SMB, NFS, WebDAV, or S3 in detail | [Storage Destinations](guides/storage-destinations.md)    |
-| Tune jobs (retention, GFS, encryption, dedup)   | [Backup Jobs](guides/backup-jobs.md)                        |
-| Set up encryption                               | Settings → Security → Encryption                            |
-| Enable Discord notifications                    | Settings → Notifications                                    |
-| Replicate backups to a second Vault server      | Replication page (in-app guidance)                          |
-| Verify a restore point on demand                | Restore page → restore point → *Verify*                     |
-| Run dedup maintenance from the CLI              | `vault dedup repair --dest <id>`, `vault dedup gc --dest <id>` |
-| Export a diagnostics bundle for support         | Settings → Support → *Download diagnostics*                 |
-| Automate with Home Assistant                    | [Home Assistant Integration](home-assistant-integration.md) |
-| Use the REST API                                | [API Reference](api.md)                                     |
-| Use the MCP server                              | [MCP](mcp.md)                                               |
+| Goal                                              | Where to look                                                  |
+| ------------------------------------------------- | -------------------------------------------------------------- |
+| Configure SFTP, SMB, NFS, WebDAV, or S3 in detail | [Storage Destinations](guides/storage-destinations.md)         |
+| Tune jobs (retention, LTR, encryption, dedup)     | [Backup Jobs](guides/backup-jobs.md)                           |
+| Set up encryption                                 | Settings → Security → Encryption                               |
+| Enable Discord notifications                      | Settings → Notifications                                       |
+| Replicate backups to a second Vault server        | Replication page (in-app guidance)                             |
+| Verify a restore point on demand                  | Restore page → restore point → _Verify_                        |
+| Run dedup maintenance from the CLI                | `vault dedup repair --dest <id>`, `vault dedup gc --dest <id>` |
+| Export a diagnostics bundle for support           | Settings → Support → _Download diagnostics_                    |
+| Automate with Home Assistant                      | [Home Assistant Integration](home-assistant-integration.md)    |
+| Use the REST API                                  | [API Reference](api.md)                                        |
+| Use the MCP server                                | [MCP](mcp.md)                                                  |
 
 > **Disaster recovery:** Back up **both** `vault.db` and `vault.key` (siblings in
 > `/boot/config/plugins/vault/`). To rebuild a lost dedup index from intact storage,
@@ -162,4 +162,4 @@ Vault uses a hybrid SQLite layout — a working DB in RAM, a periodic snapshot o
 Vault scans `/mnt/` for pool mounts at startup. If your pool isn't shown, make sure it's mounted before the Vault service starts, then override the snapshot path manually under **Settings → General → Database Location**.
 
 **Diagnostics bundle for support**
-Settings → Support → *Download diagnostics* exports a ZIP containing system info, schema, recent runs, scheduler state, and the in-memory daemon log — all credential values are redacted. Attach it to bug reports.
+Settings → Support → _Download diagnostics_ exports a ZIP containing system info, schema, recent runs, scheduler state, and the in-memory daemon log — all credential values are redacted. Attach it to bug reports.

@@ -218,9 +218,9 @@ var alterMigrations = []string{
 	"ALTER TABLE replication_sources ADD COLUMN type TEXT DEFAULT 'remote_vault'",
 	"ALTER TABLE replication_sources ADD COLUMN config TEXT DEFAULT '{}'",
 	"ALTER TABLE jobs ADD COLUMN defer_remote_upload INTEGER DEFAULT 0",
-	// GFS (grandfather-father-son) retention. Each defaults to 0 meaning
+	// Long-Term Retention (LTR) buckets. Each defaults to 0 meaning
 	// "ignore this bucket". If any of the five is > 0 the runner uses the
-	// GFS algorithm and ignores retention_count / retention_days.
+	// LTR algorithm and ignores retention_count / retention_days.
 	"ALTER TABLE jobs ADD COLUMN keep_latest INTEGER NOT NULL DEFAULT 0",
 	"ALTER TABLE jobs ADD COLUMN keep_daily INTEGER NOT NULL DEFAULT 0",
 	"ALTER TABLE jobs ADD COLUMN keep_weekly INTEGER NOT NULL DEFAULT 0",

@@ -31,13 +31,13 @@ For most home server use cases, a weekly **Full** backup with daily **Incrementa
 
 Pick which items to include in this job. Vault discovers items automatically from your server:
 
-| Category             | What's included                                                                                     |
-| -------------------- | --------------------------------------------------------------------------------------------------- |
+| Category             | What's included                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
 | **Containers**       | Docker containers (image, XML template, and all mapped appdata volumes); per-container path excludes |
-| **Virtual Machines** | libvirt VMs (live snapshot or cold backup depending on running state); NVRAM preserved              |
-| **ZFS datasets**     | Native `zfs send`/`receive` with snapshot management                                                |
-| **Folders**          | Any arbitrary path on your server (e.g. `/mnt/user/appdata`, `/boot/config`)                        |
-| **Plugins**          | Installed Unraid plugins                                                                            |
+| **Virtual Machines** | libvirt VMs (live snapshot or cold backup depending on running state); NVRAM preserved               |
+| **ZFS datasets**     | Native `zfs send`/`receive` with snapshot management                                                 |
+| **Folders**          | Any arbitrary path on your server (e.g. `/mnt/user/appdata`, `/boot/config`)                         |
+| **Plugins**          | Installed Unraid plugins                                                                             |
 
 **Notes on containers:**
 
@@ -102,25 +102,25 @@ Retention controls how many restore points are kept before the oldest is deleted
 
 Good for "always keep my last 7 backups" type policies.
 
-**Mode 2 — Grandfather-Father-Son (GFS)**
+**Mode 2 — Long-Term Retention (LTR)**
 
-| Field             | Description                                                                                  |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| **Keep latest**   | Number of *most-recent* restore points kept unconditionally (independent of cadence)         |
-| **Keep daily**   | Number of distinct *days* to retain (one restore point per day)                              |
-| **Keep weekly**  | Number of distinct *weeks* (one restore point per week)                                      |
-| **Keep monthly** | Number of distinct *months* (one restore point per month)                                    |
-| **Keep yearly**  | Number of distinct *years* (one restore point per year)                                      |
+| Field            | Description                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| **Keep latest**  | Number of _most-recent_ restore points kept unconditionally (independent of cadence) |
+| **Keep daily**   | Number of distinct _days_ to retain (one restore point per day)                      |
+| **Keep weekly**  | Number of distinct _weeks_ (one restore point per week)                              |
+| **Keep monthly** | Number of distinct _months_ (one restore point per month)                            |
+| **Keep yearly**  | Number of distinct _years_ (one restore point per year)                              |
 
-GFS lets you keep, say, "last 7 days + last 4 weeks + last 6 months + last 3 years" without paying for hundreds of restore points. The Job UI shows a *retention preview* — exactly which restore points the policy would prune on the next run — before you save.
+Long-Term Retention (LTR) lets you keep, say, "last 7 days + last 4 weeks + last 6 months + last 3 years" without paying for hundreds of restore points. The Job UI shows a _retention preview_ — exactly which restore points the policy would prune on the next run — before you save.
 
-If you leave the GFS counters at 0 and set only *Keep last N*, classic simple-count retention applies. If both are configured, the union of the two policies wins (a restore point survives if either policy keeps it).
+If you leave the LTR counters at 0 and set only _Keep last N_, classic simple-count retention applies. If any LTR counter is greater than 0, Vault uses LTR for that job and ignores the simple _Keep last N_ count.
 
 Set retention based on storage budget and how far back you want to be able to restore:
 
 - 7 daily backups → simple count = 7
 - A weekly full + 6 daily incrementals → simple count = 7, two jobs (one weekly full, one daily incremental)
-- Year of history without storage bloat → GFS with `keep_daily=7`, `keep_weekly=4`, `keep_monthly=12`, `keep_yearly=3`
+- Year of history without storage bloat → LTR with `keep_daily=7`, `keep_weekly=4`, `keep_monthly=12`, `keep_yearly=3`
 
 ---
 
@@ -196,8 +196,8 @@ If a container, VM, ZFS dataset, or folder is removed from Unraid after a job is
 
 Every backup item is hashed with SHA-256 during the upload, and Vault stores the digest alongside the restore point. Two verification layers exist on top of that:
 
-- **Per-run verify** — when the job's *Verify backup* setting is on (default), each item is read back from storage at the end of the run and re-hashed. Mismatches fail the run.
-- **On-demand verify** — from the Restore page you can click *Verify* on any individual restore point at any time. The result, including per-item byte counts and errors, is stored under `verify_runs` and listed in the restore point's verify history.
+- **Per-run verify** — when the job's _Verify backup_ setting is on (default), each item is read back from storage at the end of the run and re-hashed. Mismatches fail the run.
+- **On-demand verify** — from the Restore page you can click _Verify_ on any individual restore point at any time. The result, including per-item byte counts and errors, is stored under `verify_runs` and listed in the restore point's verify history.
 
 Both paths use the same code, so per-run and on-demand results are directly comparable.
 
@@ -213,7 +213,7 @@ The encryption status is shown on the Dashboard's 3-2-1 compliance widget, and o
 
 ## Deduplication
 
-When you enable *Dedup* on a storage destination, Vault chunks every backup with Keyed-FastCDC (256 KiB / 1 MiB / 4 MiB min/avg/max) and stores only one copy of each chunk in a per-destination dedup repo at `<dest>/_vault/packs/` and `<dest>/_vault/index/`. The repo's chunker is keyed off a 32-byte secret per destination, which closes the fingerprinting-attack class described in Truong et al. 2025 — observers without the secret can't recompute chunk boundaries from public corpora.
+When you enable _Dedup_ on a storage destination, Vault chunks every backup with Keyed-FastCDC (256 KiB / 1 MiB / 4 MiB min/avg/max) and stores only one copy of each chunk in a per-destination dedup repo at `<dest>/_vault/packs/` and `<dest>/_vault/index/`. The repo's chunker is keyed off a 32-byte secret per destination, which closes the fingerprinting-attack class described in Truong et al. 2025 — observers without the secret can't recompute chunk boundaries from public corpora.
 
 Operational notes:
 
@@ -223,4 +223,4 @@ Operational notes:
 - `vault dedup repair --dest <id>` rebuilds the SQLite chunk/pack index from the on-storage `*.idx` blobs — use when the local DB is lost or corrupted but the destination is intact.
 - Dedup-mode and non-dedup destinations can coexist on the same Vault install; the flag is per-destination and immutable after creation.
 
-Imported backups (Storage → *Scan* + *Import*) carry per-item dedup manifest IDs in their `manifest.json`, so dedup restore points produced on one Vault instance can be re-discovered and restored on another.
+Imported backups (Storage → _Scan_ + _Import_) carry per-item dedup manifest IDs in their `manifest.json`, so dedup restore points produced on one Vault instance can be re-discovered and restored on another.

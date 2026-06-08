@@ -511,8 +511,8 @@ func resolveIndexCandidates(adapter storage.Adapter, itemPrefix, archiveName str
 	return out, nil
 }
 
-// RetentionPreview returns the impact of a hypothetical GFS retention
-// policy against the job's current restore points without actually
+// RetentionPreview returns the impact of a hypothetical Long-Term Retention
+// (LTR) policy against the job's current restore points without actually
 // applying it. Used by the Jobs wizard to show "would keep X of Y" as the
 // user tunes the keep_* fields.
 //
@@ -546,7 +546,7 @@ func (h *JobHandler) RetentionPreview(w http.ResponseWriter, r *http.Request) {
 		}
 		return 0
 	}
-	policy := runner.GFSPolicy{
+	policy := runner.LTRPolicy{
 		KeepLatest:  parseN("keep_latest"),
 		KeepDaily:   parseN("keep_daily"),
 		KeepWeekly:  parseN("keep_weekly"),
@@ -571,8 +571,8 @@ func (h *JobHandler) RetentionPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	direct := runner.GFSDirectlyKept(sorted, policy, time.Local)
-	protected := runner.GFSProtectedRestorePointIDs(sorted, policy, time.Local)
+	direct := runner.LTRDirectlyKept(sorted, policy, time.Local)
+	protected := runner.LTRProtectedRestorePointIDs(sorted, policy, time.Local)
 	directIDs := make([]int64, 0, len(direct))
 	for k := range direct {
 		directIDs = append(directIDs, k)

@@ -31,7 +31,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 **Backup strategy**
 
 - Full, incremental, and differential chains
-- Simple-count retention or Grandfather-Father-Son (`keep_latest`/`daily`/`weekly`/`monthly`/`yearly`)
+- Simple-count retention or Long-Term Retention / LTR (`keep_latest`/`daily`/`weekly`/`monthly`/`yearly`)
 - AES-256-GCM encryption with per-passphrase key derivation
 - Content-defined deduplication (Keyed-FastCDC + per-destination dedup repo) with `vault dedup gc`/`repair` CLI helpers
 - Per-run SHA-256 verification and on-demand restore-point verify

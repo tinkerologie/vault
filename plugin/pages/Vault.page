@@ -269,4 +269,81 @@ function serviceControl(action) {
     };
     xhr.send('action=' + action + '&csrf_token=' + encodeURIComponent(<?=json_encode($var['csrf_token'] ?? '')?>));
 }
+
+// After applying a config change (port / bind address), apply.sh restarts the
+// daemon. The form posts into the hidden progress iframe, so the page itself
+// gives no feedback — poll the daemon's real status and surface a clear error
+// if it failed to come back up, e.g. the chosen port is already in use
+// (issue #124).
+function pollAfterApply(attempts) {
+    if (attempts === undefined) attempts = 5;
+
+    var orb = document.getElementById('vault-status-orb');
+    var statusText = document.getElementById('vault-status-text');
+    var webui = document.getElementById('vault-webui');
+    var version = document.getElementById('vault-version');
+    var errorEl = document.getElementById('vault-control-error');
+    var startStop = document.getElementById('vault-btn-startstop');
+    var restartBtn = document.getElementById('vault-btn-restart');
+
+    function render(running) {
+        if (orb) orb.className = 'fa fa-circle ' + (running ? 'green-orb' : 'grey-orb');
+        if (statusText) {
+            statusText.textContent = running ? 'RUNNING' : 'STOPPED';
+            statusText.className = 'vault-status-text ' + (running ? 'running' : 'stopped');
+        }
+        if (webui) webui.style.display = running ? 'block' : 'none';
+        if (version && !running) version.style.display = 'none';
+        if (startStop) {
+            startStop.value = running ? 'Stop' : 'Start';
+            startStop.onclick = (function(r) { return function() { serviceControl(r ? 'stop' : 'start'); }; })(running);
+        }
+        if (restartBtn) restartBtn.disabled = !running;
+        if (errorEl) {
+            if (running) {
+                errorEl.textContent = '';
+                errorEl.style.display = 'none';
+            } else {
+                errorEl.textContent = 'Vault daemon is not running after applying the configuration. The chosen port may be invalid or already in use — check the Vault log, then revert the port or pick another.';
+                errorEl.style.display = 'block';
+            }
+        }
+    }
+
+    var poll = new XMLHttpRequest();
+    poll.open('POST', '/plugins/vault/include/control.php', true);
+    poll.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    poll.onreadystatechange = function() {
+        if (poll.readyState !== 4) return;
+        var running = false;
+        if (poll.status === 200) {
+            try { running = !!JSON.parse(poll.responseText).running; } catch(e) { /* treat as down */ }
+        }
+        // The restart (graceful stop + start) can take a few seconds; only
+        // conclude the daemon is down after exhausting the retry budget.
+        if (running) {
+            render(true);
+        } else if (attempts > 1) {
+            setTimeout(function() { pollAfterApply(attempts - 1); }, 3000);
+        } else {
+            render(false);
+        }
+    };
+    poll.send('action=status&csrf_token=' + encodeURIComponent(<?=json_encode($var['csrf_token'] ?? '')?>));
+}
+
+(function() {
+    var form = document.getElementById('vaultConfigForm');
+    if (!form) return;
+    form.addEventListener('submit', function() {
+        // apply.sh only restarts the daemon if it was already running; if it
+        // was intentionally stopped, polling would raise a false "did not come
+        // back up" alarm. Mirror that condition: only poll when running.
+        var statusText = document.getElementById('vault-status-text');
+        var wasRunning = !!(statusText && statusText.classList.contains('running'));
+        if (!wasRunning) return;
+        // Give apply.sh time to stop + restart the daemon before the first poll.
+        setTimeout(function() { pollAfterApply(5); }, 4000);
+    });
+})();
 </script>

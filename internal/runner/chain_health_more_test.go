@@ -112,13 +112,13 @@ func TestSortRestorePointsNewestStableOrderingByID(t *testing.T) {
 	}
 }
 
-// TestAnnotateRestorePointsGFSPath exercises the GFS-active branch of
+// TestAnnotateRestorePointsLTRPath exercises the LTR-active branch of
 // annotateRestorePoints.
-func TestAnnotateRestorePointsGFSPath(t *testing.T) {
+func TestAnnotateRestorePointsLTRPath(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 	job := db.Job{
-		Name:       "gfs-job",
+		Name:       "ltr-job",
 		KeepLatest: 1, KeepDaily: 1,
 	}
 	points := []db.RestorePoint{

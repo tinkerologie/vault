@@ -143,7 +143,7 @@
   // Form state
   let form = $state(defaultForm())
 
-  // GFS retention preview state (Feature C). Recomputed via a debounced
+  // LTR retention preview state (Feature C). Recomputed via a debounced
   // effect whenever any keep_* field changes on an editing job. Inactive
   // for new-job mode (no restore points to preview against yet).
   let retentionPreview = $state(null)
@@ -151,7 +151,7 @@
   let retentionPreviewError = $state('')
   let retentionPreviewTimer = null
 
-  let gfsActive = $derived(
+  let ltrActive = $derived(
     (form.keep_latest || 0) + (form.keep_daily || 0) + (form.keep_weekly || 0) +
     (form.keep_monthly || 0) + (form.keep_yearly || 0) > 0
   )
@@ -177,7 +177,7 @@
       keep_monthly: form.keep_monthly || 0,
       keep_yearly: form.keep_yearly || 0,
     }
-    if (!editing || !gfsActive) {
+    if (!editing || !ltrActive) {
       retentionPreview = null
       retentionPreviewError = ''
       return
@@ -1163,11 +1163,11 @@
           </div>
         </details>
 
-        <!-- Advanced: Long-term retention (GFS) -->
+        <!-- Advanced: Long-Term Retention (LTR) -->
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Long-term retention (GFS) <Tooltip text="Grandfather-father-son retention. Keep N latest, plus the most recent backup per day/week/month/year. A single backup can fill multiple buckets. If any of these is > 0, the simple Retention Policy above is ignored for this job." />
+            Long-Term Retention (LTR) <Tooltip text="Keep N latest, plus the most recent backup per day/week/month/year. A single backup can fill multiple buckets. If any of these is > 0, the simple Retention Policy above is ignored for this job." />
           </summary>
           <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-3 pl-6">
             <div>
@@ -1196,8 +1196,8 @@
                 class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
             </div>
           </div>
-          {#if gfsActive}
-            <p class="mt-2 pl-6 text-xs text-warning">GFS is active — the simple Retention Policy above is ignored for this job.</p>
+          {#if ltrActive}
+            <p class="mt-2 pl-6 text-xs text-warning">Long-Term Retention is active — the simple Retention Policy above is ignored for this job.</p>
             {#if editing}
               <div class="mt-3 pl-6 text-xs">
                 {#if retentionPreviewLoading}
@@ -1225,7 +1225,7 @@
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Scheduled verification <Tooltip text="Periodically verify the most recent restore point on its storage destination. Quick = HEAD/size check (no bandwidth). Deep = full SHA-256 reread (catches bit rot)." />
+            Scheduled verification <Tooltip text="Periodically checks that your latest backup is still intact on its destination. Quick: confirms the files exist at the right size (no download). Deep: re-downloads and checksums everything to catch silent corruption. Recommended: Quick, or Deep for critical data." />
           </summary>
           <div class="mt-3 pl-6 space-y-3">
             <label class="flex items-center gap-2 text-sm text-text-muted">
@@ -1264,7 +1264,7 @@
         <details class="group" open>
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Backup Verification <Tooltip text="Verifies archive integrity after each backup by reading back all data and checking SHA-256 checksums. Increases backup time but catches corruption early." />
+            Backup Verification <Tooltip text="Right after each backup, re-reads the archive and checksums it to confirm nothing was corrupted in transit. Adds time but catches problems while you can still re-run. Recommended: on for important jobs." />
           </summary>
           <div class="mt-3 pl-6">
             <div class="flex items-start gap-3">
@@ -1571,7 +1571,7 @@
             <span class="text-text-muted">Retention</span>
             {#if (form.keep_latest || 0) + (form.keep_daily || 0) + (form.keep_weekly || 0) + (form.keep_monthly || 0) + (form.keep_yearly || 0) > 0}
               <span class="text-text">
-                GFS: {form.keep_latest || 0} latest / {form.keep_daily || 0} daily / {form.keep_weekly || 0} weekly / {form.keep_monthly || 0} monthly / {form.keep_yearly || 0} yearly
+                LTR: {form.keep_latest || 0} latest / {form.keep_daily || 0} daily / {form.keep_weekly || 0} weekly / {form.keep_monthly || 0} monthly / {form.keep_yearly || 0} yearly
               </span>
             {:else}
               <span class="text-text">{form.retention_count} backups / {form.retention_days} days</span>

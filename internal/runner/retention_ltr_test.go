@@ -30,25 +30,25 @@ func makeDailyPoints(t *testing.T, end time.Time, days int) []db.RestorePoint {
 	return out
 }
 
-func keptIDSet(t *testing.T, points []db.RestorePoint, policy GFSPolicy, loc *time.Location) map[int64]struct{} {
+func keptIDSet(t *testing.T, points []db.RestorePoint, policy LTRPolicy, loc *time.Location) map[int64]struct{} {
 	t.Helper()
-	return gfsDirectlyKept(points, policy, loc)
+	return ltrDirectlyKept(points, policy, loc)
 }
 
-func TestGFSPolicyIsActive(t *testing.T) {
+func TestLTRPolicyIsActive(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
-		p    GFSPolicy
+		p    LTRPolicy
 		want bool
 	}{
-		{"all zero", GFSPolicy{}, false},
-		{"only latest", GFSPolicy{KeepLatest: 1}, true},
-		{"only daily", GFSPolicy{KeepDaily: 7}, true},
-		{"only weekly", GFSPolicy{KeepWeekly: 4}, true},
-		{"only monthly", GFSPolicy{KeepMonthly: 12}, true},
-		{"only yearly", GFSPolicy{KeepYearly: 5}, true},
-		{"mixed", GFSPolicy{KeepLatest: 3, KeepWeekly: 4, KeepYearly: 5}, true},
+		{"all zero", LTRPolicy{}, false},
+		{"only latest", LTRPolicy{KeepLatest: 1}, true},
+		{"only daily", LTRPolicy{KeepDaily: 7}, true},
+		{"only weekly", LTRPolicy{KeepWeekly: 4}, true},
+		{"only monthly", LTRPolicy{KeepMonthly: 12}, true},
+		{"only yearly", LTRPolicy{KeepYearly: 5}, true},
+		{"mixed", LTRPolicy{KeepLatest: 3, KeepWeekly: 4, KeepYearly: 5}, true},
 	}
 	for _, c := range cases {
 		c := c
@@ -61,12 +61,12 @@ func TestGFSPolicyIsActive(t *testing.T) {
 	}
 }
 
-func TestGFSDirectlyKept_KeepLatestOnly(t *testing.T) {
+func TestLTRDirectlyKept_KeepLatestOnly(t *testing.T) {
 	loc := time.UTC
 	end := time.Date(2026, 5, 18, 12, 0, 0, 0, loc)
 	points := makeDailyPoints(t, end, 30)
 
-	kept := keptIDSet(t, points, GFSPolicy{KeepLatest: 5}, loc)
+	kept := keptIDSet(t, points, LTRPolicy{KeepLatest: 5}, loc)
 	if len(kept) != 5 {
 		t.Fatalf("expected 5 kept, got %d", len(kept))
 	}
@@ -78,44 +78,44 @@ func TestGFSDirectlyKept_KeepLatestOnly(t *testing.T) {
 	}
 }
 
-func TestGFSDirectlyKept_PureDaily(t *testing.T) {
+func TestLTRDirectlyKept_PureDaily(t *testing.T) {
 	loc := time.UTC
 	end := time.Date(2026, 5, 18, 12, 0, 0, 0, loc)
 	points := makeDailyPoints(t, end, 30)
 
-	kept := keptIDSet(t, points, GFSPolicy{KeepDaily: 7}, loc)
+	kept := keptIDSet(t, points, LTRPolicy{KeepDaily: 7}, loc)
 	if len(kept) != 7 {
 		t.Fatalf("expected 7 daily kept, got %d", len(kept))
 	}
 }
 
-func TestGFSDirectlyKept_PureWeekly(t *testing.T) {
+func TestLTRDirectlyKept_PureWeekly(t *testing.T) {
 	loc := time.UTC
 	// 8 weeks of daily backups → 8 distinct ISO weeks. KeepWeekly=4 should
 	// keep the most-recent restore-point in each of the 4 most-recent weeks.
 	end := time.Date(2026, 5, 18, 12, 0, 0, 0, loc) // Mon, ISO week 21
 	points := makeDailyPoints(t, end, 8*7)
 
-	kept := keptIDSet(t, points, GFSPolicy{KeepWeekly: 4}, loc)
+	kept := keptIDSet(t, points, LTRPolicy{KeepWeekly: 4}, loc)
 	if len(kept) != 4 {
 		t.Fatalf("expected 4 weekly kept, got %d (ids=%v)", len(kept), sortedIDs(kept))
 	}
 }
 
-func TestGFSDirectlyKept_PureMonthly(t *testing.T) {
+func TestLTRDirectlyKept_PureMonthly(t *testing.T) {
 	loc := time.UTC
 	// 6 months of daily backups → expect 6 unique month buckets. KeepMonthly=3
 	// keeps the newest 3.
 	end := time.Date(2026, 6, 30, 12, 0, 0, 0, loc)
 	points := makeDailyPoints(t, end, 6*30)
 
-	kept := keptIDSet(t, points, GFSPolicy{KeepMonthly: 3}, loc)
+	kept := keptIDSet(t, points, LTRPolicy{KeepMonthly: 3}, loc)
 	if len(kept) != 3 {
 		t.Fatalf("expected 3 monthly kept, got %d (ids=%v)", len(kept), sortedIDs(kept))
 	}
 }
 
-func TestGFSDirectlyKept_PureYearly(t *testing.T) {
+func TestLTRDirectlyKept_PureYearly(t *testing.T) {
 	loc := time.UTC
 	// 3 years of monthly backups (36 points). KeepYearly=2 → newest 2 years.
 	out := []db.RestorePoint{}
@@ -132,20 +132,20 @@ func TestGFSDirectlyKept_PureYearly(t *testing.T) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 
-	kept := keptIDSet(t, out, GFSPolicy{KeepYearly: 2}, loc)
+	kept := keptIDSet(t, out, LTRPolicy{KeepYearly: 2}, loc)
 	if len(kept) != 2 {
 		t.Fatalf("expected 2 yearly kept, got %d (ids=%v)", len(kept), sortedIDs(kept))
 	}
 }
 
-func TestGFSDirectlyKept_MixedPolicy(t *testing.T) {
+func TestLTRDirectlyKept_MixedPolicy(t *testing.T) {
 	loc := time.UTC
 	// 18 months of daily backups, ~547 points.
 	end := time.Date(2026, 5, 18, 12, 0, 0, 0, loc)
 	points := makeDailyPoints(t, end, 18*30)
 
 	// Realistic policy: 3 latest, 7 daily, 4 weekly, 12 monthly, 1 yearly.
-	policy := GFSPolicy{KeepLatest: 3, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 12, KeepYearly: 1}
+	policy := LTRPolicy{KeepLatest: 3, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 12, KeepYearly: 1}
 	kept := keptIDSet(t, points, policy, loc)
 
 	// Upper bound: sum of all buckets if every bucket filled with distinct points.
@@ -168,12 +168,12 @@ func TestGFSDirectlyKept_MixedPolicy(t *testing.T) {
 	}
 }
 
-func TestGFSDirectlyKept_SinglePointCoversAllBuckets(t *testing.T) {
+func TestLTRDirectlyKept_SinglePointCoversAllBuckets(t *testing.T) {
 	loc := time.UTC
 	one := []db.RestorePoint{
 		{ID: 1, JobID: 1, CreatedAt: time.Date(2026, 5, 18, 12, 0, 0, 0, loc)},
 	}
-	kept := keptIDSet(t, one, GFSPolicy{KeepLatest: 1, KeepDaily: 1, KeepWeekly: 1, KeepMonthly: 1, KeepYearly: 1}, loc)
+	kept := keptIDSet(t, one, LTRPolicy{KeepLatest: 1, KeepDaily: 1, KeepWeekly: 1, KeepMonthly: 1, KeepYearly: 1}, loc)
 	if len(kept) != 1 {
 		t.Fatalf("expected single point kept once, got %d", len(kept))
 	}
@@ -182,24 +182,24 @@ func TestGFSDirectlyKept_SinglePointCoversAllBuckets(t *testing.T) {
 	}
 }
 
-func TestGFSDirectlyKept_EmptyInput(t *testing.T) {
-	kept := keptIDSet(t, nil, GFSPolicy{KeepDaily: 7}, time.UTC)
+func TestLTRDirectlyKept_EmptyInput(t *testing.T) {
+	kept := keptIDSet(t, nil, LTRPolicy{KeepDaily: 7}, time.UTC)
 	if len(kept) != 0 {
 		t.Errorf("expected empty result on nil input, got %d", len(kept))
 	}
 }
 
-func TestGFSDirectlyKept_DisabledPolicyKeepsNothing(t *testing.T) {
+func TestLTRDirectlyKept_DisabledPolicyKeepsNothing(t *testing.T) {
 	loc := time.UTC
 	end := time.Date(2026, 5, 18, 12, 0, 0, 0, loc)
 	points := makeDailyPoints(t, end, 10)
-	kept := keptIDSet(t, points, GFSPolicy{}, loc)
+	kept := keptIDSet(t, points, LTRPolicy{}, loc)
 	if len(kept) != 0 {
 		t.Errorf("expected empty result with disabled policy, got %d", len(kept))
 	}
 }
 
-func TestGFSProtectedRestorePointIDs_ChainAncestors(t *testing.T) {
+func TestLTRProtectedRestorePointIDs_ChainAncestors(t *testing.T) {
 	loc := time.UTC
 	end := time.Date(2026, 5, 18, 12, 0, 0, 0, loc)
 	// 3 points forming a chain: full (oldest) ← incremental ← incremental
@@ -210,7 +210,7 @@ func TestGFSProtectedRestorePointIDs_ChainAncestors(t *testing.T) {
 	}
 
 	// Keep just 1 latest → directly kept is {3}, but {1, 2} must be protected as ancestors.
-	protected := gfsProtectedRestorePointIDs(points, GFSPolicy{KeepLatest: 1}, loc)
+	protected := ltrProtectedRestorePointIDs(points, LTRPolicy{KeepLatest: 1}, loc)
 	for _, id := range []int64{1, 2, 3} {
 		if _, ok := protected[id]; !ok {
 			t.Errorf("expected ID %d in protected set (chain ancestor), got %v", id, sortedIDs(protected))

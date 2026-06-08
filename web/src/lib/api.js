@@ -85,8 +85,8 @@ export const api = {
   dedupStats: (id) => request('GET', `/storage/${id}/dedup-stats`),
   runDedupGC: (id) => request('POST', `/storage/${id}/gc`),
   getRestorePoints: (id) => request('GET', `/jobs/${id}/restore-points`),
-  // getRetentionPreview asks the server what a hypothetical GFS retention
-  // policy would do to a job's current restore points. Used by the Jobs
+  // getRetentionPreview asks the server what a hypothetical Long-Term Retention
+  // (LTR) policy would do to a job's current restore points. Used by the Jobs
   // wizard to show "would keep X of Y" as the user tunes the keep_* fields.
   getRetentionPreview: (id, policy) => {
     const qs = new URLSearchParams()

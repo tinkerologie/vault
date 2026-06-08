@@ -133,12 +133,25 @@ start() {
     trim_log
     nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
-    sleep 1
-    if ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-        echo "Vault daemon failed to start. Check $LOG"
-        rm -f "$PIDFILE"
-        return 1
-    fi
+
+    # Verify the daemon stayed up. An un-bindable port (already in use, or
+    # otherwise rejected by the kernel) makes Go's listener fail almost
+    # immediately, but that can land a beat after process launch — re-check
+    # for a few seconds so we catch it and surface the cause from the log,
+    # rather than leaving a stale PID file and a silently-dead daemon
+    # (issue #124).
+    local checks=3
+    while [ "$checks" -gt 0 ]; do
+        sleep 1
+        if ! kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+            echo "Vault daemon failed to start on ${ADDR}. Check $LOG"
+            echo "--- last 10 lines of $LOG ---"
+            tail -n 10 "$LOG" 2>/dev/null
+            rm -f "$PIDFILE"
+            return 1
+        fi
+        checks=$((checks - 1))
+    done
     echo "Vault daemon started (PID: $(cat "$PIDFILE"))"
 }
 

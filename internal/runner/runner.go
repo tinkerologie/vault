@@ -1548,13 +1548,13 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}
 	}
 
-	gfs := gfsPolicyFromJob(job)
-	if gfs.IsActive() {
+	ltr := ltrPolicyFromJob(job)
+	if ltr.IsActive() {
 		// Wrapped with a hard timeout (Fix #112).
 		localDest := dest
-		localGFS := gfs
-		r.runFinalizationStep("retention-gfs", jobID, runID, finalizeRetentionTimeout, func() {
-			r.enforceRetentionGFS(localDest, jobID, localGFS)
+		localLTR := ltr
+		r.runFinalizationStep("retention-ltr", jobID, runID, finalizeRetentionTimeout, func() {
+			r.enforceRetentionLTR(localDest, jobID, localLTR)
 		})
 	} else if job.RetentionCount > 0 || job.RetentionDays > 0 {
 		// Wrapped with a hard timeout (Fix #112).
@@ -3478,14 +3478,14 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 	}
 }
 
-// enforceRetentionGFS deletes restore points that are not protected by the
-// grandfather-father-son policy. Chain-ancestor protection mirrors the
+// enforceRetentionLTR deletes restore points that are not protected by the
+// long-term retention policy. Chain-ancestor protection mirrors the
 // classic enforceRetention path: any parent restore point still required by
 // a kept incremental/differential survives the sweep.
-func (r *Runner) enforceRetentionGFS(dest db.StorageDestination, jobID int64, policy GFSPolicy) {
+func (r *Runner) enforceRetentionLTR(dest db.StorageDestination, jobID int64, policy LTRPolicy) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		log.Printf("runner: failed to create adapter for GFS retention cleanup: %v", err)
+		log.Printf("runner: failed to create adapter for LTR retention cleanup: %v", err)
 	}
 	defer storage.CloseAdapter(adapter)
 
@@ -3495,8 +3495,8 @@ func (r *Runner) enforceRetentionGFS(dest db.StorageDestination, jobID int64, po
 		return
 	}
 
-	protected := gfsProtectedRestorePointIDs(allRestorePoints, policy, time.Local)
-	log.Printf("runner: GFS retention for job %d: keeping %d of %d restore points (policy: latest=%d daily=%d weekly=%d monthly=%d yearly=%d)",
+	protected := ltrProtectedRestorePointIDs(allRestorePoints, policy, time.Local)
+	log.Printf("runner: LTR retention for job %d: keeping %d of %d restore points (policy: latest=%d daily=%d weekly=%d monthly=%d yearly=%d)",
 		jobID, len(protected), len(allRestorePoints),
 		policy.KeepLatest, policy.KeepDaily, policy.KeepWeekly, policy.KeepMonthly, policy.KeepYearly)
 	for _, rp := range allRestorePoints {
