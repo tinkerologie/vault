@@ -126,29 +126,29 @@ func TestEnforceRetentionProtectsChainAncestors(t *testing.T) {
 	}
 }
 
-// TestEnforceRetentionGFSKeepsLatest exercises the GFS path: KeepLatest=2
+// TestEnforceRetentionLTRKeepsLatest exercises the LTR path: KeepLatest=2
 // should retain the two newest restore points.
-func TestEnforceRetentionGFSKeepsLatest(t *testing.T) {
+func TestEnforceRetentionLTRKeepsLatest(t *testing.T) {
 	t.Parallel()
 	r, database, storageDir := setupTestRunner(t)
 	dest := createLocalDest(t, database, storageDir)
 
 	jobID, _ := database.CreateJob(db.Job{
-		Name: "gfs-job", BackupTypeChain: "full", StorageDestID: dest.ID,
+		Name: "ltr-job", BackupTypeChain: "full", StorageDestID: dest.ID,
 		KeepLatest: 2,
 	})
 
 	for i := 0; i < 4; i++ {
 		ago := time.Duration(i) * 24 * time.Hour
 		createRestorePointWithAge(t, database, jobID, "full",
-			"gfs-job/run_"+time.Now().Add(-ago).Format("20060102"), 0, ago)
+			"ltr-job/run_"+time.Now().Add(-ago).Format("20060102"), 0, ago)
 	}
 
-	r.enforceRetentionGFS(dest, jobID, GFSPolicy{KeepLatest: 2})
+	r.enforceRetentionLTR(dest, jobID, LTRPolicy{KeepLatest: 2})
 
 	remaining, _ := database.ListRestorePoints(jobID)
 	if len(remaining) != 2 {
-		t.Errorf("expected 2 restore points after GFS retention, got %d", len(remaining))
+		t.Errorf("expected 2 restore points after LTR retention, got %d", len(remaining))
 	}
 }
 

@@ -853,7 +853,7 @@
           <div>
             <label for="dav_chunk" class="block text-sm font-medium text-text-muted mb-1.5">
               Chunk size (MiB)
-              <Tooltip text="Files larger than this are split into independent WebDAV PUT requests. Default 0 = 50 MiB. Set to -1 to disable chunking." />
+              <Tooltip text="Splits large uploads into separate pieces so one dropped connection doesn't restart the whole file. Recommended: leave at 0 (uses 50 MiB pieces). Use -1 only if your server rejects chunked uploads." />
             </label>
             <input id="dav_chunk" type="number" bind:value={form.config.chunk_size_mb} placeholder="0 (50 MiB)" min="-1"
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
@@ -861,7 +861,7 @@
           <div>
             <label for="dav_stall" class="block text-sm font-medium text-text-muted mb-1.5">
               Stall timeout (seconds)
-              <Tooltip text="Abort an upload if no bytes flow for this many seconds. Default 300 (5 min). Set to -1 to disable. Multi-GB uploads of any size complete as long as data keeps moving." />
+              <Tooltip text="Gives up on an upload if no data moves for this many seconds — catches a silently stalled connection. The timer resets whenever data flows, so even huge files finish fine. Recommended: 300 (5 min); use -1 to disable." />
             </label>
             <input id="dav_stall" type="number" bind:value={form.config.stall_timeout_seconds} placeholder="300" min="-1"
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
@@ -869,7 +869,7 @@
           <div>
             <label for="dav_overall" class="block text-sm font-medium text-text-muted mb-1.5">
               Overall request timeout (seconds)
-              <Tooltip text="Hard ceiling on every WebDAV request including upload body. Default 0 = unlimited (recommended). Only set a value if you understand it must accommodate the largest single file upload over your slowest link." />
+              <Tooltip text="A hard time limit on every request, including a whole file upload. Set too low, it cuts off large uploads. Recommended: leave at 0 (no limit) — the stall timeout above already handles dead connections." />
             </label>
             <input id="dav_overall" type="number" bind:value={form.config.timeout_seconds} placeholder="0 (unlimited)" min="0"
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
@@ -914,7 +914,7 @@
       <label class="flex items-center gap-2 text-sm text-text-muted">
         <input type="checkbox" bind:checked={form.config.force_path_style} class="accent-vault" />
         Force path-style addressing
-        <Tooltip text="Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual hosted-style buckets." />
+        <Tooltip text="Puts the bucket name in the URL path instead of the hostname. Some older or self-hosted S3 servers (e.g. older MinIO) need this. Recommended: leave off for AWS S3 and most modern providers." />
       </label>
       <details class="group">
         <summary class="text-sm font-medium text-text-muted hover:text-text cursor-pointer select-none">
@@ -924,7 +924,7 @@
           <div>
             <label for="s3_upload_timeout" class="block text-sm font-medium text-text-muted mb-1.5">
               Upload timeout (minutes)
-              <Tooltip text="Maximum time a single object upload (including multipart transfers) may take. Defaults to 240 (4 hours) when 0 or unset. Increase for very large files over slow links." />
+              <Tooltip text="The longest a single file's upload may take before Vault gives up. Too low and large files on slow links get cut off. Recommended: leave at 0 (defaults to 240 min / 4 h); raise it only for very large files over slow connections." />
             </label>
             <input id="s3_upload_timeout" type="number" bind:value={form.config.upload_timeout_minutes} placeholder="240 (default)" min="0"
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
@@ -932,7 +932,7 @@
           <div>
             <label for="s3_part_size" class="block text-sm font-medium text-text-muted mb-1.5">
               Part size (MiB)
-              <Tooltip text="Multipart upload part size. S3 allows max 10,000 parts per object, so this directly sets the per-object ceiling (PartSize × 10,000). Default 0 = 64 MiB (640 GB ceiling). Raise for multi-TB datasets (256 → 2.5 TB, 1024 → 10 TB). Valid range: 5-5120 MiB." />
+              <Tooltip text="Splits large uploads into parts so one network drop doesn't restart the whole transfer. Bigger parts allow bigger single files. Recommended: leave at 0 (64 MiB, handles files up to ~640 GB); raise only for larger files — 256 → ~2.5 TB, 1024 → ~10 TB. Range 5-5120." />
             </label>
             <input id="s3_part_size" type="number" bind:value={form.config.part_size_mb} placeholder="0 (64 MiB)" min="0" max="5120"
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
@@ -950,7 +950,7 @@
       <div>
         <label for="bandwidth_limit_mbps" class="block text-sm font-medium text-text-muted mb-1.5">
           Bandwidth limit (Mbps)
-          <Tooltip text="Cap upload/download throughput for this destination in megabits per second. 0 = unlimited. Useful for shared internet uplinks so backups don't saturate the line. Metadata operations (list/stat/test) are never throttled." />
+          <Tooltip text="Limits how much bandwidth this destination may use, in megabits per second, so backups don't saturate a shared internet line. Recommended: 0 (unlimited) on a dedicated link; set a cap if backups slow down other traffic." />
         </label>
         <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />

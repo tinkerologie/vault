@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.06.01] - 2026-06-08
+
+### Changed
+
+- **Renamed "Grandfather-Father-Son (GFS)" retention to "Long-Term Retention (LTR)"** across the UI, code, and docs (closes #125). LTR is the industry-standard enterprise term for keeping weekly/monthly/yearly recovery points (as used by Veeam, Druva, and others) and reads far more clearly than the legacy tape-rotation name. This is a **terminology-only** change — no database, API, or behaviour changes: the `keep_latest`/`keep_daily`/`keep_weekly`/`keep_monthly`/`keep_yearly` job fields and the `GET /jobs/{id}/retention-preview` endpoint are unchanged.
+- **Collapsible API reference** (closes #126). The API Endpoints list under Settings → Reference is now split into collapsible sections (Health & Realtime, Jobs, Storage Destinations, Deduplication, and so on), each showing its endpoint count and collapsed by default, so the reference stays tidy and easy to scan as the API grows.
+- **Clearer help tooltips.** Rewrote the tooltips for the more technical storage and settings options — WebDAV/S3 transfer tuning (chunk/part size, stall and request timeouts, path-style, bandwidth), dedup compaction threshold, database mode, and scheduled/backup verification — into plain language with a consistent _what it does → why it matters → recommended default_ structure. No behaviour change.
+
+### Fixed
+
+- **Changing the daemon port no longer silently breaks the web UI** (closes #124). Previously an invalid or already-in-use port was written straight to `vault.cfg` (the port field's `1024-65535` limit was enforced only client-side), the daemon failed to bind and exited, and the UI became unreachable with no feedback. The plugin's `apply.sh` now validates the port server-side — rejecting non-numeric or out-of-range values and resetting to the default `24085` — then verifies the daemon actually comes back up after the restart and prints a clear diagnostic (with the tail of the log) if it does not. `rc.vault` now re-checks the process for a few seconds after launch and dumps the last log lines on a failed start instead of leaving a stale PID file. The Settings page polls the daemon's real status after an Apply and shows a visible error (instead of only a transient progress frame) when the chosen port can't be bound.
+
 ## [2026.06.00] - 2026-06-07
 
 ### Fixed

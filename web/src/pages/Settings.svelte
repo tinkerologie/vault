@@ -854,7 +854,7 @@
       <!-- Dedup Compaction Threshold -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">Dedup Compaction <Tooltip text="Controls when mixed dedup packs are rewritten during 'Run cleanup'. Lower values compact more aggressively; 100 disables compaction entirely." /></h2>
+          <h2 class="text-base font-semibold text-text">Dedup Compaction <Tooltip text="With deduplication on, deleting backups leaves gaps inside storage files. 'Run cleanup' rewrites a file once this % of it is wasted space, reclaiming it. Recommended: 50. Lower reclaims sooner (more rewriting); 100 never compacts." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Threshold for repacking partially-dead dedup packs during cleanup.</p>
         </div>
         <div class="p-5 space-y-4">
@@ -1533,7 +1533,7 @@
           <h2 class="text-base font-semibold text-text">API Endpoints</h2>
           <p class="text-xs text-text-muted mt-1">All routes are prefixed with <code class="bg-surface px-1 rounded">/api/v1</code>. External clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header when an API key is configured and the request is not from localhost.</p>
         </div>
-        <div class="p-5 space-y-5">
+        <div class="px-5 py-2">
           {#each [
             { group: 'Health & Realtime', rows: [
               ['GET', '/health', 'Liveness check (mode + version)'],
@@ -1553,7 +1553,7 @@
               ['GET',    '/jobs/{id}/next-run', 'Next scheduled run'],
               ['GET',    '/jobs/{id}/history', 'Job run history'],
               ['GET',    '/jobs/{id}/restore-points', 'List restore points'],
-              ['GET',    '/jobs/{id}/retention-preview', 'Preview which restore points a GFS policy would keep/prune'],
+              ['GET',    '/jobs/{id}/retention-preview', 'Preview which restore points a Long-Term Retention (LTR) policy would keep/prune'],
               ['DELETE', '/jobs/{id}/restore-points/{rpid}', 'Delete a restore point'],
               ['GET',    '/jobs/{id}/restore-points/{rpid}/contents', 'Tar index sidecar contents for the file picker'],
               ['POST',   '/jobs/{id}/run', 'Run job now'],
@@ -1653,9 +1653,13 @@
               ['ANY', '/mcp', 'MCP server endpoint (Streamable HTTP)'],
             ]},
           ] as section (section.group)}
-            <div>
-              <h3 class="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">{section.group}</h3>
-              <div class="space-y-1.5 text-sm font-mono">
+            <details class="group border-b border-border/40 last:border-b-0">
+              <summary class="flex items-center gap-2 cursor-pointer select-none py-2.5 text-xs font-semibold uppercase tracking-wide text-text-muted hover:text-text">
+                <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                {section.group}
+                <span class="ml-1 font-normal normal-case text-text-dim">({section.rows.length})</span>
+              </summary>
+              <div class="space-y-1.5 text-sm font-mono pb-3 pl-6">
                 {#each section.rows as [method, path, desc] (`${method}:${path}`)}
                   <div class="flex items-center gap-3">
                     <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3.5rem] text-center
@@ -1669,7 +1673,7 @@
                   </div>
                 {/each}
               </div>
-            </div>
+            </details>
           {/each}
         </div>
       </div>
@@ -1688,7 +1692,7 @@
         </div>
         <div class="divide-y divide-border">
           <div class="px-5 py-3 flex items-center justify-between">
-            <span class="text-sm text-text-muted">Mode <Tooltip text="Hybrid: runs in RAM for speed, snapshots to SSD periodically. Direct SSD: writes every change to SSD. Legacy USB: writes to the USB flash drive (not recommended)." /></span>
+            <span class="text-sm text-text-muted">Mode <Tooltip text="Where Vault keeps its working database. Hybrid: in RAM for speed, saved to SSD periodically (recommended). Direct SSD: every change written straight to SSD. Legacy USB: writes to the boot flash drive — wears it out, not recommended." /></span>
             <span class="text-sm font-medium text-text">
               {#if databaseInfo.mode === 'hybrid'}
                 Hybrid — runs in memory for speed, saves to SSD periodically

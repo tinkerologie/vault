@@ -24,8 +24,8 @@ type Job struct {
 	StorageDestID     int64  `json:"storage_dest_id"`
 	SourceID          int64  `json:"source_id"`
 	DeferRemoteUpload bool   `json:"defer_remote_upload"`
-	// GFS (grandfather-father-son) retention. Each defaults to 0 (disabled).
-	// If any of the five is > 0 the runner uses GFS classification and
+	// Long-Term Retention (LTR) buckets. Each defaults to 0 (disabled).
+	// If any of the five is > 0 the runner uses LTR classification and
 	// ignores RetentionCount / RetentionDays.
 	KeepLatest  int `json:"keep_latest"`
 	KeepDaily   int `json:"keep_daily"`
