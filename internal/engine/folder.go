@@ -278,7 +278,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 		return dedup.ID{}, err
 	}
 	if progress != nil {
-		progress(item.Name, 100, fmt.Sprintf("manifest written (%d entries, %d bytes)", len(m.Files), totalBytes))
+		progress(item.Name, 100, fmt.Sprintf("manifest written (%d entries, %s)", len(m.Files), humanizeBytes(float64(totalBytes))))
 	}
 	return manifestID, nil
 }

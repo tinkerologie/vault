@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { api } from '../lib/api.js'
   import { formatBytes, formatDate } from '../lib/utils.js'
+  import { copyText } from '../lib/clipboard.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
@@ -592,10 +593,9 @@
 
   async function copyApiKey() {
     if (apiKeyRevealed) {
-      try {
-        await navigator.clipboard.writeText(apiKeyRevealed)
+      if (await copyText(apiKeyRevealed)) {
         showToast('API key copied to clipboard', 'success')
-      } catch {
+      } else {
         showToast('Failed to copy — clipboard access denied', 'error')
       }
     }

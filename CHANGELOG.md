@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Copy API key works on plain-HTTP (non-secure) origins** (closes #129). The **Copy** button under Settings → API Key failed with `Failed to copy — clipboard access denied` in Safari and Chrome because the modern Clipboard API is only available in secure (HTTPS) contexts, and the Unraid web GUI is typically served over plain HTTP on the LAN. Copying now falls back to the legacy `execCommand('copy')` path via a shared clipboard helper when the Clipboard API is unavailable or denied. The Activity Log's per-entry copy button uses the same fallback.
+- **Changing the Bind Address (or Port) now reliably restarts the daemon when Apply is clicked** (closes #130). The plugin's `apply.sh` only restarted the daemon when the PID file was present and valid — a stale or missing PID file silently skipped the restart, leaving the daemon on the old address until a manual restart. It now falls back to `pidof` (the same process lookup `rc.vault` uses), prints an explicit `Restarting Vault daemon...` line in the Apply progress window, and probes the post-restart health check against the actual configured bind address (previously hardcoded to `127.0.0.1`, which could not confirm a daemon bound to a specific NIC address).
+
+### Changed
+
+- **VM and folder backup progress now shows human-readable sizes** (closes #133). Live progress messages such as `backup in progress: 6453198848/34359738368 bytes` now read `backup in progress: 6 GB/32 GB`. The same formatting applies to VM disk restore, NVRAM copy, stale block-job wait, and the folder-backup manifest completion message.
+- **Anomaly detail values are now human-friendly** (closes #134). Anomaly details stored and shown in notifications, the API, and the UI previously carried full float precision (e.g. `Z Score: -16.76413455138884`, `Growth Factor: 0.5766537578335602`). New anomalies are rounded at the source (z-score and growth factor to 2 decimals, capacity ETA to 1 decimal, slope/intercept to whole bytes, free-space percentage to 1 decimal), and the Activity Log formats these fields at display time so entries recorded before this change read cleanly too.
+
 ## [2026.06.01] - 2026-06-08
 
 ### Changed

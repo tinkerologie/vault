@@ -3,6 +3,7 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { formatDate, relTime, formatBytes } from '../lib/utils.js'
+  import { copyText } from '../lib/clipboard.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getLiveMode } from '../lib/runtime-config.js'
   import Spinner from '../components/Spinner.svelte'
@@ -160,6 +161,16 @@
     if (key === 'size_bytes') return formatBytes(value)
     if (key === 'duration_seconds') return formatDuration(Number(value))
     if (key === 'duration_ms') return formatDuration(Number(value) / 1000)
+    // Anomaly detail floats: new entries are rounded at the source (issue
+    // #134), but entries stored before that fix carry full float64 precision.
+    if (key === 'z_score' || key === 'growth_factor') return Number(value).toFixed(2)
+    if (key === 'eta_days') return `${Number(value).toFixed(1)} days`
+    if (key === 'pct_free') return `${Number(value).toFixed(1)}%`
+    if (key === 'free_bytes' || key === 'total_bytes') return formatBytes(value)
+    if (key === 'slope_bytes_per_day') {
+      const n = Number(value)
+      return `${n < 0 ? '-' : ''}${formatBytes(Math.abs(n))}/day`
+    }
     if (key === 'backup_type') return String(value).charAt(0).toUpperCase() + String(value).slice(1)
     if (key === 'containers_checked') return `${value} checked`
     if (key === 'containers_healthy') return `${value} healthy`
@@ -174,11 +185,10 @@
 
   async function copyEntry(entry) {
     const text = `[${entry.level?.toUpperCase()}] [${entry.category}] ${entry.message}${entry.details ? '\n' + entry.details : ''}`
-    try {
-      await navigator.clipboard.writeText(text)
+    if (await copyText(text)) {
       copiedId = entry.id
       setTimeout(() => { copiedId = null }, 2000)
-    } catch { /* ignore */ }
+    }
   }
 
   function exportLogs() {

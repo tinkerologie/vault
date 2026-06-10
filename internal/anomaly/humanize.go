@@ -36,6 +36,18 @@ func humanizeBytes(b float64) string {
 	return s + " " + units[i]
 }
 
+// roundTo rounds v to the given number of decimal places. Non-finite values
+// (NaN/Inf) pass through unchanged — callers guard against them separately and
+// json.Marshal would reject them either way. Used to keep Details JSON values
+// human-friendly (z_score -16.76 instead of -16.76413455138884, issue #134).
+func roundTo(v float64, decimals int) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return v
+	}
+	multiplier := math.Pow(10, float64(decimals))
+	return math.Round(v*multiplier) / multiplier
+}
+
 // humanizeDuration renders a duration in seconds as an adaptive, human-friendly
 // string, matching the web UI's formatDuration helper: "45s", "5m 26s",
 // "2h 13m". Used in anomaly summary strings so operators see "5m 26s" instead
