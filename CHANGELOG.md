@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.06.02] - 2026-06-10
+
 ### Fixed
 
 - **Copy API key works on plain-HTTP (non-secure) origins** (closes #129). The **Copy** button under Settings → API Key failed with `Failed to copy — clipboard access denied` in Safari and Chrome because the modern Clipboard API is only available in secure (HTTPS) contexts, and the Unraid web GUI is typically served over plain HTTP on the LAN. Copying now falls back to the legacy `execCommand('copy')` path via a shared clipboard helper when the Clipboard API is unavailable or denied. The Activity Log's per-entry copy button uses the same fallback.
