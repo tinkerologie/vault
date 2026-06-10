@@ -220,7 +220,9 @@ func olsFit(xs, ys []float64) (slope, intercept float64) {
 	return slope, intercept
 }
 
-// buildCapacityDetails marshals the OLS details into a JSON string.
+// buildCapacityDetails marshals the OLS details into a JSON string. Floats are
+// rounded (slope/intercept to whole bytes, ETA to 1 decimal) so notifications
+// and the UI show human-friendly values (issue #134).
 func buildCapacityDetails(slopeBytesPerDay, etaDays float64, windowSize int, intercept float64) string {
 	type payload struct {
 		SlopeBytesPerDay float64 `json:"slope_bytes_per_day"`
@@ -229,10 +231,10 @@ func buildCapacityDetails(slopeBytesPerDay, etaDays float64, windowSize int, int
 		Intercept        float64 `json:"intercept"`
 	}
 	b, err := json.Marshal(payload{
-		SlopeBytesPerDay: slopeBytesPerDay,
-		EtaDays:          etaDays,
+		SlopeBytesPerDay: roundTo(slopeBytesPerDay, 0),
+		EtaDays:          roundTo(etaDays, 1),
 		WindowSize:       windowSize,
-		Intercept:        intercept,
+		Intercept:        roundTo(intercept, 0),
 	})
 	if err != nil {
 		log.Printf("WARN anomaly: buildCapacityDetails marshal: %v", err)
@@ -251,7 +253,7 @@ func buildLowFreeDetails(freeBytes, totalBytes, pctFree float64) string {
 	b, err := json.Marshal(payload{
 		FreeBytes:  freeBytes,
 		TotalBytes: totalBytes,
-		PctFree:    pctFree,
+		PctFree:    roundTo(pctFree, 1),
 	})
 	if err != nil {
 		log.Printf("WARN anomaly: buildLowFreeDetails marshal: %v", err)

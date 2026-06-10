@@ -168,6 +168,8 @@ func higherSeverity(a, b Severity) Severity {
 // 0 when mad == 0 (rule A was disabled). Callers must never pass a non-finite
 // z (Inf/NaN) — json.Marshal cannot encode those; if it ever errors we log a
 // WARN and fall back to "{}" so Details is always valid non-empty JSON.
+// Floats are rounded to 2 decimals so notifications and the UI show
+// human-friendly values (issue #134).
 func buildDetails(zScore, growthFactor float64, windowSize int) string {
 	type detailsPayload struct {
 		ZScore       float64 `json:"z_score"`
@@ -175,8 +177,8 @@ func buildDetails(zScore, growthFactor float64, windowSize int) string {
 		WindowSize   int     `json:"window_size"`
 	}
 	b, err := json.Marshal(detailsPayload{
-		ZScore:       zScore,
-		GrowthFactor: growthFactor,
+		ZScore:       roundTo(zScore, 2),
+		GrowthFactor: roundTo(growthFactor, 2),
 		WindowSize:   windowSize,
 	})
 	if err != nil {

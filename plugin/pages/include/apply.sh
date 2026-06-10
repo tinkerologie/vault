@@ -12,6 +12,7 @@ LOG="/var/log/vault.log"
 DEFAULT_PORT=24085
 
 PORT="$DEFAULT_PORT"
+BIND_ADDRESS=""
 
 # Safely read only the keys we care about from config (avoid sourcing arbitrary
 # code).
@@ -28,6 +29,7 @@ if [ -f "$CONFIG" ]; then
                     echo "Error: failed to update BIND_ADDRESS in $CONFIG" >&2
                     exit 1
                 fi
+                BIND_ADDRESS="127.0.0.1"
             fi
             ;;
     esac
@@ -52,16 +54,50 @@ if [ -f "$CONFIG" ]; then
     fi
 fi
 
+# Probe host for the post-restart health check. The probe must target the
+# address the daemon actually binds to — a hardcoded loopback probe fails when
+# a specific NIC address is selected (issue #130). Wildcards are reachable via
+# loopback; IPv6 literals need brackets in a URL.
+PROBE_HOST="127.0.0.1"
+case "${BIND_ADDRESS:-}" in
+    0.0.0.0|::|"") PROBE_HOST="127.0.0.1" ;;
+    *:*)           PROBE_HOST="[${BIND_ADDRESS}]" ;;
+    *)             PROBE_HOST="$BIND_ADDRESS" ;;
+esac
+
+# Resolve the running daemon's PID. Mirrors rc.vault's resolve_pid: the PID
+# file is authoritative, but if it is stale or missing fall back to pidof so a
+# running daemon is still detected. Before this fallback a stale PID file made
+# the restart silently skip, leaving the daemon on the old bind address/port
+# until a manual restart (issue #130).
+resolve_pid() {
+    local pid=""
+    if [ -f "$PIDFILE" ]; then
+        pid="$(cat "$PIDFILE" 2>/dev/null)"
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            printf '%s\n' "$pid"
+            return 0
+        fi
+    fi
+    pid="$(pidof vault 2>/dev/null | awk '{print $1}')"
+    if [ -n "$pid" ]; then
+        printf '%s\n' "$pid"
+        return 0
+    fi
+    return 1
+}
+
 # Only restart if the daemon is currently running.
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+if resolve_pid >/dev/null; then
+    echo "Restarting Vault daemon to apply configuration (bind ${BIND_ADDRESS:-127.0.0.1}, port ${PORT})..."
     $RC restart
 
     # Verify the daemon actually came back up. The most common remaining
     # failure cause is a valid-but-already-in-use port: rc.vault removes the
     # PID file when the process dies, so a dead process is a definitive
     # failure signal. A process that stays alive but that we cannot reach over
-    # HTTP is treated as success — it may be bound to a non-loopback address
-    # this loopback probe cannot hit.
+    # HTTP is treated as success — the probe may be blocked even though the
+    # daemon is healthy.
     attempts=6
     daemon_up=1
     while [ "$attempts" -gt 0 ]; do
@@ -71,7 +107,7 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
             break
         fi
         if command -v curl >/dev/null 2>&1 && \
-           curl -fsS -m 2 -o /dev/null "http://127.0.0.1:${PORT}/api/v1/health" 2>/dev/null; then
+           curl -fsS -m 2 -o /dev/null "http://${PROBE_HOST}:${PORT}/api/v1/health" 2>/dev/null; then
             daemon_up=1
             break
         fi
@@ -80,10 +116,12 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     done
 
     if [ "$daemon_up" -eq 1 ]; then
-        echo "Vault daemon restarted successfully on port ${PORT}."
+        echo "Vault daemon restarted successfully (bind ${BIND_ADDRESS:-127.0.0.1}, port ${PORT})."
     else
         echo "ERROR: Vault daemon did not come back up after the configuration change."
         echo "Port ${PORT} may already be in use by another service. Last log lines:"
         tail -n 10 "$LOG" 2>/dev/null
     fi
+else
+    echo "Vault daemon is not running; configuration saved. It will apply on the next start."
 fi

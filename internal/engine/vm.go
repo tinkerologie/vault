@@ -269,7 +269,7 @@ func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, p
 			progress(item.Name, 90, "copying NVRAM")
 			nvramDest := filepath.Join(destDir, filepath.Base(nvramPath))
 			if err := copyFileWithProgress(nvramPath, nvramDest, func(copied int64) {
-				progress(item.Name, 92, fmt.Sprintf("copying NVRAM: %d bytes", copied))
+				progress(item.Name, 92, fmt.Sprintf("copying NVRAM: %s", humanizeBytes(float64(copied))))
 			}); err != nil {
 				return nil, fmt.Errorf("copying NVRAM: %w", err)
 			}
@@ -486,7 +486,7 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 			return fmt.Errorf("creating dir for disk %s: %w", targetPath, err)
 		}
 		if err := copyFileWithProgress(srcFile, targetPath, func(copied int64) {
-			progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d: %d bytes", i+1, totalDisks, copied))
+			progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d: %s", i+1, totalDisks, humanizeBytes(float64(copied))))
 		}); err != nil {
 			return fmt.Errorf("restoring disk %s: %w", targetPath, err)
 		}
@@ -911,7 +911,7 @@ func backupProgressMessage(params []libvirt.TypedParam) string {
 	processed, okProcessed := typedParamUint64(params, "fileprocessed", "diskprocessed", "dataprocessed")
 	total, okTotal := typedParamUint64(params, "filetotal", "disktotal", "datatotal")
 	if okProcessed && okTotal && total > 0 {
-		return fmt.Sprintf("backup in progress: %d/%d bytes", processed, total)
+		return fmt.Sprintf("backup in progress: %s/%s", humanizeBytes(float64(processed)), humanizeBytes(float64(total)))
 	}
 
 	return "backup in progress"
@@ -1063,7 +1063,7 @@ func (h *VMHandler) waitForDomainBlockJobReady(name string, dom libvirt.Domain, 
 			return nil
 		}
 
-		progress(name, 13, fmt.Sprintf("waiting for stale block job on %s: %d/%d bytes", target, cur, end))
+		progress(name, 13, fmt.Sprintf("waiting for stale block job on %s: %s/%s", target, humanizeBytes(float64(cur)), humanizeBytes(float64(end))))
 		if time.Now().After(deadline) {
 			return fmt.Errorf("waiting for stale block job on %s: timed out after %s", target, timeout)
 		}
