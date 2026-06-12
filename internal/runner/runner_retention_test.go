@@ -67,7 +67,7 @@ func TestEnforceRetentionKeepCountTrimsOlder(t *testing.T) {
 		}
 	}
 
-	r.enforceRetention(dest, jobID, 2, 0)
+	r.enforceRetention(t.Context(), dest, jobID, 2, 0)
 
 	remaining, err := database.ListRestorePoints(jobID)
 	if err != nil {
@@ -94,7 +94,7 @@ func TestEnforceRetentionKeepDaysCutoff(t *testing.T) {
 	createRestorePointWithAge(t, database, jobID, "full", "ret-days-job/old1", 0, 30*24*time.Hour)
 	createRestorePointWithAge(t, database, jobID, "full", "ret-days-job/old2", 0, 60*24*time.Hour)
 
-	r.enforceRetention(dest, jobID, 0, 7) // keep 7 days
+	r.enforceRetention(t.Context(), dest, jobID, 0, 7) // keep 7 days
 
 	remaining, _ := database.ListRestorePoints(jobID)
 	if len(remaining) != 1 {
@@ -118,7 +118,7 @@ func TestEnforceRetentionProtectsChainAncestors(t *testing.T) {
 
 	// keepCount=1 → only the incremental is directly protected, but the full
 	// is its ancestor so should survive.
-	r.enforceRetention(dest, jobID, 1, 0)
+	r.enforceRetention(t.Context(), dest, jobID, 1, 0)
 
 	remaining, _ := database.ListRestorePoints(jobID)
 	if len(remaining) != 2 {
@@ -144,7 +144,7 @@ func TestEnforceRetentionLTRKeepsLatest(t *testing.T) {
 			"ltr-job/run_"+time.Now().Add(-ago).Format("20060102"), 0, ago)
 	}
 
-	r.enforceRetentionLTR(dest, jobID, LTRPolicy{KeepLatest: 2})
+	r.enforceRetentionLTR(t.Context(), dest, jobID, LTRPolicy{KeepLatest: 2})
 
 	remaining, _ := database.ListRestorePoints(jobID)
 	if len(remaining) != 2 {

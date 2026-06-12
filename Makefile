@@ -83,6 +83,7 @@ package: release
 	cp plugin/rc.vault $(BUILD_DIR)/pkg/etc/rc.d/rc.vault
 	cp -r plugin/pages/*.page $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cp -r plugin/pages/include $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
+	cp plugin/README.md $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/README.md
 	cp -r web/dist/. $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui/
 	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/

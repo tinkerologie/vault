@@ -26,7 +26,7 @@ const dbBackupBaseDir = "_vault"
 //
 // All failures are logged but never propagated — DB backup is
 // best-effort and must never fail the user's backup job.
-func (r *Runner) backupDatabase(jobDest db.StorageDestination) {
+func (r *Runner) backupDatabase(ctx context.Context, jobDest db.StorageDestination) {
 	dbPath := r.db.Path()
 	if dbPath == "" || dbPath == ":memory:" {
 		return
@@ -51,7 +51,7 @@ func (r *Runner) backupDatabase(jobDest db.StorageDestination) {
 	seen := make(map[int64]struct{})
 
 	// (a) Always write to the job's own destination.
-	r.backupDatabaseToDest(jobDest, dbPath, passphrase)
+	r.backupDatabaseToDest(ctx, jobDest, dbPath, passphrase)
 	seen[jobDest.ID] = struct{}{}
 
 	// (b) Fan out to opted-in destinations.
@@ -61,10 +61,14 @@ func (r *Runner) backupDatabase(jobDest db.StorageDestination) {
 		return
 	}
 	for _, d := range extras {
+		if ctx.Err() != nil {
+			log.Printf("db_backup: cancelled before destination %q; skipping remaining fan-out", d.Name)
+			return
+		}
 		if _, dup := seen[d.ID]; dup {
 			continue
 		}
-		r.backupDatabaseToDest(d, dbPath, passphrase)
+		r.backupDatabaseToDest(ctx, d, dbPath, passphrase)
 		seen[d.ID] = struct{}{}
 	}
 }
@@ -74,13 +78,17 @@ func (r *Runner) backupDatabase(jobDest db.StorageDestination) {
 //
 // Two paths are written: a timestamped historical copy and a stable
 // "latest" pointer. Both are encrypted when passphrase is non-empty.
-func (r *Runner) backupDatabaseToDest(dest db.StorageDestination, dbPath, passphrase string) {
+func (r *Runner) backupDatabaseToDest(ctx context.Context, dest db.StorageDestination, dbPath, passphrase string) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		log.Printf("db_backup: adapter for %q: %v", dest.Name, err)
 		return
 	}
 	defer storage.CloseAdapter(adapter)
+	// Closing the adapter on cancellation aborts an in-flight write so a
+	// timed-out finalization step's goroutine exits instead of leaking.
+	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
+	defer stopOnCancel()
 
 	stamp := time.Now().UTC().Format("2006-01-02T15-04-05")
 	ext := ".db"

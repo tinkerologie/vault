@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	neturl "net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -96,6 +98,10 @@ type S3Adapter struct {
 	partSizeBytes    int64
 	requestChecksum  aws.RequestChecksumCalculation
 	responseChecksum aws.ResponseChecksumValidation
+	// sanitizedSegs tracks which original→sanitized key-segment mappings have
+	// already been logged by this adapter instance, so the rename is visible
+	// in the log without repeating for every object.
+	sanitizedSegs sync.Map
 }
 
 // NewS3Adapter validates the config and constructs an S3 client.
@@ -379,12 +385,30 @@ func (a *S3Adapter) keyFor(p string, allowRoot bool) (string, error) {
 			return "", fmt.Errorf("s3: invalid path segment %q", seg)
 		}
 		segments[i] = sanitizeS3KeySegment(seg)
+		if segments[i] != seg {
+			a.logSanitizedSegment(seg, segments[i])
+		}
 	}
 	clean = strings.Join(segments, "/")
 	if a.config.BasePath != "" {
-		clean = path.Join(sanitizeS3KeySegment(a.config.BasePath), clean)
+		sanBase := sanitizeS3KeySegment(a.config.BasePath)
+		if sanBase != a.config.BasePath {
+			a.logSanitizedSegment(a.config.BasePath, sanBase)
+		}
+		clean = path.Join(sanBase, clean)
 	}
 	return clean, nil
+}
+
+// logSanitizedSegment logs each distinct original→sanitized key-segment
+// mapping once per adapter instance, so an operator can see that e.g. job
+// "QA S3 verify" is stored under "QA_S3_verify" on the bucket — previously
+// the substitution was completely silent and only discoverable by browsing
+// the bucket (follow-up to the #95/#100 signing fix).
+func (a *S3Adapter) logSanitizedSegment(orig, sanitized string) {
+	if _, loaded := a.sanitizedSegs.LoadOrStore(orig, struct{}{}); !loaded {
+		log.Printf("s3: key segment %q is stored as %q on the bucket (URL-reserved characters are replaced so S3-compatible gateways sign requests consistently)", orig, sanitized)
+	}
 }
 
 // sanitizeS3KeySegment replaces characters that trigger the SDK signing

@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -195,6 +197,42 @@ func TestS3KeyForRejectsTraversal(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "vault/") {
 		t.Errorf("expected base prefix in key, got %q", got)
+	}
+}
+
+// TestS3KeyForLogsSanitizedSegmentsOnce — when a key segment is rewritten
+// for gateway-signing compatibility, the original→stored mapping must be
+// logged exactly once per adapter instance (previously the substitution was
+// completely silent), and unchanged segments must not be logged.
+//
+// Deliberately not t.Parallel(): it captures the global log writer.
+func TestS3KeyForLogsSanitizedSegmentsOnce(t *testing.T) {
+	a, err := NewS3Adapter(S3Config{Bucket: "b", Region: "us-east-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+
+	for range 3 {
+		key, err := a.keyFor("QA S3 sanitize-log/data.tar", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key != "QA_S3_sanitize-log/data.tar" {
+			t.Fatalf("keyFor = %q, want sanitized key", key)
+		}
+	}
+
+	out := buf.String()
+	if got := strings.Count(out, `"QA S3 sanitize-log" is stored as "QA_S3_sanitize-log"`); got != 1 {
+		t.Fatalf("sanitization logged %d times, want exactly once\nlog output: %s", got, out)
+	}
+	if strings.Contains(out, `"data.tar"`) {
+		t.Fatalf("unchanged segment was logged:\n%s", out)
 	}
 }
 

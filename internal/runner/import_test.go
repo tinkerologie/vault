@@ -731,3 +731,41 @@ func TestCleanupJobStorage(t *testing.T) {
 		t.Error("top-level job directory should have been deleted")
 	}
 }
+
+// TestImportBackupsRejectsNewerManifestVersion — a manifest written by a
+// newer Vault (version > manifestVersionCurrent) must be skipped with a
+// clear log line instead of being silently mis-parsed as a legacy manifest,
+// while current-version manifests continue to import.
+func TestImportBackupsRejectsNewerManifestVersion(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	dest := createLocalDest(t, database, storageDir)
+
+	backups := []map[string]any{
+		{
+			"version":      float64(manifestVersionCurrent + 1),
+			"job_name":     "future-job",
+			"storage_path": "future-job/1_2026-01-15_020000",
+			"backup_type":  "full",
+		},
+		{
+			"version":      float64(manifestVersionCurrent),
+			"job_name":     "current-job",
+			"storage_path": "current-job/1_2026-01-15_020000",
+			"backup_type":  "full",
+		},
+	}
+	imported, err := r.ImportBackups(dest.ID, backups)
+	if err != nil {
+		t.Fatalf("ImportBackups: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("imported = %d, want 1 (too-new manifest skipped, current one imported)", imported)
+	}
+	if _, err := database.GetJobByName("future-job"); err == nil {
+		t.Fatal("job was created from a too-new manifest")
+	}
+	if _, err := database.GetJobByName("current-job"); err != nil {
+		t.Fatalf("current-version manifest was not imported: %v", err)
+	}
+}

@@ -442,19 +442,24 @@ func (r *Runner) SetEvaluator(e anomalyEnqueuer) {
 // runFinalizationStep runs a post-backup finalization step with a hard
 // timeout so a single wedged step (e.g. a hung USB flush, dead remote
 // storage, or stuck notify helper) cannot hold the run-slot lock — and
-// thus block every future job — indefinitely. On timeout it logs a clear
-// ERROR naming the step and returns; the step's goroutine is abandoned
-// (the underlying op may still complete or leak, but the runner proceeds
-// and releases the slot). Components used by steps (SnapshotManager via its
-// own mutex, the DB pool, per-job retention) are safe for this.
-func (r *Runner) runFinalizationStep(name string, jobID, runID int64, timeout time.Duration, fn func()) {
+// thus block every future job — indefinitely. On timeout it cancels the
+// context handed to the step — steps that hold a storage adapter abort
+// their in-flight I/O via context.AfterFunc(ctx, CloseAdapter) and the
+// sweep loops check ctx between items, so the goroutine exits instead of
+// leaking — logs a clear ERROR naming the step, and returns without
+// waiting further. Components used by steps (SnapshotManager via its own
+// mutex, the DB pool, per-job retention) are safe for this.
+func (r *Runner) runFinalizationStep(name string, jobID, runID int64, timeout time.Duration, fn func(ctx context.Context)) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan struct{})
-	go func() { defer close(done); fn() }()
+	go func() { defer close(done); fn(ctx) }()
 	select {
 	case <-done:
 		return
 	case <-time.After(timeout):
-		log.Printf("ERROR runner: finalization step %q for job %d run %d exceeded %s; abandoning and continuing so the run slot is not held indefinitely (issue #112)", name, jobID, runID, timeout)
+		cancel()
+		log.Printf("ERROR runner: finalization step %q for job %d run %d exceeded %s; cancelling the step and continuing so the run slot is not held indefinitely (issue #112)", name, jobID, runID, timeout)
 	}
 }
 
@@ -1538,16 +1543,16 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		// persisted (CreateRestorePoint above), so a bounded/abandoned manifest
 		// write only degrades out-of-band recovery, not normal DB-driven restore.
 		manifestDest := dest // stable copy for closure
-		r.runFinalizationStep("manifest", jobID, runID, finalizeManifestTimeout, func() {
-			r.writeManifest(manifestDest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, itemManifests, timestamp)
+		r.runFinalizationStep("manifest", jobID, runID, finalizeManifestTimeout, func(stepCtx context.Context) {
+			r.writeManifest(stepCtx, manifestDest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, itemManifests, timestamp)
 		})
 
 		// Auto-backup the SQLite database to a centralised storage location.
 		// Wrapped with a hard timeout (Fix #112) so a stuck remote write cannot
 		// hold the run-slot mutex indefinitely.
 		localDest := dest // stable copy for closure
-		r.runFinalizationStep("database-backup", jobID, runID, finalizeDBBackupTimeout, func() {
-			r.backupDatabase(localDest)
+		r.runFinalizationStep("database-backup", jobID, runID, finalizeDBBackupTimeout, func(stepCtx context.Context) {
+			r.backupDatabase(stepCtx, localDest)
 		})
 
 		// Persist database to cache drive and USB backup after successful backup.
@@ -1555,7 +1560,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		// directly without re-locking. Wrapped with a hard timeout (Fix #112).
 		sm := r.snapshotManager
 		if sm != nil {
-			r.runFinalizationStep("snapshot-usb", jobID, runID, finalizeSnapshotTimeout, func() {
+			// Local file I/O only — no cancellable seam, so the ctx is unused.
+			r.runFinalizationStep("snapshot-usb", jobID, runID, finalizeSnapshotTimeout, func(context.Context) {
 				if err := sm.SaveSnapshotAndUSBBackup(); err != nil {
 					log.Printf("runner: snapshot save error: %v", err)
 				}
@@ -1568,16 +1574,16 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		// Wrapped with a hard timeout (Fix #112).
 		localDest := dest
 		localLTR := ltr
-		r.runFinalizationStep("retention-ltr", jobID, runID, finalizeRetentionTimeout, func() {
-			r.enforceRetentionLTR(localDest, jobID, localLTR)
+		r.runFinalizationStep("retention-ltr", jobID, runID, finalizeRetentionTimeout, func(stepCtx context.Context) {
+			r.enforceRetentionLTR(stepCtx, localDest, jobID, localLTR)
 		})
 	} else if job.RetentionCount > 0 || job.RetentionDays > 0 {
 		// Wrapped with a hard timeout (Fix #112).
 		localDest := dest
 		keepCount := job.RetentionCount
 		keepDays := job.RetentionDays
-		r.runFinalizationStep("retention", jobID, runID, finalizeRetentionTimeout, func() {
-			r.enforceRetention(localDest, jobID, keepCount, keepDays)
+		r.runFinalizationStep("retention", jobID, runID, finalizeRetentionTimeout, func(stepCtx context.Context) {
+			r.enforceRetention(stepCtx, localDest, jobID, keepCount, keepDays)
 		})
 	}
 
@@ -1647,7 +1653,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	localSize := totalSize
 	localDurationSec := int(time.Since(jobStart).Seconds())
 	localFailedNames := failedNames
-	r.runFinalizationStep("notify", jobID, runID, finalizeNotifyTimeout, func() {
+	// notify.Send is already bounded internally (30s exec timeout), so the
+	// step context is unused here.
+	r.runFinalizationStep("notify", jobID, runID, finalizeNotifyTimeout, func(context.Context) {
 		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDurationSec, localFailedNames)
 	})
 }
@@ -3434,7 +3442,7 @@ func (r *Runner) ResolvePassphrase() string {
 // destination has dedup enabled; pass nil/empty for non-dedup jobs. Without
 // it, restoring an imported dedup backup on another instance can't resolve
 // chunks because the manifest-ID linkage lives only in the local DB.
-func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job db.Job, items []db.JobItem, runID int64, backupType string, itemsDone, itemsFailed int, totalSize int64, itemChecksums map[string]map[string]string, itemManifests map[string]string, timestamp string) {
+func (r *Runner) writeManifest(ctx context.Context, dest db.StorageDestination, basePath string, job db.Job, items []db.JobItem, runID int64, backupType string, itemsDone, itemsFailed int, totalSize int64, itemChecksums map[string]map[string]string, itemManifests map[string]string, timestamp string) {
 	// Serialize items so a future import can recreate JobItems with the
 	// correct type, name, and per-item settings (e.g. folder path,
 	// container exclude_paths, ZFS dataset). Without this, importing a
@@ -3454,7 +3462,7 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 	}
 
 	manifest := map[string]any{
-		"version":           2,
+		"version":           manifestVersionCurrent,
 		"job_name":          job.Name,
 		"job_id":            job.ID,
 		"run_id":            runID,
@@ -3495,6 +3503,10 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 		return
 	}
 	defer storage.CloseAdapter(adapter)
+	// Closing the adapter on cancellation aborts an in-flight write so a
+	// timed-out finalization step's goroutine exits instead of leaking.
+	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
+	defer stopOnCancel()
 
 	manifestPath := filepath.Join(basePath, "manifest.json")
 	if err := adapter.Write(manifestPath, strings.NewReader(string(data))); err != nil {
@@ -3506,12 +3518,14 @@ func (r *Runner) writeManifest(dest db.StorageDestination, basePath string, job 
 // long-term retention policy. Chain-ancestor protection mirrors the
 // classic enforceRetention path: any parent restore point still required by
 // a kept incremental/differential survives the sweep.
-func (r *Runner) enforceRetentionLTR(dest db.StorageDestination, jobID int64, policy LTRPolicy) {
+func (r *Runner) enforceRetentionLTR(ctx context.Context, dest db.StorageDestination, jobID int64, policy LTRPolicy) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		log.Printf("runner: failed to create adapter for LTR retention cleanup: %v", err)
 	}
 	defer storage.CloseAdapter(adapter)
+	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
+	defer stopOnCancel()
 
 	allRestorePoints, err := r.db.ListRestorePoints(jobID)
 	if err != nil {
@@ -3524,6 +3538,10 @@ func (r *Runner) enforceRetentionLTR(dest db.StorageDestination, jobID int64, po
 		jobID, len(protected), len(allRestorePoints),
 		policy.KeepLatest, policy.KeepDaily, policy.KeepWeekly, policy.KeepMonthly, policy.KeepYearly)
 	for _, rp := range allRestorePoints {
+		if ctx.Err() != nil {
+			log.Printf("runner: LTR retention sweep for job %d cancelled; remaining restore points untouched until the next run", jobID)
+			return
+		}
 		if _, ok := protected[rp.ID]; ok {
 			continue
 		}
@@ -3541,12 +3559,14 @@ func (r *Runner) enforceRetentionLTR(dest db.StorageDestination, jobID int64, po
 // It handles both count-based and time-based (days) retention. Count-based
 // retention runs first, then time-based cleanup removes any remaining
 // restore points older than the specified days.
-func (r *Runner) enforceRetention(dest db.StorageDestination, jobID int64, keepCount, keepDays int) {
+func (r *Runner) enforceRetention(ctx context.Context, dest db.StorageDestination, jobID int64, keepCount, keepDays int) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		log.Printf("runner: failed to create adapter for retention cleanup: %v", err)
 	}
 	defer storage.CloseAdapter(adapter)
+	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
+	defer stopOnCancel()
 
 	allRestorePoints, err := r.db.ListRestorePoints(jobID)
 	if err != nil {
@@ -3556,6 +3576,10 @@ func (r *Runner) enforceRetention(dest db.StorageDestination, jobID int64, keepC
 
 	protected := protectedRestorePointIDs(allRestorePoints, keepCount, keepDays, time.Now())
 	for _, rp := range allRestorePoints {
+		if ctx.Err() != nil {
+			log.Printf("runner: retention sweep for job %d cancelled; remaining restore points untouched until the next run", jobID)
+			return
+		}
 		if _, ok := protected[rp.ID]; ok {
 			continue
 		}
@@ -3814,6 +3838,20 @@ func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 	return nil
 }
 
+// manifestVersionCurrent is the manifest.json schema version written by
+// writeManifest and the highest version this daemon knows how to import.
+// Manifests with a higher version (written by a newer Vault) are skipped
+// with a clear log line instead of being silently mis-parsed as legacy.
+const manifestVersionCurrent = 2
+
+// manifestVersionTooNew reports whether a discovered manifest declares a
+// schema version newer than this daemon supports. A missing or non-numeric
+// version means a legacy (v1) manifest and is always accepted.
+func manifestVersionTooNew(m map[string]any) (int, bool) {
+	v, ok := m["version"].(float64)
+	return int(v), ok && int(v) > manifestVersionCurrent
+}
+
 // ScanStorageManifests scans a storage destination for backup manifests
 // and returns metadata about each discovered backup run.
 func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]any, error) {
@@ -3857,6 +3895,10 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]
 			}
 			var manifest map[string]any
 			if err := json.Unmarshal(data, &manifest); err != nil {
+				continue
+			}
+			if v, tooNew := manifestVersionTooNew(manifest); tooNew {
+				log.Printf("runner: scan: skipping %s: manifest version %d is newer than this daemon supports (max %d) — upgrade Vault to import this backup", manifestPath, v, manifestVersionCurrent)
 				continue
 			}
 			// Add the storage path so the import handler knows where this backup lives.
@@ -3988,6 +4030,10 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (i
 		encryption, _ := b["encryption"].(string)
 
 		if jobName == "" || storagePath == "" {
+			continue
+		}
+		if v, tooNew := manifestVersionTooNew(b); tooNew {
+			log.Printf("runner: import: skipping %q (%s): manifest version %d is newer than this daemon supports (max %d) — upgrade Vault to import this backup", jobName, storagePath, v, manifestVersionCurrent)
 			continue
 		}
 		if backupType == "" {

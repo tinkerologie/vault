@@ -69,7 +69,7 @@ func TestBackupDatabase_HappyPath(t *testing.T) {
 	}
 
 	jobDest := db.StorageDestination{ID: destID, Type: "local", Config: cfg}
-	r.backupDatabase(jobDest)
+	r.backupDatabase(t.Context(), jobDest)
 
 	// Confirm both timestamped + latest pointer files were written.
 	entries, err := os.ReadDir(filepath.Join(storageDir, dbBackupBaseDir))
@@ -92,7 +92,7 @@ func TestBackupDatabaseToDest_BadConfig(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 	// Should not panic; just logs and returns.
-	r.backupDatabaseToDest(dest, dbPath, "")
+	r.backupDatabaseToDest(t.Context(), dest, dbPath, "")
 }
 
 // Tiny unique-name helper isolated from other tests' counters.
