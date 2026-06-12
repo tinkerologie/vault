@@ -54,6 +54,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 
 - REST API at `/api/v1` with token-based auth for non-loopback callers
 - MCP server (streamable HTTP + stdio) for Claude Desktop, Claude Code, and other AI tooling
+- Home Assistant custom integration: [`ha-vault`](https://github.com/ruaan-deysel/ha-vault)
 - Hybrid SQLite snapshot (RAM working DB + persistent snapshot + USB shadow) survives reboots
 - Diagnostics bundle export (redacted) for support requests
 
@@ -80,17 +81,19 @@ https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
 
 ## Documentation
 
-| Document                                                         | Description                                           |
-| ---------------------------------------------------------------- | ----------------------------------------------------- |
-| [Getting Started](docs/getting-started.md)                       | Visual walkthrough of the web UI with screenshots     |
-| [Backup Jobs](docs/guides/backup-jobs.md)                        | Job options, scheduling, retention, restore           |
-| [Storage Destinations](docs/guides/storage-destinations.md)      | Per-backend configuration with provider notes         |
-| [Anomaly Detection](docs/guides/anomaly-detection.md)            | Drift/reliability/capacity alerts + baseline learning |
-| [API Reference](docs/api.md)                                     | Full REST API endpoint reference                      |
-| [MCP Integration](docs/mcp.md)                                   | Model Context Protocol server for AI tools            |
-| [Home Assistant Integration](docs/home-assistant-integration.md) | Sensors, automations, and dashboard cards             |
-| [Architecture](docs/architecture.md)                             | Project structure, build commands, deployment         |
-| [Changelog](CHANGELOG.md)                                        | Release notes by version                              |
+| Document                                                    | Description                                           |
+| ----------------------------------------------------------- | ----------------------------------------------------- |
+| [Getting Started](docs/getting-started.md)                  | Visual walkthrough of the web UI with screenshots     |
+| [Backup Jobs](docs/guides/backup-jobs.md)                   | Job options, scheduling, retention, restore           |
+| [Storage Destinations](docs/guides/storage-destinations.md) | Per-backend configuration with provider notes         |
+| [Anomaly Detection](docs/guides/anomaly-detection.md)       | Drift/reliability/capacity alerts + baseline learning |
+| [API Reference](docs/api.md)                                | Full REST API endpoint reference                      |
+| [MCP Integration](docs/mcp.md)                              | Model Context Protocol server for AI tools            |
+| [Architecture](docs/architecture.md)                        | Project structure, build commands, deployment         |
+| [Changelog](CHANGELOG.md)                                   | Release notes by version                              |
+
+Home Assistant users: use the ready-to-use custom integration at
+[ha-vault](https://github.com/ruaan-deysel/ha-vault).
 
 ## Requirements
 

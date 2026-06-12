@@ -139,9 +139,12 @@ Each restore point also shows chain health annotations so you can see if a full 
 | Verify a restore point on demand                  | Restore page → restore point → _Verify_                        |
 | Run dedup maintenance from the CLI                | `vault dedup repair --dest <id>`, `vault dedup gc --dest <id>` |
 | Export a diagnostics bundle for support           | Settings → Support → _Download diagnostics_                    |
-| Automate with Home Assistant                      | [Home Assistant Integration](home-assistant-integration.md)    |
+| Automate with Home Assistant                      | [ha-vault](https://github.com/ruaan-deysel/ha-vault)           |
 | Use the REST API                                  | [API Reference](api.md)                                        |
 | Use the MCP server                                | [MCP](mcp.md)                                                  |
+
+For a ready-to-use Home Assistant custom integration, see
+[ha-vault](https://github.com/ruaan-deysel/ha-vault).
 
 > **Disaster recovery:** Back up **both** `vault.db` and `vault.key` (siblings in
 > `/boot/config/plugins/vault/`). To rebuild a lost dedup index from intact storage,
