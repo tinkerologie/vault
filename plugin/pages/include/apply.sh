@@ -14,6 +14,20 @@ DEFAULT_PORT=24085
 PORT="$DEFAULT_PORT"
 BIND_ADDRESS=""
 
+# /update.php runs this script from php-fpm, whose PATH may not include
+# /usr/sbin where Unraid keeps `ip` (#136). Resolve an absolute path; if no
+# binary is found we skip locality validation rather than wrongly resetting a
+# valid NIC address to 127.0.0.1.
+IP_BIN="$(command -v ip 2>/dev/null)"
+if [ -z "$IP_BIN" ]; then
+    for candidate in /usr/sbin/ip /sbin/ip; do
+        if [ -x "$candidate" ]; then
+            IP_BIN="$candidate"
+            break
+        fi
+    done
+fi
+
 # Safely read only the keys we care about from config (avoid sourcing arbitrary
 # code).
 if [ -f "$CONFIG" ]; then
@@ -22,8 +36,11 @@ if [ -f "$CONFIG" ]; then
         127.0.0.1|0.0.0.0|::1|::|"") ;; # valid loopback/wildcard
         *)
             # Check if it's a local interface IP; if not, reset to 127.0.0.1.
-            if ! ip addr show 2>/dev/null | grep -Fq "inet ${BIND_ADDRESS}/" && \
-               ! ip addr show 2>/dev/null | grep -Fq "inet6 ${BIND_ADDRESS}/"; then
+            # Only validate when `ip` is available — a missing binary must not
+            # masquerade as "address is not local".
+            if [ -n "$IP_BIN" ] && \
+               ! "$IP_BIN" addr show 2>/dev/null | grep -Fq "inet ${BIND_ADDRESS}/" && \
+               ! "$IP_BIN" addr show 2>/dev/null | grep -Fq "inet6 ${BIND_ADDRESS}/"; then
                 echo "Warning: bind address '${BIND_ADDRESS}' is not local; resetting to 127.0.0.1"
                 if ! sed -i 's/^BIND_ADDRESS=.*/BIND_ADDRESS=127.0.0.1/' "$CONFIG"; then
                     echo "Error: failed to update BIND_ADDRESS in $CONFIG" >&2

@@ -67,8 +67,9 @@ type S3Config struct {
 }
 
 // defaultS3UploadTimeout is the default per-upload deadline applied when
-// UploadTimeoutMinutes is 0 or unset. It matches the runner's job-level
-// timeout so that a single large multipart upload is not cut short.
+// UploadTimeoutMinutes is 0 or unset. This bounds a single object upload
+// (one PutObject/multipart transfer), not the job: the runner no longer has
+// a job-level wall-clock cap (issue #110).
 const defaultS3UploadTimeout = 240 * time.Minute
 
 // S3 protocol bounds for the multipart PartSize header. AWS S3 and every

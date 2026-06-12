@@ -378,6 +378,11 @@
     const unsubWs = onWsMessage((msg) => {
       if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed' || msg.type === 'stale_items_detected') {
         loadData()
+      } else if (msg.type === 'job_cleanup_complete') {
+        // Outcome of the background backup-file sweep after delete-with-files (#111).
+        showToast(`Backup files for "${msg.job_name}" deleted`, 'success')
+      } else if (msg.type === 'job_cleanup_failed') {
+        showToast(`Failed to delete backup files for "${msg.job_name}" — files may remain on storage (see Activity Log)`, 'error')
       }
     })
     const unsubBaseline = onBaselineUpdated((data) => {

@@ -665,17 +665,24 @@ func (w *WebDAVAdapter) Read(p string) (io.ReadCloser, error) {
 	return rc, nil
 }
 
+// errWebDAVRangeNotFound marks a 404 from a raw range request so ReadRange
+// can distinguish "no object at this path" (possibly a chunked upload whose
+// data lives in sidecar files) from other failures.
+var errWebDAVRangeNotFound = errors.New("object not found")
+
 // ReadRange fetches a half-open byte slice [offset, offset+length) of a
 // remote object via an HTTP Range request. gowebdav does not expose Range,
 // so we build the request by hand using the same transport as client().
 //
-// Servers that honour Range respond 206 Partial Content; servers that
-// silently ignore it return 200 OK with the full body, which we slice
-// client-side so the caller still gets the requested window. Chunked
-// (sidecar manifest) uploads are NOT supported here: dedup-managed objects
-// are pack files written as single PUTs, and the chunked manifest format
-// is invisible to Range reads. Detecting a manifest at ReadRange time
-// would defeat the purpose of avoiding a full download.
+// Plain objects are served directly (one request, no overhead — the common
+// case for dedup pack files). Chunked (sidecar manifest) uploads have no
+// object at the logical path at all, so the raw request 404s; ReadRange then
+// reads the small manifest and serves the window from only the chunks that
+// overlap it. Restores depend on this: the resumable reader opens every
+// stream — including the first — via ReadRange, so without chunk support
+// every restore of a chunked WebDAV object failed with a 404 (issue #97
+// follow-up). Range reads cannot verify per-chunk SHA-256 (partial chunks);
+// callers verify whole-file checksums, matching plain-object Range semantics.
 func (w *WebDAVAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
 	if offset < 0 || length < 0 {
 		return nil, fmt.Errorf("webdav: invalid range offset=%d length=%d", offset, length)
@@ -688,6 +695,28 @@ func (w *WebDAVAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser
 		return io.NopCloser(bytes.NewReader(nil)), nil
 	}
 
+	rc, err := w.rawRangeRequest(full, offset, length)
+	if err == nil || !errors.Is(err, errWebDAVRangeNotFound) {
+		return rc, err
+	}
+
+	// Nothing at the logical path — check for a chunked upload's manifest.
+	manifest, found, mErr := w.readManifest(w.client(), full)
+	if mErr != nil {
+		return nil, mErr
+	}
+	if !found {
+		return nil, err // genuinely missing object: surface the original 404
+	}
+	return newWebDAVChunkRangeReader(w, manifest, offset, length)
+}
+
+// rawRangeRequest issues the HTTP Range request for [offset, offset+length)
+// against a concrete remote path. Servers that honour Range respond 206
+// Partial Content; servers that silently ignore it return 200 OK with the
+// full body, which we slice client-side so the caller still gets the
+// requested window. A 404 is wrapped with errWebDAVRangeNotFound.
+func (w *WebDAVAdapter) rawRangeRequest(full string, offset, length int64) (io.ReadCloser, error) {
 	target := strings.TrimRight(w.config.URL, "/") + full
 	req, err := http.NewRequest(http.MethodGet, target, nil) // #nosec G107 //nolint:gosec // w.config.URL is the admin-configured WebDAV destination URL — not user input
 	if err != nil {
@@ -726,10 +755,91 @@ func (w *WebDAVAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser
 	case http.StatusRequestedRangeNotSatisfiable:
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("webdav: range not satisfiable for %s [%d-%d]", full, offset, offset+length-1)
+	case http.StatusNotFound:
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("webdav: range get %s: %w", full, errWebDAVRangeNotFound)
 	default:
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("webdav: unexpected status %d for %s range request", resp.StatusCode, full)
 	}
+}
+
+// webDAVChunkRangeReader streams [offset, offset+length) of a chunked
+// (sidecar manifest) object, issuing ranged reads against only the chunks
+// that overlap the window and stitching them into one contiguous stream.
+type webDAVChunkRangeReader struct {
+	w         *WebDAVAdapter
+	chunks    []webDAVChunkEntry
+	idx       int   // next chunk to open
+	chunkOff  int64 // starting offset within chunks[idx]
+	remaining int64 // logical bytes still owed to the caller
+	inner     io.ReadCloser
+}
+
+func newWebDAVChunkRangeReader(w *WebDAVAdapter, manifest webDAVChunkManifest, offset, length int64) (io.ReadCloser, error) {
+	if offset >= manifest.Size {
+		return nil, fmt.Errorf("webdav: offset %d at or past EOF (size=%d)", offset, manifest.Size)
+	}
+	// Mirror HTTP Range semantics: a window extending past EOF is truncated.
+	if avail := manifest.Size - offset; length > avail {
+		length = avail
+	}
+	r := &webDAVChunkRangeReader{w: w, chunks: manifest.Chunks, remaining: length}
+	skip := offset
+	for r.idx < len(r.chunks) && skip >= r.chunks[r.idx].Size {
+		skip -= r.chunks[r.idx].Size
+		r.idx++
+	}
+	r.chunkOff = skip
+	return r, nil
+}
+
+func (r *webDAVChunkRangeReader) Read(p []byte) (int, error) {
+	for {
+		if r.remaining <= 0 {
+			return 0, io.EOF
+		}
+		if r.inner == nil {
+			if r.idx >= len(r.chunks) {
+				// Manifest size exceeds the chunk data actually present.
+				return 0, fmt.Errorf("webdav: chunked object truncated with %d bytes unread: %w", r.remaining, io.ErrUnexpectedEOF)
+			}
+			chunk := r.chunks[r.idx]
+			need := chunk.Size - r.chunkOff
+			if need > r.remaining {
+				need = r.remaining
+			}
+			rc, err := r.w.rawRangeRequest(chunk.Path, r.chunkOff, need)
+			if err != nil {
+				return 0, err
+			}
+			r.inner = rc
+		}
+		n, err := r.inner.Read(p)
+		if n > 0 {
+			r.remaining -= int64(n)
+		}
+		if err == io.EOF {
+			_ = r.inner.Close()
+			r.inner = nil
+			r.idx++
+			r.chunkOff = 0
+			if n > 0 {
+				return n, nil
+			}
+			continue
+		}
+		return n, err
+	}
+}
+
+func (r *webDAVChunkRangeReader) Close() error {
+	if r.inner != nil {
+		err := r.inner.Close()
+		r.inner = nil
+		return err
+	}
+	return nil
 }
 
 func (w *WebDAVAdapter) Delete(p string) error {

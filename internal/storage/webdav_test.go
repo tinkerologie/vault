@@ -564,6 +564,74 @@ func TestWebDAVReadRangeFallbackOn200(t *testing.T) {
 	}
 }
 
+// TestWebDAVReadRangeChunkedObject — ReadRange on a chunked (sidecar
+// manifest) object must serve logical object bytes across chunk boundaries.
+// Restores stream every chunked object through ReadRange (the resumable
+// reader opens its very first stream with ReadRange at offset 0); before
+// chunk support here, that request 404'd — nothing exists at the logical
+// path of a chunked upload — and restoring any chunked WebDAV object failed.
+func TestWebDAVReadRangeChunkedObject(t *testing.T) {
+	a, _, cleanup := newTestWebDAVAdapter(t, WebDAVConfig{ChunkSizeMB: 1})
+	defer cleanup()
+
+	const chunk = 1024 * 1024
+	data := make([]byte, 2*chunk+512) // three chunks: 1 MiB, 1 MiB, 512 B
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+	if err := a.Write("job/item/archive.bin", bytes.NewReader(data)); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	size := int64(len(data))
+	cases := []struct {
+		name           string
+		offset, length int64
+	}{
+		{"whole object", 0, size},
+		{"within first chunk", 10, 100},
+		{"spans first boundary", chunk - 64, 128},
+		{"spans all chunks", 512, size - 1024},
+		{"tail of last chunk", size - 100, 100},
+		{"length past EOF truncates", size - 100, 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, err := a.ReadRange("job/item/archive.bin", tc.offset, tc.length)
+			if err != nil {
+				t.Fatalf("ReadRange(%d, %d) error = %v", tc.offset, tc.length, err)
+			}
+			got, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				t.Fatalf("ReadAll() error = %v", err)
+			}
+			end := tc.offset + tc.length
+			if end > size {
+				end = size
+			}
+			if !bytes.Equal(got, data[tc.offset:end]) {
+				t.Fatalf("ReadRange(%d, %d) returned %d bytes with wrong content, want bytes [%d,%d)",
+					tc.offset, tc.length, len(got), tc.offset, end)
+			}
+		})
+	}
+
+	// Offset at or past EOF mirrors plain-object HTTP 416 semantics: an error,
+	// not an empty success.
+	if rc, err := a.ReadRange("job/item/archive.bin", size, 1); err == nil {
+		_ = rc.Close()
+		t.Fatal("ReadRange(EOF, 1) succeeded, want error")
+	}
+
+	// A genuinely missing object must still fail cleanly, not be mistaken for
+	// a chunked one.
+	if rc, err := a.ReadRange("job/item/missing.bin", 0, 4); err == nil {
+		_ = rc.Close()
+		t.Fatal("ReadRange(missing) succeeded, want error")
+	}
+}
+
 func newTestWebDAVAdapter(t *testing.T, cfg WebDAVConfig) (*WebDAVAdapter, string, func()) {
 	t.Helper()
 	root := t.TempDir()

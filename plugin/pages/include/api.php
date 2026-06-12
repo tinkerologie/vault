@@ -31,10 +31,23 @@ function vault_get_bind_address() {
     return $bind === '' ? '127.0.0.1' : $bind;
 }
 
+function vault_ip_binary() {
+    // php-fpm's PATH may not include /usr/sbin, where Unraid keeps `ip`.
+    foreach (['/usr/sbin/ip', '/sbin/ip'] as $candidate) {
+        if (is_executable($candidate)) {
+            return $candidate;
+        }
+    }
+    return 'ip';
+}
+
 function vault_get_local_ips() {
+    $ip = vault_ip_binary();
+    // Keys must be non-numeric: PHP casts '4'/'6' array keys to int, which
+    // made the strict $family === '4' comparison below never match (#136).
     $commands = [
-        '4' => 'ip -4 addr show 2>/dev/null',
-        '6' => 'ip -6 addr show 2>/dev/null',
+        'v4' => $ip . ' -4 addr show 2>/dev/null',
+        'v6' => $ip . ' -6 addr show 2>/dev/null',
     ];
 
     $result = [];
@@ -58,7 +71,7 @@ function vault_get_local_ips() {
                 continue;
             }
 
-            if ($family === '4') {
+            if ($family === 'v4') {
                 if (!preg_match('/inet\s+([0-9.]+)\//', $line, $m) || $m[1] === '127.0.0.1') {
                     continue;
                 }

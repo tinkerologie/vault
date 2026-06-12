@@ -404,6 +404,21 @@ func (r *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// heartbeatAdapter wraps a storage.Adapter so every byte streamed through
+// Write refreshes the stall watchdog. The dedup backup path uploads pack
+// files from inside the handler's chunk walk, where the runner's per-file
+// progress callback can be hours apart for a single huge file — without
+// byte-level heartbeats those healthy uploads were vulnerable to the same
+// false stall-cancel fixed for classic uploads (issue #110).
+type heartbeatAdapter struct {
+	storage.Adapter
+	beat func(int64)
+}
+
+func (h *heartbeatAdapter) Write(p string, reader io.Reader) error {
+	return h.Adapter.Write(p, &countingReader{reader: reader, onRead: h.beat})
+}
+
 // SetSnapshotManager sets the snapshot manager used to persist the database
 // to the cache drive after successful backup jobs.
 func (r *Runner) SetSnapshotManager(sm *db.SnapshotManager) {
@@ -1967,7 +1982,16 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 	}
 	defer storage.CloseAdapter(adapter)
 
-	repo, err := r.openDedupRepo(adapter, dest)
+	// Pack uploads happen inside the handler's chunk walk; heartbeat the
+	// stall watchdog on every byte written so a slow remote can't trigger a
+	// false stall-cancel between per-file progress callbacks (issue #110).
+	heartbeat := &heartbeatAdapter{Adapter: adapter, beat: func(int64) {
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
+	}}
+
+	repo, err := r.openDedupRepo(heartbeat, dest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
 	}
@@ -3714,6 +3738,11 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 
 		if err := errors.Join(errs...); err != nil {
 			log.Printf("runner: async cleanup for job %d (%q) failed: %v", jobID, jobName, err)
+			// Activity log makes the failure durably visible: cleanup can finish
+			// minutes after the delete request, when no page may be listening.
+			r.logActivity("error", "system",
+				fmt.Sprintf("Failed to delete backup files for deleted job %q — files may remain on storage", jobName),
+				err.Error())
 			r.broadcast(map[string]any{
 				"type": "job_cleanup_failed", "job_id": jobID, "job_name": jobName, "error": err.Error(),
 			})
@@ -3747,6 +3776,9 @@ func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.Stor
 		if storagePath != "" {
 			if e := r.DeleteStorageDir(adapter, storagePath); e != nil {
 				log.Printf("runner: async cleanup for restore point %d failed: %v", rpID, e)
+				r.logActivity("error", "system",
+					fmt.Sprintf("Failed to delete backup files for deleted restore point %d — files may remain on storage", rpID),
+					e.Error())
 				r.broadcast(map[string]any{
 					"type": "restore_point_cleanup_failed", "job_id": jobID, "restore_point_id": rpID, "error": e.Error(),
 				})

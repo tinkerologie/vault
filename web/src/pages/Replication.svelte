@@ -63,23 +63,27 @@
     // Subscribe to WS events — refresh when syncs complete
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'replication_sync_completed' || msg.type === 'replication_sync_failed') {
-        loadData()
+        loadData(true)
       }
     })
-    const pollTimer = liveMode === 'poll' ? setInterval(() => { loadData() }, 10000) : null
+    const pollTimer = liveMode === 'poll' ? setInterval(() => { loadData(true) }, 10000) : null
     return () => {
       unsub()
       if (pollTimer) clearInterval(pollTimer)
     }
   })
 
-  async function loadData() {
-    loading = true
+  // background=true refreshes in place (10s poll, WS sync events) without
+  // swapping the list for the spinner — the swap caused a visible flicker on
+  // every poll tick (#135). A failed background refresh also stays quiet
+  // instead of raising a toast every tick.
+  async function loadData(background = false) {
+    if (!background) loading = true
     try {
       const srcs = await api.listReplicationSources()
       sources = srcs || []
     } catch (e) {
-      showToast(e.message, 'error')
+      if (!background) showToast(e.message, 'error')
     } finally {
       loading = false
     }
