@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.06.04] - 2026-06-13
+
 ### Added
 
 - **Network auto-discovery via mDNS/zeroconf** (closes #137). The daemon now advertises itself on the local network as a `_vault._tcp` service (with `version` and `tls` TXT records), so integrations such as the Home Assistant Vault integration can auto-discover a running Vault instance instead of requiring a manually entered address. Discovery is automatically **disabled** when the daemon is bound to a loopback address (the local-only default) — a `127.0.0.1`/`::1` bind is never advertised — and enabled for all-interfaces (`:24085`, `0.0.0.0`, `::`) or specific-NIC binds. Pure-Go and Avahi-compatible; advertisement failures are non-fatal and never block backups.
