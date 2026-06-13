@@ -7,6 +7,7 @@
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Spinner from '../components/Spinner.svelte'
+  import InlineSpinner from '../components/InlineSpinner.svelte'
   import PathBrowser from '../components/PathBrowser.svelte'
   import Tooltip from '../components/Tooltip.svelte'
   import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
@@ -956,7 +957,7 @@
               class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if anomalySaving}
-                <Spinner size="sm" />
+                <InlineSpinner />
               {/if}
               Save Anomaly Settings
             </button>
@@ -995,7 +996,7 @@
               class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if storageVerboseSaving}
-                <Spinner size="sm" />
+                <InlineSpinner />
               {/if}
               Save
             </button>
@@ -1064,7 +1065,7 @@
                 class="px-3 py-2 text-sm font-medium text-text-muted bg-surface-3 border border-border rounded-lg hover:bg-surface-4 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0"
               >
                 {#if discordTesting}
-                  <Spinner size="sm" />
+                  <InlineSpinner />
                 {:else}
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
                 {/if}
@@ -1091,7 +1092,7 @@
               class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if discordSaving}
-                <Spinner size="sm" />
+                <InlineSpinner />
               {/if}
               Save Discord Settings
             </button>
@@ -1771,7 +1772,7 @@
             class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if diagnosticsDownloading}
-              <Spinner size="sm" />
+              <InlineSpinner />
               Generating...
             {:else}
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
