@@ -32,6 +32,7 @@ type SettingsHandler struct {
 	}
 	diagnosticsCollector *diagnostics.Collector
 	onConfigChange       ConfigChangeHook
+	onScheduleReload     ScheduleReloader
 }
 
 // NewSettingsHandler creates a new SettingsHandler.
@@ -54,6 +55,12 @@ func (h *SettingsHandler) SetSnapshotManager(sm interface {
 // flush the database to USB flash.
 func (h *SettingsHandler) SetConfigChangeHook(fn ConfigChangeHook) {
 	h.onConfigChange = fn
+}
+
+// SetScheduleReloadHook registers a function called to reload the scheduler
+// when a setting that affects scheduling (e.g. replication_enabled) changes.
+func (h *SettingsHandler) SetScheduleReloadHook(fn ScheduleReloader) {
+	h.onScheduleReload = fn
 }
 
 // notifyConfigChange calls the config change hook if set.
@@ -270,6 +277,12 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if err := h.db.SetSetting(k, v); err != nil {
 			respondInternalError(w, err)
 			return
+		}
+	}
+
+	if _, ok := incoming["replication_enabled"]; ok && h.onScheduleReload != nil {
+		if err := h.onScheduleReload(); err != nil {
+			log.Printf("settings: scheduler reload after replication_enabled change failed: %v", err)
 		}
 	}
 

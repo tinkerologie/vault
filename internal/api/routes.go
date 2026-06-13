@@ -44,6 +44,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// Settings handler is shared between public and authenticated routes.
 		settingsH := handlers.NewSettingsHandler(s.db, s.config.ServerKey)
 		s.settingsHandler = settingsH
+		settingsH.SetScheduleReloadHook(func() error {
+			if s.schedReload != nil {
+				return s.schedReload()
+			}
+			return nil
+		})
 
 		// Public endpoints.
 		r.Get("/health", s.handleHealth)
