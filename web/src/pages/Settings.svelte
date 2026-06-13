@@ -7,10 +7,12 @@
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Spinner from '../components/Spinner.svelte'
+  import InlineSpinner from '../components/InlineSpinner.svelte'
   import PathBrowser from '../components/PathBrowser.svelte'
   import Tooltip from '../components/Tooltip.svelte'
   import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
   import ChangelogModal from '../components/ChangelogModal.svelte'
+  import { setAnomalyEnabled, setReplicationEnabled } from '../lib/settings.svelte.js'
 
   let loading = $state(true)
   let health = $state(null)
@@ -176,6 +178,15 @@
       anomalyEnabled = s?.anomaly_detection_enabled !== 'false'
       anomalySensitivityDefault = s?.anomaly_sensitivity_default || 'balanced'
       anomalyNotifyMinSeverity = s?.anomaly_notify_min_severity || 'critical'
+      // Replication enable (mirrors settings.svelte.js derive).
+      if (s?.replication_enabled === 'true') {
+        replicationEnabledSetting = true
+      } else if (s?.replication_enabled === 'false') {
+        replicationEnabledSetting = false
+      } else {
+        const replSources = await api.listReplicationSources().catch(() => [])
+        replicationEnabledSetting = Array.isArray(replSources) && replSources.length > 0
+      }
       // Storage verbose logging (Task 12 — storage resilience)
       storageVerboseLogging = s?.storage_verbose_logging === 'true'
       // Stored as a fraction "0.0".."1.0"; UI shows it as an integer percentage 0..100.
@@ -613,6 +624,10 @@
   let anomalyNotifyMinSeverity = $state('critical')
   let anomalySaving = $state(false)
 
+  // Replication enable/disable (feature visibility)
+  let replicationEnabledSetting = $state(true)
+  let replicationSaving = $state(false)
+
   // Storage verbose logging (Task 12 — storage resilience)
   let storageVerboseLogging = $state(false)
   let storageVerboseSaving = $state(false)
@@ -626,10 +641,26 @@
         anomaly_notify_min_severity: anomalyNotifyMinSeverity,
       })
       showToast('Anomaly detection settings saved', 'success')
+      setAnomalyEnabled(anomalyEnabled)
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
       anomalySaving = false
+    }
+  }
+
+  async function saveReplicationEnabled() {
+    replicationSaving = true
+    try {
+      settings = await api.updateSettings({
+        replication_enabled: replicationEnabledSetting ? 'true' : 'false',
+      })
+      setReplicationEnabled(replicationEnabledSetting)
+      showToast(replicationEnabledSetting ? 'Replication enabled' : 'Replication disabled', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      replicationSaving = false
     }
   }
 
@@ -956,13 +987,54 @@
               class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if anomalySaving}
-                <Spinner size="sm" />
+                <InlineSpinner />
               {/if}
               Save Anomaly Settings
             </button>
           </div>
         </div>
       </div>
+
+      <!-- Replication -->
+      {#if health?.mode !== 'replica'}
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Replication <Tooltip text="Replication mirrors backups to other Vault instances. Disable to hide the Replication page and pause all scheduled replication syncs." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">Show the Replication page and run scheduled replication syncs.</p>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">Replication enabled</p>
+              <p class="text-xs text-text-muted mt-0.5">When off, Replication is hidden from the sidebar and scheduled syncs are paused.</p>
+            </div>
+            <button
+              onclick={() => replicationEnabledSetting = !replicationEnabledSetting}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={replicationEnabledSetting}
+              aria-label="Toggle replication"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {replicationEnabledSetting ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {replicationEnabledSetting ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+          <div class="px-5 py-3 flex justify-end">
+            <button
+              onclick={saveReplicationEnabled}
+              disabled={replicationSaving}
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {#if replicationSaving}
+                <InlineSpinner />
+              {/if}
+              Save Replication Settings
+            </button>
+          </div>
+        </div>
+      </div>
+      {/if}
 
       <!-- Storage Verbose Logging (Task 12 — storage resilience) -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
@@ -995,7 +1067,7 @@
               class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if storageVerboseSaving}
-                <Spinner size="sm" />
+                <InlineSpinner />
               {/if}
               Save
             </button>
@@ -1064,7 +1136,7 @@
                 class="px-3 py-2 text-sm font-medium text-text-muted bg-surface-3 border border-border rounded-lg hover:bg-surface-4 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0"
               >
                 {#if discordTesting}
-                  <Spinner size="sm" />
+                  <InlineSpinner />
                 {:else}
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
                 {/if}
@@ -1091,7 +1163,7 @@
               class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if discordSaving}
-                <Spinner size="sm" />
+                <InlineSpinner />
               {/if}
               Save Discord Settings
             </button>
@@ -1771,7 +1843,7 @@
             class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if diagnosticsDownloading}
-              <Spinner size="sm" />
+              <InlineSpinner />
               Generating...
             {:else}
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

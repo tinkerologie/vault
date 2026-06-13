@@ -14,6 +14,7 @@
   import ActivityTimeline from '../components/ActivityTimeline.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import AnomalyCard from '../components/AnomalyCard.svelte'
+  import { getAnomalyEnabled } from '../lib/settings.svelte.js'
 
   let loading = $state(true)
   let error = $state('')
@@ -706,7 +707,7 @@
     {/if}
 
     <!-- Anomaly Card -->
-    {#if jobs.length > 0}
+    {#if jobs.length > 0 && getAnomalyEnabled()}
       <AnomalyCard />
     {/if}
 

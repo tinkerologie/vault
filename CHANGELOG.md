@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Network auto-discovery via mDNS/zeroconf** (closes #137). The daemon now advertises itself on the local network as a `_vault._tcp` service (with `version` and `tls` TXT records), so integrations such as the Home Assistant Vault integration can auto-discover a running Vault instance instead of requiring a manually entered address. Discovery is automatically **disabled** when the daemon is bound to a loopback address (the local-only default) — a `127.0.0.1`/`::1` bind is never advertised — and enabled for all-interfaces (`:24085`, `0.0.0.0`, `::`) or specific-NIC binds. Pure-Go and Avahi-compatible; advertisement failures are non-fatal and never block backups.
+- **Hide unused services for a cleaner interface.** Anomaly Detection and Replication can now be toggled off from **Settings**. Disabling a feature removes it from the sidebar (and the Dashboard, for Anomaly Detection) and halts its backend work — anomaly evaluation already stops, and scheduled replication syncs are now paused while disabled. Replication defaults to visible only when replication sources are already configured, so existing setups are unaffected and fresh installs stay uncluttered. Replication is always shown on replica instances (it is core there). Re-enabling a feature restores its page and resumes its backend work immediately, without a daemon restart.
+
+### Fixed
+
+- **Backup jobs now fail when all of their targets are missing** (closes #138). When every container/VM/folder/plugin/dataset configured for a job no longer exists on the server, the run previously reported **completed** with zero items backed up, masking the fact that nothing was protected. The runner now records a **failed** run with a clear error listing the missing targets (and counts them as failed items) so the failure is visible in the UI, notifications, and the reliability detector. Because a missing target is a configuration problem rather than a transient/destination fault, this does not schedule a retry or trip the destination circuit breaker. A safety net also fails any run that ends with zero items processed despite items being configured.
+- **The Dashboard's Recent Activity now shows the real failure reason instead of "expand for details"** (follow-up to #138). The failure-reason helper only surfaced plain-text log lines containing the words "error"/"fail", so messages that contained neither (such as the all-targets-missing message) fell through to a generic "Backup failed — expand for details" — misleading on the Dashboard, which has no expand affordance. It now surfaces the first meaningful line of any plain-text log, and the remaining placeholder reads "see Logs for details". The Recent Activity failure line also now **wraps** (up to three lines, full text on hover) instead of truncating to a single cut-off line.
+- **Settings "Save" buttons no longer balloon and show "Loading…" while saving.** The Anomaly Detection, Storage Logging, and Discord Save buttons (and the Discord Test / diagnostics buttons) embedded the full-section loading spinner — which carries large padding and a "Loading…" label — directly inside the button. They now use a small inline spinner that keeps the button's shape and colour.
+
 ## [2026.06.03] - 2026-06-12
 
 ### Changed

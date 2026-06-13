@@ -258,9 +258,33 @@ func isLastDayOfMonth(t time.Time) bool {
 	return tomorrow.Month() != t.Month()
 }
 
+// replicationEnabled reports whether scheduled replication should run. An
+// explicit replication_enabled setting wins; when unset it derives from
+// whether any replication sources exist (so existing users keep replication
+// and fresh installs start hidden). Mirrors the UI derive in settings.svelte.js.
+func replicationEnabled(d *db.DB) bool {
+	v, _ := d.GetSetting("replication_enabled", "")
+	switch v {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	sources, err := d.ListReplicationSources()
+	if err != nil {
+		return false
+	}
+	return len(sources) > 0
+}
+
 // loadReplicationSources loads enabled replication sources into the cron scheduler.
 func (s *Scheduler) loadReplicationSources() error {
 	if s.replicationRunner == nil {
+		return nil
+	}
+
+	if !replicationEnabled(s.db) {
+		log.Printf("scheduler: replication disabled — skipping replication source scheduling")
 		return nil
 	}
 
