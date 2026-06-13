@@ -196,12 +196,18 @@ export function getFailureReason(run) {
       if (failed.length > 0) return `${failed.length} item(s) failed`
     }
   } catch {
-    const lines = run.log.split('\n').filter(l => l.toLowerCase().includes('error') || l.toLowerCase().includes('fail'))
-    // Keep the full error line (capped generously to guard against pathological
-    // multi-kilobyte log lines) instead of clipping at 120 chars.
-    if (lines.length > 0) return lines[0].slice(0, 500)
+    // Plain-text log (not the structured per-item JSON array). Prefer an
+    // explicit error/failure line, but fall back to the first non-empty line
+    // so messages that contain neither word — e.g. "All configured backup
+    // targets are missing from this server…" — still reach the dashboard
+    // instead of the generic placeholder. Capped generously to guard against
+    // pathological multi-kilobyte log lines.
+    const lines = run.log.split('\n').map(l => l.trim()).filter(Boolean)
+    const errLine = lines.find(l => l.toLowerCase().includes('error') || l.toLowerCase().includes('fail'))
+    const line = errLine || lines[0]
+    if (line) return line.slice(0, 500)
   }
-  return run.status === 'partial' ? null : 'Backup failed — expand for details'
+  return run.status === 'partial' ? null : 'Backup failed — see Logs for details'
 }
 
 /** Format seconds into human-readable duration (e.g. "11m 4s", "2h 15m") */

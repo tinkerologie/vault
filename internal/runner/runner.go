@@ -631,6 +631,11 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// the DB for user-triggered remediation — Vault never auto-removes them.
 	// This runs BEFORE the run record is created so ItemsTotal and the
 	// job_run_started broadcast reflect the items we actually process.
+	// originalItemCount and staleNames are captured outside the stale-detection
+	// block so the all-items-missing guard below (#138) can report how many
+	// targets were expected and which ones vanished.
+	originalItemCount := len(items)
+	var staleNames []string
 	{
 		inv := engine.GatherInventory()
 		var staleIDs, reappearedIDs []int64
@@ -644,6 +649,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			status := inv.Status(item.ItemType, item.ItemName, settings)
 			if status == engine.StatusMissing {
 				staleIDs = append(staleIDs, item.ID)
+				staleNames = append(staleNames, item.ItemName)
 				staleInfo = append(staleInfo, map[string]any{
 					"item_id":   item.ID,
 					"item_type": item.ItemType,
@@ -683,6 +689,56 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				log.Printf("runner: job %d: clear stale flags: %v", jobID, err)
 			}
 		}
+	}
+
+	// #138 — if every configured item is stale (its backing container/VM/
+	// folder/plugin/dataset no longer exists on this server) there is nothing
+	// left to back up. Previously the job proceeded with an empty item list and
+	// reported "completed" with zero items, masking the fact that the backup
+	// targets are gone. Fail the run instead so the operator is alerted and the
+	// reliability detector sees the failure. This is NOT a transient/destination
+	// problem, so we do not schedule a retry or trip the circuit breaker — the
+	// fix is for the operator to re-add or remove the missing targets.
+	if len(items) == 0 && len(staleNames) > 0 {
+		errMsg := fmt.Sprintf(
+			"All %d configured backup target(s) are missing from this server and were skipped: %s. Nothing was backed up.",
+			originalItemCount, strings.Join(staleNames, ", "))
+		log.Printf("runner: job %d: %s", jobID, errMsg)
+		failed := db.JobRun{
+			JobID:        job.ID,
+			Status:       "failed",
+			BackupType:   btResult.BackupType,
+			ItemsTotal:   originalItemCount,
+			ItemsFailed:  originalItemCount,
+			RetryAttempt: opts.retryAttempt,
+			RetryOfRunID: opts.retryOfRunIDPtr(),
+		}
+		runID, createErr := r.db.CreateJobRun(failed)
+		if createErr != nil {
+			log.Printf("runner: failed to create all-stale failed run for job %d: %v", jobID, createErr)
+			return
+		}
+		failed.ID = runID
+		failed.Log = errMsg
+		if updErr := r.db.UpdateJobRun(failed); updErr != nil {
+			log.Printf("runner: failed to update all-stale failed run %d: %v", runID, updErr)
+		}
+		r.logActivity("error", "backup",
+			fmt.Sprintf("Backup failed: %s", job.Name),
+			structuredDetails(map[string]any{
+				"job_id": jobID, "run_id": runID, "error": errMsg,
+				"missing_items": staleNames,
+			}))
+		r.broadcast(map[string]any{
+			"type":   "job_run_completed",
+			"job_id": jobID,
+			"run_id": runID,
+			"status": "failed",
+		})
+		if r.evaluator != nil {
+			r.evaluator.EnqueueRun(runID)
+		}
+		return
 	}
 
 	run := db.JobRun{
@@ -1416,8 +1472,22 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		status = "partial"
 	}
 
+	// Safety net (#138): items were configured and survived stale detection, yet
+	// the run ended up with zero backed-up AND zero failed items. There is no
+	// legitimate "completed" outcome here — it means every item was silently
+	// skipped (e.g. an unforeseen handler edge case). Report a failure rather
+	// than a misleading success with nothing backed up.
+	zeroItemsProcessed := status == "completed" && itemsDone == 0 && itemsFailed == 0 && run.ItemsTotal > 0
+	if zeroItemsProcessed {
+		status = "failed"
+	}
+
 	run.Status = status
-	run.Log = structuredDetails(itemResults)
+	if zeroItemsProcessed {
+		run.Log = fmt.Sprintf("No items were backed up despite %d item(s) being configured.", run.ItemsTotal)
+	} else {
+		run.Log = structuredDetails(itemResults)
+	}
 	run.ItemsDone = itemsDone
 	run.ItemsFailed = itemsFailed
 	run.SizeBytes = totalSize

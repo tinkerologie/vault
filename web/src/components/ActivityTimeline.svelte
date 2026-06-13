@@ -124,7 +124,7 @@
                   {/if}
                 </div>
                 {#if getFailureReason(run)}
-                  <p class="text-xs text-danger mt-1 truncate">{getFailureReason(run)}</p>
+                  <p class="text-xs text-danger mt-1 whitespace-pre-wrap break-words line-clamp-3" title={getFailureReason(run)}>{getFailureReason(run)}</p>
                 {/if}
               </div>
             </div>
