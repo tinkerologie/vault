@@ -20,6 +20,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/diagnostics"
+	"github.com/ruaan-deysel/vault/internal/discovery"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/logbuf"
 	"github.com/ruaan-deysel/vault/internal/replication"
@@ -576,6 +577,13 @@ var daemonCmd = &cobra.Command{
 		if anomalyEvaluator != nil {
 			go runAnomalyTrendTicker(ctx, anomalyEvaluator)
 		}
+
+		// Zeroconf/mDNS discovery (#137). Advertises the daemon on the LAN so
+		// integrations (e.g. the Home Assistant Vault integration) can
+		// auto-discover it. Automatically no-ops when bound to loopback — the
+		// local-only default — so a 127.0.0.1 bind is never advertised. Shuts
+		// down with ctx; no explicit cleanup required.
+		discovery.New(addr, version, tlsCert != "" && tlsKey != "").Start(ctx)
 
 		err = srv.StartWithContext(ctx)
 		if errors.Is(err, http.ErrServerClosed) {

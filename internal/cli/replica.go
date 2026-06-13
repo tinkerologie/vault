@@ -14,6 +14,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/api"
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/discovery"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/spf13/cobra"
@@ -98,6 +99,10 @@ disaster recovery.`,
 		// Listen for OS signals for graceful shutdown.
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+
+		// Zeroconf/mDNS discovery (#137). Replica instances are also
+		// discoverable on the LAN unless bound to loopback. Shuts down with ctx.
+		discovery.New(addr, version, tlsCert != "" && tlsKey != "").Start(ctx)
 
 		err = srv.StartWithContext(ctx)
 		if errors.Is(err, http.ErrServerClosed) {
