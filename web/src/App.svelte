@@ -3,7 +3,7 @@
   import { connectWs } from './lib/ws.svelte.js'
   import { initTheme, getMode, setMode, getIsThemed } from './lib/theme.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
-  import { loadFeatureFlags, getAnomalyEnabled, getReplicationEnabled } from './lib/settings.svelte.js'
+  import { loadFeatureFlags, getAnomalyEnabled, getReplicationEnabled, getFeatureFlagsLoaded } from './lib/settings.svelte.js'
   import { onMount } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -58,8 +58,11 @@
     allNav.filter(item => (!replicaMode || !item.daemonOnly) && featureVisible(item.path))
   )
 
-  // Guard direct deep-links to a hidden route — redirect to Dashboard.
+  // Guard direct deep-links to a hidden route — redirect to Dashboard. Wait
+  // until flags are actually loaded so we don't redirect on the optimistic
+  // defaults during first paint.
   $effect(() => {
+    if (!getFeatureFlagsLoaded()) return
     const route = getRoute()
     if (route === '/anomalies' && !getAnomalyEnabled()) navigate('/')
     else if (route === '/replication' && !replicaMode && !getReplicationEnabled()) navigate('/')
@@ -79,7 +82,9 @@
       }
     } catch { /* ignore — default to daemon mode */ }
     connectWs()
-    await loadFeatureFlags()
+    try {
+      await loadFeatureFlags()
+    } catch { /* ignore — store fails open; never block the app from becoming ready */ }
     ready = true
   })
 

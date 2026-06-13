@@ -4,6 +4,9 @@ import { api } from './api.js'
 // page writes them on save so the UI updates without a reload.
 let anomalyEnabled = $state(true)
 let replicationEnabled = $state(true)
+// featureFlagsLoaded gates consumers (e.g. App's direct-URL guard) so they
+// don't act on the optimistic defaults before the real settings have loaded.
+let featureFlagsLoaded = $state(false)
 
 export function getAnomalyEnabled() {
   return anomalyEnabled
@@ -11,6 +14,10 @@ export function getAnomalyEnabled() {
 
 export function getReplicationEnabled() {
   return replicationEnabled
+}
+
+export function getFeatureFlagsLoaded() {
+  return featureFlagsLoaded
 }
 
 export function setAnomalyEnabled(v) {
@@ -28,9 +35,11 @@ export async function loadFeatureFlags() {
   let settings
   try {
     settings = await api.getSettings()
-  } catch {
+  } catch (e) {
+    console.warn('loadFeatureFlags: settings fetch failed, defaulting features to visible:', e)
     anomalyEnabled = true
     replicationEnabled = true
+    featureFlagsLoaded = true
     return
   }
 
@@ -46,8 +55,10 @@ export async function loadFeatureFlags() {
     try {
       const sources = await api.listReplicationSources()
       replicationEnabled = Array.isArray(sources) && sources.length > 0
-    } catch {
+    } catch (e) {
+      console.warn('loadFeatureFlags: replication sources fetch failed, defaulting to hidden:', e)
       replicationEnabled = false
     }
   }
+  featureFlagsLoaded = true
 }
