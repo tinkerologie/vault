@@ -119,7 +119,14 @@ func TestAPIKeyAuth(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
-	middleware := APIKeyAuth(database)
+	// Inject a fixed local-interface address set so the exemption check is
+	// deterministic regardless of the build host's real addresses. 192.168.20.21
+	// stands in for the NIC the daemon is bound to (the co-located proxy's
+	// source address); 192.168.1.50 is a genuine remote client.
+	localCache := newLocalIPCache(time.Minute, func() map[string]struct{} {
+		return map[string]struct{}{"192.168.20.21": {}}
+	})
+	middleware := apiKeyAuth(database, localCache)
 	handler := middleware(okHandler)
 
 	// Split to avoid generic-secret scanner false positives on the test fixture.
@@ -145,6 +152,15 @@ func TestAPIKeyAuth(t *testing.T) {
 		{
 			name:       "loopback exempt ipv6",
 			remoteAddr: "[::1]:12345",
+			setupKey:   true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			// #139: the co-located Unraid proxy connects via the daemon's NIC
+			// IP when bound to a specific address, so a request from a local
+			// interface address must be exempt even with an API key set.
+			name:       "local interface IP exempt (co-located proxy)",
+			remoteAddr: "192.168.20.21:45000",
 			setupKey:   true,
 			wantStatus: http.StatusOK,
 		},

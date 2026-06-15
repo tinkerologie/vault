@@ -21,15 +21,43 @@ if [ -f "$CONFIG" ]; then
     unset _val
 fi
 
+# Resolve an absolute path to `ip`. When rc.vault is invoked from php-fpm
+# (control.php / apply.sh via exec), PATH may not include /usr/sbin where
+# Unraid keeps `ip` (#139). A bare `ip` call then silently fails, making valid
+# NIC addresses look "not local" and get reset to loopback — so the daemon
+# binds 127.0.0.1 while the UI health probe targets the NIC IP and reports
+# STOPPED. Mirror apply.sh: resolve the binary explicitly and degrade
+# gracefully when it cannot be found.
+IP_BIN="$(command -v ip 2>/dev/null)"
+if [ -z "$IP_BIN" ]; then
+    for candidate in /usr/sbin/ip /sbin/ip; do
+        if [ -x "$candidate" ]; then
+            IP_BIN="$candidate"
+            break
+        fi
+    done
+fi
+
 # Validate bind address: only allow 127.0.0.1, 0.0.0.0, or a valid local IP.
 validate_bind_address() {
     local addr="$1"
     case "$addr" in
         127.0.0.1|0.0.0.0|::1|::) return 0 ;;
     esac
-    # Check if the address is assigned to a local interface.
-    if ip addr show 2>/dev/null | grep -Fq "inet ${addr}/" || \
-       ip addr show 2>/dev/null | grep -Fq "inet6 ${addr}/"; then
+    # Only verify locality when `ip` is available — a missing binary must not
+    # masquerade as "address is not local". Trust-but-warn: when we cannot
+    # check, accept the configured address rather than resetting it (#139),
+    # matching apply.sh's behaviour.
+    if [ -z "$IP_BIN" ]; then
+        echo "Warning: 'ip' binary not found; cannot verify bind address '$addr' is local — accepting as configured"
+        return 0
+    fi
+    # Check if the address is assigned to a local interface. Snapshot the
+    # output once and match both families against it.
+    local ip_output
+    ip_output="$("$IP_BIN" addr show 2>/dev/null)"
+    if printf '%s\n' "$ip_output" | grep -Fq "inet ${addr}/" || \
+       printf '%s\n' "$ip_output" | grep -Fq "inet6 ${addr}/"; then
         return 0
     fi
     return 1

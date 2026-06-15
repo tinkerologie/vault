@@ -57,6 +57,28 @@ $proxy_url = '/plugins/vault/include/app.php#/';
     color: #fff;
     text-decoration: none;
 }
+/* Keep the configuration form compact and left-aligned instead of stretching
+   across the full (ultra-wide) screen. */
+#vaultConfigForm {
+    max-width: 560px;
+}
+#vaultConfigForm dd input[type="number"] {
+    width: 120px;
+}
+/* Fixed width so the bind-address select does not expand to 100% (Unraid's
+   theme default) and span the whole screen — wide enough for the labels. */
+.vault-bind-select {
+    width: 340px;
+    max-width: 100%;
+}
+.vault-bind-select optgroup {
+    font-weight: bold;
+    font-style: normal;
+}
+.vault-bind-select option {
+    font-weight: normal;
+    padding-left: 4px;
+}
 </style>
 
 <div class="title"><span class="left"><i class="title fa fa-cogs"></i>Service Control</span></div>
@@ -91,7 +113,13 @@ $proxy_url = '/plugins/vault/include/app.php#/';
 
 <div class="title"><span class="left"><i class="title fa fa-wrench"></i>Configuration</span></div>
 
-<form id="vaultConfigForm" method="POST" action="/update.php" target="progressFrame">
+<!-- Apply posts into a hidden iframe of our own (not Unraid's shared visible
+     progressFrame) so the raw "Stopping Vault daemon…" script output never
+     appears above the footer. The real outcome is surfaced co-located, inline
+     below the form, by pollAfterApply() — matching how the Unraid API plugin
+     reports applied settings in-component rather than in the footer status. -->
+<iframe name="vaultApplyFrame" style="display: none;" title="Vault configuration apply"></iframe>
+<form id="vaultConfigForm" method="POST" action="/update.php" target="vaultApplyFrame">
 <input type="hidden" name="#file" value="<?=$plugin?>/vault.cfg">
 <input type="hidden" name="#command" value="/plugins/<?=$plugin?>/include/apply.sh">
 
@@ -106,22 +134,34 @@ Port number for the Vault daemon (default: 24085). Keep this configurable in cas
 <dl>
     <dt>Bind Address:</dt>
     <dd>
-        <select name="BIND_ADDRESS" class="narrow">
-            <option value="127.0.0.1" <?= $bind === '127.0.0.1' ? 'selected' : '' ?>>127.0.0.1 (Loopback — local only)</option>
-            <option value="::1" <?= $bind === '::1' ? 'selected' : '' ?>>::1 (IPv6 Loopback — local only)</option>
-            <option value="0.0.0.0" <?= $bind === '0.0.0.0' ? 'selected' : '' ?>>0.0.0.0 (All IPv4 interfaces)</option>
-            <option value="::" <?= $bind === '::' ? 'selected' : '' ?>>:: (All interfaces — IPv4 + IPv6)</option>
+        <select name="BIND_ADDRESS" class="vault-bind-select">
+            <optgroup label="Local only (recommended)">
+                <option value="127.0.0.1" <?= $bind === '127.0.0.1' ? 'selected' : '' ?>>127.0.0.1 — IPv4 loopback</option>
+                <option value="::1" <?= $bind === '::1' ? 'selected' : '' ?>>::1 — IPv6 loopback</option>
+            </optgroup>
+            <optgroup label="All interfaces">
+                <option value="0.0.0.0" <?= $bind === '0.0.0.0' ? 'selected' : '' ?>>0.0.0.0 — all IPv4 interfaces</option>
+                <option value="::" <?= $bind === '::' ? 'selected' : '' ?>>:: — all IPv4 + IPv6 interfaces</option>
+            </optgroup>
 <?php
 $known_ips = ['127.0.0.1', '0.0.0.0', '::1', '::'];
+if (!empty($local_ips)):
+?>
+            <optgroup label="Network interfaces">
+<?php
 foreach ($local_ips as $nic):
     $ip_esc = htmlspecialchars($nic['ip'], ENT_QUOTES, 'UTF-8');
     $iface_esc = htmlspecialchars($nic['iface'], ENT_QUOTES, 'UTF-8');
     $known_ips[] = $nic['ip'];
 ?>
-            <option value="<?= $ip_esc ?>" <?= $bind === $nic['ip'] ? 'selected' : '' ?>><?= $ip_esc ?> (<?= $iface_esc ?>)</option>
+                <option value="<?= $ip_esc ?>" <?= $bind === $nic['ip'] ? 'selected' : '' ?>><?= $ip_esc ?> — <?= $iface_esc ?></option>
 <?php endforeach; ?>
+            </optgroup>
+<?php endif; ?>
 <?php if (!in_array($bind, $known_ips, true)): ?>
-            <option value="<?= $bind_esc ?>" selected><?= $bind_esc ?> (unknown — pick a detected address)</option>
+            <optgroup label="Current selection (not detected)">
+                <option value="<?= $bind_esc ?>" selected><?= $bind_esc ?> — pick a detected address instead</option>
+            </optgroup>
 <?php endif; ?>
         </select>
     </dd>
@@ -140,6 +180,7 @@ Warning: the Vault API is accessible from your local network. Only use this if y
     <dd><input type="submit" name="#apply" value="Apply"><input type="button" value="Done" onclick="done()"></dd>
 </dl>
 </form>
+<div id="vault-apply-status" style="display: none; margin-top: 8px; font-size: 0.9em; color: var(--gray-500, #888);"></div>
 
 <script>
 function resetDefaults() {
@@ -271,12 +312,16 @@ function serviceControl(action) {
 }
 
 // After applying a config change (port / bind address), apply.sh restarts the
-// daemon. The form posts into the hidden progress iframe, so the page itself
-// gives no feedback — poll the daemon's real status and surface a clear error
+// daemon. The form posts into a hidden iframe, so the submission itself shows
+// nothing — the submit handler shows a transient inline note and this function
+// polls the daemon's real status, clearing the note and surfacing a clear error
 // if it failed to come back up, e.g. the chosen port is already in use
 // (issue #124).
 function pollAfterApply(attempts) {
-    if (attempts === undefined) attempts = 5;
+    // ~12 polls × 3s ≈ 36s. A restart that takes the hybrid DB-restore path can
+    // need ~15-20s to bind and serve health; a shorter window would report a
+    // false STOPPED until the user refreshes (issues #124, #139).
+    if (attempts === undefined) attempts = 12;
 
     var orb = document.getElementById('vault-status-orb');
     var statusText = document.getElementById('vault-status-text');
@@ -285,8 +330,12 @@ function pollAfterApply(attempts) {
     var errorEl = document.getElementById('vault-control-error');
     var startStop = document.getElementById('vault-btn-startstop');
     var restartBtn = document.getElementById('vault-btn-restart');
+    var applyStatus = document.getElementById('vault-apply-status');
 
     function render(running) {
+        // The apply finished — the orb/error now carry the outcome, so the
+        // transient "Restarting…" note is no longer needed.
+        if (applyStatus) applyStatus.style.display = 'none';
         if (orb) orb.className = 'fa fa-circle ' + (running ? 'green-orb' : 'grey-orb');
         if (statusText) {
             statusText.textContent = running ? 'RUNNING' : 'STOPPED';
@@ -336,14 +385,47 @@ function pollAfterApply(attempts) {
     var form = document.getElementById('vaultConfigForm');
     if (!form) return;
     form.addEventListener('submit', function() {
-        // apply.sh only restarts the daemon if it was already running; if it
-        // was intentionally stopped, polling would raise a false "did not come
-        // back up" alarm. Mirror that condition: only poll when running.
+        // Unraid reloads this page when the #apply form is submitted, which
+        // wipes any feedback shown now. Stash the intent in sessionStorage so
+        // the reloaded page can surface the result inline (handled below),
+        // co-located with the form instead of as raw script output above the
+        // footer. apply.sh only restarts the daemon when it was already
+        // running, so record that to decide whether to poll for a restart.
         var statusText = document.getElementById('vault-status-text');
         var wasRunning = !!(statusText && statusText.classList.contains('running'));
-        if (!wasRunning) return;
-        // Give apply.sh time to stop + restart the daemon before the first poll.
-        setTimeout(function() { pollAfterApply(5); }, 4000);
+        try {
+            sessionStorage.setItem('vaultApply', JSON.stringify({ t: Date.now(), wasRunning: wasRunning }));
+        } catch (e) { /* sessionStorage unavailable — skip inline feedback */ }
     });
+})();
+
+// On the reload that follows an Apply, surface the outcome inline next to the
+// form rather than as Unraid's raw progress output near the footer.
+(function() {
+    var raw;
+    try { raw = sessionStorage.getItem('vaultApply'); } catch (e) { return; }
+    if (!raw) return;
+    try { sessionStorage.removeItem('vaultApply'); } catch (e) { /* ignore */ }
+
+    var info;
+    try { info = JSON.parse(raw); } catch (e) { return; }
+    if (!info || (Date.now() - info.t) > 30000) return; // stale — ignore
+
+    var applyStatus = document.getElementById('vault-apply-status');
+    if (info.wasRunning) {
+        if (applyStatus) {
+            applyStatus.textContent = '↻ Applying configuration — restarting daemon…';
+            applyStatus.style.display = 'block';
+        }
+        // apply.sh restarted the daemon; confirm it came back up. This clears
+        // the note on success or shows a clear error if it failed (issue #124).
+        pollAfterApply(12);
+    } else if (applyStatus) {
+        // Daemon was stopped, so apply.sh only saved the config — nothing to
+        // poll for.
+        applyStatus.textContent = 'Configuration saved.';
+        applyStatus.style.display = 'block';
+        setTimeout(function() { applyStatus.style.display = 'none'; }, 4000);
+    }
 })();
 </script>

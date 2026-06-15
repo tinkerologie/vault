@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Selecting a specific NIC bind address now works end-to-end** (closes #139). Cycling the **Bind Address** to a detected interface IP (e.g. `192.168.20.21`) left the daemon showing **STOPPED** and made the Vault UI unreachable — only `127.0.0.1` and `0.0.0.0` worked. Two causes are fixed: (1) `rc.vault` validated the address with a bare `ip` command, but the service/php-fpm execution context often lacks `/usr/sbin` in `PATH` (the same gap fixed for `apply.sh` in #136), so a valid NIC address silently failed validation and was reset to `127.0.0.1` _in memory_ — the daemon bound loopback while the UI health probe targeted the NIC IP. `rc.vault` now resolves the `ip` binary to an absolute path and, when `ip` is unavailable, accepts the configured address rather than rejecting it. (2) Once bound to a NIC IP, every request from the co-located Unraid PHP proxy arrived from a non-loopback source and was rejected with **401 "valid API key required"** when an API key was configured — breaking the _entire_ proxied UI, not just the status check. The daemon now exempts requests originating from the host itself (loopback **or** any local interface address), so the local proxy is trusted on any bind address while genuine remote LAN clients still require a key.
+- **The service status no longer shows a false STOPPED right after applying a configuration change.** A restart that takes the hybrid database-restore path can need ~15–20 s to bind and serve health; the post-Apply status poll gave up too early and reported STOPPED until a manual refresh. The poll window now extends to ~36 s.
+
+### Changed
+
+- **Bind Address dropdown is grouped and no longer stretches across the screen.** The list is organised into labelled sections — _Local only (recommended)_, _All interfaces_, and _Network interfaces_ (detected NICs shown as `<ip> — <iface>`) — and the control is given a fixed, compact width so the Configuration form stays left-aligned instead of spanning the full width of wide displays.
+- **Applying a configuration change reports its result inline instead of as raw script output near the footer.** Previously the Apply form streamed `rc.vault`'s raw output (e.g. "Stopping Vault daemon…") into Unraid's progress area just above the **Array Started** system-status bar. That output is now suppressed and replaced with a co-located "Applying configuration — restarting daemon…" note next to the form that resolves to the live RUNNING/STOPPED status — keeping the daemon's feedback in-component rather than in Unraid's reserved system-status area, consistent with Unraid plugin conventions and the official Unraid API plugin.
+
 ## [2026.06.04] - 2026-06-13
 
 ### Added

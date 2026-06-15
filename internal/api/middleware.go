@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -119,17 +120,30 @@ func BodySizeLimit(maxBytes int64) func(http.Handler) http.Handler {
 }
 
 // APIKeyAuth returns middleware that enforces API key authentication for
-// non-loopback requests. Loopback connections (127.0.0.1, ::1) and the
-// Unraid PHP proxy are always exempt — authentication only applies when
-// the daemon is exposed on a LAN address (bind != 127.0.0.1).
+// requests that do not originate from the daemon's own host. Requests from the
+// host itself — loopback (127.0.0.1, ::1) or any local interface address — are
+// always exempt, which keeps the co-located Unraid PHP proxy working whether
+// the daemon is bound to loopback, a wildcard, or a specific NIC IP. API key
+// authentication only applies to genuine remote clients.
 //
 // The middleware checks the X-API-Key header against the bcrypt hash stored
 // in the settings table. If no API key has been generated, all requests pass.
 func APIKeyAuth(database *db.DB) func(http.Handler) http.Handler {
+	return apiKeyAuth(database, newLocalIPCache(localIPCacheTTL, readLocalInterfaceIPs))
+}
+
+// apiKeyAuth is the testable core of APIKeyAuth. The localIPCache identifies
+// addresses that count as "this host" (in addition to loopback) and are
+// therefore exempt from authentication.
+func apiKeyAuth(database *db.DB, local *localIPCache) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Loopback connections are always exempt.
-			if isLoopback(r.RemoteAddr) {
+			// Requests from the daemon's own host are always exempt. The
+			// Unraid PHP proxy connects to whichever address the daemon is
+			// bound to, so on a specific NIC bind its source address is that
+			// NIC IP rather than loopback — without this the entire proxied
+			// UI returns 401 once an API key is set (#139).
+			if isLocalRequest(r.RemoteAddr, local) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -185,6 +199,74 @@ func isLoopback(remoteAddr string) bool {
 		return false
 	}
 	return ip.IsLoopback()
+}
+
+// isLocalRequest reports whether the request originates from the host running
+// the daemon: a loopback address, or any address assigned to a local network
+// interface. A genuine remote LAN client's source IP is never one of the
+// host's own addresses, so it is not treated as local.
+func isLocalRequest(remoteAddr string, local *localIPCache) bool {
+	if isLoopback(remoteAddr) {
+		return true
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	host = strings.Trim(host, "[]")
+	return local.has(net.ParseIP(host))
+}
+
+// localIPCacheTTL bounds how often the host's interface addresses are
+// re-enumerated for the API-key exemption check.
+const localIPCacheTTL = 30 * time.Second
+
+// localIPCache memoises the set of IP addresses assigned to this host's
+// network interfaces, refreshing at most once per ttl. It lets the API-key
+// middleware treat requests from the host itself (the co-located Unraid PHP
+// proxy) as local without enumerating interfaces on every request. The lookup
+// is injectable so tests can supply a deterministic address set.
+type localIPCache struct {
+	ttl     time.Duration
+	lookup  func() map[string]struct{}
+	mu      sync.Mutex
+	ips     map[string]struct{}
+	expires time.Time
+}
+
+func newLocalIPCache(ttl time.Duration, lookup func() map[string]struct{}) *localIPCache {
+	return &localIPCache{ttl: ttl, lookup: lookup}
+}
+
+// has reports whether ip is currently assigned to a local interface.
+func (c *localIPCache) has(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ips == nil || time.Now().After(c.expires) {
+		c.ips = c.lookup()
+		c.expires = time.Now().Add(c.ttl)
+	}
+	_, ok := c.ips[ip.String()]
+	return ok
+}
+
+// readLocalInterfaceIPs returns the set of IP addresses assigned to the host's
+// network interfaces, keyed by their canonical string form.
+func readLocalInterfaceIPs() map[string]struct{} {
+	set := make(map[string]struct{})
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return set
+	}
+	for _, a := range addrs {
+		if ipNet, ok := a.(*net.IPNet); ok {
+			set[ipNet.IP.String()] = struct{}{}
+		}
+	}
+	return set
 }
 
 // isOAuthCallback returns true when the request path ends with a known
