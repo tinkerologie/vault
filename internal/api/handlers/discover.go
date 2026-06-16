@@ -3,6 +3,8 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/ruaan-deysel/vault/internal/engine"
 )
 
@@ -41,6 +43,41 @@ func (h *DiscoverHandler) ListContainers(w http.ResponseWriter, r *http.Request)
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"items":     items,
+		"available": true,
+	})
+}
+
+// ContainerMounts returns the bind mounts of a single container, each annotated
+// with the auto-skip verdict from the backup engine so the job wizard can render
+// per-mount include/exclude toggles.
+//
+//	GET /api/v1/containers/{name}/mounts
+func (h *DiscoverHandler) ContainerMounts(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	handler, err := engine.NewContainerHandler()
+	if err != nil {
+		// Docker not available — return empty list, not an error.
+		respondJSON(w, http.StatusOK, map[string]any{
+			"mounts":    []engine.MountInfo{},
+			"available": false,
+			"error":     err.Error(),
+		})
+		return
+	}
+
+	mounts, err := handler.ListMounts(r.Context(), name)
+	if err != nil {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"mounts":    []engine.MountInfo{},
+			"available": false,
+			"error":     err.Error(),
+		})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"mounts":    mounts,
 		"available": true,
 	})
 }

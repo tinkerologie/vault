@@ -149,6 +149,34 @@ func TestListZFSDatasets_GracefulWhenZFSAbsent(t *testing.T) {
 	}
 }
 
+// TestContainerMounts_GracefulWhenDockerAbsent checks that the per-container
+// mounts endpoint returns 200 with an empty mounts list when Docker is not
+// available (CI / macOS), mirroring the other discover handlers.
+func TestContainerMounts_GracefulWhenDockerAbsent(t *testing.T) {
+	t.Parallel()
+	h := NewDiscoverHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/containers/sonarr/mounts", nil)
+	req = withURLParam(req, "name", "sonarr")
+	w := httptest.NewRecorder()
+	h.ContainerMounts(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["mounts"]; !ok {
+		t.Errorf("response missing 'mounts' key: %v", resp)
+	}
+	if _, ok := resp["available"]; !ok {
+		t.Errorf("response missing 'available' key: %v", resp)
+	}
+}
+
 // TestDiscoverHandlers_ResponseShape validates the consistent response shape
 // across all five discover endpoints.
 func TestDiscoverHandlers_ResponseShape(t *testing.T) {

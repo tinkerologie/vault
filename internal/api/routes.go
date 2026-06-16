@@ -174,6 +174,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		if !s.config.ReadOnly {
 			discoverH := handlers.NewDiscoverHandler()
 			r.Get("/containers", discoverH.ListContainers)
+			r.Get("/containers/{name}/mounts", discoverH.ContainerMounts)
 			r.Get("/vms", discoverH.ListVMs)
 			r.Get("/folders", discoverH.ListFolders)
 			r.Get("/plugins", discoverH.ListPlugins)

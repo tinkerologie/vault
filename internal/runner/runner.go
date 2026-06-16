@@ -1022,6 +1022,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			if ep, ok := settings["exclude_paths"]; ok {
 				backupItem.Settings["exclude_paths"] = ep
 			}
+			if em, ok := settings["excluded_mounts"]; ok {
+				backupItem.Settings["excluded_mounts"] = em
+			}
 		}
 
 		// VM items need the backup mode (snapshot or cold).
