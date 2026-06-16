@@ -285,21 +285,24 @@ func (d *DB) CountJobsByStorageDestID(storageDestID int64) (int, error) {
 func (d *DB) DeleteDedupState(storageDestID int64) error {
 	tx, err := d.Begin()
 	if err != nil {
-		return err
+		return fmt.Errorf("delete dedup state: begin transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
 	// Delete chunks before packs so the operation succeeds whether or not
 	// SQLite foreign-key cascades are enabled in this connection.
-	for _, stmt := range []string{
-		"DELETE FROM dedup_chunks WHERE storage_id = ?",
-		"DELETE FROM dedup_packs WHERE storage_id = ?",
-		"DELETE FROM dedup_gc_runs WHERE storage_id = ?",
-	} {
-		if _, err := tx.Exec(stmt, storageDestID); err != nil {
-			return err
-		}
+	if _, err := tx.Exec("DELETE FROM dedup_chunks WHERE storage_id = ?", storageDestID); err != nil {
+		return fmt.Errorf("delete dedup state: delete chunks: %w", err)
 	}
-	return tx.Commit()
+	if _, err := tx.Exec("DELETE FROM dedup_packs WHERE storage_id = ?", storageDestID); err != nil {
+		return fmt.Errorf("delete dedup state: delete packs: %w", err)
+	}
+	if _, err := tx.Exec("DELETE FROM dedup_gc_runs WHERE storage_id = ?", storageDestID); err != nil {
+		return fmt.Errorf("delete dedup state: delete gc runs: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete dedup state: commit: %w", err)
+	}
+	return nil
 }
 
 // ListJobsByStorageDestID returns id/name pairs of every job that references

@@ -3891,8 +3891,11 @@ func (r *Runner) reclaimDedupAfterJobDelete(adapter storage.Adapter, jobID int64
 	if e := r.DeleteStorageDir(adapter, dedup.RepoRoot); e != nil {
 		*errs = append(*errs, fmt.Errorf("remove dedup repo: %w", e))
 	}
+	// Surface a failure to clear the dedup index too: leaving stale pack/chunk
+	// rows behind would corrupt the repo re-init on the next backup, so it must
+	// not fail silently.
 	if e := r.db.DeleteDedupState(dest.ID); e != nil {
-		log.Printf("runner: dedup cleanup: clearing dedup state for dest %d: %v", dest.ID, e)
+		*errs = append(*errs, fmt.Errorf("clear dedup index state: %w", e))
 	}
 }
 
