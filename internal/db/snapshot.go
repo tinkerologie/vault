@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"modernc.org/sqlite"
@@ -31,6 +32,11 @@ type SnapshotManager struct {
 	usbMinInterval      time.Duration // minimum interval between USB writes.
 	restorationInfo     *RestorationInfo
 	mu                  sync.Mutex
+
+	// flushPending guards ScheduleFlush so a burst of config changes coalesces
+	// into a single background flush. flushDebounce is the coalescing window.
+	flushPending  atomic.Bool
+	flushDebounce time.Duration
 }
 
 // RestorationInfo records which source was used to restore the database at
@@ -50,6 +56,7 @@ func NewSnapshotManager(database *DB, snapshotPath, defaultPath string) *Snapsho
 		snapshotPath:        snapshotPath,
 		defaultSnapshotPath: defaultPath,
 		usbMinInterval:      1 * time.Hour,
+		flushDebounce:       2 * time.Second,
 	}
 }
 
@@ -375,6 +382,30 @@ func (sm *SnapshotManager) FlushToUSB() error {
 	snapErr := sm.SaveSnapshot()
 	sm.saveUSBBackup(true)
 	return snapErr
+}
+
+// ScheduleFlush asynchronously flushes the working DB to the primary snapshot
+// and USB flash after a short debounce, coalescing a burst of config changes
+// into a single flush. Unlike FlushToUSB it never blocks the caller, so config
+// mutations (job/storage/settings CRUD) return immediately instead of waiting
+// on slow flash I/O — deleting several jobs in a row no longer serialises N
+// multi-second flushes on the request path, which made the daemon appear
+// unresponsive (issue #143). Durability is still guaranteed on shutdown by the
+// synchronous FlushToUSB in the pre-shutdown hook and Close.
+func (sm *SnapshotManager) ScheduleFlush() {
+	if !sm.flushPending.CompareAndSwap(false, true) {
+		return // a flush is already queued; it will capture this change too
+	}
+	debounce := sm.flushDebounce
+	go func() {
+		time.Sleep(debounce)
+		// Clear before flushing so a change committed during the flush schedules
+		// a fresh flush rather than being dropped.
+		sm.flushPending.Store(false)
+		if err := sm.FlushToUSB(); err != nil {
+			log.Printf("Warning: debounced config flush failed: %v", err)
+		}
+	}()
 }
 
 // Close performs a final snapshot save as a flush, including a USB backup.

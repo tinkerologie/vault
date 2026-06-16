@@ -826,3 +826,20 @@ func TestWebDAVGetCapacityNextcloudSentinel(t *testing.T) {
 		t.Errorf("expected FreeBytes=0 when no quota, got %d", cap.FreeBytes)
 	}
 }
+
+// TestWebDAVListMissingDirIsNotExist verifies that listing a directory that
+// does not exist surfaces a not-found error detectable by IsNotExist, so the
+// cleanup path can treat an already-deleted directory as success (issue #143).
+func TestWebDAVListMissingDirIsNotExist(t *testing.T) {
+	t.Parallel()
+	a, _, cleanup := newTestWebDAVAdapter(t, WebDAVConfig{})
+	defer cleanup()
+
+	_, err := a.List("does/not/exist")
+	if err == nil {
+		t.Fatal("List(missing) error = nil, want a not-found error")
+	}
+	if !IsNotExist(err) {
+		t.Errorf("IsNotExist(List error) = false, want true; err = %v", err)
+	}
+}

@@ -505,3 +505,41 @@ func TestDefaultSnapshotPath(t *testing.T) {
 		t.Errorf("DefaultSnapshotPath() = %q, want %q", sm.DefaultSnapshotPath(), defaultPath)
 	}
 }
+
+// TestScheduleFlushCoalescesAndFlushes verifies the debounced async flush:
+// a burst of config changes coalesces into a single queued flush that runs
+// after the debounce window without blocking the caller (issue #143).
+func TestScheduleFlushCoalescesAndFlushes(t *testing.T) {
+	dir := t.TempDir()
+	d := setupTestDB(t)
+
+	snapshotPath := filepath.Join(dir, "snap.db")
+	usbPath := filepath.Join(dir, "usb", "vault.db.backup")
+
+	sm := NewSnapshotManager(d, snapshotPath, snapshotPath)
+	sm.SetUSBBackupPath(usbPath)
+	sm.flushDebounce = 30 * time.Millisecond
+
+	// A burst of rapid config changes coalesces into one queued flush.
+	for i := 0; i < 10; i++ {
+		sm.ScheduleFlush()
+	}
+	if !sm.flushPending.Load() {
+		t.Fatal("flushPending = false right after burst, want true (one flush queued)")
+	}
+
+	// After the debounce window the flush runs once and clears the flag.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(usbPath); err == nil && !sm.flushPending.Load() {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, err := os.Stat(usbPath); err != nil {
+		t.Fatalf("USB backup not created after ScheduleFlush: %v", err)
+	}
+	if sm.flushPending.Load() {
+		t.Error("flushPending still true after flush completed")
+	}
+}

@@ -416,11 +416,14 @@ var daemonCmd = &cobra.Command{
 
 			// Flush the database to USB flash after any config mutation
 			// (job/storage/settings/replication CRUD) so the flash copy
-			// always has fresh data and survives reboots.
+			// always has fresh data and survives reboots. The flush is
+			// scheduled (debounced, off the request path) so a burst of
+			// mutations — e.g. deleting several jobs — no longer serialises
+			// multiple multi-second flash writes on the HTTP handler, which
+			// made the daemon appear to hang (issue #143). Shutdown durability
+			// is preserved by the synchronous pre-shutdown flush below.
 			srv.SetConfigChangeHook(func() {
-				if err := snapshotMgr.FlushToUSB(); err != nil {
-					log.Printf("Warning: config change USB flush failed: %v", err)
-				}
+				snapshotMgr.ScheduleFlush()
 			})
 
 			// Pre-drain shutdown flush: ensure the working DB is on
