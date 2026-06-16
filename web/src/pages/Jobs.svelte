@@ -791,13 +791,18 @@
       try {
         const { url, options } = buildApiRequest('GET', `/containers/${encodeURIComponent(name)}/mounts`)
         const res = await fetch(url, { ...options, signal })
-        if (!res.ok) continue
-        const data = await res.json()
-        if (data.available && Array.isArray(data.mounts)) {
-          next[name] = data.mounts
+        if (!res.ok) {
+          next[name] = []
+          continue
         }
+        const data = await res.json()
+        next[name] = data.available && Array.isArray(data.mounts) ? data.mounts : []
       } catch {
-        // Silently ignore mount fetch failures and aborts.
+        // On abort a newer fetch is in flight — bail without touching state.
+        // For other failures record an empty list so the UI shows "no bind
+        // mounts" rather than spinning on "Loading…" forever.
+        if (signal.aborted) return
+        next[name] = []
       }
     }
     if (signal.aborted) return

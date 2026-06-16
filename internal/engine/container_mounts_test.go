@@ -15,6 +15,7 @@ import (
 // only bind mounts, sorted by destination, and flags auto-skipped volumes via
 // the same shouldSkipVolume rules the backup engine applies.
 func TestListMountsFiltersBindAndFlagsAutoSkip(t *testing.T) {
+	t.Parallel()
 	mock := &mockDockerClient{
 		inspectResp: client.ContainerInspectResult{
 			Container: containertypes.InspectResponse{
@@ -48,6 +49,7 @@ func TestListMountsFiltersBindAndFlagsAutoSkip(t *testing.T) {
 
 // TestListMountsInspectError surfaces inspect failures to the caller.
 func TestListMountsInspectError(t *testing.T) {
+	t.Parallel()
 	mock := &mockDockerClient{inspectErr: errors.New("no such container")}
 	h := &ContainerHandler{cli: mock}
 
@@ -60,6 +62,7 @@ func TestListMountsInspectError(t *testing.T) {
 // exclusion list combines free-text exclude_paths with checkbox-driven
 // excluded_mounts.
 func TestContainerExclusionsMergesExcludedMounts(t *testing.T) {
+	t.Parallel()
 	settings := map[string]any{
 		"exclude_paths":   []any{"*.log", "/config/Cache"},
 		"excluded_mounts": []any{"/tv", "/downloads"},
@@ -75,6 +78,7 @@ func TestContainerExclusionsMergesExcludedMounts(t *testing.T) {
 // TestContainerExclusionsOnlyMounts handles jobs that use mount toggles without
 // any free-text exclusions.
 func TestContainerExclusionsOnlyMounts(t *testing.T) {
+	t.Parallel()
 	settings := map[string]any{
 		"excluded_mounts": []any{"/rootfs"},
 	}
