@@ -128,6 +128,27 @@ func isWebDAVRetriable(err error) bool {
 	return code >= http.StatusInternalServerError
 }
 
+// mkdirAllWithRetry creates dir (and any missing parents) on the WebDAV server,
+// retrying transient failures with the same backoff schedule and classification
+// used for chunk PUTs. This matters for servers like Koofr that return a brief
+// 423 Locked on MKCOL right after a directory's children are deleted — e.g. the
+// partial-upload cleanup that precedes an upload retry — which otherwise fails
+// the whole write even though 423 is already classified as retriable.
+func mkdirAllWithRetry(c *gowebdav.Client, dir string) error {
+	var lastErr error
+	for attempt := 0; attempt <= len(webDAVChunkRetryBackoffs); attempt++ {
+		if attempt > 0 {
+			time.Sleep(webDAVChunkRetryBackoffs[attempt-1])
+		}
+		lastErr = c.MkdirAll(dir, 0750)
+		if lastErr == nil || !isWebDAVRetriable(lastErr) {
+			return lastErr
+		}
+		log.Printf("webdav: retriable mkdir error for %s (attempt %d): %v", dir, attempt+1, lastErr)
+	}
+	return lastErr
+}
+
 type webDAVChunkManifest struct {
 	Version   int                `json:"version"`
 	Path      string             `json:"path"`
@@ -624,7 +645,7 @@ func (w *WebDAVAdapter) Write(p string, reader io.Reader) error {
 	}
 	c := w.client()
 	if dir := path.Dir(full); dir != "/" && dir != "." {
-		if err := c.MkdirAll(dir, 0750); err != nil {
+		if err := mkdirAllWithRetry(c, dir); err != nil {
 			return fmt.Errorf("webdav: mkdir %s: %w", dir, err)
 		}
 	}

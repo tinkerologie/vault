@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -841,5 +842,46 @@ func TestWebDAVListMissingDirIsNotExist(t *testing.T) {
 	}
 	if !IsNotExist(err) {
 		t.Errorf("IsNotExist(List error) = false, want true; err = %v", err)
+	}
+}
+
+// TestWebDAVWriteRetriesMkdirOnLocked verifies that a transient 423 Locked on
+// MKCOL — which Koofr returns briefly after a directory's children are deleted
+// (e.g. the partial-upload cleanup that precedes an upload retry) — is retried
+// rather than failing the whole write.
+func TestWebDAVWriteRetriesMkdirOnLocked(t *testing.T) {
+	root := t.TempDir()
+	real := testWebDAVHandler(root)
+
+	// gowebdav surfaces a 423 from MkdirAll only via its 409-recovery segment
+	// walk: the top-level MKCOL gets 409 (parent missing), then a per-segment
+	// MKCOL returns the lock. Reproduce Koofr's behaviour by returning 423 on
+	// the leaf segment's first creation, then succeeding.
+	var leafMkcols int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" && strings.HasSuffix(r.URL.Path, "/run/telegraf/") &&
+			atomic.AddInt32(&leafMkcols, 1) == 2 {
+			w.WriteHeader(http.StatusLocked) // 423 on the segment-walk creation
+			return
+		}
+		real.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Shrink the retry backoff so the test runs fast.
+	old := webDAVChunkRetryBackoffs
+	webDAVChunkRetryBackoffs = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	defer func() { webDAVChunkRetryBackoffs = old }()
+
+	if err := a.Write("run/telegraf/config.json", strings.NewReader("{}")); err != nil {
+		t.Fatalf("Write should retry a transient 423 on mkdir, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&leafMkcols); got < 3 {
+		t.Errorf("leaf MKCOL attempts = %d, want >= 3 (409 probe, 423, retried success)", got)
 	}
 }
