@@ -217,12 +217,13 @@
   // Dismiss (×) on the 3-2-1 panel: hide immediately, persist, and revert on
   // failure. Re-enabled from Settings → Dashboard.
   async function dismissBackupRule() {
+    const original = settings.backup_rule_enabled
     settings = { ...settings, backup_rule_enabled: 'false' }
     try {
       await api.updateSettings({ backup_rule_enabled: 'false' })
       showToast('3-2-1 Backup Rule hidden — re-enable in Settings → Dashboard')
     } catch (e) {
-      settings = { ...settings, backup_rule_enabled: 'true' }
+      settings = { ...settings, backup_rule_enabled: original }
       showToast(e.message || 'Could not hide the panel', 'error')
     }
   }
