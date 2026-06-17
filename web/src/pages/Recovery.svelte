@@ -35,7 +35,7 @@
       // Derive protected items from the actual existence of restore points
       // rather than from the enabled flag on the parent job. A job can have
       // its schedule disabled (manual/one-off backup workflow) and still
-      // have restore points on disk — those items are protected. This
+      // have restore points on disk – those items are protected. This
       // matches the server-side recovery plan's has_restore_point logic.
       const pSet = new SvelteSet()
       for (const step of plan?.steps || []) {
@@ -89,7 +89,7 @@
 <div>
   <div class="mb-8">
     <h1 class="text-2xl font-bold text-text">Recovery Guide</h1>
-    <p class="text-sm text-text-muted mt-1">Your disaster recovery plan — what to do if your server dies.</p>
+    <p class="text-sm text-text-muted mt-1">Your disaster recovery plan – what to do if your server dies.</p>
   </div>
 
   {#if loading}
@@ -187,7 +187,7 @@
                       {#if item.size_bytes}
                         <span>{formatBytes(item.size_bytes)}</span>
                       {/if}
-                      <span class="text-text-muted">{item.storage_name || '—'}</span>
+                      <span class="text-text-muted">{item.storage_name || '–'}</span>
                     </div>
                   </div>
                 {/each}

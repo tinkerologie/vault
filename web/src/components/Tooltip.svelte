@@ -1,12 +1,12 @@
 <script>
   /**
-   * Tooltip — contextual info icon with hover/click-triggered tooltip popup.
+   * Tooltip – contextual info icon with hover/click-triggered tooltip popup.
    *
    * Uses fixed positioning so the popup is never clipped by parent overflow.
    *
    * Props:
-   * - text: string — tooltip content
-   * - id: string (optional) — unique ID for aria-describedby linking
+   * - text: string – tooltip content
+   * - id: string (optional) – unique ID for aria-describedby linking
    */
   let { text = '', id = undefined } = $props()
 

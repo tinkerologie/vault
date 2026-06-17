@@ -1,4 +1,4 @@
-// Theme management — two-axis system: style (default/1bit/8bit/16bit) × mode (light/system/dark).
+// Theme management – two-axis system: style (default/1bit/8bit/16bit) × mode (light/system/dark).
 // Persists to localStorage 'vault-style' + 'vault-mode'.
 // Applies CSS classes on <html>: .theme-{style} + .dark
 
@@ -34,7 +34,7 @@ function applyTheme() {
   // Apply dark class
   document.documentElement.classList.toggle('dark', isDark)
 
-  // Apply style class — remove all, add the current one
+  // Apply style class – remove all, add the current one
   for (const cls of STYLE_CLASSES) {
     document.documentElement.classList.remove(cls)
   }
@@ -88,7 +88,7 @@ export function initTheme() {
   }
   // Detach any handler from the previous MediaQueryList before replacing it
   // (e.g. under HMR). Operating on the *existing* mediaQuery is the only way
-  // to actually unregister the old listener — a fresh matchMedia() returns a
+  // to actually unregister the old listener – a fresh matchMedia() returns a
   // brand-new object that has no listeners attached.
   if (mediaQuery) {
     mediaQuery.removeEventListener('change', applyTheme)
@@ -113,7 +113,7 @@ export function getIsDark() {
   return isDark
 }
 
-/** @returns {boolean} — true when any non-default style is active */
+/** @returns {boolean} – true when any non-default style is active */
 export function getIsThemed() {
   return isThemed
 }

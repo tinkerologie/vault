@@ -1,13 +1,13 @@
 <script>
   /**
-   * BackupModeSelector — radio card component for selecting backup mode.
+   * BackupModeSelector – radio card component for selecting backup mode.
    * Shows different options based on whether containers, VMs, or both are selected.
    *
    * Props:
    * - containerMode: 'one_by_one' | 'stop_all' (bindable)
    * - vmMode: 'snapshot' | 'cold' (bindable)
-   * - hasContainers: boolean — whether the job includes containers
-   * - hasVMs: boolean — whether the job includes VMs
+   * - hasContainers: boolean – whether the job includes containers
+   * - hasVMs: boolean – whether the job includes VMs
    */
   let {
     containerMode = $bindable('one_by_one'),
@@ -52,7 +52,7 @@
 <div class="space-y-5">
   {#if hasContainers}
     <div>
-      <span class="block text-sm font-medium text-text mb-2">Container Backup Mode <Tooltip text="Sequential stops and backs up each container one at a time, minimising downtime per container. Batch stops all containers at once — faster overall but more total downtime." /></span>
+      <span class="block text-sm font-medium text-text mb-2">Container Backup Mode <Tooltip text="Sequential stops and backs up each container one at a time, minimising downtime per container. Batch stops all containers at once – faster overall but more total downtime." /></span>
       <div class="grid grid-cols-1 gap-2">
         {#each containerModes as mode (mode.value)}
           <button
@@ -88,7 +88,7 @@
 
   {#if hasVMs}
     <div>
-      <span class="block text-sm font-medium text-text mb-2">VM Backup Mode <Tooltip text="Live Snapshot creates a backup while the VM is running — no downtime. Cold Backup shuts the VM down first for maximum consistency but causes downtime." /></span>
+      <span class="block text-sm font-medium text-text mb-2">VM Backup Mode <Tooltip text="Live Snapshot creates a backup while the VM is running – no downtime. Cold Backup shuts the VM down first for maximum consistency but causes downtime." /></span>
       <div class="grid grid-cols-1 gap-2">
         {#each vmModes as mode (mode.value)}
           <button

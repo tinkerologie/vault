@@ -20,7 +20,7 @@
 
   function durationStr(run) {
     const d = formatDurationFromDates(run.started_at, run.completed_at)
-    return d === '—' ? '' : d
+    return d === '–' ? '' : d
   }
 
   function activityDotClass(run) {

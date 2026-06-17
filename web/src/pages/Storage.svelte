@@ -75,7 +75,7 @@
       if (msg.type === 'dedup_gc_complete' && msg.destination) {
         refreshOneDedupStats(msg.destination)
       }
-      // NEW — capacity probe completed on the server side; patch the
+      // NEW – capacity probe completed on the server side; patch the
       // affected card in place instead of re-fetching the whole list.
       if (msg.type === 'storage_capacity_updated' && msg.storage_id != null) {
         const dest = destinations.find((d) => d.id === msg.storage_id)
@@ -117,7 +117,7 @@
     cleanupBusy = new SvelteSet(cleanupBusy)
     try {
       await api.runDedupGC(id)
-      showToast('Cleanup started — refreshing stats…', 'info')
+      showToast('Cleanup started – refreshing stats…', 'info')
       // Best-effort refresh in 2s; the WS dedup_gc_complete event will
       // catch up the card if the GC takes longer.
       setTimeout(async () => {
@@ -153,7 +153,7 @@
     breakerBusy = next
     try {
       await api.closeBreaker(id)
-      showToast('Breaker reset — destination re-enabled', 'success')
+      showToast('Breaker reset – destination re-enabled', 'success')
       await loadData()
     } catch (e) {
       showToast(`Reset failed: ${e.message}`, 'error')
@@ -360,7 +360,7 @@
   }
 
   function formatSize(bytes) {
-    if (!bytes || bytes === 0) return '—'
+    if (!bytes || bytes === 0) return '–'
     const units = ['B', 'KB', 'MB', 'GB', 'TB']
     let i = 0
     let size = bytes
@@ -491,32 +491,32 @@
           <!-- Config summary -->
           <div class="text-xs text-text-dim space-y-1 mb-4">
             {#if dest.type === 'local'}
-              <p>Path: {cfg.path || '—'}</p>
+              <p>Path: {cfg.path || '–'}</p>
             {:else if dest.type === 'sftp'}
-              <p>Host: {cfg.host || '—'}:{cfg.port || 22}</p>
+              <p>Host: {cfg.host || '–'}:{cfg.port || 22}</p>
               <p>Path: {cfg.base_path || cfg.path || '/'}</p>
             {:else if dest.type === 'smb'}
-              <p>Share: \\{cfg.host || '—'}\{cfg.share || '—'}</p>
+              <p>Share: \\{cfg.host || '–'}\{cfg.share || '–'}</p>
               {#if cfg.base_path || cfg.path}<p>Path: {cfg.base_path || cfg.path}</p>{/if}
             {:else if dest.type === 'nfs'}
               <p class="text-xs text-text-muted truncate">{cfg.host}:{cfg.export}</p>
             {:else if dest.type === 'webdav'}
-              <p class="text-xs text-text-muted truncate">{cfg.url || '—'}</p>
+              <p class="text-xs text-text-muted truncate">{cfg.url || '–'}</p>
               {#if cfg.base_path}<p>Path: {cfg.base_path}</p>{/if}
             {:else if dest.type === 's3'}
-              <p>Bucket: {cfg.bucket || '—'}</p>
-              <p>Region: {cfg.region || '—'}</p>
+              <p>Bucket: {cfg.bucket || '–'}</p>
+              <p>Region: {cfg.region || '–'}</p>
               {#if cfg.endpoint}<p class="truncate">Endpoint: {cfg.endpoint}</p>{/if}
             {/if}
           </div>
 
-          <!-- Capacity block (Task 10 — storage-capacity feature).
+          <!-- Capacity block (Task 10 – storage-capacity feature).
                Sits between the destination's identity (config summary) and
                its operational toggles (DB backup, dedup stats). Reads the
-               "capacity" sub-object on every destination — null when never
+               "capacity" sub-object on every destination – null when never
                probed; { total_bytes: 0, ... } when the provider has no
                protocol-level quota (S3, generic WebDAV).
-               All byte values go through formatBytes() per the spec — users
+               All byte values go through formatBytes() per the spec – users
                see KB/MB/GB/TB, never raw int64. -->
           <div class="border-t border-border pt-3 mb-3 text-xs">
             {#if dest.capacity == null}
@@ -583,7 +583,7 @@
             {/if}
           </div>
 
-          <!-- DB backup fan-out toggle (Task 11 — resilience hardening).
+          <!-- DB backup fan-out toggle (Task 11 – resilience hardening).
                Lets the user opt-in this destination to receive the daily
                encrypted DB snapshot. Hidden during dbBackupBusy flicker
                to keep the row from flashing. -->
@@ -639,7 +639,7 @@
                   </button>
                 </div>
               {:else}
-                <div class="text-text-dim italic">Dedup repo not initialised yet — first backup populates it.</div>
+                <div class="text-text-dim italic">Dedup repo not initialised yet – first backup populates it.</div>
               {/if}
             </div>
           {/if}
@@ -661,7 +661,7 @@
             {#if dest.breaker_state === 'open'}
               <span
                 class="text-xs px-2.5 py-1 rounded-full bg-danger/10 text-danger font-medium whitespace-nowrap"
-                title={dest.breaker_opened_at ? `Breaker open since ${formatDate(dest.breaker_opened_at)}` : 'Circuit breaker is open — scheduled runs skip this destination'}
+                title={dest.breaker_opened_at ? `Breaker open since ${formatDate(dest.breaker_opened_at)}` : 'Circuit breaker is open – scheduled runs skip this destination'}
               >
                 Breaker open
               </span>
@@ -794,7 +794,7 @@
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
         <div class="col-span-2">
-          <label for="nfs_export" class="block text-sm font-medium text-text-muted mb-1.5">Export Path <Tooltip text="The path the NFS server exports — matches the entry in /etc/exports on the server (e.g. /mnt/user/backups). This is what gets mounted, not a sub-path within it." /></label>
+          <label for="nfs_export" class="block text-sm font-medium text-text-muted mb-1.5">Export Path <Tooltip text="The path the NFS server exports – matches the entry in /etc/exports on the server (e.g. /mnt/user/backups). This is what gets mounted, not a sub-path within it." /></label>
           <input id="nfs_export" type="text" bind:value={form.config.export} placeholder="/mnt/user/backups"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
         </div>
@@ -861,7 +861,7 @@
           <div>
             <label for="dav_stall" class="block text-sm font-medium text-text-muted mb-1.5">
               Stall timeout (seconds)
-              <Tooltip text="Gives up on an upload if no data moves for this many seconds — catches a silently stalled connection. The timer resets whenever data flows, so even huge files finish fine. Recommended: 300 (5 min); use -1 to disable." />
+              <Tooltip text="Gives up on an upload if no data moves for this many seconds – catches a silently stalled connection. The timer resets whenever data flows, so even huge files finish fine. Recommended: 300 (5 min); use -1 to disable." />
             </label>
             <input id="dav_stall" type="number" bind:value={form.config.stall_timeout_seconds} placeholder="300" min="-1"
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
@@ -869,7 +869,7 @@
           <div>
             <label for="dav_overall" class="block text-sm font-medium text-text-muted mb-1.5">
               Overall request timeout (seconds)
-              <Tooltip text="A hard time limit on every request, including a whole file upload. Set too low, it cuts off large uploads. Recommended: leave at 0 (no limit) — the stall timeout above already handles dead connections." />
+              <Tooltip text="A hard time limit on every request, including a whole file upload. Set too low, it cuts off large uploads. Recommended: leave at 0 (no limit) – the stall timeout above already handles dead connections." />
             </label>
             <input id="dav_overall" type="number" bind:value={form.config.timeout_seconds} placeholder="0 (unlimited)" min="0"
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
@@ -932,7 +932,7 @@
           <div>
             <label for="s3_part_size" class="block text-sm font-medium text-text-muted mb-1.5">
               Part size (MiB)
-              <Tooltip text="Splits large uploads into parts so one network drop doesn't restart the whole transfer. Bigger parts allow bigger single files. Recommended: leave at 0 (64 MiB, handles files up to ~640 GB); raise only for larger files — 256 → ~2.5 TB, 1024 → ~10 TB. Range 5-5120." />
+              <Tooltip text="Splits large uploads into parts so one network drop doesn't restart the whole transfer. Bigger parts allow bigger single files. Recommended: leave at 0 (64 MiB, handles files up to ~640 GB); raise only for larger files – 256 → ~2.5 TB, 1024 → ~10 TB. Range 5-5120." />
             </label>
             <input id="s3_part_size" type="number" bind:value={form.config.part_size_mb} placeholder="0 (64 MiB)" min="0" max="5120"
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
@@ -958,7 +958,7 @@
     {/if}
 
     <!-- Universal: deduplication. Top-level column on storage_destinations.
-         Immutable after creation — backend ignores any update attempt and
+         Immutable after creation – backend ignores any update attempt and
          the UI disables the toggle when editing. -->
     <div class="border-t border-border pt-4">
       <label class="flex items-start gap-2 text-sm">
@@ -1048,11 +1048,11 @@
 {/if}
 
 <!-- Import Backups Modal -->
-<Modal show={showImport} title={`Import Backups — ${importStorageName}`} onclose={() => showImport = false}>
-  <!-- Subfolder field — always visible so users can rescan with a different path -->
+<Modal show={showImport} title={`Import Backups – ${importStorageName}`} onclose={() => showImport = false}>
+  <!-- Subfolder field – always visible so users can rescan with a different path -->
   <div class="mb-4">
     <label for="import-base-path" class="block text-xs font-medium text-text-muted mb-1">
-      Subfolder <span class="font-normal text-text-dim">(optional — leave blank to scan the storage root)</span>
+      Subfolder <span class="font-normal text-text-dim">(optional – leave blank to scan the storage root)</span>
     </label>
     <div class="flex gap-2">
       <input

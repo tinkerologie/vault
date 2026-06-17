@@ -382,7 +382,7 @@
         // Outcome of the background backup-file sweep after delete-with-files (#111).
         showToast(`Backup files for "${msg.job_name}" deleted`, 'success')
       } else if (msg.type === 'job_cleanup_failed') {
-        showToast(`Failed to delete backup files for "${msg.job_name}" — files may remain on storage (see Activity Log)`, 'error')
+        showToast(`Failed to delete backup files for "${msg.job_name}" – files may remain on storage (see Activity Log)`, 'error')
       }
     })
     const unsubBaseline = onBaselineUpdated((data) => {
@@ -423,7 +423,7 @@
         }
       })
     )
-    if (reqId !== baselineLoadId) return // stale response — discard
+    if (reqId !== baselineLoadId) return // stale response – discard
     const map = {}
     for (const [id, b] of results) map[id] = b
     baselines = map
@@ -445,7 +445,7 @@
         }
       })
     )
-    if (reqId !== staleLoadId) return // stale response — discard
+    if (reqId !== staleLoadId) return // stale response – discard
     const map = {}
     for (const [id, s] of results) map[id] = s
     staleItems = map
@@ -801,13 +801,13 @@
         }
       })
     )
-    // A newer fetch aborted this one — discard its results.
+    // A newer fetch aborted this one – discard its results.
     if (signal.aborted) return
     containerMounts = Object.fromEntries(entries)
   }
 
   // Stable key of selected container names so mounts are only re-fetched when
-  // the selection changes — not on every exclusion/toggle edit to form.items.
+  // the selection changes – not on every exclusion/toggle edit to form.items.
   let selectedContainerNamesKey = $derived(
     selectedContainerItems.map((i) => i.item_name).filter(Boolean).join('\n')
   )
@@ -854,7 +854,7 @@
   // A mount is shown as excluded (unchecked) when its whole destination is
   // excluded via either mechanism: the checkbox-driven excluded_mounts, or an
   // exact-path entry in the free-text exclude_paths (e.g. a pre-existing
-  // /rootfs exclusion). Subpath/glob patterns leave the mount checked — the
+  // /rootfs exclusion). Subpath/glob patterns leave the mount checked – the
   // mount is still backed up, just filtered.
   function isMountWholeExcluded(item, destination) {
     const dest = cleanMountPath(destination)
@@ -876,7 +876,7 @@
   }
 
   // Clear defer_remote_upload when the user switches to (or stays on) a local
-  // destination — deferring an upload that never leaves the box is a no-op.
+  // destination – deferring an upload that never leaves the box is a no-op.
   $effect(() => {
     const selected = storageList.find(s => s.id === form.storage_dest_id)
     const isLocal = !selected || selected.type === 'local'
@@ -1088,7 +1088,7 @@
 {/if}
 <Modal show={showModal} title={editing ? 'Edit Job' : 'Create Backup Job'} size="lg" onclose={() => showModal = false}>
   {#snippet stepper()}
-    <!-- Step indicator — rendered outside the scrollable body so it stays always visible -->
+    <!-- Step indicator – rendered outside the scrollable body so it stays always visible -->
     <div class="flex items-center gap-1 sm:gap-2">
       {#each [{n:1, label:'Type'}, {n:2, label:'Items'}, {n:3, label:'Schedule'}, {n:4, label:'Details'}, {n:5, label:'Advanced'}, {n:6, label:'Review'}] as s (s.n)}
         <button
@@ -1138,7 +1138,7 @@
           <label for="storage" class="block text-sm font-medium text-text-muted mb-1.5">Storage Destination</label>
           <select id="storage" bind:value={form.storage_dest_id}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
-            <option value={0}>— Select —</option>
+            <option value={0}>– Select –</option>
             {#each storageList as s (s.id)}
               <option value={s.id}>{s.name} ({s.type})</option>
             {/each}
@@ -1198,7 +1198,7 @@
               <option value="zstd">Zstandard (recommended)</option>
             </select>
             <p class="text-xs text-text-dim mt-1">
-              {form.compression === 'none' ? 'No compression — fastest backup with zero CPU overhead but largest size. Best for pre-compressed content like media files or already-encrypted blobs.' :
+              {form.compression === 'none' ? 'No compression – fastest backup with zero CPU overhead but largest size. Best for pre-compressed content like media files or already-encrypted blobs.' :
                form.compression === 'gzip' ? 'Universal compatibility, moderate compression ratio and speed. Good when archives need to be opened by other tools.' :
                form.compression === 'zstd' ? 'Best all-rounder: better compression than gzip and roughly 3–5× faster. Recommended for container images and large volumes.' : ''}
             </p>
@@ -1249,7 +1249,7 @@
         <details class="group" open>
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Retention Policy <Tooltip text="'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply — whichever triggers first will prune old backups." />
+            Retention Policy <Tooltip text="'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply – whichever triggers first will prune old backups." />
           </summary>
           <div class="grid grid-cols-2 gap-4 mt-3 pl-6">
             <div>
@@ -1305,7 +1305,7 @@
             </div>
           </div>
           {#if ltrActive}
-            <p class="mt-2 pl-6 text-xs text-warning">Long-Term Retention is active — the simple Retention Policy above is ignored for this job.</p>
+            <p class="mt-2 pl-6 text-xs text-warning">Long-Term Retention is active – the simple Retention Policy above is ignored for this job.</p>
             {#if editing}
               <div class="mt-3 pl-6 text-xs">
                 {#if retentionPreviewLoading}
@@ -1388,7 +1388,7 @@
           </div>
         </details>
 
-        <!-- Advanced: Retry policy override (Task 11 — resilience hardening) -->
+        <!-- Advanced: Retry policy override (Task 11 – resilience hardening) -->
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -1430,14 +1430,14 @@
               class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
             >
               <option value="">(default)</option>
-              <option value="strict">Strict — flag small deviations</option>
+              <option value="strict">Strict – flag small deviations</option>
               <option value="balanced">Balanced</option>
-              <option value="permissive">Permissive — flag large deviations only</option>
+              <option value="permissive">Permissive – flag large deviations only</option>
             </select>
           </div>
         </details>
 
-        <!-- Advanced: Max parallel uploads (Task 12 — storage resilience) -->
+        <!-- Advanced: Max parallel uploads (Task 12 – storage resilience) -->
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -1795,7 +1795,7 @@
 <!-- Missing-item remediation dialog (#119) -->
 <Modal
   show={!!remediating}
-  title={remediating ? `Review missing items — ${remediating.name}` : 'Review missing items'}
+  title={remediating ? `Review missing items – ${remediating.name}` : 'Review missing items'}
   onclose={() => { remediating = null }}
 >
   {#if remediating}
@@ -1813,7 +1813,7 @@
       </div>
     {:else}
       <p class="text-sm text-text-muted">
-        These items no longer exist on this server. Removing one keeps its existing backups/restore points — it only stops future backups from trying to include it.
+        These items no longer exist on this server. Removing one keeps its existing backups/restore points – it only stops future backups from trying to include it.
       </p>
       <ul class="mt-4 space-y-2">
         {#each items as item (item.id)}

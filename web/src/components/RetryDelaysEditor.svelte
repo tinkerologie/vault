@@ -1,15 +1,15 @@
 <script>
   /**
-   * RetryDelaysEditor — friendly editor for a JSON-array-of-seconds retry
+   * RetryDelaysEditor – friendly editor for a JSON-array-of-seconds retry
    * delays string. Lets users pick a preset, edit per-row values with a unit
-   * dropdown, and add/remove retries — replacing the raw JSON text input
+   * dropdown, and add/remove retries – replacing the raw JSON text input
    * that used to power Settings ▸ Retry Policy and the Job override section.
    *
    * Wire format (the bindable `value`) stays as a JSON array of integer
    * seconds (e.g. "[900,3600,14400]") or the empty string, which is what
    * the backend already expects.
    *
-   * Internally the bound `value` is the source of truth — we never store a
+   * Internally the bound `value` is the source of truth – we never store a
    * second copy in component state. Each edit re-serialises the rows to
    * JSON and writes the new string straight back to `value`, so $derived
    * picks up the change and re-renders.
@@ -114,7 +114,7 @@
 
   function applyPreset(id) {
     const p = PRESETS.find(x => x.id === id)
-    // Selecting "Custom" is a no-op — the dropdown already mirrors the user's
+    // Selecting "Custom" is a no-op – the dropdown already mirrors the user's
     // edits whenever the rows stop matching a known preset.
     if (!p || !p.delays) return
     commit(p.delays.map(d => largestUnit(d)))

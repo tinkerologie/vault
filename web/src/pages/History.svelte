@@ -60,7 +60,7 @@
       const jobsList = (await api.listJobs()) || []
       // Hydrate each job with its items so SizeChart can categorise runs by
       // backup-target type (containers / vms / folder / flash). We do this
-      // in parallel and tolerate per-job failures — a missing items array
+      // in parallel and tolerate per-job failures – a missing items array
       // just falls into the "Other" category.
       jobs = await Promise.all(
         jobsList.map(j =>
@@ -171,7 +171,7 @@
       case 'running':
         return { d: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', cls: 'text-info' }
       case 'skipped':
-        // Skipped runs are neither failures nor successes — render them
+        // Skipped runs are neither failures nor successes – render them
         // neutrally with a forward-skip icon to make the distinction clear.
         return { d: 'M13 5l7 7-7 7M5 5l7 7-7 7', cls: 'text-text-muted' }
       default:

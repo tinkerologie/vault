@@ -60,7 +60,7 @@
 
   onMount(() => {
     loadData()
-    // Subscribe to WS events — refresh when syncs complete
+    // Subscribe to WS events – refresh when syncs complete
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'replication_sync_completed' || msg.type === 'replication_sync_failed') {
         loadData(true)
@@ -74,7 +74,7 @@
   })
 
   // background=true refreshes in place (10s poll, WS sync events) without
-  // swapping the list for the spinner — the swap caused a visible flicker on
+  // swapping the list for the spinner – the swap caused a visible flicker on
   // every poll tick (#135). A failed background refresh also stays quiet
   // instead of raising a toast every tick.
   async function loadData(background = false) {
@@ -95,7 +95,7 @@
       return
     }
     if (!cloudConfig.api_key) {
-      modalTestResult = { success: false, error: 'Enter an API key — it is required to connect to the remote Vault server' }
+      modalTestResult = { success: false, error: 'Enter an API key – it is required to connect to the remote Vault server' }
       return
     }
     modalTesting = true
@@ -430,7 +430,7 @@
           {#if modalTestResult}
             <span class="text-xs {modalTestResult.success ? (modalTestResult.warning ? 'text-warning' : 'text-success') : 'text-danger'}">
               {#if modalTestResult.success && modalTestResult.warning}
-                <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')} — {modalTestResult.warning}
+                <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')} – {modalTestResult.warning}
               {:else if modalTestResult.success}
                 <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')}
               {:else}

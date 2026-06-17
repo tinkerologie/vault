@@ -11,9 +11,9 @@ export function formatBytes(bytes) {
 }
 
 export function formatDate(str) {
-  if (!str) return '—'
+  if (!str) return '–'
   const d = new Date(str)
-  if (isNaN(d.getTime())) return '—'
+  if (isNaN(d.getTime())) return '–'
   const hour12 = getHour12()
   return d.toLocaleString(undefined, {
     year: 'numeric',
@@ -26,16 +26,16 @@ export function formatDate(str) {
 }
 
 /**
- * Compact variant of formatDate — drops the year and uses a numeric hour
+ * Compact variant of formatDate – drops the year and uses a numeric hour
  * (no leading zero). Roughly 30-40% narrower than formatDate. Useful in
  * tight horizontal rows like card footers where the full date would push
  * adjacent elements to wrap. Pair with `title={formatDate(str)}` so the
  * full date stays available on hover.
  */
 export function formatDateCompact(str) {
-  if (!str) return '—'
+  if (!str) return '–'
   const d = new Date(str)
-  if (isNaN(d.getTime())) return '—'
+  if (isNaN(d.getTime())) return '–'
   const hour12 = getHour12()
   return d.toLocaleString(undefined, {
     month: 'short',
@@ -64,9 +64,9 @@ export function formatClockTime(h, m) {
 }
 
 export function relTime(str) {
-  if (!str) return '—'
+  if (!str) return '–'
   const d = new Date(str)
-  if (isNaN(d.getTime())) return '—'
+  if (isNaN(d.getTime())) return '–'
   const diff = Date.now() - d.getTime()
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'just now'
@@ -178,7 +178,7 @@ export function relTimeUntil(dateStr) {
  * Extract a failure reason from a job run's log.
  *
  * Surfaces the full per-item error (e.g. the libvirt/QEMU message behind a
- * failed VM backup) rather than a truncated snippet — operators need the whole
+ * failed VM backup) rather than a truncated snippet – operators need the whole
  * message to diagnose why a backup failed. Also covers 'partial' runs, where
  * some items succeeded but at least one failed.
  */
@@ -198,8 +198,8 @@ export function getFailureReason(run) {
   } catch {
     // Plain-text log (not the structured per-item JSON array). Prefer an
     // explicit error/failure line, but fall back to the first non-empty line
-    // so messages that contain neither word — e.g. "All configured backup
-    // targets are missing from this server…" — still reach the dashboard
+    // so messages that contain neither word – e.g. "All configured backup
+    // targets are missing from this server…" – still reach the dashboard
     // instead of the generic placeholder. Capped generously to guard against
     // pathological multi-kilobyte log lines.
     const lines = run.log.split('\n').map(l => l.trim()).filter(Boolean)
@@ -207,12 +207,12 @@ export function getFailureReason(run) {
     const line = errLine || lines[0]
     if (line) return line.slice(0, 500)
   }
-  return run.status === 'partial' ? null : 'Backup failed — see Logs for details'
+  return run.status === 'partial' ? null : 'Backup failed – see Logs for details'
 }
 
 /** Format seconds into human-readable duration (e.g. "11m 4s", "2h 15m") */
 export function formatDuration(seconds) {
-  if (seconds == null || seconds < 0) return '—'
+  if (seconds == null || seconds < 0) return '–'
   const sec = Math.round(seconds)
   if (sec < 60) return `${sec}s`
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
@@ -238,10 +238,10 @@ export function prettyAnomalySummary(summary) {
 
 /** Format a start/end date pair into human-readable duration */
 export function formatDurationFromDates(startedAt, completedAt) {
-  if (!startedAt || !completedAt) return '—'
+  if (!startedAt || !completedAt) return '–'
   const start = new Date(startedAt)
   const end = new Date(completedAt)
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return '—'
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return '–'
   return formatDuration((end - start) / 1000)
 }
 

@@ -2,7 +2,7 @@
 
 import { formatBytes } from './utils.js'
 
-// Global progress state — survives component mount/unmount cycles.
+// Global progress state – survives component mount/unmount cycles.
 let activeRun = $state(null) // { job_id, run_id, job_name, started_at, run_type }
 let itemProgress = $state({}) // { item_name: { percent, message, item_type, status } }
 let overallDone = $state(0)
@@ -119,7 +119,7 @@ export function syncFromStatus(status) {
   elapsedSec = Math.max(0, Math.round((Date.now() - startMs) / 1000))
 }
 
-/** Handle an incoming WebSocket message — update progress state.
+/** Handle an incoming WebSocket message – update progress state.
  *  Returns true if this message was a progress event (handled).
  */
 export function handleProgressMessage(msg, jobNameResolver) {
@@ -192,7 +192,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       const prev = itemProgress[msg.item_name] || {}
       itemProgress = {
         ...itemProgress,
-        [msg.item_name]: { ...prev, percent: 50, message: 'Staged — awaiting upload', status: 'running', item_type: msg.item_type || prev.item_type },
+        [msg.item_name]: { ...prev, percent: 50, message: 'Staged – awaiting upload', status: 'running', item_type: msg.item_type || prev.item_type },
       }
       return true
     }
@@ -238,7 +238,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       const prev = itemProgress[msg.item_name] || {}
       itemProgress = {
         ...itemProgress,
-        [msg.item_name]: { ...prev, percent: 100, message: `Done — ${formatBytes(msg.size_bytes)}`, status: 'done' },
+        [msg.item_name]: { ...prev, percent: 100, message: `Done – ${formatBytes(msg.size_bytes)}`, status: 'done' },
       }
       if (msg.items_done !== undefined) overallDone = msg.items_done
       if (msg.items_total) overallTotal = msg.items_total

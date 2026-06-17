@@ -17,7 +17,7 @@ export async function copyText(text) {
       await navigator.clipboard.writeText(text)
       return true
     } catch {
-      // Permission denied or transient failure — try the legacy path below.
+      // Permission denied or transient failure – try the legacy path below.
     }
   }
 
