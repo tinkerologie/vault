@@ -331,6 +331,85 @@ func (h *ContainerHandler) DetectSocketMounts(ctx context.Context, name string) 
 	return paths, nil
 }
 
+// MountInfo describes a single container bind mount for the mounts API. It
+// carries the auto-skip verdict from shouldSkipVolume so the UI can render
+// heuristically-skipped mounts as disabled with an explanation.
+type MountInfo struct {
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Type        string `json:"type"`
+	AutoSkip    bool   `json:"auto_skip"`
+	SkipReason  string `json:"skip_reason,omitempty"`
+}
+
+// ListMounts inspects the named container and returns its bind mounts, each
+// annotated with the auto-skip verdict from shouldSkipVolume. Only bind mounts
+// are returned, matching the engine's backup behaviour (named volumes, tmpfs,
+// device nodes, etc. are never backed up). Results are sorted by destination
+// for stable UI ordering.
+func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]MountInfo, error) {
+	inspectResult, err := h.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("inspecting container %q: %w", name, err)
+	}
+	mounts := make([]MountInfo, 0, len(inspectResult.Container.Mounts))
+	for _, m := range inspectResult.Container.Mounts {
+		if string(m.Type) != "bind" {
+			continue
+		}
+		skip, reason := shouldSkipVolume(m.Source)
+		mounts = append(mounts, MountInfo{
+			Source:      m.Source,
+			Destination: filepath.Clean(m.Destination),
+			Type:        string(m.Type),
+			AutoSkip:    skip,
+			SkipReason:  reason,
+		})
+	}
+	sort.Slice(mounts, func(i, j int) bool {
+		return mounts[i].Destination < mounts[j].Destination
+	})
+	return mounts, nil
+}
+
+// extractExcludedMounts parses the excluded_mounts setting — the list of
+// container-side mount destinations the user unchecked in the job wizard.
+// Stored separately from exclude_paths so the UI can round-trip toggle state.
+func extractExcludedMounts(settings map[string]any) []string {
+	raw, ok := settings["excluded_mounts"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// containerExclusions merges free-text exclude_paths with the checkbox-driven
+// excluded_mounts list. Both feed the same shouldExcludeMount matching, so an
+// unchecked mount is excluded exactly as a typed path would be.
+func containerExclusions(settings map[string]any) []string {
+	paths := extractExcludePaths(settings)
+	mounts := extractExcludedMounts(settings)
+	if len(mounts) == 0 {
+		return paths
+	}
+	out := make([]string, 0, len(paths)+len(mounts))
+	out = append(out, paths...)
+	out = append(out, mounts...)
+	return out
+}
+
 // Backup performs a full backup of a Docker container:
 //  1. Inspects the container and saves its config as JSON.
 //  2. Stops the container if running (unless no_stop is set).
@@ -380,17 +459,9 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	noStop, _ := item.Settings["no_stop"].(bool)
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 
-	// Extract path exclusions from item settings.
-	var exclusions []string
-	if ep, ok := item.Settings["exclude_paths"]; ok {
-		if epSlice, ok := ep.([]any); ok {
-			for _, v := range epSlice {
-				if s, ok := v.(string); ok && s != "" {
-					exclusions = append(exclusions, s)
-				}
-			}
-		}
-	}
+	// Extract path exclusions from item settings: free-text exclude_paths plus
+	// the checkbox-driven excluded_mounts from the job wizard.
+	exclusions := containerExclusions(item.Settings)
 
 	if wasRunning && !noStop {
 		progress(item.Name, 20, "stopping container")
@@ -1190,7 +1261,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// classic tar Backup path: whole excluded mounts are skipped
 	// (shouldExcludeMount) and surviving mounts get their patterns mapped to
 	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
-	exclusions := extractExcludePaths(item.Settings)
+	exclusions := containerExclusions(item.Settings)
 	if progress != nil {
 		progress(item.Name, 50, "backing up volumes")
 	}

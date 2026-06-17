@@ -772,6 +772,112 @@
     }
   })
 
+  // Per-container bind mounts keyed by container name, used to render the
+  // include/exclude toggles. Auto-skipped mounts (per the backup engine's
+  // heuristics) are surfaced as disabled with their reason.
+  let containerMounts = $state({})
+  let mountsAbortController = null
+
+  async function fetchContainerMounts(names) {
+    if (mountsAbortController) {
+      mountsAbortController.abort()
+    }
+    mountsAbortController = new AbortController()
+    const signal = mountsAbortController.signal
+
+    const next = {}
+    for (const name of names) {
+      if (!name) continue
+      try {
+        const { url, options } = buildApiRequest('GET', `/containers/${encodeURIComponent(name)}/mounts`)
+        const res = await fetch(url, { ...options, signal })
+        if (!res.ok) {
+          next[name] = []
+          continue
+        }
+        const data = await res.json()
+        next[name] = data.available && Array.isArray(data.mounts) ? data.mounts : []
+      } catch {
+        // On abort a newer fetch is in flight — bail without touching state.
+        // For other failures record an empty list so the UI shows "no bind
+        // mounts" rather than spinning on "Loading…" forever.
+        if (signal.aborted) return
+        next[name] = []
+      }
+    }
+    if (signal.aborted) return
+    containerMounts = next
+  }
+
+  // Stable key of selected container names so mounts are only re-fetched when
+  // the selection changes — not on every exclusion/toggle edit to form.items.
+  let selectedContainerNamesKey = $derived(
+    selectedContainerItems.map((i) => i.item_name).filter(Boolean).join(' ')
+  )
+
+  $effect(() => {
+    const key = selectedContainerNamesKey
+    if (!key) return
+    fetchContainerMounts(key.split(' '))
+  })
+
+  function getExcludedMounts(item) {
+    const settings = parseItemSettings(item)
+    return Array.isArray(settings.excluded_mounts) ? settings.excluded_mounts : []
+  }
+
+  function updateExcludedMounts(itemName, mounts) {
+    form = {
+      ...form,
+      items: form.items.map((item) => {
+        if (item.item_type !== 'container' || item.item_name !== itemName) return item
+
+        const settings = { ...parseItemSettings(item) }
+        if (mounts.length === 0) {
+          delete settings.excluded_mounts
+        } else {
+          settings.excluded_mounts = mounts
+        }
+
+        return { ...item, settings: JSON.stringify(settings) }
+      }),
+    }
+  }
+
+  function getItemByName(itemName) {
+    return form.items.find((i) => i.item_type === 'container' && i.item_name === itemName)
+  }
+
+  // Normalise a path for whole-mount comparison: trim and drop a trailing slash.
+  function cleanMountPath(p) {
+    const t = (p || '').trim()
+    return t === '/' ? '/' : t.replace(/\/+$/, '')
+  }
+
+  // A mount is shown as excluded (unchecked) when its whole destination is
+  // excluded via either mechanism: the checkbox-driven excluded_mounts, or an
+  // exact-path entry in the free-text exclude_paths (e.g. a pre-existing
+  // /rootfs exclusion). Subpath/glob patterns leave the mount checked — the
+  // mount is still backed up, just filtered.
+  function isMountWholeExcluded(item, destination) {
+    const dest = cleanMountPath(destination)
+    if (getExcludedMounts(item).some((d) => cleanMountPath(d) === dest)) return true
+    return getContainerExclusionPaths(item).some((p) => cleanMountPath(p) === dest)
+  }
+
+  function toggleExcludedMount(itemName, destination, included) {
+    const item = getItemByName(itemName)
+    const dest = cleanMountPath(destination)
+    if (included) {
+      // Include the mount: drop it from excluded_mounts and remove any exact
+      // whole-mount entry from exclude_paths so re-checking actually re-includes.
+      updateExcludedMounts(itemName, getExcludedMounts(item).filter((d) => cleanMountPath(d) !== dest))
+      updateContainerExclusionPaths(itemName, getContainerExclusionPaths(item).filter((p) => cleanMountPath(p) !== dest))
+    } else {
+      updateExcludedMounts(itemName, [...new Set([...getExcludedMounts(item), destination])])
+    }
+  }
+
   // Clear defer_remote_upload when the user switches to (or stays on) a local
   // destination — deferring an upload that never leaves the box is a no-op.
   $effect(() => {
@@ -1469,47 +1575,79 @@
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Container Path Exclusions
+              Container Mounts &amp; Exclusions
             </summary>
             <div class="space-y-4 mt-3 pl-6">
-              <p class="text-xs text-text-dim">Exclude paths from container backups to skip cache, logs, and other non-critical data. Use container-side paths (e.g., /config/Cache) or glob patterns (e.g., *.log). One per line.</p>
+              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Uncheck a mount to exclude its data (e.g. media or downloads). Mounts Vault auto-skips are shown disabled with the reason.</p>
               {#each selectedContainerItems as cItem (cItem.item_name)}
                 {@const currentExclusions = getContainerExclusionPaths(cItem)}
                 {@const preset = containerPresets[cItem.item_name]}
                 {@const allPresetLoaded = preset ? preset.every(p => currentExclusions.includes(p)) : false}
+                {@const mounts = containerMounts[cItem.item_name]}
                 <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3">
-                  <div class="flex items-center justify-between">
-                    <p class="text-sm font-medium text-text">{cItem.item_name}</p>
-                    {#if currentExclusions.length > 0}
-                      <span class="text-xs text-text-dim">{currentExclusions.length} path{currentExclusions.length !== 1 ? 's' : ''} excluded</span>
-                    {/if}
-                  </div>
+                  <p class="text-sm font-medium text-text">{cItem.item_name}</p>
 
-                  {#if preset}
-                    <button
-                      type="button"
-                      disabled={allPresetLoaded}
-                      onclick={() => {
-                        const merged = [...new Set([...currentExclusions, ...preset])]
-                        updateContainerExclusionPaths(cItem.item_name, merged)
-                      }}
-                      class="text-xs px-3 py-1.5 rounded-lg border transition-colors {allPresetLoaded ? 'border-green-500/30 text-green-400 bg-green-500/10 cursor-default' : 'border-vault/30 text-vault hover:bg-vault/10 cursor-pointer'}"
-                    >
-                      {allPresetLoaded ? 'Recommended exclusions loaded' : 'Load recommended exclusions'}
-                    </button>
+                  <!-- Mount point toggles -->
+                  {#if mounts === undefined}
+                    <p class="text-xs text-text-dim italic">Loading mount points…</p>
+                  {:else if mounts.length === 0}
+                    <p class="text-xs text-text-dim italic">No bind mounts detected for this container.</p>
+                  {:else}
+                    <div class="space-y-1.5">
+                      {#each mounts as mount (mount.destination)}
+                        {@const included = !mount.auto_skip && !isMountWholeExcluded(cItem, mount.destination)}
+                        <label class="flex items-start gap-2.5 py-1 {mount.auto_skip ? 'opacity-60' : 'cursor-pointer'}">
+                          <input
+                            type="checkbox"
+                            class="mt-0.5 accent-vault"
+                            checked={included}
+                            disabled={mount.auto_skip}
+                            onchange={(e) => toggleExcludedMount(cItem.item_name, mount.destination, e.currentTarget.checked)}
+                          />
+                          <span class="min-w-0 flex-1">
+                            <span class="flex items-center gap-2 flex-wrap">
+                              <span class="text-sm font-mono text-text">{mount.destination}</span>
+                              {#if mount.auto_skip}
+                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-dim border border-border">auto-excluded</span>
+                              {/if}
+                            </span>
+                            <span class="block text-xs text-text-dim font-mono truncate">{mount.source}{#if mount.auto_skip && mount.skip_reason} · {mount.skip_reason}{/if}</span>
+                          </span>
+                        </label>
+                      {/each}
+                    </div>
                   {/if}
 
-                  <textarea
-                    value={currentExclusions.join('\n')}
-                    oninput={(e) => {
-                      const paths = e.currentTarget.value.split('\n').map(p => p.trim()).filter(Boolean)
-                      updateContainerExclusionPaths(cItem.item_name, paths)
-                    }}
-                    placeholder={`/config/Cache
+                  <!-- Additional path exclusions (globs / subpaths) -->
+                  <div class="space-y-2 pt-1 border-t border-border/60">
+                    <p class="text-xs font-medium text-text-muted">Additional path exclusions</p>
+                    <p class="text-xs text-text-dim">For subpaths within an included mount or glob patterns. One per line, e.g. /config/Cache or *.log.</p>
+                    {#if preset}
+                      <button
+                        type="button"
+                        disabled={allPresetLoaded}
+                        onclick={() => {
+                          const merged = [...new Set([...currentExclusions, ...preset])]
+                          updateContainerExclusionPaths(cItem.item_name, merged)
+                        }}
+                        class="text-xs px-3 py-1.5 rounded-lg border transition-colors {allPresetLoaded ? 'border-green-500/30 text-green-400 bg-green-500/10 cursor-default' : 'border-vault/30 text-vault hover:bg-vault/10 cursor-pointer'}"
+                      >
+                        {allPresetLoaded ? 'Recommended exclusions loaded' : 'Load recommended exclusions'}
+                      </button>
+                    {/if}
+
+                    <textarea
+                      value={currentExclusions.join('\n')}
+                      oninput={(e) => {
+                        const paths = e.currentTarget.value.split('\n').map(p => p.trim()).filter(Boolean)
+                        updateContainerExclusionPaths(cItem.item_name, paths)
+                      }}
+                      placeholder={`/config/Cache
 *.log`}
-                    rows="4"
-                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-dim/50"
-                  ></textarea>
+                      rows="3"
+                      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-dim/50"
+                    ></textarea>
+                  </div>
                 </div>
               {/each}
             </div>
