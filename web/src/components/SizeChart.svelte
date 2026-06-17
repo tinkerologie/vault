@@ -63,7 +63,7 @@
       .slice(-30)
   })
 
-  // Which categories actually appear in the current dataset — used to
+  // Which categories actually appear in the current dataset – used to
   // render only the legend chips that matter and to control which stacked
   // bands are drawn. Categories are kept in the canonical CATEGORIES order
   // so the colour assignment is stable across re-renders.
@@ -80,7 +80,7 @@
   let chartWidth = width - padding.left - padding.right
   let chartHeight = height - padding.top - padding.bottom
 
-  // Per-bar width — using bars (one stacked column per run) reads more
+  // Per-bar width – using bars (one stacked column per run) reads more
   // clearly than a stacked line when each x-value is a single run.
   let barWidth = $derived.by(() => {
     if (dataPoints.length === 0) return 0
@@ -110,7 +110,7 @@
     return c ? c.label : 'Other'
   }
 
-  // Same single-job heuristic as before — the linear-regression trend
+  // Same single-job heuristic as before – the linear-regression trend
   // percentage is only meaningful when every point belongs to one job.
   let isSingleJob = $derived(new Set(dataPoints.map(p => p.name).filter(Boolean)).size <= 1)
 

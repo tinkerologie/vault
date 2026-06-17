@@ -1,5 +1,5 @@
 /**
- * Auth stub — no-op placeholder.
+ * Auth stub – no-op placeholder.
  *
  * API key authentication is enforced server-side by the APIKeyAuth
  * middleware (internal/api/middleware.go). The browser UI is always

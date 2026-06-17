@@ -51,7 +51,7 @@
       const res = await api.listAnomalies({ state: 'open', limit: 100 })
       setOpenList(res?.anomalies ?? [])
     } catch {
-      // Non-fatal — card just shows empty state; we don't surface the error
+      // Non-fatal – card just shows empty state; we don't surface the error
       // prominently since the main content is still useful.
     } finally {
       loading = false
@@ -76,7 +76,7 @@
   function scopeLabel(a) {
     if (a.scope_kind === 'job') return `Job #${a.scope_id}`
     if (a.scope_kind === 'destination') return `Dest #${a.scope_id}`
-    return a.scope_kind || '—'
+    return a.scope_kind || '–'
   }
 
   const severityBg = { critical: 'bg-danger/10 border-l-2 border-danger', warning: 'bg-warning/10 border-l-2 border-warning', info: 'bg-info/10 border-l-2 border-info' }
@@ -165,7 +165,7 @@
               onclick={() => navigate('/anomalies')}
               class="text-xs text-vault hover:text-vault-dark transition-colors font-medium"
             >
-              + {totalOpen - displayed.length} more — view all anomalies
+              + {totalOpen - displayed.length} more – view all anomalies
             </button>
           </div>
         {/if}

@@ -51,7 +51,7 @@
       switch (msg.type) {
         case 'anomaly.raised':
         case 'anomaly.updated':
-          // In-place upsert/remove — no refetch, no flicker.
+          // In-place upsert/remove – no refetch, no flicker.
           applyLiveAnomaly(msg.data)
           break
         case 'anomaly.bulk_resolved':
@@ -80,7 +80,7 @@
       return
     }
     if (!matchesStateFilter(anomaly)) {
-      // No longer matches the active filter — remove if present.
+      // No longer matches the active filter – remove if present.
       if (idx >= 0) anomalies = anomalies.filter(a => a.id !== anomaly.id)
       return
     }
@@ -98,7 +98,7 @@
     const reqId = ++listRequestId
     try {
       const res = await api.listAnomalies(buildFilter(undefined))
-      if (reqId !== listRequestId) return // stale response — discard
+      if (reqId !== listRequestId) return // stale response – discard
       anomalies = res?.anomalies ?? []
       nextCursor = res?.next_cursor ?? ''
       // Drop selections that no longer exist.
@@ -133,7 +133,7 @@
     error = ''
     try {
       const res = await api.listAnomalies(buildFilter(reset ? undefined : nextCursor))
-      if (reqId !== listRequestId) return // stale response — discard
+      if (reqId !== listRequestId) return // stale response – discard
       const rows = res?.anomalies ?? []
       anomalies = reset ? rows : [...anomalies, ...rows]
       nextCursor = res?.next_cursor ?? ''
@@ -230,7 +230,7 @@
   // Render observed/expected values in units appropriate to the metric:
   // bytes → KB/MB/GB, seconds → m/s/h, ETA → days, everything else a trimmed number.
   function formatMetricValue(metric, value) {
-    if (value == null) return '—'
+    if (value == null) return '–'
     if (BYTE_METRICS.has(metric)) return formatBytes(value)
     if (DURATION_METRICS.has(metric)) return formatDuration(value)
     if (DAY_METRICS.has(metric)) return `${trimNum(value, 1)} days`
@@ -240,7 +240,7 @@
   // Deviation is a modified z-score (or growth factor); show ~2 dp instead of a
   // long float like -27.28833643436231.
   function formatDeviation(value) {
-    if (value == null) return '—'
+    if (value == null) return '–'
     if (!isFinite(value)) return value > 0 ? '∞' : '−∞'
     return trimNum(value, 2)
   }
@@ -263,7 +263,7 @@
   function scopeLabel(a) {
     if (a.scope_kind === 'job') return `Job #${a.scope_id}`
     if (a.scope_kind === 'destination') return `Dest #${a.scope_id}`
-    return a.scope_kind || '—'
+    return a.scope_kind || '–'
   }
 </script>
 
@@ -452,7 +452,7 @@
                     Expected
                   </button>
                 {:else}
-                  <span class="text-xs text-text-dim italic">—</span>
+                  <span class="text-xs text-text-dim italic">–</span>
                 {/if}
               </div>
             </div>

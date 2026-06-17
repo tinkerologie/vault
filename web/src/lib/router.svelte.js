@@ -16,8 +16,8 @@ function handleHashChange() {
 if (typeof window !== 'undefined') {
   // Under HMR the module is re-evaluated and `handleHashChange` closes over a
   // fresh `current` $state. Remove the previously registered handler (if any)
-  // before adding the new one so exactly one active listener — bound to the
-  // *current* module evaluation — is registered at all times.
+  // before adding the new one so exactly one active listener – bound to the
+  // *current* module evaluation – is registered at all times.
   const w = /** @type {any} */ (window)
   if (typeof w.__vaultRouterHandler === 'function') {
     window.removeEventListener('hashchange', w.__vaultRouterHandler)
@@ -25,7 +25,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('hashchange', handleHashChange)
   w.__vaultRouterHandler = handleHashChange
 
-  // @ts-ignore — Vite injects `import.meta.hot` only in dev builds.
+  // @ts-ignore – Vite injects `import.meta.hot` only in dev builds.
   if (import.meta.hot) {
     // @ts-ignore
     import.meta.hot.dispose(() => {

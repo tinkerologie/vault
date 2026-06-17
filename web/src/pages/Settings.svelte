@@ -64,7 +64,7 @@
   // Diagnostics state
   let diagnosticsDownloading = $state(false)
 
-  // Retry policy state (Task 11 — resilience hardening). Backend stores the
+  // Retry policy state (Task 11 – resilience hardening). Backend stores the
   // delays as a JSON-encoded array string in the settings table. The
   // RetryDelaysEditor component handles parsing/serialising and only ever
   // emits a valid JSON array string (or '' for "unset"), so no client-side
@@ -187,7 +187,7 @@
         const replSources = await api.listReplicationSources().catch(() => [])
         replicationEnabledSetting = Array.isArray(replSources) && replSources.length > 0
       }
-      // Storage verbose logging (Task 12 — storage resilience)
+      // Storage verbose logging (Task 12 – storage resilience)
       storageVerboseLogging = s?.storage_verbose_logging === 'true'
       // Stored as a fraction "0.0".."1.0"; UI shows it as an integer percentage 0..100.
       const rawRatio = s?.dedup_compaction_min_dead_ratio
@@ -559,7 +559,7 @@
       apiKeyEnabled = true
       apiKeyRevealed = res.api_key
       apiKeyShowing = true
-      showToast('API key generated — copy it now', 'success')
+      showToast('API key generated – copy it now', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -591,7 +591,7 @@
       const res = await api.rotateAPIKey()
       apiKeyRevealed = res.api_key
       apiKeyShowing = true
-      showToast('API key rotated — copy the new key', 'success')
+      showToast('API key rotated – copy the new key', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -607,7 +607,7 @@
       apiKeyEnabled = false
       apiKeyRevealed = ''
       apiKeyShowing = false
-      showToast('API key revoked — authentication disabled', 'success')
+      showToast('API key revoked – authentication disabled', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -620,7 +620,7 @@
       if (await copyText(apiKeyRevealed)) {
         showToast('API key copied to clipboard', 'success')
       } else {
-        showToast('Failed to copy — clipboard access denied', 'error')
+        showToast('Failed to copy – clipboard access denied', 'error')
       }
     }
   }
@@ -642,7 +642,7 @@
   let replicationEnabledSetting = $state(true)
   let replicationSaving = $state(false)
 
-  // Storage verbose logging (Task 12 — storage resilience)
+  // Storage verbose logging (Task 12 – storage resilience)
   let storageVerboseLogging = $state(false)
   let storageVerboseSaving = $state(false)
 
@@ -1000,9 +1000,9 @@
               bind:value={anomalySensitivityDefault}
               class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
             >
-              <option value="strict">Strict — flag small deviations</option>
-              <option value="balanced">Balanced — moderate threshold (recommended)</option>
-              <option value="permissive">Permissive — flag large deviations only</option>
+              <option value="strict">Strict – flag small deviations</option>
+              <option value="balanced">Balanced – moderate threshold (recommended)</option>
+              <option value="permissive">Permissive – flag large deviations only</option>
             </select>
           </div>
           <!-- Notify minimum severity -->
@@ -1016,9 +1016,9 @@
               bind:value={anomalyNotifyMinSeverity}
               class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
             >
-              <option value="info">Info — notify on all anomalies</option>
-              <option value="warning">Warning — skip informational</option>
-              <option value="critical">Critical — only urgent anomalies</option>
+              <option value="info">Info – notify on all anomalies</option>
+              <option value="warning">Warning – skip informational</option>
+              <option value="critical">Critical – only urgent anomalies</option>
             </select>
           </div>
           <!-- Save button -->
@@ -1078,7 +1078,7 @@
       </div>
       {/if}
 
-      <!-- Storage Verbose Logging (Task 12 — storage resilience) -->
+      <!-- Storage Verbose Logging (Task 12 – storage resilience) -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Storage Logging <Tooltip text="When enabled, every file-level storage operation (upload, download, delete) is traced to the daemon log. Useful for diagnosing intermittent transfer failures; off by default to avoid log noise." /></h2>
@@ -1148,7 +1148,7 @@
           {#if notificationsOn}
             <div class="px-5 py-3">
               <p class="text-xs text-text-dim">
-                Each job has its own "Notify On" preference (Always, On Failure, Never) — configure it in the job's advanced settings. This global toggle enables or disables all Vault notifications.
+                Each job has its own "Notify On" preference (Always, On Failure, Never) – configure it in the job's advanced settings. This global toggle enables or disables all Vault notifications.
               </p>
             </div>
           {/if}
@@ -1220,7 +1220,7 @@
       <!-- Encryption -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">Encryption <Tooltip text="Uses age encryption. Each job must opt in individually. The passphrase is irrecoverable if lost — store it safely." /></h2>
+          <h2 class="text-base font-semibold text-text">Encryption <Tooltip text="Uses age encryption. Each job must opt in individually. The passphrase is irrecoverable if lost – store it safely." /></h2>
         </div>
         <div class="divide-y divide-border">
           {#if encryptionEnabled}
@@ -1806,10 +1806,10 @@
         </div>
         <div class="divide-y divide-border">
           <div class="px-5 py-3 flex items-center justify-between">
-            <span class="text-sm text-text-muted">Mode <Tooltip text="Where Vault keeps its working database. Hybrid: in RAM for speed, saved to SSD periodically (recommended). Direct SSD: every change written straight to SSD. Legacy USB: writes to the boot flash drive — wears it out, not recommended." /></span>
+            <span class="text-sm text-text-muted">Mode <Tooltip text="Where Vault keeps its working database. Hybrid: in RAM for speed, saved to SSD periodically (recommended). Direct SSD: every change written straight to SSD. Legacy USB: writes to the boot flash drive – wears it out, not recommended." /></span>
             <span class="text-sm font-medium text-text">
               {#if databaseInfo.mode === 'hybrid'}
-                Hybrid — runs in memory for speed, saves to SSD periodically
+                Hybrid – runs in memory for speed, saves to SSD periodically
               {:else if databaseInfo.mode === 'direct'}
                 Direct SSD
               {:else}
@@ -1897,7 +1897,7 @@
         </div>
       </div>
 
-      <!-- About Vault — single merged card -->
+      <!-- About Vault – single merged card -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">About Vault</h2>

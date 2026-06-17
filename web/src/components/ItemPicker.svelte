@@ -97,7 +97,7 @@
         const res = await api.pathExists(p)
         customFolderExists.set(key, !!res?.exists)
       } catch {
-        // Network failure — leave undefined so we don't false-alarm.
+        // Network failure – leave undefined so we don't false-alarm.
       }
     }
   }
@@ -323,7 +323,7 @@
       const s = safeParseSettings(item.settings)
       // Custom folders (no preset) aren't in /api/v1/folders, so the
       // inventory check would always fire. Use the path-exists probe
-      // result instead — undefined means "not yet checked", treat as
+      // result instead – undefined means "not yet checked", treat as
       // healthy to avoid a false-alarm flash.
       if (!s.preset) {
         const present = customFolderExists.get(key)
@@ -788,7 +788,7 @@
                 <div class="text-xs text-text-muted truncate">
                   {dataset.settings?.type === 'volume' ? 'ZFS Volume' : 'ZFS Filesystem'}
                   {#if dataset.settings?.mountpoint}
-                    — {dataset.settings.mountpoint}
+                    – {dataset.settings.mountpoint}
                   {/if}
                 </div>
               </div>

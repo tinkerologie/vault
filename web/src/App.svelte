@@ -46,11 +46,11 @@
     { path: '/settings', label: 'Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
   ]
 
-  // Filter nav items based on mode — hide daemon-only pages in replica mode —
+  // Filter nav items based on mode – hide daemon-only pages in replica mode –
   // and by feature flags.
   function featureVisible(path) {
     if (path === '/anomalies') return getAnomalyEnabled()
-    // Replication is core in replica mode — never hide it there.
+    // Replication is core in replica mode – never hide it there.
     if (path === '/replication') return replicaMode || getReplicationEnabled()
     return true
   }
@@ -58,7 +58,7 @@
     allNav.filter(item => (!replicaMode || !item.daemonOnly) && featureVisible(item.path))
   )
 
-  // Guard direct deep-links to a hidden route — redirect to Dashboard. Wait
+  // Guard direct deep-links to a hidden route – redirect to Dashboard. Wait
   // until flags are actually loaded so we don't redirect on the optimistic
   // defaults during first paint.
   $effect(() => {
@@ -80,11 +80,11 @@
         setReplicaMode(true)
         replicaMode = true
       }
-    } catch { /* ignore — default to daemon mode */ }
+    } catch { /* ignore – default to daemon mode */ }
     connectWs()
     try {
       await loadFeatureFlags()
-    } catch { /* ignore — store fails open; never block the app from becoming ready */ }
+    } catch { /* ignore – store fails open; never block the app from becoming ready */ }
     ready = true
   })
 

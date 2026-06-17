@@ -158,7 +158,7 @@
       settings = sett || {}
 
       // Include items from ALL configured jobs, not just enabled ones. A
-      // disabled schedule does not remove existing restore points — the
+      // disabled schedule does not remove existing restore points – the
       // 2026.05.00 fix made the recovery API behave this way and the
       // Dashboard should match. Filtering by j.enabled here caused the
       // Protection Status panel to drop items the moment a user paused
@@ -221,10 +221,23 @@
     settings = { ...settings, backup_rule_enabled: 'false' }
     try {
       await api.updateSettings({ backup_rule_enabled: 'false' })
-      showToast('3-2-1 Backup Rule hidden — re-enable in Settings → Dashboard')
+      showToast('3-2-1 Backup Rule hidden – re-enable in Settings → Dashboard')
     } catch (e) {
       settings = { ...settings, backup_rule_enabled: original }
       showToast(e.message || 'Could not hide the panel', 'error')
+    }
+  }
+
+  // Persist the chosen 3-2-1 goal (optimistic, revert on failure). When unset,
+  // the panel auto-detects the goal from the current setup.
+  async function setBackupRuleGoal(goal) {
+    const original = settings.backup_rule_goal
+    settings = { ...settings, backup_rule_goal: goal }
+    try {
+      await api.updateSettings({ backup_rule_goal: goal })
+    } catch (e) {
+      settings = { ...settings, backup_rule_goal: original }
+      showToast(e.message || 'Could not save backup goal', 'error')
     }
   }
 
@@ -280,7 +293,7 @@
     if (unprotectedCount > 0) issues.push(`${unprotectedCount} items unprotected`)
     if (s.recent_failed > 0) issues.push(`${s.recent_failed} recent failures`)
     if (issues.length === 0) return 'Backups operational' + suffix
-    if (healthScore < 50) return 'Attention needed — ' + issues.join(', ') + suffix
+    if (healthScore < 50) return 'Attention needed – ' + issues.join(', ') + suffix
     return issues.join(', ') + suffix
   })
 </script>
@@ -380,7 +393,14 @@
 
     <!-- 3-2-1 Compliance Badge -->
     {#if jobs.length > 0 && backupRuleOn}
-      <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={dismissBackupRule} />
+      <ComplianceBadge
+        {storage}
+        {jobs}
+        {replicationSources}
+        ondismiss={dismissBackupRule}
+        goalSetting={settings.backup_rule_goal || ''}
+        onGoalChange={setBackupRuleGoal}
+      />
     {/if}
 
     <!-- Stats Grid -->
@@ -453,10 +473,10 @@
             <svg aria-hidden="true" class="w-5 h-5 text-info" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
           </div>
         </div>
-        <p class="text-xs text-text-dim mt-2">{storage.map(s => s.type).filter((v,i,a) => a.indexOf(v) === i).join(', ') || '—'}</p>
+        <p class="text-xs text-text-dim mt-2">{storage.map(s => s.type).filter((v,i,a) => a.indexOf(v) === i).join(', ') || '–'}</p>
       </button>
     </div>
-    <!-- Scroll fade hint — only visible on mobile when cards overflow -->
+    <!-- Scroll fade hint – only visible on mobile when cards overflow -->
     <div class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-surface to-transparent lg:hidden"></div>
     </div>
 

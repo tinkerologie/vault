@@ -71,7 +71,7 @@
   ]
 
   // background=true refreshes the list in place (5s poll, WS fallback)
-  // without swapping it out for the spinner — the swap caused a visible
+  // without swapping it out for the spinner – the swap caused a visible
   // flicker every poll tick (#135). Only the initial load and explicit
   // user actions (filter change, Refresh) show the spinner.
   async function loadLogs(background = false) {
@@ -184,7 +184,7 @@
     if (key === 'containers_checked') return `${value} checked`
     if (key === 'containers_healthy') return `${value} healthy`
     if (key === 'containers_unhealthy') return `${value} unhealthy`
-    if (Array.isArray(value)) return value.length ? value.join(', ') : '—'
+    if (Array.isArray(value)) return value.length ? value.join(', ') : '–'
     return String(value)
   }
 
@@ -203,7 +203,7 @@
   function exportLogs() {
     const lines = filteredEntries.map(e => {
       const ts = formatDate(e.created_at)
-      return `[${ts}] [${e.level?.toUpperCase()}] [${e.category}] ${e.message}${e.details ? ' — ' + e.details : ''}`
+      return `[${ts}] [${e.level?.toUpperCase()}] [${e.category}] ${e.message}${e.details ? ' – ' + e.details : ''}`
     })
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
@@ -364,7 +364,7 @@
                               </span>
                             {/each}
                           {:else if key === 'results' && Array.isArray(value)}
-                            <!-- Skip results array in badge view — summary covers it -->
+                            <!-- Skip results array in badge view – summary covers it -->
                           {:else if value === null || value === undefined}
                             <!-- Skip null values -->
                           {:else if Array.isArray(value) && value.length > 0}

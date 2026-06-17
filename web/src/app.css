@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 
-/* Vault theme — amber accent, light/dark support */
+/* Vault theme – amber accent, light/dark support */
 @theme {
   --color-amber-50: #fffbeb;
   --color-amber-100: #fef3c7;
@@ -50,7 +50,7 @@
 }
 
 /* ═══════════════════════════════════════════════
-   1-BIT — Monochrome Terminal
+   1-BIT – Monochrome Terminal
    ═══════════════════════════════════════════════ */
 
 /* 1-Bit Light: white bg, black text */
@@ -94,7 +94,7 @@
 }
 
 /* ═══════════════════════════════════════════════
-   8-BIT — NES / Game Boy Pixel
+   8-BIT – NES / Game Boy Pixel
    ═══════════════════════════════════════════════ */
 
 /* 8-Bit Light: warm parchment + NES palette */
@@ -138,7 +138,7 @@
 }
 
 /* ═══════════════════════════════════════════════
-   16-BIT — SNES / Sega Genesis RPG
+   16-BIT – SNES / Sega Genesis RPG
    ═══════════════════════════════════════════════ */
 
 /* 16-Bit Light: warm parchment + deep blue RPG windows */
@@ -213,7 +213,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════
-   SHARED BASE — all themed styles
+   SHARED BASE – all themed styles
    ═══════════════════════════════════════════════ */
 
 .theme-1bit,
@@ -233,7 +233,7 @@ body {
     border-radius: 0;
   }
 
-  /* Cards — solid borders, no shadow */
+  /* Cards – solid borders, no shadow */
   & .bg-surface-2 {
     border: 1px solid var(--color-border);
     box-shadow: none;
@@ -252,7 +252,7 @@ body {
   & [role="switch"] { border-radius: 0 !important; }
   & [role="progressbar"] { border-radius: 0 !important; border: 1px solid var(--color-border); }
 
-  /* Buttons — square, bordered */
+  /* Buttons – square, bordered */
   & .btn {
     border-radius: 0;
     border: 1px solid var(--color-border);
@@ -329,7 +329,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════
-   1-BIT specific — system monospace, zero effects
+   1-BIT specific – system monospace, zero effects
    ═══════════════════════════════════════════════ */
 
 .theme-1bit,
@@ -339,7 +339,7 @@ body {
 
 /* 1-bit dark: vault is white, so text on vault-bg must be black */
 .theme-1bit.dark .bg-vault { color: #000000 !important; }
-/* Monospace chars are wider than proportional — tighten buttons to keep layouts consistent */
+/* Monospace chars are wider than proportional – tighten buttons to keep layouts consistent */
 .theme-1bit button { letter-spacing: -0.5px; font-size: 0.8125rem; }
 .theme-1bit aside nav button { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
 .theme-1bit th, .theme-1bit td { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
@@ -351,7 +351,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════
-   8-BIT specific — Press Start 2P + VT323, pixel borders
+   8-BIT specific – Press Start 2P + VT323, pixel borders
    ═══════════════════════════════════════════════ */
 
 .theme-8bit,
@@ -361,7 +361,7 @@ body {
   image-rendering: crisp-edges;
 }
 
-/* Pixel font on headings — scale down because Press Start 2P runs large */
+/* Pixel font on headings – scale down because Press Start 2P runs large */
 .theme-8bit h1,
 .theme-8bit h2,
 .theme-8bit h3 {
@@ -405,7 +405,7 @@ body {
 .theme-8bit .btn { border-width: 2px; }
 
 /* ═══════════════════════════════════════════════
-   16-BIT specific — SNES/Genesis RPG dialogs
+   16-BIT specific – SNES/Genesis RPG dialogs
    ═══════════════════════════════════════════════ */
 
 .theme-16bit,
@@ -445,7 +445,7 @@ body {
   font-family: 'VT323', monospace;
 }
 
-/* RPG dialog box panels — double border with inner highlight */
+/* RPG dialog box panels – double border with inner highlight */
 .theme-16bit .bg-surface-2 {
   border: 3px solid var(--color-border);
   box-shadow:
@@ -453,7 +453,7 @@ body {
     inset 0 0 0 2px var(--color-surface);
 }
 
-/* RPG panel title bar — gradient header */
+/* RPG panel title bar – gradient header */
 .theme-16bit .bg-surface-2 > :first-child {
   border-bottom: 2px solid var(--color-border);
   background: linear-gradient(180deg, var(--color-surface-3) 0%, var(--color-surface-2) 100%);
@@ -475,7 +475,7 @@ body {
   z-index: 9999;
 }
 
-/* RPG-style nav highlight — cursor-like active state */
+/* RPG-style nav highlight – cursor-like active state */
 .theme-16bit aside nav button:hover {
   background: linear-gradient(90deg, var(--color-vault) 0%, transparent 100%) !important;
   color: var(--color-text) !important;
@@ -574,7 +574,7 @@ body {
   animation: panel-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* Stagger children — each child delays by its index */
+/* Stagger children – each child delays by its index */
 .stagger > * { opacity: 0; animation: fade-up 0.3s ease-out both; }
 .stagger > *:nth-child(1) { animation-delay: 0ms; }
 .stagger > *:nth-child(2) { animation-delay: 50ms; }
