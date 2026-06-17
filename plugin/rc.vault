@@ -24,7 +24,7 @@ fi
 # Resolve an absolute path to `ip`. When rc.vault is invoked from php-fpm
 # (control.php / apply.sh via exec), PATH may not include /usr/sbin where
 # Unraid keeps `ip` (#139). A bare `ip` call then silently fails, making valid
-# NIC addresses look "not local" and get reset to loopback — so the daemon
+# NIC addresses look "not local" and get reset to loopback – so the daemon
 # binds 127.0.0.1 while the UI health probe targets the NIC IP and reports
 # STOPPED. Mirror apply.sh: resolve the binary explicitly and degrade
 # gracefully when it cannot be found.
@@ -44,12 +44,12 @@ validate_bind_address() {
     case "$addr" in
         127.0.0.1|0.0.0.0|::1|::) return 0 ;;
     esac
-    # Only verify locality when `ip` is available — a missing binary must not
+    # Only verify locality when `ip` is available – a missing binary must not
     # masquerade as "address is not local". Trust-but-warn: when we cannot
     # check, accept the configured address rather than resetting it (#139),
     # matching apply.sh's behaviour.
     if [ -z "$IP_BIN" ]; then
-        echo "Warning: 'ip' binary not found; cannot verify bind address '$addr' is local — accepting as configured"
+        echo "Warning: 'ip' binary not found; cannot verify bind address '$addr' is local – accepting as configured"
         return 0
     fi
     # Check if the address is assigned to a local interface. Snapshot the
@@ -164,7 +164,7 @@ start() {
 
     # Verify the daemon stayed up. An un-bindable port (already in use, or
     # otherwise rejected by the kernel) makes Go's listener fail almost
-    # immediately, but that can land a beat after process launch — re-check
+    # immediately, but that can land a beat after process launch – re-check
     # for a few seconds so we catch it and surface the cause from the log,
     # rather than leaving a stale PID file and a silently-dead daemon
     # (issue #124).

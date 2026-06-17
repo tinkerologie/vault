@@ -1,5 +1,5 @@
 <?php
-// control.php — AJAX endpoint for Vault service start/stop/status.
+// control.php – AJAX endpoint for Vault service start/stop/status.
 // Called by Vault.page JavaScript to manage the daemon without full page reload.
 
 require_once __DIR__ . '/api.php';
@@ -10,7 +10,7 @@ $RC = '/etc/rc.d/rc.vault';
 $PIDFILE = '/var/run/vault.pid';
 $CONFIG = '/boot/config/plugins/vault/vault.cfg';
 
-// is_running consults the daemon's /api/v1/health endpoint first — this is the
+// is_running consults the daemon's /api/v1/health endpoint first – this is the
 // same authoritative check used at page load, so the post-action status agrees
 // with what the user sees on refresh. The PID file is only used as a fallback
 // when the health endpoint is unreachable (e.g. during shutdown), since a
@@ -23,7 +23,7 @@ function is_running() {
         if (is_array($health) && (($health['status'] ?? '') === 'ok')) {
             return true;
         }
-        // A definitive non-ok response means the daemon is not serving — fall
+        // A definitive non-ok response means the daemon is not serving – fall
         // through to the PID check only when the HTTP call itself failed
         // (vault_get returns null on transport errors).
         if (is_array($health)) {
