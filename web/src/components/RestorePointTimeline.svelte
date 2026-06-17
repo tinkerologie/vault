@@ -43,7 +43,13 @@
     return d.toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })
   }
   function timeLabel(d) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+  // Normalise metadata item count to a number, or null when absent/unknown.
+  function itemCountOf(rp) {
+    const items = parseMeta(rp).items
+    if (Array.isArray(items)) return items.length
+    return typeof items === 'number' ? items : null
   }
 
   // Group newest-first by calendar day. points arrive newest-first.
@@ -52,10 +58,11 @@
     const byKey = {}
     for (const rp of points) {
       const d = new Date(rp.created_at)
-      const key = dayKey(d)
+      const valid = !Number.isNaN(d.getTime())
+      const key = valid ? dayKey(d) : 'unknown'
       let g = byKey[key]
       if (!g) {
-        g = { key, date: d, label: dayLabel(d), points: [], size: 0, hasFull: false }
+        g = { key, label: valid ? dayLabel(d) : 'Unknown date', points: [], size: 0, hasFull: false }
         byKey[key] = g
         groups.push(g)
       }
@@ -113,6 +120,8 @@
           {@const meta = parseMeta(rp)}
           {@const selected = rp.id === selectedId}
           {@const recommended = rp.id === recommendedId}
+          {@const dsz = displaySize(rp)}
+          {@const itemCount = itemCountOf(rp)}
           <div
             role="button"
             tabindex="0"
@@ -165,10 +174,9 @@
             </div>
 
             <div class="flex items-center gap-4 text-xs text-text-dim mt-1.5">
-              <span>{formatBytes(displaySize(rp))}{displaySize(rp) !== rp.size_bytes ? ' selected' : ''}</span>
+              <span>{formatBytes(dsz)}{dsz !== rp.size_bytes ? ' selected' : ''}</span>
               {#if rp.jobName}<span class="text-text-muted truncate">{rp.jobName}</span>{/if}
-              {#if meta.items}
-                {@const itemCount = Array.isArray(meta.items) ? meta.items.length : meta.items}
+              {#if itemCount != null}
                 <span>{itemCount} item{itemCount !== 1 ? 's' : ''}</span>
               {/if}
             </div>
