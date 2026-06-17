@@ -1415,7 +1415,7 @@
           </div>
         </details>
 
-        <!-- Advanced: Anomaly sensitivity override (Task 19) — only when anomaly detection is enabled -->
+        <!-- Advanced: Anomaly sensitivity override (Task 19) – only when anomaly detection is enabled -->
         {#if getAnomalyEnabled()}
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
