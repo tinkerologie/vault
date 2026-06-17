@@ -785,40 +785,37 @@
     mountsAbortController = new AbortController()
     const signal = mountsAbortController.signal
 
-    const next = {}
-    for (const name of names) {
-      if (!name) continue
-      try {
-        const { url, options } = buildApiRequest('GET', `/containers/${encodeURIComponent(name)}/mounts`)
-        const res = await fetch(url, { ...options, signal })
-        if (!res.ok) {
-          next[name] = []
-          continue
+    // Fetch every selected container's mounts concurrently. A failed or
+    // unavailable fetch records an empty list (not undefined) so the UI shows
+    // "no bind mounts" rather than spinning on "Loading…" forever.
+    const entries = await Promise.all(
+      names.filter(Boolean).map(async (name) => {
+        try {
+          const { url, options } = buildApiRequest('GET', `/containers/${encodeURIComponent(name)}/mounts`)
+          const res = await fetch(url, { ...options, signal })
+          if (!res.ok) return [name, []]
+          const data = await res.json()
+          return [name, data.available && Array.isArray(data.mounts) ? data.mounts : []]
+        } catch {
+          return [name, []]
         }
-        const data = await res.json()
-        next[name] = data.available && Array.isArray(data.mounts) ? data.mounts : []
-      } catch {
-        // On abort a newer fetch is in flight — bail without touching state.
-        // For other failures record an empty list so the UI shows "no bind
-        // mounts" rather than spinning on "Loading…" forever.
-        if (signal.aborted) return
-        next[name] = []
-      }
-    }
+      })
+    )
+    // A newer fetch aborted this one — discard its results.
     if (signal.aborted) return
-    containerMounts = next
+    containerMounts = Object.fromEntries(entries)
   }
 
   // Stable key of selected container names so mounts are only re-fetched when
   // the selection changes — not on every exclusion/toggle edit to form.items.
   let selectedContainerNamesKey = $derived(
-    selectedContainerItems.map((i) => i.item_name).filter(Boolean).join(' ')
+    selectedContainerItems.map((i) => i.item_name).filter(Boolean).join('\n')
   )
 
   $effect(() => {
     const key = selectedContainerNamesKey
     if (!key) return
-    fetchContainerMounts(key.split(' '))
+    fetchContainerMounts(key.split('\n'))
   })
 
   function getExcludedMounts(item) {

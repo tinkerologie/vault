@@ -25,6 +25,7 @@ func (a *recordingDedupAdapter) Delete(p string) error {
 // job on a dedup destination is deleted, the shared _vault repo is removed and
 // the destination's dedup index rows are cleared (issue #143).
 func TestReclaimDedupAfterJobDeleteLastJobRemovesRepo(t *testing.T) {
+	t.Parallel()
 	database, err := db.Open(":memory:")
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
