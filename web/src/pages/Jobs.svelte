@@ -12,6 +12,7 @@
   import EmptyState from '../components/EmptyState.svelte'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
   import { getAnomalies, onBaselineUpdated } from '../lib/anomalies.svelte.js'
+  import { getAnomalyEnabled } from '../lib/settings.svelte.js'
   import ItemPicker from '../components/ItemPicker.svelte'
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import BackupModeSelector from '../components/BackupModeSelector.svelte'
@@ -962,8 +963,8 @@
                     {job.name}
                   </h2>
                 {/if}
-                <!-- Anomaly badge for this job -->
-                {#if jobAnomalyCount(job.id) > 0}
+                <!-- Anomaly badge for this job (hidden when anomaly detection is off) -->
+                {#if getAnomalyEnabled() && jobAnomalyCount(job.id) > 0}
                   <AnomalyBadge count={jobAnomalyCount(job.id)} severity={jobWorstSeverity(job.id)} />
                 {/if}
                 <!-- Missing-item remediation pill (#119) -->
@@ -978,8 +979,8 @@
                     {jobStaleCount(job.id)} missing
                   </button>
                 {/if}
-                <!-- Baseline learning indicator -->
-                {#if baselineSamples(job.id) < 10}
+                <!-- Baseline learning indicator (hidden when anomaly detection is off) -->
+                {#if getAnomalyEnabled() && baselineSamples(job.id) < 10}
                   <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-4 text-text-dim font-medium shrink-0">
                     Learning baseline ({baselineSamples(job.id)}/10)
                   </span>
@@ -1414,7 +1415,8 @@
           </div>
         </details>
 
-        <!-- Advanced: Anomaly sensitivity override (Task 19) -->
+        <!-- Advanced: Anomaly sensitivity override (Task 19) — only when anomaly detection is enabled -->
+        {#if getAnomalyEnabled()}
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -1436,6 +1438,7 @@
             </select>
           </div>
         </details>
+        {/if}
 
         <!-- Advanced: Max parallel uploads (Task 12 – storage resilience) -->
         <details class="group">
