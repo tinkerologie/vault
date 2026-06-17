@@ -3,9 +3,10 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { formatDate, relTime, formatBytes } from '../lib/utils.js'
+  import { formatDate, formatBytes } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
   import Spinner from './Spinner.svelte'
+  import RestorePointTimeline from './RestorePointTimeline.svelte'
 
   let { jobs = [], onrestore = () => {}, initialJobId = null } = $props()
 
@@ -280,6 +281,8 @@
   }
 
   let selectedItemsArray = $derived(Array.from(selectedItems.values()))
+  // The newest restore point is the recommended one to restore from.
+  let recommendedRpId = $derived(restorePoints[0]?.id ?? null)
 
   function chainDependencies(rp) {
     return Math.max(0, (rp?.chain_depth || 1) - 1)
@@ -485,74 +488,16 @@
         <p class="text-sm text-text-muted">No restore points found for the selected items.</p>
       </div>
     {:else}
-      <div class="space-y-2">
-        {#each restorePoints as rp, i (rp.id)}
-          {@const meta = parseMetadata(rp.metadata)}
-          {@const isRecommended = i === 0 && (rp.status === 'completed' || rp.status === 'success')}
-          <div role="button" tabindex="0"
-            onclick={() => { confirmDeleteRpId = null; selectPoint(rp) }}
-            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); confirmDeleteRpId = null; selectPoint(rp) } }}
-            class="w-full bg-surface-2 border rounded-xl p-4 text-left hover:shadow-sm transition-all cursor-pointer
-              {isRecommended ? 'border-vault/40 hover:border-vault/60' : 'border-border hover:border-vault/30'}">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center gap-2">
-                <span class="text-xs px-2 py-0.5 rounded-full font-medium uppercase bg-vault/10 text-vault">{rp.backup_type}</span>
-                {#if rp.chain_status === 'broken'}
-                  <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-danger/15 text-danger">Broken chain</span>
-                {:else if chainDependencies(rp) > 0}
-                  <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-info/15 text-info">Chain x{rp.chain_depth}</span>
-                {/if}
-                {#if rp.retention_preserved}
-                  <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-warning/15 text-warning">Retained for chain</span>
-                {/if}
-                {#if isRecommended}
-                  <span class="text-xs px-2 py-0.5 rounded-full bg-success/15 text-success font-medium">Recommended</span>
-                {/if}
-                {#if meta.verified}
-                  <span class="text-xs px-2 py-0.5 rounded-full bg-info/15 text-info font-medium">Verified</span>
-                {/if}
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-text-dim" title={relTime(rp.created_at)}>
-                  {formatDate(rp.created_at)}
-                  <span class="text-text-muted">· {relTime(rp.created_at)}</span>
-                </span>
-                <button
-                  type="button"
-                  onclick={(e) => { e.stopPropagation(); deleteRestorePoint(rp) }}
-                  disabled={deletingRpId === rp.id}
-                  title={confirmDeleteRpId === rp.id ? 'Click again to confirm' : 'Delete this backup'}
-                  aria-label="Delete restore point"
-                  class="p-1 rounded transition-colors {confirmDeleteRpId === rp.id ? 'text-danger hover:text-danger/80' : 'text-text-dim hover:text-danger'} disabled:opacity-40"
-                >
-                  {#if deletingRpId === rp.id}
-                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                  {:else}
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                  {/if}
-                </button>
-              </div>
-            </div>
-            <div class="flex items-center gap-4 text-xs text-text-dim">
-              <span>{formatBytes(selectedRestoreSize(rp))}{selectedRestoreSize(rp) !== rp.size_bytes ? ' selected' : ''}</span>
-              <span>Run #{rp.job_run_id}</span>
-              <span class="text-text-muted">{rp.jobName}</span>
-              {#if meta.items}
-                {@const itemCount = Array.isArray(meta.items) ? meta.items.length : meta.items}
-                <span>{itemCount} items</span>
-              {/if}
-            </div>
-            {#if rp.chain_status === 'broken'}
-              <p class="mt-2 text-xs text-danger">{rp.chain_warning}</p>
-            {:else if chainDependencies(rp) > 0}
-              <p class="mt-2 text-xs text-info">Restore replays {chainDependencies(rp)} earlier backup{chainDependencies(rp) === 1 ? '' : 's'} in this chain.</p>
-            {/if}
-            {#if rp.retention_preserved}
-              <p class="mt-1 text-xs text-warning">{retentionPreservedMessage(rp)}</p>
-            {/if}
-          </div>
-        {/each}
-      </div>
+      <RestorePointTimeline
+        points={restorePoints}
+        selectedId={selectedPoint?.id ?? null}
+        recommendedId={recommendedRpId}
+        onSelect={(rp) => { confirmDeleteRpId = null; selectPoint(rp) }}
+        onDelete={deleteRestorePoint}
+        deletingId={deletingRpId}
+        confirmDeleteId={confirmDeleteRpId}
+        sizeFor={selectedRestoreSize}
+      />
       <p class="text-xs text-text-dim mt-3 text-center">{restorePoints.length} restore point{restorePoints.length !== 1 ? 's' : ''}</p>
     {/if}
 
