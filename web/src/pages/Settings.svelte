@@ -237,6 +237,19 @@
     }
   }
 
+  async function toggleBackupRule() {
+    const newVal = settings.backup_rule_enabled === 'false' ? 'true' : 'false'
+    saving = true
+    try {
+      settings = await api.updateSettings({ backup_rule_enabled: newVal })
+      showToast(`3-2-1 Backup Rule ${newVal === 'true' ? 'shown' : 'hidden'} on Dashboard`, 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      saving = false
+    }
+  }
+
   async function saveDiscordSettings() {
     discordSaving = true
     try {
@@ -613,6 +626,7 @@
   }
 
   let notificationsOn = $derived(settings.notifications_enabled !== 'false')
+  let backupRuleOn = $derived(settings.backup_rule_enabled !== 'false')
   let containerBackupOn = $derived(settings.container_backup_enabled !== 'false')
   let vmBackupOn = $derived(settings.vm_backup_enabled !== 'false')
   let folderBackupOn = $derived(settings.folder_backup_enabled !== 'false')
@@ -833,6 +847,34 @@
             >
               <div class="w-11 h-6 rounded-full transition-colors {flashBackupOn ? 'bg-vault' : 'bg-surface-4'}">
                 <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {flashBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Dashboard</h2>
+          <p class="text-xs text-text-muted mt-0.5">Control which optional panels appear on the Dashboard.</p>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-text">3-2-1 Backup Rule</p>
+              <p class="text-xs text-text-muted mt-0.5">Show the 3-2-1 best-practice compliance panel. Hide it if you run an intentionally simple setup.</p>
+            </div>
+            <button
+              onclick={() => toggleBackupRule()}
+              disabled={saving}
+              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              role="switch"
+              aria-checked={backupRuleOn}
+              aria-label="Toggle 3-2-1 Backup Rule panel"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {backupRuleOn ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {backupRuleOn ? 'translate-x-5' : 'translate-x-0'}"></div>
               </div>
             </button>
           </div>

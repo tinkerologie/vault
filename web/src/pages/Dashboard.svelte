@@ -212,6 +212,21 @@
   const vmBackupOn = $derived(settings.vm_backup_enabled !== 'false')
   const folderBackupOn = $derived(settings.folder_backup_enabled !== 'false')
   const flashBackupOn = $derived(settings.flash_backup_enabled !== 'false')
+  const backupRuleOn = $derived(settings.backup_rule_enabled !== 'false')
+
+  // Dismiss (×) on the 3-2-1 panel: hide immediately, persist, and revert on
+  // failure. Re-enabled from Settings → Dashboard.
+  async function dismissBackupRule() {
+    const original = settings.backup_rule_enabled
+    settings = { ...settings, backup_rule_enabled: 'false' }
+    try {
+      await api.updateSettings({ backup_rule_enabled: 'false' })
+      showToast('3-2-1 Backup Rule hidden — re-enable in Settings → Dashboard')
+    } catch (e) {
+      settings = { ...settings, backup_rule_enabled: original }
+      showToast(e.message || 'Could not hide the panel', 'error')
+    }
+  }
 
   const trackedContainers = $derived(containerBackupOn ? containers : [])
   const trackedVMs = $derived(vmBackupOn ? vms : [])
@@ -364,8 +379,8 @@
     {/if}
 
     <!-- 3-2-1 Compliance Badge -->
-    {#if jobs.length > 0}
-      <ComplianceBadge {storage} {jobs} {replicationSources} />
+    {#if jobs.length > 0 && backupRuleOn}
+      <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={dismissBackupRule} />
     {/if}
 
     <!-- Stats Grid -->

@@ -1,7 +1,7 @@
 <script>
   import { SvelteSet } from 'svelte/reactivity'
 
-  let { storage = [], jobs = [], replicationSources = [] } = $props()
+  let { storage = [], jobs = [], replicationSources = [], ondismiss } = $props()
 
   // --- 3 Copies ---
   // Count distinct storage destinations with at least one enabled job.
@@ -69,6 +69,17 @@
           {#if offsite >= 1}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>{/if} 1 offsite
         </span>
       </div>
+      {#if ondismiss}
+        <button
+          type="button"
+          onclick={(e) => { e.stopPropagation(); ondismiss() }}
+          class="text-text-muted hover:text-text p-1 -m-1 rounded transition-colors cursor-pointer"
+          title="Hide — re-enable in Settings"
+          aria-label="Hide 3-2-1 Backup Rule"
+        >
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      {/if}
       <svg aria-hidden="true" class="w-4 h-4 text-text-muted transition-transform {expanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
     </div>
   </div>
