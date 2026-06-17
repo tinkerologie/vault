@@ -1,8 +1,8 @@
 #!/bin/bash
-# apply.sh — Called by Unraid's /update.php after saving vault.cfg.
+# apply.sh – Called by Unraid's /update.php after saving vault.cfg.
 # Validates the saved port and bind address, then restarts the Vault daemon to
 # pick up the changes (if it is running) and verifies it actually came back up
-# (issue #124 — an invalid or already-in-use port used to leave the daemon
+# (issue #124 – an invalid or already-in-use port used to leave the daemon
 # silently dead, making the web UI unreachable with no feedback).
 
 RC="/etc/rc.d/rc.vault"
@@ -36,7 +36,7 @@ if [ -f "$CONFIG" ]; then
         127.0.0.1|0.0.0.0|::1|::|"") ;; # valid loopback/wildcard
         *)
             # Check if it's a local interface IP; if not, reset to 127.0.0.1.
-            # Only validate when `ip` is available — a missing binary must not
+            # Only validate when `ip` is available – a missing binary must not
             # masquerade as "address is not local".
             if [ -n "$IP_BIN" ] && \
                ! "$IP_BIN" addr show 2>/dev/null | grep -Fq "inet ${BIND_ADDRESS}/" && \
@@ -52,7 +52,7 @@ if [ -f "$CONFIG" ]; then
     esac
 
     # Validate the port server-side. The HTML form enforces 1024-65535, but
-    # that constraint is client-side only — an out-of-range or non-numeric
+    # that constraint is client-side only – an out-of-range or non-numeric
     # value written straight to vault.cfg would make the daemon fail to bind
     # and exit, which is the root cause of issue #124. Reset to the default on
     # anything invalid so the daemon always has a usable port to start on.
@@ -72,7 +72,7 @@ if [ -f "$CONFIG" ]; then
 fi
 
 # Probe host for the post-restart health check. The probe must target the
-# address the daemon actually binds to — a hardcoded loopback probe fails when
+# address the daemon actually binds to – a hardcoded loopback probe fails when
 # a specific NIC address is selected (issue #130). Wildcards are reachable via
 # loopback; IPv6 literals need brackets in a URL.
 PROBE_HOST="127.0.0.1"
@@ -113,7 +113,7 @@ if resolve_pid >/dev/null; then
     # failure cause is a valid-but-already-in-use port: rc.vault removes the
     # PID file when the process dies, so a dead process is a definitive
     # failure signal. A process that stays alive but that we cannot reach over
-    # HTTP is treated as success — the probe may be blocked even though the
+    # HTTP is treated as success – the probe may be blocked even though the
     # daemon is healthy.
     attempts=6
     daemon_up=1
