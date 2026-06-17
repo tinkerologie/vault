@@ -3715,6 +3715,13 @@ func (r *Runner) deleteStorageDir(adapter storage.Adapter, prefix string) {
 func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) error {
 	files, err := adapter.List(prefix)
 	if err != nil {
+		// A directory that no longer exists is already clean — nothing to
+		// delete. Treating this as a hard failure made job/restore-point
+		// cleanup report "files may remain on storage" when a path had been
+		// removed already or never existed (e.g. WebDAV PROPFIND 404). (#143)
+		if storage.IsNotExist(err) {
+			return nil
+		}
 		log.Printf("runner: failed to list storage dir %s for cleanup: %v", prefix, err)
 		return fmt.Errorf("list %s: %w", prefix, err)
 	}
@@ -3833,6 +3840,15 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 		// surface a benign "not found", so its error does not fail the cleanup.
 		_ = r.DeleteStorageDir(adapter, jobName)
 
+		// Dedup destinations keep backup data in a shared content-addressed
+		// repo (_vault/), so deleting a job's manifests above leaves its chunks
+		// behind. Reclaim them: if this was the last job on the destination the
+		// whole repo is orphaned and removed outright; otherwise run GC to free
+		// only the chunks no longer referenced by a surviving job. (issue #143)
+		if dest.DedupEnabled {
+			r.reclaimDedupAfterJobDelete(adapter, jobID, dest, &errs)
+		}
+
 		if err := errors.Join(errs...); err != nil {
 			log.Printf("runner: async cleanup for job %d (%q) failed: %v", jobID, jobName, err)
 			// Activity log makes the failure durably visible: cleanup can finish
@@ -3851,6 +3867,39 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 			"type": "job_cleanup_complete", "job_id": jobID, "job_name": jobName,
 		})
 	}()
+}
+
+// reclaimDedupAfterJobDelete frees dedup data left behind by a just-deleted
+// job. The job row and its restore points are already gone, so:
+//   - if no jobs reference the destination anymore, the entire _vault repo is
+//     orphaned: remove it and clear the destination's dedup index rows so a
+//     future backup re-initialises cleanly;
+//   - otherwise other jobs still share the repo, so run GC to reclaim only the
+//     chunks no longer referenced by a surviving restore point.
+//
+// Repo-removal errors are appended to errs (genuine cleanup failures); GC
+// reports its own outcome via the dedup_gc_complete broadcast and the log.
+func (r *Runner) reclaimDedupAfterJobDelete(adapter storage.Adapter, jobID int64, dest db.StorageDestination, errs *[]error) {
+	remaining, err := r.db.CountJobsByStorageDestID(dest.ID)
+	if err != nil {
+		log.Printf("runner: dedup cleanup: counting jobs for dest %d: %v", dest.ID, err)
+		return
+	}
+	if remaining > 0 {
+		// Other jobs still share the repo — reclaim only orphaned chunks.
+		r.RunDedupGC(dest, fmt.Sprintf("job-delete-%d", jobID))
+		return
+	}
+	// Last dedup job on this destination — the whole repo is orphaned.
+	if e := r.DeleteStorageDir(adapter, dedup.RepoRoot); e != nil {
+		*errs = append(*errs, fmt.Errorf("remove dedup repo: %w", e))
+	}
+	// Surface a failure to clear the dedup index too: leaving stale pack/chunk
+	// rows behind would corrupt the repo re-init on the next backup, so it must
+	// not fail silently.
+	if e := r.db.DeleteDedupState(dest.ID); e != nil {
+		*errs = append(*errs, fmt.Errorf("clear dedup index state: %w", e))
+	}
 }
 
 // CleanupRestorePointStorageAsync deletes a single restore point's files on

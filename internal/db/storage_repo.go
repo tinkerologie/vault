@@ -276,6 +276,35 @@ func (d *DB) CountJobsByStorageDestID(storageDestID int64) (int, error) {
 	return count, err
 }
 
+// DeleteDedupState removes all deduplication index rows (packs, chunks, GC
+// runs) for a storage destination. Called when the last dedup job on a
+// destination is deleted and its shared _vault repo is removed from storage, so
+// a future backup re-initialises the repo from a clean slate rather than
+// inheriting stale pack/chunk references. The destination row itself is left
+// intact. (issue #143)
+func (d *DB) DeleteDedupState(storageDestID int64) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("delete dedup state: begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+	// Delete chunks before packs so the operation succeeds whether or not
+	// SQLite foreign-key cascades are enabled in this connection.
+	if _, err := tx.Exec("DELETE FROM dedup_chunks WHERE storage_id = ?", storageDestID); err != nil {
+		return fmt.Errorf("delete dedup state: delete chunks: %w", err)
+	}
+	if _, err := tx.Exec("DELETE FROM dedup_packs WHERE storage_id = ?", storageDestID); err != nil {
+		return fmt.Errorf("delete dedup state: delete packs: %w", err)
+	}
+	if _, err := tx.Exec("DELETE FROM dedup_gc_runs WHERE storage_id = ?", storageDestID); err != nil {
+		return fmt.Errorf("delete dedup state: delete gc runs: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete dedup state: commit: %w", err)
+	}
+	return nil
+}
+
 // ListJobsByStorageDestID returns id/name pairs of every job that references
 // the given storage destination. Used by the dependent-jobs API surface so the
 // UI can render which jobs would be orphaned by a delete.

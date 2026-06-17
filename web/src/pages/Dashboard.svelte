@@ -597,7 +597,7 @@
                   <h3 class="text-sm font-medium text-text">Containers</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedContainers.length}/{trackedContainers.length}</span>
                 </div>
-                <div class="space-y-1.5 max-h-48 overflow-y-auto">
+                <div class="space-y-1.5">
                   {#each trackedContainers as c (c.name)}
                     {@const isProtected = protectedItems.has(`container:${c.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
@@ -625,7 +625,7 @@
                   <h3 class="text-sm font-medium text-text">Virtual Machines</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedVMs.length}/{trackedVMs.length}</span>
                 </div>
-                <div class="space-y-1.5 max-h-48 overflow-y-auto">
+                <div class="space-y-1.5">
                   {#each trackedVMs as v (v.name)}
                     {@const isProtected = protectedItems.has(`vm:${v.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
@@ -653,7 +653,7 @@
                   <h3 class="text-sm font-medium text-text">Folders</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedFolders.length}/{trackedFolders.length}</span>
                 </div>
-                <div class="space-y-1.5 max-h-48 overflow-y-auto">
+                <div class="space-y-1.5">
                   {#each trackedFolders as f (f.name)}
                     {@const isProtected = protectedItems.has(`folder:${f.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
@@ -681,7 +681,7 @@
                   <h3 class="text-sm font-medium text-text">Flash Drive</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedFlash.length}/{trackedFlash.length}</span>
                 </div>
-                <div class="space-y-1.5 max-h-48 overflow-y-auto">
+                <div class="space-y-1.5">
                   {#each trackedFlash as f (f.name)}
                     {@const isProtected = protectedItems.has(`folder:${f.name}`)}
                     <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">

@@ -15,9 +15,15 @@ import (
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
+// RepoRoot is the top-level directory of a dedup repository on a storage
+// destination. It holds repo.json, the pack store, and the index — all shared
+// across every dedup job that targets the destination. Exported so cleanup code
+// can remove the whole repo when the last dedup job on a destination is deleted.
+const RepoRoot = "_vault"
+
 const (
-	repoConfigPath = "_vault/repo.json"
-	packsRoot      = "_vault/packs"
+	repoConfigPath = RepoRoot + "/repo.json"
+	packsRoot      = RepoRoot + "/packs"
 	repoVersion    = 1
 	splitterAlgo   = "kfastcdc"
 	hashAlgo       = "hmac-blake2b-256"

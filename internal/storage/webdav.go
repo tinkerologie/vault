@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -865,6 +866,13 @@ func (w *WebDAVAdapter) List(prefix string) ([]FileInfo, error) {
 	c := w.client()
 	entries, err := c.ReadDir(full)
 	if err != nil {
+		// Normalise a 404 to fs.ErrNotExist so callers (e.g. cleanup) can treat
+		// an already-deleted directory as success via storage.IsNotExist. The
+		// gowebdav not-found check must run on the raw error here — it does not
+		// unwrap %w-wrapped errors. (issue #143)
+		if isWebDAVNotFound(err) {
+			return nil, fmt.Errorf("webdav: list %s: %w", full, fs.ErrNotExist)
+		}
 		return nil, fmt.Errorf("webdav: list %s: %w", full, err)
 	}
 	out := make([]FileInfo, 0, len(entries))
