@@ -53,6 +53,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		// Public endpoints.
 		r.Get("/health", s.handleHealth)
+		r.Get("/meta/routes", s.handleMetaRoutes)
 
 		// All API routes.
 		r.Get("/ws", s.hub.HandleWS)
