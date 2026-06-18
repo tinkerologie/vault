@@ -1,5 +1,5 @@
 <script>
-  let { score = 0, summary = '', avgSpeed = null } = $props()
+  let { score = 0, summary = '', hint = '', avgSpeed = null } = $props()
 
   let color = $derived(
     score >= 80 ? 'var(--color-success)' :
@@ -28,6 +28,9 @@
   <div>
     <h3 class="text-lg font-semibold text-text">Backup Health</h3>
     <p class="text-sm text-text-muted mt-1">{summary}</p>
+    {#if hint}
+      <p class="text-xs text-text-dim mt-1">{hint}</p>
+    {/if}
     {#if avgSpeed}
       <p class="text-xs text-text-dim mt-1.5">Avg. speed: {avgSpeed}</p>
     {/if}
