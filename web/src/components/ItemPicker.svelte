@@ -807,7 +807,7 @@
       {/if}
     {:else}
       <p class="text-sm text-text-muted py-4 text-center">
-        {activeTab === 'containers' ? 'Docker is not available' : activeTab === 'vms' ? 'libvirt is not available' : activeTab === 'plugins' ? 'Plugins not available' : activeTab === 'flash' ? 'Flash drive not available' : activeTab === 'zfs' ? 'ZFS is not available' : 'No folders available'}
+        {activeTab === 'containers' ? 'Docker service not available' : activeTab === 'vms' ? 'Virtual Machine service not available' : activeTab === 'plugins' ? 'Plugins not available' : activeTab === 'flash' ? 'Flash drive not available' : activeTab === 'zfs' ? 'ZFS is not available' : 'No folders available'}
       </p>
     {/if}
 
