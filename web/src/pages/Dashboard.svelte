@@ -280,21 +280,30 @@
     return excluded
   })
 
+  // The gauge subtitle describes the SAME metric the ring shows
+  // (healthSummary.health_score: backup success + protection of configured
+  // items), so the card never contradicts itself. Whole-server coverage is a
+  // separate metric and lives in the Protection Status panel below; it's
+  // surfaced here only as a calm, non-alarming hint (healthCoverageHint).
   const healthSummaryText = $derived.by(() => {
     if (!healthSummary) return ''
     const s = healthSummary
-    const healthScore = totalProtected === 0 && totalItems === 0
-      ? 100
-      : Math.round((totalProtected / totalItems) * 100)
+    const score = s.health_score ?? 0
+    if (s.recent_failed > 0) {
+      return `${s.recent_failed} recent failure${s.recent_failed === 1 ? '' : 's'} – check History`
+    }
+    if (score >= 80) return 'All backups healthy'
+    if (score >= 50) return 'Backups mostly healthy'
+    return 'Attention needed – recent backups have not completed'
+  })
+
+  // Calm coverage pointer toward the Protection Status panel. Not part of the
+  // health tone above, so a deliberately partial setup stays "healthy".
+  const healthCoverageHint = $derived.by(() => {
     const unprotectedCount = Math.max(0, totalItems - totalProtected)
-    const suffix = excludedCategories.length > 0 ? ` · ${excludedCategories.join(', ')} excluded` : ''
-    if (healthScore >= 80) return 'All backups healthy' + suffix
-    const issues = []
-    if (unprotectedCount > 0) issues.push(`${unprotectedCount} items unprotected`)
-    if (s.recent_failed > 0) issues.push(`${s.recent_failed} recent failures`)
-    if (issues.length === 0) return 'Backups operational' + suffix
-    if (healthScore < 50) return 'Attention needed – ' + issues.join(', ') + suffix
-    return issues.join(', ') + suffix
+    const excluded = excludedCategories.length > 0 ? ` · ${excludedCategories.join(', ')} excluded` : ''
+    if (unprotectedCount === 0) return excluded ? `Fully protected${excluded}` : ''
+    return `${unprotectedCount} item${unprotectedCount === 1 ? '' : 's'} not in any backup job · see Protection Status${excluded}`
   })
 </script>
 
@@ -388,7 +397,7 @@
 
     <!-- Health Gauge -->
     {#if healthSummary && jobs.length > 0}
-      <HealthGauge score={healthSummary.health_score} summary={healthSummaryText} {avgSpeed} />
+      <HealthGauge score={healthSummary.health_score} summary={healthSummaryText} hint={healthCoverageHint} {avgSpeed} />
     {/if}
 
     <!-- 3-2-1 Compliance Badge -->
