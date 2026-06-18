@@ -492,7 +492,7 @@
         {@const cfg = parseConfig(dest.config)}
         {@const tr = testResults.get(dest.id)}
         {@const jobCount = depCounts.get(dest.id) || 0}
-        <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 hover:shadow-sm transition-all">
+        <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 hover:shadow-sm transition-all flex flex-col">
           <div class="flex items-start justify-between mb-3">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-lg bg-surface-3 flex items-center justify-center">
@@ -693,7 +693,7 @@
             </div>
           {/if}
 
-          <div class="flex items-center gap-2 pt-3 border-t border-border">
+          <div class="flex items-center gap-2 pt-3 border-t border-border mt-auto">
             <span class="text-xs text-text-dim whitespace-nowrap" title={formatDate(dest.created_at)}>{formatDateCompact(dest.created_at)}</span>
             {#if jobCount > 0}
               <span class="text-xs px-2.5 py-1 rounded-full bg-vault/10 text-vault font-medium whitespace-nowrap">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
