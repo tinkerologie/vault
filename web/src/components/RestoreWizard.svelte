@@ -279,8 +279,25 @@
         }
       }
 
+      // Only show restore points that actually contain every selected item.
+      // A restore point records its membership in metadata.item_sizes /
+      // item_manifests; an item added to a job after a backup ran is NOT in
+      // that backup, so showing it would be misleading and the restore would
+      // fail. Legacy restore points with no recorded membership are kept
+      // (unknown → fall back to whole-archive behaviour).
+      const selectedNames = Array.from(selectedItems.values()).map(i => i.name)
+      const containsSelected = (rp) => {
+        const meta = parseMetadata(rp.metadata)
+        const names = new Set([
+          ...Object.keys(meta.item_sizes || {}),
+          ...Object.keys(meta.item_manifests || {}),
+        ])
+        if (names.size === 0) return true // legacy: membership unknown
+        return selectedNames.every(n => names.has(n))
+      }
+
       // Sort by date descending
-      restorePoints = allPoints.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      restorePoints = allPoints.filter(containsSelected).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
     } catch { /* ignore */ } finally {
       loadingPoints = false
     }
