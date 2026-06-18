@@ -544,6 +544,7 @@ func TestJobItemMissingSince(t *testing.T) {
 }
 
 func TestPurgeEligibleRuns(t *testing.T) {
+	t.Parallel()
 	d, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -554,6 +555,7 @@ func TestPurgeEligibleRuns(t *testing.T) {
 	jobID, _ := d.CreateJob(Job{Name: "j", Schedule: "@daily", Compression: "none", Encryption: "none", StorageDestID: destID})
 
 	mkRun := func(daysAgo int, withRP bool) int64 {
+		t.Helper()
 		runID, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "success", BackupType: "full"})
 		if err != nil {
 			t.Fatalf("run: %v", err)

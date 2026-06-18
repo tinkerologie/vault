@@ -129,7 +129,10 @@ func (h *HistoryHandler) Trend(w http.ResponseWriter, r *http.Request) {
 	}
 	cat := map[int64]string{}
 	for _, j := range jobs {
-		items, _ := h.db.GetJobItems(j.ID)
+		items, err := h.db.GetJobItems(j.ID)
+		if err != nil {
+			log.Printf("trend: listing items for job %d: %v", j.ID, err)
+		}
 		cat[j.ID] = dominantCategory(items)
 	}
 
@@ -137,6 +140,7 @@ func (h *HistoryHandler) Trend(w http.ResponseWriter, r *http.Request) {
 	for _, j := range jobs {
 		jrs, err := h.db.GetJobRuns(j.ID, 100000)
 		if err != nil {
+			log.Printf("trend: listing runs for job %d: %v", j.ID, err)
 			continue
 		}
 		for _, run := range jrs {
@@ -160,6 +164,9 @@ func (h *HistoryHandler) Trend(w http.ResponseWriter, r *http.Request) {
 // dominantCategory mirrors the frontend SizeChart classification: the job's
 // most common item-type category (ties resolve by canonical order).
 func dominantCategory(items []db.JobItem) string {
+	if len(items) == 0 {
+		return "other"
+	}
 	order := []string{"containers", "vms", "folders", "flash", "other"}
 	counts := map[string]int{}
 	for _, it := range items {

@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Configurable history retention.** A new **Settings → General → History Retention** control (30 days / 90 days / 6 months / 1 year / 2 years / Keep everything; default 1 year) caps how long backup/restore run history is kept, so the database doesn't grow without bound. The daily purge is deliberately safe: it only removes run-history rows that are both older than the chosen period **and** no longer back a restore point – recoverable backups are governed solely by each job's own backup retention and are never deleted by this setting.
+- **Configurable history retention.** A new **Settings → General → History Retention** control (30 days / 90 days / 6 months / 1 year / 2 years / Keep everything; default 1 year) caps how long backup/restore run history is kept, so the database doesn't grow without bound. The purge (which runs during the daemon's maintenance pass) is deliberately safe: it only removes run-history rows that are both older than the chosen period **and** no longer back a restore point – recoverable backups are governed solely by each job's own backup retention and are never deleted by this setting.
 - **Selectable backup-size trend window.** The History page's "Backup Size Trend" chart now has a period selector – **7d / 30d / 90d / 6m / 1y** (default 30d) – instead of a fixed last-30-runs view. Long ranges are aggregated server-side into readable buckets (per run for 7d, per day for 30d/90d, per week for 6m/1y) and the bars are stacked by backup type (containers / VMs / folders / flash). Backed by a new `GET /api/v1/history/trend` endpoint.
 - **Capacity trend and runway forecast on storage destinations.** Each destination's capacity block now shows a sparkline of usage over the last 90 days (the samples Vault already collects) plus a plain-language runway estimate – "~N days until full at current growth", "Usage stable or shrinking", or "Not enough history yet" – computed from a linear fit of recent samples. The trend and runway colour-shift to amber/red as the destination nears full. Quota-less providers (S3, generic WebDAV) show the usage trend without a percentage or runway.
 - **Dedup savings bar.** Deduplicated destinations now show a visual savings bar beside the existing ratio text: how much of the logical data is physically stored versus how much deduplication avoided writing (e.g. "Stored 29% · Saved 70.6 GB").
@@ -47,7 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Removed
 
-- **The API Endpoints list was removed from Settings → Reference.** It enumerated every REST route in the UI, which added clutter without real value for operators (no comparable backup tool surfaces its API inside the app), so it has been dropped. The Reference tab keeps its Compression Guide and Backup Type Guide. The REST API itself is unchanged – integrations that call `/api/v1/...` are unaffected.
+- **The API Endpoints list was removed from Settings → Reference.** It enumerated every REST route in the UI, which added clutter without real value for operators (no comparable backup tool surfaces its API inside the app), so it has been dropped. The Reference tab keeps its Compression Guide and Backup Type Guide. Only the in-UI list was removed – the REST endpoints themselves are unaffected, and integrations that call `/api/v1/...` continue to work.
 
 ## [2026.06.04] - 2026-06-13
 

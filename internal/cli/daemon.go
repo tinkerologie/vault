@@ -329,11 +329,14 @@ var daemonCmd = &cobra.Command{
 		// History retention: purge run history older than the configured
 		// number of days, but only runs that no longer have a restore point
 		// (recoverable backups are governed solely by per-job backup
-		// retention). Default 365; "0"/empty disables.
+		// retention). Default 365 days; "0" disables purging. Any other
+		// invalid value (including empty) falls back to the 365 default.
 		retDays := 365
 		if v, err := database.GetSetting("history_retention_days", "365"); err == nil {
 			if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil {
 				retDays = n
+			} else {
+				log.Printf("Warning: invalid history_retention_days %q (%v); using default %d", v, perr, retDays)
 			}
 		}
 		if cleaned, err := database.PurgeEligibleRuns(retDays); err != nil {

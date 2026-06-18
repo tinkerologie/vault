@@ -341,7 +341,7 @@
   async function saveHistoryRetention() {
     historyRetentionSaving = true
     try {
-      await api.updateSettings({ history_retention_days: historyRetention })
+      settings = await api.updateSettings({ history_retention_days: historyRetention })
       showToast('History retention saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')

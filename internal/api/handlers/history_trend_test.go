@@ -3,9 +3,12 @@ package handlers
 import (
 	"testing"
 	"time"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 func TestBucketTrend(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 6, 18, 2, 0, 0, 0, time.UTC)
 	runs := []trendRun{
 		{Start: base, Size: 100, Category: "containers"},
@@ -33,6 +36,7 @@ func TestBucketTrend(t *testing.T) {
 }
 
 func TestPeriodToWindow(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{"7d": "run", "30d": "day", "90d": "day", "6m": "week", "1y": "week"}
 	for period, wantBucket := range cases {
 		_, bucket, ok := periodToWindow(period)
@@ -42,5 +46,27 @@ func TestPeriodToWindow(t *testing.T) {
 	}
 	if _, _, ok := periodToWindow("bogus"); ok {
 		t.Errorf("bogus period should be rejected")
+	}
+}
+
+// TestDominantCategory covers the empty-items edge case (must be "other", not
+// "containers") plus basic classification and tie-break order.
+func TestDominantCategory(t *testing.T) {
+	t.Parallel()
+	if got := dominantCategory(nil); got != "other" {
+		t.Errorf("empty items = %q, want other", got)
+	}
+	mk := func(types ...string) []db.JobItem {
+		out := make([]db.JobItem, 0, len(types))
+		for _, ty := range types {
+			out = append(out, db.JobItem{ItemType: ty})
+		}
+		return out
+	}
+	if got := dominantCategory(mk("vm", "vm", "container")); got != "vms" {
+		t.Errorf("vm-dominant = %q, want vms", got)
+	}
+	if got := dominantCategory(mk("container")); got != "containers" {
+		t.Errorf("single container = %q, want containers", got)
 	}
 }
