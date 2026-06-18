@@ -170,6 +170,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		historyH := handlers.NewHistoryHandler(s.db)
 		r.Delete("/history", historyH.Purge)
+		r.Get("/history/trend", historyH.Trend)
 
 		// Discovery endpoints are only relevant in daemon mode.
 		if !s.config.ReadOnly {
