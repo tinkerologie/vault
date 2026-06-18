@@ -26,13 +26,10 @@ func TestJobUpdate_InvalidID(t *testing.T) {
 	}
 }
 
-// TestRestorePointContents_GetJobError forces the GetJob branch to fail by
-// closing the DB after the restore-point lookup succeeded. Tricky since we
-// can't pause mid-handler — use the fact that GetJob is hit BEFORE the
-// item check, so we need a scenario where GetRestorePoint succeeds but
-// GetJob fails. Easier: pre-seed restore point pointing at a job whose
-// row was deleted via raw SQL (cascade off).
-func TestRestorePointContents_GetJobError(t *testing.T) {
+// TestRestorePointContents_MissingRestorePoint deletes the job, which cascades
+// to its restore points (restore_points.job_id ON DELETE CASCADE), so the
+// subsequent GetRestorePoint lookup misses and the handler returns 404.
+func TestRestorePointContents_MissingRestorePoint(t *testing.T) {
 	t.Parallel()
 	h, d := newJobHandlerDB(t)
 	jobID := seedJob(t, d)
@@ -50,7 +47,7 @@ func TestRestorePointContents_GetJobError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create rp: %v", err)
 	}
-	// Delete the job row directly bypassing cascade (NULL FK leaves rp).
+	// Deleting the job cascades to its restore points, so the rp is gone too.
 	if _, err := d.Exec(`DELETE FROM jobs WHERE id = ?`, jobID); err != nil {
 		t.Fatalf("delete job direct: %v", err)
 	}
@@ -64,11 +61,10 @@ func TestRestorePointContents_GetJobError(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.RestorePointContents(w, req)
 
-	// The job is gone but the rp is still there; GetJob returns
-	// ErrNotFound which goes to respondInternalError → 500. (The handler
-	// doesn't special-case this NotFound.)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500; body: %s", w.Code, w.Body.String())
+	// The restore point was cascade-deleted with the job, so GetRestorePoint
+	// returns db.ErrNotFound and the handler responds 404.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
 	}
 }
 

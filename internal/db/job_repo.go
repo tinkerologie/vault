@@ -580,6 +580,9 @@ func (d *DB) GetRestorePoint(id int64) (RestorePoint, error) {
 	).Scan(&rp.ID, &rp.JobRunID, &rp.JobID, &rp.BackupType,
 		&rp.StoragePath, &rp.Metadata, &rp.SizeBytes,
 		&rp.ParentRestorePointID, &rp.SourceID, &rp.ManifestID, &rp.CreatedAt)
+	if err == sql.ErrNoRows {
+		return rp, ErrNotFound
+	}
 	return rp, err
 }
 

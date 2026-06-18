@@ -76,7 +76,10 @@ func TestPreflightRestore_AllGreen(t *testing.T) {
 }
 
 func TestPreflightRestore_MissingRestorePointFails(t *testing.T) {
-	d, _ := db.Open(":memory:")
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
 	defer d.Close()           //nolint:errcheck
 	storageDir := t.TempDir() // no restore-point dir created
 	_, job := newLocalDest(t, d, storageDir, false)
@@ -94,7 +97,10 @@ func TestPreflightRestore_MissingRestorePointFails(t *testing.T) {
 }
 
 func TestPreflightRestore_EncryptedPassphrase(t *testing.T) {
-	d, _ := db.Open(":memory:")
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
 	defer d.Close() //nolint:errcheck
 	storageDir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(storageDir, "j/r"), 0o755)
@@ -124,7 +130,10 @@ func TestPreflightRestore_EncryptedPassphrase(t *testing.T) {
 }
 
 func TestPreflightRestore_LowSpaceWarns(t *testing.T) {
-	d, _ := db.Open(":memory:")
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
 	defer d.Close() //nolint:errcheck
 	storageDir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(storageDir, "j/r"), 0o755)

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -881,12 +880,16 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 
 	job, err := h.db.GetJob(id)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "job not found")
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		respondInternalError(w, err)
 		return
 	}
 	rp, err := h.db.GetRestorePoint(rpID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, db.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "restore point not found")
 			return
 		}
@@ -894,7 +897,7 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rp.JobID != id {
-		respondError(w, http.StatusBadRequest, "restore point does not belong to this job")
+		respondError(w, http.StatusNotFound, "restore point not found")
 		return
 	}
 	respondJSON(w, http.StatusOK, h.runner.PreflightRestore(job, rp, req.Passphrase, req.Destination))

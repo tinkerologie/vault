@@ -25,7 +25,10 @@ func TestRestorePointPreflight_Handler(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "run1", "config.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _ := json.Marshal(map[string]string{"path": dir})
+	cfg, err := json.Marshal(map[string]string{"path": dir})
+	if err != nil {
+		t.Fatal(err)
+	}
 	destID, err := d.CreateStorageDestination(db.StorageDestination{
 		Name: "pf-" + nextUnique(), Type: "local", Config: string(cfg),
 	})
