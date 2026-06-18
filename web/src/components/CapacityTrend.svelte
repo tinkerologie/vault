@@ -25,7 +25,7 @@
   let latestPct = $derived(latest && latest.total > 0 ? (latest.used / latest.total) * 100 : 0)
 
   // The plotted series: used % when there's a quota, otherwise raw used bytes.
-  let series = $derived(points.map(p => (hasQuota ? (p.used / p.total) * 100 : p.used)))
+  let series = $derived(points.map(p => (hasQuota && p.total > 0 ? (p.used / p.total) * 100 : p.used)))
 
   // SVG polyline/area paths over a 100x40 viewBox (preserveAspectRatio none).
   // For a quota the Y axis is a fixed 0..100%; without one it's relative
