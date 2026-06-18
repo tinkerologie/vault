@@ -1,7 +1,7 @@
 <script>
   import { formatBytes } from '../lib/utils.js'
 
-  let { runs = [], jobs = [] } = $props()
+  let { buckets = [], bucket = 'day' } = $props()
 
   // Four stable backup-target categories. We deliberately keep the palette
   // small (Veeam / Duplicati / Backblaze converge on the same idea) so the
@@ -14,61 +14,24 @@
     { key: 'other',      label: 'Other',      color: 'var(--color-text-dim, #6b7280)' },
   ]
 
-  // Map a raw JobItem.item_type to one of our four headline categories.
-  // Anything we don't recognise falls into "other" so the chart can still
-  // attribute a size to it instead of dropping the run silently.
-  function classifyItemType(itemType) {
-    const t = String(itemType || '').toLowerCase()
-    if (t === 'container' || t === 'docker') return 'containers'
-    if (t === 'vm' || t === 'libvirt') return 'vms'
-    if (t === 'folder' || t === 'folders' || t === 'file' || t === 'files' || t === 'path') return 'folders'
-    if (t === 'flash' || t === 'usb' || t === 'boot') return 'flash'
-    return 'other'
-  }
-
-  // Build {jobId -> dominant category} so each run can be coloured by
-  // the kind of data it backed up. Mixed jobs pick their largest item type;
-  // ties go to whichever appears first in CATEGORIES.
-  let jobCategory = $derived.by(() => {
-    const m = new Map()
-    for (const j of jobs || []) {
-      const counts = new Map()
-      for (const it of j.items || []) {
-        const c = classifyItemType(it.item_type)
-        counts.set(c, (counts.get(c) || 0) + 1)
-      }
-      let best = 'other'
-      let bestN = -1
-      for (const cat of CATEGORIES) {
-        const n = counts.get(cat.key) || 0
-        if (n > bestN) { bestN = n; best = cat.key }
-      }
-      m.set(j.id, best)
-    }
-    return m
-  })
-
-  // Extract completed runs and tag each with its category. Failed runs have
-  // partial/misleading sizes so we keep the original filter.
-  let dataPoints = $derived.by(() => {
-    return runs
-      .filter(r => r.size_bytes > 0 && r.started_at && (r.status === 'completed' || r.status === 'success'))
-      .map(r => ({
-        date: new Date(r.started_at),
-        size: r.size_bytes,
-        name: r.jobName,
-        category: jobCategory.get(r.job_id) || 'other',
-      }))
-      .sort((a, b) => a.date.getTime() - b.date.getTime())
-      .slice(-30)
-  })
+  // Each chart point is a server-bucketed time window (run/day/week,
+  // depending on the selected trend period). Bucketing and date-range
+  // selection now happen server-side, so we just map the shape.
+  let dataPoints = $derived(
+    (buckets || []).map(b => ({
+      date: new Date(b.start),
+      size: b.total_bytes,
+      categories: b.categories || {},
+    }))
+  )
 
   // Which categories actually appear in the current dataset – used to
   // render only the legend chips that matter and to control which stacked
   // bands are drawn. Categories are kept in the canonical CATEGORIES order
   // so the colour assignment is stable across re-renders.
   let activeCategories = $derived.by(() => {
-    const present = new Set(dataPoints.map(p => p.category))
+    const presentKeys = dataPoints.flatMap(p => Object.keys(p.categories).filter(k => p.categories[k] > 0))
+    const present = new Set(presentKeys)
     return CATEGORIES.filter(c => present.has(c.key))
   })
 
@@ -100,20 +63,6 @@
     return chartHeight - (size / yMax) * chartHeight
   }
 
-  function colorFor(catKey) {
-    const c = CATEGORIES.find(c => c.key === catKey)
-    return c ? c.color : 'var(--color-text-dim)'
-  }
-
-  function labelFor(catKey) {
-    const c = CATEGORIES.find(c => c.key === catKey)
-    return c ? c.label : 'Other'
-  }
-
-  // Same single-job heuristic as before – the linear-regression trend
-  // percentage is only meaningful when every point belongs to one job.
-  let isSingleJob = $derived(new Set(dataPoints.map(p => p.name).filter(Boolean)).size <= 1)
-
   let trend = $derived.by(() => {
     if (dataPoints.length < 2) return null
     const n = dataPoints.length
@@ -128,11 +77,36 @@
     if (firstPred <= 0) return null
     const pct = ((lastPred - firstPred) / firstPred) * 100
     const direction = pct > 5 ? 'up' : pct < -5 ? 'down' : 'stable'
-    return { pct: Math.round(Math.abs(pct)), direction, showPct: isSingleJob }
+    return { pct: Math.round(Math.abs(pct)), direction, showPct: true }
   })
 
+  // Week buckets span 7 days, so labelling just the start date is
+  // ambiguous - prefix with "Wk of" to make that explicit.
   function formatDateShort(d) {
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    const formatted = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    return bucket === 'week' ? `Wk of ${formatted}` : formatted
+  }
+
+  // Build the stacked bands for one bucket: each band's height is
+  // proportional to its category's byte count, stacked bottom-up in
+  // canonical CATEGORIES order so colours line up across bars.
+  function bandsFor(p) {
+    let cumulative = 0
+    const bands = []
+    for (const cat of activeCategories) {
+      const value = p.categories[cat.key] || 0
+      if (value <= 0) continue
+      const bandHeight = (value / yMax) * chartHeight
+      bands.push({
+        key: cat.key,
+        color: cat.color,
+        value,
+        yTop: chartHeight - cumulative - bandHeight,
+        height: bandHeight,
+      })
+      cumulative += bandHeight
+    }
+    return bands
   }
 </script>
 
@@ -176,26 +150,32 @@
               stroke="var(--color-border)" stroke-width="0.5" stroke-dasharray="4 4" />
           {/each}
 
-          <!-- One vertical bar per run, coloured by its job's dominant
-               backup-target category. Each bar is the entire run size; we
-               don't subdivide the bar because we don't store per-item-type
-               sizes on a JobRun (size_bytes is a total). The legend tells
-               the user what each colour means and the tooltip names the
-               specific job. -->
+          <!-- One stacked bar per bucket: each band's height is proportional
+               to that category's byte total within the bucket, so the full
+               bar height represents total_bytes. The legend explains each
+               colour and the tooltip gives the per-category breakdown. -->
           {#each dataPoints as p, i (i)}
-            <rect
-              x={xCenter(i) - barWidth / 2}
-              y={y(p.size)}
-              width={barWidth}
-              height={chartHeight - y(p.size)}
-              fill={colorFor(p.category)}
+            <g
+              role="img"
+              aria-label="{formatDateShort(p.date)}: {formatBytes(p.size)}"
               opacity={hoveredIndex === i ? 1 : 0.85}
               class="transition-opacity duration-150 cursor-pointer"
-              rx="1.5"
-              role="img"
-              aria-label="{p.name}: {formatBytes(p.size)}"
               onmouseenter={() => hoveredIndex = i}
-            />
+            >
+              <!-- Invisible full-height hit area so hovering anywhere along
+                   the bar's column (including empty space above it) works. -->
+              <rect x={xCenter(i) - barWidth / 2} y="0" width={barWidth} height={chartHeight} fill="transparent" />
+              {#each bandsFor(p) as band (band.key)}
+                <rect
+                  x={xCenter(i) - barWidth / 2}
+                  y={band.yTop}
+                  width={barWidth}
+                  height={band.height}
+                  fill={band.color}
+                  rx="1.5"
+                />
+              {/each}
+            </g>
           {/each}
 
           <!-- X axis labels (first and last) -->
@@ -214,15 +194,17 @@
         {@const tooltipX = padding.left + xCenter(hoveredIndex)}
         <div class="absolute pointer-events-none bg-surface-3 border border-border rounded-lg shadow-lg p-2 text-xs -translate-x-1/2 -translate-y-full"
           style="left: {(tooltipX / width) * 100}%; top: {((padding.top + y(p.size)) / height) * 100 - 5}%">
-          <div class="flex items-center gap-1.5 mb-0.5">
-            <span class="inline-block w-2 h-2 rounded-sm" style="background: {colorFor(p.category)}"></span>
-            <span class="text-text-muted">{labelFor(p.category)}</span>
-          </div>
-          <p class="font-semibold text-text">{formatBytes(p.size)}</p>
-          <p class="text-text-dim">{formatDateShort(p.date)}</p>
-          {#if p.name}
-            <p class="text-text-muted truncate max-w-[160px]">{p.name}</p>
-          {/if}
+          <p class="text-text-dim mb-1">{formatDateShort(p.date)}</p>
+          {#each activeCategories as cat (cat.key)}
+            {#if p.categories[cat.key] > 0}
+              <div class="flex items-center gap-1.5">
+                <span class="inline-block w-2 h-2 rounded-sm" style="background: {cat.color}"></span>
+                <span class="text-text-muted">{cat.label}</span>
+                <span class="text-text ml-auto pl-3">{formatBytes(p.categories[cat.key])}</span>
+              </div>
+            {/if}
+          {/each}
+          <p class="font-semibold text-text mt-1 pt-1 border-t border-border">{formatBytes(p.size)} total</p>
         </div>
       {/if}
     </div>
