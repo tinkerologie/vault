@@ -857,6 +857,52 @@ func (h *JobHandler) RunnerStatus(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, h.runner.Status())
 }
 
+// RestorePointPreflight runs cheap pre-restore validation (storage reachable,
+// backup present, decryptable, free space) so the UI can show a go/no-go
+// checklist before a restore is started.
+//
+//	POST /api/v1/jobs/{id}/restore-points/{rpid}/preflight
+func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	rpID, ok := parseID(w, r, "rpid")
+	if !ok {
+		return
+	}
+	var req struct {
+		Passphrase  string `json:"passphrase"`
+		Destination string `json:"destination"`
+	}
+	// Body is optional (unencrypted, original-location restore needs nothing).
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	job, err := h.db.GetJob(id)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
+	rp, err := h.db.GetRestorePoint(rpID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "restore point not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
+	if rp.JobID != id {
+		respondError(w, http.StatusNotFound, "restore point not found")
+		return
+	}
+	respondJSON(w, http.StatusOK, h.runner.PreflightRestore(job, rp, req.Passphrase, req.Destination))
+}
+
 // Restore triggers a restore from a specific restore point.
 //
 //	POST /api/v1/jobs/{id}/restore

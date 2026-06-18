@@ -4609,7 +4609,7 @@ func (r *Runner) buildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error
 	for current.ParentRestorePointID > 0 {
 		parent, err := r.db.GetRestorePoint(current.ParentRestorePointID)
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, db.ErrNotFound) {
 				return nil, fmt.Errorf("missing parent restore point %d for restore point %d", current.ParentRestorePointID, current.ID)
 			}
 			return nil, fmt.Errorf("getting parent restore point %d: %w", current.ParentRestorePointID, err)
