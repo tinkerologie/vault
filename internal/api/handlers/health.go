@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -44,7 +45,12 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		// restore point are "pending" — adding an item to a job does not make
 		// it backed up. Schedule state is irrelevant: a disabled schedule must
 		// not flip already-backed-up items back to unprotected.
-		rps, _ := h.db.ListRestorePoints(job.ID)
+		rps, rpErr := h.db.ListRestorePoints(job.ID)
+		if rpErr != nil {
+			// Surface DB issues rather than silently treating the job as having
+			// no backups (which would mislabel its items as pending).
+			log.Printf("health summary: listing restore points for job %d: %v", job.ID, rpErr)
+		}
 		backedUp := make(map[string]struct{})
 		legacyAllProtected := false
 		for _, rp := range rps {
@@ -53,9 +59,10 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 				// A legacy restore point (produced before per-item membership
 				// was recorded) tells us nothing per item; fall back to the
 				// historical behaviour of treating every job item as protected
-				// so existing installs don't regress.
+				// so existing installs don't regress. Once one is found the
+				// per-item map is irrelevant, so stop scanning.
 				legacyAllProtected = true
-				continue
+				break
 			}
 			for name := range members {
 				backedUp[name] = struct{}{}

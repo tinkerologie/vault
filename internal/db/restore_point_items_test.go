@@ -28,6 +28,12 @@ func TestRestorePointBackedUpItems(t *testing.T) {
 			wantKnown: true,
 		},
 		{
+			name:      "item in both fields is counted once",
+			metadata:  `{"item_sizes":{"plex":1},"item_manifests":{"plex":"ab","radarr":"cd"}}`,
+			wantItems: []string{"plex", "radarr"},
+			wantKnown: true,
+		},
+		{
 			name:      "legacy restore point with no item metadata is unknown",
 			metadata:  `{"size_bytes":1234}`,
 			wantItems: nil,
@@ -49,6 +55,7 @@ func TestRestorePointBackedUpItems(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rp := RestorePoint{Metadata: tt.metadata}
 			got, known := rp.BackedUpItems()
 			if known != tt.wantKnown {
