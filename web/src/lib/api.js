@@ -104,6 +104,10 @@ export const api = {
     request('GET', `/jobs/${jobId}/restore-points/${rpId}/contents?item=${encodeURIComponent(item)}${file ? `&file=${encodeURIComponent(file)}` : ''}`),
   runJob: (id) => request('POST', `/jobs/${id}/run`),
   restoreJob: (id, data) => request('POST', `/jobs/${id}/restore`, data),
+  // preflightRestore runs cheap pre-restore checks (storage reachable, backup
+  // present, decryptable, free space) and returns { ok, checks:[{id,label,status,detail}] }.
+  preflightRestore: (jobId, rpId, data) =>
+    request('POST', `/jobs/${jobId}/restore-points/${rpId}/preflight`, data),
   getNextRuns: () => request('GET', '/jobs/next-runs'),
   getNextRun: (id) => request('GET', `/jobs/${id}/next-run`),
 

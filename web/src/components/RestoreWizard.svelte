@@ -27,6 +27,40 @@
   // Restore progress
   let restoring = $state(false)
 
+  // Pre-flight: cheap go/no-go checks run before a restore. The result is only
+  // trusted while the inputs that produced it are unchanged (preflightFresh):
+  // change the passphrase or destination and the gate re-arms automatically.
+  let preflightResult = $state(null)
+  let preflightRunning = $state(false)
+  let preflightSig = $state('')
+
+  // Signature of the inputs that affect a restore's pre-flight outcome.
+  let restoreSig = $derived(JSON.stringify({
+    p: passphrase,
+    o: showDestOverride,
+    d: showDestOverride ? restoreDestination : '',
+  }))
+  // True when the current result reflects the current inputs.
+  let preflightFresh = $derived(preflightResult != null && preflightSig === restoreSig)
+
+  async function runPreflight() {
+    if (!selectedPoint) return
+    const sigAtRun = restoreSig
+    preflightRunning = true
+    preflightResult = null
+    try {
+      const payload = {}
+      if (showDestOverride && restoreDestination.trim()) payload.destination = restoreDestination.trim()
+      if (passphrase) payload.passphrase = passphrase
+      preflightResult = await api.preflightRestore(selectedPoint.jobId, selectedPoint.id, payload)
+    } catch (e) {
+      preflightResult = { ok: false, checks: [{ id: 'error', label: 'Pre-flight could not run', status: 'fail', detail: e.message || 'request failed' }] }
+    } finally {
+      preflightSig = sigAtRun
+      preflightRunning = false
+    }
+  }
+
   // Partial-restore file picker (Feature B).
   // Per-item map: itemName -> { contents: TarIndex|null, selected: SvelteSet<string>,
   //                              loading: boolean, error: string, search: string, open: boolean }
@@ -258,6 +292,7 @@
     passphrase = ''
     restoreDestination = ''
     showDestOverride = false
+    preflightResult = null
   }
 
   let needsPassphrase = $derived(selectedPoint?.encryption === 'age')
@@ -587,18 +622,26 @@
 
     <!-- Options -->
     <div class="space-y-5 mb-6">
-      <!-- Destination override -->
+      <!-- Destination: original (default) or a custom path. -->
       <div>
-        <div class="flex items-center gap-2 mb-2">
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" bind:checked={showDestOverride} class="sr-only peer" />
-            <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+        <p class="text-sm font-medium text-text-muted mb-2">Restore destination</p>
+        <div class="space-y-2">
+          <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
+            <input type="radio" name="rw_dest" class="accent-vault" checked={!showDestOverride}
+              onchange={() => { showDestOverride = false; restoreDestination = '' }} />
+            Restore to original location
           </label>
-          <span class="text-sm text-text-muted">Override restore destination</span>
+          <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
+            <input type="radio" name="rw_dest" class="accent-vault" checked={showDestOverride}
+              onchange={() => { showDestOverride = true }} />
+            Custom destination
+          </label>
         </div>
         {#if showDestOverride}
-          <PathBrowser bind:value={restoreDestination} />
-          <p class="text-xs text-text-dim mt-1">Leave empty to restore to the original location.</p>
+          <div class="mt-2">
+            <PathBrowser bind:value={restoreDestination} />
+            <p class="text-xs text-text-dim mt-1">Files will be written under this path instead of their original location.</p>
+          </div>
         {/if}
       </div>
 
@@ -709,16 +752,69 @@
       </div>
     </div>
 
-    <!-- Restore button -->
-    <button type="button" onclick={doRestore} disabled={restoring || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase)}
-      class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-      {#if restoring}
-        <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-        Restoring...
-      {:else}
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-        Start Restore
+    <!-- Pre-flight checks -->
+    <div class="bg-surface-2 border border-border rounded-xl p-4 mb-4">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <p class="text-sm font-medium text-text">Pre-flight checks</p>
+          <p class="text-xs text-text-dim mt-0.5">Confirm the backup can be restored before starting.</p>
+        </div>
+        <button type="button" onclick={runPreflight} disabled={preflightRunning || (needsPassphrase && !passphrase)}
+          class="text-xs px-3 py-1.5 rounded-lg border border-border text-text-muted hover:text-text hover:border-vault/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer inline-flex items-center gap-1.5 shrink-0">
+          {#if preflightRunning}
+            <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Checking…
+          {:else}
+            {preflightResult && preflightFresh ? 'Re-check' : 'Run checks'}
+          {/if}
+        </button>
+      </div>
+      {#if preflightResult && !preflightFresh}
+        <p class="mt-3 text-xs text-text-dim">Inputs changed since the last check. Run the checks again.</p>
+      {:else if preflightResult}
+        <ul class="mt-3 space-y-1.5">
+          {#each preflightResult.checks as c (c.id)}
+            <li class="flex items-start gap-2 text-xs">
+              <span class="mt-0.5 shrink-0 {c.status === 'ok' ? 'text-success' : c.status === 'fail' ? 'text-danger' : c.status === 'warn' ? 'text-warning' : 'text-text-dim'}">
+                {#if c.status === 'ok'}
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="passed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                {:else if c.status === 'fail'}
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="failed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                {:else if c.status === 'warn'}
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="warning"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                {:else}
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="skipped"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6"/></svg>
+                {/if}
+              </span>
+              <span class="text-text">{c.label}</span>
+              {#if c.detail}<span class="text-text-dim">· {c.detail}</span>{/if}
+            </li>
+          {/each}
+        </ul>
+        {#if !preflightResult.ok}
+          <p class="text-xs text-danger mt-2">Resolve the failing checks above, then re-check before restoring.</p>
+        {/if}
       {/if}
-    </button>
+    </div>
+
+    <!-- Restore -->
+    <div class="flex items-center gap-4">
+      <button type="button" onclick={doRestore}
+        disabled={restoring || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase) || !(preflightResult?.ok && preflightFresh)}
+        class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+        {#if restoring}
+          <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          Restoring...
+        {:else}
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          Start Restore
+        {/if}
+      </button>
+      {#if preflightResult && preflightFresh && !preflightResult.ok && !restoring && selectedPoint?.chain_status !== 'broken'}
+        <button type="button"
+          onclick={() => { if (window.confirm('Pre-flight checks did not all pass. Restore anyway?')) doRestore() }}
+          class="text-xs text-text-dim hover:text-text underline cursor-pointer">Restore anyway</button>
+      {/if}
+    </div>
   {/if}
 </div>
