@@ -916,8 +916,9 @@
             <button
               onclick={saveRetryPolicy}
               disabled={retrySaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
+              {#if retrySaving}<InlineSpinner />{/if}
               Save Retry Policy
             </button>
           </div>
@@ -955,8 +956,9 @@
                 type="button"
                 onclick={saveCompactionThreshold}
                 disabled={compactionSaving}
-                class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
+                {#if compactionSaving}<InlineSpinner />{/if}
                 {compactionSaving ? 'Saving…' : 'Save'}
               </button>
             </div>
@@ -1026,7 +1028,7 @@
             <button
               onclick={saveAnomalySettings}
               disabled={anomalySaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if anomalySaving}
                 <InlineSpinner />
@@ -1066,7 +1068,7 @@
             <button
               onclick={saveReplicationEnabled}
               disabled={replicationSaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if replicationSaving}
                 <InlineSpinner />
@@ -1106,7 +1108,7 @@
             <button
               onclick={saveStorageVerboseLogging}
               disabled={storageVerboseSaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if storageVerboseSaving}
                 <InlineSpinner />
@@ -1202,7 +1204,7 @@
             <button
               onclick={saveDiscordSettings}
               disabled={discordSaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if discordSaving}
                 <InlineSpinner />
@@ -1249,7 +1251,7 @@
                   <p class="text-xs text-text-muted mt-0.5">Please keep your encryption key private.</p>
                 </div>
                 <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
-                  {loadingPassphrase ? 'Loading...' : showingPassphrase ? 'Hide' : 'Show'}
+                  {loadingPassphrase ? 'Loading…' : showingPassphrase ? 'Hide' : 'Show'}
                 </button>
               </div>
               {#if showingPassphrase}
@@ -1287,8 +1289,9 @@
                     <p class="text-xs text-danger">Passphrases do not match</p>
                   {/if}
                   <div class="flex items-center gap-2">
-                    <button onclick={saveChangePassphrase} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                      {encSaving ? 'Saving...' : 'Update Passphrase'}
+                    <button onclick={saveChangePassphrase} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                      {#if encSaving}<InlineSpinner />{/if}
+                      {encSaving ? 'Saving…' : 'Update Passphrase'}
                     </button>
                     <button onclick={cancelChangePassphrase} class="px-4 py-2 text-sm font-medium rounded-lg text-text-muted hover:text-text transition-colors">
                       Cancel
@@ -1301,7 +1304,7 @@
             <!-- Disable encryption -->
             <div class="px-5 py-3 flex justify-end">
               <button onclick={removeEncryption} disabled={encSaving} class="text-xs text-text-dim hover:text-danger transition-colors disabled:opacity-50">
-                {encSaving ? 'Removing...' : 'Disable encryption'}
+                {encSaving ? 'Removing…' : 'Disable encryption'}
               </button>
             </div>
           {:else}
@@ -1328,8 +1331,9 @@
                 {#if encPassphrase && encConfirm && encPassphrase !== encConfirm}
                   <p class="text-xs text-danger">Passphrases do not match</p>
                 {/if}
-                <button onclick={saveEncryption} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {encSaving ? 'Saving...' : 'Set Passphrase'}
+                <button onclick={saveEncryption} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                  {#if encSaving}<InlineSpinner />{/if}
+                  {encSaving ? 'Saving…' : 'Set Passphrase'}
                 </button>
               </div>
             </div>
@@ -1361,7 +1365,7 @@
                   <p class="text-xs text-text-muted mt-0.5">Reveal the key to copy it for external integrations.</p>
                 </div>
                 <button onclick={toggleApiKeyReveal} disabled={apiKeyLoading} class="text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
-                  {apiKeyLoading ? 'Loading...' : apiKeyShowing ? 'Hide' : 'Show'}
+                  {apiKeyLoading ? 'Loading…' : apiKeyShowing ? 'Hide' : 'Show'}
                 </button>
               </div>
               {#if apiKeyShowing && apiKeyRevealed}
@@ -1383,7 +1387,7 @@
                 <p class="text-xs text-text-muted mt-0.5">Replace with a new key. Existing integrations will need the new key.</p>
               </div>
               <button onclick={rotateApiKey} disabled={apiKeyGenerating} class="text-sm font-medium text-warning hover:text-warning/80 transition-colors shrink-0 disabled:opacity-50">
-                {apiKeyGenerating ? 'Rotating...' : 'Rotate'}
+                {apiKeyGenerating ? 'Rotating…' : 'Rotate'}
               </button>
             </div>
 
@@ -1393,7 +1397,7 @@
                 <div class="flex items-center gap-2">
                   <span class="text-xs text-danger">Revoke key and disable authentication?</span>
                   <button onclick={revokeApiKey} disabled={apiKeyRevoking} class="text-xs font-medium text-danger hover:text-danger/80 transition-colors disabled:opacity-50">
-                    {apiKeyRevoking ? 'Revoking...' : 'Yes, revoke'}
+                    {apiKeyRevoking ? 'Revoking…' : 'Yes, revoke'}
                   </button>
                   <button onclick={() => confirmApiKeyRevoke = false} class="text-xs text-text-muted hover:text-text transition-colors">
                     Cancel
@@ -1412,8 +1416,9 @@
                 <span class="text-sm font-medium text-text">No API key configured</span>
               </div>
               <p class="text-xs text-text-muted mb-4">Generate an API key to protect the Vault API when it is exposed beyond localhost. API keys are required for third-party integrations (e.g. Home Assistant) and replication between Vault instances on different servers.</p>
-              <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-medium rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                {apiKeyGenerating ? 'Generating...' : 'Generate API Key'}
+              <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                {#if apiKeyGenerating}<InlineSpinner />{/if}
+                {apiKeyGenerating ? 'Generating…' : 'Generate API Key'}
               </button>
             </div>
           {/if}
@@ -1463,7 +1468,8 @@
               <div class="flex-1">
                 <PathBrowser bind:value={stagingOverrideInput} onselect={saveStagingOverride} includeZfs={true} />
               </div>
-              <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault/90 disabled:opacity-50 transition-colors shrink-0">
+              <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+                {#if stagingSaving}<InlineSpinner />{/if}
                 Apply
               </button>
             </div>
@@ -1851,7 +1857,8 @@
             <div class="flex-1">
               <PathBrowser bind:value={snapshotPathInput} onselect={saveSnapshotPath} includeZfs={true} />
             </div>
-            <button onclick={saveSnapshotPath} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault/90 disabled:opacity-50 transition-colors shrink-0">
+            <button onclick={saveSnapshotPath} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+              {#if snapshotPathSaving}<InlineSpinner />{/if}
               Apply
             </button>
           </div>
@@ -1927,7 +1934,7 @@
               type="button"
               onclick={() => (aboutModalOpen = true)}
               disabled={aboutLoading || releases.length === 0}
-              class="px-3 py-1.5 text-sm font-medium text-white bg-vault rounded-lg hover:bg-vault-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-3 py-1.5 text-sm font-medium text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               View Changelog
             </button>
