@@ -30,9 +30,6 @@ export const api = {
   health: () => request('GET', '/health'),
   getHealthSummary: () => request('GET', '/health/summary'),
 
-  // Meta
-  getApiRoutes: () => request('GET', '/meta/routes'),
-
   // Release
   getChangelog: async () => {
     const body = await request('GET', '/release/changelog')

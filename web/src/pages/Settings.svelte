@@ -100,11 +100,6 @@
   let aboutLoading = $state(true)
   let aboutModalOpen = $state(false)
 
-  // API reference (Reference tab) — generated from the live router so the
-  // list can never drift from what's actually registered.
-  /** @type {Array<{ method: string, path: string, description: string }>} */
-  let apiRoutes = $state([])
-
   // Strip a leading "v" so a daemon-reported "2026.05.02" matches a
   // GitHub tag like "v2026.05.02" before comparing.
   /** @param {string | undefined} v */
@@ -161,7 +156,7 @@
 
   onMount(async () => {
     try {
-      const [h, s, enc, staging, dbInfo, apiKeyStatus, changelog, latestRelease, routes] = await Promise.all([
+      const [h, s, enc, staging, dbInfo, apiKeyStatus, changelog, latestRelease] = await Promise.all([
         api.health(),
         api.getSettings(),
         api.getEncryptionStatus(),
@@ -170,7 +165,6 @@
         api.getAPIKeyStatus().catch(() => null),
         api.getChangelog().catch(() => []),
         api.getLatestRelease().catch(() => null),
-        api.getApiRoutes().catch(() => []),
       ])
       health = h
       settings = s || {}
@@ -211,7 +205,6 @@
       currentVersion = (h && h.version) || 'dev'
       releases = changelog
       latest = latestRelease
-      apiRoutes = routes || []
     } catch (e) {
       console.error('Settings load error:', e)
     } finally {
@@ -1691,30 +1684,6 @@
                 </tr>
               </tbody>
             </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- API Info -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
-        <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">API Endpoints</h2>
-          <p class="text-xs text-text-muted mt-1">All routes are prefixed with <code class="bg-surface px-1 rounded">/api/v1</code>. External clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header when an API key is configured and the request is not from localhost.</p>
-        </div>
-        <div class="px-5 py-2">
-          <div class="space-y-1.5 text-sm font-mono py-3">
-            {#each apiRoutes as ep (ep.method + ':' + ep.path)}
-              <div class="flex items-center gap-3">
-                <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3.5rem] text-center
-                  {ep.method === 'GET' ? 'bg-info/20 text-info' :
-                   ep.method === 'POST' ? 'bg-success/20 text-success' :
-                   ep.method === 'PUT' ? 'bg-warning/20 text-warning' :
-                   ep.method === 'DELETE' ? 'bg-danger/20 text-danger' :
-                   'bg-vault/20 text-vault'}">{ep.method}</span>
-                <span class="text-text-muted truncate">{ep.path}</span>
-                <span class="text-text-dim text-xs ml-auto hidden sm:inline truncate">{ep.description}</span>
-              </div>
-            {/each}
           </div>
         </div>
       </div>
