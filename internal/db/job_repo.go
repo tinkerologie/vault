@@ -371,6 +371,28 @@ func (d *DB) DeleteOldFailedRuns(keepDays int) (int64, error) {
 	return res.RowsAffected()
 }
 
+// PurgeEligibleRuns removes finished job runs older than keepDays that no
+// longer have any restore point — i.e. run history whose backups were already
+// trimmed by the job's own retention. Runs that still back a restore point
+// (recoverable backups) are never touched here. keepDays <= 0 is a no-op.
+func (d *DB) PurgeEligibleRuns(keepDays int) (int64, error) {
+	if keepDays <= 0 {
+		return 0, nil
+	}
+	res, err := d.Exec(
+		`DELETE FROM job_runs
+		 WHERE status != 'running'
+		   AND completed_at IS NOT NULL
+		   AND completed_at < datetime('now', '-' || ? || ' days')
+		   AND id NOT IN (SELECT DISTINCT job_run_id FROM restore_points)`,
+		keepDays,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("purging eligible runs: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // ListRecentRuns returns the most recent job runs across all jobs.
 func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 	rows, err := d.Query(

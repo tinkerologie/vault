@@ -542,3 +542,59 @@ func TestJobItemMissingSince(t *testing.T) {
 		t.Errorf("expected 1 item after DeleteJobItemsByIDs, got %d", len(items6))
 	}
 }
+
+func TestPurgeEligibleRuns(t *testing.T) {
+	d, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close() //nolint:errcheck
+
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: `{"path":"/tmp"}`})
+	jobID, _ := d.CreateJob(Job{Name: "j", Schedule: "@daily", Compression: "none", Encryption: "none", StorageDestID: destID})
+
+	mkRun := func(daysAgo int, withRP bool) int64 {
+		runID, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		ts := time.Now().AddDate(0, 0, -daysAgo).UTC().Format("2006-01-02 15:04:05")
+		if _, err := d.Exec(`UPDATE job_runs SET completed_at = ? WHERE id = ?`, ts, runID); err != nil {
+			t.Fatalf("backdate: %v", err)
+		}
+		if withRP {
+			if _, err := d.CreateRestorePoint(RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "p"}); err != nil {
+				t.Fatalf("rp: %v", err)
+			}
+		}
+		return runID
+	}
+
+	oldOrphan := mkRun(100, false)
+	oldWithRP := mkRun(100, true)
+	recent := mkRun(5, false)
+
+	n, err := d.PurgeEligibleRuns(30)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("purged %d, want 1", n)
+	}
+	exists := func(id int64) bool {
+		var x int64
+		return d.QueryRow(`SELECT id FROM job_runs WHERE id = ?`, id).Scan(&x) == nil
+	}
+	if exists(oldOrphan) {
+		t.Errorf("old orphan run should be purged")
+	}
+	if !exists(oldWithRP) {
+		t.Errorf("old run with restore point must be kept")
+	}
+	if !exists(recent) {
+		t.Errorf("recent run must be kept")
+	}
+	if n, _ := d.PurgeEligibleRuns(0); n != 0 {
+		t.Errorf("keepDays=0 purged %d, want 0", n)
+	}
+}

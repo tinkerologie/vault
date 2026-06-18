@@ -55,6 +55,10 @@
   let snapshotPathInput = $state('')
   let snapshotPathSaving = $state(false)
 
+  // History retention state
+  let historyRetention = $state('365')
+  let historyRetentionSaving = $state(false)
+
   // Discord state
   let discordWebhookUrl = $state('')
   let discordNotifyOn = $state('always')
@@ -172,6 +176,7 @@
       discordNotifyOn = s?.discord_notify_on || 'always'
       databaseInfo = dbInfo
       snapshotPathInput = dbInfo?.snapshot_path_override || ''
+      historyRetention = String(s.history_retention_days ?? '365')
       retryMax = s?.retry_max_default ?? ''
       retryDelays = s?.retry_delays_default ?? ''
       // Anomaly detection settings (Task 19)
@@ -330,6 +335,18 @@
       showToast(e.message, 'error')
     } finally {
       snapshotPathSaving = false
+    }
+  }
+
+  async function saveHistoryRetention() {
+    historyRetentionSaving = true
+    try {
+      await api.updateSettings({ history_retention_days: historyRetention })
+      showToast('History retention saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      historyRetentionSaving = false
     }
   }
 
@@ -1484,6 +1501,30 @@
         </div>
       </div>
       {/if}
+
+      <!-- History Retention -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">History Retention</h2>
+          <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
+        </div>
+        <div class="p-5 flex items-center gap-2">
+          <select bind:value={historyRetention}
+            class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+            <option value="180">6 months</option>
+            <option value="365">1 year</option>
+            <option value="730">2 years</option>
+            <option value="0">Keep everything</option>
+          </select>
+          <button type="button" onclick={saveHistoryRetention} disabled={historyRetentionSaving}
+            class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+            {#if historyRetentionSaving}<InlineSpinner />{/if}
+            Save
+          </button>
+        </div>
+      </div>
 
       <!-- Server Info -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
