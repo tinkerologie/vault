@@ -72,11 +72,59 @@
     return (staleItems[jobId] || []).length
   }
 
-  // Bulk selection
+  // Find / filter / sort toolbar (Direction 3). All client-side over the
+  // already-loaded jobs list, so no extra requests.
+  let search = $state('')
+  let statusFilter = $state('all') // 'all' | 'enabled' | 'disabled'
+  let storageFilter = $state(0) // 0 = all destinations, else storage_dest_id
+  let sortBy = $state('name') // 'name' | 'next' | 'created'
+
+  let filtersActive = $derived(
+    search.trim() !== '' || statusFilter !== 'all' || storageFilter !== 0
+  )
+
+  let filteredJobs = $derived.by(() => {
+    const q = search.trim().toLowerCase()
+    const out = jobs.filter(j => {
+      if (statusFilter === 'enabled' && !j.enabled) return false
+      if (statusFilter === 'disabled' && j.enabled) return false
+      if (storageFilter !== 0 && j.storage_dest_id !== storageFilter) return false
+      if (q && !(`${j.name} ${j.description || ''}`.toLowerCase().includes(q))) return false
+      return true
+    })
+    const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    out.sort((a, b) => {
+      if (sortBy === 'created') return new Date(b.created_at) - new Date(a.created_at)
+      if (sortBy === 'next') {
+        const na = nextRuns[String(a.id)], nb = nextRuns[String(b.id)]
+        if (!na && !nb) return byName(a, b)
+        if (!na) return 1 // jobs without a next run sort last
+        if (!nb) return -1
+        return new Date(na) - new Date(nb)
+      }
+      return byName(a, b)
+    })
+    return out
+  })
+
+  function clearFilters() {
+    search = ''
+    statusFilter = 'all'
+    storageFilter = 0
+  }
+
+  // Bulk selection. Selection and the select-all toggle operate on the
+  // currently filtered set, so you can (e.g.) filter to Disabled and bulk
+  // enable just those.
   let selectedJobs = $state(new SvelteSet())
   let bulkRunning = $state(false)
 
-  let allSelected = $derived(jobs.length > 0 && selectedJobs.size === jobs.length)
+  let allSelected = $derived(
+    filteredJobs.length > 0 && filteredJobs.every(j => selectedJobs.has(j.id))
+  )
+  // How many of the currently visible (filtered) jobs are selected — keeps the
+  // "Select all (n/total)" numerator consistent with its filtered denominator.
+  let selectedVisibleCount = $derived(filteredJobs.filter(j => selectedJobs.has(j.id)).length)
 
   function toggleSelectJob(id) {
     const next = new SvelteSet(selectedJobs)
@@ -89,7 +137,7 @@
     if (allSelected) {
       selectedJobs = new SvelteSet()
     } else {
-      selectedJobs = new SvelteSet(jobs.map(j => j.id))
+      selectedJobs = new SvelteSet(filteredJobs.map(j => j.id))
     }
   }
 
@@ -906,12 +954,50 @@
   </div>
 
   {#if !loading && jobs.length > 0}
+    <!-- Find / filter / sort toolbar -->
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      <div class="relative flex-1 min-w-[12rem]">
+        <svg aria-hidden="true" class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-text-dim pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <input type="search" bind:value={search} placeholder="Search jobs by name or description"
+          aria-label="Search jobs"
+          class="w-full pl-8 pr-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault" />
+      </div>
+      <!-- Status segmented control -->
+      <div class="flex items-center rounded-lg border border-border bg-surface-3 p-0.5 text-xs">
+        {#each [['all', 'All'], ['enabled', 'Enabled'], ['disabled', 'Disabled']] as [val, label] (val)}
+          <button type="button" onclick={() => statusFilter = val}
+            class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer {statusFilter === val ? 'bg-vault text-white' : 'text-text-muted hover:text-text'}">
+            {label}
+          </button>
+        {/each}
+      </div>
+      <select bind:value={storageFilter} aria-label="Filter by storage destination"
+        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+        <option value={0}>All storage</option>
+        {#each storageList as s (s.id)}
+          <option value={s.id}>{s.name}</option>
+        {/each}
+      </select>
+      <select bind:value={sortBy} aria-label="Sort jobs"
+        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+        <option value="name">Name (A–Z)</option>
+        <option value="next">Next run</option>
+        <option value="created">Recently created</option>
+      </select>
+    </div>
     <div class="flex items-center gap-3 mb-3">
       <label class="flex items-center gap-2 text-xs text-text-muted cursor-pointer select-none">
         <input type="checkbox" checked={allSelected} onchange={toggleSelectAll}
           class="accent-vault w-3.5 h-3.5" />
-        Select all ({selectedJobs.size}/{jobs.length})
+        Select all ({selectedVisibleCount}/{filteredJobs.length})
       </label>
+      <span class="text-xs text-text-dim">
+        Showing {filteredJobs.length} of {jobs.length}
+      </span>
+      {#if filtersActive}
+        <button type="button" onclick={clearFilters}
+          class="text-xs text-vault hover:underline cursor-pointer">Clear filters</button>
+      {/if}
     </div>
   {/if}
 
@@ -923,9 +1009,15 @@
         <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
       {/snippet}
     </EmptyState>
+  {:else if filteredJobs.length === 0}
+    <div class="text-center py-12">
+      <div class="mb-3 opacity-30 flex justify-center"><svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg></div>
+      <p class="text-sm text-text-muted">No jobs match these filters.</p>
+      <button type="button" onclick={clearFilters} class="mt-2 text-sm text-vault hover:underline cursor-pointer">Clear filters</button>
+    </div>
   {:else}
     <div class="space-y-3 stagger">
-      {#each jobs as job (job.id)}
+      {#each filteredJobs as job (job.id)}
         <div class="bg-surface-2 border border-border rounded-xl p-5 hover:border-vault/30 hover:shadow-sm transition-all {selectedJobs.has(job.id) ? 'ring-1 ring-vault/40' : ''}">
           <div class="flex items-start justify-between">
             <div class="flex-1 min-w-0">
