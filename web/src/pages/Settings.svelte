@@ -55,6 +55,10 @@
   let snapshotPathInput = $state('')
   let snapshotPathSaving = $state(false)
 
+  // History retention state
+  let historyRetention = $state('365')
+  let historyRetentionSaving = $state(false)
+
   // Discord state
   let discordWebhookUrl = $state('')
   let discordNotifyOn = $state('always')
@@ -172,6 +176,7 @@
       discordNotifyOn = s?.discord_notify_on || 'always'
       databaseInfo = dbInfo
       snapshotPathInput = dbInfo?.snapshot_path_override || ''
+      historyRetention = String(s.history_retention_days ?? '365')
       retryMax = s?.retry_max_default ?? ''
       retryDelays = s?.retry_delays_default ?? ''
       // Anomaly detection settings (Task 19)
@@ -330,6 +335,18 @@
       showToast(e.message, 'error')
     } finally {
       snapshotPathSaving = false
+    }
+  }
+
+  async function saveHistoryRetention() {
+    historyRetentionSaving = true
+    try {
+      settings = await api.updateSettings({ history_retention_days: historyRetention })
+      showToast('History retention saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      historyRetentionSaving = false
     }
   }
 
@@ -1485,6 +1502,30 @@
       </div>
       {/if}
 
+      <!-- History Retention -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">History Retention</h2>
+          <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
+        </div>
+        <div class="p-5 flex items-center gap-2">
+          <select bind:value={historyRetention}
+            class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+            <option value="180">6 months</option>
+            <option value="365">1 year</option>
+            <option value="730">2 years</option>
+            <option value="0">Keep everything</option>
+          </select>
+          <button type="button" onclick={saveHistoryRetention} disabled={historyRetentionSaving}
+            class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+            {#if historyRetentionSaving}<InlineSpinner />{/if}
+            Save
+          </button>
+        </div>
+      </div>
+
       <!-- Server Info -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
@@ -1644,157 +1685,6 @@
               </tbody>
             </table>
           </div>
-        </div>
-      </div>
-
-      <!-- API Info -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
-        <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">API Endpoints</h2>
-          <p class="text-xs text-text-muted mt-1">All routes are prefixed with <code class="bg-surface px-1 rounded">/api/v1</code>. External clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header when an API key is configured and the request is not from localhost.</p>
-        </div>
-        <div class="px-5 py-2">
-          {#each [
-            { group: 'Health & Realtime', rows: [
-              ['GET', '/health', 'Liveness check (mode + version)'],
-              ['GET', '/health/summary', 'Aggregate system health'],
-              ['GET', '/runner/status', 'Backup runner status'],
-              ['WS',  '/ws', 'WebSocket event stream'],
-              ['GET', '/release/changelog', 'Embedded CHANGELOG.md (drives the About modal)'],
-              ['GET', '/release/latest', 'Latest GitHub release metadata (drives the update badge)'],
-            ]},
-            { group: 'Jobs', rows: [
-              ['GET',    '/jobs', 'List backup jobs'],
-              ['POST',   '/jobs', 'Create backup job'],
-              ['GET',    '/jobs/next-runs', 'Next scheduled run for every job'],
-              ['GET',    '/jobs/{id}', 'Get job'],
-              ['PUT',    '/jobs/{id}', 'Update job'],
-              ['DELETE', '/jobs/{id}', 'Delete job'],
-              ['GET',    '/jobs/{id}/next-run', 'Next scheduled run'],
-              ['GET',    '/jobs/{id}/history', 'Job run history'],
-              ['GET',    '/jobs/{id}/restore-points', 'List restore points'],
-              ['GET',    '/jobs/{id}/retention-preview', 'Preview which restore points a Long-Term Retention (LTR) policy would keep/prune'],
-              ['DELETE', '/jobs/{id}/restore-points/{rpid}', 'Delete a restore point'],
-              ['GET',    '/jobs/{id}/restore-points/{rpid}/contents', 'Tar index sidecar contents for the file picker'],
-              ['POST',   '/jobs/{id}/run', 'Run job now'],
-              ['POST',   '/jobs/{id}/cancel', 'Cancel running job'],
-              ['POST',   '/jobs/{id}/restore', 'Restore from a restore point'],
-              ['GET',    '/jobs/{id}/stale-items', 'List items whose backing resource no longer exists (live scan)'],
-              ['POST',   '/jobs/{id}/stale-items/remove', 'Remove all still-missing items from the job (re-validates first)'],
-              ['DELETE', '/jobs/{id}/items/{itemId}', 'Remove a single item from the job (existing restore points are kept)'],
-            ]},
-            { group: 'Verify', rows: [
-              ['POST', '/jobs/{id}/restore-points/{rpid}/verify', 'Start a verify run (mode: quick or deep)'],
-              ['GET',  '/jobs/{id}/restore-points/{rpid}/verify-runs', 'List recent verify runs for a restore point'],
-              ['GET',  '/jobs/{id}/verify-runs/{vrid}', 'Get one verify run'],
-            ]},
-            { group: 'Storage Destinations', rows: [
-              ['GET',    '/storage', 'List storage destinations'],
-              ['POST',   '/storage', 'Create storage destination'],
-              ['GET',    '/storage/{id}', 'Get storage destination'],
-              ['PUT',    '/storage/{id}', 'Update storage destination'],
-              ['DELETE', '/storage/{id}', 'Delete storage destination'],
-              ['POST',   '/storage/{id}/test', 'Test connection'],
-              ['POST',   '/storage/{id}/health-check', 'Run on-demand health check (returns {status, error})'],
-              ['POST',   '/storage/{id}/capacity-check', 'Refresh used / total / free capacity for this destination'],
-              ['POST',   '/storage/{id}/breaker/close', 'Manually close the destination circuit breaker (clear sticky failure state)'],
-              ['POST',   '/storage/{id}/scan', 'Scan for existing backups'],
-              ['POST',   '/storage/{id}/import', 'Import discovered backups'],
-              ['POST',   '/storage/{id}/restore-db', 'Restore Vault database from this destination'],
-              ['GET',    '/storage/{id}/jobs', 'Jobs targeting this destination'],
-              ['GET',    '/storage/{id}/list', 'List files at destination'],
-              ['GET',    '/storage/{id}/files', 'Download a file from destination'],
-              ['POST',   '/storage/{id}/scan-orphans', 'Scan for orphan files (dry-run)'],
-              ['POST',   '/storage/{id}/delete-orphans', 'Delete listed orphan files (re-checks before deleting)'],
-            ]},
-            { group: 'Deduplication', rows: [
-              ['GET',  '/storage/{id}/dedup-stats', 'Per-destination dedup stats (ratio, chunks, packs, reclaimable bytes)'],
-              ['POST', '/storage/{id}/gc', 'Run mark-and-sweep GC (async; broadcasts dedup_gc_complete over WS)'],
-            ]},
-            { group: 'Anomalies', rows: [
-              ['GET',  '/anomalies', 'List detected anomalies (filters: state, severity, scope; keyset paginated)'],
-              ['POST', '/anomalies/ack-bulk', 'Acknowledge several anomalies at once'],
-              ['GET',  '/anomalies/{id}', 'Get one anomaly'],
-              ['POST', '/anomalies/{id}/ack', 'Acknowledge / dismiss / mark-expected one anomaly'],
-              ['GET',  '/jobs/{id}/baseline', 'Per-job learned baseline (size/duration median + MAD, sample count)'],
-              ['GET',  '/destinations/{id}/capacity-trajectory', 'Capacity samples + projected runway for a destination'],
-            ]},
-            { group: 'Settings', rows: [
-              ['GET', '/settings', 'Get settings'],
-              ['PUT', '/settings', 'Update settings'],
-              ['GET', '/settings/staging', 'Get staging path info'],
-              ['PUT', '/settings/staging', 'Override staging path'],
-              ['GET', '/settings/database', 'Get database location info'],
-              ['PUT', '/settings/database', 'Set custom database snapshot path'],
-              ['GET', '/settings/diagnostics', 'Download diagnostics bundle'],
-              ['POST','/settings/discord/test', 'Send Discord webhook test'],
-            ]},
-            { group: 'Encryption', rows: [
-              ['GET',  '/settings/encryption', 'Encryption status'],
-              ['POST', '/settings/encryption', 'Enable / disable encryption'],
-              ['POST', '/settings/encryption/verify', 'Verify passphrase (rate-limited 10/min)'],
-              ['GET',  '/settings/encryption/passphrase', 'Reveal stored passphrase'],
-            ]},
-            { group: 'API Key', rows: [
-              ['GET',    '/settings/api-key', 'API key status'],
-              ['POST',   '/settings/api-key/generate', 'Generate API key (rate-limited 5/min)'],
-              ['GET',    '/settings/api-key/key', 'Reveal API key'],
-              ['POST',   '/settings/api-key/rotate', 'Rotate API key (rate-limited 5/min)'],
-              ['DELETE', '/settings/api-key', 'Revoke API key'],
-            ]},
-            { group: 'Discovery', rows: [
-              ['GET', '/containers', 'List Docker containers'],
-              ['GET', '/vms', 'List libvirt VMs'],
-              ['GET', '/folders', 'List user share folders'],
-              ['GET', '/plugins', 'List Unraid plugins'],
-              ['GET', '/zfs', 'List ZFS datasets'],
-              ['GET', '/browse', 'Browse filesystem paths'],
-              ['GET', '/path-exists', 'Safepath-gated existence check (used by the folder picker)'],
-              ['GET', '/presets/exclusions', 'Built-in exclusion presets'],
-            ]},
-            { group: 'Replication', rows: [
-              ['GET',    '/replication', 'List replication peers'],
-              ['POST',   '/replication', 'Create replication peer'],
-              ['POST',   '/replication/test-url', 'Test a peer URL'],
-              ['GET',    '/replication/{id}', 'Get peer'],
-              ['PUT',    '/replication/{id}', 'Update peer'],
-              ['DELETE', '/replication/{id}', 'Delete peer'],
-              ['POST',   '/replication/{id}/test', 'Test peer connection'],
-              ['POST',   '/replication/{id}/sync', 'Sync now'],
-              ['GET',    '/replication/{id}/jobs', 'List replicated jobs'],
-            ]},
-            { group: 'Activity & History', rows: [
-              ['GET',    '/activity', 'List activity log'],
-              ['DELETE', '/activity', 'Purge activity log'],
-              ['DELETE', '/history', 'Purge job run history'],
-              ['GET',    '/recovery/plan', 'Disaster recovery plan'],
-            ]},
-            { group: 'Model Context Protocol', rows: [
-              ['ANY', '/mcp', 'MCP server endpoint (Streamable HTTP)'],
-            ]},
-          ] as section (section.group)}
-            <details class="group border-b border-border/40 last:border-b-0">
-              <summary class="flex items-center gap-2 cursor-pointer select-none py-2.5 text-xs font-semibold uppercase tracking-wide text-text-muted hover:text-text">
-                <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                {section.group}
-                <span class="ml-1 font-normal normal-case text-text-dim">({section.rows.length})</span>
-              </summary>
-              <div class="space-y-1.5 text-sm font-mono pb-3 pl-6">
-                {#each section.rows as [method, path, desc] (`${method}:${path}`)}
-                  <div class="flex items-center gap-3">
-                    <span class="text-xs px-2 py-0.5 rounded font-medium min-w-[3.5rem] text-center
-                      {method === 'GET' ? 'bg-info/20 text-info' :
-                       method === 'POST' ? 'bg-success/20 text-success' :
-                       method === 'PUT' ? 'bg-warning/20 text-warning' :
-                       method === 'DELETE' ? 'bg-danger/20 text-danger' :
-                       'bg-vault/20 text-vault'}">{method}</span>
-                    <span class="text-text-muted truncate">{path}</span>
-                    <span class="text-text-dim text-xs ml-auto hidden sm:inline truncate">{desc}</span>
-                  </div>
-                {/each}
-              </div>
-            </details>
-          {/each}
         </div>
       </div>
 

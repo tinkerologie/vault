@@ -44,8 +44,22 @@
   let confirmPurge = $state(false)
   let purging = $state(false)
 
+  let trendPeriod = $state('30d')
+  let trendData = $state({ period: '30d', bucket: 'day', points: [] })
+  const TREND_PERIODS = [['7d', '7d'], ['30d', '30d'], ['90d', '90d'], ['6m', '6m'], ['1y', '1y']]
+
+  async function loadTrend() {
+    try { trendData = await api.getHistoryTrend(trendPeriod) } catch { /* keep last */ }
+  }
+
+  function selectTrendPeriod(val) {
+    trendPeriod = val
+    loadTrend()
+  }
+
   onMount(() => {
     loadData()
+    loadTrend()
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed') {
         loadData(true)
@@ -306,7 +320,16 @@
       </EmptyState>
     {:else}
       <!-- Size trend chart -->
-      <SizeChart runs={filteredRuns} {jobs} />
+      <div class="flex items-center justify-end mb-2">
+        <div class="flex items-center rounded-lg border border-border bg-surface-3 p-0.5 text-xs">
+          {#each TREND_PERIODS as [val, label] (val)}
+            <button type="button" onclick={() => selectTrendPeriod(val)}
+              aria-pressed={trendPeriod === val}
+              class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer {trendPeriod === val ? 'bg-vault text-white' : 'text-text-muted hover:text-text'}">{label}</button>
+          {/each}
+        </div>
+      </div>
+      <SizeChart buckets={trendData.points} bucket={trendData.bucket} />
 
       <!-- Date-grouped timeline -->
       <div class="space-y-8">
@@ -452,8 +475,8 @@
 <ConfirmDialog
   show={confirmPurge}
   title="Purge All History"
-  message="This will permanently delete all job run history records. This action cannot be undone."
-  confirmLabel={purging ? 'Purging...' : 'Purge All'}
+  message="This permanently deletes ALL job-run history AND their restore points – the recoverable backups Vault tracks. The backup files on storage are left behind (orphaned), so you would have to re-import them to restore. This cannot be undone."
+  confirmLabel={purging ? 'Purging…' : 'Purge Everything'}
   variant="danger"
   onconfirm={handlePurge}
   oncancel={() => confirmPurge = false}
