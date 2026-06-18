@@ -390,6 +390,15 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		respondError(w, http.StatusBadRequest, "item query parameter is required")
 		return
 	}
+	// Guard against browsing an item that this restore point never captured
+	// (e.g. an item added to the job after these backups ran). Without this
+	// the storage lookup below fails with a generic 500.
+	if members, known := rp.BackedUpItems(); known {
+		if _, ok := members[itemName]; !ok {
+			respondError(w, http.StatusNotFound, "this item is not in the selected restore point")
+			return
+		}
+	}
 	archiveName := strings.TrimSpace(r.URL.Query().Get("file"))
 
 	job, err := h.db.GetJob(jobID)
@@ -999,6 +1008,19 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	if len(targets) == 0 {
 		respondError(w, http.StatusBadRequest, "no items to restore")
 		return
+	}
+
+	// Reject items this restore point never captured (e.g. added to the job
+	// after these backups ran). Restoring them would fail mid-run; fail fast
+	// with a clear message instead. Skipped for legacy restore points whose
+	// per-item membership is unknown.
+	if members, known := found.BackedUpItems(); known {
+		for _, t := range targets {
+			if _, ok := members[t.Name]; !ok {
+				respondError(w, http.StatusBadRequest, t.Name+" is not in this restore point")
+				return
+			}
+		}
 	}
 
 	// Build runner targets and execute tracked restore asynchronously.

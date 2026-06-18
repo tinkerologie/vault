@@ -26,6 +26,9 @@
   let vms = $state([])
   let folders = $state([])
   let protectedItems = $state(new SvelteSet())
+  // Items configured in a job but not yet captured in any restore point
+  // (awaiting their first backup). Keyed "type:name", from the health summary.
+  let pendingItems = $state(new SvelteSet())
   let runningJob = $state(null)
   let toast = $state({ message: '', type: 'info', key: 0 })
   let nextRuns = $state({})
@@ -157,25 +160,19 @@
       replicationSources = replSources || []
       settings = sett || {}
 
-      // Include items from ALL configured jobs, not just enabled ones. A
-      // disabled schedule does not remove existing restore points – the
-      // 2026.05.00 fix made the recovery API behave this way and the
-      // Dashboard should match. Filtering by j.enabled here caused the
-      // Protection Status panel to drop items the moment a user paused
-      // their schedule, even though those items still had recent backups.
-      if (jobs.length > 0) {
-        const jobDetails = await Promise.all(
-          jobs.map(j => api.getJob(j.id).catch(() => null))
-        )
-        const pSet = new SvelteSet()
-        for (const detail of jobDetails) {
-          if (!detail?.items) continue
-          for (const item of detail.items) {
-            pSet.add(`${item.item_type}:${item.item_name}`)
-          }
-        }
-        protectedItems = pSet
-      }
+      // Protection is computed server-side from actual restore-point
+      // membership (health summary's protected_keys/pending_keys), so an item
+      // counts as protected only once a backup has really captured it. Items
+      // configured in a job but not yet in any restore point are "pending"
+      // (awaiting their first backup) rather than protected. A disabled
+      // schedule does not flip already-backed-up items back — the backend
+      // keys reflect restore points, not schedule state.
+      const pSet = new SvelteSet()
+      for (const key of hSummary?.protected_keys || []) pSet.add(key)
+      protectedItems = pSet
+      const pendSet = new SvelteSet()
+      for (const key of hSummary?.pending_keys || []) pendSet.add(key)
+      pendingItems = pendSet
 
       const runPromises = jobs.slice(0, 10).map(async (job) => {
         try {
@@ -246,10 +243,14 @@
   const trackedFolders = $derived(folderBackupOn ? folders.filter(f => f.settings?.preset !== 'flash') : [])
   const trackedFlash = $derived(flashBackupOn ? folders.filter(f => f.settings?.preset === 'flash') : [])
 
+  // Three-way state per item: protected (in a real restore point), pending
+  // (configured in a job but not yet backed up), or unprotected (not in any
+  // job). Pending is neither green nor red.
+  const isPending = (key) => pendingItems.has(key)
   const protectedContainers = $derived(trackedContainers.filter(c => protectedItems.has(`container:${c.name}`)))
-  const unprotectedContainers = $derived(trackedContainers.filter(c => !protectedItems.has(`container:${c.name}`)))
+  const unprotectedContainers = $derived(trackedContainers.filter(c => !protectedItems.has(`container:${c.name}`) && !isPending(`container:${c.name}`)))
   const protectedVMs = $derived(trackedVMs.filter(v => protectedItems.has(`vm:${v.name}`)))
-  const unprotectedVMs = $derived(trackedVMs.filter(v => !protectedItems.has(`vm:${v.name}`)))
+  const unprotectedVMs = $derived(trackedVMs.filter(v => !protectedItems.has(`vm:${v.name}`) && !isPending(`vm:${v.name}`)))
   const protectedFolders = $derived(trackedFolders.filter(f => protectedItems.has(`folder:${f.name}`)))
   const protectedFlash = $derived(trackedFlash.filter(f => protectedItems.has(`folder:${f.name}`)))
 
@@ -308,6 +309,13 @@
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
+
+{#snippet pendingBadge()}
+  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-amber-500 shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
+    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    pending first backup
+  </span>
+{/snippet}
 
 <PullToRefresh onrefresh={loadDashboard}>
 <div>
@@ -644,14 +652,17 @@
                 <div class="space-y-1.5">
                   {#each trackedContainers as c (c.name)}
                     {@const isProtected = protectedItems.has(`container:${c.name}`)}
-                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
-                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
+                    {@const pending = isPending(`container:${c.name}`)}
+                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : pending ? 'bg-amber-500/5' : 'bg-surface-3'} group">
+                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : pending ? 'bg-amber-500' : 'bg-surface-5'}"></div>
                       <span class="text-sm text-text truncate">{c.name}</span>
                       {#if isProtected}
                         <button onclick={() => navigate(`/restore?type=container&name=${encodeURIComponent(c.name)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {c.name}">
                           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                         </button>
                         <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                      {:else if pending}
+                        {@render pendingBadge()}
                       {:else}
                         <span class="text-[11px] text-text-dim ml-auto">unprotected</span>
                       {/if}
@@ -672,14 +683,17 @@
                 <div class="space-y-1.5">
                   {#each trackedVMs as v (v.name)}
                     {@const isProtected = protectedItems.has(`vm:${v.name}`)}
-                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
-                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
+                    {@const pending = isPending(`vm:${v.name}`)}
+                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : pending ? 'bg-amber-500/5' : 'bg-surface-3'} group">
+                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : pending ? 'bg-amber-500' : 'bg-surface-5'}"></div>
                       <span class="text-sm text-text truncate">{v.name}</span>
                       {#if isProtected}
                         <button onclick={() => navigate(`/restore?type=vm&name=${encodeURIComponent(v.name)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {v.name}">
                           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                         </button>
                         <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                      {:else if pending}
+                        {@render pendingBadge()}
                       {:else}
                         <span class="text-[11px] text-text-dim ml-auto">unprotected</span>
                       {/if}
@@ -700,14 +714,17 @@
                 <div class="space-y-1.5">
                   {#each trackedFolders as f (f.name)}
                     {@const isProtected = protectedItems.has(`folder:${f.name}`)}
-                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
-                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
+                    {@const pending = isPending(`folder:${f.name}`)}
+                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : pending ? 'bg-amber-500/5' : 'bg-surface-3'} group">
+                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : pending ? 'bg-amber-500' : 'bg-surface-5'}"></div>
                       <span class="text-sm text-text truncate">{f.name}</span>
                       {#if isProtected}
                         <button onclick={() => navigate(`/restore?type=folder&name=${encodeURIComponent(f.name)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {f.name}">
                           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                         </button>
                         <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                      {:else if pending}
+                        {@render pendingBadge()}
                       {:else}
                         <span class="text-[11px] text-text-dim ml-auto">unprotected</span>
                       {/if}
@@ -728,8 +745,9 @@
                 <div class="space-y-1.5">
                   {#each trackedFlash as f (f.name)}
                     {@const isProtected = protectedItems.has(`folder:${f.name}`)}
-                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : 'bg-surface-3'} group">
-                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : 'bg-surface-5'}"></div>
+                    {@const pending = isPending(`folder:${f.name}`)}
+                    <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : pending ? 'bg-amber-500/5' : 'bg-surface-3'} group">
+                      <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : pending ? 'bg-amber-500' : 'bg-surface-5'}"></div>
                       <span class="text-sm text-text truncate">{f.name}</span>
                       <span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium shrink-0">USB boot drive</span>
                       {#if isProtected}
@@ -737,6 +755,8 @@
                           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                         </button>
                         <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                      {:else if pending}
+                        {@render pendingBadge()}
                       {:else}
                         <span class="text-[11px] text-text-dim ml-auto">unprotected</span>
                       {/if}

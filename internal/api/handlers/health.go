@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -28,6 +29,8 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	var totalItems, protectedItems int
 	var recentSuccess, recentFailed int
 	var lastSuccessTime *time.Time
+	protectedKeys := []string{}
+	pendingKeys := []string{}
 
 	for _, job := range jobs {
 		items, err := h.db.GetJobItems(job.ID)
@@ -35,13 +38,45 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		totalItems += len(items)
-		// An item is "protected" when it has at least one restore point on
-		// disk, regardless of whether the job's schedule is currently
-		// enabled. Disabling the schedule must not flip already-backed-up
-		// items back to unprotected.
-		rps, _ := h.db.ListRestorePoints(job.ID)
-		if len(rps) > 0 {
-			protectedItems += len(items)
+
+		// An item is "protected" only when at least one of the job's restore
+		// points actually contains it (per the membership recorded when the
+		// backup ran). Items configured in the job but never captured in a
+		// restore point are "pending" — adding an item to a job does not make
+		// it backed up. Schedule state is irrelevant: a disabled schedule must
+		// not flip already-backed-up items back to unprotected.
+		rps, rpErr := h.db.ListRestorePoints(job.ID)
+		if rpErr != nil {
+			// Surface DB issues rather than silently treating the job as having
+			// no backups (which would mislabel its items as pending).
+			log.Printf("health summary: listing restore points for job %d: %v", job.ID, rpErr)
+		}
+		backedUp := make(map[string]struct{})
+		legacyAllProtected := false
+		for _, rp := range rps {
+			members, known := rp.BackedUpItems()
+			if !known {
+				// A legacy restore point (produced before per-item membership
+				// was recorded) tells us nothing per item; fall back to the
+				// historical behaviour of treating every job item as protected
+				// so existing installs don't regress. Once one is found the
+				// per-item map is irrelevant, so stop scanning.
+				legacyAllProtected = true
+				break
+			}
+			for name := range members {
+				backedUp[name] = struct{}{}
+			}
+		}
+		for _, item := range items {
+			key := item.ItemType + ":" + item.ItemName
+			_, isBackedUp := backedUp[item.ItemName]
+			if legacyAllProtected || isBackedUp {
+				protectedItems++
+				protectedKeys = append(protectedKeys, key)
+			} else {
+				pendingKeys = append(pendingKeys, key)
+			}
 		}
 
 		runs, err := h.db.GetJobRuns(job.ID, 10)
@@ -80,6 +115,8 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		"health_score":    healthScore,
 		"total_items":     totalItems,
 		"protected_items": protectedItems,
+		"protected_keys":  protectedKeys,
+		"pending_keys":    pendingKeys,
 		"protection_pct":  protectionPct,
 		"success_rate":    successRate,
 		"recent_success":  recentSuccess,

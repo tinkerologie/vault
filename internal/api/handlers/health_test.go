@@ -135,6 +135,80 @@ func TestHealthSummary_WithSuccessfulRun(t *testing.T) {
 	}
 }
 
+// TestHealthSummary_PendingItemNotInRestorePoint covers the case the user hit:
+// an item added to a job whose existing restore points do not contain it must
+// count as pending (not protected), and must appear in pending_keys.
+func TestHealthSummary_PendingItemNotInRestorePoint(t *testing.T) {
+	d := newTestDB(t)
+	h := NewHealthHandler(d)
+
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "pending-dest", Type: "local", Config: `{"path":"/tmp"}`,
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+	jobID, err := d.CreateJob(db.Job{
+		Name: "pending-job", Enabled: true, StorageDestID: destID,
+		BackupTypeChain: "full", Schedule: "@daily",
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	// Two items configured; the restore point only ever contained "plex".
+	for _, name := range []string{"plex", "privoxyvpn"} {
+		if _, err := d.AddJobItem(db.JobItem{JobID: jobID, ItemType: "container", ItemName: name}); err != nil {
+			t.Fatalf("add item %s: %v", name, err)
+		}
+	}
+	runID, err := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := d.CreateRestorePoint(db.RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "full",
+		StoragePath: "run1", Metadata: `{"item_sizes":{"plex":12345}}`,
+	}); err != nil {
+		t.Fatalf("create rp: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	h.Summary(w, newReq(http.MethodGet, "/api/v1/health/summary", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TotalItems     int      `json:"total_items"`
+		ProtectedItems int      `json:"protected_items"`
+		ProtectedKeys  []string `json:"protected_keys"`
+		PendingKeys    []string `json:"pending_keys"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.TotalItems != 2 || resp.ProtectedItems != 1 {
+		t.Fatalf("total=%d protected=%d, want 2/1", resp.TotalItems, resp.ProtectedItems)
+	}
+	if !contains(resp.ProtectedKeys, "container:plex") {
+		t.Errorf("protected_keys %v should contain container:plex", resp.ProtectedKeys)
+	}
+	if !contains(resp.PendingKeys, "container:privoxyvpn") {
+		t.Errorf("pending_keys %v should contain container:privoxyvpn", resp.PendingKeys)
+	}
+	if contains(resp.ProtectedKeys, "container:privoxyvpn") {
+		t.Errorf("privoxyvpn must not be protected; protected_keys=%v", resp.ProtectedKeys)
+	}
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestHealthSummary_WithFailedRun(t *testing.T) {
 	d := newTestDB(t)
 	h := NewHealthHandler(d)
