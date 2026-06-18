@@ -10,6 +10,7 @@
   import EmptyState from '../components/EmptyState.svelte'
   import PathBrowser from '../components/PathBrowser.svelte'
   import Tooltip from '../components/Tooltip.svelte'
+  import CapacityTrend from '../components/CapacityTrend.svelte'
 
   let loading = $state(true)
   let destinations = $state([])
@@ -51,6 +52,33 @@
   // Tracks the destination id currently being capacity-probed. null when idle.
   let refreshingCapacityId = $state(null)
 
+  // Per-destination capacity-trajectory samples (last 90 days), keyed by id.
+  // Fed to the CapacityTrend sparkline + runway estimate.
+  let trajectories = $state(new SvelteMap())
+
+  async function refreshTrajectories() {
+    // Only destinations that have ever been probed have samples worth charting.
+    const targets = destinations.filter(d => d.capacity != null)
+    if (targets.length === 0) return
+    const next = new SvelteMap(trajectories)
+    await Promise.all(targets.map(async (d) => {
+      try {
+        const res = await api.getCapacityTrajectory(d.id)
+        next.set(d.id, res?.samples || [])
+      } catch { /* leave any prior samples in place */ }
+    }))
+    trajectories = next
+  }
+
+  async function refreshOneTrajectory(id) {
+    try {
+      const res = await api.getCapacityTrajectory(id)
+      const next = new SvelteMap(trajectories)
+      next.set(id, res?.samples || [])
+      trajectories = next
+    } catch { /* ignore */ }
+  }
+
   function defaultForm() {
     return {
       name: '',
@@ -80,6 +108,7 @@
       if (msg.type === 'storage_capacity_updated' && msg.storage_id != null) {
         const dest = destinations.find((d) => d.id === msg.storage_id)
         if (dest) dest.capacity = msg.capacity
+        refreshOneTrajectory(msg.storage_id)
       }
     })
     // Refresh dedup stats every 30s for dedup-enabled destinations.
@@ -138,6 +167,7 @@
       const { capacity } = await api.refreshCapacity(id)
       const dest = destinations.find((d) => d.id === id)
       if (dest) dest.capacity = capacity
+      refreshOneTrajectory(id)
       showToast('Capacity refreshed', 'success')
     } catch (e) {
       showToast(`Capacity refresh failed: ${e.message}`, 'error')
@@ -206,6 +236,7 @@
       }))
       depCounts = counts
       refreshDedupStats()
+      refreshTrajectories()
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -579,6 +610,11 @@
                     ⚠ Last probe failed
                   </div>
                 {/if}
+                {#if (trajectories.get(dest.id) || []).length >= 2}
+                  <div class="pt-1.5">
+                    <CapacityTrend samples={trajectories.get(dest.id)} />
+                  </div>
+                {/if}
               </div>
             {/if}
           </div>
@@ -615,6 +651,19 @@
                   <span class="text-text-muted">Dedup</span>
                   <span class="font-medium text-text">{(s.dedup_ratio || 1).toFixed(1)}× ({formatBytes(s.logical_bytes)} → {formatBytes(s.physical_bytes)})</span>
                 </div>
+                {#if s.logical_bytes > 0}
+                  {@const storedPct = Math.min(100, (s.physical_bytes / s.logical_bytes) * 100)}
+                  {@const saved = Math.max(0, s.logical_bytes - s.physical_bytes)}
+                  <!-- Savings bar: filled portion = bytes actually stored, the
+                       remainder visualises what dedup avoided writing. -->
+                  <div class="h-2 bg-emerald-500/20 rounded-full overflow-hidden" title="{storedPct.toFixed(1)}% of logical data is physically stored">
+                    <div class="h-full bg-vault rounded-full transition-all" style="width: {storedPct.toFixed(1)}%"></div>
+                  </div>
+                  <div class="flex justify-between text-text-dim">
+                    <span>Stored {storedPct.toFixed(0)}%</span>
+                    <span class="text-emerald-500">Saved {formatBytes(saved)}</span>
+                  </div>
+                {/if}
                 <div class="flex justify-between text-text-dim">
                   <span>Chunks · Packs</span>
                   <span>{(s.total_chunks ?? 0).toLocaleString()} · {(s.total_packs ?? 0).toLocaleString()}</span>
