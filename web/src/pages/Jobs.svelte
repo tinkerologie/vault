@@ -122,6 +122,9 @@
   let allSelected = $derived(
     filteredJobs.length > 0 && filteredJobs.every(j => selectedJobs.has(j.id))
   )
+  // How many of the currently visible (filtered) jobs are selected — keeps the
+  // "Select all (n/total)" numerator consistent with its filtered denominator.
+  let selectedVisibleCount = $derived(filteredJobs.filter(j => selectedJobs.has(j.id)).length)
 
   function toggleSelectJob(id) {
     const next = new SvelteSet(selectedJobs)
@@ -986,7 +989,7 @@
       <label class="flex items-center gap-2 text-xs text-text-muted cursor-pointer select-none">
         <input type="checkbox" checked={allSelected} onchange={toggleSelectAll}
           class="accent-vault w-3.5 h-3.5" />
-        Select all ({selectedJobs.size}/{filteredJobs.length})
+        Select all ({selectedVisibleCount}/{filteredJobs.length})
       </label>
       <span class="text-xs text-text-dim">
         Showing {filteredJobs.length} of {jobs.length}
