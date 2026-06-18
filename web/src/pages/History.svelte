@@ -452,8 +452,8 @@
 <ConfirmDialog
   show={confirmPurge}
   title="Purge All History"
-  message="This will permanently delete all job run history records. This action cannot be undone."
-  confirmLabel={purging ? 'Purging...' : 'Purge All'}
+  message="This permanently deletes ALL job-run history AND their restore points – the recoverable backups Vault tracks. The backup files on storage are left behind (orphaned), so you would have to re-import them to restore. This cannot be undone."
+  confirmLabel={purging ? 'Purging…' : 'Purge Everything'}
   variant="danger"
   onconfirm={handlePurge}
   oncancel={() => confirmPurge = false}
