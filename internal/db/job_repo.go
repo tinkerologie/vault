@@ -490,7 +490,7 @@ func (d *DB) GetJobRunsSince(jobID int64, since time.Time) ([]JobRun, error) {
 		jobID, since.UTC().Format("2006-01-02 15:04:05"),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("querying job runs since %s: %w", since.UTC().Format("2006-01-02"), err)
 	}
 	defer rows.Close()
 	var runs []JobRun
