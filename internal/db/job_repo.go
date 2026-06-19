@@ -475,6 +475,35 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 	return runs, rows.Err()
 }
 
+// GetJobRunsSince returns a job's runs started at or after `since`, with only
+// the lightweight fields callers like the history trend need (id, status,
+// started_at, size_bytes) — notably NOT the inline log payload. The time
+// filter is applied in SQL via datetime() normalisation so it is correct
+// regardless of how each row's timestamp was stored, and bounding by `since`
+// avoids loading the full run history into memory.
+func (d *DB) GetJobRunsSince(jobID int64, since time.Time) ([]JobRun, error) {
+	rows, err := d.Query(
+		`SELECT id, job_id, status, started_at, size_bytes
+		FROM job_runs
+		WHERE job_id = ? AND datetime(started_at) >= datetime(?)
+		ORDER BY started_at DESC`,
+		jobID, since.UTC().Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []JobRun
+	for rows.Next() {
+		var run JobRun
+		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.StartedAt, &run.SizeBytes); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
 // Restore Points
 
 func (d *DB) CreateRestorePoint(rp RestorePoint) (int64, error) {

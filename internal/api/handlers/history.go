@@ -138,13 +138,15 @@ func (h *HistoryHandler) Trend(w http.ResponseWriter, r *http.Request) {
 
 	var runs []trendRun
 	for _, j := range jobs {
-		jrs, err := h.db.GetJobRuns(j.ID, 100000)
+		// Time-filtered in SQL (and without the log payload) so we don't load
+		// the full run history into memory just to discard most of it.
+		jrs, err := h.db.GetJobRunsSince(j.ID, since)
 		if err != nil {
 			log.Printf("trend: listing runs for job %d: %v", j.ID, err)
 			continue
 		}
 		for _, run := range jrs {
-			if run.SizeBytes <= 0 || run.StartedAt.Before(since) {
+			if run.SizeBytes <= 0 {
 				continue
 			}
 			if run.Status != "success" && run.Status != "completed" {
