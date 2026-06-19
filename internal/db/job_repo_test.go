@@ -543,6 +543,50 @@ func TestJobItemMissingSince(t *testing.T) {
 	}
 }
 
+func TestGetJobRunsSince(t *testing.T) {
+	t.Parallel()
+	d, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close() //nolint:errcheck
+
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: `{"path":"/tmp"}`})
+	jobID, _ := d.CreateJob(Job{Name: "j", Schedule: "@daily", Compression: "none", Encryption: "none", StorageDestID: destID})
+
+	mk := func(daysAgo int) {
+		t.Helper()
+		runID, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		ts := time.Now().AddDate(0, 0, -daysAgo).UTC().Format("2006-01-02 15:04:05")
+		if _, err := d.Exec(`UPDATE job_runs SET started_at = ?, size_bytes = 100 WHERE id = ?`, ts, runID); err != nil {
+			t.Fatalf("backdate: %v", err)
+		}
+	}
+	mk(1)
+	mk(10)
+	mk(40)
+
+	got, err := d.GetJobRunsSince(jobID, time.Now().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatalf("since: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d runs, want 2 (the 1- and 10-day-old runs, not the 40-day-old one)", len(got))
+	}
+	cutoff := time.Now().AddDate(0, 0, -31)
+	for _, r := range got {
+		if r.StartedAt.Before(cutoff) {
+			t.Errorf("run older than the window leaked: %v", r.StartedAt)
+		}
+		if r.SizeBytes != 100 || r.Status != "success" {
+			t.Errorf("lean fields not populated: %+v", r)
+		}
+	}
+}
+
 func TestPurgeEligibleRuns(t *testing.T) {
 	t.Parallel()
 	d, err := Open(":memory:")
