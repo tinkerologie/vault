@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.06.05] - 2026-06-20
+
 ### Added
 
 - **Configurable history retention.** A new **Settings → General → History Retention** control (30 days / 90 days / 6 months / 1 year / 2 years / Keep everything; default 1 year) caps how long backup/restore run history is kept, so the database doesn't grow without bound. The purge (which runs during the daemon's maintenance pass) is deliberately safe: it only removes run-history rows that are both older than the chosen period **and** no longer back a restore point – recoverable backups are governed solely by each job's own backup retention and are never deleted by this setting.
