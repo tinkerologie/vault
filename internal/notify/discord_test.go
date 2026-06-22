@@ -55,6 +55,13 @@ func TestSendDiscord_Success(t *testing.T) {
 	if received.Embeds[0].Timestamp == "" {
 		t.Error("expected timestamp to be set automatically")
 	}
+	// Even with no options, mention parsing is locked down so nothing can ping.
+	if received.AllowedMentions == nil || len(received.AllowedMentions.Parse) != 0 {
+		t.Errorf("expected allowed_mentions with empty parse, got %+v", received.AllowedMentions)
+	}
+	if received.Content != "" {
+		t.Errorf("content = %q, want empty when no mention configured", received.Content)
+	}
 }
 
 func TestSendDiscord_ErrorStatus(t *testing.T) {
@@ -145,7 +152,8 @@ func TestSendDiscord_InvalidRoleIDOmitsMention(t *testing.T) {
 	discordAPIBaseURL = srv.URL
 
 	// A non-numeric "role ID" (e.g. an injected @everyone) must not produce a
-	// mention or allowed_mentions block.
+	// mention. allowed_mentions is still emitted (locked down) so nothing can
+	// ping, but with no content mention and no whitelisted role.
 	opts := DiscordOptions{MentionRoleID: "@everyone"}
 	if err := SendDiscord("https://discord.example/api/webhooks/123/token", DiscordEmbed{Title: "x"}, opts); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -153,8 +161,14 @@ func TestSendDiscord_InvalidRoleIDOmitsMention(t *testing.T) {
 	if received.Content != "" {
 		t.Errorf("content = %q, want empty for invalid role ID", received.Content)
 	}
-	if received.AllowedMentions != nil {
-		t.Errorf("allowed_mentions = %+v, want nil for invalid role ID", received.AllowedMentions)
+	if received.AllowedMentions == nil {
+		t.Fatal("expected allowed_mentions to be emitted (locked down) even without a valid role")
+	}
+	if len(received.AllowedMentions.Parse) != 0 {
+		t.Errorf("allowed_mentions.parse = %v, want empty (blocks @everyone)", received.AllowedMentions.Parse)
+	}
+	if len(received.AllowedMentions.Roles) != 0 {
+		t.Errorf("allowed_mentions.roles = %v, want empty for invalid role ID", received.AllowedMentions.Roles)
 	}
 }
 

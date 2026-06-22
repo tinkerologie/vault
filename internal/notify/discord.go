@@ -53,11 +53,13 @@ type DiscordPayload struct {
 	AllowedMentions *DiscordAllowedMentions `json:"allowed_mentions,omitempty"`
 }
 
-// DiscordAllowedMentions restricts which mentions in Content actually ping. An
-// empty (but non-nil) Parse array disables all mass pings (@everyone/@here and
-// blanket role pings); only the IDs explicitly listed in Roles/Users are
-// allowed to notify. This prevents a stray mention in message content from
-// pinging an entire server.
+// DiscordAllowedMentions controls which mentions in a message are permitted to
+// notify. Discord applies it to the message content (and message components) —
+// the only place Vault ever emits a mention; mentions inside embeds never
+// notify regardless. Vault sends an empty (but non-nil) Parse array on every
+// message to disable all automatic mass pings (@everyone/@here and blanket role
+// pings), and whitelists only the IDs explicitly listed in Roles/Users, so a
+// stray mention can never ping an entire server.
 type DiscordAllowedMentions struct {
 	Parse []string `json:"parse"`
 	Roles []string `json:"roles,omitempty"`
@@ -150,19 +152,22 @@ func SendDiscord(webhookURL string, embed DiscordEmbed, opts ...DiscordOptions) 
 	}
 
 	payload := DiscordPayload{Embeds: []DiscordEmbed{embed}}
+	// Always lock down mention parsing so an automatic @everyone/@here or role
+	// mention can never fire from any message we send; only an explicitly
+	// configured role is whitelisted below. Emitting this unconditionally (even
+	// when no mention is requested) keeps the guarantee independent of what ends
+	// up in the content.
+	allowed := &DiscordAllowedMentions{Parse: []string{}}
 	if len(opts) > 0 {
 		opt := opts[0]
 		payload.Username = strings.TrimSpace(opt.Username)
 		payload.AvatarURL = strings.TrimSpace(opt.AvatarURL)
 		if roleID := sanitizeSnowflake(opt.MentionRoleID); roleID != "" {
 			payload.Content = "<@&" + roleID + ">"
-			// Restrict pings to exactly this role; empty Parse blocks @everyone.
-			payload.AllowedMentions = &DiscordAllowedMentions{
-				Parse: []string{},
-				Roles: []string{roleID},
-			}
+			allowed.Roles = []string{roleID}
 		}
 	}
+	payload.AllowedMentions = allowed
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal discord payload: %w", err)
