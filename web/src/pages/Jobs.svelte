@@ -1453,11 +1453,31 @@
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Scripts & Notifications <Tooltip text="Pre-backup scripts run before any containers are stopped. Post-backup scripts run after all items are backed up. Environment variables like VAULT_JOB_NAME and VAULT_STATUS are available." />
+            Scripts <Tooltip text="Pre-backup scripts run before any containers are stopped. Post-backup scripts run after all items are backed up. Environment variables like VAULT_JOB_NAME and VAULT_STATUS are available." />
           </summary>
           <div class="space-y-4 mt-3 pl-6">
             <ScriptBrowser bind:value={form.pre_script} label="Pre-Backup Script" placeholder="/path/to/script.sh" />
             <ScriptBrowser bind:value={form.post_script} label="Post-Backup Script" placeholder="/path/to/script.sh" />
+          </div>
+        </details>
+
+        <!-- Advanced: Notifications -->
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Notifications <Tooltip text="Controls when this job sends Unraid system notifications. The global notifications toggle in Settings must be enabled for any to be sent. Discord notifications are configured separately in Settings." />
+          </summary>
+          <div class="mt-3 pl-6">
+            <label for="notify_on" class="block text-xs font-medium text-text-muted mb-1">Notify On</label>
+            <select
+              id="notify_on"
+              bind:value={form.notify_on}
+              class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+            >
+              <option value="always">All backups (success &amp; failure)</option>
+              <option value="failure">Failures only</option>
+              <option value="never">Never</option>
+            </select>
           </div>
         </details>
 

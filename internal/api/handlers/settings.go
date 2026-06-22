@@ -509,7 +509,12 @@ func (h *SettingsHandler) TestDiscordWebhook(w http.ResponseWriter, r *http.Requ
 			{Name: "Status", Value: "Connection verified", Inline: true},
 		},
 	}
-	if err := notify.SendDiscord(req.WebhookURL, embed); err != nil {
+	// Reflect the configured bot name/avatar so the test matches real alerts.
+	// No role mention is attached — a connection test shouldn't ping anyone.
+	username, _ := h.db.GetSetting("discord_bot_username", "")
+	avatarURL, _ := h.db.GetSetting("discord_bot_avatar_url", "")
+	opts := notify.DiscordOptions{Username: username, AvatarURL: avatarURL}
+	if err := notify.SendDiscord(req.WebhookURL, embed, opts); err != nil {
 		respondError(w, http.StatusBadGateway, "Discord webhook failed: "+err.Error())
 		return
 	}

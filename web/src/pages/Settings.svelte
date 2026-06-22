@@ -62,6 +62,10 @@
   // Discord state
   let discordWebhookUrl = $state('')
   let discordNotifyOn = $state('always')
+  let discordBotUsername = $state('')
+  let discordBotAvatarUrl = $state('')
+  let discordMentionRoleId = $state('')
+  let discordMentionOn = $state('never')
   let discordSaving = $state(false)
   let discordTesting = $state(false)
 
@@ -174,6 +178,10 @@
       stagingOverrideInput = staging?.override || ''
       discordWebhookUrl = s?.discord_webhook_url || ''
       discordNotifyOn = s?.discord_notify_on || 'always'
+      discordBotUsername = s?.discord_bot_username || ''
+      discordBotAvatarUrl = s?.discord_bot_avatar_url || ''
+      discordMentionRoleId = s?.discord_mention_role_id || ''
+      discordMentionOn = s?.discord_mention_on || 'never'
       databaseInfo = dbInfo
       snapshotPathInput = dbInfo?.snapshot_path_override || ''
       historyRetention = String(s.history_retention_days ?? '365')
@@ -261,6 +269,10 @@
       settings = await api.updateSettings({
         discord_webhook_url: discordWebhookUrl,
         discord_notify_on: discordNotifyOn,
+        discord_bot_username: discordBotUsername,
+        discord_bot_avatar_url: discordBotAvatarUrl,
+        discord_mention_role_id: discordMentionRoleId,
+        discord_mention_on: discordMentionOn,
       })
       showToast('Discord settings saved', 'success')
     } catch (e) {
@@ -1216,6 +1228,53 @@
               <option value="failure">Failures only</option>
               <option value="never">Disabled</option>
             </select>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label for="discord-bot-username" class="block text-sm font-medium text-text mb-1.5">Bot Username <Tooltip text="Overrides the name the webhook posts under. Leave blank to use the webhook's configured name." /></label>
+              <input
+                id="discord-bot-username"
+                type="text"
+                bind:value={discordBotUsername}
+                placeholder="Vault"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              />
+            </div>
+            <div>
+              <label for="discord-bot-avatar" class="block text-sm font-medium text-text mb-1.5">Bot Avatar URL <Tooltip text="Overrides the avatar the webhook posts with. Must be a direct image URL. Leave blank to use the webhook's configured avatar." /></label>
+              <input
+                id="discord-bot-avatar"
+                type="url"
+                bind:value={discordBotAvatarUrl}
+                placeholder="https://example.com/avatar.png"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              />
+            </div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label for="discord-mention-role" class="block text-sm font-medium text-text mb-1.5">Mention Role ID <Tooltip text="A Discord role ID to ping on alerts (enable Developer Mode, then Server Settings → Roles → Copy ID). Only this role is pinged — @everyone is never used." /></label>
+              <input
+                id="discord-mention-role"
+                type="text"
+                inputmode="numeric"
+                bind:value={discordMentionRoleId}
+                placeholder="123456789012345678"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              />
+            </div>
+            <div>
+              <label for="discord-mention-on" class="block text-sm font-medium text-text mb-1.5">Mention On <Tooltip text="When to ping the role above. Failures only pings on failed or partial backups; All backups pings on every alert this webhook sends." /></label>
+              <select
+                id="discord-mention-on"
+                bind:value={discordMentionOn}
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              >
+                <option value="never">Never</option>
+                <option value="failure">Failures only</option>
+                <option value="always">All backups</option>
+              </select>
+            </div>
           </div>
           <div class="px-5 py-3 flex justify-end">
             <button
