@@ -46,7 +46,34 @@ type DiscordFooter struct {
 
 // DiscordPayload is the top-level JSON sent to a Discord webhook.
 type DiscordPayload struct {
-	Embeds []DiscordEmbed `json:"embeds"`
+	Username        string                  `json:"username,omitempty"`
+	AvatarURL       string                  `json:"avatar_url,omitempty"`
+	Content         string                  `json:"content,omitempty"`
+	Embeds          []DiscordEmbed          `json:"embeds"`
+	AllowedMentions *DiscordAllowedMentions `json:"allowed_mentions,omitempty"`
+}
+
+// DiscordAllowedMentions restricts which mentions in Content actually ping. An
+// empty (but non-nil) Parse array disables all mass pings (@everyone/@here and
+// blanket role pings); only the IDs explicitly listed in Roles/Users are
+// allowed to notify. This prevents a stray mention in message content from
+// pinging an entire server.
+type DiscordAllowedMentions struct {
+	Parse []string `json:"parse"`
+	Roles []string `json:"roles,omitempty"`
+	Users []string `json:"users,omitempty"`
+}
+
+// DiscordOptions personalizes a webhook message. The zero value reproduces the
+// original plain behaviour (default bot name/avatar, no mention).
+type DiscordOptions struct {
+	// Username overrides the webhook's default bot name when non-empty.
+	Username string
+	// AvatarURL overrides the webhook's default avatar when non-empty.
+	AvatarURL string
+	// MentionRoleID, when a valid Discord snowflake, prepends a role mention
+	// (<@&id>) to the message content and is the only role permitted to ping.
+	MentionRoleID string
 }
 
 func normalizeDiscordWebhookURL(webhookURL string) (string, error) {
@@ -102,8 +129,10 @@ func normalizeDiscordWebhookURL(webhookURL string) (string, error) {
 
 // SendDiscord posts a rich embed to a Discord webhook URL.
 // It uses a 10-second timeout and returns any error for the caller to log.
-// Empty URL is a no-op.
-func SendDiscord(webhookURL string, embed DiscordEmbed) error {
+// Empty URL is a no-op. An optional DiscordOptions personalizes the bot
+// name/avatar and attaches a role mention; the zero value (or omitting it)
+// preserves the original plain behaviour.
+func SendDiscord(webhookURL string, embed DiscordEmbed, opts ...DiscordOptions) error {
 	if webhookURL == "" {
 		return nil
 	}
@@ -121,6 +150,19 @@ func SendDiscord(webhookURL string, embed DiscordEmbed) error {
 	}
 
 	payload := DiscordPayload{Embeds: []DiscordEmbed{embed}}
+	if len(opts) > 0 {
+		opt := opts[0]
+		payload.Username = strings.TrimSpace(opt.Username)
+		payload.AvatarURL = strings.TrimSpace(opt.AvatarURL)
+		if roleID := sanitizeSnowflake(opt.MentionRoleID); roleID != "" {
+			payload.Content = "<@&" + roleID + ">"
+			// Restrict pings to exactly this role; empty Parse blocks @everyone.
+			payload.AllowedMentions = &DiscordAllowedMentions{
+				Parse: []string{},
+				Roles: []string{roleID},
+			}
+		}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal discord payload: %w", err)
@@ -138,4 +180,20 @@ func SendDiscord(webhookURL string, embed DiscordEmbed) error {
 		return fmt.Errorf("discord webhook returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// sanitizeSnowflake returns the trimmed input only when it is a plausible
+// Discord snowflake (a non-empty run of digits); otherwise "". This guards the
+// mention/allowed_mentions fields against arbitrary text injection.
+func sanitizeSnowflake(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return s
 }

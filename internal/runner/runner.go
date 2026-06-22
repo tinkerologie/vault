@@ -3347,12 +3347,44 @@ func (r *Runner) sendNotification(job db.Job, status string, done, failed int, s
 		shouldSend := discordPref == "always" || (discordPref == "failure" && status != "completed")
 		if shouldSend {
 			embed := r.buildDiscordEmbed(job.Name, status, done, failed, sizeBytes, durationSec, failedNames)
+			opts := r.discordOptions(status)
 			go func() {
-				if err := notify.SendDiscord(webhookURL, embed); err != nil {
+				if err := notify.SendDiscord(webhookURL, embed, opts); err != nil {
 					log.Printf("runner: discord notification error: %v", err)
 				}
 			}()
 		}
+	}
+}
+
+// discordOptions reads the Discord personalization settings (bot name/avatar and
+// optional role mention) for a webhook notification. The role mention is only
+// attached when a role ID is configured and the outcome matches the
+// discord_mention_on preference, so a healthy backup doesn't ping anyone.
+func (r *Runner) discordOptions(status string) notify.DiscordOptions {
+	username, _ := r.db.GetSetting("discord_bot_username", "")
+	avatarURL, _ := r.db.GetSetting("discord_bot_avatar_url", "")
+	opts := notify.DiscordOptions{Username: username, AvatarURL: avatarURL}
+
+	roleID, _ := r.db.GetSetting("discord_mention_role_id", "")
+	mentionOn, _ := r.db.GetSetting("discord_mention_on", "never")
+	if roleID != "" && shouldMentionDiscord(mentionOn, status) {
+		opts.MentionRoleID = roleID
+	}
+	return opts
+}
+
+// shouldMentionDiscord decides whether to attach the role mention for a given
+// outcome: "always" pings on every send, "failure" pings on failed/partial
+// runs only, and anything else (including "never") never pings.
+func shouldMentionDiscord(mentionOn, status string) bool {
+	switch mentionOn {
+	case "always":
+		return true
+	case "failure":
+		return status != "completed"
+	default:
+		return false
 	}
 }
 
