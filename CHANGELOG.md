@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.06.06] - 2026-06-22
+
+### Added
+
+- **Richer Discord notifications: bot identity and role pings** (#146). The **Settings → Notifications → Discord** card now lets you override the **Bot Username** and **Bot Avatar URL** the webhook posts under, and ping a **Mention Role ID** on alerts with a **Mention On** control (Never / Failures only / All backups). Pings are deliberately safe — only the role you specify is mentioned (`allowed_mentions` is locked down, so a stray mention can never `@everyone`), the role ID is validated as a numeric snowflake before use, and the **Test** button now reflects your configured bot name/avatar. By default nothing pings (Mention On = Never), so existing setups are unchanged.
+
+### Fixed
+
+- **You can now choose to be notified on successful backups, not just failures** (closes #146). The per-job notification preference (`notify_on`) was already honoured by the backend and submitted by the job form, but the job wizard never rendered a control to change it, so it was stuck at its `failure`-only default and there was no way to opt into success notifications. The job wizard's **Step 5 → Advanced** now has a dedicated **Notifications** section (split out from Scripts for clarity) with a **Notify On** dropdown — **All backups (success & failure)** / **Failures only** / **Never** — and a tooltip noting that the global notifications toggle in Settings must be on and that Discord is configured separately. No backend, database, or API changes were required.
+
 ## [2026.06.05] - 2026-06-20
 
 ### Added
