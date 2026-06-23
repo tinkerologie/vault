@@ -12,10 +12,6 @@
 
   let dialogEl = $state(null)
 
-  function handleBackdrop(e) {
-    if (e.target === e.currentTarget) oncancel()
-  }
-
   function handleKey(e) {
     if (e.key === 'Escape') oncancel()
     if (e.key === 'Tab' && dialogEl) {
@@ -58,7 +54,6 @@
 {#if show}
   <div
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
-    onclick={handleBackdrop}
     onkeydown={handleKey}
     role="dialog"
     aria-modal="true"
