@@ -5,29 +5,32 @@ import "testing"
 func TestValidateSchedule(t *testing.T) {
 	t.Parallel()
 
-	valid := []string{
-		"",             // manual-only job
-		"   ",          // whitespace trims to empty → manual
-		"0 3 * * *",    // standard 5-field
-		"*/15 * * * *", // step values
-		"0 2 L * *",    // last-day-of-month special case
-		"@daily",       // descriptor
-	}
-	for _, s := range valid {
-		if err := ValidateSchedule(s); err != nil {
-			t.Errorf("ValidateSchedule(%q) = %v, want nil", s, err)
-		}
+	tests := []struct {
+		name    string
+		spec    string
+		wantErr bool
+	}{
+		{"empty is manual", "", false},
+		{"whitespace trims to manual", "   ", false},
+		{"standard 5-field", "0 3 * * *", false},
+		{"step values", "*/15 * * * *", false},
+		{"last-day-of-month", "0 2 L * *", false},
+		{"descriptor", "@daily", false},
+		{"prose is invalid", "not a cron", true},
+		{"too few fields", "0 3 * *", true},
+		{"out of range", "99 99 * * *", true},
+		{"unknown descriptor", "@bogus", true},
 	}
 
-	invalid := []string{
-		"not a cron",
-		"0 3 * *",     // only 4 fields
-		"99 99 * * *", // out-of-range
-		"@bogus",      // unknown descriptor
-	}
-	for _, s := range invalid {
-		if err := ValidateSchedule(s); err == nil {
-			t.Errorf("ValidateSchedule(%q) = nil, want error", s)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSchedule(tt.spec)
+			if tt.wantErr && err == nil {
+				t.Errorf("ValidateSchedule(%q) = nil, want error", tt.spec)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ValidateSchedule(%q) = %v, want nil", tt.spec, err)
+			}
+		})
 	}
 }

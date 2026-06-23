@@ -116,13 +116,20 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 // validateJobInput enforces the create/update invariants the DB and scheduler
 // otherwise surface only as a 500 or a silently-non-firing job: a non-empty
 // (trimmed) name and a schedule the scheduler can actually run. It trims the
-// name in place. On failure it writes a 400 response and returns false.
+// name and schedule in place. On failure it writes a 400 response and returns
+// false.
 func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 	job.Name = strings.TrimSpace(job.Name)
 	if job.Name == "" {
 		respondError(w, http.StatusBadRequest, "name is required")
 		return false
 	}
+	// Normalize the schedule in place so a whitespace-only value is stored as
+	// "" (manual-only). Otherwise it would pass validation (ValidateSchedule
+	// trims internally) yet persist as non-empty, and the scheduler's
+	// `Schedule != ""` check would then try to cron-parse "   ", fail, and
+	// leave the job marked scheduled but never actually running.
+	job.Schedule = strings.TrimSpace(job.Schedule)
 	if err := scheduler.ValidateSchedule(job.Schedule); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid schedule: "+err.Error())
 		return false
@@ -192,6 +199,17 @@ func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
 	if !ok {
+		return
+	}
+	// UpdateJob is an UPDATE … WHERE id=? that does not error on zero rows, so
+	// without this check updating a non-existent id returned 200 with an echoed
+	// body (silent no-op). 404 here matches Get and the storage Update handler.
+	if _, err := h.db.GetJob(id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "not found")
+			return
+		}
+		respondInternalError(w, err)
 		return
 	}
 	var req struct {

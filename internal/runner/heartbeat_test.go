@@ -57,6 +57,10 @@ func TestHeartbeatStopsOnContextCancel(t *testing.T) {
 	hb := NewHeartbeat(path, "v", interval)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// Guarantee the heartbeat goroutine is torn down even if an assertion below
+	// calls t.Fatal before the explicit cancel() — otherwise it keeps writing
+	// to the removed t.TempDir for the rest of the test binary's lifetime.
+	defer cancel()
 	hb.Start(ctx)
 
 	// Make sure the ticker has actually fired at least once (mtime advanced

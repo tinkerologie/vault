@@ -427,10 +427,11 @@ func TestJobUpdate_NotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := withURLParam(newReq(http.MethodPut, "/api/v1/jobs/9999", body), "id", "9999")
 	h.Update(w, r)
-	// UpdateJob against a non-existent row does not return an error from SQLite
-	// (it just updates 0 rows), so we expect 200 back.
-	if w.Code == http.StatusBadRequest {
-		t.Fatalf("unexpected 400; body: %s", w.Body.String())
+	// Update verifies the job exists first: UpdateJob is an UPDATE … WHERE id=?
+	// that affects 0 rows for an unknown id without erroring, so the handler
+	// now returns 404 rather than a misleading 200 (silent no-op).
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
 	}
 }
 

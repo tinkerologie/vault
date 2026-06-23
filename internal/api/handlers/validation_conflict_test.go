@@ -41,31 +41,91 @@ func TestJobHandler_Create_Validation(t *testing.T) {
 	}
 }
 
-// TestJobHandler_Create_DuplicateName_Conflict ensures a duplicate job name
-// returns 409 Conflict with an actionable message instead of a raw 500.
-func TestJobHandler_Create_DuplicateName_Conflict(t *testing.T) {
+// TestJobHandler_Create_NormalizesWhitespaceSchedule ensures a whitespace-only
+// schedule is stored as "" (manual-only). Otherwise it would pass validation
+// but persist as non-empty, and the scheduler would try (and fail) to
+// cron-parse it, leaving the job marked scheduled yet never running.
+func TestJobHandler_Create_NormalizesWhitespaceSchedule(t *testing.T) {
 	h := newJobHandler(t)
-	body := `{"name":"dup-job"}`
-
-	w1 := httptest.NewRecorder()
-	h.Create(w1, newReq("POST", "/jobs", []byte(body)))
-	if w1.Code != http.StatusCreated {
-		t.Fatalf("first create: got %d, want 201 (%s)", w1.Code, w1.Body.String())
+	w := httptest.NewRecorder()
+	h.Create(w, newReq(http.MethodPost, "/jobs", []byte(`{"name":"qa-ws-sched","schedule":"   "}`)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got %d, want 201 (%s)", w.Code, w.Body.String())
 	}
-
-	w2 := httptest.NewRecorder()
-	h.Create(w2, newReq("POST", "/jobs", []byte(body)))
-	if w2.Code != http.StatusConflict {
-		t.Fatalf("duplicate create: got %d, want 409 (%s)", w2.Code, w2.Body.String())
-	}
-	if !strings.Contains(w2.Body.String(), "already exists") {
-		t.Fatalf("expected an actionable conflict message, got %s", w2.Body.String())
+	if !strings.Contains(w.Body.String(), `"schedule":""`) {
+		t.Fatalf("expected normalized empty schedule in response, got %s", w.Body.String())
 	}
 }
 
-// TestJobHandler_Update_Validation_And_Conflict covers the same invariants on
-// the Update path: empty name → 400, and renaming onto an existing name → 409.
-func TestJobHandler_Update_Validation_And_Conflict(t *testing.T) {
+// TestHandlers_DuplicateName_Conflict confirms the shared duplicate-name → 409
+// mapping is wired into the job, storage, and replication create handlers (not
+// a raw 500 from the underlying UNIQUE constraint).
+func TestHandlers_DuplicateName_Conflict(t *testing.T) {
+	tests := []struct {
+		name    string
+		creates func(t *testing.T) (first, second *httptest.ResponseRecorder)
+	}{
+		{
+			name: "job",
+			creates: func(t *testing.T) (*httptest.ResponseRecorder, *httptest.ResponseRecorder) {
+				h := newJobHandler(t)
+				body := []byte(`{"name":"dup-job"}`)
+				w1 := httptest.NewRecorder()
+				h.Create(w1, newReq(http.MethodPost, "/jobs", body))
+				w2 := httptest.NewRecorder()
+				h.Create(w2, newReq(http.MethodPost, "/jobs", body))
+				return w1, w2
+			},
+		},
+		{
+			name: "storage destination",
+			creates: func(t *testing.T) (*httptest.ResponseRecorder, *httptest.ResponseRecorder) {
+				h := newStorageHandlerForTest(t)
+				body := []byte(`{"name":"dup-dest","type":"local","config":"{\"path\":\"/tmp\"}"}`)
+				w1 := httptest.NewRecorder()
+				h.Create(w1, newReq(http.MethodPost, "/storage", body))
+				w2 := httptest.NewRecorder()
+				h.Create(w2, newReq(http.MethodPost, "/storage", body))
+				return w1, w2
+			},
+		},
+		{
+			name: "replication source",
+			creates: func(t *testing.T) (*httptest.ResponseRecorder, *httptest.ResponseRecorder) {
+				h, _ := setupReplicationTest(t)
+				body := []byte(`{"name":"dup-repl","url":"http://192.168.1.1:24085","storage_dest_id":1,"schedule":"0 3 * * *","enabled":true}`)
+				mk := func() *httptest.ResponseRecorder {
+					w := httptest.NewRecorder()
+					r := newReq(http.MethodPost, "/replication", body)
+					r.Header.Set("Content-Type", "application/json")
+					h.Create(w, r)
+					return w
+				}
+				return mk(), mk()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w1, w2 := tt.creates(t)
+			if w1.Code != http.StatusCreated {
+				t.Fatalf("first create: got %d, want 201 (%s)", w1.Code, w1.Body.String())
+			}
+			if w2.Code != http.StatusConflict {
+				t.Fatalf("duplicate create: got %d, want 409 (%s)", w2.Code, w2.Body.String())
+			}
+			if !strings.Contains(w2.Body.String(), "already exists") {
+				t.Fatalf("expected an actionable conflict message, got %s", w2.Body.String())
+			}
+		})
+	}
+}
+
+// TestJobHandler_Update_Validation covers the Update path invariants: empty
+// name → 400, renaming onto an existing name → 409, and an unknown id → 404
+// (rather than a silent 200 no-op).
+func TestJobHandler_Update_Validation(t *testing.T) {
 	h, d := newJobHandlerDB(t)
 	idA, err := d.CreateJob(db.Job{Name: "job-a"})
 	if err != nil {
@@ -74,22 +134,28 @@ func TestJobHandler_Update_Validation_And_Conflict(t *testing.T) {
 	if _, err := d.CreateJob(db.Job{Name: "job-b"}); err != nil {
 		t.Fatalf("seed job-b: %v", err)
 	}
-	idStr := strconv.FormatInt(idA, 10)
 
-	// Empty name on update → 400.
-	wEmpty := httptest.NewRecorder()
-	rEmpty := withURLParam(newReq("PUT", "/jobs/"+idStr, []byte(`{"name":""}`)), "id", idStr)
-	h.Update(wEmpty, rEmpty)
-	if wEmpty.Code != http.StatusBadRequest {
-		t.Fatalf("update empty name: got %d, want 400 (%s)", wEmpty.Code, wEmpty.Body.String())
+	tests := []struct {
+		name string
+		id   int64
+		body string
+		want int
+	}{
+		{"empty name", idA, `{"name":""}`, http.StatusBadRequest},
+		{"duplicate name", idA, `{"name":"job-b"}`, http.StatusConflict},
+		{"unknown id", 99999, `{"name":"whatever"}`, http.StatusNotFound},
 	}
 
-	// Rename job-a onto job-b's name → 409.
-	wDup := httptest.NewRecorder()
-	rDup := withURLParam(newReq("PUT", "/jobs/"+idStr, []byte(`{"name":"job-b"}`)), "id", idStr)
-	h.Update(wDup, rDup)
-	if wDup.Code != http.StatusConflict {
-		t.Fatalf("update to duplicate name: got %d, want 409 (%s)", wDup.Code, wDup.Body.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idStr := strconv.FormatInt(tt.id, 10)
+			w := httptest.NewRecorder()
+			r := withURLParam(newReq(http.MethodPut, "/jobs/"+idStr, []byte(tt.body)), "id", idStr)
+			h.Update(w, r)
+			if w.Code != tt.want {
+				t.Fatalf("got %d, want %d (%s)", w.Code, tt.want, w.Body.String())
+			}
+		})
 	}
 }
 
@@ -102,46 +168,4 @@ func newStorageHandlerForTest(t *testing.T) *StorageHandler {
 	go hub.Run()
 	r := runner.New(d, hub, bytes.Repeat([]byte{0xcd}, 32))
 	return NewStorageHandler(d, r)
-}
-
-// TestStorageHandler_Create_DuplicateName_Conflict confirms the shared
-// duplicate-name → 409 mapping is wired into the storage handler too.
-func TestStorageHandler_Create_DuplicateName_Conflict(t *testing.T) {
-	h := newStorageHandlerForTest(t)
-	body := `{"name":"dup-dest","type":"local","config":"{\"path\":\"/tmp\"}"}`
-
-	w1 := httptest.NewRecorder()
-	h.Create(w1, newReq("POST", "/storage", []byte(body)))
-	if w1.Code != http.StatusCreated {
-		t.Fatalf("first create: got %d, want 201 (%s)", w1.Code, w1.Body.String())
-	}
-
-	w2 := httptest.NewRecorder()
-	h.Create(w2, newReq("POST", "/storage", []byte(body)))
-	if w2.Code != http.StatusConflict {
-		t.Fatalf("duplicate create: got %d, want 409 (%s)", w2.Code, w2.Body.String())
-	}
-}
-
-// TestReplicationHandler_Create_DuplicateName_Conflict confirms the same for
-// replication sources.
-func TestReplicationHandler_Create_DuplicateName_Conflict(t *testing.T) {
-	h, _ := setupReplicationTest(t)
-	body := `{"name":"dup-repl","url":"http://192.168.1.1:24085","storage_dest_id":1,"schedule":"0 3 * * *","enabled":true}`
-
-	w1 := httptest.NewRecorder()
-	r1 := newReq("POST", "/replication", []byte(body))
-	r1.Header.Set("Content-Type", "application/json")
-	h.Create(w1, r1)
-	if w1.Code != http.StatusCreated {
-		t.Fatalf("first create: got %d, want 201 (%s)", w1.Code, w1.Body.String())
-	}
-
-	w2 := httptest.NewRecorder()
-	r2 := newReq("POST", "/replication", []byte(body))
-	r2.Header.Set("Content-Type", "application/json")
-	h.Create(w2, r2)
-	if w2.Code != http.StatusConflict {
-		t.Fatalf("duplicate create: got %d, want 409 (%s)", w2.Code, w2.Body.String())
-	}
 }
