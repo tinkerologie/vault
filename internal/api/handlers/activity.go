@@ -27,12 +27,15 @@ func (h *ActivityHandler) List(w http.ResponseWriter, r *http.Request) {
 	const maxActivityLimit = 1000
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			if parsed > maxActivityLimit {
-				parsed = maxActivityLimit
-			}
-			limit = parsed
+		parsed, err := strconv.Atoi(l)
+		if err != nil || parsed < 1 {
+			respondError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
 		}
+		if parsed > maxActivityLimit {
+			parsed = maxActivityLimit
+		}
+		limit = parsed
 	}
 	category := r.URL.Query().Get("category")
 

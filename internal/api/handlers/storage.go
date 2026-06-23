@@ -100,7 +100,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, err := h.db.CreateStorageDestination(dest)
 	if err != nil {
-		respondInternalError(w, err)
+		respondWriteError(w, err, "storage destination")
 		return
 	}
 	// Re-fetch the row so the response includes server-assigned timestamps
@@ -200,7 +200,7 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.BackupDatabaseEnabled = *patch.BackupDatabaseEnabled
 	}
 	if err := h.db.UpdateStorageDestination(existing); err != nil {
-		respondInternalError(w, err)
+		respondWriteError(w, err, "storage destination")
 		return
 	}
 	saved, err := h.db.GetStorageDestination(id)
@@ -649,6 +649,16 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 func (h *StorageHandler) DependentJobs(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
 	if !ok {
+		return
+	}
+	// 404 on an unknown destination instead of reporting zero dependents,
+	// which read as "safe to delete" for an id that never existed.
+	if _, err := h.db.GetStorageDestination(id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "storage not found")
+			return
+		}
+		respondInternalError(w, err)
 		return
 	}
 	jobs, err := h.db.ListJobsByStorageDestID(id)
