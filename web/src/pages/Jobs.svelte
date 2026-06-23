@@ -1969,11 +1969,10 @@
   {/if}
 </Modal>
 
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && confirmDelete.show) confirmDelete = { show: false, id: 0, name: '', deleteFiles: false } }} />
 {#if confirmDelete.show}
   <div
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
-    onclick={(e) => { if (e.target === e.currentTarget) confirmDelete = { show: false, id: 0, name: '', deleteFiles: false } }}
-    onkeydown={(e) => { if (e.key === 'Escape') confirmDelete = { show: false, id: 0, name: '', deleteFiles: false } }}
     role="dialog" aria-modal="true" aria-labelledby="delete-title" tabindex="-1"
   >
     <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">

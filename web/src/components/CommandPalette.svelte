@@ -139,7 +139,6 @@
 {#if show}
   <div
     class="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm animate-backdrop"
-    onclick={(e) => { if (e.target === e.currentTarget) onclose() }}
     onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"

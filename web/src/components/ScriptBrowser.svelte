@@ -87,8 +87,7 @@
   </div>
 
   {#if open}
-    <!-- eslint-disable-next-line -->
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) open = false }} onkeydown={() => {}}>
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop" role="presentation">
       <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col animate-panel-up">
         <!-- Header -->
         <div class="flex items-center justify-between px-5 py-3 border-b border-border">

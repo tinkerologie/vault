@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Modals no longer close when you click the background** (closes #148). Clicking the dimmed backdrop behind a dialog – or releasing a text selection whose drag ended outside the dialog – used to dismiss the modal and discard any in-progress work, such as a half-filled backup job. Backdrop click-to-close has been removed from every modal: the job and storage wizards, confirmation dialogs, the command palette, and the path and script browsers. Modals are still dismissed the deliberate ways – the close (×) button, Cancel, or the Escape key – all unchanged.
+
+### Fixed
+
+- **Container appdata on Unassigned Devices is no longer auto-excluded from backups** (closes #152). Bind mounts under `/mnt/disks/` (the Unassigned Devices mount point) were wrongly flagged as a "direct disk volume" and shown greyed-out in the job wizard's **Container Mounts & Exclusions** step, so appdata kept on an Unassigned Devices SSD (e.g. a container's `/config` at `/mnt/disks/<device>/appdata/<app>`) could not be included in a backup. The direct-disk rule now matches only real array disks (`/mnt/disk1`, `/mnt/disk2`, …) and no longer catches the plural `/mnt/disks/`, so those mounts are backed up by default and are tickable like any other path.
+
 ## [2026.06.06] - 2026-06-22
 
 ### Added

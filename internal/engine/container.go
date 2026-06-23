@@ -109,8 +109,11 @@ func shouldSkipVolume(source string) (bool, string) {
 		}
 	}
 
-	// Skip direct disk access paths (/mnt/disk1, /mnt/disk2, etc.).
-	if strings.HasPrefix(norm, "/mnt/disk") {
+	// Skip direct array-disk access paths (/mnt/disk1, /mnt/disk2, etc.). A
+	// digit must follow "/mnt/disk" so this does not also match "/mnt/disks/"
+	// (the Unassigned Devices mount point), which holds legitimate appdata and
+	// data that must be backed up.
+	if rest := strings.TrimPrefix(norm, "/mnt/disk"); rest != norm && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
 		return true, "direct disk volume"
 	}
 

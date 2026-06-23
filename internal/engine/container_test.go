@@ -119,6 +119,10 @@ func TestShouldSkipVolume(t *testing.T) {
 		{"disk1", "/mnt/disk1/share", true, "direct disk volume"},
 		{"disk12", "/mnt/disk12/data", true, "direct disk volume"},
 
+		// Unassigned Devices (/mnt/disks/, plural) — backed up, not direct disk.
+		{"unassigned devices appdata", "/mnt/disks/SSD-Device/appdata/Jellyfin", false, ""},
+		{"unassigned devices share", "/mnt/disks/SSD-Device/data", false, ""},
+
 		// Root /mnt — skipped.
 		{"root mnt", "/mnt", true, "root /mnt mount"},
 
@@ -142,7 +146,7 @@ func TestShouldSkipVolume(t *testing.T) {
 			if gotSkip != tt.wantSkip {
 				t.Errorf("shouldSkipVolume(%q) skip = %v, want %v", tt.source, gotSkip, tt.wantSkip)
 			}
-			if tt.wantReason != "" && gotReason != tt.wantReason {
+			if gotReason != tt.wantReason {
 				t.Errorf("shouldSkipVolume(%q) reason = %q, want %q", tt.source, gotReason, tt.wantReason)
 			}
 		})
