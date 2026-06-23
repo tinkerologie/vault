@@ -146,7 +146,7 @@ func TestShouldSkipVolume(t *testing.T) {
 			if gotSkip != tt.wantSkip {
 				t.Errorf("shouldSkipVolume(%q) skip = %v, want %v", tt.source, gotSkip, tt.wantSkip)
 			}
-			if tt.wantReason != "" && gotReason != tt.wantReason {
+			if gotReason != tt.wantReason {
 				t.Errorf("shouldSkipVolume(%q) reason = %q, want %q", tt.source, gotReason, tt.wantReason)
 			}
 		})
