@@ -9,8 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.25
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.24
-	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.27
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.3
+	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.28
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/aws/smithy-go v1.27.2
 	github.com/cloudsoda/go-smb2 v0.0.0-20260408191215-349cbc5b0af3
 	github.com/coder/websocket v1.8.15
@@ -21,8 +21,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/klauspost/compress v1.18.6
-	github.com/moby/moby/api v1.54.2
-	github.com/moby/moby/client v0.4.1
+	github.com/moby/moby/api v1.55.0
+	github.com/moby/moby/client v0.5.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/pkg/sftp v1.13.10
 	github.com/robfig/cron/v3 v3.0.1
@@ -32,7 +32,7 @@ require (
 	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.46.0
 	golang.org/x/time v0.15.0
-	modernc.org/sqlite v1.52.0
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -98,7 +98,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
