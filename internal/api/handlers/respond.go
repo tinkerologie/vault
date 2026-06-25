@@ -7,6 +7,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // respondJSON writes a JSON response with the given status code.
@@ -28,6 +30,18 @@ func respondError(w http.ResponseWriter, status int, msg string) {
 func respondInternalError(w http.ResponseWriter, err error) {
 	log.Printf("internal error: %v", err)
 	respondError(w, http.StatusInternalServerError, "internal server error")
+}
+
+// respondWriteError maps a DB write error to an HTTP response. A UNIQUE
+// constraint violation (duplicate name) becomes 409 Conflict with an
+// actionable message; anything else is treated as an internal error. entity
+// is the user-facing noun for the conflicting row, e.g. "job".
+func respondWriteError(w http.ResponseWriter, err error, entity string) {
+	if db.IsUniqueViolation(err) {
+		respondError(w, http.StatusConflict, "a "+entity+" with this name already exists")
+		return
+	}
+	respondInternalError(w, err)
 }
 
 // parseID extracts and validates a numeric URL parameter. It returns the

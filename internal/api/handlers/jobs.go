@@ -17,6 +17,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -112,6 +113,30 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, jobs)
 }
 
+// validateJobInput validates and normalizes a job's name and schedule in place
+// before it is persisted. The name is trimmed and must be non-empty; the
+// schedule is trimmed (whitespace becomes "" = manual-only) and must be one the
+// scheduler can actually run — otherwise the job would be saved but silently
+// never fire. On failure it writes a 400 response and returns false.
+func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
+	job.Name = strings.TrimSpace(job.Name)
+	if job.Name == "" {
+		respondError(w, http.StatusBadRequest, "name is required")
+		return false
+	}
+	// Normalize the schedule in place so a whitespace-only value is stored as
+	// "" (manual-only). Otherwise it would pass validation (ValidateSchedule
+	// trims internally) yet persist as non-empty, and the scheduler's
+	// `Schedule != ""` check would then try to cron-parse "   ", fail, and
+	// leave the job marked scheduled but never actually running.
+	job.Schedule = strings.TrimSpace(job.Schedule)
+	if err := scheduler.ValidateSchedule(job.Schedule); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid schedule: "+err.Error())
+		return false
+	}
+	return true
+}
+
 func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		db.Job
@@ -119,6 +144,9 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if !validateJobInput(w, &req.Job) {
 		return
 	}
 	if req.MaxParallelUploads > 16 {
@@ -129,7 +157,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.db.CreateJob(req.Job)
 	if err != nil {
-		respondInternalError(w, err)
+		respondWriteError(w, err, "job")
 		return
 	}
 	for _, item := range req.Items {
@@ -173,12 +201,26 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// UpdateJob is an UPDATE … WHERE id=? that does not error on zero rows, so
+	// without this check updating a non-existent id returned 200 with an echoed
+	// body (silent no-op). 404 here matches Get and the storage Update handler.
+	if _, err := h.db.GetJob(id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
 	var req struct {
 		db.Job
 		Items []db.JobItem `json:"items"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if !validateJobInput(w, &req.Job) {
 		return
 	}
 	if req.MaxParallelUploads > 16 {
@@ -189,7 +231,7 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Job.ID = id
 	if err := h.db.UpdateJob(req.Job); err != nil {
-		respondInternalError(w, err)
+		respondWriteError(w, err, "job")
 		return
 	}
 	if req.Items != nil {
@@ -291,6 +333,16 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
 	if !ok {
+		return
+	}
+	// Reject unknown jobs with 404 rather than returning an empty list, which
+	// masked typos and was inconsistent with the sibling restore-points route.
+	if _, err := h.db.GetJob(id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "not found")
+			return
+		}
+		respondInternalError(w, err)
 		return
 	}
 	const maxLimit = 1000

@@ -342,6 +342,16 @@ func (h *AnomalyHandler) GetBaseline(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A genuinely unknown job is a 404; a known job that simply has no baseline
+	// yet is "still learning" and handled below as a 200 with a zero payload.
+	if _, err := h.db.GetJob(jobID); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		respondInternalError(w, err)
+		return
+	}
 	baseline, err := h.db.GetJobBaseline(jobID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {

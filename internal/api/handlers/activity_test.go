@@ -50,9 +50,9 @@ func TestActivityList_WithEntries(t *testing.T) {
 	d.LogActivity("info", "backup", "msg3", "{}")
 
 	tests := []struct {
-		name     string
-		query    string
-		wantLen  int
+		name    string
+		query   string
+		wantLen int
 	}{
 		{
 			name:    "no query params returns all (up to default 100)",
@@ -118,12 +118,26 @@ func TestActivityList_InvalidLimit(t *testing.T) {
 	h := NewActivityHandler(d)
 	d.LogActivity("info", "backup", "msg", "{}")
 
-	// A non-numeric limit is silently ignored; default (100) is used.
-	w := httptest.NewRecorder()
-	r := newReq(http.MethodGet, "/api/v1/activity?limit=abc", nil)
-	h.List(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
+	// Invalid limits are rejected with 400, matching /jobs/{id}/history.
+	tests := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{"non-numeric", "/api/v1/activity?limit=abc", http.StatusBadRequest},
+		{"negative", "/api/v1/activity?limit=-5", http.StatusBadRequest},
+		{"zero", "/api/v1/activity?limit=0", http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := newReq(http.MethodGet, tt.query, nil)
+			h.List(w, r)
+			if w.Code != tt.want {
+				t.Fatalf("status = %d, want %d", w.Code, tt.want)
+			}
+		})
 	}
 }
 

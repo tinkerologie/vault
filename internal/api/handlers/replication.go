@@ -127,7 +127,7 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, err := h.db.CreateReplicationSource(src)
 	if err != nil {
-		respondInternalError(w, err)
+		respondWriteError(w, err, "replication source")
 		return
 	}
 	src.ID = id
@@ -183,7 +183,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
-		respondInternalError(w, err)
+		respondWriteError(w, err, "replication source")
 		return
 	}
 

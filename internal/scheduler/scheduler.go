@@ -237,6 +237,25 @@ func (s *Scheduler) addVerifyJob(job db.Job) {
 	s.verifyEntries[job.ID] = entryID
 }
 
+// ValidateSchedule reports whether spec is a schedule the scheduler can run.
+// An empty spec is valid (a manual-only job that the scheduler skips). A
+// non-empty spec must parse with the same standard parser cron.New() uses in
+// addJob, after the custom "L" (last day of month) day-of-month token is
+// normalized. Keeping this in lockstep with addJob ensures the API never
+// accepts a schedule the scheduler would later silently reject (leaving the
+// job persisted but never firing).
+func ValidateSchedule(spec string) error {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil
+	}
+	if normalized, ok := parseLastDaySchedule(spec); ok {
+		spec = normalized
+	}
+	_, err := cron.ParseStandard(spec)
+	return err
+}
+
 // parseLastDaySchedule checks if a cron string contains L in the day-of-month
 // field and returns a daily equivalent schedule (e.g. "0 2 L * *" → "0 2 * * *").
 func parseLastDaySchedule(schedule string) (string, bool) {
