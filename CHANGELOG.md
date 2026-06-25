@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.06.07] - 2026-06-25
+
 ### Changed
 
 - **Modals no longer close when you click the background** (closes #148). Clicking the dimmed backdrop behind a dialog – or releasing a text selection whose drag ended outside the dialog – used to dismiss the modal and discard any in-progress work, such as a half-filled backup job. Backdrop click-to-close has been removed from every modal: the job and storage wizards, confirmation dialogs, the command palette, and the path and script browsers. Modals are still dismissed the deliberate ways – the close (×) button, Cancel, or the Escape key – all unchanged.
