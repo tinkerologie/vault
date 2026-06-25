@@ -113,11 +113,11 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, jobs)
 }
 
-// validateJobInput enforces the create/update invariants the DB and scheduler
-// otherwise surface only as a 500 or a silently-non-firing job: a non-empty
-// (trimmed) name and a schedule the scheduler can actually run. It trims the
-// name and schedule in place. On failure it writes a 400 response and returns
-// false.
+// validateJobInput validates and normalizes a job's name and schedule in place
+// before it is persisted. The name is trimmed and must be non-empty; the
+// schedule is trimmed (whitespace becomes "" = manual-only) and must be one the
+// scheduler can actually run — otherwise the job would be saved but silently
+// never fire. On failure it writes a 400 response and returns false.
 func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 	job.Name = strings.TrimSpace(job.Name)
 	if job.Name == "" {
