@@ -12,12 +12,12 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
-    "@tailwindcss/vite": "^4.3.1",
-    "eslint": "^10.5.0",
-    "eslint-plugin-svelte": "^3.19.0",
-    "globals": "^17.6.0",
-    "svelte": "^5.56.3",
+    "@tailwindcss/vite": "^4.3.2",
+    "eslint": "^10.6.0",
+    "eslint-plugin-svelte": "^3.20.0",
+    "globals": "^17.7.0",
+    "svelte": "^5.56.4",
     "tailwindcss": "^4.2.2",
-    "vite": "^8.0.16"
+    "vite": "^8.1.0"
   }
 }
