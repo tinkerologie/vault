@@ -5,6 +5,7 @@ vault
 # Staging temp dirs
 .vault-stage/
 .vault-tmp/
+graphify-out/
 
 # Go
 *.exe
