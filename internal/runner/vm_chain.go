@@ -70,6 +70,12 @@ func resolveVMChainDisks(stepDirs []string) ([]vmChainDisk, error) {
 	}
 	if metaErr == nil && len(meta.Disks) > 0 {
 		for _, d := range meta.Disks {
+			// A record without both fields can't be resolved — an empty
+			// base would turn the filename candidates into bare
+			// extensions (".qcow2") that could match unrelated files.
+			if d.Target == "" || d.BackupFile == "" {
+				continue
+			}
 			base := strings.TrimSuffix(d.BackupFile, filepath.Ext(d.BackupFile))
 			keys = append(keys, diskKey{target: d.Target, base: base})
 		}

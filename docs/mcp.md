@@ -25,9 +25,12 @@ Pick the path that matches how you reach your server.
 #### LAN-only (recommended): `mcp-remote` stdio bridge
 
 Claude Desktop launches a local [`mcp-remote`](https://www.npmjs.com/package/mcp-remote)
-process that bridges to Vault's HTTP endpoint over your LAN. No TLS or public
-exposure is required; you just need Node.js installed on the same machine as
-Claude Desktop.
+process that bridges to Vault's HTTP endpoint over your LAN. Vault must be
+configured to listen on a LAN-reachable address (Settings → Vault on the Unraid
+webgui — the default bind is `127.0.0.1`, which is not reachable from another
+machine). Traffic, including the API key header, travels unencrypted over HTTP,
+so only use this on a trusted LAN. No TLS or public exposure is required; you
+just need Node.js installed on the same machine as Claude Desktop.
 
 ```json
 {

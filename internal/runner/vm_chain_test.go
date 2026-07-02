@@ -3,7 +3,6 @@ package runner
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -113,32 +112,32 @@ func TestCopyDirShallowMissingSrc(t *testing.T) {
 func TestChainLayerPathForStepCandidates(t *testing.T) {
 	t.Parallel()
 
-	d1 := t.TempDir()
-	d2 := t.TempDir()
-	d3 := t.TempDir()
-	d4 := t.TempDir()
-
-	if err := os.WriteFile(filepath.Join(d1, "vda.qcow2"), []byte("L1"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(d2, "vda.raw"), []byte("L2"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(d3, "vda"), []byte("L3"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(d4, "vda.img"), []byte("L4"), 0o644); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name     string
+		diskFile string
+	}{
+		{"qcow2", "vda.qcow2"},
+		{"raw", "vda.raw"},
+		{"extensionless", "vda"},
+		{"img", "vda.img"},
 	}
 
-	for i, dir := range []string{d1, d2, d3, d4} {
-		p, err := chainLayerPathForStep(dir, "vda", "vda")
-		if err != nil {
-			t.Fatalf("chainLayerPathForStep(step %d): %v", i, err)
-		}
-		if !strings.HasPrefix(p, dir) {
-			t.Errorf("layer %d = %q, want prefix %q", i, p, dir)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, tt.diskFile), []byte("layer"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			p, err := chainLayerPathForStep(dir, "vda", "vda")
+			if err != nil {
+				t.Fatalf("chainLayerPathForStep: %v", err)
+			}
+			if p != filepath.Join(dir, tt.diskFile) {
+				t.Errorf("layer = %q, want %q", p, filepath.Join(dir, tt.diskFile))
+			}
+		})
 	}
 }
 

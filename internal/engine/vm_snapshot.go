@@ -42,6 +42,9 @@ type domainDisk struct {
 type skippedDomainDisk struct {
 	Target     string
 	SourceType string
+	// SourcePath is the <source dev=...> path for block-backed disks, so the
+	// operator can identify which device was skipped. Empty for network disks.
+	SourcePath string
 }
 
 // domainDiskInventory is the parsed disk view of a domain: the file-backed
@@ -153,6 +156,7 @@ func parseDomainDiskInventory(xmlDesc string) (domainDiskInventory, error) {
 			inventory.Skipped = append(inventory.Skipped, skippedDomainDisk{
 				Target:     strings.TrimSpace(disk.Target.Dev),
 				SourceType: sourceType,
+				SourcePath: strings.TrimSpace(disk.Source.Dev),
 			})
 			continue
 		}
@@ -210,6 +214,10 @@ func formatSkippedDomainDisks(skipped []skippedDomainDisk) string {
 	}
 	parts := make([]string, 0, len(skipped))
 	for _, s := range skipped {
+		if s.SourcePath != "" {
+			parts = append(parts, fmt.Sprintf("%s(source type %s, %s)", s.Target, s.SourceType, s.SourcePath))
+			continue
+		}
 		parts = append(parts, fmt.Sprintf("%s(source type %s)", s.Target, s.SourceType))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"

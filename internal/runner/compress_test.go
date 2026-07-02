@@ -131,4 +131,8 @@ func TestTransportCompressReaderRoundTrip(t *testing.T) {
 	if got := transportCompressionSuffix("none"); got != "" {
 		t.Fatalf("suffix for none = %q, want empty", got)
 	}
+
+	if _, err := transportCompressReader("brotli", bytes.NewReader(plain)); err == nil {
+		t.Fatal("expected error for unsupported transport codec")
+	}
 }

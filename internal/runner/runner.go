@@ -2204,14 +2204,15 @@ func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, d
 // not wrap those uploads — historically the engine always emitted .tar.gz and
 // the runner added a second transport-layer compression on top, which yielded
 // double-compressed files and ignored the user's "None" selection entirely.
-// VM backups are the exception: the engine stages raw artifacts (disk images,
-// domain.xml, vm_meta.json, NVRAM) with no codec of their own, so the job's
-// compression is applied here as a transport wrap. The restore path peels it
-// off content-based via decompressStoredReader, the same mechanism used for
-// legacy double-wrapped backups.
+// VM and ZFS backups are the exception: their engines stage raw artifacts
+// (disk images, domain.xml, vm_meta.json, NVRAM, zfs send streams) with no
+// codec of their own, so the job's compression is applied here as a transport
+// wrap. The restore path peels it off content-based via
+// decompressStoredReader, the same mechanism used for legacy double-wrapped
+// backups.
 func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, itemType string, itemName string, concurrency int) (map[string]string, error) {
 	transportCompression := "none"
-	if itemType == "vm" {
+	if itemType == "vm" || itemType == "zfs" {
 		transportCompression = compression
 	}
 

@@ -84,17 +84,23 @@ func TestParseDomainDiskInventoryReportsSkippedDisks(t *testing.T) {
 	if inventory.Skipped[0].Target != "hdc" || inventory.Skipped[0].SourceType != "block" {
 		t.Fatalf("unexpected skipped disk: %+v", inventory.Skipped[0])
 	}
+	if inventory.Skipped[0].SourcePath != "/dev/disk/by-id/ata-Samsung" {
+		t.Fatalf("expected skipped disk to carry its block source path, got %q", inventory.Skipped[0].SourcePath)
+	}
 }
 
 func TestFormatSkippedDomainDisks(t *testing.T) {
 	t.Parallel()
 
 	desc := formatSkippedDomainDisks([]skippedDomainDisk{
-		{Target: "hdc", SourceType: "block"},
+		{Target: "hdc", SourceType: "block", SourcePath: "/dev/disk/by-id/ata-Samsung"},
 		{Target: "vdb", SourceType: "network"},
 	})
 	if !strings.Contains(desc, "hdc") || !strings.Contains(desc, "block") {
 		t.Fatalf("expected skipped disk description to name target and source type: %s", desc)
+	}
+	if !strings.Contains(desc, "/dev/disk/by-id/ata-Samsung") {
+		t.Fatalf("expected skipped disk description to include the block source path: %s", desc)
 	}
 }
 
