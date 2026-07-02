@@ -283,3 +283,21 @@ func TestUpdateVMBackupMetadataInvalidJSON(t *testing.T) {
 		t.Fatalf("expected parse-vm-metadata error wrap, got %v", err)
 	}
 }
+
+// TestVMDiskMetaJSONContract pins the vm_meta.json disk-record key names. The
+// runner's chain-restore code (internal/runner/vm_chain.go vmChainStepMeta)
+// decodes these fields independently, so a renamed tag here would silently
+// break incremental VM restores.
+func TestVMDiskMetaJSONContract(t *testing.T) {
+	t.Parallel()
+
+	data, err := json.Marshal(vmDiskMeta{Target: "hdc", BackupFile: "vdisk0.img", Format: "qcow2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"target"`, `"backup_file"`, `"format"`} {
+		if !strings.Contains(string(data), key) {
+			t.Fatalf("vm_meta.json disk record lost key %s: %s", key, data)
+		}
+	}
+}

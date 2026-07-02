@@ -2182,6 +2182,7 @@ func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, d
 
 	result, err := handler.Backup(ctx, item, tmpDir, progress)
 	if err != nil {
+		log.Printf("runner: backup %s %q failed: %v", item.Type, item.Name, err)
 		cleanup()
 		return "", nil, func() {}, fmt.Errorf("backup %s: %w", item.Name, err)
 	}
@@ -2198,14 +2199,22 @@ func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, d
 // re-applies encryption each attempt, so the retry layer can replay the upload
 // from a fresh stream. The runner no longer runs its own per-file backoff loop.
 //
-// Compression is applied by the engine when it produces the archive so the
-// runner does not wrap the upload stream — historically the engine always
-// emitted .tar.gz and the runner added a second transport-layer compression on
-// top, which yielded double-compressed files and ignored the user's "None"
-// selection entirely. The compression parameter is retained for the call
-// signature but intentionally unused here.
+// Compression for archive-producing item types (container, folder, plugin)
+// is applied by the engine when it produces the archive, so the runner does
+// not wrap those uploads — historically the engine always emitted .tar.gz and
+// the runner added a second transport-layer compression on top, which yielded
+// double-compressed files and ignored the user's "None" selection entirely.
+// VM and ZFS backups are the exception: their engines stage raw artifacts
+// (disk images, domain.xml, vm_meta.json, NVRAM, zfs send streams) with no
+// codec of their own, so the job's compression is applied here as a transport
+// wrap. The restore path peels it off content-based via
+// decompressStoredReader, the same mechanism used for legacy double-wrapped
+// backups.
 func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, itemType string, itemName string, concurrency int) (map[string]string, error) {
-	_ = compression // applied by the engine; see doc comment
+	transportCompression := "none"
+	if itemType == "vm" || itemType == "zfs" {
+		transportCompression = compression
+	}
 
 	progress := func(pct int, msg string) {
 		r.lastProgressMu.Lock()
@@ -2267,7 +2276,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.
 		go func(entryName string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			storageName, checksum, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, itemType, itemName, progress)
+			storageName, checksum, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName, progress)
 			if storageName != "" {
 				mu.Lock()
 				checksums[storageName] = checksum // checksum is "" on error; key still enables cleanup
@@ -2340,7 +2349,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.
 // It returns (storageName, checksumHex, err). All per-attempt state (hasher,
 // uploaded counter, broadcast timer) is local so concurrent calls never share
 // mutable state.
-func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, itemType, itemName string, progress func(int, string)) (string, string, error) {
+func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName string, progress func(int, string)) (string, string, error) {
 	_ = itemType
 	_ = itemName
 
@@ -2353,7 +2362,11 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 		fileSize = fi.Size()
 	}
 
-	storageName := entryName
+	// Compression is applied before encryption (encrypted bytes don't
+	// compress) and both leave their mark on the stored name so the restore
+	// path can peel the layers back off in order.
+	compressSuffix := transportCompressionSuffix(transportCompression)
+	storageName := entryName + compressSuffix
 	if passphrase != "" {
 		storageName += ".age"
 	}
@@ -2375,10 +2388,21 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 		}
 		var src io.Reader = f
 		closers := []io.Closer{f}
-		if passphrase != "" {
-			enc, encErr := crypto.EncryptReader(passphrase, f)
-			if encErr != nil {
+		if compressSuffix != "" {
+			comp, compErr := transportCompressReader(transportCompression, f)
+			if compErr != nil {
 				_ = f.Close()
+				return nil, fmt.Errorf("compressing %s: %w", entryName, compErr)
+			}
+			src = comp
+			closers = append(closers, comp)
+		}
+		if passphrase != "" {
+			enc, encErr := crypto.EncryptReader(passphrase, src)
+			if encErr != nil {
+				for i := len(closers) - 1; i >= 0; i-- {
+					_ = closers[i].Close()
+				}
 				return nil, fmt.Errorf("encrypting %s: %w", entryName, encErr)
 			}
 			src = enc
@@ -2796,7 +2820,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 
 		r.reportRestoreProgress(reporter, 30, "Flattening VM chain")
 		flattenedDir := filepath.Join(tmpDir, "flat")
-		if err := flattenVMChain(stepDirs, flattenedDir); err != nil {
+		if err := flattenVMChain(ctx, stepDirs, flattenedDir); err != nil {
 			return fmt.Errorf("flattening VM chain: %w", err)
 		}
 		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100)

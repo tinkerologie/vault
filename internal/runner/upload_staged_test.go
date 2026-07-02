@@ -185,3 +185,64 @@ func TestUploadStagedFiles_ParallelAllChecksums(t *testing.T) {
 		t.Errorf("checksums = %d, want 6", len(sums))
 	}
 }
+
+// TestUploadStagedFiles_TransportCompression verifies the job's compression
+// setting is applied to uploads of item types whose engine stages raw
+// artifacts (issue: qcow2 files landed uncompressed on the destination even
+// with gzip/zstd configured) while engine-compressed item types
+// (container/folder/plugin archives) are still uploaded as-is.
+func TestUploadStagedFiles_TransportCompression(t *testing.T) {
+	t.Parallel()
+
+	payload := bytes.Repeat([]byte("fedora vm disk block "), 4096)
+
+	tests := []struct {
+		name           string
+		itemType       string
+		stagedName     string
+		storedName     string
+		wantCompressed bool
+	}{
+		{"vm_disk_zstd_compressed", "vm", "vdisk0.qcow2", "vdisk0.qcow2.zst", true},
+		{"zfs_send_stream_zstd_compressed", "zfs", "send.zfs", "send.zfs.zst", true},
+		{"container_archive_not_double_compressed", "container", "data.tar.zst", "data.tar.zst", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r, _ := newTestRunner(t)
+
+			tmpDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(tmpDir, tt.stagedName), payload, 0600); err != nil {
+				t.Fatalf("stage file: %v", err)
+			}
+			storeDir := filepath.Join(t.TempDir(), "store")
+			cfg, _ := json.Marshal(map[string]string{"path": storeDir})
+			dest := db.StorageDestination{Type: "local", Config: string(cfg)}
+
+			checksums, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp", false, "", "zstd", tt.itemType, "item", 1)
+			if err != nil {
+				t.Fatalf("uploadStagedFiles: %v", err)
+			}
+			if _, ok := checksums[tt.storedName]; !ok {
+				t.Fatalf("expected checksum keyed by stored name %s, got %v", tt.storedName, checksums)
+			}
+
+			stored, err := os.ReadFile(filepath.Join(storeDir, "rp", tt.storedName))
+			if err != nil {
+				t.Fatalf("stored file missing: %v", err)
+			}
+			if tt.wantCompressed {
+				if !looksCompressed(stored) {
+					t.Fatal("stored file is not compressed")
+				}
+				if len(stored) >= len(payload) {
+					t.Fatalf("stored file did not shrink: %d >= %d", len(stored), len(payload))
+				}
+			} else if !bytes.Equal(stored, payload) {
+				t.Fatal("engine-compressed archive must be stored byte-for-byte")
+			}
+		})
+	}
+}

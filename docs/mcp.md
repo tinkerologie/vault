@@ -4,26 +4,81 @@ Vault exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
 
 ## Transports
 
-| Transport       | Endpoint                         | Use Case                                   |
-| --------------- | -------------------------------- | ------------------------------------------ |
-| Streamable HTTP | `http://<host>:24085/api/v1/mcp` | Remote clients (Claude Desktop, web tools) |
-| Stdio           | `vault mcp --db <path>`          | Local clients (Claude Code, CLI tools)     |
+| Transport       | Endpoint                         | Use Case                                       |
+| --------------- | -------------------------------- | ---------------------------------------------- |
+| Streamable HTTP | `http://<host>:24085/api/v1/mcp` | Remote clients, via a stdio bridge or a tunnel |
+| Stdio           | `vault mcp --db <path>`          | Local clients (Claude Code, CLI tools)         |
+
+> **You can't paste the `http://…` endpoint straight into Claude Desktop.** Its
+> "Add custom connector" flow only accepts **HTTPS** URLs, and connectors are
+> reached **from Anthropic's cloud** — so a LAN address (`192.168.x.x`,
+> `tower.local`) is unreachable from Anthropic's servers and a self-signed
+> certificate is rejected. Native HTTPS alone (see below) does not make a LAN URL
+> work. Use one of the two paths in the Claude Desktop section.
 
 ## Configuration
 
 ### Claude Desktop
 
-Add to your Claude Desktop MCP settings:
+Pick the path that matches how you reach your server.
+
+#### LAN-only (recommended): `mcp-remote` stdio bridge
+
+Claude Desktop launches a local [`mcp-remote`](https://www.npmjs.com/package/mcp-remote)
+process that bridges to Vault's HTTP endpoint over your LAN. Vault must be
+configured to listen on a LAN-reachable address (Settings → Vault on the Unraid
+webgui — the default bind is `127.0.0.1`, which is not reachable from another
+machine). Traffic, including the API key header, travels unencrypted over HTTP,
+so only use this on a trusted LAN. No TLS or public exposure is required; you
+just need Node.js installed on the same machine as Claude Desktop.
 
 ```json
 {
   "mcpServers": {
     "vault": {
-      "url": "http://<host>:24085/api/v1/mcp"
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://<host>:24085/api/v1/mcp",
+        "--allow-http"
+      ]
     }
   }
 }
 ```
+
+If you have set an API key (Settings → API), pass it as a header. Note there is
+no space after the colon — `mcp-remote` mishandles spaces in header values:
+
+```json
+{
+  "mcpServers": {
+    "vault": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://<host>:24085/api/v1/mcp",
+        "--allow-http",
+        "--header",
+        "X-API-Key:<your-key>"
+      ]
+    }
+  }
+}
+```
+
+#### Custom Connector: public HTTPS endpoint
+
+To add Vault as a native Custom Connector, the endpoint must be reachable from
+Anthropic's cloud over HTTPS with a **publicly-trusted** certificate. Vault
+serves HTTPS natively when the daemon is started with `--tls-cert`/`--tls-key`,
+but a self-signed cert won't be accepted and a private IP won't be reachable.
+Put Vault behind a tunnel or reverse proxy that terminates trusted TLS — e.g.
+Cloudflare Tunnel, Tailscale Funnel, or nginx with a Let's Encrypt
+certificate — then add the resulting public `https://…/api/v1/mcp` URL under
+Settings → Connectors in Claude Desktop.
 
 ### Claude Code
 

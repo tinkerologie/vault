@@ -128,9 +128,19 @@ func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, p
 
 	diskXMLDesc := selectBackupDiskXML(stateValue, liveXMLDesc, inactiveXMLDesc)
 
-	disks, nvramPath, err := parseDomainDisksWithTargets(diskXMLDesc)
+	inventory, err := parseDomainDiskInventory(diskXMLDesc)
 	if err != nil {
 		return nil, fmt.Errorf("parsing domain XML: %w", err)
+	}
+	disks, nvramPath := inventory.Disks, inventory.NVRAMPath
+
+	log.Printf("engine/vm: %s (state=%s) disk inventory: %d eligible %s, %d skipped %s",
+		item.Name, domainStateString(stateValue), len(disks), describeDomainDisks(disks),
+		len(inventory.Skipped), formatSkippedDomainDisks(inventory.Skipped))
+	if len(disks) == 0 && len(inventory.Skipped) > 0 {
+		// Backing up nothing while disks exist would be a silent data-loss
+		// trap: the run would "succeed" with only domain XML and metadata.
+		return nil, fmt.Errorf("VM %s has no file-backed disks the backup job can handle; skipped disks: %s", item.Name, formatSkippedDomainDisks(inventory.Skipped))
 	}
 
 	cleanDisks, err := h.cleanStaleSnapshots(item.Name, dom, disks, progress)
@@ -332,16 +342,6 @@ func (h *VMHandler) deriveCheckpointName(item BackupItem) string {
 	return fmt.Sprintf("vault-%s", time.Now().UTC().Format("20060102-150405"))
 }
 
-// allDisksQcow2 reports whether every disk's source path indicates qcow2.
-func allDisksQcow2(disks []domainDisk) bool {
-	for _, d := range disks {
-		if backupDriverType(d.Path) != "qcow2" {
-			return false
-		}
-	}
-	return len(disks) > 0
-}
-
 // checkpointExists returns true if the named libvirt checkpoint is currently
 // known to libvirt for the given domain. An RPC error is treated as
 // "not found" so callers can fall back to a full backup.
@@ -407,6 +407,7 @@ func (h *VMHandler) backupDisks(dom libvirt.Domain, name string, disks []domainD
 	}
 
 	progress(name, 25, "starting libvirt backup job")
+	log.Printf("engine/vm: %s starting backup job (parentCheckpoint=%q forceQcow2=%v): %s", name, parentCheckpoint, forceQcow2, backupXML)
 	if err := h.conn.DomainBackupBegin(dom, backupXML, nil, 0); err != nil {
 		return nil, fmt.Errorf("starting backup job: %w", err)
 	}
@@ -738,6 +739,38 @@ func domainStateString(state libvirt.DomainState) string {
 	}
 }
 
+// destroyDomainWithRetry tears down a domain, retrying while the qemu process
+// is stuck in uninterruptible IO — after a large backup the process can sit in
+// D-state flushing dirty pages to fuse-backed storage, so libvirt's kill wait
+// times out with "Failed to terminate process ... with SIGKILL: Device or
+// resource busy" even though the process exits once the flush completes.
+func (h *VMHandler) destroyDomainWithRetry(dom libvirt.Domain, name string) error {
+	deadline := time.Now().Add(vmShutdownTimeout)
+	for {
+		err := h.conn.DomainDestroy(dom)
+		if err == nil || isLibvirtNoDomainError(err) {
+			return nil
+		}
+
+		// The kill may have landed despite the error — check whether the
+		// domain is already gone or shut off before retrying.
+		state, _, stateErr := h.conn.DomainGetState(dom, 0)
+		if stateErr != nil {
+			if isLibvirtNoDomainError(stateErr) {
+				return nil
+			}
+		} else if libvirtDomainIsShutOff(libvirt.DomainState(state)) {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("destroying domain %s: giving up after %s: %w", name, vmShutdownTimeout, err)
+		}
+		log.Printf("engine/vm: destroying domain %s: %v — retrying", name, err)
+		time.Sleep(vmShutdownPollInterval)
+	}
+}
+
 // prepareDomainForBackup normalizes the domain into a libvirt state that can
 // run DomainBackupBegin while preserving the caller-visible power state as
 // closely as possible.
@@ -756,10 +789,7 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 		}
 
 		return backupDom, func() error {
-			if err := h.conn.DomainDestroy(backupDom); err != nil && !isLibvirtNoDomainError(err) {
-				return err
-			}
-			return nil
+			return h.destroyDomainWithRetry(backupDom, name)
 		}, nil
 	}
 
@@ -784,7 +814,7 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 
 	if shutdownErr != nil || !libvirtDomainIsShutOff(state) {
 		progress(name, 22, "forcing domain stop for cold backup")
-		if err := h.conn.DomainDestroy(dom); err != nil {
+		if err := h.destroyDomainWithRetry(dom, name); err != nil {
 			if shutdownErr != nil {
 				return libvirt.Domain{}, nil, fmt.Errorf("stopping domain for cold backup: shutdown failed: %v; destroy failed: %w", shutdownErr, err)
 			}
@@ -803,7 +833,7 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 	}
 
 	return backupDom, func() error {
-		if err := h.conn.DomainDestroy(backupDom); err != nil && !isLibvirtNoDomainError(err) {
+		if err := h.destroyDomainWithRetry(backupDom, name); err != nil {
 			return fmt.Errorf("stopping paused backup session: %w", err)
 		}
 		if err := h.conn.DomainCreate(dom); err != nil {
@@ -815,33 +845,53 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 
 func (h *VMHandler) waitForBackupCompletion(dom libvirt.Domain, name string, artifacts []vmBackupArtifact, progress ProgressFunc) error {
 	const backupTimeout = 2 * time.Hour
+	// The job can vanish without a completed-stats record (libvirt reports
+	// that as a successful query with job type DomainJobNone — see issue
+	// #160). Give the artifacts a few polls to appear before concluding the
+	// job died without producing them.
+	const vanishedGraceAttempts = 5
 
+	vanishedPolls := 0
 	deadline := time.Now().Add(backupTimeout)
 	for {
 		jobType, params, err := h.conn.DomainGetJobStats(dom, 0)
 		if err != nil {
-			completedType, completedParams, completedErr := h.conn.DomainGetJobStats(dom, libvirt.DomainJobStatsCompleted|libvirt.DomainJobStatsKeepCompleted)
-			if completedErr == nil {
-				return backupJobError(libvirt.DomainJobType(completedType), completedParams)
+			done, jobErr := h.vanishedBackupJobOutcome(dom, name, artifacts)
+			if done {
+				if jobErr == nil {
+					progress(name, 85, "backup job completed")
+				}
+				return jobErr
 			}
-			return fmt.Errorf("getting backup job stats: %w", err)
-		}
-
-		typeValue := libvirt.DomainJobType(jobType)
-		switch typeValue {
-		case libvirt.DomainJobCompleted, libvirt.DomainJobFailed, libvirt.DomainJobCancelled:
-			return backupJobError(typeValue, params)
-		case libvirt.DomainJobNone:
-			completedType, completedParams, completedErr := h.conn.DomainGetJobStats(dom, libvirt.DomainJobStatsCompleted|libvirt.DomainJobStatsKeepCompleted)
-			if completedErr == nil {
-				return backupJobError(libvirt.DomainJobType(completedType), completedParams)
+			vanishedPolls++
+			if vanishedPolls >= vanishedGraceAttempts {
+				return fmt.Errorf("getting backup job stats: %w; %s", err, describeMissingBackupArtifacts(artifacts))
 			}
-			if backupArtifactsExist(artifacts) {
-				progress(name, 85, "backup job completed")
+		} else {
+			typeValue := libvirt.DomainJobType(jobType)
+			switch typeValue {
+			case libvirt.DomainJobCompleted, libvirt.DomainJobFailed, libvirt.DomainJobCancelled:
+				if jobErr := backupJobError(typeValue, params); jobErr != nil {
+					log.Printf("engine/vm: backup job for %s ended with type=%s params=%+v", name, typeValue, params)
+					return jobErr
+				}
 				return nil
+			case libvirt.DomainJobNone:
+				done, jobErr := h.vanishedBackupJobOutcome(dom, name, artifacts)
+				if done {
+					if jobErr == nil {
+						progress(name, 85, "backup job completed")
+					}
+					return jobErr
+				}
+				vanishedPolls++
+				if vanishedPolls >= vanishedGraceAttempts {
+					return fmt.Errorf("backup job for %s ended without a completion record; %s", name, describeMissingBackupArtifacts(artifacts))
+				}
+			default:
+				vanishedPolls = 0
+				progress(name, backupProgressPercent(params), backupProgressMessage(params))
 			}
-		default:
-			progress(name, backupProgressPercent(params), backupProgressMessage(params))
 		}
 
 		if time.Now().After(deadline) {
@@ -852,168 +902,19 @@ func (h *VMHandler) waitForBackupCompletion(dom libvirt.Domain, name string, art
 	}
 }
 
-func backupJobError(jobType libvirt.DomainJobType, params []libvirt.TypedParam) error {
-	success, ok := typedParamBool(params, "success")
-	if ok && success {
-		return nil
+// vanishedBackupJobOutcome consults the completed-job stats once the active
+// backup job is gone, falling back to the artifacts on disk when libvirt has
+// no completed-job record for the domain.
+func (h *VMHandler) vanishedBackupJobOutcome(dom libvirt.Domain, name string, artifacts []vmBackupArtifact) (bool, error) {
+	completedType, completedParams, completedErr := h.conn.DomainGetJobStats(dom, libvirt.DomainJobStatsCompleted|libvirt.DomainJobStatsKeepCompleted)
+	done, jobErr := resolveVanishedBackupJob(libvirt.DomainJobType(completedType), completedParams, completedErr, backupArtifactsExist(artifacts))
+	if done && jobErr != nil {
+		log.Printf("engine/vm: backup job for %s failed: completedType=%s completedErr=%v params=%+v", name, libvirt.DomainJobType(completedType), completedErr, completedParams)
 	}
-
-	errMsg := typedParamString(params, "errmsg", "error")
-	if errMsg == "" {
-		errMsg = jobType.String()
+	if done && jobErr == nil && (completedErr != nil || libvirt.DomainJobType(completedType) == libvirt.DomainJobNone) {
+		log.Printf("engine/vm: backup job for %s finished without a completed-stats record (completedErr=%v); success inferred from artifacts on disk", name, completedErr)
 	}
-
-	switch jobType {
-	case libvirt.DomainJobCompleted:
-		if ok && !success {
-			return fmt.Errorf("backup job failed: %s", errMsg)
-		}
-		return nil
-	case libvirt.DomainJobFailed:
-		return fmt.Errorf("backup job failed: %s", errMsg)
-	case libvirt.DomainJobCancelled:
-		return fmt.Errorf("backup job cancelled: %s", errMsg)
-	default:
-		return fmt.Errorf("backup job ended unexpectedly: %s", errMsg)
-	}
-}
-
-func backupArtifactsExist(artifacts []vmBackupArtifact) bool {
-	for _, artifact := range artifacts {
-		info, err := os.Stat(artifact.TargetPath)
-		if err != nil || info.Size() == 0 {
-			return false
-		}
-	}
-
-	return len(artifacts) > 0
-}
-
-func backupProgressPercent(params []libvirt.TypedParam) int {
-	processed, okProcessed := typedParamUint64(params, "fileprocessed", "diskprocessed", "dataprocessed")
-	total, okTotal := typedParamUint64(params, "filetotal", "disktotal", "datatotal")
-	if !okProcessed || !okTotal || total == 0 {
-		return 50
-	}
-
-	percent := int((processed * 100) / total)
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
-
-	return 35 + (percent * 50 / 100)
-}
-
-func backupProgressMessage(params []libvirt.TypedParam) string {
-	processed, okProcessed := typedParamUint64(params, "fileprocessed", "diskprocessed", "dataprocessed")
-	total, okTotal := typedParamUint64(params, "filetotal", "disktotal", "datatotal")
-	if okProcessed && okTotal && total > 0 {
-		return fmt.Sprintf("backup in progress: %s/%s", humanizeBytes(float64(processed)), humanizeBytes(float64(total)))
-	}
-
-	return "backup in progress"
-}
-
-func typedParamBool(params []libvirt.TypedParam, keys ...string) (bool, bool) {
-	for _, param := range params {
-		switch normalizeTypedParamField(param.Field) {
-		case keys[0]:
-			return typedParamValueBool(param.Value), true
-		}
-		for _, key := range keys[1:] {
-			if normalizeTypedParamField(param.Field) == key {
-				return typedParamValueBool(param.Value), true
-			}
-		}
-	}
-
-	return false, false
-}
-
-func typedParamUint64(params []libvirt.TypedParam, keys ...string) (uint64, bool) {
-	for _, param := range params {
-		normalized := normalizeTypedParamField(param.Field)
-		for _, key := range keys {
-			if normalized != key {
-				continue
-			}
-
-			switch value := param.Value.I.(type) {
-			case uint64:
-				return value, true
-			case int64:
-				if value >= 0 {
-					return uint64(value), true
-				}
-			case uint32:
-				return uint64(value), true
-			case int32:
-				if value >= 0 {
-					return uint64(value), true
-				}
-			case int:
-				if value >= 0 {
-					return uint64(value), true
-				}
-			case uint:
-				return uint64(value), true
-			}
-		}
-	}
-
-	return 0, false
-}
-
-func typedParamString(params []libvirt.TypedParam, keys ...string) string {
-	for _, param := range params {
-		normalized := normalizeTypedParamField(param.Field)
-		for _, key := range keys {
-			if normalized != key {
-				continue
-			}
-
-			if value, ok := param.Value.I.(string); ok {
-				return value
-			}
-		}
-	}
-
-	return ""
-}
-
-func typedParamValueBool(value libvirt.TypedParamValue) bool {
-	switch typed := value.I.(type) {
-	case bool:
-		return typed
-	case int32:
-		return typed != 0
-	case uint32:
-		return typed != 0
-	case int:
-		return typed != 0
-	case uint:
-		return typed != 0
-	default:
-		return false
-	}
-}
-
-func normalizeTypedParamField(field string) string {
-	var builder strings.Builder
-	builder.Grow(len(field))
-	for _, r := range field {
-		if r >= 'A' && r <= 'Z' {
-			builder.WriteRune(r + ('a' - 'A'))
-			continue
-		}
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			builder.WriteRune(r)
-		}
-	}
-	return builder.String()
+	return done, jobErr
 }
 
 func formatDomainUUID(uuid libvirt.UUID) string {
