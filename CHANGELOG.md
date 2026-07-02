@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.07.00] - 2026-07-02
+
 ### Fixed
 
 - **VM backups now honour the job's compression setting.** Container, folder, and plugin backups compress their archives in the engine, but VM backups stage raw artifacts (disk images, `domain.xml`, `vm_meta.json`, NVRAM) and the upload layer never applied a codec — so jobs configured for gzip or Zstandard still landed full-size, uncompressed `qcow2`/`img` files on the destination. VM uploads are now compressed in transit with the configured codec (stored as `.gz`/`.zst`, compressed before encryption) and transparently decompressed on restore; existing uncompressed backups keep restoring unchanged. A 10 GiB Fedora test disk dropped from 2.7 GB to 1.1 GB on the destination with zstd.
