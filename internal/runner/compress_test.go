@@ -68,3 +68,67 @@ func TestDecompressStoredReader_ContentBased(t *testing.T) {
 		})
 	}
 }
+
+// VM engine artifacts (qcow2 images, domain.xml, vm_meta.json) are staged
+// uncompressed — unlike container/folder archives, the engine applies no
+// codec — so the upload path must honour the job's compression for them.
+func TestTransportCompressReaderRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	plain := bytes.Repeat([]byte("vault vm disk content "), 1024)
+
+	for _, tt := range []struct {
+		compression string
+		wantSuffix  string
+	}{
+		{"gzip", ".gz"},
+		{"zstd", ".zst"},
+	} {
+		t.Run(tt.compression, func(t *testing.T) {
+			t.Parallel()
+			suffix := transportCompressionSuffix(tt.compression)
+			if suffix != tt.wantSuffix {
+				t.Fatalf("suffix = %q, want %q", suffix, tt.wantSuffix)
+			}
+
+			rc, err := transportCompressReader(tt.compression, bytes.NewReader(plain))
+			if err != nil {
+				t.Fatalf("transportCompressReader: %v", err)
+			}
+			compressed, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("read compressed: %v", err)
+			}
+			if err := rc.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+			if !looksCompressed(compressed) {
+				t.Fatal("output does not carry a gzip/zstd magic number")
+			}
+			if len(compressed) >= len(plain) {
+				t.Fatalf("compressible input did not shrink: %d >= %d", len(compressed), len(plain))
+			}
+
+			// The restore path must transparently peel it back off.
+			dr, closeFn, name, err := decompressStoredReader(bytes.NewReader(compressed), "vdisk0.qcow2"+suffix, tt.compression)
+			if err != nil {
+				t.Fatalf("decompressStoredReader: %v", err)
+			}
+			defer func() { _ = closeFn() }()
+			got, err := io.ReadAll(dr)
+			if err != nil {
+				t.Fatalf("read decompressed: %v", err)
+			}
+			if !bytes.Equal(got, plain) {
+				t.Fatal("round trip mismatch")
+			}
+			if name != "vdisk0.qcow2" {
+				t.Fatalf("restored name = %q", name)
+			}
+		})
+	}
+
+	if got := transportCompressionSuffix("none"); got != "" {
+		t.Fatalf("suffix for none = %q, want empty", got)
+	}
+}

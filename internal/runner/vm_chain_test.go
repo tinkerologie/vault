@@ -107,54 +107,46 @@ func TestCopyDirShallowMissingSrc(t *testing.T) {
 	}
 }
 
-// TestChainLayerPathsForDiskHappy exercises the file-by-file discovery
-// loop. Each step dir is expected to have a vdaX.qcow2 (or .raw / extensionless).
-func TestChainLayerPathsForDiskHappy(t *testing.T) {
+// TestChainLayerPathForStepCandidates exercises the filename-candidate
+// fallback used for steps without vm_meta.json disk records. Each step dir
+// may hold the disk as .qcow2, .raw, .img or extensionless.
+func TestChainLayerPathForStepCandidates(t *testing.T) {
 	t.Parallel()
 
 	d1 := t.TempDir()
 	d2 := t.TempDir()
 	d3 := t.TempDir()
+	d4 := t.TempDir()
 
-	// Step 1: target.qcow2
 	if err := os.WriteFile(filepath.Join(d1, "vda.qcow2"), []byte("L1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Step 2: target.raw (covers the second candidate)
 	if err := os.WriteFile(filepath.Join(d2, "vda.raw"), []byte("L2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Step 3: extensionless target name (covers the middle candidate)
 	if err := os.WriteFile(filepath.Join(d3, "vda"), []byte("L3"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(d4, "vda.img"), []byte("L4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	layers, err := chainLayerPathsForDisk([]string{d1, d2, d3}, "vda")
-	if err != nil {
-		t.Fatalf("chainLayerPathsForDisk: %v", err)
-	}
-	if len(layers) != 3 {
-		t.Fatalf("len(layers)=%d, want 3", len(layers))
-	}
-	wantPrefixes := []string{d1, d2, d3}
-	for i, want := range wantPrefixes {
-		if !strings.HasPrefix(layers[i], want) {
-			t.Errorf("layer %d = %q, want prefix %q", i, layers[i], want)
+	for i, dir := range []string{d1, d2, d3, d4} {
+		p, err := chainLayerPathForStep(dir, "vda", "vda")
+		if err != nil {
+			t.Fatalf("chainLayerPathForStep(step %d): %v", i, err)
+		}
+		if !strings.HasPrefix(p, dir) {
+			t.Errorf("layer %d = %q, want prefix %q", i, p, dir)
 		}
 	}
 }
 
-// TestChainLayerPathsForDiskMissing exercises the not-found error path.
-func TestChainLayerPathsForDiskMissing(t *testing.T) {
+// TestChainLayerPathForStepMissing exercises the not-found error path.
+func TestChainLayerPathForStepMissing(t *testing.T) {
 	t.Parallel()
-	d1 := t.TempDir()
-	d2 := t.TempDir()
-	if err := os.WriteFile(filepath.Join(d1, "vda.qcow2"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// d2 has no disk file — chainLayerPathsForDisk should return an error.
-	_, err := chainLayerPathsForDisk([]string{d1, d2}, "vda")
-	if err == nil {
+	d := t.TempDir()
+	if _, err := chainLayerPathForStep(d, "vda", "vda"); err == nil {
 		t.Error("expected error when a step dir is missing the disk")
 	}
 }
@@ -163,7 +155,7 @@ func TestChainLayerPathsForDiskMissing(t *testing.T) {
 func TestFlattenVMChainNoSteps(t *testing.T) {
 	t.Parallel()
 	finalDir := filepath.Join(t.TempDir(), "out")
-	if err := flattenVMChain(nil, finalDir); err == nil {
+	if err := flattenVMChain(t.Context(), nil, finalDir); err == nil {
 		t.Error("expected error for empty step list")
 	}
 }
@@ -181,7 +173,7 @@ func TestFlattenVMChainSingleStep(t *testing.T) {
 	}
 
 	finalDir := filepath.Join(t.TempDir(), "flat")
-	if err := flattenVMChain([]string{step}, finalDir); err != nil {
+	if err := flattenVMChain(t.Context(), []string{step}, finalDir); err != nil {
 		t.Fatalf("flattenVMChain: %v", err)
 	}
 
@@ -207,7 +199,7 @@ func TestFlattenVMChainFinalDirCreated(t *testing.T) {
 	}
 	// finalDir under a not-yet-existing parent.
 	finalDir := filepath.Join(t.TempDir(), "deeply", "nested", "out")
-	if err := flattenVMChain([]string{step}, finalDir); err != nil {
+	if err := flattenVMChain(t.Context(), []string{step}, finalDir); err != nil {
 		t.Fatalf("flattenVMChain: %v", err)
 	}
 	if _, err := os.Stat(finalDir); err != nil {
@@ -230,7 +222,7 @@ func TestFlattenVMChainMultiStepNoQcow2FallsBackToCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalDir := filepath.Join(t.TempDir(), "flat")
-	if err := flattenVMChain([]string{d1, d2}, finalDir); err != nil {
+	if err := flattenVMChain(t.Context(), []string{d1, d2}, finalDir); err != nil {
 		t.Fatalf("flattenVMChain: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(finalDir, "domain.xml")); err != nil {
@@ -244,3 +236,110 @@ func TestFlattenVMChainMultiStepNoQcow2FallsBackToCopy(t *testing.T) {
 // so we deliberately don't exercise them here. Those paths would require
 // either a real qemu-img binary or extracting qemu-img invocation into
 // an injectable seam — out of scope for the coverage-lift task.
+
+func writeChainStep(t *testing.T, dir, meta string, files map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if meta != "" {
+		if err := os.WriteFile(filepath.Join(dir, "vm_meta.json"), []byte(meta), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Unraid VM disks are usually named vdisk1.img even when qcow2-formatted, so
+// a chain's full step is written as vdisk0.img while incremental steps are
+// forced to vdisk0.qcow2. Layer resolution must follow vm_meta.json instead
+// of assuming every layer ends in .qcow2.
+func TestResolveVMChainDisksFromMetadata(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	full := filepath.Join(root, "step_0")
+	inc := filepath.Join(root, "step_1")
+
+	writeChainStep(t, full,
+		`{"state":"running","disks":[{"target":"hdc","backup_file":"vdisk0.img","format":"qcow2"}]}`,
+		map[string]string{"vdisk0.img": "full-layer", "domain.xml": "<domain/>"})
+	writeChainStep(t, inc,
+		`{"state":"running","disks":[{"target":"hdc","backup_file":"vdisk0.qcow2","format":"qcow2"}]}`,
+		map[string]string{"vdisk0.qcow2": "inc-layer", "domain.xml": "<domain/>"})
+
+	disks, err := resolveVMChainDisks([]string{full, inc})
+	if err != nil {
+		t.Fatalf("resolveVMChainDisks() error = %v", err)
+	}
+	if len(disks) != 1 {
+		t.Fatalf("expected 1 disk, got %d", len(disks))
+	}
+
+	d := disks[0]
+	if d.Target != "hdc" {
+		t.Fatalf("unexpected target: %q", d.Target)
+	}
+	wantLayers := []string{filepath.Join(full, "vdisk0.img"), filepath.Join(inc, "vdisk0.qcow2")}
+	if len(d.Layers) != 2 || d.Layers[0] != wantLayers[0] || d.Layers[1] != wantLayers[1] {
+		t.Fatalf("unexpected layers: %v (want %v)", d.Layers, wantLayers)
+	}
+	// The flattened output must use the full step's filename: the engine's
+	// restore plan derives expected names from the original disk path
+	// extension (vdisk0.img here).
+	if d.OutputName != "vdisk0.img" {
+		t.Fatalf("unexpected output name: %q", d.OutputName)
+	}
+}
+
+func TestResolveVMChainDisksLegacyFallback(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	full := filepath.Join(root, "step_0")
+	inc := filepath.Join(root, "step_1")
+
+	// Old backups have no disks recorded in vm_meta.json.
+	writeChainStep(t, full, `{"state":"running"}`,
+		map[string]string{"vdisk0.qcow2": "full-layer", "domain.xml": "<domain/>"})
+	writeChainStep(t, inc, "",
+		map[string]string{"vdisk0.qcow2": "inc-layer", "domain.xml": "<domain/>"})
+
+	disks, err := resolveVMChainDisks([]string{full, inc})
+	if err != nil {
+		t.Fatalf("resolveVMChainDisks() error = %v", err)
+	}
+	if len(disks) != 1 {
+		t.Fatalf("expected 1 disk, got %d", len(disks))
+	}
+	d := disks[0]
+	if d.Layers[0] != filepath.Join(full, "vdisk0.qcow2") || d.Layers[1] != filepath.Join(inc, "vdisk0.qcow2") {
+		t.Fatalf("unexpected layers: %v", d.Layers)
+	}
+	if d.OutputName != "vdisk0.qcow2" {
+		t.Fatalf("unexpected output name: %q", d.OutputName)
+	}
+}
+
+func TestResolveVMChainDisksMissingLayer(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	full := filepath.Join(root, "step_0")
+	inc := filepath.Join(root, "step_1")
+
+	writeChainStep(t, full,
+		`{"disks":[{"target":"hdc","backup_file":"vdisk0.img","format":"qcow2"}]}`,
+		map[string]string{"domain.xml": "<domain/>"})
+	writeChainStep(t, inc,
+		`{"disks":[{"target":"hdc","backup_file":"vdisk0.qcow2","format":"qcow2"}]}`,
+		map[string]string{"vdisk0.qcow2": "inc-layer"})
+
+	if _, err := resolveVMChainDisks([]string{full, inc}); err == nil {
+		t.Fatal("expected error when a chain layer file is missing")
+	}
+}

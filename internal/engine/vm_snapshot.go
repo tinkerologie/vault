@@ -14,26 +14,57 @@ import (
 // tests and linted on the host OS.
 var (
 	_ = parseDomainDisksWithTargets
+	_ = parseDomainDiskInventory
 	_ = sameDomainDisks
 	_ = buildBackupXML
 	_ = buildSnapshotXML
 	_ = selectBackupDiskXML
 	_ = stripDomainBackingStores
+	_ = allDisksQcow2
+	_ = describeDomainDisks
+	_ = formatSkippedDomainDisks
 )
 
 type domainDisk struct {
 	Index  int
 	Path   string
 	Target string
+	// Format is the disk image format from the domain XML <driver type=...>
+	// (with an extension-based fallback). Unraid disk images are typically
+	// named vdisk1.img regardless of format, so the extension alone is not
+	// trustworthy.
+	Format string
+}
+
+// skippedDomainDisk describes a <disk device="disk"> entry the push-backup
+// path cannot handle (block-device or network backed), kept so backups can
+// report them instead of silently dropping them.
+type skippedDomainDisk struct {
+	Target     string
+	SourceType string
+}
+
+// domainDiskInventory is the parsed disk view of a domain: the file-backed
+// disks eligible for backup, the disks that had to be skipped, and the NVRAM
+// path if any.
+type domainDiskInventory struct {
+	Disks     []domainDisk
+	Skipped   []skippedDomainDisk
+	NVRAMPath string
 }
 
 type domainXMLDetails struct {
 	XMLName xml.Name `xml:"domain"`
 	Devices struct {
 		Disks []struct {
+			Type   string `xml:"type,attr"`
 			Device string `xml:"device,attr"`
+			Driver struct {
+				Type string `xml:"type,attr"`
+			} `xml:"driver"`
 			Source struct {
 				File string `xml:"file,attr"`
+				Dev  string `xml:"dev,attr"`
 			} `xml:"source"`
 			Target struct {
 				Dev string `xml:"dev,attr"`
@@ -94,30 +125,94 @@ type vmBackupArtifact struct {
 }
 
 func parseDomainDisksWithTargets(xmlDesc string) ([]domainDisk, string, error) {
+	inventory, err := parseDomainDiskInventory(xmlDesc)
+	if err != nil {
+		return nil, "", err
+	}
+	return inventory.Disks, inventory.NVRAMPath, nil
+}
+
+func parseDomainDiskInventory(xmlDesc string) (domainDiskInventory, error) {
 	var d domainXMLDetails
 	if err := xml.Unmarshal([]byte(xmlDesc), &d); err != nil {
-		return nil, "", fmt.Errorf("unmarshalling domain XML: %w", err)
+		return domainDiskInventory{}, fmt.Errorf("unmarshalling domain XML: %w", err)
 	}
 
-	disks := make([]domainDisk, 0, len(d.Devices.Disks))
+	inventory := domainDiskInventory{
+		Disks: make([]domainDisk, 0, len(d.Devices.Disks)),
+	}
 	for _, disk := range d.Devices.Disks {
-		if disk.Device != "disk" || disk.Source.File == "" {
+		if disk.Device != "disk" {
+			continue
+		}
+		if disk.Source.File == "" {
+			sourceType := strings.TrimSpace(disk.Type)
+			if sourceType == "" || sourceType == "file" {
+				sourceType = "unknown"
+			}
+			inventory.Skipped = append(inventory.Skipped, skippedDomainDisk{
+				Target:     strings.TrimSpace(disk.Target.Dev),
+				SourceType: sourceType,
+			})
 			continue
 		}
 
-		disks = append(disks, domainDisk{
-			Index:  len(disks),
+		format := strings.ToLower(strings.TrimSpace(disk.Driver.Type))
+		if format == "" {
+			format = backupDriverType(disk.Source.File)
+		}
+
+		inventory.Disks = append(inventory.Disks, domainDisk{
+			Index:  len(inventory.Disks),
 			Path:   disk.Source.File,
 			Target: strings.TrimSpace(disk.Target.Dev),
+			Format: format,
 		})
 	}
 
-	var nvramPath string
 	if len(d.OS.NVRAMs) > 0 {
-		nvramPath = strings.TrimSpace(d.OS.NVRAMs[0].Path)
+		inventory.NVRAMPath = strings.TrimSpace(d.OS.NVRAMs[0].Path)
 	}
 
-	return disks, nvramPath, nil
+	return inventory, nil
+}
+
+// allDisksQcow2 reports whether every disk is qcow2-formatted, which gates
+// libvirt checkpoint/incremental support. Falls back to the path extension
+// for callers that did not populate Format.
+func allDisksQcow2(disks []domainDisk) bool {
+	for _, d := range disks {
+		format := d.Format
+		if format == "" {
+			format = backupDriverType(d.Path)
+		}
+		if format != "qcow2" {
+			return false
+		}
+	}
+	return len(disks) > 0
+}
+
+func describeDomainDisks(disks []domainDisk) string {
+	if len(disks) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(disks))
+	for _, d := range disks {
+		parts = append(parts, fmt.Sprintf("%s=%s(%s)", d.Target, d.Path, d.Format))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func formatSkippedDomainDisks(skipped []skippedDomainDisk) string {
+	if len(skipped) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(skipped))
+	for _, s := range skipped {
+		parts = append(parts, fmt.Sprintf("%s(source type %s)", s.Target, s.SourceType))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func sameDomainDisks(left, right []domainDisk) bool {
@@ -184,7 +279,10 @@ func buildBackupXMLWithParent(destDir string, disks []domainDisk, parentCheckpoi
 			return "", nil, fmt.Errorf("disk %s has no target device", disk.Path)
 		}
 
-		driverType := backupDriverType(disk.Path)
+		driverType := disk.Format
+		if driverType == "" {
+			driverType = backupDriverType(disk.Path)
+		}
 		if forceQcow2 {
 			driverType = "qcow2"
 		}

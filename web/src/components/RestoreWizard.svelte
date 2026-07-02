@@ -91,6 +91,13 @@
     picker.set(itemName, { ...cur, ...patch })
   }
 
+  // Partial (per-file) restore only exists for item types whose backups are
+  // tar archives with an index sidecar. VM and ZFS backups are whole-image
+  // artefacts, so offering the picker would just 404 on the missing sidecar.
+  function supportsFilePicker(type) {
+    return type === 'container' || type === 'folder' || type === 'plugin'
+  }
+
   async function togglePickerOpen(item) {
     const cur = ensurePickerEntry(item.name)
     const willOpen = !cur.open
@@ -683,6 +690,17 @@
         {@const entry = picker.get(item.name)}
         {@const sel = entry?.selected?.size || 0}
         {@const total = entry?.contents?.files?.length || 0}
+        {#if !supportsFilePicker(item.type)}
+          <div class="bg-surface-2 border border-border rounded-xl p-3 text-sm flex items-center justify-between gap-3">
+            <span class="flex items-center gap-2">
+              <span class="font-medium text-text">{item.name}</span>
+              <span class="text-xs text-text-dim">({item.type})</span>
+            </span>
+            <span class="text-xs text-text-muted">
+              {item.type === 'vm' ? 'Restored in full (disk images, domain XML, NVRAM)' : 'Restored in full'}
+            </span>
+          </div>
+        {:else}
         <details class="group bg-surface-2 border border-border rounded-xl"
           open={entry?.open || false}>
           <summary class="flex items-center justify-between gap-3 cursor-pointer select-none p-3 text-sm"
@@ -748,6 +766,7 @@
             </div>
           {/if}
         </details>
+        {/if}
       {/each}
     </div>
 
@@ -831,6 +850,8 @@
         <button type="button"
           onclick={() => { if (window.confirm('Pre-flight checks did not all pass. Restore anyway?')) doRestore() }}
           class="text-xs text-text-dim hover:text-text underline cursor-pointer">Restore anyway</button>
+      {:else if !restoring && !(preflightResult && preflightFresh) && selectedPoint?.chain_status !== 'broken'}
+        <p class="text-xs text-text-dim">Run the pre-flight checks above to enable Start Restore.</p>
       {/if}
     </div>
   {/if}

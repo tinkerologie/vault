@@ -185,3 +185,54 @@ func TestUploadStagedFiles_ParallelAllChecksums(t *testing.T) {
 		t.Errorf("checksums = %d, want 6", len(sums))
 	}
 }
+
+// TestUploadStagedFiles_VMTransportCompression verifies the job's compression
+// setting is applied to VM uploads (issue: qcow2 files landed uncompressed on
+// the destination even with gzip/zstd configured) while engine-compressed
+// item types (container/folder/plugin archives) are still uploaded as-is.
+func TestUploadStagedFiles_VMTransportCompression(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRunner(t)
+
+	tmpDir := t.TempDir()
+	payload := bytes.Repeat([]byte("fedora vm disk block "), 4096)
+	if err := os.WriteFile(filepath.Join(tmpDir, "vdisk0.qcow2"), payload, 0600); err != nil {
+		t.Fatalf("stage file: %v", err)
+	}
+	storeDir := filepath.Join(t.TempDir(), "store")
+	cfg, _ := json.Marshal(map[string]string{"path": storeDir})
+	dest := db.StorageDestination{Type: "local", Config: string(cfg)}
+
+	checksums, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp-vm", false, "", "zstd", "vm", "Fedora", 1)
+	if err != nil {
+		t.Fatalf("uploadStagedFiles: %v", err)
+	}
+	if _, ok := checksums["vdisk0.qcow2.zst"]; !ok {
+		t.Fatalf("expected checksum keyed by stored name vdisk0.qcow2.zst, got %v", checksums)
+	}
+
+	stored, err := os.ReadFile(filepath.Join(storeDir, "rp-vm", "vdisk0.qcow2.zst"))
+	if err != nil {
+		t.Fatalf("stored file missing: %v", err)
+	}
+	if !looksCompressed(stored) {
+		t.Fatal("stored VM disk is not compressed")
+	}
+	if len(stored) >= len(payload) {
+		t.Fatalf("stored VM disk did not shrink: %d >= %d", len(stored), len(payload))
+	}
+
+	// Container archives are compressed by the engine — the upload layer
+	// must not wrap them a second time.
+	tmpDir2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir2, "data.tar.zst"), payload, 0600); err != nil {
+		t.Fatalf("stage file: %v", err)
+	}
+	checksums, err = r.uploadStagedFilesN(context.Background(), tmpDir2, dest, "rp-ct", false, "", "zstd", "container", "app", 1)
+	if err != nil {
+		t.Fatalf("uploadStagedFiles: %v", err)
+	}
+	if _, ok := checksums["data.tar.zst"]; !ok {
+		t.Fatalf("container archive must be stored under its own name, got %v", checksums)
+	}
+}

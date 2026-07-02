@@ -72,3 +72,54 @@ func decompressStoredReader(r io.Reader, fileName, compression string) (io.Reade
 	}
 	return zr, func() error { zr.Close(); return nil }, strings.TrimSuffix(fileName, ".zst"), nil
 }
+
+// transportCompressionSuffix maps a job compression setting to the filename
+// suffix its transport wrap carries. Empty for "none" or unknown codecs.
+func transportCompressionSuffix(compression string) string {
+	switch compression {
+	case "gzip":
+		return ".gz"
+	case "zstd":
+		return ".zst"
+	default:
+		return ""
+	}
+}
+
+// transportCompressReader wraps src with the job's configured codec. Used for
+// item types whose engine stages uncompressed artifacts (VM disk images and
+// sidecars) — container/folder/plugin archives are compressed by the engine
+// and must not be wrapped again. Closing the returned reader stops the
+// background compressor; the caller still owns closing src.
+func transportCompressReader(compression string, src io.Reader) (io.ReadCloser, error) {
+	pr, pw := io.Pipe()
+
+	var cw io.WriteCloser
+	switch compression {
+	case "gzip":
+		cw = gzip.NewWriter(pw)
+	case "zstd":
+		zw, err := zstd.NewWriter(pw)
+		if err != nil {
+			_ = pw.Close()
+			_ = pr.Close()
+			return nil, fmt.Errorf("creating zstd writer: %w", err)
+		}
+		cw = zw
+	default:
+		_ = pw.Close()
+		_ = pr.Close()
+		return nil, fmt.Errorf("unsupported transport compression %q", compression)
+	}
+
+	go func() {
+		_, copyErr := io.Copy(cw, src)
+		if closeErr := cw.Close(); copyErr == nil {
+			copyErr = closeErr
+		}
+		// Propagate the compressor's fate to the reading side; nil means EOF.
+		_ = pw.CloseWithError(copyErr)
+	}()
+
+	return pr, nil
+}
