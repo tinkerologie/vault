@@ -8,7 +8,7 @@
     <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/&name;/main/plugin/vault.plg">
     <!ENTITY bundle    "&name;-&version;.txz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
-    <!ENTITY sha256      "4d88b976e9c17cbbd5e50e92b01329921a70990162882cee4f784e12240e075d">
+    <!ENTITY sha256      "d3531ef2acb1e4251ffdadf2e45d46317acfc598c27e0ce11a6294130bcce459">
     <!ENTITY support   "https://forums.unraid.net/topic/197786-plugin-vault-backup-manager">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
