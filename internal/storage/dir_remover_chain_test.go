@@ -31,24 +31,26 @@ func TestRemoveEmptyDirThroughWrappedChain(t *testing.T) {
 		t.Fatal("wrapped adapter chain does not expose RemoveEmptyDir — the empty-dir sweep is dead again (#168)")
 	}
 
-	// Empty dir: removed.
-	if err := dr.RemoveEmptyDir("job/run"); err != nil {
-		t.Fatalf("RemoveEmptyDir(empty): %v", err)
-	}
-	if _, err := os.Stat(sub); !os.IsNotExist(err) {
-		t.Fatal("empty directory was not removed through the chain")
-	}
+	t.Run("removes-empty-dir", func(t *testing.T) {
+		if err := dr.RemoveEmptyDir("job/run"); err != nil {
+			t.Fatalf("RemoveEmptyDir(empty): %v", err)
+		}
+		if _, err := os.Stat(sub); !os.IsNotExist(err) {
+			t.Fatal("empty directory was not removed through the chain")
+		}
+	})
 
-	// Non-empty dir: refused (the desired sweep guard).
-	if err := os.WriteFile(filepath.Join(base, "job", "keep.txt"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := dr.RemoveEmptyDir("job"); err == nil {
-		t.Fatal("RemoveEmptyDir(non-empty) must fail")
-	}
-	if _, err := os.Stat(filepath.Join(base, "job")); err != nil {
-		t.Fatal("non-empty directory must survive")
-	}
+	t.Run("refuses-non-empty-dir", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(base, "job", "keep.txt"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := dr.RemoveEmptyDir("job"); err == nil {
+			t.Fatal("RemoveEmptyDir(non-empty) must fail")
+		}
+		if _, err := os.Stat(filepath.Join(base, "job")); err != nil {
+			t.Fatal("non-empty directory must survive")
+		}
+	})
 }
 
 // TestRemoveEmptyDirUnsupportedProvider verifies the sentinel path: a chain

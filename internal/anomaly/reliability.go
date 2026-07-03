@@ -96,7 +96,7 @@ func (r *ReliabilityDetector) evalStreak(ec EvalContext, jobID int64) *Anomaly {
 	// Count contiguous failures from index 0 (newest) forward.
 	streak := 0
 	for _, run := range runs {
-		if run.Status == "failed" || run.ItemsFailed > 0 {
+		if isFailedRun(run) {
 			streak++
 		} else {
 			break

@@ -37,6 +37,12 @@ type SnapshotManager struct {
 	// into a single background flush. flushDebounce is the coalescing window.
 	flushPending  atomic.Bool
 	flushDebounce time.Duration
+
+	// writeMu serialises backupWorkingDBToPath: the debounced flush, the
+	// periodic ticker, and post-backup finalization can overlap, and two
+	// concurrent backups into the same <dest>.tmp would corrupt it before
+	// the rename (CodeRabbit review on #182).
+	writeMu sync.Mutex
 }
 
 // RestorationInfo records which source was used to restore the database at
@@ -322,6 +328,12 @@ func (sm *SnapshotManager) backupWorkingDBToPath(dest string) error {
 		return fmt.Errorf("validating backup destination: %w", err)
 	}
 	dest = validDest
+
+	// One writer per destination at a time — overlapping flush/ticker/
+	// post-backup saves must not interleave writes into the same temp file.
+	sm.writeMu.Lock()
+	defer sm.writeMu.Unlock()
+
 	tmp := dest + ".tmp"
 	_ = os.Remove(tmp)
 
@@ -346,6 +358,9 @@ func (sm *SnapshotManager) backupWorkingDBToPath(dest string) error {
 		for more := true; more; {
 			more, err = bck.Step(-1)
 			if err != nil {
+				// Finish releases the backup handle and destination lock
+				// even when a step failed; the step error stays primary.
+				_ = bck.Finish()
 				return err
 			}
 		}

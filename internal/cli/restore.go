@@ -68,12 +68,18 @@ func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePat
 	}
 }
 
-// newestRotatedSnapshots returns rotated snapshot copies (newest first, max 3)
-// from the rotated/ directories next to the given snapshot paths. Filenames
-// embed a sortable UTC timestamp, so a lexical sort is chronological.
+// newestRotatedSnapshots returns rotated snapshot copies (newest first,
+// max 3 total) from the rotated/ directories next to the given snapshot
+// paths. Ordering uses each file's modification time — basenames only sort
+// chronologically within one directory sharing a prefix, so a lexical sort
+// is not a valid global order across configured/default rotated dirs.
 func newestRotatedSnapshots(paths ...string) []string {
+	type candidate struct {
+		path string
+		mod  int64
+	}
 	seen := map[string]bool{}
-	var candidates []string
+	var candidates []candidate
 	for _, p := range paths {
 		if p == "" {
 			continue
@@ -88,20 +94,28 @@ func newestRotatedSnapshots(paths ...string) []string {
 			continue
 		}
 		for _, e := range entries {
-			if !e.IsDir() {
-				candidates = append(candidates, filepath.Join(dir, e.Name()))
+			if e.IsDir() {
+				continue
 			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			candidates = append(candidates, candidate{
+				path: filepath.Join(dir, e.Name()),
+				mod:  info.ModTime().UnixNano(),
+			})
 		}
 	}
-	// One global newest-first ordering across all rotated dirs (the
-	// timestamp-suffixed basenames sort chronologically), capped at 3.
-	sort.Slice(candidates, func(i, j int) bool {
-		return filepath.Base(candidates[i]) > filepath.Base(candidates[j])
-	})
-	if len(candidates) > 3 {
-		candidates = candidates[:3]
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].mod > candidates[j].mod })
+	out := make([]string, 0, 3)
+	for i, c := range candidates {
+		if i >= 3 {
+			break
+		}
+		out = append(out, c.path)
 	}
-	return candidates
+	return out
 }
 
 // validateConfiguredPaths checks that user-configured paths (snapshot override,

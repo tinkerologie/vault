@@ -253,6 +253,21 @@ func (m *s3Mock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Length", strconv.Itoa(len(slice)))
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(obj)))
 			w.WriteHeader(http.StatusPartialContent)
+			if m.getChunkSize > 0 {
+				flusher, _ := w.(http.Flusher)
+				for cs := 0; cs < len(slice); cs += m.getChunkSize {
+					ce := cs + m.getChunkSize
+					if ce > len(slice) {
+						ce = len(slice)
+					}
+					_, _ = w.Write(slice[cs:ce])
+					if flusher != nil {
+						flusher.Flush()
+					}
+					time.Sleep(m.getChunkDelay)
+				}
+				return
+			}
 			_, _ = w.Write(slice)
 			return
 		}
@@ -421,21 +436,43 @@ func TestS3Read_SlowChunkedStreamCompletes(t *testing.T) {
 	mock.getChunkSize = 512
 	mock.getChunkDelay = 20 * time.Millisecond // 16 chunks ≈ 320 ms total
 
-	rc, err := a.Read("slow.bin")
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	got, err := io.ReadAll(rc)
-	closeErr := rc.Close()
-	if err != nil {
-		t.Fatalf("slow stream aborted mid-read: %v", err)
-	}
-	if closeErr != nil {
-		t.Errorf("Close: %v", closeErr)
-	}
-	if !bytes.Equal(got, payload) {
-		t.Errorf("slow stream returned %d bytes, want %d", len(got), len(payload))
-	}
+	// Both streaming methods must ride the deadline-free stream context; the
+	// helper contract itself is pinned by TestCtxStream_NoDeadline.
+	t.Run("Read", func(t *testing.T) {
+		rc, err := a.Read("slow.bin")
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		got, err := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if err != nil {
+			t.Fatalf("slow stream aborted mid-read: %v", err)
+		}
+		if closeErr != nil {
+			t.Errorf("Close: %v", closeErr)
+		}
+		if !bytes.Equal(got, payload) {
+			t.Errorf("slow stream returned %d bytes, want %d", len(got), len(payload))
+		}
+	})
+
+	t.Run("ReadRange", func(t *testing.T) {
+		rc, err := a.ReadRange("slow.bin", 0, int64(len(payload)))
+		if err != nil {
+			t.Fatalf("ReadRange: %v", err)
+		}
+		got, err := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if err != nil {
+			t.Fatalf("slow ranged stream aborted mid-read: %v", err)
+		}
+		if closeErr != nil {
+			t.Errorf("Close: %v", closeErr)
+		}
+		if !bytes.Equal(got, payload) {
+			t.Errorf("slow ranged stream returned %d bytes, want %d", len(got), len(payload))
+		}
+	})
 }
 
 func TestS3Read_TraversalRejected(t *testing.T) {
