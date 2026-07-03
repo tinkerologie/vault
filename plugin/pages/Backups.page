@@ -3,7 +3,7 @@ Type="xmenu"
 Title="Backups"
 Icon="shield"
 Markdown="false"
-Cond="(function_exists('parse_plugin_cfg') ? (parse_plugin_cfg('vault')['NAV_LINK'] ?? '') : '') == 'yes'"
+Cond="trim((function_exists('parse_plugin_cfg') ? (parse_plugin_cfg('vault')['NAV_LINK'] ?? '') : ''), chr(39).chr(34)) == 'yes'"
 ---
 <?php
 /*

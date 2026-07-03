@@ -217,7 +217,7 @@ Warning: the Vault API is accessible from your local network. Only use this if y
     </dd>
 </dl>
 <blockquote class="inline_help">
-Adds a <strong>Backups</strong> entry to the Unraid top navigation bar that opens the Vault web UI embedded in the Unraid interface. Off by default; takes effect on the next page load. No Unraid core files are modified.
+Adds a <strong>Backups</strong> entry to the Unraid top navigation bar that opens the Vault web UI embedded in the Unraid interface. Off by default; takes effect on the next page load.
 </blockquote>
 <div id="vault-navlink-status" style="display: none; margin-top: 4px; font-size: 0.9em; color: var(--gray-500, #888);"></div>
 

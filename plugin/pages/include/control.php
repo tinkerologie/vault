@@ -115,7 +115,7 @@ switch ($action) {
             }
         }
         $lines = array_values(array_filter($lines, function ($l) {
-            return !preg_match('/^NAV_LINK=/', $l);
+            return !preg_match('/^\\s*NAV_LINK\\s*=/', $l);
         }));
         $lines[] = "NAV_LINK='{$enabled}'";
         $written = file_put_contents($CONFIG, implode("\n", $lines) . "\n", LOCK_EX);
