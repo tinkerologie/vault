@@ -63,6 +63,17 @@
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/Vault.page
       changed_when: true
 
+    - name: Upload Backups top-nav page via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p '{{ ansible_password }}'
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ playbook_dir }}/../plugin/pages/Backups.page
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/Backups.page
+      changed_when: true
+
     - name: Upload plugin README via SCP
       delegate_to: localhost
       ansible.builtin.command:

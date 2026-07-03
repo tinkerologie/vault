@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Optional "Backups" quick link in the Unraid top navigation** (closes #162). Enable it under Settings → Utilities → Vault → Quick Access to get a one-click **Backups** entry in the Unraid top bar that opens the Vault web UI embedded in the Unraid interface. Off by default. Unlike the community add-on that inspired it, this uses Unraid's supported plugin menu extension point — no core files are patched and no background watchdog is needed; the embedded view also refreshes its session token automatically when you return to a long-idle tab.
+
 ### Fixed
 
 - **Anomaly baselines no longer report a 100% failure rate for every job** (closes #181). The baseline refresher counted a run as failed unless its status was `success` — a value the runner never writes (successes are `completed`) — so every job's stored failure rate was a meaningless constant 1.0. Failures are now counted the same way the reliability detector counts them (`failed` status or failed items), producing real rates.

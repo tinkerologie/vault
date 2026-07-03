@@ -8,23 +8,23 @@ Vault is a single Go binary that runs as a daemon on Unraid servers. It provides
 CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / Engine / Runner
 ```
 
-| Layer       | Package                 | Description                                                                |
-| ----------- | ----------------------- | -------------------------------------------------------------------------- |
+| Layer       | Package                 | Description                                                                 |
+| ----------- | ----------------------- | --------------------------------------------------------------------------- |
 | CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault mcp`, `vault dedup` |
-| API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                           |
-| MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP and stdio                |
-| Database    | `internal/db/`          | SQLite (WAL, pure-Go driver) with hybrid snapshot + USB shadow             |
-| Storage     | `internal/storage/`     | Local, SFTP, SMB, NFS, WebDAV, and S3 adapters (factory-dispatched)        |
-| Engine      | `internal/engine/`      | Per-type backup/restore handlers (container, VM, ZFS, folder, plugin)     |
-| Runner      | `internal/runner/`      | Job orchestration, retention, verification, compression                    |
-| Dedup       | `internal/dedup/`       | Keyed-FastCDC chunker, per-destination dedup repo, GC                      |
-| Crypto      | `internal/crypto/`      | AES-256-GCM, server key, passphrase-derived data keys                      |
-| Replication | `internal/replication/` | Pull-mode replication client + syncer                                      |
-| Scheduler   | `internal/scheduler/`   | Cron-based scheduling                                                      |
-| WebSocket   | `internal/ws/`          | Real-time event hub for backup progress and config changes                 |
-| Notify      | `internal/notify/`      | Unraid notifications + Discord webhooks                                    |
-| Diagnostics | `internal/diagnostics/` | Redacted ZIP bundle (system info, schema, runs, scheduler, daemon log)     |
-| Logbuf      | `internal/logbuf/`      | In-memory ring buffer that captures every `log.*` line for diagnostics     |
+| API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                            |
+| MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP and stdio                 |
+| Database    | `internal/db/`          | SQLite (WAL, pure-Go driver) with hybrid snapshot + USB shadow              |
+| Storage     | `internal/storage/`     | Local, SFTP, SMB, NFS, WebDAV, and S3 adapters (factory-dispatched)         |
+| Engine      | `internal/engine/`      | Per-type backup/restore handlers (container, VM, ZFS, folder, plugin)       |
+| Runner      | `internal/runner/`      | Job orchestration, retention, verification, compression                     |
+| Dedup       | `internal/dedup/`       | Keyed-FastCDC chunker, per-destination dedup repo, GC                       |
+| Crypto      | `internal/crypto/`      | AES-256-GCM, server key, passphrase-derived data keys                       |
+| Replication | `internal/replication/` | Pull-mode replication client + syncer                                       |
+| Scheduler   | `internal/scheduler/`   | Cron-based scheduling                                                       |
+| WebSocket   | `internal/ws/`          | Real-time event hub for backup progress and config changes                  |
+| Notify      | `internal/notify/`      | Unraid notifications + Discord webhooks                                     |
+| Diagnostics | `internal/diagnostics/` | Redacted ZIP bundle (system info, schema, runs, scheduler, daemon log)      |
+| Logbuf      | `internal/logbuf/`      | In-memory ring buffer that captures every `log.*` line for diagnostics      |
 
 ## Key Interfaces
 
@@ -79,7 +79,7 @@ Schema is applied inline at open time via `CREATE TABLE IF NOT EXISTS` (no versi
 
 ### Hybrid snapshot layout
 
-To survive Unraid's USB-backed boot (where writing every commit to flash would wear the drive), the daemon runs in *hybrid* mode by default:
+To survive Unraid's USB-backed boot (where writing every commit to flash would wear the drive), the daemon runs in _hybrid_ mode by default:
 
 1. **Working DB** — `/var/local/vault/vault.db` (tmpfs-backed; fast, never written to flash directly)
 2. **Primary snapshot** — `<discovered cache pool>/.vault/vault.db` (periodic copies; the authoritative on-disk source)
@@ -199,23 +199,23 @@ See [ansible/README.md](../ansible/README.md) for the full deployment workflow.
 
 ## Key Dependencies
 
-| Package                                       | Purpose                                                |
-| --------------------------------------------- | ------------------------------------------------------ |
-| `github.com/go-chi/chi/v5`                    | HTTP router                                            |
-| `github.com/spf13/cobra`                      | CLI framework                                          |
-| `github.com/robfig/cron/v3`                   | Cron scheduler                                         |
-| `modernc.org/sqlite`                          | Pure Go SQLite driver (no CGO)                         |
-| `github.com/docker/docker`                    | Docker Engine SDK                                      |
-| `github.com/digitalocean/go-libvirt`          | Pure Go libvirt RPC (Linux only)                       |
-| `github.com/vmware/go-nfs-client`             | NFS storage adapter                                    |
-| `github.com/cloudsoda/go-smb2`                | SMB storage adapter                                    |
-| `github.com/pkg/sftp`                         | SFTP storage adapter                                   |
-| `github.com/studio-b12/gowebdav`              | WebDAV storage adapter                                 |
-| `github.com/aws/aws-sdk-go-v2/...`            | S3 / S3-compatible storage adapter                     |
-| `github.com/PlakarKorp/go-cdc-chunkers`       | Keyed-FastCDC chunker for content-defined dedup        |
-| `github.com/coder/websocket`                  | WebSocket server                                       |
-| `github.com/modelcontextprotocol/go-sdk`      | MCP streamable-HTTP / stdio transport                  |
-| `filippo.io/age`                              | Optional age-encrypted archive layer                   |
+| Package                                  | Purpose                                         |
+| ---------------------------------------- | ----------------------------------------------- |
+| `github.com/go-chi/chi/v5`               | HTTP router                                     |
+| `github.com/spf13/cobra`                 | CLI framework                                   |
+| `github.com/robfig/cron/v3`              | Cron scheduler                                  |
+| `modernc.org/sqlite`                     | Pure Go SQLite driver (no CGO)                  |
+| `github.com/docker/docker`               | Docker Engine SDK                               |
+| `github.com/digitalocean/go-libvirt`     | Pure Go libvirt RPC (Linux only)                |
+| `github.com/vmware/go-nfs-client`        | NFS storage adapter                             |
+| `github.com/cloudsoda/go-smb2`           | SMB storage adapter                             |
+| `github.com/pkg/sftp`                    | SFTP storage adapter                            |
+| `github.com/studio-b12/gowebdav`         | WebDAV storage adapter                          |
+| `github.com/aws/aws-sdk-go-v2/...`       | S3 / S3-compatible storage adapter              |
+| `github.com/PlakarKorp/go-cdc-chunkers`  | Keyed-FastCDC chunker for content-defined dedup |
+| `github.com/coder/websocket`             | WebSocket server                                |
+| `github.com/modelcontextprotocol/go-sdk` | MCP streamable-HTTP / stdio transport           |
+| `filippo.io/age`                         | Optional age-encrypted archive layer            |
 
 ## Known Limitations
 
@@ -229,3 +229,7 @@ See [ansible/README.md](../ansible/README.md) for the full deployment workflow.
 ## Version
 
 Vault uses date-based versioning in the `VERSION` file with the format `YYYY.MM.PATCH`. Version is injected via ldflags at build time (`-X main.version`, `-X main.buildDate`, `-X main.commit`).
+
+## Top-navigation quick link (`Backups.page`)
+
+`plugin/pages/Backups.page` is an optional top-nav entry (`Menu="Tasks"`, `Type="xmenu"` — the same extension point Community Applications uses) gated by `NAV_LINK` in `vault.cfg` via its `Cond` header, toggled from the Vault settings page through `control.php`'s `navlink` action. It embeds the SPA's proxy entrypoint (`include/app.php`) in an iframe sized to the viewport. Because `app.php` injects Unraid's CSRF token once per render and the SPA has no in-app refresh, the frame reloads itself when the tab regains visibility after >10 minutes hidden so write actions keep working across token rotations. In proxy mode the SPA polls; WebSocket-only live events do not stream here (matching the Utilities page).
