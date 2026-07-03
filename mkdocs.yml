@@ -1,0 +1,62 @@
+site_name: Vault
+site_description: Backup and restore daemon for Unraid servers
+site_url: https://ruaan-deysel.github.io/vault/
+repo_url: https://github.com/ruaan-deysel/vault
+repo_name: ruaan-deysel/vault
+docs_dir: docs
+# Internal planning/spec docs live under docs/superpowers/ and are not part of
+# the published site.
+exclude_docs: |
+  superpowers/
+# architecture.md links to ../ansible/README.md, a repo file that lives outside
+# docs_dir and cannot be resolved by MkDocs. Downgrade not-found links so the
+# reused doc content does not have to be edited.
+validation:
+  links:
+    not_found: ignore
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle: { icon: material/weather-night, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle: { icon: material/weather-sunny, name: Switch to light mode }
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed: { alternate_style: true }
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.snippets: { base_path: ["."] }
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - How Backup Works: how-backup-works.md
+  - Guides:
+      - Backup Jobs: guides/backup-jobs.md
+      - Storage Destinations: guides/storage-destinations.md
+      - Anomaly Detection: guides/anomaly-detection.md
+  - Settings Reference:
+      - App / Daemon Settings: reference/app-settings.md
+      - Job Configuration: reference/job-config.md
+      - Notifications: reference/notifications.md
+      - "Storage: SFTP": reference/storage-sftp.md
+      - "Storage: SMB": reference/storage-smb.md
+      - "Storage: NFS": reference/storage-nfs.md
+      - "Storage: WebDAV": reference/storage-webdav.md
+      - "Storage: S3": reference/storage-s3.md
+      - "Storage: Local": reference/storage-local.md
+  - Architecture: architecture.md
+  - API & MCP:
+      - REST API: api.md
+      - MCP Server: mcp.md
+  - Changelog: changelog.md
+  - FAQ: faq.md

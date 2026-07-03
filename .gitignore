@@ -90,3 +90,6 @@ internal/release/CHANGELOG.md
 
 # Worktrees for parallel/isolated feature work (superpowers)
 .worktrees/
+
+# Generated docs reference (built fresh in CI)
+docs/reference/*.md
