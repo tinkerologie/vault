@@ -193,3 +193,19 @@ func TestNormalizeComponentEdges(t *testing.T) {
 		t.Errorf("file.txt: got %q err %v", got, err)
 	}
 }
+
+// TestNormalizeComponentRejectsBackslash pins the #179 fix: the previous
+// check tested for a DOUBLE backslash, so a single '\' passed as an ordinary
+// character. Any path separator must be rejected.
+func TestNormalizeComponentRejectsBackslash(t *testing.T) {
+	for _, bad := range []string{`a\b`, `..\evil`, `\`, `trailing\`} {
+		t.Run(bad, func(t *testing.T) {
+			if _, err := NormalizeComponent(bad); err == nil {
+				t.Errorf("NormalizeComponent(%q) accepted a backslash separator (#179)", bad)
+			}
+		})
+	}
+	if got, err := NormalizeComponent("plain-name.txt"); err != nil || got != "plain-name.txt" {
+		t.Errorf("plain component rejected: %v", err)
+	}
+}

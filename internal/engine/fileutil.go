@@ -1,20 +1,24 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 )
 
-// copyFile copies a file from src to dst. It reports progress via the optional
-// progress callback (may be nil). The callback receives the percentage complete.
-func copyFile(src, dst string) error {
-	return copyFileWithProgress(src, dst, nil)
+// copyFile copies a file from src to dst, honouring ctx cancellation
+// between chunks.
+func copyFile(ctx context.Context, src, dst string) error {
+	return copyFileWithProgress(ctx, src, dst, nil)
 }
 
 // copyFileWithProgress copies a file from src to dst, calling onProgress with
-// the number of bytes copied so far after each chunk.
-func copyFileWithProgress(src, dst string, onProgress func(bytesCopied int64)) error {
+// the number of bytes copied so far after each chunk. ctx is checked before
+// every chunk so a cancelled run aborts a multi-GB copy within one 1 MiB
+// chunk instead of running to completion (issue #171). A partial destination
+// file is left for the caller's cleanup to handle.
+func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(bytesCopied int64)) error {
 	in, err := os.Open(src) // #nosec G304 — src paths come from libvirt domain XML (trusted system data)
 	if err != nil {
 		return fmt.Errorf("opening source %s: %w", src, err)
@@ -44,6 +48,9 @@ func copyFileWithProgress(src, dst string, onProgress func(bytesCopied int64)) e
 	buf := make([]byte, 1024*1024) // 1 MiB buffer
 	var copied int64
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		n, readErr := in.Read(buf)
 		if n > 0 {
 			if _, writeErr := out.Write(buf[:n]); writeErr != nil {

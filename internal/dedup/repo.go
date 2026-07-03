@@ -21,6 +21,15 @@ import (
 // can remove the whole repo when the last dedup job on a destination is deleted.
 const RepoRoot = "_vault"
 
+// RepoSubpaths lists every path the dedup repo owns inside RepoRoot. The
+// _vault directory is SHARED with the runner's database backups
+// (vault.db.<timestamp> files live alongside the repo — see
+// runner/db_backup.go), so cleanup of an orphaned repo must delete exactly
+// these subpaths and never the shared root (issue #183).
+func RepoSubpaths() []string {
+	return []string{repoConfigPath, packsRoot, indexRootPath}
+}
+
 const (
 	repoConfigPath = RepoRoot + "/repo.json"
 	packsRoot      = RepoRoot + "/packs"

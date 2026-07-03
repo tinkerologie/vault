@@ -194,7 +194,6 @@ func TestRunDedupGCMissingDest(t *testing.T) {
 	}
 }
 
-
 func TestRedactConfig(t *testing.T) {
 	t.Parallel()
 

@@ -80,7 +80,7 @@ func NormalizeComponent(name string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("name is required")
 	}
-	if strings.Contains(trimmed, "/") || strings.Contains(trimmed, `\\`) {
+	if strings.ContainsAny(trimmed, `/\`) {
 		return "", fmt.Errorf("name must not contain path separators")
 	}
 	if trimmed != filepath.Base(trimmed) || !filepath.IsLocal(trimmed) {

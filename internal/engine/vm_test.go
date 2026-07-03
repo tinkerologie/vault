@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,8 +37,8 @@ func TestCopyFile(t *testing.T) {
 	data := []byte("test vm disk data")
 	os.WriteFile(src, data, 0644)
 
-	if err := copyFile(src, dst); err != nil {
-		t.Fatalf("copyFile() error = %v", err)
+	if err := copyFile(context.Background(), src, dst); err != nil {
+		t.Fatalf("copyFile(context.Background(), ) error = %v", err)
 	}
 
 	got, err := os.ReadFile(dst)
@@ -60,11 +61,11 @@ func TestCopyFileWithProgress(t *testing.T) {
 	os.WriteFile(src, data, 0644)
 
 	var progressCalled bool
-	err := copyFileWithProgress(src, dst, func(bytesCopied int64) {
+	err := copyFileWithProgress(context.Background(), src, dst, func(bytesCopied int64) {
 		progressCalled = true
 	})
 	if err != nil {
-		t.Fatalf("copyFileWithProgress() error = %v", err)
+		t.Fatalf("copyFileWithProgress(context.Background(), ) error = %v", err)
 	}
 	if !progressCalled {
 		t.Error("expected progress callback to be called")
@@ -81,7 +82,7 @@ func TestCopyFileWithProgress(t *testing.T) {
 
 func TestCopyFileSourceNotFound(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "dest.bin")
-	err := copyFile("/nonexistent/file.bin", dst)
+	err := copyFile(context.Background(), "/nonexistent/file.bin", dst)
 	if err == nil {
 		t.Fatal("expected error for missing source file")
 	}

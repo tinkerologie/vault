@@ -226,7 +226,8 @@
   function statusBadge(src) {
     if (!src.enabled) return { label: 'Disabled', cls: 'bg-surface-3 text-text-muted' }
     if (src.last_sync_status === 'success') return { label: 'Synced', cls: 'bg-success/10 text-success' }
-    if (src.last_sync_status === 'error') return { label: 'Error', cls: 'bg-danger/10 text-danger' }
+    if (src.last_sync_status === 'error' || src.last_sync_status === 'failed') return { label: 'Failed', cls: 'bg-danger/10 text-danger' }
+    if (src.last_sync_status === 'partial') return { label: 'Partial', cls: 'bg-warning/10 text-warning' }
     if (src.last_sync_status === 'running') return { label: 'Syncing', cls: 'bg-warning/10 text-warning' }
     return { label: 'Pending', cls: 'bg-surface-3 text-text-muted' }
   }
@@ -296,7 +297,7 @@
               </div>
             </div>
 
-            {#if src.last_sync_status === 'error' && src.last_sync_error}
+            {#if (src.last_sync_status === 'error' || src.last_sync_status === 'failed' || src.last_sync_status === 'partial') && src.last_sync_error}
               <div class="mt-3 p-2 bg-danger/5 border border-danger/20 rounded-lg text-xs text-danger">
                 {src.last_sync_error}
               </div>

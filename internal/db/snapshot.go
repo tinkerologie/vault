@@ -37,6 +37,12 @@ type SnapshotManager struct {
 	// into a single background flush. flushDebounce is the coalescing window.
 	flushPending  atomic.Bool
 	flushDebounce time.Duration
+
+	// writeMu serialises backupWorkingDBToPath: the debounced flush, the
+	// periodic ticker, and post-backup finalization can overlap, and two
+	// concurrent backups into the same <dest>.tmp would corrupt it before
+	// the rename (CodeRabbit review on #182).
+	writeMu sync.Mutex
 }
 
 // RestorationInfo records which source was used to restore the database at
@@ -186,39 +192,22 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 		return fmt.Errorf("create snapshot directory: %w", err)
 	}
 
-	conn, err := sm.db.DB.Conn(context.Background())
-	if err != nil {
-		return fmt.Errorf("acquire connection: %w", err)
-	}
-	defer conn.Close()
-
 	// Checkpoint the WAL so the resulting snapshot is self-contained.
 	// TRUNCATE: backfill all frames to main.db, then shrink the WAL file
 	// to 0 bytes. Safe to run here because SaveSnapshot is not on a hot
 	// path. Failure is logged but does not block the snapshot — the
 	// Online Backup API copies WAL frames correctly even without an
 	// explicit checkpoint.
-	if _, ckErr := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); ckErr != nil {
-		log.Printf("snapshot: wal_checkpoint(TRUNCATE) failed: %v (continuing)", ckErr)
+	if conn, cerr := sm.db.DB.Conn(context.Background()); cerr == nil {
+		if _, ckErr := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); ckErr != nil {
+			log.Printf("snapshot: wal_checkpoint(TRUNCATE) failed: %v (continuing)", ckErr)
+		}
+		_ = conn.Close()
 	}
 
-	err = conn.Raw(func(driverConn any) error {
-		type backuper interface {
-			NewBackup(string) (*sqlite.Backup, error)
-		}
-		bck, err := driverConn.(backuper).NewBackup(validPath)
-		if err != nil {
-			return err
-		}
-		for more := true; more; {
-			more, err = bck.Step(-1)
-			if err != nil {
-				return err
-			}
-		}
-		return bck.Finish()
-	})
-	if err != nil {
+	// Atomic write: temp file + rename so a crash mid-save can never
+	// corrupt the previous good snapshot (issue #182).
+	if err := sm.backupWorkingDBToPath(validPath); err != nil {
 		return fmt.Errorf("save snapshot: %w", err)
 	}
 
@@ -321,6 +310,71 @@ func (sm *SnapshotManager) pruneRotated(dir string) {
 			log.Printf("snapshot rotation: remove %s: %v", p, err)
 		}
 	}
+}
+
+// backupWorkingDBToPath runs the SQLite Online Backup API against a sibling
+// temp file and renames it into place only after Finish succeeds. Writing
+// the destination in place meant a crash / power loss / ENOSPC mid-save
+// corrupted the previous good copy — the disaster-recovery snapshot itself
+// (issue #182).
+func (sm *SnapshotManager) backupWorkingDBToPath(dest string) error {
+	// Callers pass already-validated paths, but re-validate here so this
+	// function is safe standalone AND so the CodeQL go/path-injection
+	// sanitiser barrier (see validateSnapshotPath godoc) fires on every
+	// downstream os.Remove / NewBackup / os.Rename — the same pattern
+	// rotateSnapshot documents.
+	validDest, err := validateSnapshotPath(dest)
+	if err != nil {
+		return fmt.Errorf("validating backup destination: %w", err)
+	}
+	dest = validDest
+
+	// One writer per destination at a time — overlapping flush/ticker/
+	// post-backup saves must not interleave writes into the same temp file.
+	sm.writeMu.Lock()
+	defer sm.writeMu.Unlock()
+
+	tmp := dest + ".tmp"
+	_ = os.Remove(tmp)
+
+	conn, err := sm.db.DB.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("acquire connection: %w", err)
+	}
+	defer conn.Close()
+
+	err = conn.Raw(func(driverConn any) error {
+		type backuper interface {
+			NewBackup(string) (*sqlite.Backup, error)
+		}
+		bk, ok := driverConn.(backuper)
+		if !ok {
+			return fmt.Errorf("driver connection does not support online backup")
+		}
+		bck, err := bk.NewBackup(tmp)
+		if err != nil {
+			return fmt.Errorf("init backup: %w", err)
+		}
+		for more := true; more; {
+			more, err = bck.Step(-1)
+			if err != nil {
+				// Finish releases the backup handle and destination lock
+				// even when a step failed; the step error stays primary.
+				_ = bck.Finish()
+				return err
+			}
+		}
+		return bck.Finish()
+	})
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("activating snapshot: %w", err)
+	}
+	return nil
 }
 
 // RestoreFromSnapshot copies the snapshot file into the working DB using the
@@ -450,30 +504,9 @@ func (sm *SnapshotManager) saveUSBBackup(force bool) {
 		return
 	}
 
-	conn, err := sm.db.DB.Conn(context.Background())
-	if err != nil {
-		log.Printf("Warning: failed to acquire connection for USB backup: %v", err)
-		return
-	}
-	defer conn.Close()
-
-	err = conn.Raw(func(driverConn any) error {
-		type backuper interface {
-			NewBackup(string) (*sqlite.Backup, error)
-		}
-		bck, err := driverConn.(backuper).NewBackup(validPath)
-		if err != nil {
-			return err
-		}
-		for more := true; more; {
-			more, err = bck.Step(-1)
-			if err != nil {
-				return err
-			}
-		}
-		return bck.Finish()
-	})
-	if err != nil {
+	// Atomic write (temp + rename) so a crash mid-save never corrupts the
+	// USB safety-net copy (issue #182).
+	if err := sm.backupWorkingDBToPath(validPath); err != nil {
 		log.Printf("Warning: USB backup failed: %v", err)
 		return
 	}

@@ -300,10 +300,11 @@ func (s *SMBAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	if err := ctx.Err(); err != nil {
 		return Capacity{}, err
 	}
-	share, _, err := s.connect()
+	share, session, err := s.connect()
 	if err != nil {
 		return Capacity{}, fmt.Errorf("smb: connect: %w", err)
 	}
+	defer session.Logoff()
 	defer share.Umount()
 
 	probedAt := time.Now().UTC()

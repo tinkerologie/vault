@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	nethttp "net/http"
 	neturl "net/url"
 	"path"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	s3manager "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -102,6 +104,22 @@ type S3Adapter struct {
 	// already been logged by this adapter instance, so the rename is visible
 	// in the log without repeating for every object.
 	sanitizedSegs sync.Map
+
+	// streamCtx is the adapter's lifecycle context: every Read/ReadRange
+	// stream context derives from it, and Close cancels it. This is what
+	// lets the runner's context.AfterFunc(ctx, storage.CloseAdapter) hook
+	// abort in-flight S3 body reads when a run is cancelled (e.g. by the
+	// stall watchdog) — without it, a wedged body read could only end via
+	// TCP-level failure.
+	streamCtx    context.Context
+	streamCancel context.CancelFunc
+}
+
+// Close cancels every in-flight streamed read opened by this adapter.
+// Wired to run-context cancellation through storage.CloseAdapter.
+func (a *S3Adapter) Close() error {
+	a.streamCancel()
+	return nil
 }
 
 // NewS3Adapter validates the config and constructs an S3 client.
@@ -169,6 +187,16 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 
 	loadOpts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(cfg.Region),
+		// Bound the wait for response HEADERS on every request. The stream
+		// contexts (ctxStream) are deliberately deadline-free for BODY reads,
+		// so without this a dead endpoint could hang GetObject before a body
+		// reader even exists. ResponseHeaderTimeout starts after the request
+		// is fully written, so multi-hour uploads are unaffected — servers
+		// that buffer an upload before replying get the same 5-minute
+		// allowance the WebDAV transport uses.
+		awsconfig.WithHTTPClient(awshttp.NewBuildableClient().WithTransportOptions(func(tr *nethttp.Transport) {
+			tr.ResponseHeaderTimeout = 5 * time.Minute
+		})),
 	}
 	// When the user configures a custom Endpoint they are talking to an
 	// S3-compatible service (MEGA, Backblaze B2, IDrive E2, older MinIO
@@ -250,6 +278,7 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 		u.PartSize = partSizeBytes
 		u.RequestChecksumCalculation = awsCfg.RequestChecksumCalculation
 	})
+	streamCtx, streamCancel := context.WithCancel(context.Background())
 	return &S3Adapter{
 		config:           cfg,
 		client:           client,
@@ -258,6 +287,8 @@ func NewS3Adapter(cfg S3Config) (*S3Adapter, error) {
 		partSizeBytes:    partSizeBytes,
 		requestChecksum:  awsCfg.RequestChecksumCalculation,
 		responseChecksum: awsCfg.ResponseChecksumValidation,
+		streamCtx:        streamCtx,
+		streamCancel:     streamCancel,
 	}, nil
 }
 
@@ -338,6 +369,22 @@ func (r *staticS3EndpointResolver) ResolveEndpoint(_ context.Context, params s3.
 
 func ctxOp() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 5*time.Minute)
+}
+
+// ctxStream returns a cancellable context with NO deadline, used for streamed
+// response bodies (Read/ReadRange). A GetObject body's read duration is
+// unbounded — it depends only on object size and link speed — so any fixed
+// deadline would abort legitimate large-object streams mid-read (the verify
+// path streams whole archives back; see issue #164).
+//
+// Release mechanisms, in order: closing the returned reader cancels this
+// context (cancelOnCloseReader); adapter Close cancels ALL in-flight streams
+// via the parent lifecycle context — which is how run cancellation reaches a
+// blocked body read (the runner installs context.AfterFunc(runCtx,
+// storage.CloseAdapter)); and the transport's ResponseHeaderTimeout bounds
+// the pre-body wait.
+func (a *S3Adapter) ctxStream() (context.Context, context.CancelFunc) {
+	return context.WithCancel(a.streamCtx)
 }
 
 // ctxUpload returns a context with the adapter's configured upload timeout.
@@ -459,10 +506,12 @@ func (a *S3Adapter) Read(p string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The op context governs the GetObject request *and* the lifetime of the
-	// returned body stream — cancelling it before the caller finishes reading
-	// would abort the download. Cancel only when the caller closes the body.
-	ctx, cancel := ctxOp()
+	// The stream context governs the GetObject request *and* the lifetime of
+	// the returned body — cancelling it before the caller finishes reading
+	// would abort the download. It carries NO deadline (a large object can
+	// legitimately stream for longer than any fixed timer; issue #164);
+	// see ctxStream for the release mechanisms.
+	ctx, cancel := a.ctxStream()
 	out, err := a.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(a.config.Bucket),
 		Key:    aws.String(key),
@@ -475,8 +524,9 @@ func (a *S3Adapter) Read(p string) (io.ReadCloser, error) {
 }
 
 // cancelOnCloseReader pairs an S3 response body with the context cancel func
-// for the GetObject request. Closing the reader cancels the context, ensuring
-// no goroutine/timer is left dangling once the caller is done reading.
+// for the GetObject request. The stream context has no deadline (issue #164):
+// closing the reader cancels it, and the adapter-level lifecycle context
+// (cancelled by Close) covers abandonment on run cancellation.
 type cancelOnCloseReader struct {
 	io.ReadCloser
 	cancel context.CancelFunc
@@ -493,8 +543,9 @@ func (r *cancelOnCloseReader) Close() error {
 // translate the half-open length-based contract into the S3 form.
 //
 // The cancel func on the GetObject context is deferred to Close, mirroring
-// Read(), so that closing the body promptly releases the SDK's internal
-// timer and any in-flight retry goroutine.
+// Read(). The context carries no deadline (issue #164) — see ctxStream for
+// the release mechanisms (reader Close, adapter Close on run cancellation,
+// bounded header waits).
 func (a *S3Adapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
 	if offset < 0 || length < 0 {
 		return nil, fmt.Errorf("s3: invalid range offset=%d length=%d", offset, length)
@@ -508,7 +559,7 @@ func (a *S3Adapter) ReadRange(p string, offset, length int64) (io.ReadCloser, er
 		// caller asked for nothing, so return an empty no-op reader.
 		return io.NopCloser(bytes.NewReader(nil)), nil
 	}
-	ctx, cancel := ctxOp()
+	ctx, cancel := a.ctxStream()
 	out, err := a.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(a.config.Bucket),
 		Key:    aws.String(key),

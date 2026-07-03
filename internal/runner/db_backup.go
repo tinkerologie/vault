@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
@@ -17,6 +19,13 @@ import (
 // dbBackupBaseDir is the directory layout under each storage root where
 // the daemon's own database is copied after every successful backup.
 const dbBackupBaseDir = "_vault"
+
+// dbBackupsKept caps how many timestamped vault.db copies are retained per
+// destination. One copy lands after every successful run, so without a cap
+// the directory grew forever (477 MB / 136 copies observed — issue #184).
+// 14 copies ≈ two weeks of daily runs; the vault.db.latest pointer is always
+// kept in addition.
+const dbBackupsKept = 14
 
 // backupDatabase copies the working database to (a) the job's own
 // destination AND (b) any other destination flagged with
@@ -105,6 +114,44 @@ func (r *Runner) backupDatabaseToDest(ctx context.Context, dest db.StorageDestin
 	latestPath := filepath.Join(dbBackupBaseDir, "vault.db.latest"+ext)
 	if err := writeDBOnce(adapter, dbPath, latestPath, passphrase); err != nil {
 		log.Printf("db_backup: write latest pointer to %q: %v", dest.Name, err)
+	}
+
+	pruneDBBackups(adapter, dest.Name)
+}
+
+// pruneDBBackups deletes the oldest timestamped vault.db copies beyond
+// dbBackupsKept. The filenames embed a sortable UTC timestamp, so a lexical
+// sort is chronological. The vault.db.latest pointer and everything else in
+// the shared _vault directory (dedup repo paths) are never touched.
+// Best-effort: failures are logged and must never fail the backup job.
+func pruneDBBackups(adapter storage.Adapter, destName string) {
+	entries, err := adapter.List(dbBackupBaseDir)
+	if err != nil {
+		if !storage.IsNotExist(err) {
+			log.Printf("db_backup: prune: list %s on %q: %v", dbBackupBaseDir, destName, err)
+		}
+		return
+	}
+	var hist []string
+	for _, e := range entries {
+		if e.IsDir {
+			continue
+		}
+		name := filepath.Base(e.Path)
+		if !strings.HasPrefix(name, "vault.db.") || strings.HasPrefix(name, "vault.db.latest") {
+			continue
+		}
+		hist = append(hist, name)
+	}
+	if len(hist) <= dbBackupsKept {
+		return
+	}
+	sort.Strings(hist)
+	for _, name := range hist[:len(hist)-dbBackupsKept] {
+		p := filepath.Join(dbBackupBaseDir, name)
+		if err := adapter.Delete(p); err != nil {
+			log.Printf("db_backup: prune: delete %s on %q: %v", p, destName, err)
+		}
 	}
 }
 

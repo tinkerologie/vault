@@ -291,7 +291,9 @@ func (e *Evaluator) floorLookupFunc() func(string) float64 {
 // Fields used from db.JobRun:
 //   - SizeBytes       — bytes transferred (total archive size for this run)
 //   - DurationSeconds — wall-clock seconds (NULL for in-progress runs, skipped)
-//   - Status          — "success" = non-failure; anything else counts as failure
+//   - Status          — a run counts as failed when Status=="failed" OR
+//     ItemsFailed>0, matching the reliability detector. (The runner never
+//     writes "success"; successful runs are "completed" — issue #181.)
 func (e *Evaluator) refreshBaseline(ec EvalContext) {
 	if ec.Job == nil {
 		return
@@ -314,7 +316,7 @@ func (e *Evaluator) refreshBaseline(ec EvalContext) {
 	for i, r := range completed {
 		bytesVals[i] = float64(r.SizeBytes)
 		durVals[i] = float64(*r.DurationSeconds)
-		if r.Status != "success" {
+		if isFailedRun(r) {
 			failCount++
 		}
 	}
@@ -338,6 +340,14 @@ func (e *Evaluator) refreshBaseline(ec EvalContext) {
 		"job_id":   ec.Job.ID,
 		"baseline": baseline,
 	})
+}
+
+// isFailedRun reports whether a run should be counted as failed: explicit
+// "failed" status or any failed items. Shared by the baseline refresher and
+// the reliability streak detector so the two predicates cannot drift (the
+// runner never writes "success"; successful runs are "completed" — #181).
+func isFailedRun(r db.JobRun) bool {
+	return r.Status == "failed" || r.ItemsFailed > 0
 }
 
 // Ensure *ws.Hub satisfies the broadcaster interface at compile time.

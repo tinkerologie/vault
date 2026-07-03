@@ -24,6 +24,8 @@ $running = !empty($health) && ($health['status'] ?? '') === 'ok';
 $version = $health['version'] ?? '';
 
 $proxy_url = '/plugins/vault/include/app.php#/';
+$nav_link  = trim((string) ($cfg['NAV_LINK'] ?? ''), " \t\n\r\0\x0B\"'") === 'yes'; // cfg values are RAW-scanned and quoted
+
 ?>
 
 <style>
@@ -202,6 +204,23 @@ Warning: the Vault API is accessible from your local network. Only use this if y
 </form>
 <div id="vault-apply-status" style="display: none; margin-top: 8px; font-size: 0.9em; color: var(--gray-500, #888);"></div>
 
+<div class="title"><span class="left"><i class="title fa fa-compass"></i>Quick Access</span></div>
+
+<dl style="display: flex; align-items: baseline; gap: 12px; margin: 0 0 12px 0;">
+    <dt style="flex: 0 0 140px; text-align: left; font-weight: bold;">Top navigation:</dt>
+    <dd>
+        <label>
+            <input type="checkbox" id="vault-navlink-toggle" <?= $nav_link ? 'checked' : '' ?>
+                   onchange="toggleNavLink(this)">
+            Show a <strong>Backups</strong> quick link in the Unraid top navigation
+        </label>
+    </dd>
+</dl>
+<blockquote class="inline_help">
+Adds a <strong>Backups</strong> entry to the Unraid top navigation bar that opens the Vault web UI embedded in the Unraid interface. Off by default; takes effect on the next page load.
+</blockquote>
+<div id="vault-navlink-status" style="display: none; margin-top: 4px; font-size: 0.9em; color: var(--gray-500, #888);"></div>
+
 <script>
 function resetDefaults() {
     if (!confirm('Reset Vault configuration to defaults?')) return;
@@ -218,6 +237,39 @@ function resetDefaults() {
         }
     };
     xhr.send('action=reset-config&csrf_token=' + encodeURIComponent(<?=json_encode($var['csrf_token'] ?? '')?>));
+}
+
+function toggleNavLink(cb) {
+    var status = document.getElementById('vault-navlink-status');
+    var enabled = cb.checked ? 'yes' : 'no';
+    cb.disabled = true;
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/plugins/vault/include/control.php', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState !== 4) return;
+        cb.disabled = false;
+        var ok = false;
+        if (xhr.status === 200) {
+            try { ok = !!JSON.parse(xhr.responseText).success; } catch (e) { /* fallthrough */ }
+        }
+        if (!ok) {
+            cb.checked = !cb.checked; // revert
+            if (status) {
+                status.textContent = 'Failed to update the navigation setting.';
+                status.style.display = 'block';
+            }
+            return;
+        }
+        if (status) {
+            status.textContent = enabled === 'yes'
+                ? 'Enabled — reloading to show the Backups entry…'
+                : 'Disabled — reloading to remove the Backups entry…';
+            status.style.display = 'block';
+        }
+        setTimeout(function() { location.reload(); }, 800);
+    };
+    xhr.send('action=navlink&enabled=' + enabled + '&csrf_token=' + encodeURIComponent(<?=json_encode($var['csrf_token'] ?? '')?>));
 }
 
 function serviceControl(action) {

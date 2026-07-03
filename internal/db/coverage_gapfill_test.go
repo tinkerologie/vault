@@ -40,7 +40,7 @@ func TestGetSettingInt(t *testing.T) {
 		t.Fatalf("port = %d, want 24085", v)
 	}
 
-	// Stored unparseable value falls back to default (no error).
+	// Stored unparsable value falls back to default (no error).
 	if err := d.SetSetting("garbage", "not-an-int"); err != nil {
 		t.Fatal(err)
 	}
@@ -808,6 +808,58 @@ func TestClaimDueRetries(t *testing.T) {
 	}
 	if len(claimed2) != 0 {
 		t.Fatalf("second ClaimDueRetries returned %d, want 0", len(claimed2))
+	}
+}
+
+// TestClaimDueRetries_SkippedAndCancelled pins the #167 fix: the runner
+// schedules retries on preflight-failed runs (persisted as status 'skipped')
+// and stall-watchdog cancellations (status 'cancelled'). The claim query must
+// pick both up — previously it matched only 'failed', so those retries sat
+// with a due retry_next_at forever and never fired.
+func TestClaimDueRetries_SkippedAndCancelled(t *testing.T) {
+	t.Parallel()
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "d167", Type: "local", Config: "{}"})
+	jobID, _ := d.CreateJob(Job{Name: "j167", StorageDestID: destID, BackupTypeChain: "full"})
+
+	past := time.Now().Add(-time.Hour).UTC()
+	mkRun := func(status string) int64 {
+		t.Helper()
+		id, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "running", BackupType: "full"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Exec(`UPDATE job_runs SET status = ?, retry_next_at = ? WHERE id = ?`, status, past, id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	skippedID := mkRun("skipped")     // preflight failure
+	cancelledID := mkRun("cancelled") // stall-watchdog cancel
+	// A completed run with a (bogus) due timestamp must still never be
+	// claimed — the explicit status list guards against drift.
+	completedID := mkRun("completed")
+
+	claimed, err := d.ClaimDueRetries()
+	if err != nil {
+		t.Fatalf("ClaimDueRetries: %v", err)
+	}
+	got := map[int64]bool{}
+	for _, c := range claimed {
+		got[c.OriginalRunID] = true
+	}
+	if !got[skippedID] {
+		t.Errorf("skipped run %d was not claimed — preflight retries never fire (#167)", skippedID)
+	}
+	if !got[cancelledID] {
+		t.Errorf("cancelled run %d was not claimed — stall-cancel retries never fire (#167)", cancelledID)
+	}
+	if got[completedID] {
+		t.Errorf("completed run %d must not be claimed", completedID)
+	}
+	if len(claimed) != 2 {
+		t.Errorf("claimed %d runs, want 2", len(claimed))
 	}
 }
 

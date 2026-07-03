@@ -245,21 +245,34 @@ func TestUpdateSyncStatus(t *testing.T) {
 func TestRewriteMetadata(t *testing.T) {
 	t.Parallel()
 	s := NewSyncer(openTestDB(t), nil)
+	// Every output must be valid JSON with replicated_from set (#176) —
+	// asserted by unmarshalling, not substring matching, since concatenation
+	// bugs produced structurally invalid output that substrings missed.
 	cases := []struct {
 		name, original, source string
-		wantContains           string
+		wantKeys               map[string]string
 	}{
-		{"empty", "", "Source-A", `"replicated_from":"Source-A"`},
-		{"empty-object", "{}", "Source-B", `"replicated_from":"Source-B"`},
-		{"has-content", `{"foo":"bar"}`, "Src", `"replicated_from":"Src","foo":"bar"`},
-		// Pathological case — original is not a JSON object, returned verbatim.
-		{"not-object", `"raw"`, "Src", `"raw"`},
+		{"empty", "", "Source-A", map[string]string{"replicated_from": "Source-A"}},
+		{"empty-object", "{}", "Source-B", map[string]string{"replicated_from": "Source-B"}},
+		{"whitespace-object", "{ }", "Src", map[string]string{"replicated_from": "Src"}},
+		{"has-content", `{"foo":"bar"}`, "Src", map[string]string{"replicated_from": "Src", "foo": "bar"}},
+		{"quote-in-name", `{"foo":"bar"}`, `My "Main" Vault\`, map[string]string{"replicated_from": `My "Main" Vault\`, "foo": "bar"}},
+		// Non-object originals collapse to the origin marker alone —
+		// downstream json.Unmarshal consumers must always succeed.
+		{"not-object", `"raw"`, "Src", map[string]string{"replicated_from": "Src"}},
+		{"malformed", `{broken`, "Src", map[string]string{"replicated_from": "Src"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := s.rewriteMetadata(tc.original, tc.source)
-			if !strings.Contains(got, tc.wantContains) {
-				t.Errorf("got %q, want substring %q", got, tc.wantContains)
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+				t.Fatalf("output is not valid JSON (%v): %q", err, got)
+			}
+			for k, want := range tc.wantKeys {
+				if v, _ := parsed[k].(string); v != want {
+					t.Errorf("key %q = %q, want %q (full: %q)", k, v, want, got)
+				}
 			}
 		})
 	}
@@ -726,5 +739,53 @@ func TestCompleteSyncStatusDirect(t *testing.T) {
 	}
 	if (*seen)[len(*seen)-1] != 1.0 {
 		t.Errorf("last progress = %v, want 1.0", *seen)
+	}
+}
+
+// --- completeSyncStatus honesty (#177) ---
+
+func TestCompleteSyncStatusHonest(t *testing.T) {
+	t.Parallel()
+	d := openTestDB(t)
+	s := NewSyncer(d, nil)
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{
+		Name: "d177", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`,
+	})
+	noop := func(float64, string) {}
+
+	cases := []struct {
+		name       string
+		result     SyncResult
+		wantStatus string
+	}{
+		{"all-ok", SyncResult{JobsSynced: 2, jobsOK: 2}, "success"},
+		{"some-failed", SyncResult{JobsSynced: 1, jobsOK: 1, JobsFailed: 1}, "partial"},
+		// One job failed, one succeeded WITHOUT producing new restore points
+		// (already in sync): a no-op success is still a success → partial,
+		// never "failed" (CodeRabbit review finding on #177).
+		{"noop-success-plus-failure", SyncResult{JobsFailed: 1, jobsOK: 1}, "partial"},
+		{"all-failed", SyncResult{JobsFailed: 3}, "failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := d.CreateReplicationSource(db.ReplicationSource{
+				Name: "src-" + tc.name, URL: "http://x", Config: "{}", StorageDestID: destID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := tc.result
+			s.completeSyncStatus(id, "src-"+tc.name, &res, noop)
+			src, err := d.GetReplicationSource(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if src.LastSyncStatus != tc.wantStatus {
+				t.Errorf("status = %q, want %q (a sync with failures must not report success — #177)", src.LastSyncStatus, tc.wantStatus)
+			}
+			if tc.wantStatus != "success" && src.LastSyncError == "" {
+				t.Errorf("expected a last_sync_error for %s", tc.wantStatus)
+			}
+		})
 	}
 }

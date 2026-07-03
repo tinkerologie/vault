@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -12,13 +13,13 @@ import (
 	libvirt "github.com/digitalocean/go-libvirt"
 )
 
-func (h *VMHandler) verifyRestoredVMReady(dom libvirt.Domain, name string, config vmRestoreVerifyConfig, progress ProgressFunc) error {
+func (h *VMHandler) verifyRestoredVMReady(ctx context.Context, dom libvirt.Domain, name string, config vmRestoreVerifyConfig, progress ProgressFunc) error {
 	switch config.Mode {
 	case vmRestoreVerifyModeRunning:
 		return nil
 	case vmRestoreVerifyModeGuestAgent:
 		progress(name, 98, "waiting for QEMU guest agent")
-		if err := h.waitForVMGuestAgent(dom, name, time.Duration(vmRestoreVerifyTimeout(config))*time.Second); err != nil {
+		if err := h.waitForVMGuestAgent(ctx, dom, name, time.Duration(vmRestoreVerifyTimeout(config))*time.Second); err != nil {
 			return fmt.Errorf("waiting for guest agent: %w", err)
 		}
 		progress(name, 99, "verified QEMU guest agent")
@@ -29,7 +30,7 @@ func (h *VMHandler) verifyRestoredVMReady(dom libvirt.Domain, name string, confi
 			return err
 		}
 		progress(name, 98, fmt.Sprintf("waiting for %s", endpoint))
-		if err := waitForTCPEndpoint(endpoint, time.Duration(vmRestoreVerifyTimeout(config))*time.Second); err != nil {
+		if err := waitForTCPEndpoint(ctx, endpoint, time.Duration(vmRestoreVerifyTimeout(config))*time.Second); err != nil {
 			return fmt.Errorf("waiting for restored VM service %s: %w", endpoint, err)
 		}
 		progress(name, 99, fmt.Sprintf("verified %s", endpoint))
@@ -39,7 +40,7 @@ func (h *VMHandler) verifyRestoredVMReady(dom libvirt.Domain, name string, confi
 	}
 }
 
-func (h *VMHandler) waitForVMGuestAgent(dom libvirt.Domain, name string, timeout time.Duration) error {
+func (h *VMHandler) waitForVMGuestAgent(ctx context.Context, dom libvirt.Domain, name string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
@@ -69,7 +70,9 @@ func (h *VMHandler) waitForVMGuestAgent(dom libvirt.Domain, name string, timeout
 		}
 
 		lastErr = err
-		time.Sleep(vmShutdownPollInterval)
+		if serr := sleepCtx(ctx, vmShutdownPollInterval); serr != nil {
+			return serr
+		}
 	}
 }
 
@@ -124,7 +127,7 @@ func (h *VMHandler) detectVMReadyHost(dom libvirt.Domain) (string, error) {
 	return "", fmt.Errorf("libvirt did not report a reachable guest address; configure an explicit TCP host")
 }
 
-func waitForTCPEndpoint(endpoint string, timeout time.Duration) error {
+func waitForTCPEndpoint(ctx context.Context, endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
@@ -140,6 +143,8 @@ func waitForTCPEndpoint(endpoint string, timeout time.Duration) error {
 			return lastErr
 		}
 
-		time.Sleep(vmShutdownPollInterval)
+		if serr := sleepCtx(ctx, vmShutdownPollInterval); serr != nil {
+			return serr
+		}
 	}
 }

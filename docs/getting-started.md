@@ -166,3 +166,7 @@ Vault scans `/mnt/` for pool mounts at startup. If your pool isn't shown, make s
 
 **Diagnostics bundle for support**
 Settings → Support → _Download diagnostics_ exports a ZIP containing system info, schema, recent runs, scheduler state, and the in-memory daemon log — all credential values are redacted. Attach it to bug reports.
+
+## Optional: "Backups" link in the top navigation
+
+Vault can add a **Backups** entry to the Unraid top navigation bar for one-click access to the web UI, embedded inside the Unraid interface. It is **off by default** — enable it under _Settings → Utilities → Vault → Quick Access_. The entry uses Unraid's supported plugin menu extension point; no core files are modified.

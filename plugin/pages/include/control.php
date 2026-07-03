@@ -96,6 +96,40 @@ switch ($action) {
         echo json_encode(build_response($rc, $out));
         break;
 
+    case 'navlink':
+        // Toggle the optional "Backups" top-navigation quick link (#162).
+        // Writes NAV_LINK into vault.cfg; Backups.page's Cond header reads it
+        // via parse_plugin_cfg on nav render. No daemon restart needed.
+        $enabled = $_POST['enabled'] ?? '';
+        if (!in_array($enabled, ['yes', 'no'], true)) {
+            http_response_code(400);
+            echo json_encode(['error' => "enabled must be 'yes' or 'no'"]);
+            break;
+        }
+        // Line-based upsert so every other key in vault.cfg is preserved.
+        $lines = [];
+        if (file_exists($CONFIG)) {
+            $raw = @file_get_contents($CONFIG);
+            if ($raw !== false && $raw !== '') {
+                $split = preg_split('/\r?\n/', rtrim($raw, "\r\n"));
+                if (is_array($split)) {
+                    $lines = $split;
+                }
+            }
+        }
+        $lines = array_values(array_filter($lines, function ($l) {
+            return !preg_match('/^\\s*NAV_LINK\\s*=/', $l);
+        }));
+        $lines[] = "NAV_LINK='{$enabled}'";
+        $written = file_put_contents($CONFIG, implode("\n", $lines) . "\n", LOCK_EX);
+        if ($written === false) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Failed to write config file']);
+            break;
+        }
+        echo json_encode(['success' => true, 'nav_link' => $enabled]);
+        break;
+
     case 'reset-config':
         // Reset vault.cfg to defaults, preserving SERVICE and SNAPSHOT_PATH.
         $service = 'yes';

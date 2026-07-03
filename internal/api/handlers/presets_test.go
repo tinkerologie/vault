@@ -55,8 +55,8 @@ func TestPresetsGetExclusions_KnownImage(t *testing.T) {
 	h := NewPresetsHandler()
 
 	tests := []struct {
-		image    string
-		wantMin  int // minimum number of preset paths
+		image   string
+		wantMin int // minimum number of preset paths
 	}{
 		{image: "plex", wantMin: 3},
 		{image: "jellyfin", wantMin: 2},

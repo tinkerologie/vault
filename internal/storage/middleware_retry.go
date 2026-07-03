@@ -145,3 +145,10 @@ func (r *retryAdapter) Close() error {
 	}
 	return nil
 }
+
+// RemoveEmptyDir forwards the optional dir-removal capability down the chain
+// (#168). No retry: a non-empty directory is the expected stop condition for
+// the sweep, not a transient fault.
+func (r *retryAdapter) RemoveEmptyDir(dir string) error {
+	return forwardRemoveEmptyDir(r.inner, dir)
+}
