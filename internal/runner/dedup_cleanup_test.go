@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"io/fs"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/db"
@@ -21,9 +22,17 @@ func (a *recordingDedupAdapter) Delete(p string) error {
 	return nil
 }
 
+// Stat reports not-found so the scoped reclaim (#183) treats every subpath as
+// a directory and routes it through DeleteStorageDir.
+func (a *recordingDedupAdapter) Stat(string) (storage.FileInfo, error) {
+	return storage.FileInfo{}, fs.ErrNotExist
+}
+
 // TestReclaimDedupAfterJobDeleteLastJobRemovesRepo verifies that when the last
-// job on a dedup destination is deleted, the shared _vault repo is removed and
-// the destination's dedup index rows are cleared (issue #143).
+// job on a dedup destination is deleted, the dedup-owned repo paths are removed
+// and the destination's dedup index rows are cleared (issue #143) — but ONLY
+// the dedup-owned subpaths, never the shared _vault root, which also holds the
+// runner's database backups (issue #183).
 func TestReclaimDedupAfterJobDeleteLastJobRemovesRepo(t *testing.T) {
 	t.Parallel()
 	database, err := db.Open(":memory:")
@@ -54,14 +63,17 @@ func TestReclaimDedupAfterJobDeleteLastJobRemovesRepo(t *testing.T) {
 	if len(errs) != 0 {
 		t.Errorf("errs = %v, want none", errs)
 	}
-	found := false
+	deleted := map[string]bool{}
 	for _, p := range adapter.deleted {
-		if p == dedup.RepoRoot {
-			found = true
+		deleted[p] = true
+	}
+	for _, sub := range dedup.RepoSubpaths() {
+		if !deleted[sub] {
+			t.Errorf("Delete(%q) not called; deleted = %v", sub, adapter.deleted)
 		}
 	}
-	if !found {
-		t.Errorf("Delete(%q) not called; deleted = %v", dedup.RepoRoot, adapter.deleted)
+	if deleted[dedup.RepoRoot] {
+		t.Errorf("Delete(%q) was called on the shared root — DB backups would be destroyed (#183)", dedup.RepoRoot)
 	}
 
 	var n int

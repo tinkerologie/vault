@@ -81,7 +81,7 @@ func (h *VMHandler) ListItems() ([]BackupItem, error) {
 //   - vm_checkpoint: name of the libvirt checkpoint created by this backup
 //   - vm_backup_type: the actual type performed (may differ from requested
 //     when a fallback to full was needed)
-func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
+func (h *VMHandler) Backup(ctx context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	result := &BackupResult{ItemName: item.Name, Meta: map[string]any{}}
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -143,7 +143,7 @@ func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, p
 		return nil, fmt.Errorf("VM %s has no file-backed disks the backup job can handle; skipped disks: %s", item.Name, formatSkippedDomainDisks(inventory.Skipped))
 	}
 
-	cleanDisks, err := h.cleanStaleSnapshots(item.Name, dom, disks, progress)
+	cleanDisks, err := h.cleanStaleSnapshots(ctx, item.Name, dom, disks, progress)
 	if err != nil {
 		return nil, fmt.Errorf("cleaning stale snapshots: %w", err)
 	}
@@ -241,12 +241,12 @@ func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, p
 	var artifacts []vmBackupArtifact
 	checkpointName := ""
 	if len(copyDisks) > 0 {
-		backupDom, restoreDomainState, err := h.prepareDomainForBackup(item.Name, dom, stateValue, backupMode, progress)
+		backupDom, restoreDomainState, err := h.prepareDomainForBackup(ctx, item.Name, dom, stateValue, backupMode, progress)
 		if err != nil {
 			return nil, err
 		}
 
-		artifacts, err = h.backupDisks(backupDom, item.Name, copyDisks, destDir, parentCheckpoint, forceQcow2, progress, result)
+		artifacts, err = h.backupDisks(ctx, backupDom, item.Name, copyDisks, destDir, parentCheckpoint, forceQcow2, progress, result)
 		if err != nil {
 			if restoreErr := restoreDomainState(); restoreErr != nil {
 				return nil, fmt.Errorf("%v; restoring domain state: %w", err, restoreErr)
@@ -278,7 +278,7 @@ func (h *VMHandler) Backup(_ context.Context, item BackupItem, destDir string, p
 		if _, err := os.Stat(nvramPath); err == nil {
 			progress(item.Name, 90, "copying NVRAM")
 			nvramDest := filepath.Join(destDir, filepath.Base(nvramPath))
-			if err := copyFileWithProgress(nvramPath, nvramDest, func(copied int64) {
+			if err := copyFileWithProgress(ctx, nvramPath, nvramDest, func(copied int64) {
 				progress(item.Name, 92, fmt.Sprintf("copying NVRAM: %s", humanizeBytes(float64(copied))))
 			}); err != nil {
 				return nil, fmt.Errorf("copying NVRAM: %w", err)
@@ -400,7 +400,7 @@ func (h *VMHandler) DeleteCheckpoint(domainName, checkpointName string) error {
 	return nil
 }
 
-func (h *VMHandler) backupDisks(dom libvirt.Domain, name string, disks []domainDisk, destDir, parentCheckpoint string, forceQcow2 bool, progress ProgressFunc, result *BackupResult) ([]vmBackupArtifact, error) {
+func (h *VMHandler) backupDisks(ctx context.Context, dom libvirt.Domain, name string, disks []domainDisk, destDir, parentCheckpoint string, forceQcow2 bool, progress ProgressFunc, result *BackupResult) ([]vmBackupArtifact, error) {
 	backupXML, artifacts, err := buildBackupXMLWithParent(destDir, disks, parentCheckpoint, forceQcow2)
 	if err != nil {
 		return nil, fmt.Errorf("building backup XML: %w", err)
@@ -412,7 +412,7 @@ func (h *VMHandler) backupDisks(dom libvirt.Domain, name string, disks []domainD
 		return nil, fmt.Errorf("starting backup job: %w", err)
 	}
 
-	if err := h.waitForBackupCompletion(dom, name, artifacts, progress); err != nil {
+	if err := h.waitForBackupCompletion(ctx, dom, name, artifacts, progress); err != nil {
 		return nil, err
 	}
 
@@ -428,7 +428,7 @@ func (h *VMHandler) backupDisks(dom libvirt.Domain, name string, disks []domainD
 // If item.Settings["restore_destination"] is set, disk images and NVRAM
 // are restored under that base directory instead of their original paths,
 // and the domain XML is rewritten to reference the new locations.
-func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
+func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 5, "reading domain XML")
 
 	xmlPath := filepath.Join(sourceDir, "domain.xml")
@@ -463,7 +463,7 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 		return fmt.Errorf("validating restore plan: %w", err)
 	}
 
-	if err := h.reconcileExistingDomainForRestore(item.Name, progress); err != nil {
+	if err := h.reconcileExistingDomainForRestore(ctx, item.Name, progress); err != nil {
 		return fmt.Errorf("cleaning up existing domain: %w", err)
 	}
 
@@ -471,6 +471,9 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 	progress(item.Name, 20, "restoring disk images")
 	totalDisks := len(plan.Disks)
 	for i, disk := range plan.Disks {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		pct := 20 + (i*50)/max(totalDisks, 1)
 		srcFile := filepath.Join(sourceDir, disk.BackupFile)
 		if _, err := os.Stat(srcFile); err != nil {
@@ -486,7 +489,7 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 			return fmt.Errorf("creating dir for disk %s: %w", targetPath, err)
 		}
-		if err := copyFileWithProgress(srcFile, targetPath, func(copied int64) {
+		if err := copyFileWithProgress(ctx, srcFile, targetPath, func(copied int64) {
 			progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d: %s", i+1, totalDisks, humanizeBytes(float64(copied))))
 		}); err != nil {
 			return fmt.Errorf("restoring disk %s: %w", targetPath, err)
@@ -506,7 +509,7 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 			if err := os.MkdirAll(filepath.Dir(nvramTargetPath), 0755); err != nil {
 				return fmt.Errorf("creating NVRAM dir: %w", err)
 			}
-			if err := copyFile(nvramSrc, nvramTargetPath); err != nil {
+			if err := copyFile(ctx, nvramSrc, nvramTargetPath); err != nil {
 				return fmt.Errorf("restoring NVRAM: %w", err)
 			}
 		}
@@ -526,7 +529,9 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 				return restoreErr
 			}
 
-			cleanupErr := h.stopStartedRestoreDomain(dom, item.Name)
+			// Teardown must complete even when the restore was cancelled —
+			// use a fresh context, not the (possibly cancelled) run ctx.
+			cleanupErr := h.stopStartedRestoreDomain(context.Background(), dom, item.Name)
 			if cleanupErr != nil {
 				return fmt.Errorf("%w; cleanup started restored VM: %v", restoreErr, cleanupErr)
 			}
@@ -539,10 +544,10 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 			return fmt.Errorf("starting restored VM: %w", err)
 		}
 		startedRestoreDomain = true
-		if _, err := h.waitForLibvirtDomainRunning(dom, item.Name, 2*time.Minute); err != nil {
+		if _, err := h.waitForLibvirtDomainRunning(ctx, dom, item.Name, 2*time.Minute); err != nil {
 			return cleanupRestoreStartFailure(fmt.Errorf("verifying restored VM is running: %w", err))
 		}
-		if err := h.verifyRestoredVMReady(dom, item.Name, verifyConfig, progress); err != nil {
+		if err := h.verifyRestoredVMReady(ctx, dom, item.Name, verifyConfig, progress); err != nil {
 			return cleanupRestoreStartFailure(fmt.Errorf("verifying restored VM readiness: %w", err))
 		}
 		progress(item.Name, 99, "verified restored VM running")
@@ -552,7 +557,7 @@ func (h *VMHandler) Restore(_ context.Context, item BackupItem, sourceDir string
 	return nil
 }
 
-func (h *VMHandler) reconcileExistingDomainForRestore(name string, progress ProgressFunc) error {
+func (h *VMHandler) reconcileExistingDomainForRestore(ctx context.Context, name string, progress ProgressFunc) error {
 	dom, err := h.conn.DomainLookupByName(name)
 	if err != nil {
 		if isLibvirtNoDomainError(err) {
@@ -572,7 +577,7 @@ func (h *VMHandler) reconcileExistingDomainForRestore(name string, progress Prog
 		progress(name, 12, "stopping existing domain")
 		shutdownErr := h.conn.DomainShutdownFlags(dom, libvirt.DomainShutdownDefault)
 		if shutdownErr == nil {
-			stateValue, err = h.waitForLibvirtDomainShutOff(dom, name, vmShutdownTimeout)
+			stateValue, err = h.waitForLibvirtDomainShutOff(ctx, dom, name, vmShutdownTimeout)
 			if err != nil {
 				return err
 			}
@@ -587,7 +592,7 @@ func (h *VMHandler) reconcileExistingDomainForRestore(name string, progress Prog
 				return fmt.Errorf("forcing existing domain stop: %w", err)
 			}
 
-			if _, err := h.waitForLibvirtDomainShutOff(dom, name, 30*time.Second); err != nil {
+			if _, err := h.waitForLibvirtDomainShutOff(ctx, dom, name, 30*time.Second); err != nil {
 				return err
 			}
 		}
@@ -611,10 +616,10 @@ func (h *VMHandler) reconcileExistingDomainForRestore(name string, progress Prog
 	return nil
 }
 
-func (h *VMHandler) stopStartedRestoreDomain(dom libvirt.Domain, name string) error {
+func (h *VMHandler) stopStartedRestoreDomain(ctx context.Context, dom libvirt.Domain, name string) error {
 	shutdownErr := h.conn.DomainShutdownFlags(dom, libvirt.DomainShutdownDefault)
 	if shutdownErr == nil {
-		if _, err := h.waitForLibvirtDomainShutOff(dom, name, 30*time.Second); err == nil {
+		if _, err := h.waitForLibvirtDomainShutOff(ctx, dom, name, 30*time.Second); err == nil {
 			return nil
 		} else {
 			shutdownErr = err
@@ -631,7 +636,7 @@ func (h *VMHandler) stopStartedRestoreDomain(dom libvirt.Domain, name string) er
 		return fmt.Errorf("destroy failed: %w", destroyErr)
 	}
 
-	if _, err := h.waitForLibvirtDomainShutOff(dom, name, 30*time.Second); err != nil && !isLibvirtNoDomainError(err) {
+	if _, err := h.waitForLibvirtDomainShutOff(ctx, dom, name, 30*time.Second); err != nil && !isLibvirtNoDomainError(err) {
 		if shutdownErr != nil {
 			return fmt.Errorf("shutdown failed: %v; post-destroy wait failed: %w", shutdownErr, err)
 		}
@@ -641,7 +646,7 @@ func (h *VMHandler) stopStartedRestoreDomain(dom libvirt.Domain, name string) er
 	return nil
 }
 
-func (h *VMHandler) waitForLibvirtDomainShutOff(dom libvirt.Domain, name string, timeout time.Duration) (libvirt.DomainState, error) {
+func (h *VMHandler) waitForLibvirtDomainShutOff(ctx context.Context, dom libvirt.Domain, name string, timeout time.Duration) (libvirt.DomainState, error) {
 	deadline := time.Now().Add(timeout)
 	for {
 		state, _, err := h.conn.DomainGetState(dom, 0)
@@ -656,11 +661,13 @@ func (h *VMHandler) waitForLibvirtDomainShutOff(dom libvirt.Domain, name string,
 			return stateValue, fmt.Errorf("waiting for domain %s to shut off: timed out with state %s", name, domainStateString(stateValue))
 		}
 
-		time.Sleep(vmShutdownPollInterval)
+		if err := sleepCtx(ctx, vmShutdownPollInterval); err != nil {
+			return stateValue, err
+		}
 	}
 }
 
-func (h *VMHandler) waitForLibvirtDomainRunning(dom libvirt.Domain, name string, timeout time.Duration) (libvirt.DomainState, error) {
+func (h *VMHandler) waitForLibvirtDomainRunning(ctx context.Context, dom libvirt.Domain, name string, timeout time.Duration) (libvirt.DomainState, error) {
 	deadline := time.Now().Add(timeout)
 	for {
 		state, _, err := h.conn.DomainGetState(dom, 0)
@@ -676,7 +683,23 @@ func (h *VMHandler) waitForLibvirtDomainRunning(dom libvirt.Domain, name string,
 			return stateValue, fmt.Errorf("waiting for domain %s to reach running state: timed out with state %s", name, domainStateString(stateValue))
 		}
 
-		time.Sleep(vmShutdownPollInterval)
+		if err := sleepCtx(ctx, vmShutdownPollInterval); err != nil {
+			return stateValue, err
+		}
+	}
+}
+
+// sleepCtx waits for d or until ctx is cancelled, returning ctx.Err() on
+// cancellation. Replaces bare time.Sleep in the VM poll loops so a cancelled
+// run is observed within one poll interval (issue #171).
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
 }
 
@@ -744,7 +767,7 @@ func domainStateString(state libvirt.DomainState) string {
 // D-state flushing dirty pages to fuse-backed storage, so libvirt's kill wait
 // times out with "Failed to terminate process ... with SIGKILL: Device or
 // resource busy" even though the process exits once the flush completes.
-func (h *VMHandler) destroyDomainWithRetry(dom libvirt.Domain, name string) error {
+func (h *VMHandler) destroyDomainWithRetry(ctx context.Context, dom libvirt.Domain, name string) error {
 	deadline := time.Now().Add(vmShutdownTimeout)
 	for {
 		err := h.conn.DomainDestroy(dom)
@@ -767,7 +790,9 @@ func (h *VMHandler) destroyDomainWithRetry(dom libvirt.Domain, name string) erro
 			return fmt.Errorf("destroying domain %s: giving up after %s: %w", name, vmShutdownTimeout, err)
 		}
 		log.Printf("engine/vm: destroying domain %s: %v — retrying", name, err)
-		time.Sleep(vmShutdownPollInterval)
+		if serr := sleepCtx(ctx, vmShutdownPollInterval); serr != nil {
+			return fmt.Errorf("destroying domain %s: %w", name, serr)
+		}
 	}
 }
 
@@ -780,7 +805,7 @@ func (h *VMHandler) destroyDomainWithRetry(dom libvirt.Domain, name string) erro
 // we start a temporary paused boot session, run the backup job against that
 // paused VM, then tear the session back down. Guests that were already paused
 // can use their existing paused state directly without another reboot cycle.
-func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, state libvirt.DomainState, backupMode string, progress ProgressFunc) (libvirt.Domain, func() error, error) {
+func (h *VMHandler) prepareDomainForBackup(ctx context.Context, name string, dom libvirt.Domain, state libvirt.DomainState, backupMode string, progress ProgressFunc) (libvirt.Domain, func() error, error) {
 	if state == libvirt.DomainShutoff || state == libvirt.DomainShutdown {
 		progress(name, 20, "starting domain paused for backup")
 		backupDom, err := h.conn.DomainCreateWithFlags(dom, uint32(libvirt.DomainStartPaused))
@@ -789,7 +814,8 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 		}
 
 		return backupDom, func() error {
-			return h.destroyDomainWithRetry(backupDom, name)
+			// Teardown must complete even after cancellation — fresh context.
+			return h.destroyDomainWithRetry(context.Background(), backupDom, name)
 		}, nil
 	}
 
@@ -805,7 +831,7 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 	progress(name, 20, "shutting down domain for cold backup")
 	shutdownErr := h.conn.DomainShutdownFlags(dom, libvirt.DomainShutdownDefault)
 	if shutdownErr == nil {
-		stateAfterShutdown, err := h.waitForLibvirtDomainShutOff(dom, name, vmShutdownTimeout)
+		stateAfterShutdown, err := h.waitForLibvirtDomainShutOff(ctx, dom, name, vmShutdownTimeout)
 		if err != nil {
 			return libvirt.Domain{}, nil, err
 		}
@@ -814,14 +840,14 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 
 	if shutdownErr != nil || !libvirtDomainIsShutOff(state) {
 		progress(name, 22, "forcing domain stop for cold backup")
-		if err := h.destroyDomainWithRetry(dom, name); err != nil {
+		if err := h.destroyDomainWithRetry(ctx, dom, name); err != nil {
 			if shutdownErr != nil {
 				return libvirt.Domain{}, nil, fmt.Errorf("stopping domain for cold backup: shutdown failed: %v; destroy failed: %w", shutdownErr, err)
 			}
 			return libvirt.Domain{}, nil, fmt.Errorf("forcing domain stop for cold backup: %w", err)
 		}
 
-		if _, err := h.waitForLibvirtDomainShutOff(dom, name, 30*time.Second); err != nil {
+		if _, err := h.waitForLibvirtDomainShutOff(ctx, dom, name, 30*time.Second); err != nil {
 			return libvirt.Domain{}, nil, err
 		}
 	}
@@ -833,7 +859,8 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 	}
 
 	return backupDom, func() error {
-		if err := h.destroyDomainWithRetry(backupDom, name); err != nil {
+		// Teardown must complete even after cancellation — fresh context.
+		if err := h.destroyDomainWithRetry(context.Background(), backupDom, name); err != nil {
 			return fmt.Errorf("stopping paused backup session: %w", err)
 		}
 		if err := h.conn.DomainCreate(dom); err != nil {
@@ -843,7 +870,7 @@ func (h *VMHandler) prepareDomainForBackup(name string, dom libvirt.Domain, stat
 	}, nil
 }
 
-func (h *VMHandler) waitForBackupCompletion(dom libvirt.Domain, name string, artifacts []vmBackupArtifact, progress ProgressFunc) error {
+func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Domain, name string, artifacts []vmBackupArtifact, progress ProgressFunc) error {
 	const backupTimeout = 2 * time.Hour
 	// The job can vanish without a completed-stats record (libvirt reports
 	// that as a successful query with job type DomainJobNone — see issue
@@ -854,6 +881,16 @@ func (h *VMHandler) waitForBackupCompletion(dom libvirt.Domain, name string, art
 	vanishedPolls := 0
 	deadline := time.Now().Add(backupTimeout)
 	for {
+		// Cancellation (operator Cancel or stall watchdog) must stop the
+		// libvirt push-mode job itself — otherwise the hypervisor keeps
+		// writing into a staging dir the runner is about to delete (#171).
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			log.Printf("engine/vm: backup for %s cancelled — aborting libvirt backup job", name)
+			if aerr := h.conn.DomainAbortJob(dom); aerr != nil && !isLibvirtNoDomainError(aerr) {
+				log.Printf("engine/vm: aborting backup job for %s: %v", name, aerr)
+			}
+			return ctxErr
+		}
 		jobType, params, err := h.conn.DomainGetJobStats(dom, 0)
 		if err != nil {
 			done, jobErr := h.vanishedBackupJobOutcome(dom, name, artifacts)
@@ -898,7 +935,7 @@ func (h *VMHandler) waitForBackupCompletion(dom libvirt.Domain, name string, art
 			return fmt.Errorf("waiting for backup completion: timed out after %s", backupTimeout)
 		}
 
-		time.Sleep(vmShutdownPollInterval)
+		_ = sleepCtx(ctx, vmShutdownPollInterval) // cancellation handled at loop top
 	}
 }
 
@@ -947,7 +984,7 @@ func domainBlockJobIsCommit(jobType libvirt.DomainBlockJobType) bool {
 	return jobType == libvirt.DomainBlockJobTypeCommit || jobType == libvirt.DomainBlockJobTypeActiveCommit
 }
 
-func (h *VMHandler) waitForDomainBlockJobReady(name string, dom libvirt.Domain, target string, timeout time.Duration, progress ProgressFunc) error {
+func (h *VMHandler) waitForDomainBlockJobReady(ctx context.Context, name string, dom libvirt.Domain, target string, timeout time.Duration, progress ProgressFunc) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		found, jobType, cur, end, err := h.getDomainBlockJobInfo(dom, target)
@@ -969,11 +1006,13 @@ func (h *VMHandler) waitForDomainBlockJobReady(name string, dom libvirt.Domain, 
 			return fmt.Errorf("waiting for stale block job on %s: timed out after %s", target, timeout)
 		}
 
-		time.Sleep(vmShutdownPollInterval)
+		if err := sleepCtx(ctx, vmShutdownPollInterval); err != nil {
+			return err
+		}
 	}
 }
 
-func (h *VMHandler) pivotDomainBlockJob(name string, dom libvirt.Domain, target string, progress ProgressFunc) error {
+func (h *VMHandler) pivotDomainBlockJob(ctx context.Context, name string, dom libvirt.Domain, target string, progress ProgressFunc) error {
 	progress(name, 13, fmt.Sprintf("pivoting stale block job on %s", target))
 	if err := h.conn.DomainBlockJobAbort(dom, target, libvirt.DomainBlockJobAbortPivot); err != nil {
 		return fmt.Errorf("pivoting stale block job on %s: %w", target, err)
@@ -992,11 +1031,13 @@ func (h *VMHandler) pivotDomainBlockJob(name string, dom libvirt.Domain, target 
 			return fmt.Errorf("waiting for pivoted block job on %s to disappear: timed out after %s", target, vmShutdownTimeout)
 		}
 
-		time.Sleep(vmShutdownPollInterval)
+		if err := sleepCtx(ctx, vmShutdownPollInterval); err != nil {
+			return err
+		}
 	}
 }
 
-func (h *VMHandler) resolveStaleSnapshotDisk(name string, dom libvirt.Domain, disk domainDisk, progress ProgressFunc) (bool, error) {
+func (h *VMHandler) resolveStaleSnapshotDisk(ctx context.Context, name string, dom libvirt.Domain, disk domainDisk, progress ProgressFunc) (bool, error) {
 	found, jobType, cur, end, err := h.getDomainBlockJobInfo(dom, disk.Target)
 	if err != nil {
 		return false, err
@@ -1007,11 +1048,11 @@ func (h *VMHandler) resolveStaleSnapshotDisk(name string, dom libvirt.Domain, di
 			return false, fmt.Errorf("disk %s has active block job %s", disk.Target, jobType)
 		}
 		if !domainBlockJobIsReady(cur, end) {
-			if err := h.waitForDomainBlockJobReady(name, dom, disk.Target, vmShutdownTimeout, progress); err != nil {
+			if err := h.waitForDomainBlockJobReady(ctx, name, dom, disk.Target, vmShutdownTimeout, progress); err != nil {
 				return false, err
 			}
 		}
-		return true, h.pivotDomainBlockJob(name, dom, disk.Target, progress)
+		return true, h.pivotDomainBlockJob(ctx, name, dom, disk.Target, progress)
 	}
 
 	if _, statErr := os.Stat(disk.Path); statErr != nil {
@@ -1025,16 +1066,16 @@ func (h *VMHandler) resolveStaleSnapshotDisk(name string, dom libvirt.Domain, di
 	if err := h.conn.DomainBlockCommit(dom, disk.Target, nil, nil, 0, libvirt.DomainBlockCommitActive|libvirt.DomainBlockCommitDelete); err != nil {
 		return false, fmt.Errorf("starting block commit for stale overlay on %s: %w", disk.Target, err)
 	}
-	if err := h.waitForDomainBlockJobReady(name, dom, disk.Target, vmShutdownTimeout, progress); err != nil {
+	if err := h.waitForDomainBlockJobReady(ctx, name, dom, disk.Target, vmShutdownTimeout, progress); err != nil {
 		return false, err
 	}
 
-	return true, h.pivotDomainBlockJob(name, dom, disk.Target, progress)
+	return true, h.pivotDomainBlockJob(ctx, name, dom, disk.Target, progress)
 }
 
 // cleanStaleSnapshots detects disk paths that are leftover snapshot overlays
 // from a previous failed backup and resolves them back to their base image.
-func (h *VMHandler) cleanStaleSnapshots(name string, dom libvirt.Domain, disks []domainDisk, progress ProgressFunc) ([]domainDisk, error) {
+func (h *VMHandler) cleanStaleSnapshots(ctx context.Context, name string, dom libvirt.Domain, disks []domainDisk, progress ProgressFunc) ([]domainDisk, error) {
 	hasStale := false
 	for _, disk := range disks {
 		if strings.HasSuffix(disk.Path, ".snap") {
@@ -1056,7 +1097,7 @@ func (h *VMHandler) cleanStaleSnapshots(name string, dom libvirt.Domain, disks [
 		log.Printf("engine: detected stale snapshot overlay %s, base image %s", disk.Path, base)
 		progress(name, 12, fmt.Sprintf("cleaning stale snapshot: %s", filepath.Base(disk.Path)))
 
-		resolved, err := h.resolveStaleSnapshotDisk(name, dom, disk, progress)
+		resolved, err := h.resolveStaleSnapshotDisk(ctx, name, dom, disk, progress)
 		if err != nil {
 			return nil, fmt.Errorf("resolving stale snapshot disk %s: %w", disk.Target, err)
 		}

@@ -297,7 +297,7 @@ func TestFolderChunkedHonoursExclusions(t *testing.T) {
 		}
 	}
 	must(filepath.Join(src, "keep.txt"), []byte("keep me"))
-	must(filepath.Join(src, "app.log"), []byte("noisy log"))         // glob excluded
+	must(filepath.Join(src, "app.log"), []byte("noisy log"))          // glob excluded
 	must(filepath.Join(src, "logs/debug.txt"), []byte("dir content")) // dir excluded
 	must(filepath.Join(src, "data/blob.bin"), []byte("payload"))      // kept
 

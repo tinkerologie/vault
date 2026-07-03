@@ -898,6 +898,10 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		itemResults   []map[string]any
 		itemChecksums = make(map[string]map[string]string)
 		vmCheckpoints = make(map[string]string)
+		// zfsSnapshots records the ZFS snapshot created per item so the next
+		// incremental/differential run can resolve its -i parent from the
+		// restore point instead of guessing (issue #180).
+		zfsSnapshots = make(map[string]string)
 		// itemManifests holds per-item dedup manifest IDs (hex-encoded) for
 		// the dedup path. Populated when result.Meta["manifest_id"] is set
 		// by backupItemChunked. Persisted in restore_point metadata as
@@ -925,7 +929,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 					if item.ItemType == "container" {
 						if currentID, ok := byName[item.ItemName]; ok && currentID != item.ItemID {
 							log.Printf("runner: container %q: ID changed from %s to %s (resolved by name)",
-								item.ItemName, item.ItemID[:12], currentID[:12])
+								item.ItemName, engine.ShortID(item.ItemID), engine.ShortID(currentID))
 							resolvedIDs[item.ItemName] = currentID
 						}
 					}
@@ -1062,14 +1066,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				backupItem.Settings[key] = value
 			}
 			backupItem.Settings["backup_type"] = btResult.BackupType
-			// For incremental ZFS backups, read the parent snapshot from the
-			// previous restore point's zfs_meta.json sidecar.
+			// For incremental/differential ZFS backups, read the parent
+			// snapshot for this item from the parent restore point's
+			// zfs_snapshots metadata (written below on success). The engine
+			// falls back to a full backup when it is absent or the snapshot
+			// no longer exists on the dataset (issue #180).
 			if btResult.ParentRP != nil && btResult.BackupType != "full" {
-				var parentMeta map[string]any
-				if json.Unmarshal([]byte(btResult.ParentRP.Metadata), &parentMeta) == nil {
-					if ps, ok := parentMeta["zfs_snapshot"].(string); ok && ps != "" {
-						backupItem.Settings["parent_snapshot"] = ps
-					}
+				if ps := zfsSnapshotFromRPMeta(btResult.ParentRP.Metadata, item.ItemName); ps != "" {
+					backupItem.Settings["parent_snapshot"] = ps
 				}
 			}
 		}
@@ -1189,12 +1193,11 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			if job.VerifyBackup {
 				resEntry["verified"] = true
 			}
-			// For ZFS items, capture the snapshot name from the backup settings
-			// so it can be referenced by future incremental backups.
+			// For ZFS items, capture the snapshot the engine created so future
+			// incremental/differential backups can reference it as their -i
+			// parent (issue #180).
 			if item.ItemType == "zfs" {
-				if snap, ok := backupItem.Settings["dataset"].(string); ok {
-					resEntry["zfs_dataset"] = snap
-				}
+				captureZFSResult(backupItem.Settings, result, item.ItemName, zfsSnapshots, resEntry)
 			}
 			// For VM items, capture the libvirt checkpoint name produced by
 			// the engine so future incremental/differential backups can
@@ -1295,15 +1298,25 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			"message": fmt.Sprintf("Verifying health of %d containers...", len(stoppedContainerIDs)),
 		})
 
+		// Resolve names via both stored and re-resolved IDs: after a container
+		// recreate, stoppedContainerIDs holds the RE-RESOLVED ID, which never
+		// matches item.ItemID — exactly the case the resolution machinery
+		// exists for (issue #178). Raw ID remains the last-resort fallback.
+		nameByID := make(map[string]string, len(items))
+		for _, item := range items {
+			if item.ItemType == "container" && item.ItemID != "" {
+				nameByID[item.ItemID] = item.ItemName
+			}
+		}
+		for itemName, rid := range resolvedIDs {
+			nameByID[rid] = itemName
+		}
+
 		var healthResults []map[string]any
 		for _, id := range stoppedContainerIDs {
-			// Find the container name from items.
 			name := id
-			for _, item := range items {
-				if item.ItemID == id {
-					name = item.ItemName
-					break
-				}
+			if n, ok := nameByID[id]; ok {
+				name = n
 			}
 			result, err := engine.VerifyContainerHealth(id, name, 60*time.Second)
 			if err != nil {
@@ -1414,9 +1427,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 					resEntry["verified"] = true
 				}
 				if s.dbItem.ItemType == "zfs" {
-					if snap, ok := s.engineItem.Settings["dataset"].(string); ok {
-						resEntry["zfs_dataset"] = snap
-					}
+					captureZFSResult(s.engineItem.Settings, s.result, s.dbItem.ItemName, zfsSnapshots, resEntry)
 				}
 				if s.dbItem.ItemType == "vm" && s.result != nil {
 					if cp, ok := s.result.Meta["vm_checkpoint"].(string); ok && cp != "" {
@@ -1562,6 +1573,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}
 		if len(vmCheckpoints) > 0 {
 			rpMeta["vm_checkpoints"] = vmCheckpoints
+		}
+		if len(zfsSnapshots) > 0 {
+			rpMeta["zfs_snapshots"] = zfsSnapshots
 		}
 		// item_manifests carries one hex-encoded dedup manifest ID per item
 		// for dedup destinations. The restore path uses this to resolve the
@@ -1842,6 +1856,29 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		})
 		return
 	}
+	// GC must never overlap a backup/restore writing to the repo: an
+	// in-flight run registers packs immediately but its restore-point row
+	// (which makes those packs reachable) only lands at the end, so a
+	// concurrent mark-and-sweep would see the new packs as fully dead and
+	// delete them — silently corrupting the run's manifest (issue #165).
+	// Serialise through the same run-slot mutex backups/restores hold, and
+	// join the drain protocol so shutdown waits for an in-progress GC.
+	if r.shouldRefuseStart() {
+		log.Printf("gc: refusing to start for dest %d (%q) — daemon is draining", dest.ID, dest.Name)
+		r.Broadcast(map[string]any{
+			"type":        "dedup_gc_complete",
+			"gc_run_id":   runID,
+			"destination": dest.ID,
+			"status":      "failed",
+			"error":       "daemon is shutting down",
+		})
+		return
+	}
+	r.markStart()
+	defer r.markFinish()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		log.Printf("gc: adapter for %q: %v", dest.Name, err)
@@ -2523,6 +2560,18 @@ func (r *Runner) startStallWatchdog(ctx context.Context, cancel context.CancelFu
 // record with run_type="restore", restores each target item, updates
 // progress via WebSocket, and finalises the run record.
 func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarget, destination, passphrase string) {
+	// Restores participate in the drain protocol exactly like backups
+	// (issue #172): a draining daemon must not start a new restore, and
+	// shutdown must wait for an in-flight restore — killing one mid-write
+	// leaves half-restored appdata/VM disks, the state Drain exists to
+	// prevent.
+	if r.shouldRefuseStart() {
+		log.Printf("runner: refusing to start restore for job %d — daemon is draining", restorePoint.JobID)
+		return
+	}
+	r.markStart()
+	defer r.markFinish()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -3946,9 +3995,21 @@ func (r *Runner) reclaimDedupAfterJobDelete(adapter storage.Adapter, jobID int64
 		r.RunDedupGC(dest, fmt.Sprintf("job-delete-%d", jobID))
 		return
 	}
-	// Last dedup job on this destination — the whole repo is orphaned.
-	if e := r.DeleteStorageDir(adapter, dedup.RepoRoot); e != nil {
-		*errs = append(*errs, fmt.Errorf("remove dedup repo: %w", e))
+	// Last dedup job on this destination — the repo is orphaned. Delete ONLY
+	// the dedup-owned subpaths, never the _vault root: the runner's database
+	// backups (vault.db.<timestamp> + vault.db.latest) share that directory,
+	// and removing the root destroyed the daemon's own disaster-recovery
+	// copies on this destination (issue #183).
+	for _, sub := range dedup.RepoSubpaths() {
+		var e error
+		if fi, statErr := adapter.Stat(sub); statErr == nil && !fi.IsDir {
+			e = adapter.Delete(sub) // plain file (repo.json)
+		} else {
+			e = r.DeleteStorageDir(adapter, sub) // directory (packs/, index/); no-op when absent
+		}
+		if e != nil && !storage.IsNotExist(e) {
+			*errs = append(*errs, fmt.Errorf("remove dedup repo path %s: %w", sub, e))
+		}
 	}
 	// Surface a failure to clear the dedup index too: leaving stale pack/chunk
 	// rows behind would corrupt the repo re-init on the next backup, so it must
@@ -4533,6 +4594,47 @@ func buildImportJobItems(b map[string]any) []db.JobItem {
 	}
 
 	return nil
+}
+
+// captureZFSResult folds a ZFS item's engine result into the run's shared
+// accounting (zfs_dataset for display back-compat, zfs_snapshot as the next
+// chain parent — issue #180). Shared by the inline and deferred-upload result
+// paths so the two cannot drift.
+func captureZFSResult(settings map[string]any, result *engine.BackupResult, itemName string, zfsSnapshots map[string]string, resEntry map[string]any) {
+	if ds, ok := settings["dataset"].(string); ok {
+		resEntry["zfs_dataset"] = ds
+	}
+	if result == nil {
+		return
+	}
+	if snap, ok := result.Meta["zfs_snapshot"].(string); ok && snap != "" {
+		zfsSnapshots[itemName] = snap
+		resEntry["zfs_snapshot"] = snap
+	}
+	if bt, ok := result.Meta["zfs_backup_type"].(string); ok && bt != "" {
+		resEntry["zfs_backup_type"] = bt
+	}
+}
+
+// zfsSnapshotFromRPMeta returns the ZFS snapshot name recorded for the given
+// item in a restore point's metadata JSON (the zfs_snapshots map written on
+// successful ZFS backups). Returns "" when the metadata does not include a
+// snapshot for that item — e.g. restore points created before issue #180 was
+// fixed — in which case the engine downgrades the run to a full backup.
+func zfsSnapshotFromRPMeta(metadata, itemName string) string {
+	if metadata == "" || itemName == "" {
+		return ""
+	}
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
+		return ""
+	}
+	raw, ok := meta["zfs_snapshots"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	snap, _ := raw[itemName].(string)
+	return snap
 }
 
 // vmCheckpointFromRPMeta returns the libvirt checkpoint name recorded for the

@@ -3,6 +3,8 @@ package cli
 import (
 	"log"
 	"os"
+	"path/filepath"
+	"sort"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 )
@@ -47,6 +49,14 @@ func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePat
 			return info
 		}
 	}
+	// Rotated copies (written by rotateSnapshot after every successful save)
+	// sit next to the snapshot; try the newest ones before falling back to
+	// the (up to 1 h stale) USB copy or a fresh database (issue #182).
+	for _, rotated := range newestRotatedSnapshots(configuredPath, defaultCachePath) {
+		if info := tryTier("rotated", rotated, "restored from rotated snapshot copy (primary snapshot unavailable or invalid)"); info != nil {
+			return info
+		}
+	}
 	if info := tryTier("usb_backup", usbBackupPath, "restored from USB flash backup (other snapshots unavailable or invalid)"); info != nil {
 		return info
 	}
@@ -56,6 +66,42 @@ func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePat
 		Path:   "",
 		Reason: "no snapshot files passed integrity check; configuration will need to be reconfigured",
 	}
+}
+
+// newestRotatedSnapshots returns rotated snapshot copies (newest first, max 3)
+// from the rotated/ directories next to the given snapshot paths. Filenames
+// embed a sortable UTC timestamp, so a lexical sort is chronological.
+func newestRotatedSnapshots(paths ...string) []string {
+	seen := map[string]bool{}
+	var candidates []string
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		dir := filepath.Join(filepath.Dir(p), "rotated")
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				candidates = append(candidates, filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	// One global newest-first ordering across all rotated dirs (the
+	// timestamp-suffixed basenames sort chronologically), capped at 3.
+	sort.Slice(candidates, func(i, j int) bool {
+		return filepath.Base(candidates[i]) > filepath.Base(candidates[j])
+	})
+	if len(candidates) > 3 {
+		candidates = candidates[:3]
+	}
+	return candidates
 }
 
 // validateConfiguredPaths checks that user-configured paths (snapshot override,

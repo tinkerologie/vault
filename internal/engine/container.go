@@ -281,7 +281,7 @@ func (h *ContainerHandler) ListItems() ([]BackupItem, error) {
 
 	items := make([]BackupItem, 0, len(listResult.Items))
 	for _, c := range listResult.Items {
-		name := c.ID[:12]
+		name := ShortID(c.ID)
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
@@ -443,7 +443,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			return nil, fmt.Errorf("inspecting container: %w", err)
 		}
 		containerID = inspectResult.Container.ID
-		log.Printf("[backup] container %q: resolved by name (ID changed from stored value to %s)", item.Name, containerID[:12])
+		log.Printf("[backup] container %q: resolved by name (ID changed from stored value to %s)", item.Name, ShortID(containerID))
 	}
 	inspect := inspectResult.Container
 
@@ -1489,7 +1489,7 @@ func contextCopy(ctx context.Context, dst io.Writer, src io.Reader) (int64, erro
 // tarFile creates a tar archive (optionally compressed via compression) at
 // destPath containing a single file from srcPath. Used for file-based bind
 // mounts (e.g. Tailscale container hook).
-func tarFile(ctx context.Context, srcPath, destPath, compression string) error {
+func tarFile(ctx context.Context, srcPath, destPath, compression string) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1503,16 +1503,33 @@ func tarFile(ctx context.Context, srcPath, destPath, compression string) error {
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
 	}
-	defer outFile.Close()
+	// The three closes below are data-critical: they flush the tar footer,
+	// the compression trailer, and the final bytes to disk. A failure in any
+	// of them (ENOSPC, short-written final entry) means a truncated archive,
+	// which MUST fail the backup instead of being reported as success (#166).
+	// LIFO defer order closes tar → compressor → file.
+	defer func() {
+		if cerr := outFile.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing archive file: %w", cerr)
+		}
+	}()
 
 	cw, closeCompress, err := compressedWriter(outFile, compression)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = closeCompress() }()
+	defer func() {
+		if cerr := closeCompress(); cerr != nil && err == nil {
+			err = fmt.Errorf("finalising compression: %w", cerr)
+		}
+	}()
 
 	tw := tar.NewWriter(cw)
-	defer tw.Close()
+	defer func() {
+		if cerr := tw.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing tar writer: %w", cerr)
+		}
+	}()
 
 	header, err := tar.FileInfoHeader(info, "")
 	if err != nil {
@@ -1599,7 +1616,7 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 
 // tarDirectory creates a tar archive of srcDir at destPath. The compression
 // argument selects the archive compression layer ("none", "gzip", or "zstd").
-func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []string, compression string) error {
+func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []string, compression string) (err error) {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -1610,18 +1627,35 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
 	}
-	defer outFile.Close()
+	// Data-critical closes: tar footer, compression trailer, final flush to
+	// disk. Any failure means a truncated archive and MUST fail the backup
+	// (#166) — tar.Writer.Close also surfaces "missed writing N bytes" when
+	// the last file shrank between stat and copy. LIFO order: tar → compressor
+	// → file.
+	defer func() {
+		if cerr := outFile.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing archive file: %w", cerr)
+		}
+	}()
 
 	cw, closeCompress, err := compressedWriter(outFile, compression)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = closeCompress() }()
+	defer func() {
+		if cerr := closeCompress(); cerr != nil && err == nil {
+			err = fmt.Errorf("finalising compression: %w", cerr)
+		}
+	}()
 
 	tw := tar.NewWriter(cw)
-	defer tw.Close()
+	defer func() {
+		if cerr := tw.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing tar writer: %w", cerr)
+		}
+	}()
 
-	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -1707,6 +1741,7 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 		}
 		return nil
 	})
+	return err
 }
 
 // tarDirectoryFiltered creates a tar archive of srcDir at destPath, including
@@ -1714,7 +1749,7 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 // are always included to preserve structure. This is used for incremental and
 // differential backups. The compression argument selects the archive
 // compression layer ("none", "gzip", or "zstd").
-func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string, compression string) error {
+func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string, compression string) (err error) {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -1725,18 +1760,32 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
 	}
-	defer outFile.Close()
+	// Data-critical closes — see tarDirectory (#166). LIFO order: tar →
+	// compressor → file.
+	defer func() {
+		if cerr := outFile.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing archive file: %w", cerr)
+		}
+	}()
 
 	cw, closeCompress, err := compressedWriter(outFile, compression)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = closeCompress() }()
+	defer func() {
+		if cerr := closeCompress(); cerr != nil && err == nil {
+			err = fmt.Errorf("finalising compression: %w", cerr)
+		}
+	}()
 
 	tw := tar.NewWriter(cw)
-	defer tw.Close()
+	defer func() {
+		if cerr := tw.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing tar writer: %w", cerr)
+		}
+	}()
 
-	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -1823,6 +1872,7 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 		}
 		return nil
 	})
+	return err
 }
 
 // untarDirectory extracts a tar archive from srcPath into destDir. The archive
@@ -1924,6 +1974,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
+			removeExistingNonDir(target)                                // overwrite semantics for links (#175)
 			if err := os.Symlink(header.Linkname, target); err != nil { // #nosec G305 — target validated by joinArchiveTarget, linkname validated by resolveSymlinkTarget
 				return fmt.Errorf("creating symlink %s -> %s: %w", target, header.Linkname, err)
 			}
@@ -1938,6 +1989,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
+			removeExistingNonDir(target) // overwrite semantics for links (#175)
 			if err := os.Link(linkTarget, target); err != nil {
 				return fmt.Errorf("creating hard link %s -> %s: %w", target, linkTarget, err)
 			}
@@ -1946,6 +1998,18 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 		}
 	}
 	return nil
+}
+
+// removeExistingNonDir removes an existing file or link at target so a
+// symlink/hardlink tar entry can be recreated over it — regular files
+// already get overwrite semantics via O_TRUNC, but os.Symlink/os.Link fail
+// with EEXIST, which aborted restores over an existing installation at the
+// first pre-existing link (issue #175). Directories are never removed: a
+// dir-vs-link conflict is surfaced by the subsequent create call instead.
+func removeExistingNonDir(target string) {
+	if fi, err := os.Lstat(target); err == nil && !fi.IsDir() {
+		_ = os.Remove(target)
+	}
 }
 
 // StopContainers stops the given container IDs in order. It returns the IDs
@@ -2083,6 +2147,20 @@ func VerifyContainerHealth(containerID, containerName string, timeout time.Durat
 			}, nil
 		}
 	}
+}
+
+// ShortID returns the first 12 characters of a Docker container ID for log
+// lines, or the input unchanged when it is shorter. Stored item IDs can be
+// short or empty (imported jobs record no container ID), so an unguarded
+// [:12] slice panicked the run (issue #170).
+func ShortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	if id == "" {
+		return "<none>"
+	}
+	return id
 }
 
 // backupFileInfo returns a BackupFile with name and size from the given path.

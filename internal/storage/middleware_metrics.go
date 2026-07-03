@@ -119,3 +119,10 @@ func (m *metricsAdapter) Close() error {
 	}
 	return nil
 }
+
+// RemoveEmptyDir forwards the optional dir-removal capability down the chain
+// so the wrapped adapter returned by NewAdapter still satisfies the runner's
+// empty-directory sweep assertion (#168).
+func (m *metricsAdapter) RemoveEmptyDir(dir string) error {
+	return forwardRemoveEmptyDir(m.inner, dir)
+}

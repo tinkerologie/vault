@@ -543,3 +543,35 @@ func TestScheduleFlushCoalescesAndFlushes(t *testing.T) {
 		t.Error("flushPending still true after flush completed")
 	}
 }
+
+// TestSaveSnapshotAtomic pins the #182 contract: snapshot writes go through
+// a temp file + rename, leaving no .tmp residue and always producing a
+// readable snapshot at the destination.
+func TestSaveSnapshotAtomic(t *testing.T) {
+	d, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	dir := t.TempDir()
+	snap := filepath.Join(dir, "vault.db")
+	sm := NewSnapshotManager(d, snap, snap)
+
+	for i := 0; i < 2; i++ { // second save overwrites the first atomically
+		if err := sm.SaveSnapshot(); err != nil {
+			t.Fatalf("SaveSnapshot #%d: %v", i+1, err)
+		}
+	}
+	if _, err := os.Stat(snap); err != nil {
+		t.Fatalf("snapshot missing: %v", err)
+	}
+	if _, err := os.Stat(snap + ".tmp"); !os.IsNotExist(err) {
+		t.Error("temp file left behind after successful save (#182)")
+	}
+	// The snapshot must be an openable SQLite database.
+	check, err := Open(snap)
+	if err != nil {
+		t.Fatalf("snapshot not a valid database: %v", err)
+	}
+	_ = check.Close()
+}

@@ -101,8 +101,22 @@ func (h *ZFSHandler) ListItems() ([]BackupItem, error) {
 }
 
 // Backup creates a ZFS snapshot and sends it as a stream file.
+//
+// For incremental/differential runs the parent snapshot MUST be supplied by
+// the runner via item.Settings["parent_snapshot"] (read from the parent
+// restore point's zfs_snapshots metadata). When it is missing, or no longer
+// exists on the dataset, the run downgrades to a full backup with a clear
+// warning — it must never silently send against an arbitrary "latest"
+// snapshot, which produced differential streams that could not be received
+// against their recorded restore chain (issue #180).
+//
+// On success, BackupResult.Meta carries:
+//   - zfs_snapshot: name of the snapshot created by this backup
+//   - zfs_backup_type: the actual type performed (may differ from requested
+//     when a fallback to full was needed)
+//   - zfs_parent_snapshot: the -i source used (incremental/differential only)
 func (h *ZFSHandler) Backup(ctx context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
-	result := &BackupResult{ItemName: item.Name}
+	result := &BackupResult{ItemName: item.Name, Meta: map[string]any{}}
 
 	dataset, _ := item.Settings["dataset"].(string)
 	if dataset == "" {
@@ -129,17 +143,26 @@ func (h *ZFSHandler) Backup(ctx context.Context, item BackupItem, destDir string
 		backupType = bt
 	}
 
-	// For incremental/differential, find the most recent vault snapshot as the parent.
+	// For incremental/differential the parent comes exclusively from the
+	// runner (parent restore point's recorded snapshot). Missing or vanished
+	// parent → downgrade to full with a warning (issue #180); never guess.
 	parentSnapshot := ""
 	if ps, ok := item.Settings["parent_snapshot"].(string); ok && ps != "" {
 		parentSnapshot = ps
 	}
-	if parentSnapshot == "" && backupType != "full" {
-		parentSnapshot = h.findLatestVaultSnapshot(ctx, dataset)
-		if parentSnapshot == "" {
-			// No parent found — fall back to full backup.
+	if backupType != "full" {
+		switch {
+		case parentSnapshot == "":
+			log.Printf("engine/zfs: no parent snapshot recorded for %s %s backup — falling back to full", dataset, backupType)
 			backupType = "full"
+		case !h.snapshotExists(ctx, dataset, parentSnapshot):
+			log.Printf("engine/zfs: parent snapshot %q no longer exists on %s — falling back to full", parentSnapshot, dataset)
+			backupType = "full"
+			parentSnapshot = ""
 		}
+	}
+	if backupType == "full" {
+		parentSnapshot = ""
 	}
 
 	progress(item.Name, 10, "sending ZFS stream")
@@ -211,8 +234,24 @@ func (h *ZFSHandler) Backup(ctx context.Context, item BackupItem, destDir string
 	}
 	result.Files = append(result.Files, backupFileInfo(metaPath))
 
-	// Clean up old vault snapshots, keeping only this one.
-	h.cleanupOldSnapshots(ctx, dataset, fullSnapName)
+	// Surface the snapshot linkage to the runner so it can persist it in
+	// restore-point metadata (zfs_snapshots) — the parent source for the
+	// next incremental/differential run (issue #180).
+	result.Meta["zfs_snapshot"] = fullSnapName
+	result.Meta["zfs_backup_type"] = backupType
+	if parentSnapshot != "" {
+		result.Meta["zfs_parent_snapshot"] = parentSnapshot
+	}
+
+	// Clean up old vault snapshots. Keep this run's snapshot AND the parent
+	// used for the send: a differential chain re-uses the last full's
+	// snapshot as the -i source on every subsequent run, so destroying it
+	// here would break the next differential (issue #180).
+	keep := map[string]struct{}{fullSnapName: {}}
+	if parentSnapshot != "" {
+		keep[parentSnapshot] = struct{}{}
+	}
+	h.cleanupOldSnapshots(ctx, dataset, keep)
 
 	progress(item.Name, 100, "backup complete")
 	result.Success = true
@@ -293,29 +332,32 @@ func (h *ZFSHandler) Restore(ctx context.Context, item BackupItem, sourceDir str
 	return nil
 }
 
-// findLatestVaultSnapshot returns the most recent vault-created snapshot on
-// the given dataset, or an empty string if none exist.
-func (h *ZFSHandler) findLatestVaultSnapshot(ctx context.Context, dataset string) string {
+// snapshotExists reports whether the named snapshot (full "dataset@snap"
+// form) currently exists on the dataset. A listing error is treated as
+// "not found" so callers fall back to a full backup — mirroring the VM
+// handler's checkpointExists semantics.
+func (h *ZFSHandler) snapshotExists(ctx context.Context, dataset, name string) bool {
+	if name == "" {
+		return false
+	}
 	snapshots, err := h.client.ZFS.ListByType(ctx, gzfs.DatasetTypeSnapshot, false, dataset)
 	if err != nil {
-		return ""
+		return false
 	}
-
-	var latest string
 	for _, snap := range snapshots {
-		parts := strings.SplitN(snap.Name, "@", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if strings.HasPrefix(parts[1], snapshotPrefix) {
-			latest = snap.Name // Snapshots are listed in creation order; last wins.
+		if snap.Name == name {
+			return true
 		}
 	}
-	return latest
+	return false
 }
 
-// cleanupOldSnapshots removes vault-created snapshots except the one to keep.
-func (h *ZFSHandler) cleanupOldSnapshots(ctx context.Context, dataset string, keepSnapshot string) {
+// cleanupOldSnapshots removes vault-created snapshots except those in keep.
+// The keep-set always contains the snapshot just created and, for chain
+// backups, the parent used as the -i source — a differential chain sends
+// against the last full's snapshot on every run, so that anchor must survive
+// between runs (issue #180). Non-vault snapshots are never touched.
+func (h *ZFSHandler) cleanupOldSnapshots(ctx context.Context, dataset string, keep map[string]struct{}) {
 	snapshots, err := h.client.ZFS.ListByType(ctx, gzfs.DatasetTypeSnapshot, false, dataset)
 	if err != nil {
 		return
@@ -331,7 +373,7 @@ func (h *ZFSHandler) cleanupOldSnapshots(ctx context.Context, dataset string, ke
 		if !strings.HasPrefix(snapSuffix, snapshotPrefix) {
 			continue
 		}
-		if snap.Name == keepSnapshot {
+		if _, ok := keep[snap.Name]; ok {
 			continue
 		}
 		_ = snap.Destroy(ctx, false, false)

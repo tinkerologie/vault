@@ -210,9 +210,20 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 
 	m := dedup.Manifest{Version: dedup.ManifestVersion, Item: item.Name, Files: map[string]dedup.ManifestEntry{}}
 	var totalBytes int64
+	var skipped int
 	err = filepath.Walk(srcPath, func(p string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			// An inaccessible SOURCE ROOT is a broken backup, not a skip —
+			// silently succeeding with an empty manifest would mask it.
+			if p == srcPath {
+				return fmt.Errorf("folder: source path inaccessible: %w", walkErr)
+			}
+			// Log-and-skip inaccessible paths instead of aborting the whole
+			// item — matching the classic tar path's semantics so the same
+			// job doesn't hard-fail only on dedup destinations (issue #174).
+			log.Printf("engine: chunked: skipping inaccessible path %s: %v", p, walkErr)
+			skipped++
+			return nil
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -247,7 +258,9 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 		}
 		f, err := root.Open(rel)
 		if err != nil {
-			return err
+			log.Printf("engine: chunked: skipping unopenable file %s: %v", rel, err)
+			skipped++
+			return nil
 		}
 		defer f.Close()
 		ids := []dedup.ID{}
@@ -273,12 +286,20 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 		return dedup.ID{}, err
 	}
 
+	if skipped > 0 {
+		log.Printf("engine: chunked: %s: %d inaccessible path(s) skipped", item.Name, skipped)
+	}
+
 	manifestID, err := repo.PutManifest(item.Name, m)
 	if err != nil {
 		return dedup.ID{}, err
 	}
 	if progress != nil {
-		progress(item.Name, 100, fmt.Sprintf("manifest written (%d entries, %s)", len(m.Files), humanizeBytes(float64(totalBytes))))
+		msg := fmt.Sprintf("manifest written (%d entries, %s)", len(m.Files), humanizeBytes(float64(totalBytes)))
+		if skipped > 0 {
+			msg += fmt.Sprintf(", %d skipped", skipped)
+		}
+		progress(item.Name, 100, msg)
 	}
 	return manifestID, nil
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // ---- stripPrefix (pure helper) --------------------------------------
@@ -77,6 +78,11 @@ type s3Mock struct {
 	objects map[string][]byte // key -> body
 	// multipart state: uploadID -> ordered part bodies
 	parts map[string][][]byte
+	// When getChunkSize > 0, plain GetObject responses are written in
+	// chunks of that size with getChunkDelay between chunks, simulating a
+	// slow stream so tests can prove reads are not deadline-bound (#164).
+	getChunkSize  int
+	getChunkDelay time.Duration
 }
 
 func newS3Mock(bucket string) *s3Mock {
@@ -252,6 +258,21 @@ func (m *s3Mock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(obj)))
 		w.WriteHeader(http.StatusOK)
+		if m.getChunkSize > 0 {
+			flusher, _ := w.(http.Flusher)
+			for start := 0; start < len(obj); start += m.getChunkSize {
+				end := start + m.getChunkSize
+				if end > len(obj) {
+					end = len(obj)
+				}
+				_, _ = w.Write(obj[start:end])
+				if flusher != nil {
+					flusher.Flush()
+				}
+				time.Sleep(m.getChunkDelay)
+			}
+			return
+		}
 		_, _ = w.Write(obj)
 		return
 	}
@@ -364,6 +385,56 @@ func TestS3Read_NotFound(t *testing.T) {
 	defer cleanup()
 	if _, err := a.Read("missing.bin"); err == nil {
 		t.Fatal("expected error for missing key")
+	}
+}
+
+// TestCtxStream_NoDeadline pins the #164 contract: the context used for
+// streamed response bodies must carry no deadline (a large object may
+// legitimately stream for longer than any fixed timer), and cancel must
+// still release it.
+func TestCtxStream_NoDeadline(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := ctxStream()
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("ctxStream returned a context WITH a deadline — streamed reads would abort mid-stream (#164)")
+	}
+	cancel()
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("cancel did not close the stream context")
+	}
+}
+
+// TestS3Read_SlowChunkedStreamCompletes regression-guards #164: a body that
+// arrives slowly in many chunks must stream to completion. Before the fix,
+// the shared 5-minute op deadline governed the body read and a slow stream
+// died with context.DeadlineExceeded (reproduced here in miniature — any
+// deadline shorter than the total stream time fails this shape of read).
+func TestS3Read_SlowChunkedStreamCompletes(t *testing.T) {
+	t.Parallel()
+	a, mock, cleanup := newS3MockAdapter(t)
+	defer cleanup()
+
+	payload := bytes.Repeat([]byte("0123456789abcdef"), 512) // 8 KiB
+	mock.objects["slow.bin"] = payload
+	mock.getChunkSize = 512
+	mock.getChunkDelay = 20 * time.Millisecond // 16 chunks ≈ 320 ms total
+
+	rc, err := a.Read("slow.bin")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	closeErr := rc.Close()
+	if err != nil {
+		t.Fatalf("slow stream aborted mid-read: %v", err)
+	}
+	if closeErr != nil {
+		t.Errorf("Close: %v", closeErr)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("slow stream returned %d bytes, want %d", len(got), len(payload))
 	}
 }
 

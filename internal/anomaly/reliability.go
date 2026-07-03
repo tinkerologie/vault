@@ -82,8 +82,8 @@ func (r *ReliabilityDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 // are in RecentRuns. RecentRuns is ordered newest-first (GetJobRuns uses
 // ORDER BY started_at DESC).
 //
-// If the newest run is clean (Status == "success" && ItemsFailed == 0),
-// the streak is 0 and no anomaly is emitted.
+// If the newest run is clean (not failed and ItemsFailed == 0), the streak
+// is 0 and no anomaly is emitted.
 func (r *ReliabilityDetector) evalStreak(ec EvalContext, jobID int64) *Anomaly {
 	runs := ec.RecentRuns
 	if len(runs) > maxStreakWindow {

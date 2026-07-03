@@ -35,7 +35,12 @@ func (s *Syncer) updateSyncStatus(sourceID int64, status, errorMsg string) {
 
 // SyncResult contains the outcome of a sync operation.
 type SyncResult struct {
-	JobsSynced       int    `json:"jobs_synced"`
+	JobsSynced int `json:"jobs_synced"`
+	JobsFailed int `json:"jobs_failed"`
+	// jobsOK counts jobs whose sync succeeded regardless of whether they
+	// produced new restore points (an in-sync job is a success, not a
+	// failure) — used only for status classification.
+	jobsOK           int
 	RestorePointsNew int    `json:"restore_points_new"`
 	BytesTransferred int64  `json:"bytes_transferred"`
 	Error            string `json:"error,omitempty"`
@@ -150,6 +155,9 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 		s.logSyncError(sourceID, src.Name, errMsg)
 		return nil, fmt.Errorf("open local storage: %w", err)
 	}
+	// Release pooled connections / mounts when the sync finishes — scheduled
+	// syncs leaked one SFTP pool (or NFS mount) per tick without this (#173).
+	defer storage.CloseAdapter(localAdapter)
 
 	result := &SyncResult{}
 	totalJobs := len(remoteJobs)
@@ -176,8 +184,10 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 		newRPs, bytes, syncErr := s.syncJob(client, src, rj, localAdapter)
 		if syncErr != nil {
 			log.Printf("replication: failed to sync job %q from %q: %v", rj.Name, src.Name, syncErr)
+			result.JobsFailed++
 			continue
 		}
+		result.jobsOK++
 		if newRPs > 0 {
 			result.JobsSynced++
 		}
@@ -190,24 +200,44 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 }
 
 // completeSyncStatus broadcasts sync completion and updates the DB status.
+// The persisted status is honest about per-job failures (issue #177):
+// "success" only when every job synced, "partial" when some failed, and
+// "failed" when nothing could be synced — previously a sync whose every job
+// failed still reported success, a false safety signal for a 3-2-1 feature.
 func (s *Syncer) completeSyncStatus(sourceID int64, sourceName string, result *SyncResult, progress ProgressFunc) {
 	progress(0.98, "Sync complete, updating status...")
+
+	status := "success"
+	errMsg := ""
+	level := "info"
+	switch {
+	case result.JobsFailed > 0 && result.jobsOK == 0:
+		status = "failed"
+		errMsg = fmt.Sprintf("all %d job(s) failed to sync — see daemon log", result.JobsFailed)
+		level = "error"
+	case result.JobsFailed > 0:
+		status = "partial"
+		errMsg = fmt.Sprintf("%d job(s) failed to sync — see daemon log", result.JobsFailed)
+		level = "warning"
+	}
 
 	s.broadcast(map[string]any{
 		"type":              "replication_sync_completed",
 		"source_id":         sourceID,
 		"source_name":       sourceName,
+		"status":            status,
 		"jobs_synced":       result.JobsSynced,
+		"jobs_failed":       result.JobsFailed,
 		"restore_points":    result.RestorePointsNew,
 		"bytes_transferred": result.BytesTransferred,
 	})
 
-	s.updateSyncStatus(sourceID, "success", "")
-	s.db.LogActivity("info", "replication",
-		fmt.Sprintf("Replication sync completed: %s — %d jobs, %d restore points, %d bytes",
-			sourceName, result.JobsSynced, result.RestorePointsNew, result.BytesTransferred),
-		fmt.Sprintf(`{"source_id":%d,"jobs_synced":%d,"restore_points":%d,"bytes":%d}`,
-			sourceID, result.JobsSynced, result.RestorePointsNew, result.BytesTransferred))
+	s.updateSyncStatus(sourceID, status, errMsg)
+	s.db.LogActivity(level, "replication",
+		fmt.Sprintf("Replication sync %s: %s — %d jobs, %d failed, %d restore points, %d bytes",
+			status, sourceName, result.JobsSynced, result.JobsFailed, result.RestorePointsNew, result.BytesTransferred),
+		fmt.Sprintf(`{"source_id":%d,"jobs_synced":%d,"jobs_failed":%d,"restore_points":%d,"bytes":%d}`,
+			sourceID, result.JobsSynced, result.JobsFailed, result.RestorePointsNew, result.BytesTransferred))
 
 	progress(1.0, "Done")
 }
@@ -330,17 +360,27 @@ func (s *Syncer) syncRestorePoint(
 	return totalBytes, nil
 }
 
-// rewriteMetadata adds replication origin info to the metadata.
+// rewriteMetadata adds replication origin info to the metadata. The result
+// is built via encoding/json (never string concatenation): a source name
+// containing quotes/backslashes, or originals like "{ }", previously produced
+// invalid JSON — silently stripping checksums and item_manifests from every
+// replicated restore point for consumers like GC and restore (issue #176).
+// Whenever the original does not parse as a JSON object, the origin marker
+// alone is returned so downstream parsers always receive valid JSON.
 func (s *Syncer) rewriteMetadata(original, sourceName string) string {
-	if original == "" || original == "{}" {
-		return fmt.Sprintf(`{"replicated_from":"%s"}`, sourceName)
+	meta := map[string]any{}
+	if trimmed := strings.TrimSpace(original); trimmed != "" {
+		if err := json.Unmarshal([]byte(trimmed), &meta); err != nil {
+			log.Printf("replication: metadata from source %q is not valid JSON (%v); keeping origin marker only", sourceName, err)
+			meta = map[string]any{}
+		}
 	}
-	// Insert replicated_from into existing JSON.
-	trimmed := strings.TrimSpace(original)
-	if strings.HasPrefix(trimmed, "{") && len(trimmed) > 2 {
-		return fmt.Sprintf(`{"replicated_from":"%s",%s`, sourceName, trimmed[1:])
+	meta["replicated_from"] = sourceName
+	out, err := json.Marshal(meta)
+	if err != nil {
+		return `{"replicated_from":"unknown"}`
 	}
-	return original
+	return string(out)
 }
 
 // SetServerKey sets the AES-256 key used to unseal storage credentials.

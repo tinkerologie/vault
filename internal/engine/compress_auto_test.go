@@ -78,14 +78,14 @@ func TestMaybeDowngradeCompression_SingleFile(t *testing.T) {
 func TestIsPrecompressedExt(t *testing.T) {
 	t.Parallel()
 	cases := map[string]bool{
-		"file.mp4":   true,
-		"file.MP4":   true, // case-insensitive
-		"file.jpeg":  true,
-		"file.tar":   false,
-		"file.txt":   false,
-		"no-ext":     false,
-		".hidden":    false,
-		"a.tar.gz":   true,
+		"file.mp4":    true,
+		"file.MP4":    true, // case-insensitive
+		"file.jpeg":   true,
+		"file.tar":    false,
+		"file.txt":    false,
+		"no-ext":      false,
+		".hidden":     false,
+		"a.tar.gz":    true,
 		"foo.tar.zst": true,
 	}
 	for path, want := range cases {

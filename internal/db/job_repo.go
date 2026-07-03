@@ -686,6 +686,13 @@ type DueRetry struct {
 // expired, clearing their retry_next_at so they cannot be claimed twice.
 // Returns descriptors the scheduler can dispatch.
 //
+// The status list mirrors every outcome for which the runner schedules a
+// retry (scheduleRetryIfDue call sites): 'failed' (end-of-pipeline
+// failures and panics), 'skipped' (pre-flight check failures — transient
+// DNS/mount blips), and 'cancelled' (stall-watchdog cancellations; user
+// cancels never get a retry_next_at). Matching only 'failed' left skipped
+// and cancelled rows with a due retry_next_at unclaimed forever (#167).
+//
 // Implementation: SELECT candidates, then UPDATE each one with a WHERE
 // clause that requires retry_next_at to still be non-null. Only the
 // caller that wins the race gets RowsAffected = 1.
@@ -693,7 +700,7 @@ func (d *DB) ClaimDueRetries() ([]DueRetry, error) {
 	rows, err := d.Query(`
 		SELECT id, job_id, COALESCE(retry_attempt, 0)
 		  FROM job_runs
-		 WHERE status = 'failed'
+		 WHERE status IN ('failed', 'skipped', 'cancelled')
 		   AND retry_next_at IS NOT NULL
 		   AND retry_next_at <= CURRENT_TIMESTAMP
 	`)
