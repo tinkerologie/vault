@@ -68,8 +68,12 @@ func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePat
 	}
 }
 
+// maxRotatedCandidates caps how many rotated snapshot copies the fallback
+// tier will attempt, newest first.
+const maxRotatedCandidates = 3
+
 // newestRotatedSnapshots returns rotated snapshot copies (newest first,
-// max 3 total) from the rotated/ directories next to the given snapshot
+// max maxRotatedCandidates total) from the rotated/ directories next to the given snapshot
 // paths. Ordering uses each file's modification time — basenames only sort
 // chronologically within one directory sharing a prefix, so a lexical sort
 // is not a valid global order across configured/default rotated dirs.
@@ -108,9 +112,9 @@ func newestRotatedSnapshots(paths ...string) []string {
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].mod > candidates[j].mod })
-	out := make([]string, 0, 3)
+	out := make([]string, 0, maxRotatedCandidates)
 	for i, c := range candidates {
-		if i >= 3 {
+		if i >= maxRotatedCandidates {
 			break
 		}
 		out = append(out, c.path)

@@ -111,7 +111,10 @@ switch ($action) {
         if (file_exists($CONFIG)) {
             $raw = @file_get_contents($CONFIG);
             if ($raw !== false && $raw !== '') {
-                $lines = preg_split('/\r?\n/', rtrim($raw, "\r\n"));
+                $split = preg_split('/\r?\n/', rtrim($raw, "\r\n"));
+                if (is_array($split)) {
+                    $lines = $split;
+                }
             }
         }
         $lines = array_values(array_filter($lines, function ($l) {
