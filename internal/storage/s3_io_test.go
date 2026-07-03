@@ -409,16 +409,36 @@ func TestS3Read_NotFound(t *testing.T) {
 // still release it.
 func TestCtxStream_NoDeadline(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := ctxStream()
-	if _, ok := ctx.Deadline(); ok {
-		t.Fatal("ctxStream returned a context WITH a deadline — streamed reads would abort mid-stream (#164)")
-	}
-	cancel()
-	select {
-	case <-ctx.Done():
-	default:
-		t.Fatal("cancel did not close the stream context")
-	}
+	a, _, cleanup := newS3MockAdapter(t)
+	defer cleanup()
+
+	t.Run("no-deadline-and-cancel", func(t *testing.T) {
+		ctx, cancel := a.ctxStream()
+		if _, ok := ctx.Deadline(); ok {
+			t.Fatal("ctxStream returned a context WITH a deadline — streamed reads would abort mid-stream (#164)")
+		}
+		cancel()
+		select {
+		case <-ctx.Done():
+		default:
+			t.Fatal("cancel did not close the stream context")
+		}
+	})
+
+	t.Run("adapter-close-cancels-streams", func(t *testing.T) {
+		// Run cancellation reaches blocked S3 body reads via
+		// storage.CloseAdapter → S3Adapter.Close → lifecycle cancel.
+		ctx, cancel := a.ctxStream()
+		defer cancel()
+		if err := a.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+		default:
+			t.Fatal("adapter Close did not cancel in-flight stream contexts")
+		}
+	})
 }
 
 // TestS3Read_SlowChunkedStreamCompletes regression-guards #164: a body that
