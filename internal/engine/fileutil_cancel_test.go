@@ -17,8 +17,9 @@ func TestCopyFileWithProgress_Cancelled(t *testing.T) {
 	if err := os.WriteFile(src, make([]byte, 4<<20), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	dst := filepath.Join("/tmp", "vault-test-cancel.img")
-	t.Cleanup(func() { _ = os.Remove(dst) })
+	// t.TempDir() lands under an allowed restore root on both dev (macOS:
+	// /var/folders/…) and CI (Linux: /tmp), keeping the test hermetic.
+	dst := filepath.Join(t.TempDir(), "vault-test-cancel.img")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	err := copyFileWithProgress(ctx, src, dst, func(copied int64) {

@@ -17,7 +17,7 @@ func copyFile(ctx context.Context, src, dst string) error {
 // the number of bytes copied so far after each chunk. ctx is checked before
 // every chunk so a cancelled run aborts a multi-GB copy within one 1 MiB
 // chunk instead of running to completion (issue #171). A partial destination
-// file is left for the caller”s cleanup to handle.
+// file is left for the caller's cleanup to handle.
 func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(bytesCopied int64)) error {
 	in, err := os.Open(src) // #nosec G304 — src paths come from libvirt domain XML (trusted system data)
 	if err != nil {

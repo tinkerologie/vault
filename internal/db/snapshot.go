@@ -312,6 +312,16 @@ func (sm *SnapshotManager) pruneRotated(dir string) {
 // corrupted the previous good copy — the disaster-recovery snapshot itself
 // (issue #182).
 func (sm *SnapshotManager) backupWorkingDBToPath(dest string) error {
+	// Callers pass already-validated paths, but re-validate here so this
+	// function is safe standalone AND so the CodeQL go/path-injection
+	// sanitiser barrier (see validateSnapshotPath godoc) fires on every
+	// downstream os.Remove / NewBackup / os.Rename — the same pattern
+	// rotateSnapshot documents.
+	validDest, err := validateSnapshotPath(dest)
+	if err != nil {
+		return fmt.Errorf("validating backup destination: %w", err)
+	}
+	dest = validDest
 	tmp := dest + ".tmp"
 	_ = os.Remove(tmp)
 
