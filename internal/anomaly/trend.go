@@ -3,8 +3,6 @@ package anomaly
 import (
 	"log"
 	"time"
-
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
 )
 
 // anomalyRetentionDays is the default retention window for terminal-state
@@ -37,10 +35,7 @@ func (e *Evaluator) EvaluateTrendDetectors() {
 		return
 	}
 
-	sensitivity, err := e.db.GetSetting("anomaly_sensitivity_default", docsmeta.DefaultFor("anomaly_sensitivity_default"))
-	if err != nil {
-		sensitivity = docsmeta.DefaultFor("anomaly_sensitivity_default")
-	}
+	sensitivity := e.globalSensitivity()
 
 	since := e.clock.Now().AddDate(0, 0, -anomalyRetentionDays)
 

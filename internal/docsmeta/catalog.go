@@ -104,12 +104,14 @@ func DefaultFor(key string) string {
 	return s.Default
 }
 
-// DefaultInt returns the registered default parsed as an int, or 0 if the
-// stored default is empty or unparsable. Panics on an unregistered key.
+// DefaultInt returns the registered default parsed as an int. It panics on an
+// unregistered key or a malformed int default — both are programming errors the
+// docsmeta drift test also guards against, so a panic here is unreachable in a
+// correctly-registered tree.
 func DefaultInt(key string) int {
 	v, err := strconv.Atoi(DefaultFor(key))
 	if err != nil {
-		return 0
+		panic("docsmeta: default for " + key + " is not a valid int: " + err.Error())
 	}
 	return v
 }

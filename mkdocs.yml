@@ -35,7 +35,8 @@ markdown_extensions:
   - pymdownx.tabbed: { alternate_style: true }
   - tables
   - toc: { permalink: true }
-  - pymdownx.snippets: { base_path: ["."] }
+  - pymdownx.snippets:
+      base_path: !relative $config_dir
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
