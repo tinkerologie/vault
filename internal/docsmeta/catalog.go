@@ -130,7 +130,7 @@ func DefaultBool(key string) bool {
 // (so the drift test finds a description for every exported field) and are also
 // listed in InternalFields so the generator can omit them from user-facing
 // output.
-var FieldDocs = map[string]string{
+var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable docs for config fields; keys like "SFTPConfig.Password"/"S3Config.SecretKey" are field names surfaced in the manual, not credentials.
 	// db.Job
 	"Job.ID":                  "Unique identifier for the job.",
 	"Job.Name":                "Human-readable name of the backup job.",
