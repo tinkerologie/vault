@@ -140,3 +140,15 @@ func TestInternalDefaultsAreEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestAppSettingsKeysAreUnique guards against a duplicate Key silently shadowing
+// another in the DefaultFor lookup index.
+func TestAppSettingsKeysAreUnique(t *testing.T) {
+	seen := make(map[string]bool, len(docsmeta.AppSettings))
+	for _, s := range docsmeta.AppSettings {
+		if seen[s.Key] {
+			t.Errorf("duplicate AppSettings key %q", s.Key)
+		}
+		seen[s.Key] = true
+	}
+}

@@ -15,6 +15,13 @@ var appGroupOrder = []Group{GroupGeneral, GroupBackup, GroupAnomaly, GroupNotifi
 // emptyDefault renders an empty Default cell so the table stays readable.
 const emptyDefault = "_(empty)_"
 
+// escapeCell makes text safe inside a markdown table cell: pipes are escaped and
+// newlines collapsed to spaces so a stray character can't break the table layout.
+func escapeCell(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.ReplaceAll(s, "|", "\\|")
+}
+
 // RenderAppSettings renders the full app/daemon settings page: a top-level
 // heading followed by one "## <Group>" section per user-facing group, each with
 // a markdown table whose rows are sorted by key. Internal keys are excluded.
@@ -60,9 +67,9 @@ func writeSettingsTable(b *strings.Builder, settings []SettingDoc) {
 	for _, s := range settings {
 		def := emptyDefault
 		if s.Default != "" {
-			def = "`" + s.Default + "`"
+			def = "`" + escapeCell(s.Default) + "`"
 		}
-		fmt.Fprintf(b, "| `%s` | %s | %s | %s |\n", s.Key, s.Type, def, s.Description)
+		fmt.Fprintf(b, "| `%s` | %s | %s | %s |\n", s.Key, s.Type, def, escapeCell(s.Description))
 	}
 }
 
@@ -97,7 +104,7 @@ func RenderStruct(title string, v any) string {
 			jsonKey = jsonKey[:comma]
 		}
 		desc := FieldDocs[qualified]
-		fmt.Fprintf(&b, "| %s | %s | `%s` | %s |\n", f.Name, f.Type.String(), jsonKey, desc)
+		fmt.Fprintf(&b, "| %s | %s | `%s` | %s |\n", f.Name, f.Type.String(), jsonKey, escapeCell(desc))
 	}
 	return b.String()
 }
@@ -114,6 +121,6 @@ func RenderLocal() string {
 	b.WriteString("# Storage: Local\n\n")
 	b.WriteString("| Field | Type | JSON key | Description |\n")
 	b.WriteString("| --- | --- | --- | --- |\n")
-	fmt.Fprintf(&b, "| Path | string | `path` | %s |\n", desc)
+	fmt.Fprintf(&b, "| Path | string | `path` | %s |\n", escapeCell(desc))
 	return b.String()
 }

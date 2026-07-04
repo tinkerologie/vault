@@ -10,15 +10,35 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
-const outDir = "docs/reference"
+// outSubdir is the reference directory relative to the repository root.
+var outSubdir = filepath.Join("docs", "reference")
+
+// repoRoot derives the repository root from this source file's location so the
+// generator always writes to <root>/docs/reference regardless of the working
+// directory. `go generate ./...` runs directives from the package directory
+// (cmd/gendocs), not the repo root, so a plain relative path would misfire.
+func repoRoot() (string, error) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("cannot determine caller path")
+	}
+	// file == <root>/cmd/gendocs/main.go
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..")), nil
+}
 
 func main() {
+	root, err := repoRoot()
+	if err != nil {
+		log.Fatalf("gendocs: %v", err)
+	}
+	outDir := filepath.Join(root, outSubdir)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		log.Fatalf("gendocs: create %s: %v", outDir, err)
 	}
@@ -36,14 +56,14 @@ func main() {
 	}
 
 	for name, content := range pages {
-		if err := writePage(name, content); err != nil {
+		if err := writePage(outDir, name, content); err != nil {
 			log.Fatalf("gendocs: %v", err)
 		}
 	}
 	fmt.Printf("gendocs: wrote %d pages to %s\n", len(pages), outDir)
 }
 
-func writePage(name, content string) error {
+func writePage(outDir, name, content string) error {
 	path := filepath.Join(outDir, name)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
