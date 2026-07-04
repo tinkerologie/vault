@@ -1613,6 +1613,24 @@
 
       <!-- === REFERENCE TAB === -->
       {#if activeTab === 'reference'}
+      <!-- Online documentation -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Documentation</h2>
+        </div>
+        <div class="p-5">
+          <p class="text-sm text-text-muted mb-4">
+            The full Vault manual (getting started, guides, and a complete settings reference) is published online and stays in sync with each release.
+          </p>
+          <a href="https://ruaan-deysel.github.io/vault/" target="_blank" rel="noopener"
+            aria-label="Open documentation (opens in a new tab)"
+            class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors">
+            <svg aria-hidden="true" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6H6zm7 1.5L18.5 9H13V3.5zM8 12h8v1.5H8V12zm0 3h6v1.5H8V15z"/></svg>
+            Open documentation
+          </a>
+        </div>
+      </div>
+
       <!-- Compression Info -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">

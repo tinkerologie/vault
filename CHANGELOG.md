@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Documentation link in Settings → Reference** (closes #189). A new Documentation card at the top of the Reference tab links directly to the online manual at [ruaan-deysel.github.io/vault](https://ruaan-deysel.github.io/vault/), so users can reach the guides and settings reference without leaving the plugin.
 - **Optional "Backups" quick link in the Unraid top navigation** (closes #162). Enable it under Settings → Utilities → Vault → Quick Access to get a one-click **Backups** entry in the Unraid top bar that opens the Vault web UI embedded in the Unraid interface. Off by default. Unlike the community add-on that inspired it, this uses Unraid's supported plugin menu extension point — no core files are patched and no background watchdog is needed; the embedded view also refreshes its session token automatically when you return to a long-idle tab.
 
 ### Fixed
