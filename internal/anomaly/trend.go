@@ -39,7 +39,7 @@ func (e *Evaluator) EvaluateTrendDetectors() {
 
 	sensitivity, err := e.db.GetSetting("anomaly_sensitivity_default", docsmeta.DefaultFor("anomaly_sensitivity_default"))
 	if err != nil {
-		sensitivity = "balanced"
+		sensitivity = docsmeta.DefaultFor("anomaly_sensitivity_default")
 	}
 
 	since := e.clock.Now().AddDate(0, 0, -anomalyRetentionDays)

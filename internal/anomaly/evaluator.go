@@ -256,10 +256,10 @@ func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 		return EvalContext{}, fmt.Errorf("get job baseline for job %d: %w", run.JobID, err)
 	}
 
-	// Global sensitivity setting ("balanced" is the seeded default).
+	// Global sensitivity setting (default sourced from docsmeta).
 	sensitivity, err := e.db.GetSetting("anomaly_sensitivity_default", docsmeta.DefaultFor("anomaly_sensitivity_default"))
 	if err != nil {
-		sensitivity = "balanced"
+		sensitivity = docsmeta.DefaultFor("anomaly_sensitivity_default")
 	}
 
 	return EvalContext{

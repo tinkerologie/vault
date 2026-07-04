@@ -50,7 +50,7 @@ var AppSettings = []SettingDoc{
 	{"snapshot_path_override", "string", "", "Override for the directory used to stage filesystem snapshots. Empty uses the built-in default.", GroupGeneral},
 	{"staging_dir_override", "string", "", "Override for the working directory used to stage archives before upload. Empty uses the built-in default.", GroupGeneral},
 	{"storage_verbose_logging", "bool", "false", "When enabled, storage adapters log every operation for troubleshooting.", GroupGeneral},
-	{"replication_enabled", "bool", "", "Master toggle for the replication subsystem. Empty/false disables replication scheduling.", GroupGeneral},
+	{"replication_enabled", "string", "", "Master toggle for the replication subsystem. Empty/false disables replication scheduling; \"true\" enables it.", GroupGeneral},
 
 	// Backup engine
 	{"retry_max_default", "int", "2", "Default maximum number of automatic retries for a failed backup when a job has no per-job override.", GroupBackup},
