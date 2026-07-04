@@ -8,6 +8,9 @@ on:
       - "CHANGELOG.md"
       - "internal/docsmeta/**"
       - "cmd/gendocs/**"
+      # Reflected structs: changes here alter the generated reference pages.
+      - "internal/db/models.go"
+      - "internal/storage/*.go"
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:

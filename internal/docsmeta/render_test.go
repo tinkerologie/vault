@@ -22,10 +22,10 @@ func TestRenderAppSettingsExcludesInternal(t *testing.T) {
 	}
 }
 
-// Job is a stand-in for db.Job used to exercise RenderStruct's reflection
-// without importing package db (which would create an import cycle, since db
-// depends on docsmeta). Its type name "Job" makes rt.Name()+"."+Field match
-// the real FieldDocs / InternalFields keys ("Job.ID", "Job.Schedule").
+// Job is a minimal stand-in used to exercise RenderStruct's reflection in a
+// hermetic unit test, without depending on the full db.Job layout. Its type
+// name "Job" makes rt.Name()+"."+Field match the real FieldDocs /
+// InternalFields keys ("Job.ID", "Job.Schedule").
 type Job struct {
 	ID       string `json:"id"`       // in InternalFields -> must be omitted
 	Schedule string `json:"schedule"` // documented -> must be rendered

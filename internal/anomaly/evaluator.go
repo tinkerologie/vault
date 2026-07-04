@@ -220,7 +220,6 @@ func (e *Evaluator) broadcastData(eventType string, data any) {
 	e.hub.Broadcast(msg)
 }
 
-// buildContext loads all data needed for evaluation and assembles an EvalContext.
 // globalSensitivity returns the configured global anomaly sensitivity,
 // falling back to the docsmeta default when the setting read fails.
 func (e *Evaluator) globalSensitivity() string {
@@ -232,6 +231,7 @@ func (e *Evaluator) globalSensitivity() string {
 	return v
 }
 
+// buildContext loads all data needed for evaluation and assembles an EvalContext.
 func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 	run, err := e.db.GetJobRun(runID)
 	if err != nil {

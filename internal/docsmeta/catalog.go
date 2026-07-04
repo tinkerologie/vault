@@ -67,11 +67,11 @@ var AppSettings = []SettingDoc{
 	// Notifications
 	{"notifications_enabled", "bool", "true", "Master toggle for all outbound notifications.", GroupNotifications},
 	{"discord_webhook_url", "string", "", "Discord webhook URL for notifications. Empty disables Discord delivery.", GroupNotifications},
-	{"discord_notify_on", "string", "always", "When to send Discord notifications (\"always\", \"on_failure\", etc.).", GroupNotifications},
+	{"discord_notify_on", "string", "always", "When to send Discord notifications (\"always\" or \"failure\").", GroupNotifications},
 	{"discord_bot_username", "string", "", "Optional override for the username shown on Discord webhook messages.", GroupNotifications},
 	{"discord_bot_avatar_url", "string", "", "Optional override for the avatar shown on Discord webhook messages.", GroupNotifications},
 	{"discord_mention_role_id", "string", "", "Discord role ID to mention on notifications. Empty disables role mentions.", GroupNotifications},
-	{"discord_mention_on", "string", "never", "When to mention the configured Discord role (\"never\", \"on_failure\", \"always\").", GroupNotifications},
+	{"discord_mention_on", "string", "never", "When to mention the configured Discord role (\"never\", \"failure\", or \"always\").", GroupNotifications},
 
 	// Internal / secrets — persisted but never rendered in the reference.
 	{"encryption_passphrase", "string", "", "Legacy plaintext backup encryption passphrase (migrated to a sealed value; retained for compatibility).", GroupInternal},
@@ -146,7 +146,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"Job.VMMode":              "How libvirt VMs are handled during backup (e.g. shutdown, snapshot).",
 	"Job.PreScript":           "Shell script run before the backup starts.",
 	"Job.PostScript":          "Shell script run after the backup completes.",
-	"Job.NotifyOn":            "When to send notifications for this job (e.g. always, on_failure).",
+	"Job.NotifyOn":            "When to send notifications for this job (\"always\", \"failure\", or \"never\").",
 	"Job.VerifyBackup":        "Whether to verify the backup immediately after it is written.",
 	"Job.StorageDestID":       "Foreign key to the storage destination this job writes to.",
 	"Job.SourceID":            "Foreign key to the replication source, when applicable.",
