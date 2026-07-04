@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2026.07.01] - 2026-07-04
+
 ### Added
 
 - **Documentation link in Settings → Reference** (closes #189). A new Documentation card at the top of the Reference tab links directly to the online manual at [ruaan-deysel.github.io/vault](https://ruaan-deysel.github.io/vault/), so users can reach the guides and settings reference without leaving the plugin.
