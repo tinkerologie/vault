@@ -1,0 +1,7 @@
+/* Keep setting keys and struct field names (the first table column of the
+   generated Settings Reference) on a single line. Long identifiers such as
+   `dedup_compaction_min_dead_ratio` were breaking mid-token. Tables remain
+   horizontally scrollable on narrow viewports, so nothing is clipped. */
+.md-typeset table:not([class]) td:first-child {
+  white-space: nowrap;
+}
