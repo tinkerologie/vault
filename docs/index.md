@@ -16,6 +16,12 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 
 See [How Backup Works](how-backup-works.md) for the concepts behind these features.
 
+## Integrations
+
+- **Home Assistant** — monitor jobs and trigger backups from your dashboard with the ready-to-use custom integration [`ha-vault`](https://github.com/ruaan-deysel/ha-vault).
+- **AI assistants (MCP)** — drive Vault from Claude and other MCP clients via the built-in [MCP server](mcp.md).
+- **Scripting & automation** — the full [REST API](api.md) exposes jobs, storage, runs, and restore points.
+
 ## Explore the UI
 
 |                                        |                                        |
