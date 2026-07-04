@@ -35,10 +35,7 @@ func (e *Evaluator) EvaluateTrendDetectors() {
 		return
 	}
 
-	sensitivity, err := e.db.GetSetting("anomaly_sensitivity_default", "balanced")
-	if err != nil {
-		sensitivity = "balanced"
-	}
+	sensitivity := e.globalSensitivity()
 
 	since := e.clock.Now().AddDate(0, 0, -anomalyRetentionDays)
 

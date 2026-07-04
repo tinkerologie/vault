@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
 
@@ -219,6 +220,17 @@ func (e *Evaluator) broadcastData(eventType string, data any) {
 	e.hub.Broadcast(msg)
 }
 
+// globalSensitivity returns the configured global anomaly sensitivity,
+// falling back to the docsmeta default when the setting read fails.
+func (e *Evaluator) globalSensitivity() string {
+	def := docsmeta.DefaultFor("anomaly_sensitivity_default")
+	v, err := e.db.GetSetting("anomaly_sensitivity_default", def)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
 // buildContext loads all data needed for evaluation and assembles an EvalContext.
 func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 	run, err := e.db.GetJobRun(runID)
@@ -255,11 +267,8 @@ func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 		return EvalContext{}, fmt.Errorf("get job baseline for job %d: %w", run.JobID, err)
 	}
 
-	// Global sensitivity setting ("balanced" is the seeded default).
-	sensitivity, err := e.db.GetSetting("anomaly_sensitivity_default", "balanced")
-	if err != nil {
-		sensitivity = "balanced"
-	}
+	// Global sensitivity setting (default sourced from docsmeta).
+	sensitivity := e.globalSensitivity()
 
 	return EvalContext{
 		JobRun:            &run,

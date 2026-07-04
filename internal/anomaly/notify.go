@@ -4,6 +4,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/notify"
 )
 
@@ -105,7 +106,11 @@ func (e *Evaluator) maybeNotify(a Anomaly, isUpdate bool) {
 	}
 
 	// Severity gate.
-	minSevStr, _ := e.db.GetSetting("anomaly_notify_min_severity", "critical")
+	minSevDefault := docsmeta.DefaultFor("anomaly_notify_min_severity")
+	minSevStr, err := e.db.GetSetting("anomaly_notify_min_severity", minSevDefault)
+	if err != nil {
+		minSevStr = minSevDefault
+	}
 	shouldSend := severityAtLeast(a.Severity, Severity(minSevStr))
 
 	// Per-job override (only meaningful when scope is a job).

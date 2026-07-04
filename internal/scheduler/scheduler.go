@@ -8,6 +8,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 )
 
 // JobRunner is called when a backup job is due.
@@ -282,7 +283,7 @@ func isLastDayOfMonth(t time.Time) bool {
 // whether any replication sources exist (so existing users keep replication
 // and fresh installs start hidden). Mirrors the UI derive in settings.svelte.js.
 func replicationEnabled(d *db.DB) bool {
-	v, _ := d.GetSetting("replication_enabled", "")
+	v, _ := d.GetSetting("replication_enabled", docsmeta.DefaultFor("replication_enabled"))
 	switch v {
 	case "true":
 		return true

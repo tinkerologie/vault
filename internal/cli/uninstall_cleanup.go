@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
 	"github.com/ruaan-deysel/vault/internal/unraid"
 	"github.com/spf13/cobra"
@@ -174,8 +175,8 @@ func discoverUninstallCleanupState(cfg uninstallCleanupConfig) (uninstallCleanup
 			continue
 		}
 
-		snapshotOverride, _ := database.GetSetting("snapshot_path_override", "")
-		stagingOverride, _ := database.GetSetting("staging_dir_override", "")
+		snapshotOverride, _ := database.GetSetting("snapshot_path_override", docsmeta.DefaultFor("snapshot_path_override"))
+		stagingOverride, _ := database.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 		_ = database.Close()
 
 		state.Confident = true

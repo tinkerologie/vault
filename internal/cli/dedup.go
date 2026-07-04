@@ -14,6 +14,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
@@ -194,7 +195,7 @@ func runDedupGC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("collect live manifest IDs: %w", err)
 	}
 
-	ratioStr, _ := ctx.db.GetSetting("dedup_compaction_min_dead_ratio", "0.5")
+	ratioStr, _ := ctx.db.GetSetting("dedup_compaction_min_dead_ratio", docsmeta.DefaultFor("dedup_compaction_min_dead_ratio"))
 	ratio, perr := strconv.ParseFloat(ratioStr, 64)
 	if perr != nil || ratio < 0 || ratio > 1 {
 		fmt.Fprintf(os.Stderr, "warning: invalid dedup_compaction_min_dead_ratio %q, using 0.5 (err: %v)\n", ratioStr, perr)

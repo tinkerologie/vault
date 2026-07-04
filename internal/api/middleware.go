@@ -12,6 +12,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 )
 
 const (
@@ -156,7 +157,7 @@ func apiKeyAuth(database *db.DB, local *localIPCache) func(http.Handler) http.Ha
 			}
 
 			// Check if an API key has been configured.
-			hash, err := database.GetSetting("api_key_hash", "")
+			hash, err := database.GetSetting("api_key_hash", docsmeta.DefaultFor("api_key_hash"))
 			if err != nil {
 				// Fail closed: DB errors must not allow unauthenticated access.
 				respondUnauthorized(w)

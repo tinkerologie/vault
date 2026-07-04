@@ -15,6 +15,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/diagnostics"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/notify"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
 )
@@ -118,7 +119,7 @@ func (h *SettingsHandler) GetDatabaseInfo(w http.ResponseWriter, _ *http.Request
 	}
 
 	// Include the configured snapshot path override (may be empty).
-	override, _ := h.db.GetSetting("snapshot_path_override", "")
+	override, _ := h.db.GetSetting("snapshot_path_override", docsmeta.DefaultFor("snapshot_path_override"))
 	info["snapshot_path_override"] = override
 
 	if h.snapshotManager != nil {
@@ -365,7 +366,7 @@ func (h *SettingsHandler) VerifyEncryption(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	hash, _ := h.db.GetSetting("encryption_passphrase_hash", "")
+	hash, _ := h.db.GetSetting("encryption_passphrase_hash", docsmeta.DefaultFor("encryption_passphrase_hash"))
 	if hash == "" {
 		respondJSON(w, http.StatusOK, map[string]any{
 			"valid":   false,
@@ -392,7 +393,7 @@ func (h *SettingsHandler) VerifyEncryption(w http.ResponseWriter, r *http.Reques
 //
 //	GET /api/v1/settings/encryption
 func (h *SettingsHandler) GetEncryptionStatus(w http.ResponseWriter, _ *http.Request) {
-	hash, _ := h.db.GetSetting("encryption_passphrase_hash", "")
+	hash, _ := h.db.GetSetting("encryption_passphrase_hash", docsmeta.DefaultFor("encryption_passphrase_hash"))
 	respondJSON(w, http.StatusOK, map[string]any{
 		"encryption_enabled": hash != "",
 	})
@@ -404,7 +405,7 @@ func (h *SettingsHandler) GetEncryptionStatus(w http.ResponseWriter, _ *http.Req
 func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 
-	sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", "")
+	sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", docsmeta.DefaultFor("encryption_passphrase_sealed"))
 	if sealed != "" {
 		if len(h.serverKey) == 0 {
 			respondInternalError(w, fmt.Errorf("server key is not configured"))
@@ -421,7 +422,7 @@ func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http
 		return
 	}
 
-	legacyPassphrase, _ := h.db.GetSetting("encryption_passphrase", "")
+	legacyPassphrase, _ := h.db.GetSetting("encryption_passphrase", docsmeta.DefaultFor("encryption_passphrase"))
 	if legacyPassphrase != "" {
 		respondJSON(w, http.StatusOK, map[string]string{"passphrase": legacyPassphrase})
 		return
@@ -432,7 +433,7 @@ func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http
 
 // GetStagingInfo returns info about the current staging directory.
 func (h *SettingsHandler) GetStagingInfo(w http.ResponseWriter, r *http.Request) {
-	override, _ := h.db.GetSetting("staging_dir_override", "")
+	override, _ := h.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 	dests, err := h.db.ListStorageDestinations()
 	if err != nil {
 		respondInternalError(w, err)
@@ -511,8 +512,8 @@ func (h *SettingsHandler) TestDiscordWebhook(w http.ResponseWriter, r *http.Requ
 	}
 	// Reflect the configured bot name/avatar so the test matches real alerts.
 	// No role mention is attached — a connection test shouldn't ping anyone.
-	username, _ := h.db.GetSetting("discord_bot_username", "")
-	avatarURL, _ := h.db.GetSetting("discord_bot_avatar_url", "")
+	username, _ := h.db.GetSetting("discord_bot_username", docsmeta.DefaultFor("discord_bot_username"))
+	avatarURL, _ := h.db.GetSetting("discord_bot_avatar_url", docsmeta.DefaultFor("discord_bot_avatar_url"))
 	opts := notify.DiscordOptions{Username: username, AvatarURL: avatarURL}
 	if err := notify.SendDiscord(req.WebhookURL, embed, opts); err != nil {
 		respondError(w, http.StatusBadGateway, "Discord webhook failed: "+err.Error())
@@ -525,7 +526,7 @@ func (h *SettingsHandler) TestDiscordWebhook(w http.ResponseWriter, r *http.Requ
 //
 //	GET /api/v1/settings/api-key
 func (h *SettingsHandler) GetAPIKeyStatus(w http.ResponseWriter, _ *http.Request) {
-	hash, _ := h.db.GetSetting("api_key_hash", "")
+	hash, _ := h.db.GetSetting("api_key_hash", docsmeta.DefaultFor("api_key_hash"))
 	respondJSON(w, http.StatusOK, map[string]any{
 		"enabled": hash != "",
 	})
@@ -584,7 +585,7 @@ func (h *SettingsHandler) GenerateAPIKey(w http.ResponseWriter, _ *http.Request)
 //
 //	GET /api/v1/settings/api-key/reveal
 func (h *SettingsHandler) GetAPIKey(w http.ResponseWriter, _ *http.Request) {
-	sealed, _ := h.db.GetSetting("api_key_sealed", "")
+	sealed, _ := h.db.GetSetting("api_key_sealed", docsmeta.DefaultFor("api_key_sealed"))
 	if sealed == "" {
 		respondError(w, http.StatusNotFound, "no API key configured")
 		return
@@ -610,7 +611,7 @@ func (h *SettingsHandler) GetAPIKey(w http.ResponseWriter, _ *http.Request) {
 //	POST /api/v1/settings/api-key/rotate
 func (h *SettingsHandler) RotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// Verify an existing key is set.
-	hash, _ := h.db.GetSetting("api_key_hash", "")
+	hash, _ := h.db.GetSetting("api_key_hash", docsmeta.DefaultFor("api_key_hash"))
 	if hash == "" {
 		respondError(w, http.StatusBadRequest, "no existing API key to rotate — generate one first")
 		return

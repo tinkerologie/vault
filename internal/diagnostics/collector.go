@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/logbuf"
 	"github.com/ruaan-deysel/vault/internal/unraid"
@@ -451,7 +452,7 @@ func (c *Collector) collectDatabaseInfo() DatabaseInfo {
 	}
 
 	// Detect hybrid mode by checking for a snapshot path setting.
-	if override, err := c.db.GetSetting("snapshot_path_override", ""); err == nil && override != "" {
+	if override, err := c.db.GetSetting("snapshot_path_override", docsmeta.DefaultFor("snapshot_path_override")); err == nil && override != "" {
 		info.Mode = "hybrid"
 	} else if pool := unraid.PreferredPool(); pool != "" && unraid.IsMountedPool(pool) {
 		info.Mode = "hybrid"
@@ -507,10 +508,10 @@ func (c *Collector) collectDiskUsage() []DiskUsage {
 	if dbPath := c.db.Path(); dbPath != "" {
 		paths = append(paths, dbDir(dbPath))
 	}
-	if staging, err := c.db.GetSetting("staging_dir_override", ""); err == nil && staging != "" {
+	if staging, err := c.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override")); err == nil && staging != "" {
 		paths = append(paths, staging)
 	}
-	if snap, err := c.db.GetSetting("snapshot_path_override", ""); err == nil && snap != "" {
+	if snap, err := c.db.GetSetting("snapshot_path_override", docsmeta.DefaultFor("snapshot_path_override")); err == nil && snap != "" {
 		paths = append(paths, dbDir(snap))
 	}
 	paths = append(paths, unraid.DiscoverPools()...)
