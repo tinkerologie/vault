@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
 
@@ -256,7 +257,7 @@ func (e *Evaluator) buildContext(runID int64) (EvalContext, error) {
 	}
 
 	// Global sensitivity setting ("balanced" is the seeded default).
-	sensitivity, err := e.db.GetSetting("anomaly_sensitivity_default", "balanced")
+	sensitivity, err := e.db.GetSetting("anomaly_sensitivity_default", docsmeta.DefaultFor("anomaly_sensitivity_default"))
 	if err != nil {
 		sensitivity = "balanced"
 	}

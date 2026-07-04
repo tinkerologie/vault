@@ -24,6 +24,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/notify"
 	"github.com/ruaan-deysel/vault/internal/storage"
@@ -174,8 +175,8 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 		hub:       hub,
 		serverKey: serverKey,
 	}
-	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", 3)
-	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", 2)
+	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", docsmeta.DefaultInt("breaker_fail_threshold"))
+	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", docsmeta.DefaultInt("breaker_close_successes"))
 	r.breaker = NewBreaker(failThreshold, closeSuccesses)
 	r.activeCond = sync.NewCond(&r.activeMu)
 	return r
@@ -1919,7 +1920,7 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		return
 	}
 
-	ratioStr, _ := r.db.GetSetting("dedup_compaction_min_dead_ratio", "0.5")
+	ratioStr, _ := r.db.GetSetting("dedup_compaction_min_dead_ratio", docsmeta.DefaultFor("dedup_compaction_min_dead_ratio"))
 	ratio, perr := strconv.ParseFloat(ratioStr, 64)
 	if perr != nil || ratio < 0 || ratio > 1 {
 		log.Printf("gc: invalid dedup_compaction_min_dead_ratio %q, falling back to 0.5 (err: %v)", ratioStr, perr)
@@ -2175,7 +2176,7 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 // staged files are no longer needed (callers may defer it immediately for the
 // non-deferred path, or hold it across the upload phase for deferred mode).
 func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, dest db.StorageDestination) (string, *engine.BackupResult, func(), error) {
-	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
+	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 	tmpDir, cleanup, err := tempdir.CreateBackupDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config}, stageOverride)
 	if err != nil {
 		return "", nil, func() {}, fmt.Errorf("creating temp dir: %w", err)
@@ -2268,7 +2269,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.
 		})
 	}
 
-	verbose, vErr := r.db.GetSettingBool("storage_verbose_logging", false)
+	verbose, vErr := r.db.GetSettingBool("storage_verbose_logging", docsmeta.DefaultBool("storage_verbose_logging"))
 	if vErr != nil {
 		log.Printf("runner: reading storage_verbose_logging setting: %v", vErr)
 	}
@@ -2839,7 +2840,7 @@ func usesMergedRestoreChain(itemType string) bool {
 }
 
 func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
-	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
+	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
@@ -2895,7 +2896,7 @@ func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.Restore
 		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, reporter)
 	}
 
-	stageOverride, _ := r.db.GetSetting("staging_dir_override", "")
+	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
@@ -3382,7 +3383,7 @@ func (r *Runner) logActivity(level, category, message, details string) {
 // It also respects the global notifications_enabled setting.
 func (r *Runner) sendNotification(job db.Job, status string, done, failed int, sizeBytes int64, durationSec int, failedNames []string) {
 	// Check global notification switch first.
-	globalEnabled, _ := r.db.GetSetting("notifications_enabled", "true")
+	globalEnabled, _ := r.db.GetSetting("notifications_enabled", docsmeta.DefaultFor("notifications_enabled"))
 	if globalEnabled != "true" {
 		return
 	}
@@ -3414,8 +3415,8 @@ func (r *Runner) sendNotification(job db.Job, status string, done, failed int, s
 	}
 
 	// Discord notifications.
-	webhookURL, _ := r.db.GetSetting("discord_webhook_url", "")
-	discordPref, _ := r.db.GetSetting("discord_notify_on", "always")
+	webhookURL, _ := r.db.GetSetting("discord_webhook_url", docsmeta.DefaultFor("discord_webhook_url"))
+	discordPref, _ := r.db.GetSetting("discord_notify_on", docsmeta.DefaultFor("discord_notify_on"))
 	if webhookURL != "" && discordPref != "never" {
 		shouldSend := discordPref == "always" || (discordPref == "failure" && status != "completed")
 		if shouldSend {
@@ -3435,12 +3436,12 @@ func (r *Runner) sendNotification(job db.Job, status string, done, failed int, s
 // attached when a role ID is configured and the outcome matches the
 // discord_mention_on preference, so a healthy backup doesn't ping anyone.
 func (r *Runner) discordOptions(status string) notify.DiscordOptions {
-	username, _ := r.db.GetSetting("discord_bot_username", "")
-	avatarURL, _ := r.db.GetSetting("discord_bot_avatar_url", "")
+	username, _ := r.db.GetSetting("discord_bot_username", docsmeta.DefaultFor("discord_bot_username"))
+	avatarURL, _ := r.db.GetSetting("discord_bot_avatar_url", docsmeta.DefaultFor("discord_bot_avatar_url"))
 	opts := notify.DiscordOptions{Username: username, AvatarURL: avatarURL}
 
-	roleID, _ := r.db.GetSetting("discord_mention_role_id", "")
-	mentionOn, _ := r.db.GetSetting("discord_mention_on", "never")
+	roleID, _ := r.db.GetSetting("discord_mention_role_id", docsmeta.DefaultFor("discord_mention_role_id"))
+	mentionOn, _ := r.db.GetSetting("discord_mention_on", docsmeta.DefaultFor("discord_mention_on"))
 	if roleID != "" && shouldMentionDiscord(mentionOn, status) {
 		opts.MentionRoleID = roleID
 	}
@@ -3534,7 +3535,7 @@ func fmtSize(bytes int64) string {
 
 // sendRestoreNotification sends an Unraid notification for restore outcomes.
 func (r *Runner) sendRestoreNotification(itemName, itemType string, err error) {
-	globalEnabled, _ := r.db.GetSetting("notifications_enabled", "true")
+	globalEnabled, _ := r.db.GetSetting("notifications_enabled", docsmeta.DefaultFor("notifications_enabled"))
 	if globalEnabled != "true" {
 		return
 	}
@@ -3590,7 +3591,7 @@ func logLevelForStatus(status string) string {
 // 2. Legacy plaintext passphrase in DB (migration compatibility).
 func (r *Runner) resolvePassphrase() string {
 	// Try sealed passphrase first.
-	if sealed, _ := r.db.GetSetting("encryption_passphrase_sealed", ""); sealed != "" && len(r.serverKey) > 0 {
+	if sealed, _ := r.db.GetSetting("encryption_passphrase_sealed", docsmeta.DefaultFor("encryption_passphrase_sealed")); sealed != "" && len(r.serverKey) > 0 {
 		passphrase, err := crypto.Unseal(r.serverKey, sealed)
 		if err != nil {
 			log.Printf("runner: failed to unseal passphrase: %v", err)
@@ -3600,7 +3601,7 @@ func (r *Runner) resolvePassphrase() string {
 	}
 
 	// Fall back to legacy plaintext (will be cleaned up on next SetEncryption call).
-	plaintext, _ := r.db.GetSetting("encryption_passphrase", "")
+	plaintext, _ := r.db.GetSetting("encryption_passphrase", docsmeta.DefaultFor("encryption_passphrase"))
 	return plaintext
 }
 

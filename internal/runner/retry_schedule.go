@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 )
 
 // scheduleRetryIfDue sets run.RetryNextAt if the run is eligible for a
@@ -21,8 +22,8 @@ func (r *Runner) scheduleRetryIfDue(run *db.JobRun, job db.Job, dest db.StorageD
 	if dest.BreakerState == "open" {
 		return
 	}
-	globalMax, _ := r.db.GetSettingInt("retry_max_default", 2)
-	globalDelaysStr, _ := r.db.GetSetting("retry_delays_default", "[900,3600,14400]")
+	globalMax, _ := r.db.GetSettingInt("retry_max_default", docsmeta.DefaultInt("retry_max_default"))
+	globalDelaysStr, _ := r.db.GetSetting("retry_delays_default", docsmeta.DefaultFor("retry_delays_default"))
 	globalDelays := parseGlobalDelays(globalDelaysStr)
 	if globalDelays == nil {
 		globalDelays = []int{900, 3600, 14400}

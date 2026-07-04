@@ -8,6 +8,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -129,7 +130,7 @@ func (r *Runner) checkDecryptable(job db.Job, passphrase string) PreflightCheck 
 		c.Status, c.Detail = "fail", "this backup is encrypted — a passphrase is required"
 		return c
 	}
-	hash, err := r.db.GetSetting("encryption_passphrase_hash", "")
+	hash, err := r.db.GetSetting("encryption_passphrase_hash", docsmeta.DefaultFor("encryption_passphrase_hash"))
 	if err != nil {
 		c.Status, c.Detail = "warn", fmt.Sprintf("could not read the stored passphrase hash: %v", err)
 		return c
@@ -156,7 +157,7 @@ func (r *Runner) checkFreeSpace(destination string, rp db.RestorePoint) Prefligh
 		// The staging override is optional; if it can't be read (missing or a
 		// settings error) fall back to the temp dir, which is still a valid
 		// target to probe for free space.
-		if override, err := r.db.GetSetting("staging_dir_override", ""); err == nil && override != "" {
+		if override, err := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override")); err == nil && override != "" {
 			target = override
 		} else {
 			target = os.TempDir()

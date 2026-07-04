@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 )
 
 // restoreWithFallback attempts to restore the database from a chain of
@@ -125,13 +126,13 @@ func newestRotatedSnapshots(paths ...string) []string {
 // validateConfiguredPaths checks that user-configured paths (snapshot override,
 // staging override) are accessible and logs warnings for any that are not.
 func validateConfiguredPaths(database *db.DB) {
-	if snapOverride, err := database.GetSetting("snapshot_path_override", ""); err == nil && snapOverride != "" {
+	if snapOverride, err := database.GetSetting("snapshot_path_override", docsmeta.DefaultFor("snapshot_path_override")); err == nil && snapOverride != "" {
 		if _, err := os.Stat(snapOverride); err != nil {
 			log.Printf("Warning: configured snapshot_path_override is not accessible: %s (%v)", snapOverride, err)
 		}
 	}
 
-	if stagingOverride, err := database.GetSetting("staging_dir_override", ""); err == nil && stagingOverride != "" {
+	if stagingOverride, err := database.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override")); err == nil && stagingOverride != "" {
 		if fi, err := os.Stat(stagingOverride); err != nil || !fi.IsDir() {
 			log.Printf("Warning: configured staging_dir_override is not accessible: %s", stagingOverride)
 		}

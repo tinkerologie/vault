@@ -23,6 +23,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/diagnostics"
 	"github.com/ruaan-deysel/vault/internal/discovery"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/logbuf"
 	"github.com/ruaan-deysel/vault/internal/replication"
@@ -332,7 +333,7 @@ var daemonCmd = &cobra.Command{
 		// retention). Default 365 days; "0" disables purging. Any other
 		// invalid value (including empty) falls back to the 365 default.
 		retDays := 365
-		if v, err := database.GetSetting("history_retention_days", "365"); err == nil {
+		if v, err := database.GetSetting("history_retention_days", docsmeta.DefaultFor("history_retention_days")); err == nil {
 			if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil {
 				retDays = n
 			} else {
@@ -383,7 +384,7 @@ var daemonCmd = &cobra.Command{
 		}
 
 		// Migrate any legacy plaintext encryption passphrase to sealed form.
-		if plaintext, _ := database.GetSetting("encryption_passphrase", ""); plaintext != "" {
+		if plaintext, _ := database.GetSetting("encryption_passphrase", docsmeta.DefaultFor("encryption_passphrase")); plaintext != "" {
 			sealed, sealErr := crypto.Seal(serverKey, plaintext)
 			if sealErr != nil {
 				log.Printf("Warning: failed to seal legacy passphrase: %v", sealErr)
@@ -783,7 +784,7 @@ func copyFile(src, dst string) error {
 // The helper is extracted from RunE so the gating logic is unit-testable
 // without spinning up the full daemon (see daemon_test.go).
 func buildAnomalyEvaluator(database *db.DB, srv *api.Server) *anomaly.Evaluator {
-	enabled, _ := database.GetSetting("anomaly_detection_enabled", "true")
+	enabled, _ := database.GetSetting("anomaly_detection_enabled", docsmeta.DefaultFor("anomaly_detection_enabled"))
 	if enabled != "true" {
 		return nil
 	}
@@ -800,7 +801,7 @@ func buildAnomalyEvaluator(database *db.DB, srv *api.Server) *anomaly.Evaluator 
 	// Unraid + Discord. The webhook URL closure reads the DB at send time so
 	// settings changes take effect without restarting the daemon.
 	notifier := anomaly.NewRealNotifier(func() string {
-		url, _ := database.GetSetting("discord_webhook_url", "")
+		url, _ := database.GetSetting("discord_webhook_url", docsmeta.DefaultFor("discord_webhook_url"))
 		return url
 	})
 	ev.SetNotifier(notifier)
