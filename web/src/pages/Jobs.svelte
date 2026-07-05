@@ -781,6 +781,10 @@
   let vmRestoreVerifyErrors = $derived(selectedVMItems.map(getVMRestoreVerifyError).filter(Boolean))
 
   let containerPresets = $state({})
+  // Advisory notes/warnings per container (e.g. the Immich database caveat),
+  // keyed by container name. Kept separate from containerPresets so the
+  // exclusion-path logic stays a plain array.
+  let containerPresetMeta = $state({})
   let presetsAbortController = null
 
   async function fetchContainerPresets(items) {
@@ -791,6 +795,7 @@
     const signal = presetsAbortController.signal
 
     const newPresets = {}
+    const newMeta = {}
     for (const item of items) {
       const settings = parseItemSettings(item)
       const image = settings.image || ''
@@ -807,12 +812,16 @@
         if (data.paths && data.paths.length > 0) {
           newPresets[item.item_name] = data.paths
         }
+        if ((data.notes && data.notes.length) || (data.warnings && data.warnings.length)) {
+          newMeta[item.item_name] = { notes: data.notes || [], warnings: data.warnings || [] }
+        }
       } catch {
         // Silently ignore preset fetch failures and aborts.
       }
     }
     if (signal.aborted) return
     containerPresets = newPresets
+    containerPresetMeta = newMeta
   }
 
   $effect(() => {
@@ -1728,6 +1737,22 @@
                         </label>
                       {/each}
                     </div>
+                  {/if}
+
+                  <!-- Advisory notes/warnings for known apps (e.g. Immich DB) -->
+                  {#if containerPresetMeta[cItem.item_name]}
+                    {@const meta = containerPresetMeta[cItem.item_name]}
+                    {#each meta.warnings as warning}
+                      <div class="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                        <svg aria-hidden="true" class="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                        <span>{warning}</span>
+                      </div>
+                    {/each}
+                    {#each meta.notes as note}
+                      <p class="text-xs text-text-dim">{note}</p>
+                    {/each}
                   {/if}
 
                   <!-- Additional path exclusions (globs / subpaths) -->

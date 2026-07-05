@@ -67,9 +67,23 @@ func (h *PresetsHandler) GetExclusions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"paths":     paths,
 		"image":     image,
 		"container": containerName,
-	})
+	}
+
+	// Merge advisory metadata (notes/warnings) when the image has any, e.g. the
+	// Immich database caveat. Absent for most containers, so the keys only
+	// appear when relevant.
+	if meta, ok := config.GetPresetMeta(image); ok {
+		if len(meta.Notes) > 0 {
+			resp["notes"] = meta.Notes
+		}
+		if len(meta.Warnings) > 0 {
+			resp["warnings"] = meta.Warnings
+		}
+	}
+
+	respondJSON(w, http.StatusOK, resp)
 }

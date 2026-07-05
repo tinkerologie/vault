@@ -39,6 +39,10 @@ func TestGetExclusionPreset(t *testing.T) {
 		// substring matching (issue #188).
 		{"tdarr server", "ghcr.io/haveagitgat/tdarr:latest", true, "tdarr"},
 		{"tdarr node", "ghcr.io/haveagitgat/tdarr_node:latest", true, "tdarr"},
+		// Immich: the official image and the imagegenius fork both resolve to
+		// the single "immich" preset via substring matching (issue #187).
+		{"immich official", "ghcr.io/immich-app/immich-server:release", true, "immich"},
+		{"immich imagegenius", "ghcr.io/imagegenius/immich:latest", true, "immich"},
 	}
 
 	for _, tt := range tests {
@@ -57,6 +61,55 @@ func TestGetExclusionPreset(t *testing.T) {
 				t.Errorf("GetExclusionPreset(%q) returned %v, expected no match", tt.image, paths)
 			}
 		})
+	}
+}
+
+func TestImmichPresetCoversBothLayouts(t *testing.T) {
+	t.Parallel()
+	paths := GetExclusionPreset("ghcr.io/immich-app/immich-server:release")
+	got := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		got[p] = true
+	}
+
+	// Derived content for both the official (/data) and imagegenius (/photos)
+	// layouts must be excluded.
+	for _, want := range []string{"/data/thumbs", "/data/encoded-video", "/photos/thumbs", "/photos/encoded-video"} {
+		if !got[want] {
+			t.Errorf("immich preset missing derived-content exclusion %q", want)
+		}
+	}
+
+	// Critical, must-keep folders must never be excluded, under either layout.
+	for _, critical := range []string{
+		"/data/upload", "/data/library", "/data/profile", "/data/backups",
+		"/photos/upload", "/photos/library", "/photos/profile", "/photos/backups",
+	} {
+		if got[critical] {
+			t.Errorf("immich preset must not exclude critical path %q", critical)
+		}
+	}
+}
+
+func TestGetPresetMeta(t *testing.T) {
+	t.Parallel()
+
+	meta, ok := GetPresetMeta("ghcr.io/imagegenius/immich:latest")
+	if !ok {
+		t.Fatal("expected metadata for immich image")
+	}
+	if len(meta.Warnings) == 0 {
+		t.Error("expected immich metadata to carry a database warning")
+	}
+	if len(meta.Notes) == 0 {
+		t.Error("expected immich metadata to carry explanatory notes")
+	}
+
+	if _, ok := GetPresetMeta("linuxserver/sonarr:latest"); ok {
+		t.Error("expected no metadata for an image without advisory notes")
+	}
+	if _, ok := GetPresetMeta(""); ok {
+		t.Error("expected no metadata for empty image")
 	}
 }
 

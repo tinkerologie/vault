@@ -18,103 +18,103 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Core
 
-| Method | Endpoint             | Description                                                              |
-| ------ | -------------------- | ------------------------------------------------------------------------ |
-| GET    | `/health`            | Basic health, version, and mode                                          |
-| GET    | `/health/summary`    | Aggregated dashboard health metrics                                      |
-| GET    | `/ws`                | WebSocket event stream                                                   |
-| GET    | `/runner/status`     | Current backup or restore state, including queued jobs                   |
-| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)  |
-| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)     |
+| Method | Endpoint             | Description                                                             |
+| ------ | -------------------- | ----------------------------------------------------------------------- |
+| GET    | `/health`            | Basic health, version, and mode                                         |
+| GET    | `/health/summary`    | Aggregated dashboard health metrics                                     |
+| GET    | `/ws`                | WebSocket event stream                                                  |
+| GET    | `/runner/status`     | Current backup or restore state, including queued jobs                  |
+| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal) |
+| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)    |
 
 ## Jobs
 
-| Method | Endpoint                                                         | Description                                                                    |
-| ------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| GET    | `/jobs`                                                          | List jobs                                                                      |
-| POST   | `/jobs`                                                          | Create job (response echoes the persisted items)                               |
-| GET    | `/jobs/next-runs`                                                | Next scheduled run for every job                                               |
-| GET    | `/jobs/{id}`                                                     | Get a job and its items                                                        |
-| PUT    | `/jobs/{id}`                                                     | Update a job (response echoes the persisted items)                             |
-| DELETE | `/jobs/{id}`                                                     | Delete a job                                                                   |
-| GET    | `/jobs/{id}/history`                                             | Job run history (returns `[]` when empty)                                      |
-| GET    | `/jobs/{id}/restore-points`                                      | Restore points with chain-health annotations (returns `[]` when empty)         |
-| GET    | `/jobs/{id}/retention-preview`                                   | Preview which restore points the configured retention policy would prune       |
-| DELETE | `/jobs/{id}/restore-points/{rpid}`                               | Delete a specific restore point and its files                                  |
-| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…`               | List files inside a restore point (works for classic and dedup restore points) |
-| POST   | `/jobs/{id}/restore-points/{rpid}/verify`                        | Trigger an on-demand SHA-256 verification of a restore point                   |
-| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`                   | List verification runs for a restore point                                     |
-| GET    | `/jobs/{id}/verify-runs/{vrid}`                                  | Get a single verification run record                                           |
-| POST   | `/jobs/{id}/run`                                                 | Trigger an immediate backup                                                    |
-| POST   | `/jobs/{id}/cancel`                                              | Cancel a running backup job                                                    |
-| POST   | `/jobs/{id}/restore`                                             | Trigger a restore                                                              |
-| GET    | `/jobs/{id}/next-run`                                            | Next scheduled run for one job                                                 |
+| Method | Endpoint                                           | Description                                                                    |
+| ------ | -------------------------------------------------- | ------------------------------------------------------------------------------ |
+| GET    | `/jobs`                                            | List jobs                                                                      |
+| POST   | `/jobs`                                            | Create job (response echoes the persisted items)                               |
+| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                               |
+| GET    | `/jobs/{id}`                                       | Get a job and its items                                                        |
+| PUT    | `/jobs/{id}`                                       | Update a job (response echoes the persisted items)                             |
+| DELETE | `/jobs/{id}`                                       | Delete a job                                                                   |
+| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                      |
+| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)         |
+| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune       |
+| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                  |
+| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points) |
+| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Trigger an on-demand SHA-256 verification of a restore point                   |
+| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                     |
+| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                           |
+| POST   | `/jobs/{id}/run`                                   | Trigger an immediate backup                                                    |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup job                                                    |
+| POST   | `/jobs/{id}/restore`                               | Trigger a restore                                                              |
+| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                 |
 
 ## Storage
 
-| Method | Endpoint                          | Description                                                                            |
-| ------ | --------------------------------- | -------------------------------------------------------------------------------------- |
-| GET    | `/storage`                        | List storage destinations (credentials redacted in the response)                       |
-| POST   | `/storage`                        | Create storage destination (config validated; response is redacted)                    |
-| GET    | `/storage/{id}`                   | Get storage destination (redacted)                                                     |
-| PUT    | `/storage/{id}`                   | Partial-merge update; rejects mutation of immutable fields (`type`, `dedup_enabled`)   |
-| DELETE | `/storage/{id}`                   | Delete storage destination; `?force=true` drops dependent-job guard; `?deleteFiles=true` also removes backup files |
-| POST   | `/storage/{id}/test`              | Test storage connection                                                                |
-| POST   | `/storage/{id}/health-check`      | Run the storage health probe (used by the Dashboard health widget)                     |
-| POST   | `/storage/{id}/capacity-check`    | Refresh used / total / free capacity (broadcasts `storage_capacity_updated` over WS)   |
-| POST   | `/storage/{id}/breaker/close`     | Manually close the destination circuit breaker — clears sticky failure state           |
-| POST   | `/storage/{id}/scan-orphans`      | Scan storage for orphaned files (no matching restore point)                            |
-| POST   | `/storage/{id}/delete-orphans`    | Delete files surfaced by `scan-orphans`                                                |
-| GET    | `/storage/{id}/dedup-stats`       | Dedup repo statistics (chunks, packs, logical/physical bytes, dedup ratio)             |
-| POST   | `/storage/{id}/gc`                | Run mark-and-sweep GC on the destination's dedup repo                                  |
-| POST   | `/storage/{id}/scan`              | Scan storage for importable backups                                                    |
-| POST   | `/storage/{id}/import`            | Import backups discovered during scan (preserves dedup manifest IDs)                   |
-| POST   | `/storage/{id}/restore-db`        | Restore the Vault database from a centralized backup at `_vault/vault.db`              |
-| GET    | `/storage/{id}/jobs`              | Returns `{ jobs: [{id, name}], job_count: N }` — dependent-job list                    |
-| GET    | `/storage/{id}/list`              | List files under a storage path                                                        |
-| GET    | `/storage/{id}/files`             | Download a file from storage                                                           |
+| Method | Endpoint                       | Description                                                                                                        |
+| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/storage`                     | List storage destinations (credentials redacted in the response)                                                   |
+| POST   | `/storage`                     | Create storage destination (config validated; response is redacted)                                                |
+| GET    | `/storage/{id}`                | Get storage destination (redacted)                                                                                 |
+| PUT    | `/storage/{id}`                | Partial-merge update; rejects mutation of immutable fields (`type`, `dedup_enabled`)                               |
+| DELETE | `/storage/{id}`                | Delete storage destination; `?force=true` drops dependent-job guard; `?deleteFiles=true` also removes backup files |
+| POST   | `/storage/{id}/test`           | Test storage connection                                                                                            |
+| POST   | `/storage/{id}/health-check`   | Run the storage health probe (used by the Dashboard health widget)                                                 |
+| POST   | `/storage/{id}/capacity-check` | Refresh used / total / free capacity (broadcasts `storage_capacity_updated` over WS)                               |
+| POST   | `/storage/{id}/breaker/close`  | Manually close the destination circuit breaker — clears sticky failure state                                       |
+| POST   | `/storage/{id}/scan-orphans`   | Scan storage for orphaned files (no matching restore point)                                                        |
+| POST   | `/storage/{id}/delete-orphans` | Delete files surfaced by `scan-orphans`                                                                            |
+| GET    | `/storage/{id}/dedup-stats`    | Dedup repo statistics (chunks, packs, logical/physical bytes, dedup ratio)                                         |
+| POST   | `/storage/{id}/gc`             | Run mark-and-sweep GC on the destination's dedup repo                                                              |
+| POST   | `/storage/{id}/scan`           | Scan storage for importable backups                                                                                |
+| POST   | `/storage/{id}/import`         | Import backups discovered during scan (preserves dedup manifest IDs)                                               |
+| POST   | `/storage/{id}/restore-db`     | Restore the Vault database from a centralized backup at `_vault/vault.db`                                          |
+| GET    | `/storage/{id}/jobs`           | Returns `{ jobs: [{id, name}], job_count: N }` — dependent-job list                                                |
+| GET    | `/storage/{id}/list`           | List files under a storage path                                                                                    |
+| GET    | `/storage/{id}/files`          | Download a file from storage                                                                                       |
 
 ## Settings
 
-| Method | Endpoint                          | Description                                                   |
-| ------ | --------------------------------- | ------------------------------------------------------------- |
-| GET    | `/settings`                       | List settings                                                 |
-| PUT    | `/settings`                       | Update settings                                               |
-| GET    | `/settings/encryption`            | Encryption status                                             |
-| POST   | `/settings/encryption`            | Set encryption passphrase                                     |
-| POST   | `/settings/encryption/verify`     | Verify encryption passphrase                                  |
-| GET    | `/settings/encryption/passphrase` | Read the configured passphrase (`Cache-Control: no-store`)    |
-| GET    | `/settings/staging`               | Staging directory info                                        |
-| PUT    | `/settings/staging`               | Override the staging directory                                |
-| GET    | `/settings/database`              | Database snapshot settings                                    |
-| PUT    | `/settings/database`              | Update database snapshot settings                             |
-| POST   | `/settings/discord/test`          | Test the Discord webhook                                      |
-| GET    | `/settings/api-key`               | API key status (configured / not configured)                  |
-| GET    | `/settings/api-key/key`           | Read the current API key (loopback callers only)              |
-| POST   | `/settings/api-key/generate`      | Generate a new API key (rate-limited)                         |
-| POST   | `/settings/api-key/rotate`        | Rotate the existing API key (rate-limited)                    |
-| DELETE | `/settings/api-key`               | Revoke the API key                                            |
+| Method | Endpoint                          | Description                                                                                          |
+| ------ | --------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| GET    | `/settings`                       | List settings                                                                                        |
+| PUT    | `/settings`                       | Update settings                                                                                      |
+| GET    | `/settings/encryption`            | Encryption status                                                                                    |
+| POST   | `/settings/encryption`            | Set encryption passphrase                                                                            |
+| POST   | `/settings/encryption/verify`     | Verify encryption passphrase                                                                         |
+| GET    | `/settings/encryption/passphrase` | Read the configured passphrase (`Cache-Control: no-store`)                                           |
+| GET    | `/settings/staging`               | Staging directory info                                                                               |
+| PUT    | `/settings/staging`               | Override the staging directory                                                                       |
+| GET    | `/settings/database`              | Database snapshot settings                                                                           |
+| PUT    | `/settings/database`              | Update database snapshot settings                                                                    |
+| POST   | `/settings/discord/test`          | Test the Discord webhook                                                                             |
+| GET    | `/settings/api-key`               | API key status (configured / not configured)                                                         |
+| GET    | `/settings/api-key/key`           | Read the current API key (loopback callers only)                                                     |
+| POST   | `/settings/api-key/generate`      | Generate a new API key (rate-limited)                                                                |
+| POST   | `/settings/api-key/rotate`        | Rotate the existing API key (rate-limited)                                                           |
+| DELETE | `/settings/api-key`               | Revoke the API key                                                                                   |
 | GET    | `/settings/diagnostics`           | Download a diagnostics ZIP (system info, schema, runs, scheduler, daemon log — credentials redacted) |
 
 ## Discovery
 
-| Method | Endpoint                     | Description                                                          |
-| ------ | ---------------------------- | -------------------------------------------------------------------- |
-| GET    | `/browse?path=…`             | Browse filesystem paths (safepath-gated; allowed under `/mnt` etc.)  |
-| GET    | `/path-exists?path=…`        | Safepath-gated `os.Stat` (used by the Folder picker for staleness)   |
-| GET    | `/containers`                | Discover Docker containers                                           |
-| GET    | `/vms`                       | Discover libvirt VMs                                                 |
-| GET    | `/folders`                   | Discover folder presets (engine-known paths)                         |
-| GET    | `/plugins`                   | Discover installed Unraid plugins                                    |
-| GET    | `/zfs`                       | Discover ZFS datasets                                                |
-| GET    | `/presets/exclusions`        | Per-container exclusion presets (Plex cache, Sonarr db, …)           |
+| Method | Endpoint              | Description                                                                                                |
+| ------ | --------------------- | ---------------------------------------------------------------------------------------------------------- |
+| GET    | `/browse?path=…`      | Browse filesystem paths (safepath-gated; allowed under `/mnt` etc.)                                        |
+| GET    | `/path-exists?path=…` | Safepath-gated `os.Stat` (used by the Folder picker for staleness)                                         |
+| GET    | `/containers`         | Discover Docker containers                                                                                 |
+| GET    | `/vms`                | Discover libvirt VMs                                                                                       |
+| GET    | `/folders`            | Discover folder presets (engine-known paths)                                                               |
+| GET    | `/plugins`            | Discover installed Unraid plugins                                                                          |
+| GET    | `/zfs`                | Discover ZFS datasets                                                                                      |
+| GET    | `/presets/exclusions` | Per-container exclusion presets (`paths`), plus advisory `notes`/`warnings` for some apps (e.g. Immich DB) |
 
 ## Activity Logs
 
-| Method | Endpoint                | Description                                                              |
-| ------ | ----------------------- | ------------------------------------------------------------------------ |
-| GET    | `/activity?limit=N`     | Activity log entries (`limit` is clamped to ≤ 1000 to prevent OOM)       |
-| DELETE | `/activity`             | Purge all activity log entries (irreversible)                            |
+| Method | Endpoint            | Description                                                        |
+| ------ | ------------------- | ------------------------------------------------------------------ |
+| GET    | `/activity?limit=N` | Activity log entries (`limit` is clamped to ≤ 1000 to prevent OOM) |
+| DELETE | `/activity`         | Purge all activity log entries (irreversible)                      |
 
 ## History
 
@@ -140,16 +140,16 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Recovery
 
-| Method | Endpoint         | Description                                                                            |
-| ------ | ---------------- | -------------------------------------------------------------------------------------- |
+| Method | Endpoint         | Description                                                                                                  |
+| ------ | ---------------- | ------------------------------------------------------------------------------------------------------------ |
 | GET    | `/recovery/plan` | Recovery plan with per-step item status; step downgrades to `warning` if any item is missing a restore point |
 
 ## MCP (Model Context Protocol)
 
-| Method | Endpoint   | Description                                                                                  |
-| ------ | ---------- | -------------------------------------------------------------------------------------------- |
-| Any    | `/mcp`     | Streamable-HTTP MCP entry point (Claude Desktop, web AI clients). Daemon mode only.          |
-| Any    | `/mcp/*`   | MCP transport sub-paths used by the protocol                                                 |
+| Method | Endpoint | Description                                                                         |
+| ------ | -------- | ----------------------------------------------------------------------------------- |
+| Any    | `/mcp`   | Streamable-HTTP MCP entry point (Claude Desktop, web AI clients). Daemon mode only. |
+| Any    | `/mcp/*` | MCP transport sub-paths used by the protocol                                        |
 
 See [MCP Integration](mcp.md) for the available tools and client configuration.
 

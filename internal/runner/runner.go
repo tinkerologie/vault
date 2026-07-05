@@ -873,7 +873,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// Execute pre-script if configured.
 	if job.PreScript != "" {
 		log.Printf("runner: job %d executing pre-script: %s", jobID, job.PreScript)
-		output, err := runScript(job.PreScript, defaultScriptTimeout)
+		output, err := runScript(job.PreScript, defaultScriptTimeout, scriptContextEnv(job, runID, "starting"))
 		if output != "" {
 			log.Printf("runner: pre-script output: %s", strings.TrimSpace(output))
 		}
@@ -1679,7 +1679,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// defaultScriptTimeout internally — no additional wrapper needed.
 	if job.PostScript != "" {
 		log.Printf("runner: job %d executing post-script: %s", jobID, job.PostScript)
-		output, err := runScript(job.PostScript, defaultScriptTimeout)
+		output, err := runScript(job.PostScript, defaultScriptTimeout, scriptContextEnv(job, runID, run.Status))
 		if output != "" {
 			log.Printf("runner: post-script output: %s", strings.TrimSpace(output))
 		}

@@ -48,7 +48,24 @@ Pick which items to include in this job. Vault discovers items automatically fro
 
 **Excluding container sub-paths:**
 
-You can list paths to exclude from a container backup (e.g. `/config/Library/Application Support/Plex Media Server/Cache` or `/config/Sonarr/MediaCover`). The job wizard exposes a free-text list per container, and Vault ships a `GET /api/v1/presets/exclusions` catalogue of common rules for popular containers (Plex, Sonarr, Radarr, etc.) the UI offers as starting points.
+You can list paths to exclude from a container backup (e.g. `/config/Library/Application Support/Plex Media Server/Cache` or `/config/Sonarr/MediaCover`). The job wizard exposes a free-text list per container, and Vault ships a `GET /api/v1/presets/exclusions` catalogue of common rules for popular containers (Plex, Sonarr, Radarr, etc.) the UI offers as starting points. For some apps the response also carries advisory `notes`/`warnings` (e.g. the Immich database caveat below), which the wizard shows inline.
+
+**Backing up Immich:**
+
+Immich detection works for both the official `ghcr.io/immich-app/immich-server` image (media root mounted at `/data`) and the imagegenius fork `ghcr.io/imagegenius/immich` (`/photos`). The recommended exclusions cover both layouts:
+
+|                         | Always backed up (critical)               | Excluded (regeneratable)  |
+| ----------------------- | ----------------------------------------- | ------------------------- |
+| Official (`/data`)      | `upload`, `library`, `profile`, `backups` | `thumbs`, `encoded-video` |
+| imagegenius (`/photos`) | `upload`, `library`, `profile`, `backups` | `thumbs`, `encoded-video` |
+
+Thumbnails and re-encoded video are re-created by Immich on demand after a restore, so excluding them saves space without data loss. The `upload`/`library`/`profile` folders hold your original photos and videos and are never excluded.
+
+**Immich's database is the catch:** Immich stores every asset's metadata in a **PostgreSQL database that runs in a separate container**, so a filesystem backup of the Immich container does _not_ capture it — and a raw file copy of the Postgres data directory is not crash-consistent. Choose one of:
+
+1. **Recommended — Immich's built-in database backup.** In Immich, go to **Administration → Settings → Backup Settings** and enable the database dump. Immich writes timestamped `.sql.gz` dumps into the `backups/` folder inside your media root (`/data/backups` or `/photos/backups`), which Vault keeps. Backing up the media root then captures both your photos and a restorable database dump in one job.
+2. **Back up the Postgres container as its own Vault job.** Add the Immich Postgres container to a separate job; Vault stops it before archiving, giving a consistent copy of its data directory.
+3. **Dump via a pre-backup script.** Vault runs a job's **Pre-backup script** before stopping any containers, with `VAULT_JOB_NAME`, `VAULT_STATUS`, `VAULT_JOB_ID`, and `VAULT_RUN_ID` exported into its environment. A script can `docker exec` a `pg_dump` into the media root before the backup runs.
 
 **Notes on ZFS datasets:**
 

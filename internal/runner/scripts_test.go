@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 func writeExecutableScript(path string, contents string) error {
@@ -20,7 +22,7 @@ func TestRunScript(t *testing.T) {
 
 	t.Run("empty script", func(t *testing.T) {
 		t.Parallel()
-		out, err := runScript("", time.Second)
+		out, err := runScript("", time.Second, nil)
 		if err != nil {
 			t.Errorf("runScript('') error = %v", err)
 		}
@@ -31,7 +33,7 @@ func TestRunScript(t *testing.T) {
 
 	t.Run("relative path rejected", func(t *testing.T) {
 		t.Parallel()
-		_, err := runScript("scripts/run.sh", time.Second)
+		_, err := runScript("scripts/run.sh", time.Second, nil)
 		if err == nil {
 			t.Error("expected error for relative path")
 		}
@@ -39,7 +41,7 @@ func TestRunScript(t *testing.T) {
 
 	t.Run("nonexistent script", func(t *testing.T) {
 		t.Parallel()
-		_, err := runScript("/usr/local/bin/vault-nonexistent-test-script", time.Second)
+		_, err := runScript("/usr/local/bin/vault-nonexistent-test-script", time.Second, nil)
 		if err == nil {
 			t.Error("expected error for nonexistent script")
 		}
@@ -48,7 +50,7 @@ func TestRunScript(t *testing.T) {
 	t.Run("directory rejected", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		_, err := runScript(dir, time.Second)
+		_, err := runScript(dir, time.Second, nil)
 		if err == nil {
 			t.Error("expected error for directory")
 		}
@@ -61,7 +63,7 @@ func TestRunScript(t *testing.T) {
 		if err := os.WriteFile(script, []byte("#!/bin/sh\necho ok"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := runScript(script, time.Second)
+		_, err := runScript(script, time.Second, nil)
 		if err == nil {
 			t.Error("expected error for non-executable script")
 		}
@@ -74,7 +76,7 @@ func TestRunScript(t *testing.T) {
 		if err := writeExecutableScript(script, "#!/bin/sh\necho hello\n"); err != nil {
 			t.Fatal(err)
 		}
-		out, err := runScript(script, 5*time.Second)
+		out, err := runScript(script, 5*time.Second, nil)
 		if err != nil {
 			t.Errorf("runScript() error = %v", err)
 		}
@@ -90,9 +92,27 @@ func TestRunScript(t *testing.T) {
 		if err := writeExecutableScript(script, "#!/bin/sh\nexit 1\n"); err != nil {
 			t.Fatal(err)
 		}
-		_, err := runScript(script, 5*time.Second)
+		_, err := runScript(script, 5*time.Second, nil)
 		if err == nil {
 			t.Error("expected error for failing script")
+		}
+	})
+
+	t.Run("injects context env vars", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		script := filepath.Join(dir, "env.sh")
+		// Echo the Vault-injected variables so we can assert they were set.
+		if err := writeExecutableScript(script, "#!/bin/sh\necho \"$VAULT_JOB_NAME|$VAULT_STATUS|$VAULT_JOB_ID|$VAULT_RUN_ID\"\n"); err != nil {
+			t.Fatal(err)
+		}
+		env := scriptContextEnv(db.Job{ID: 42, Name: "Nightly Photos"}, 7, "completed")
+		out, err := runScript(script, 5*time.Second, env)
+		if err != nil {
+			t.Fatalf("runScript() error = %v", err)
+		}
+		if got, want := out, "Nightly Photos|completed|42|7\n"; got != want {
+			t.Errorf("runScript() env output = %q, want %q", got, want)
 		}
 	})
 }
