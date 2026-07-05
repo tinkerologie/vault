@@ -1,6 +1,11 @@
 package notify
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+)
 
 // Anomaly Discord embed colour constants (hex values stored as int).
 // Used by BuildAnomalyEmbed so callers don't hard-code magic numbers.
@@ -64,10 +69,10 @@ func BuildAnomalyEmbed(p AnomalyEmbedParams) DiscordEmbed {
 		Value:  p.Severity,
 		Inline: true,
 	})
-	if p.Details != "" {
+	if ctx := renderAnomalyDetails(p.Details); ctx != "" {
 		fields = append(fields, DiscordField{
-			Name:  "Details",
-			Value: truncate(p.Details, 256),
+			Name:  "Context",
+			Value: truncate(ctx, 256),
 		})
 	}
 
@@ -88,7 +93,68 @@ func BuildAnomalyEmbed(p AnomalyEmbedParams) DiscordEmbed {
 // the call is a no-op that logs and returns nil — same behaviour as Send.
 func SendAnomalyUnraid(summary, details, severity string) error {
 	imp := importanceForSeverity(severity)
-	return Send("Vault", fmt.Sprintf("Anomaly detected: %s", summary), details, imp)
+	return Send("Vault", fmt.Sprintf("Anomaly detected: %s", summary), renderAnomalyDetails(details), imp)
+}
+
+// renderAnomalyDetails converts an anomaly's structured Details JSON into
+// short, human-readable context lines for notifications, replacing the raw
+// JSON blob that used to be shown to users. It only surfaces fields that add
+// approachable context and deliberately omits purely statistical values
+// (e.g. z_score, slope) that the plain-English Summary already conveys.
+//
+// Unrecognised or unparsable payloads yield an empty string so the caller
+// simply omits the context rather than dumping raw JSON. The underlying
+// Details JSON is left untouched for the API, MCP, and web UI that parse it.
+func renderAnomalyDetails(details string) string {
+	if strings.TrimSpace(details) == "" {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(details), &m); err != nil {
+		return ""
+	}
+
+	var lines []string
+	// window_size counts the samples the detector looked back over — backup
+	// runs for drift/reliability, but capacity health-check samples for the
+	// capacity detector — so use the neutral "sample(s)" label rather than
+	// "runs", which would misdescribe capacity anomalies.
+	if n, ok := intField(m, "window_size"); ok && n > 0 {
+		lines = append(lines, "Based on the last "+countLabel(n, "sample"))
+	}
+	if n, ok := intField(m, "streak"); ok && n > 0 {
+		lines = append(lines, countLabel(n, "run")+" failed in a row")
+	}
+	if newest, ok := m["newest_status"].(string); ok {
+		if prev, ok2 := m["previous_status"].(string); ok2 {
+			lines = append(lines, fmt.Sprintf("Latest verification %s (previous run %s)", newest, prev))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// countLabel renders a count with a singular/plural unit, e.g. countLabel(1,
+// "sample") → "1 sample" and countLabel(3, "run") → "3 runs".
+func countLabel(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
+}
+
+// intField reads a numeric JSON field as an int. JSON numbers decode to
+// float64 through map[string]any, so only float64 is accepted; fractional,
+// non-finite, or out-of-range values are rejected (ok=false) so malformed
+// payloads never produce nonsense counts in user-facing notification text.
+func intField(m map[string]any, key string) (int, bool) {
+	f, ok := m[key].(float64)
+	if !ok {
+		return 0, false
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) || f < math.MinInt || f > math.MaxInt {
+		return 0, false
+	}
+	return int(f), true
 }
 
 func importanceForSeverity(severity string) Importance {

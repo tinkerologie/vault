@@ -96,7 +96,7 @@ func (d *SizeDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 				Expected:    &median,
 				Deviation:   &dev,
 				JobRunID:    &runID,
-				Summary:     fmt.Sprintf("backup shrank to %s (%.0f%% of expected %s)", humanizeBytes(observed), growthFactor*100, humanizeBytes(median)),
+				Summary:     fmt.Sprintf("This backup shrank to %s, only %s of its usual %s — this can signal missing or corrupted data.", humanizeBytes(observed), humanizePercent(growthFactor), humanizeBytes(median)),
 				Details:     details,
 			},
 		}, nil
@@ -139,7 +139,7 @@ func (d *SizeDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 			Expected:    &median,
 			Deviation:   &dev,
 			JobRunID:    &runID,
-			Summary:     fmt.Sprintf("backup size anomaly: %s (%.1fx median)", humanizeBytes(observed), growthFactor),
+			Summary:     fmt.Sprintf("This backup grew to %s, about %s its usual %s.", humanizeBytes(observed), humanizeMultiplier(growthFactor), humanizeBytes(median)),
 			Details:     details,
 		},
 	}, nil

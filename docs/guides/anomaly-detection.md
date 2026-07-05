@@ -93,6 +93,16 @@ Changes take effect on the next evaluation — no daemon restart needed.
 | **Notifications**   | Unraid + Discord alerts for critical anomalies (configurable)                    |
 | **MCP**             | `list_anomalies` / `get_anomaly` / `acknowledge_anomaly` tools for AI assistants |
 
+Anomaly messages are written as plain-English sentences that state what happened versus what was expected, so you don't need to read statistics to understand them:
+
+- **Duration:** _This backup took 4m 23s, about 1.2× its usual 3m 40s._
+- **Size (growth):** _This backup grew to 20 GB, about 5× its usual 4 GB._
+- **Size (shrinkage):** _This backup shrank to 1.8 GB, only 45% of its usual 4 GB — this can signal missing or corrupted data._
+- **Reliability:** _This backup has failed 3 runs in a row and needs attention._
+- **Capacity:** _Storage "backups" is filling up — at the current rate of 12 GB per day it will run out of free space in about 6 days._
+
+Notifications show the same sentence plus a short line of context (e.g. _Based on the last 10 samples_) instead of a raw JSON blob. The precise statistics (z-score, growth factor, window size) are still available in the structured `details` field via the API, MCP, and the web UI's **Raw details** expander.
+
 ---
 
 ## Lifecycle: resolve, acknowledge, mark-expected

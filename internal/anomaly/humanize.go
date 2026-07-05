@@ -65,3 +65,55 @@ func humanizeDuration(seconds float64) string {
 	}
 	return fmt.Sprintf("%dh %dm", s/3600, (s%3600)/60)
 }
+
+// humanizeMultiplier renders a growth factor as a friendly "N×" string for use
+// in summary sentences (e.g. 1.18 → "1.2×", 5.0 → "5×"). Whole multiples drop
+// the decimal so "5×" reads cleanly; fractional ones keep one decimal.
+//
+// A tight MAD can fire a z-score anomaly at a growth factor only just above 1,
+// where rounding to a bare "1×" would read like no change at all. Such values
+// collapse to ">1×" (and "<1×" below 1) so the summary still signals a real
+// deviation.
+func humanizeMultiplier(factor float64) string {
+	if math.IsNaN(factor) || math.IsInf(factor, 0) {
+		return "—"
+	}
+	r := roundTo(factor, 1)
+	if r == 1 && factor > 1 {
+		return ">1×"
+	}
+	if r == 1 && factor < 1 {
+		return "<1×"
+	}
+	if r == math.Trunc(r) {
+		return fmt.Sprintf("%.0f×", r)
+	}
+	return fmt.Sprintf("%.1f×", r)
+}
+
+// humanizePercent renders a fraction (0–1) as a whole-percent string
+// (e.g. 0.45 → "45%"). Used when a summary compares an observed value against
+// the usual one as a share rather than a multiple.
+func humanizePercent(fraction float64) string {
+	if math.IsNaN(fraction) || math.IsInf(fraction, 0) {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f%%", fraction*100)
+}
+
+// humanizeDays renders a day count as a friendly phrase for runway/ETA text
+// (e.g. 0.4 → "less than a day", 1 → "1 day", 5.6 → "6 days").
+func humanizeDays(days float64) string {
+	if math.IsNaN(days) || math.IsInf(days, 0) || days < 0 {
+		return "—"
+	}
+	r := math.Round(days)
+	switch {
+	case r < 1:
+		return "less than a day"
+	case r == 1:
+		return "1 day"
+	default:
+		return fmt.Sprintf("%.0f days", r)
+	}
+}

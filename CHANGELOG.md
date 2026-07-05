@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Anomaly messages are now plain-English sentences** (closes #192). Every detector now describes what happened versus what was expected in friendly language — e.g. _"This backup took 4m 23s, about 1.2× its usual 3m 40s"_ instead of _"backup duration anomaly: 4m 23s (1.2x median)"_ — across the dashboard, the anomalies page, notifications, the API, and MCP. Notifications also replace the raw JSON blob (`{"z_score":11.06,...}`) with a short context line such as _"Based on the last 10 samples"_, while the precise statistics remain available in the structured `details` field for programmatic consumers.
+
 ## [2026.07.01] - 2026-07-04
 
 ### Added

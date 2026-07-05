@@ -123,7 +123,7 @@ func (r *ReliabilityDetector) evalStreak(ec EvalContext, jobID int64) *Anomaly {
 		Metric:      "failure_streak",
 		Observed:    float64(streak),
 		JobRunID:    &runID,
-		Summary:     fmt.Sprintf("job has failed %d runs in a row", streak),
+		Summary:     fmt.Sprintf("This backup has failed %s in a row and needs attention.", pluralizeRuns(streak)),
 		Details:     details,
 	}
 }
@@ -171,9 +171,18 @@ func (r *ReliabilityDetector) evalVerifyRegression(jobID int64) (*Anomaly, error
 		ScopeID:     jobID,
 		Metric:      "verify_outcome",
 		Observed:    0, // no numeric metric; presence is the signal
-		Summary:     "backup verification regressed: previous run passed, latest run failed",
+		Summary:     "This backup's latest verification failed after the previous one passed — the backed-up data may no longer be restorable.",
 		Details:     details,
 	}, nil
+}
+
+// pluralizeRuns renders a run count as "1 run" or "N runs" so the streak
+// summary reads naturally regardless of the configured sensitivity threshold.
+func pluralizeRuns(n int) string {
+	if n == 1 {
+		return "1 run"
+	}
+	return fmt.Sprintf("%d runs", n)
 }
 
 // buildStreakDetails marshals the streak count into a JSON Details string.

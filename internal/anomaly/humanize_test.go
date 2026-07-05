@@ -63,6 +63,78 @@ func TestHumanizeDuration(t *testing.T) {
 	}
 }
 
+func TestHumanizeMultiplier(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   float64
+		want string
+	}{
+		{"whole", 5, "5×"},
+		{"fractional", 1.18, "1.2×"},
+		{"exactly one", 1, "1×"},
+		{"just over one stays a deviation", 1.04, ">1×"},
+		{"just under one stays a deviation", 0.97, "<1×"},
+		{"large fractional", 12.35, "12.4×"},
+		{"infinity", math.Inf(1), "—"},
+		{"NaN", math.NaN(), "—"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := humanizeMultiplier(c.in); got != c.want {
+				t.Errorf("humanizeMultiplier(%v) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestHumanizePercent(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   float64
+		want string
+	}{
+		{"half", 0.5, "50%"},
+		{"rounds", 0.456, "46%"},
+		{"tiny", 0.02, "2%"},
+		{"infinity", math.Inf(1), "—"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := humanizePercent(c.in); got != c.want {
+				t.Errorf("humanizePercent(%v) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestHumanizeDays(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   float64
+		want string
+	}{
+		{"sub-day", 0.4, "less than a day"},
+		{"one day", 1, "1 day"},
+		{"rounds to one", 1.2, "1 day"},
+		{"several", 5.6, "6 days"},
+		{"negative", -3, "—"},
+		{"infinity", math.Inf(1), "—"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := humanizeDays(c.in); got != c.want {
+				t.Errorf("humanizeDays(%v) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRoundTo(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
