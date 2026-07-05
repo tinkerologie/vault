@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **VM backup jobs now detect raw vs qcow2 disks and only offer supported backup types** (closes #163). Vault reads each VM's disk format at discovery time and exposes it (`disk_format`, `supports_incremental`) on `GET /api/v1/vms`. Because libvirt checkpoint-based incremental/differential backups require qcow2 disks, the job wizard now hides those options — and falls back to Full — when a selected VM uses raw or mixed disks, with an inline note naming the affected VM. This surfaces up front the constraint the engine previously enforced silently by downgrading raw-disk VMs to full backups.
 - **Pre/post-backup scripts now receive job context as environment variables** (part of #187). The job editor has long promised `VAULT_JOB_NAME` and `VAULT_STATUS` to hook scripts, but they were never actually set. Vault now exports `VAULT_JOB_NAME`, `VAULT_STATUS` (`starting` for pre-scripts, the run's final status for post-scripts), `VAULT_JOB_ID`, and `VAULT_RUN_ID` into every pre/post-backup script's environment — enabling, for example, an Immich `pg_dump` pre-script that targets the right job.
 - **Container exclusion presets can now carry advisory notes and warnings** (part of #187). `GET /api/v1/presets/exclusions` returns optional `notes`/`warnings` for apps that need a caveat, and the job wizard shows them inline beneath the container's exclusions.
 

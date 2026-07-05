@@ -57,12 +57,29 @@ func (h *VMHandler) ListItems() ([]BackupItem, error) {
 
 		stateStr := domainStateString(libvirt.DomainState(state))
 
+		// Detect disk format so the job wizard can offer only the backup types
+		// the VM actually supports (incremental/differential need qcow2 disks).
+		// Read the persistent (inactive) config so the result is stable
+		// regardless of running state or in-flight snapshots. Any failure
+		// degrades to a conservative "unknown"/not-incremental result rather
+		// than failing the whole listing.
+		diskFormat, supportsIncremental := "unknown", false
+		if xmlDesc, xmlErr := h.conn.DomainGetXMLDesc(dom, libvirt.DomainXMLInactive); xmlErr != nil {
+			log.Printf("engine/vm: disk-format detection for %q: reading domain XML: %v", dom.Name, xmlErr)
+		} else if disks, _, parseErr := parseDomainDisksWithTargets(xmlDesc); parseErr != nil {
+			log.Printf("engine/vm: disk-format detection for %q: parsing disks: %v", dom.Name, parseErr)
+		} else {
+			diskFormat, supportsIncremental = summariseDiskFormat(disks)
+		}
+
 		items = append(items, BackupItem{
 			Name: dom.Name,
 			Type: "vm",
 			Settings: map[string]any{
-				"uuid":  formatDomainUUID(dom.UUID),
-				"state": stateStr,
+				"uuid":                 formatDomainUUID(dom.UUID),
+				"state":                stateStr,
+				"disk_format":          diskFormat,
+				"supports_incremental": supportsIncremental,
 			},
 		})
 	}

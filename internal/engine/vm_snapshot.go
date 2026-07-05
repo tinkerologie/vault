@@ -21,6 +21,7 @@ var (
 	_ = selectBackupDiskXML
 	_ = stripDomainBackingStores
 	_ = allDisksQcow2
+	_ = summariseDiskFormat
 	_ = describeDomainDisks
 	_ = formatSkippedDomainDisks
 )
@@ -181,16 +182,50 @@ func parseDomainDiskInventory(xmlDesc string) (domainDiskInventory, error) {
 	return inventory, nil
 }
 
+// resolveDiskFormat returns a disk's effective image format: the domain XML
+// <driver type> when present, otherwise the path-extension heuristic. Shared by
+// summariseDiskFormat and allDisksQcow2 so the "supports incremental" and
+// "all qcow2" decisions can never diverge on the fallback rule.
+func resolveDiskFormat(d domainDisk) string {
+	if d.Format != "" {
+		return d.Format
+	}
+	return backupDriverType(d.Path)
+}
+
+// summariseDiskFormat condenses a domain's disks into a single format label
+// ("qcow2", "raw", the shared format, or "mixed") plus whether the VM supports
+// libvirt checkpoint-based incremental/differential backups (qcow2-only).
+//
+// An empty disk list (no file-backed disks, e.g. block/network-only or an
+// unreadable inventory) is reported as "unknown" / not incremental-capable so
+// callers surface a conservative default rather than a misleading format.
+func summariseDiskFormat(disks []domainDisk) (format string, supportsIncremental bool) {
+	if len(disks) == 0 {
+		return "unknown", false
+	}
+	first := ""
+	uniform := true
+	for i, d := range disks {
+		f := resolveDiskFormat(d)
+		if i == 0 {
+			first = f
+		} else if f != first {
+			uniform = false
+		}
+	}
+	if !uniform {
+		return "mixed", false
+	}
+	return first, first == "qcow2"
+}
+
 // allDisksQcow2 reports whether every disk is qcow2-formatted, which gates
 // libvirt checkpoint/incremental support. Falls back to the path extension
 // for callers that did not populate Format.
 func allDisksQcow2(disks []domainDisk) bool {
 	for _, d := range disks {
-		format := d.Format
-		if format == "" {
-			format = backupDriverType(d.Path)
-		}
-		if format != "qcow2" {
+		if resolveDiskFormat(d) != "qcow2" {
 			return false
 		}
 	}

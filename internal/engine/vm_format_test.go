@@ -156,3 +156,56 @@ func TestAllDisksQcow2UsesFormat(t *testing.T) {
 		t.Fatal("expected extension fallback for disks without Format")
 	}
 }
+
+func TestSummariseDiskFormat(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name            string
+		disks           []domainDisk
+		wantFormat      string
+		wantIncremental bool
+	}{
+		{
+			name:            "all qcow2 supports incremental",
+			disks:           []domainDisk{{Path: "a.img", Format: "qcow2"}, {Path: "b.img", Format: "qcow2"}},
+			wantFormat:      "qcow2",
+			wantIncremental: true,
+		},
+		{
+			name:            "all raw does not",
+			disks:           []domainDisk{{Path: "a.img", Format: "raw"}, {Path: "b.img", Format: "raw"}},
+			wantFormat:      "raw",
+			wantIncremental: false,
+		},
+		{
+			name:            "mixed formats",
+			disks:           []domainDisk{{Path: "a.img", Format: "qcow2"}, {Path: "b.img", Format: "raw"}},
+			wantFormat:      "mixed",
+			wantIncremental: false,
+		},
+		{
+			name:            "empty or skipped-only is unknown",
+			disks:           nil,
+			wantFormat:      "unknown",
+			wantIncremental: false,
+		},
+		{
+			name:            "extension fallback when Format unset",
+			disks:           []domainDisk{{Path: "/mnt/cache/domains/haos/haos.qcow2"}},
+			wantFormat:      "qcow2",
+			wantIncremental: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			format, incremental := summariseDiskFormat(c.disks)
+			if format != c.wantFormat || incremental != c.wantIncremental {
+				t.Errorf("summariseDiskFormat(%s) = (%q, %v), want (%q, %v)",
+					c.name, format, incremental, c.wantFormat, c.wantIncremental)
+			}
+		})
+	}
+}

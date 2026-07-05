@@ -395,6 +395,25 @@
     return ''
   }
 
+  // Reads the disk-format capability a VM item carries from discovery.
+  // supportsIncremental is only true when the backend positively detected
+  // qcow2 disks; a known non-qcow2 format ('raw'/'mixed') blocks incremental.
+  // Missing/'unknown' formats (legacy items, detection failures) do NOT block —
+  // the engine still downgrades to full safely.
+  function getVMDiskFormat(item) {
+    const settings = parseItemSettings(item)
+    const format = settings.disk_format || 'unknown'
+    const supportsIncremental = settings.supports_incremental === true
+    return {
+      format, // display only
+      supportsIncremental,
+      // Trust the backend's incremental-support decision; only skip the
+      // restriction when the format is genuinely unknown (legacy items or a
+      // detection failure) so we don't over-restrict a capable VM.
+      blocksIncremental: format !== 'unknown' && !supportsIncremental,
+    }
+  }
+
   function getContainerExclusionPaths(item) {
     const settings = parseItemSettings(item)
     return Array.isArray(settings.exclude_paths) ? settings.exclude_paths : []
@@ -779,6 +798,24 @@
   let selectedVMItems = $derived(form.items.filter(i => i.item_type === 'vm'))
   let selectedContainerItems = $derived(form.items.filter(i => i.item_type === 'container'))
   let vmRestoreVerifyErrors = $derived(selectedVMItems.map(getVMRestoreVerifyError).filter(Boolean))
+
+  // Selected VMs whose disks don't support libvirt checkpoints (raw/mixed), so
+  // incremental/differential backups aren't available for this job.
+  let incrementalBlockedVMs = $derived(
+    selectedVMItems.filter(vm => getVMDiskFormat(vm).blocksIncremental)
+  )
+  let vmDiskFormatRestriction = $derived(incrementalBlockedVMs.length > 0)
+  let incrementalBlockedSummary = $derived(
+    incrementalBlockedVMs.map(vm => `${vm.item_name} (${getVMDiskFormat(vm).format})`).join(', ')
+  )
+
+  // Coerce away an unavailable backup type when the selection only supports full
+  // (e.g. a raw-disk VM was just added while incremental was selected).
+  $effect(() => {
+    if (vmDiskFormatRestriction && form.backup_type_chain !== 'full') {
+      form.backup_type_chain = 'full'
+    }
+  })
 
   let containerPresets = $state({})
   // Advisory notes/warnings per container (e.g. the Immich database caveat),
@@ -1282,14 +1319,19 @@
             <select id="backup_type" bind:value={form.backup_type_chain}
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
               <option value="full">Full</option>
-              <option value="incremental">Incremental</option>
-              <option value="differential">Differential</option>
+              {#if !vmDiskFormatRestriction}
+                <option value="incremental">Incremental</option>
+                <option value="differential">Differential</option>
+              {/if}
             </select>
             <p class="text-xs text-text-dim mt-1">
               {form.backup_type_chain === 'full' ? 'Backs up everything every time. Largest but most reliable.' :
                form.backup_type_chain === 'incremental' ? 'Only backs up changes since last backup. Fastest and smallest.' :
                form.backup_type_chain === 'differential' ? 'Backs up changes since last full backup. Balance of speed and safety.' : ''}
             </p>
+            {#if vmDiskFormatRestriction}
+              <p class="text-xs text-warning mt-1">Incremental and differential backups require qcow2 disks. {incrementalBlockedSummary} don't, so only Full is available.</p>
+            {/if}
           </div>
           <div>
             <label for="compression" class="block text-sm font-medium text-text-muted mb-1.5">Compression</label>

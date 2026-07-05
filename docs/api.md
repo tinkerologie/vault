@@ -98,16 +98,16 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Discovery
 
-| Method | Endpoint              | Description                                                                                                |
-| ------ | --------------------- | ---------------------------------------------------------------------------------------------------------- |
-| GET    | `/browse?path=…`      | Browse filesystem paths (safepath-gated; allowed under `/mnt` etc.)                                        |
-| GET    | `/path-exists?path=…` | Safepath-gated `os.Stat` (used by the Folder picker for staleness)                                         |
-| GET    | `/containers`         | Discover Docker containers                                                                                 |
-| GET    | `/vms`                | Discover libvirt VMs                                                                                       |
-| GET    | `/folders`            | Discover folder presets (engine-known paths)                                                               |
-| GET    | `/plugins`            | Discover installed Unraid plugins                                                                          |
-| GET    | `/zfs`                | Discover ZFS datasets                                                                                      |
-| GET    | `/presets/exclusions` | Per-container exclusion presets (`paths`), plus advisory `notes`/`warnings` for some apps (e.g. Immich DB) |
+| Method | Endpoint              | Description                                                                                                                                   |
+| ------ | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/browse?path=…`      | Browse filesystem paths (safepath-gated; allowed under `/mnt` etc.)                                                                           |
+| GET    | `/path-exists?path=…` | Safepath-gated `os.Stat` (used by the Folder picker for staleness)                                                                            |
+| GET    | `/containers`         | Discover Docker containers                                                                                                                    |
+| GET    | `/vms`                | Discover libvirt VMs; each item's `settings` includes `disk_format` (`qcow2`/`raw`/`mixed`/`unknown`) and `supports_incremental` (qcow2-only) |
+| GET    | `/folders`            | Discover folder presets (engine-known paths)                                                                                                  |
+| GET    | `/plugins`            | Discover installed Unraid plugins                                                                                                             |
+| GET    | `/zfs`                | Discover ZFS datasets                                                                                                                         |
+| GET    | `/presets/exclusions` | Per-container exclusion presets (`paths`), plus advisory `notes`/`warnings` for some apps (e.g. Immich DB)                                    |
 
 ## Activity Logs
 
