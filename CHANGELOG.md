@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Anomaly messages are now plain-English sentences** (closes #192). Every detector now describes what happened versus what was expected in friendly language — e.g. _"This backup took 4m 23s, about 1.2× its usual 3m 40s"_ instead of _"backup duration anomaly: 4m 23s (1.2x median)"_ — across the dashboard, the anomalies page, notifications, the API, and MCP. Notifications also replace the raw JSON blob (`{"z_score":11.06,...}`) with a short context line such as _"Based on the last 10 samples"_, while the precise statistics remain available in the structured `details` field for programmatic consumers.
+- **Tdarr container backups now drop stray log files and are covered by tests** (closes #188). The Tdarr exclusion preset already skipped the transcode cache (`/temp`) and log directory (`/app/logs`); it now also excludes stray `*.log` files, while deliberately keeping `/app/server` (the DB2 database, plugins and samples) and `/app/configs` so Tdarr settings and statistics restore cleanly. Both the combined `tdarr` image and the `tdarr_node` image are recognised, now with regression tests to keep detection working.
 
 ## [2026.07.01] - 2026-07-04
 
