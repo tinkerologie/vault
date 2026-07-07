@@ -37,7 +37,7 @@ jobs:
           go-version: "1.26"
       - name: Generate settings reference
         run: go run ./cmd/gendocs
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
       - name: Install MkDocs Material
