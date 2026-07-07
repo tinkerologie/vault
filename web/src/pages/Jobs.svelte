@@ -414,7 +414,7 @@
     }
   }
 
-  function getContainerExclusionPaths(item) {
+  function getExclusionPaths(item) {
     const settings = parseItemSettings(item)
     return Array.isArray(settings.exclude_paths) ? settings.exclude_paths : []
   }
@@ -426,29 +426,11 @@
     return Array.isArray(settings.recommended_exclusions) ? settings.recommended_exclusions : []
   }
 
-  function updateContainerExclusionPaths(itemName, paths) {
+  function updateExclusionPaths(itemType, itemName, paths) {
     form = {
       ...form,
       items: form.items.map((item) => {
-        if (item.item_type !== 'container' || item.item_name !== itemName) return item
-
-        const settings = { ...parseItemSettings(item) }
-        if (paths.length === 0) {
-          delete settings.exclude_paths
-        } else {
-          settings.exclude_paths = paths
-        }
-
-        return { ...item, settings: JSON.stringify(settings) }
-      }),
-    }
-  }
-
-  function updateFolderExclusionPaths(itemName, paths) {
-    form = {
-      ...form,
-      items: form.items.map((item) => {
-        if (item.item_type !== 'folder' || item.item_name !== itemName) return item
+        if (item.item_type !== itemType || item.item_name !== itemName) return item
 
         const settings = { ...parseItemSettings(item) }
         if (paths.length === 0) {
@@ -865,12 +847,12 @@
       const recommended = getRecommendedExclusions(item)
       if (recommended.length === 0 || autoAppliedRecommended.has(item.item_name)) continue
 
-      const current = getContainerExclusionPaths(item)
+      const current = getExclusionPaths(item)
       const merged = [...current, ...recommended.filter(p => !current.includes(p))]
       // Mark before mutating: the write feeds back through selectedFolderItems.
       autoAppliedRecommended.add(item.item_name)
       if (merged.length !== current.length) {
-        updateFolderExclusionPaths(item.item_name, merged)
+        updateExclusionPaths('folder', item.item_name, merged)
       }
     }
   })
@@ -1012,7 +994,7 @@
   function isMountWholeExcluded(item, destination) {
     const dest = cleanMountPath(destination)
     if (getExcludedMounts(item).some((d) => cleanMountPath(d) === dest)) return true
-    return getContainerExclusionPaths(item).some((p) => cleanMountPath(p) === dest)
+    return getExclusionPaths(item).some((p) => cleanMountPath(p) === dest)
   }
 
   function toggleExcludedMount(itemName, destination, included) {
@@ -1022,7 +1004,7 @@
       // Include the mount: drop it from excluded_mounts and remove any exact
       // whole-mount entry from exclude_paths so re-checking actually re-includes.
       updateExcludedMounts(itemName, getExcludedMounts(item).filter((d) => cleanMountPath(d) !== dest))
-      updateContainerExclusionPaths(itemName, getContainerExclusionPaths(item).filter((p) => cleanMountPath(p) !== dest))
+      updateExclusionPaths('container', itemName, getExclusionPaths(item).filter((p) => cleanMountPath(p) !== dest))
     } else {
       updateExcludedMounts(itemName, [...new Set([...getExcludedMounts(item), destination])])
     }
@@ -1801,7 +1783,7 @@
             <div class="space-y-4 mt-3 pl-6">
               <p class="text-xs text-text-dim">Choose which mount points each container backs up. Uncheck a mount to exclude its data (e.g. media or downloads). Mounts Vault auto-skips are shown disabled with the reason.</p>
               {#each selectedContainerItems as cItem (cItem.item_name)}
-                {@const currentExclusions = getContainerExclusionPaths(cItem)}
+                {@const currentExclusions = getExclusionPaths(cItem)}
                 {@const preset = containerPresets[cItem.item_name]}
                 {@const allPresetLoaded = preset ? preset.every(p => currentExclusions.includes(p)) : false}
                 {@const mounts = containerMounts[cItem.item_name]}
@@ -1865,7 +1847,7 @@
                         disabled={allPresetLoaded}
                         onclick={() => {
                           const merged = [...new Set([...currentExclusions, ...preset])]
-                          updateContainerExclusionPaths(cItem.item_name, merged)
+                          updateExclusionPaths('container', cItem.item_name, merged)
                         }}
                         class="text-xs px-3 py-1.5 rounded-lg border transition-colors {allPresetLoaded ? 'border-green-500/30 text-green-400 bg-green-500/10 cursor-default' : 'border-vault/30 text-vault hover:bg-vault/10 cursor-pointer'}"
                       >
@@ -1877,7 +1859,7 @@
                       value={currentExclusions.join('\n')}
                       oninput={(e) => {
                         const paths = e.currentTarget.value.split('\n').map(p => p.trim()).filter(Boolean)
-                        updateContainerExclusionPaths(cItem.item_name, paths)
+                        updateExclusionPaths('container', cItem.item_name, paths)
                       }}
                       placeholder={`/config/Cache
 *.log`}
@@ -1903,13 +1885,13 @@
                 <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3">
                   <p class="text-sm font-medium text-text">{fItem.item_name}</p>
                   {#if getRecommendedExclusions(fItem).length > 0}
-                    <p class="text-xs text-vault">Recycle Bin plugin detected — {getRecommendedExclusions(fItem).join(', ')} excluded automatically. Edit below to change.</p>
+                    <p class="text-xs text-vault">Recycle Bin plugin detected "{getRecommendedExclusions(fItem).join(', ')}" excluded automatically. Edit below to change.</p>
                   {/if}
                   <textarea
-                    value={getContainerExclusionPaths(fItem).join('\n')}
+                    value={getExclusionPaths(fItem).join('\n')}
                     oninput={(e) => {
                       const paths = e.currentTarget.value.split('\n').map(p => p.trim()).filter(Boolean)
-                      updateFolderExclusionPaths(fItem.item_name, paths)
+                      updateExclusionPaths('folder', fItem.item_name, paths)
                     }}
                     placeholder={`.Recycle.Bin
 *.log`}
