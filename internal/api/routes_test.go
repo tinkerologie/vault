@@ -180,3 +180,44 @@ func TestSPACatchAllServesInjectedHTML(t *testing.T) {
 		t.Errorf("Content-Type = %q, want text/html", ct)
 	}
 }
+
+func TestKeyByRemoteAddr(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		want       string
+	}{
+		{name: "ipv4 with port strips port", remoteAddr: "1.2.3.4:5678", want: "1.2.3.4"},
+		{name: "bare ipv4 falls back", remoteAddr: "1.2.3.4", want: "1.2.3.4"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := httptest.NewRequest(http.MethodPost, "/", nil)
+			r.RemoteAddr = tc.remoteAddr
+			got, err := keyByRemoteAddr(r)
+			if err != nil {
+				t.Fatalf("keyByRemoteAddr() error = %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("keyByRemoteAddr(%q) = %q, want %q", tc.remoteAddr, got, tc.want)
+			}
+		})
+	}
+
+	// The rate-limit invariant: the same client on different source ports must
+	// land in one bucket (LimitByIP's whole point).
+	a, _ := keyByRemoteAddr(reqWithAddr("9.9.9.9:1000"))
+	b, _ := keyByRemoteAddr(reqWithAddr("9.9.9.9:2000"))
+	if a != b {
+		t.Errorf("same IP different ports keyed differently: %q vs %q", a, b)
+	}
+}
+
+func reqWithAddr(addr string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.RemoteAddr = addr
+	return r
+}

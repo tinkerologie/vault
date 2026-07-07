@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -20,6 +21,22 @@ import (
 	"github.com/ruaan-deysel/vault/internal/release"
 	"github.com/ruaan-deysel/vault/web"
 )
+
+// keyByRemoteAddr rate-limits by the TCP peer address (r.RemoteAddr) — the
+// exact behaviour of the now-deprecated httprate.LimitByIP/KeyByIP, made
+// explicit. RemoteAddr is set by net/http and cannot be forged via request
+// headers. The Vault daemon is reached either directly on the LAN or through
+// Unraid's server-side proxy.php (whose requests the auth middleware already
+// treats as local); it never sits behind an untrusted reverse proxy, so keying
+// off RemoteAddr is the correct trust model here. CanonicalizeIP buckets IPv6
+// clients by their /64.
+func keyByRemoteAddr(r *http.Request) (string, error) {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		ip = r.RemoteAddr
+	}
+	return httprate.CanonicalizeIP(ip), nil
+}
 
 func (s *Server) setupRoutes() *chi.Mux {
 	r := chi.NewRouter()
@@ -140,7 +157,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Put("/", settingsH.Update)
 			r.Get("/encryption", settingsH.GetEncryptionStatus)
 			r.Post("/encryption", settingsH.SetEncryption)
-			r.With(httprate.LimitByIP(10, time.Minute)).Post("/encryption/verify", settingsH.VerifyEncryption)
+			r.With(httprate.LimitBy(10, time.Minute, keyByRemoteAddr)).Post("/encryption/verify", settingsH.VerifyEncryption)
 			r.Get("/encryption/passphrase", settingsH.GetEncryptionPassphrase)
 			r.Get("/staging", settingsH.GetStagingInfo)
 			r.Put("/staging", settingsH.SetStagingOverride)
@@ -151,9 +168,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 			// API key management.
 			r.Get("/api-key", settingsH.GetAPIKeyStatus)
-			r.With(httprate.LimitByIP(5, time.Minute)).Post("/api-key/generate", settingsH.GenerateAPIKey)
+			r.With(httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/api-key/generate", settingsH.GenerateAPIKey)
 			r.Get("/api-key/key", settingsH.GetAPIKey)
-			r.With(httprate.LimitByIP(5, time.Minute)).Post("/api-key/rotate", settingsH.RotateAPIKey)
+			r.With(httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/api-key/rotate", settingsH.RotateAPIKey)
 			r.Delete("/api-key", settingsH.RevokeAPIKey)
 		})
 
