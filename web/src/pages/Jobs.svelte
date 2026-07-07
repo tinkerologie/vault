@@ -419,11 +419,36 @@
     return Array.isArray(settings.exclude_paths) ? settings.exclude_paths : []
   }
 
+  // Exclusions the backend recommends for a folder item (e.g. .Recycle.Bin when
+  // the Unraid Recycle Bin plugin is detected). Only fresh discovery carries these.
+  function getRecommendedExclusions(item) {
+    const settings = parseItemSettings(item)
+    return Array.isArray(settings.recommended_exclusions) ? settings.recommended_exclusions : []
+  }
+
   function updateContainerExclusionPaths(itemName, paths) {
     form = {
       ...form,
       items: form.items.map((item) => {
         if (item.item_type !== 'container' || item.item_name !== itemName) return item
+
+        const settings = { ...parseItemSettings(item) }
+        if (paths.length === 0) {
+          delete settings.exclude_paths
+        } else {
+          settings.exclude_paths = paths
+        }
+
+        return { ...item, settings: JSON.stringify(settings) }
+      }),
+    }
+  }
+
+  function updateFolderExclusionPaths(itemName, paths) {
+    form = {
+      ...form,
+      items: form.items.map((item) => {
+        if (item.item_type !== 'folder' || item.item_name !== itemName) return item
 
         const settings = { ...parseItemSettings(item) }
         if (paths.length === 0) {
@@ -561,6 +586,8 @@
   function openCreate() {
     editing = null
     form = defaultForm()
+    // Fresh session: let recommended exclusions auto-apply again for re-added items.
+    autoAppliedRecommended.clear()
     if (storageList.length > 0) form.storage_dest_id = storageList[0].id
     step = 1
     showModal = true
@@ -607,6 +634,14 @@
         max_parallel_uploads: data.job.max_parallel_uploads || 3,
         items: data.items || [],
         selectedTypes: deriveTypesFromItems(data.items || []),
+      }
+      // Edit session: mark every already-saved folder item as already-applied so
+      // the auto-load effect never re-derives recommended exclusions over the
+      // user's saved choices (recommended_exclusions can persist verbatim in an
+      // item's settings, so a removed .Recycle.Bin must not snap back on edit).
+      autoAppliedRecommended.clear()
+      for (const it of (data.items || [])) {
+        if (it.item_type === 'folder') autoAppliedRecommended.add(it.item_name)
       }
       step = 1
       showModal = true
@@ -797,6 +832,7 @@
   let hasZFS = $derived(form.items.some(i => i.item_type === 'zfs'))
   let selectedVMItems = $derived(form.items.filter(i => i.item_type === 'vm'))
   let selectedContainerItems = $derived(form.items.filter(i => i.item_type === 'container'))
+  let selectedFolderItems = $derived(form.items.filter(i => i.item_type === 'folder'))
   let vmRestoreVerifyErrors = $derived(selectedVMItems.map(getVMRestoreVerifyError).filter(Boolean))
 
   // Selected VMs whose disks don't support libvirt checkpoints (raw/mixed), so
@@ -814,6 +850,28 @@
   $effect(() => {
     if (vmDiskFormatRestriction && form.backup_type_chain !== 'full') {
       form.backup_type_chain = 'full'
+    }
+  })
+
+  // Folder items already auto-loaded with their backend-recommended exclusions.
+  // Guards the effect below so it applies exactly once per item — after that the
+  // user can freely remove the entry in the textarea without it snapping back.
+  let autoAppliedRecommended = new SvelteSet()
+
+  // Auto-load backend-recommended exclusions (e.g. .Recycle.Bin from the Unraid
+  // Recycle Bin plugin) into a newly-added folder item so they persist on save.
+  $effect(() => {
+    for (const item of selectedFolderItems) {
+      const recommended = getRecommendedExclusions(item)
+      if (recommended.length === 0 || autoAppliedRecommended.has(item.item_name)) continue
+
+      const current = getContainerExclusionPaths(item)
+      const merged = [...current, ...recommended.filter(p => !current.includes(p))]
+      // Mark before mutating: the write feeds back through selectedFolderItems.
+      autoAppliedRecommended.add(item.item_name)
+      if (merged.length !== current.length) {
+        updateFolderExclusionPaths(item.item_name, merged)
+      }
     }
   })
 
@@ -1833,7 +1891,38 @@
           </details>
         {/if}
 
-        {#if !hasVMs && !hasContainers}
+        {#if hasFolders || hasFlash}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Folder Path Exclusions
+            </summary>
+            <div class="space-y-4 mt-3 pl-6">
+              <p class="text-xs text-text-dim">Exclude subpaths or glob patterns from folder/flash backups. One per line, e.g. .Recycle.Bin or *.log.</p>
+              {#each selectedFolderItems as fItem (fItem.item_name)}
+                <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3">
+                  <p class="text-sm font-medium text-text">{fItem.item_name}</p>
+                  {#if getRecommendedExclusions(fItem).length > 0}
+                    <p class="text-xs text-vault">Recycle Bin plugin detected — {getRecommendedExclusions(fItem).join(', ')} excluded automatically. Edit below to change.</p>
+                  {/if}
+                  <textarea
+                    value={getContainerExclusionPaths(fItem).join('\n')}
+                    oninput={(e) => {
+                      const paths = e.currentTarget.value.split('\n').map(p => p.trim()).filter(Boolean)
+                      updateFolderExclusionPaths(fItem.item_name, paths)
+                    }}
+                    placeholder={`.Recycle.Bin
+*.log`}
+                    rows="3"
+                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-dim/50"
+                  ></textarea>
+                </div>
+              {/each}
+            </div>
+          </details>
+        {/if}
+
+        {#if !hasVMs && !hasContainers && !hasFolders && !hasFlash}
           <p class="text-sm text-text-dim italic">No additional advanced settings for the selected items.</p>
         {/if}
       </div>

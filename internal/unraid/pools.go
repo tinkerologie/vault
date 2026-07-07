@@ -18,11 +18,17 @@ var mntBase = "/mnt"
 var mountInfoPath = "/proc/self/mountinfo"
 
 // excludedNames are known non-pool directories under /mnt/.
+//
+// "RecycleBin" is a view directory created by the Unraid Recycle Bin plugin
+// (a plain dir of symlinks/subfolders, not a real mounted pool). The plugin
+// rebuilds it periodically, so staging a backup there fails mid-run with
+// ENOENT when the view is regenerated (issue #204).
 var excludedNames = map[string]bool{
-	"user":    true,
-	"user0":   true,
-	"disks":   true,
-	"remotes": true,
+	"user":       true,
+	"user0":      true,
+	"disks":      true,
+	"remotes":    true,
+	"RecycleBin": true,
 }
 
 // arrayDiskPattern matches array disk entries like disk1, disk2, ..., disk99.
@@ -54,6 +60,12 @@ func discoverPoolsIn(root string) []string {
 			continue
 		}
 		name := e.Name()
+
+		// Skip hidden entries (e.g. a stray ".Recycle.Bin"); real pools are
+		// never dot-prefixed.
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
 
 		// Skip known non-pool directories.
 		if excludedNames[name] {

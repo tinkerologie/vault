@@ -12,6 +12,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/ruaan-deysel/vault/internal/unraid"
 )
 
 // FolderHandler implements Handler for arbitrary filesystem directories.
@@ -31,13 +32,21 @@ func (h *FolderHandler) ListItems() ([]BackupItem, error) {
 
 	// Flash Drive preset — always listed if /boot exists.
 	if info, err := os.Stat("/boot"); err == nil && info.IsDir() {
+		settings := map[string]any{
+			"path":   "/boot",
+			"preset": "flash",
+		}
+		// When the Recycle Bin plugin is installed it keeps deleted files in a
+		// per-share ".Recycle.Bin" folder (on flash, /boot/.Recycle.Bin). Offer
+		// it as a recommended exclusion so the UI can pre-fill it and users
+		// don't back up their trash (issue #204).
+		if unraid.RecycleBinInstalled() {
+			settings["recommended_exclusions"] = []string{unraid.RecycleBinDir}
+		}
 		items = append(items, BackupItem{
-			Name: "Flash Drive",
-			Type: "folder",
-			Settings: map[string]any{
-				"path":   "/boot",
-				"preset": "flash",
-			},
+			Name:     "Flash Drive",
+			Type:     "folder",
+			Settings: settings,
 		})
 	}
 
@@ -80,13 +89,17 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 		}
 	}
 
+	// Honour user path exclusions (e.g. the flash drive's own recycle-bin
+	// folder), matching the dedup BackupChunked path (issue #204).
+	exclusions := extractExcludePaths(item.Settings)
+
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
-		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, nil, effectiveCompression); err != nil {
+		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, exclusions, effectiveCompression); err != nil {
 			return nil, fmt.Errorf("archiving changed files in %s: %w", srcPath, err)
 		}
 	} else {
-		if err := tarDirectory(ctx, srcPath, archivePath, nil, effectiveCompression); err != nil {
+		if err := tarDirectory(ctx, srcPath, archivePath, exclusions, effectiveCompression); err != nil {
 			return nil, fmt.Errorf("archiving %s: %w", srcPath, err)
 		}
 	}

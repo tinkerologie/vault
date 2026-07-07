@@ -46,6 +46,15 @@ func TestDiscoverPoolsIn(t *testing.T) {
 			want: []string{"cache"},
 		},
 		{
+			name: "excludes RecycleBin plugin view and hidden dirs",
+			setup: func(root string) {
+				for _, n := range []string{"RecycleBin", ".Recycle.Bin", "cache", "mypool"} {
+					os.Mkdir(filepath.Join(root, n), 0o755)
+				}
+			},
+			want: []string{"cache", "mypool"},
+		},
+		{
 			name:  "nonexistent root returns empty",
 			setup: nil, // use a non-existent path below
 			want:  nil,
