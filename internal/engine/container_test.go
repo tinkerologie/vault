@@ -735,9 +735,17 @@ func TestContainerChunkedBackupCapturesVolumesAndMeta(t *testing.T) {
 // Backup's bind-only logic. Without this guard the runner would attempt to
 // chunk arbitrary Docker volume paths under /var/lib/docker/volumes/
 // (often shared between containers) and silently bloat the repo.
-func TestContainerChunkedBackupSkipsNonBindMounts(t *testing.T) {
-	volSrc := t.TempDir()
-	if err := os.WriteFile(filepath.Join(volSrc, "a.txt"), []byte("data"), 0o644); err != nil {
+// TestContainerChunkedBackupIncludesVolumesSkipsTmpfs verifies the dedup
+// container path backs up both bind mounts AND named volumes (a volume's Source
+// is a real host path), while non-data mounts like tmpfs are skipped
+// (issue #204 follow-up: named volumes were previously excluded entirely).
+func TestContainerChunkedBackupIncludesVolumesSkipsTmpfs(t *testing.T) {
+	bindSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bindSrc, "a.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	volSrc := t.TempDir() // stands in for /var/lib/docker/volumes/<name>/_data
+	if err := os.WriteFile(filepath.Join(volSrc, "b.txt"), []byte("vol"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mock := &mockDockerClient{
@@ -748,8 +756,8 @@ func TestContainerChunkedBackupSkipsNonBindMounts(t *testing.T) {
 				Config: &containertypes.Config{Image: "redis:7"},
 				State:  &containertypes.State{Running: false},
 				Mounts: []containertypes.MountPoint{
-					{Type: mounttypes.TypeBind, Source: volSrc, Destination: "/data"},
-					{Type: mounttypes.TypeVolume, Source: "/var/lib/docker/volumes/foo/_data", Destination: "/cache"},
+					{Type: mounttypes.TypeBind, Source: bindSrc, Destination: "/data"},
+					{Type: mounttypes.TypeVolume, Name: "cachevol", Source: volSrc, Destination: "/cache"},
 					{Type: mounttypes.TypeTmpfs, Source: "", Destination: "/tmp"},
 				},
 			},
@@ -770,13 +778,12 @@ func TestContainerChunkedBackupSkipsNonBindMounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Only one __vol__* entry — the bind mount. The volume + tmpfs must
-	// not appear.
+	// The bind mount AND the named volume are backed up; tmpfs is not.
 	if _, ok := m.Files[containerVolPrefix+"/data"]; !ok {
 		t.Errorf("manifest missing expected bind volume %s/data", containerVolPrefix)
 	}
-	if _, ok := m.Files[containerVolPrefix+"/cache"]; ok {
-		t.Errorf("manifest unexpectedly contains volume-typed mount %s/cache", containerVolPrefix)
+	if _, ok := m.Files[containerVolPrefix+"/cache"]; !ok {
+		t.Errorf("manifest missing expected named volume %s/cache", containerVolPrefix)
 	}
 	if _, ok := m.Files[containerVolPrefix+"/tmp"]; ok {
 		t.Errorf("manifest unexpectedly contains tmpfs mount %s/tmp", containerVolPrefix)

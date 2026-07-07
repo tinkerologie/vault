@@ -126,6 +126,95 @@ func shouldSkipVolume(source string) (bool, string) {
 	return false, ""
 }
 
+// backupableMount reports whether a Docker mount TYPE holds real on-disk data
+// worth archiving: bind mounts and volumes (a volume's Source is a real host
+// path, /var/lib/docker/volumes/<name>/_data); tmpfs, npipe, cluster and image
+// mounts are skipped. This is a type-only check — callers additionally apply
+// restorableVolume to exclude anonymous volumes, which can't be reattached on
+// restore. Named-volume support closes the appdata.backup plugin's single
+// most-reported gap (compose stacks were previously backed up as empty).
+func backupableMount(mountType string) bool {
+	return mountType == "bind" || mountType == "volume"
+}
+
+// isHex64 reports whether s is a 64-character lowercase hex string — Docker's
+// identifier format for an anonymous volume.
+func isHex64(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// restorableVolume reports whether a volume mount can be reliably restored.
+// Only *named* volumes appear in the container's HostConfig.Binds (as
+// "<name>:<dest>") and are reattached when the container is recreated;
+// anonymous volumes (a 64-hex id, or no name) are not in Binds, so backing them
+// up would orphan the data on restore. Such volumes are skipped to avoid a
+// false sense of safety. Bind mounts are always restorable.
+func restorableVolume(mountType, name string) bool {
+	if mountType != "volume" {
+		return true
+	}
+	return name != "" && !isHex64(name)
+}
+
+// sparseWarnMinBytes is the logical-size floor below which a sparse file isn't
+// worth warning about — the read is fast regardless.
+const sparseWarnMinBytes = 1 << 30 // 1 GiB
+
+// sparseWarnRatio is the logical:physical ratio above which a large file is
+// flagged as sparse.
+const sparseWarnRatio = 10
+
+// sparseInfo (defined per-platform in sparse_unix.go / sparse_other.go) reports
+// whether a large regular file is sparse and returns its physical byte count.
+
+// warnIfSparse logs a warning for a sparse file whose holes still force a full
+// sequential read (the LMDB/Meilisearch multi-hour-stall class from the
+// appdata.backup forum thread). It never errors; it only surfaces the risk so
+// a slow backup isn't a silent mystery.
+func warnIfSparse(path string, info os.FileInfo) {
+	if sparse, physical := sparseInfo(info); sparse {
+		log.Printf("engine: WARNING: %s is sparse (%s logical vs %s on disk); "+
+			"the backup reads its full logical size and may be slow — consider excluding it",
+			path, humanizeBytes(float64(info.Size())), humanizeBytes(float64(physical)))
+	}
+}
+
+// networkDependency returns the container name/ID this container routes its
+// network through (Docker's `network_mode: container:<x>`), or "" if none.
+// Such a container (e.g. an app behind a Gluetun/VPN sidecar) must be started
+// after its provider, so the runner warns when the job order would break that.
+func networkDependency(inspect container.InspectResponse) string {
+	if inspect.HostConfig == nil {
+		return ""
+	}
+	mode := string(inspect.HostConfig.NetworkMode)
+	if target, ok := strings.CutPrefix(mode, "container:"); ok {
+		return target
+	}
+	return ""
+}
+
+// warnNetworkDependency logs a note when a container routes its network through
+// another container (a Gluetun/VPN-sidecar setup). Vault backs up and restarts
+// containers in the job's configured order, so the user must place the provider
+// before its dependents or the dependent's network fails on restart.
+func warnNetworkDependency(inspect container.InspectResponse, name string) {
+	if dep := networkDependency(inspect); dep != "" {
+		log.Printf("engine: NOTE: container %s routes its network through %q "+
+			"(network_mode: container:%s) — make sure %q is in this job and ordered to "+
+			"start first, or %s will lose its network when restarted after backup",
+			name, dep, dep, dep, name)
+	}
+}
+
 // isGlobPattern returns true if the pattern contains glob metacharacters.
 func isGlobPattern(pattern string) bool {
 	return strings.ContainsAny(pattern, "*?[")
@@ -345,11 +434,11 @@ type MountInfo struct {
 	SkipReason  string `json:"skip_reason,omitempty"`
 }
 
-// ListMounts inspects the named container and returns its bind mounts, each
-// annotated with the auto-skip verdict from shouldSkipVolume. Only bind mounts
-// are returned, matching the engine's backup behaviour (named volumes, tmpfs,
-// device nodes, etc. are never backed up). Results are sorted by destination
-// for stable UI ordering.
+// ListMounts inspects the named container and returns its backup-eligible
+// mounts (bind mounts and named volumes), each annotated with the auto-skip
+// verdict from shouldSkipVolume. Matches the engine's backup behaviour: tmpfs,
+// device nodes, and anonymous volumes (which can't be reattached on restore)
+// are excluded. Results are sorted by destination for stable UI ordering.
 func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]MountInfo, error) {
 	inspectResult, err := h.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
@@ -357,7 +446,7 @@ func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]Mount
 	}
 	mounts := make([]MountInfo, 0, len(inspectResult.Container.Mounts))
 	for _, m := range inspectResult.Container.Mounts {
-		if string(m.Type) != "bind" {
+		if !backupableMount(string(m.Type)) || !restorableVolume(string(m.Type), m.Name) {
 			continue
 		}
 		skip, reason := shouldSkipVolume(m.Source)
@@ -446,6 +535,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		log.Printf("[backup] container %q: resolved by name (ID changed from stored value to %s)", item.Name, ShortID(containerID))
 	}
 	inspect := inspectResult.Container
+	warnNetworkDependency(inspect, item.Name)
 
 	configPath := filepath.Join(destDir, "config.json")
 	configData, err := json.MarshalIndent(inspect, "", "  ")
@@ -529,11 +619,11 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			}
 		}
 
-		// Step 4: Tar bind mount volumes, skipping large shared data paths.
+		// Step 4: Tar bind mounts and named volumes, skipping large shared data paths.
 		progress(item.Name, 60, "backing up volumes")
 		var manifest []volumeManifestEntry
 		for i, mount := range inspect.Mounts {
-			if mount.Type != "bind" {
+			if !backupableMount(string(mount.Type)) {
 				continue
 			}
 
@@ -541,6 +631,14 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				Index:       i,
 				Source:      mount.Source,
 				Destination: mount.Destination,
+			}
+
+			if !restorableVolume(string(mount.Type), mount.Name) {
+				log.Printf("engine: skipping anonymous volume %q for %s (not restorable — no stable name)", mount.Destination, item.Name)
+				entry.BackedUp = false
+				entry.SkipReason = "anonymous volume (not restorable)"
+				manifest = append(manifest, entry)
+				continue
 			}
 
 			if skip, reason := shouldSkipVolume(mount.Source); skip {
@@ -802,7 +900,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	}
 
 	for i, mount := range inspect.Mounts {
-		if mount.Type != "bind" {
+		if !backupableMount(mount.Type) {
 			continue
 		}
 		volArchive, err := findArchive(sourceDir, fmt.Sprintf("volume_%d.tar", i))
@@ -819,7 +917,15 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 
 		targetPath := mount.Source
 		if restoreDest != "" {
-			volumeName, err := normalizeRestoreComponent(filepath.Base(mount.Source))
+			// For named volumes the recreated container's bind is rewritten to
+			// restoreDest/<volume-name> (see recreateAndStartContainer), so the
+			// data must land there too — not restoreDest/_data (base of the
+			// /var/lib/docker/volumes/<name>/_data source).
+			component := filepath.Base(mount.Source)
+			if mount.Type == "volume" && mount.Name != "" {
+				component = mount.Name
+			}
+			volumeName, err := normalizeRestoreComponent(component)
 			if err != nil {
 				return err
 			}
@@ -930,6 +1036,7 @@ type restoreInspect struct {
 	} `json:"State"`
 	Mounts []struct {
 		Type        string `json:"Type"`
+		Name        string `json:"Name"`
 		Source      string `json:"Source"`
 		Destination string `json:"Destination"`
 	} `json:"Mounts"`
@@ -1213,6 +1320,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		}
 	}
 	inspect := inspectResult.Container
+	warnNetworkDependency(inspect, item.Name)
 
 	m := dedup.Manifest{
 		Version: dedup.ManifestVersion,
@@ -1253,9 +1361,9 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		}
 	}
 
-	// 3. Bind-mount volumes — each delegated to FolderHandler.BackupChunked.
-	//    Non-bind mounts (volume, tmpfs, etc.) are skipped to match the
-	//    classic Backup's bind-only logic. Skipped binds (per
+	// 3. Bind mounts and named volumes — each delegated to
+	//    FolderHandler.BackupChunked. Non-data mounts (tmpfs, npipe, etc.) are
+	//    skipped to match the classic Backup path. Skipped mounts (per
 	//    shouldSkipVolume) are recorded with Size: volumeSkippedSize so
 	//    RestoreChunked can keep the diagnostic entry but not dereference
 	//    a missing sub-manifest.
@@ -1269,13 +1377,18 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		progress(item.Name, 50, "backing up volumes")
 	}
 	for _, mnt := range inspect.Mounts {
-		if string(mnt.Type) != "bind" {
+		if !backupableMount(string(mnt.Type)) {
 			continue
 		}
 		if mnt.Source == "" || mnt.Destination == "" {
 			continue
 		}
 		key := containerVolPrefix + mnt.Destination
+		if !restorableVolume(string(mnt.Type), mnt.Name) {
+			log.Printf("engine: chunked: skipping anonymous volume %q for %s (not restorable)", mnt.Destination, item.Name)
+			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+			continue
+		}
 		if skip, reason := shouldSkipVolume(mnt.Source); skip {
 			log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
 			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
@@ -1405,7 +1518,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	fh := &FolderHandler{}
 	mountByDest := map[string]string{} // destination → host source
 	for _, mnt := range inspect.Mounts {
-		if mnt.Type == "bind" && mnt.Destination != "" {
+		if backupableMount(mnt.Type) && mnt.Destination != "" {
 			mountByDest[mnt.Destination] = mnt.Source
 		}
 	}
@@ -1722,6 +1835,7 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 			return nil
 		}
 		header.Size = currentInfo.Size()
+		warnIfSparse(rel, currentInfo)
 
 		if err := tw.WriteHeader(header); err != nil {
 			return fmt.Errorf("writing tar header for %s: %w", rel, err)

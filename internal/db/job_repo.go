@@ -22,15 +22,15 @@ func nullableID(id int64) any {
 func (d *DB) CreateJob(job Job) (int64, error) {
 	res, err := d.Exec(
 		`INSERT INTO jobs (name, description, enabled, schedule, backup_type_chain,
-		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
+		retention_count, retention_days, compression, compression_level, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, storage_dest_id, defer_remote_upload,
 		keep_latest, keep_daily, keep_weekly, keep_monthly, keep_yearly,
 		verify_schedule, verify_mode,
 		retry_max_override, retry_delays_override,
 		max_parallel_uploads)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
-		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
+		job.RetentionCount, job.RetentionDays, job.Compression, job.CompressionLevel, job.Encryption, job.ContainerMode,
 		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, nullableID(job.StorageDestID),
 		job.DeferRemoteUpload,
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
@@ -48,7 +48,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 	var job Job
 	err := d.QueryRow(
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
-		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
+		retention_count, retention_days, compression, compression_level, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
 		COALESCE(defer_remote_upload, 0),
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
@@ -60,7 +60,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		created_at, updated_at
 		FROM jobs WHERE id = ?`, id,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
-		&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression,
+		&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression, &job.CompressionLevel,
 		&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
 		&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
 		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
@@ -78,7 +78,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 func (d *DB) ListJobs() ([]Job, error) {
 	rows, err := d.Query(
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
-		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
+		retention_count, retention_days, compression, compression_level, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
 		COALESCE(defer_remote_upload, 0),
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
@@ -97,7 +97,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 	for rows.Next() {
 		var job Job
 		if err := rows.Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
-			&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression,
+			&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression, &job.CompressionLevel,
 			&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
 			&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
 			&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
@@ -116,7 +116,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 func (d *DB) UpdateJob(job Job) error {
 	_, err := d.Exec(
 		`UPDATE jobs SET name=?, description=?, enabled=?, schedule=?, backup_type_chain=?,
-		retention_count=?, retention_days=?, compression=?, encryption=?, container_mode=?, vm_mode=?, pre_script=?,
+		retention_count=?, retention_days=?, compression=?, compression_level=?, encryption=?, container_mode=?, vm_mode=?, pre_script=?,
 		post_script=?, notify_on=?, verify_backup=?, storage_dest_id=?, defer_remote_upload=?,
 		keep_latest=?, keep_daily=?, keep_weekly=?, keep_monthly=?, keep_yearly=?,
 		verify_schedule=?, verify_mode=?,
@@ -125,7 +125,7 @@ func (d *DB) UpdateJob(job Job) error {
 		max_parallel_uploads=?,
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
-		job.RetentionCount, job.RetentionDays, job.Compression, job.Encryption, job.ContainerMode,
+		job.RetentionCount, job.RetentionDays, job.Compression, job.CompressionLevel, job.Encryption, job.ContainerMode,
 		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, nullableID(job.StorageDestID),
 		job.DeferRemoteUpload,
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
@@ -149,7 +149,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 	var job Job
 	err := d.QueryRow(
 		`SELECT id, name, description, enabled, schedule, backup_type_chain,
-		retention_count, retention_days, compression, encryption, container_mode, vm_mode, pre_script,
+		retention_count, retention_days, compression, compression_level, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
 		COALESCE(defer_remote_upload, 0),
 		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
@@ -161,7 +161,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		created_at, updated_at
 		FROM jobs WHERE name = ?`, name,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
-		&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression,
+		&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression, &job.CompressionLevel,
 		&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
 		&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
 		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,

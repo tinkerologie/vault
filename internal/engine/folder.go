@@ -269,6 +269,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 			log.Printf("engine: skipping non-regular file %s (mode %v)", rel, info.Mode())
 			return nil
 		}
+		warnIfSparse(rel, info)
 		f, err := root.Open(rel)
 		if err != nil {
 			log.Printf("engine: chunked: skipping unopenable file %s: %v", rel, err)

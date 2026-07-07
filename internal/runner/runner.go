@@ -1016,7 +1016,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				"image": settings["image"],
 				"state": settings["state"],
 			},
-			Compression: job.Compression,
+			Compression: engine.JoinCompression(job.Compression, job.CompressionLevel),
 		}
 
 		if item.ItemType == "container" {

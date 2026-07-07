@@ -141,6 +141,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"Job.RetentionCount":      "Number of most-recent restore points to keep. Ignored when LTR buckets are set.",
 	"Job.RetentionDays":       "Age in days after which restore points are pruned. Ignored when LTR buckets are set.",
 	"Job.Compression":         "Compression algorithm applied to the archive (e.g. zstd, gzip, none).",
+	"Job.CompressionLevel":    "Compression level trading time for size (fastest, default, better, best). Empty means the algorithm's default.",
 	"Job.Encryption":          "Encryption mode for the archive (e.g. none, passphrase).",
 	"Job.ContainerMode":       "How Docker containers are handled during backup (e.g. stop, pause, hot).",
 	"Job.VMMode":              "How libvirt VMs are handled during backup (e.g. shutdown, snapshot).",

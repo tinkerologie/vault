@@ -50,7 +50,8 @@ const downgradeThresholdPercent = 70
 // of files) the walk dominates I/O cost, but that's the same walk
 // tarDirectory is about to do anyway — there's no double-read.
 func MaybeDowngradeCompression(srcDir, requested string) string {
-	switch requested {
+	algo, _ := splitCompression(requested)
+	switch algo {
 	case CompressionGzip, CompressionZstd:
 		// fall through
 	default:

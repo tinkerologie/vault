@@ -263,6 +263,7 @@
       verify_schedule: '',
       verify_mode: 'quick',
       compression: 'zstd',
+      compression_level: '',
       container_mode: 'one_by_one',
       vm_mode: 'snapshot',
       pre_script: '',
@@ -595,6 +596,7 @@
         verify_schedule: data.job.verify_schedule || '',
         verify_mode: data.job.verify_mode || 'quick',
         compression: data.job.compression || 'zstd',
+        compression_level: data.job.compression_level || '',
         container_mode: data.job.container_mode || 'one_by_one',
         // Read the saved VM backup mode so editing a job preserves the user's
         // choice (snapshot vs cold). Falls back to 'snapshot' for jobs created
@@ -708,6 +710,7 @@
         schedule: fullJob.schedule || '0 2 * * *',
         storage_dest_id: fullJob.storage_dest_id || 0,
         compression: fullJob.compression || 'zstd',
+        compression_level: fullJob.compression_level || '',
         encryption: fullJob.encryption || 'none',
         container_mode: fullJob.container_mode || 'one_by_one',
         backup_type_chain: fullJob.backup_type_chain || 'full',
@@ -1376,6 +1379,7 @@
           <div>
             <label for="compression" class="block text-sm font-medium text-text-muted mb-1.5">Compression</label>
             <select id="compression" bind:value={form.compression}
+              onchange={() => { if (form.compression === 'none') form.compression_level = '' }}
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
               <option value="none">None</option>
               <option value="gzip">Gzip</option>
@@ -1387,6 +1391,19 @@
                form.compression === 'zstd' ? 'Best all-rounder: better compression than gzip and roughly 3–5× faster. Recommended for container images and large volumes.' : ''}
             </p>
           </div>
+          {#if form.compression !== 'none'}
+            <div>
+              <label for="compression_level" class="block text-sm font-medium text-text-muted mb-1.5">Compression level</label>
+              <select id="compression_level" bind:value={form.compression_level}
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+                <option value="">Default (balanced)</option>
+                <option value="fastest">Fastest — least CPU, larger archive</option>
+                <option value="better">Better — smaller archive, more CPU</option>
+                <option value="best">Best — smallest archive, slowest</option>
+              </select>
+              <p class="text-xs text-text-dim mt-1">Trade backup time for archive size. Applies to gzip and zstd.</p>
+            </div>
+          {/if}
           <div>
             <label for="encryption" class="block text-sm font-medium text-text-muted mb-1.5">Encryption</label>
             <select id="encryption" bind:value={form.encryption}
@@ -1813,6 +1830,9 @@
                               {#if mount.auto_skip}
                                 <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-dim border border-border">auto-excluded</span>
                               {/if}
+                              {#if mount.type === 'volume'}
+                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-dim border border-border">named volume</span>
+                              {/if}
                             </span>
                             <span class="block text-xs text-text-dim font-mono truncate">{mount.source}{#if mount.auto_skip && mount.skip_reason} · {mount.skip_reason}{/if}</span>
                           </span>
@@ -1954,7 +1974,7 @@
           </div>
           <div class="flex justify-between">
             <span class="text-text-muted">Compression</span>
-            <span class="text-text capitalize">{form.compression}</span>
+            <span class="text-text capitalize">{form.compression}{#if form.compression !== 'none' && form.compression_level} · {form.compression_level}{/if}</span>
           </div>
           <div class="flex justify-between">
             <span class="text-text-muted">Encryption</span>

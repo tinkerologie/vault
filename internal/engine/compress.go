@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -44,10 +45,50 @@ const (
 	CompressionZstd = "zstd"
 )
 
+// Compression levels let users trade time for size. They are encoded onto the
+// compression value as an "algo:level" suffix (e.g. "zstd:best") that travels
+// opaquely through the engine as job.Compression — only splitCompression,
+// archiveExt and MaybeDowngradeCompression interpret it. A bare "zstd"/"gzip"
+// (no suffix) means the algorithm's default level, preserving prior behaviour.
+const (
+	CompressionLevelFastest = "fastest"
+	CompressionLevelDefault = "default"
+	CompressionLevelBetter  = "better"
+	CompressionLevelBest    = "best"
+)
+
+// splitCompression separates an "algo:level" compression spec into its parts.
+// A spec with no ":" yields an empty level (the algorithm default).
+func splitCompression(spec string) (algo, level string) {
+	if i := strings.IndexByte(spec, ':'); i >= 0 {
+		return spec[:i], spec[i+1:]
+	}
+	return spec, ""
+}
+
+// JoinCompression builds an "algo:level" spec. The default level (or an empty
+// algo/level) produces the bare algo so existing "gzip"/"zstd"/"none" values —
+// and their on-storage archives — are byte-for-byte unchanged. The runner uses
+// this to fold a job's compression_level into the compression value it hands
+// the engine.
+func JoinCompression(algo, level string) string {
+	if level == "" || level == CompressionLevelDefault {
+		return algo
+	}
+	switch algo {
+	case CompressionGzip, CompressionZstd:
+		return algo + ":" + level
+	default:
+		// "none"/unknown algorithms carry no level.
+		return algo
+	}
+}
+
 // archiveExt returns the filename suffix the engine appends after `.tar` for
-// the given compression mode. Returns "" for none/empty/unknown.
+// the given compression spec. Returns "" for none/empty/unknown.
 func archiveExt(compression string) string {
-	switch compression {
+	algo, _ := splitCompression(compression)
+	switch algo {
 	case CompressionGzip:
 		return ".gz"
 	case CompressionZstd:
@@ -57,22 +98,52 @@ func archiveExt(compression string) string {
 	}
 }
 
-// compressedWriter wraps w with the chosen compression algorithm. The returned
-// closer flushes and finalises the compression stream and MUST be called
-// before the underlying writer is closed.
+// zstdEncoderLevel maps a user level name to a zstd encoder level.
+func zstdEncoderLevel(level string) zstd.EncoderLevel {
+	switch level {
+	case CompressionLevelFastest:
+		return zstd.SpeedFastest
+	case CompressionLevelBetter:
+		return zstd.SpeedBetterCompression
+	case CompressionLevelBest:
+		return zstd.SpeedBestCompression
+	default:
+		return zstd.SpeedDefault
+	}
+}
+
+// gzipEncoderLevel maps a user level name to a compress/gzip level.
+func gzipEncoderLevel(level string) int {
+	switch level {
+	case CompressionLevelFastest:
+		return gzip.BestSpeed
+	case CompressionLevelBetter:
+		return 7
+	case CompressionLevelBest:
+		return gzip.BestCompression
+	default:
+		return gzip.DefaultCompression
+	}
+}
+
+// compressedWriter wraps w with the chosen compression algorithm and level
+// (parsed from an "algo:level" spec). The returned closer flushes and finalises
+// the compression stream and MUST be called before the underlying writer is
+// closed.
 //
 // For an empty / "none" / unknown compression value, the original writer is
 // returned with a no-op closer so callers can always defer the close.
 func compressedWriter(w io.Writer, compression string) (io.Writer, func() error, error) {
-	switch compression {
+	algo, level := splitCompression(compression)
+	switch algo {
 	case CompressionGzip:
-		gw, err := gzip.NewWriterLevel(w, gzip.DefaultCompression)
+		gw, err := gzip.NewWriterLevel(w, gzipEncoderLevel(level))
 		if err != nil {
 			return nil, nil, fmt.Errorf("creating gzip writer: %w", err)
 		}
 		return gw, gw.Close, nil
 	case CompressionZstd:
-		zw, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedDefault))
+		zw, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstdEncoderLevel(level)))
 		if err != nil {
 			return nil, nil, fmt.Errorf("creating zstd writer: %w", err)
 		}

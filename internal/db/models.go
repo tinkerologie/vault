@@ -14,6 +14,7 @@ type Job struct {
 	RetentionCount    int    `json:"retention_count"`
 	RetentionDays     int    `json:"retention_days"`
 	Compression       string `json:"compression"`
+	CompressionLevel  string `json:"compression_level"`
 	Encryption        string `json:"encryption"`
 	ContainerMode     string `json:"container_mode"`
 	VMMode            string `json:"vm_mode"`
