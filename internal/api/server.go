@@ -98,9 +98,15 @@ func (s *Server) SetScheduleReloader(fn ScheduleReloader) {
 	s.schedReload = fn
 }
 
-// SetNextRunResolver sets the function used by job handlers to look up next run times.
+// SetNextRunResolver sets the function used by job handlers to look up next run
+// times. The router (and its job handler) is built in NewServer, before the
+// daemon has a scheduler to wire, so propagate to the already-registered
+// handler here — otherwise the /jobs/next-runs endpoints return empty.
 func (s *Server) SetNextRunResolver(fn func(jobID int64) (string, bool)) {
 	s.nextRunResolver = fn
+	if s.jobHandler != nil {
+		s.jobHandler.SetNextRunResolver(fn)
+	}
 }
 
 // SetConfigChangeHook registers a function called after any handler mutates

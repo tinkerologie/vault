@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { formatDate, relTime, formatBytes } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
@@ -255,12 +255,15 @@
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         Export
       </button>
-      <!-- Purge button -->
-      <button onclick={() => confirmPurge = true} disabled={filteredEntries.length === 0}
-        class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-danger hover:bg-danger/10 transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Purge all logs">
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-        Purge
-      </button>
+      <!-- Purge button — clears ALL logs regardless of active filters, so gate on
+           whether any logs exist rather than the filtered subset. -->
+      {#if !isReplicaMode()}
+        <button onclick={() => confirmPurge = true} disabled={entries.length === 0}
+          class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-danger hover:bg-danger/10 transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Purge all logs">
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          Purge All
+        </button>
+      {/if}
       <button onclick={() => loadLogs()} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5" aria-label="Refresh">
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         Refresh
@@ -268,9 +271,17 @@
     </div>
   </div>
 
+  {#if isReplicaMode()}
+    <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <span>Read-only replica — write actions are disabled on this instance.</span>
+    </div>
+  {/if}
+
   <!-- Filters -->
   <div class="flex flex-wrap items-center gap-2 mb-4">
     <div role="group" aria-label="Filter by category" class="flex items-center gap-2 flex-wrap">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Category</span>
       {#each categories as cat (cat.value)}
         <button
           type="button"
@@ -286,6 +297,7 @@
     </div>
     <div class="w-px h-5 bg-border" aria-hidden="true"></div>
     <div role="group" aria-label="Filter by level" class="flex items-center gap-2 flex-wrap">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Level</span>
       {#each levels as lev (lev.value)}
         <button
           type="button"
@@ -315,7 +327,7 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl overflow-hidden" bind:this={logContainer}>
+    <div class="bg-surface-2 border border-border rounded-xl overflow-y-auto max-h-[70vh]" bind:this={logContainer}>
       <div class="divide-y divide-border">
         {#each filteredEntries as entry (entry.id)}
           <div class="px-5 py-3.5 hover:bg-surface-3/30 transition-colors {entry.level === 'error' ? 'border-l-2 border-l-danger' : ''} group">

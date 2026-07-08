@@ -97,7 +97,7 @@
                 <!-- Per-item breakdown -->
                 {#if items.length > 0}
                   <div class="flex flex-wrap gap-1.5 mt-1.5">
-                    {#each items as item (item.name)}
+                    {#each items as item, i (i)}
                       <span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">
                         {#if item.status === 'ok'}
                           <svg aria-hidden="true" class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>

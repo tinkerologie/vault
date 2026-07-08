@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte'
   import { navigate } from '../lib/router.svelte.js'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import AnomalyBadge from './AnomalyBadge.svelte'
+  import Tooltip from './Tooltip.svelte'
   import { prettyAnomalySummary } from '../lib/utils.js'
 
   const anomalies = getAnomalies()
@@ -125,6 +126,12 @@
         </div>
 
       {:else}
+        {#if !isReplicaMode()}
+        <div class="px-5 py-1.5 flex items-center justify-end gap-1 text-[11px] text-text-dim">
+          <span>Expected teaches the baseline</span>
+          <Tooltip text="Mark an anomaly as normal so future runs like it won't be flagged (feeds the baseline). Dismiss only clears it once." />
+        </div>
+        {/if}
         {#each displayed as anomaly (anomaly.id)}
           <div class="px-5 py-3 {severityBg[anomaly.severity] ?? ''}">
             <div class="flex items-start gap-3">
@@ -137,6 +144,7 @@
                 <p class="text-sm text-text mt-1 leading-snug">{prettyAnomalySummary(anomaly.summary)}</p>
               </div>
               <!-- Ack actions -->
+              {#if !isReplicaMode()}
               <div class="flex items-center gap-1 shrink-0">
                 <button
                   onclick={() => ack(anomaly, 'dismiss')}
@@ -155,6 +163,7 @@
                   Expected
                 </button>
               </div>
+              {/if}
             </div>
           </div>
         {/each}

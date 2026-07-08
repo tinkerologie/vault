@@ -106,21 +106,22 @@
           <svg aria-hidden="true" viewBox="0 0 100 100" class="w-full h-full -rotate-90">
             <circle cx="50" cy="50" r="40" fill="none" stroke="var(--color-border)" stroke-width="8" />
             <circle cx="50" cy="50" r="40" fill="none"
-              stroke={readinessPct >= 80 ? 'var(--color-success)' : readinessPct >= 50 ? 'var(--color-warning)' : 'var(--color-danger)'}
+              stroke={totalItems === 0 ? 'var(--color-border)' : readinessPct === 100 ? 'var(--color-success)' : readinessPct >= 50 ? 'var(--color-warning)' : 'var(--color-danger)'}
               stroke-width="8" stroke-linecap="round"
               stroke-dasharray={2 * Math.PI * 40} stroke-dashoffset={2 * Math.PI * 40 * (1 - readinessPct / 100)}
               class="transition-all duration-1000" />
           </svg>
           <div class="absolute inset-0 flex items-center justify-center">
-            <span class="text-lg font-bold text-text">{readinessPct}%</span>
+            <span class="text-lg font-bold text-text">{totalItems === 0 ? '—' : `${readinessPct}%`}</span>
           </div>
         </div>
         <div>
           <h2 class="text-lg font-semibold text-text">Recovery Readiness</h2>
           <p class="text-sm text-text-muted mt-1">
-            {readinessPct === 100 ? 'All items are protected and backed up.' :
-             readinessPct >= 80 ? 'Most items protected. Review warnings below.' :
-             'Several items need attention.'}
+            {totalItems === 0 ? 'No items to protect yet. Add containers, VMs, or folders to a backup job to get started.' :
+             readinessPct === 100 ? 'All items are protected and backed up.' :
+             readinessPct >= 50 ? `Partially protected — ${totalUnprotected} item${totalUnprotected !== 1 ? 's' : ''} still unprotected. Review below.` :
+             `Action needed — most items are unprotected (${totalUnprotected} of ${totalItems}).`}
           </p>
           <p class="text-xs text-text-dim mt-1">
             {plan.server_info?.total_protected_items || 0} items protected · Vault v{plan.server_info?.vault_version || '?'}
@@ -172,7 +173,7 @@
           {#if expandedSteps.has(step.step) && step.items?.length > 0}
             <div class="px-5 pb-4 border-t border-border pt-3">
               <div class="space-y-2">
-                {#each step.items as item (item.name)}
+                {#each step.items as item, i (i)}
                   <div class="flex items-center justify-between px-3 py-2 bg-surface-3 rounded-lg">
                     <div class="flex items-center gap-2 min-w-0">
                       <div class="w-2 h-2 rounded-full shrink-0 {item.has_restore_point ? 'bg-success' : 'bg-warning'}"></div>
@@ -199,7 +200,7 @@
     </div>
 
     <!-- Unprotected Items -->
-    {#if unprotectedContainers.length > 0 || unprotectedVMs.length > 0}
+    {#if totalUnprotected > 0}
       <div class="bg-surface-2 border border-border rounded-xl mt-8">
         <div class="px-5 py-4 border-b border-border">
           <h3 class="text-base font-semibold text-text">Unprotected Items</h3>
@@ -218,6 +219,20 @@
               <div class="w-2 h-2 rounded-full bg-danger shrink-0"></div>
               <span class="text-sm text-text">{v.name}</span>
               <span class="text-[10px] text-text-dim ml-auto">vm</span>
+            </div>
+          {/each}
+          {#each unprotectedFolders as f (f.name)}
+            <div class="flex items-center gap-2 px-3 py-2 bg-danger/5 rounded-lg">
+              <div class="w-2 h-2 rounded-full bg-danger shrink-0"></div>
+              <span class="text-sm text-text">{f.name}</span>
+              <span class="text-[10px] text-text-dim ml-auto">folder</span>
+            </div>
+          {/each}
+          {#each unprotectedFlash as f (f.name)}
+            <div class="flex items-center gap-2 px-3 py-2 bg-danger/5 rounded-lg">
+              <div class="w-2 h-2 rounded-full bg-danger shrink-0"></div>
+              <span class="text-sm text-text">{f.name}</span>
+              <span class="text-[10px] text-text-dim ml-auto">flash</span>
             </div>
           {/each}
         </div>

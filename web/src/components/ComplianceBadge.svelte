@@ -119,7 +119,7 @@
       </span>
     </div>
     <div class="flex items-center gap-3">
-      <div class="hidden md:block">{@render goalPicker()}</div>
+      {#if onGoalChange}<div class="hidden md:block">{@render goalPicker()}</div>{/if}
       {#if ondismiss}
         <button
           type="button"
@@ -137,7 +137,7 @@
   {#if expanded}
     <div class="px-5 pb-4 space-y-3 border-t border-border/50 pt-3">
       <!-- On small screens the picker lives here instead of the header. -->
-      <div class="md:hidden">{@render goalPicker()}</div>
+      {#if onGoalChange}<div class="md:hidden">{@render goalPicker()}</div>{/if}
 
       <p class="text-xs text-text-muted">
         Goal: <strong class="text-text">{GOAL_LABELS[goal]}</strong>{isExplicit ? '' : ' (auto-selected for your setup)'}

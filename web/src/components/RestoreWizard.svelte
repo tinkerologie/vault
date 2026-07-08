@@ -8,10 +8,11 @@
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
 
-  let { jobs = [], onrestore = () => {}, initialJobId = null } = $props()
+  let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null } = $props()
 
   let step = $state(1)
   let selectedItems = $state(new SvelteMap()) // key: "type:name", value: item object
+  let autoSelectApplied = false // deep-link auto-select is one-time per mount
   let selectedPoint = $state(null)
   let restoreDestination = $state('')
   let showDestOverride = $state(false)
@@ -181,14 +182,27 @@
         }
       }
       allItems = Array.from(itemMap.values())
-      // Auto-select items from a pre-selected job (e.g. quick restore from Dashboard)
-      if (initialJobId && selectedItems.size === 0) {
-        const jid = Number(initialJobId)
-        for (const item of allItems) {
-          if (item.jobs.some(j => j.id === jid)) {
-            const key = `${item.type}:${item.name}`
-            selectedItems.set(key, item)
+      // Deep-link auto-select runs once per mount so a later gatherItems refresh
+      // (e.g. a WS event) can't re-select items the user has since cleared.
+      if (!autoSelectApplied) {
+        autoSelectApplied = true
+        // Auto-select items from a pre-selected job (e.g. quick restore from Dashboard)
+        if (initialJobId) {
+          const jid = Number(initialJobId)
+          for (const item of allItems) {
+            if (item.jobs.some(j => j.id === jid)) {
+              const key = `${item.type}:${item.name}`
+              selectedItems.set(key, item)
+            }
           }
+        }
+        // Auto-select a specific item from a type+name deep-link (Dashboard restore
+        // buttons and the command palette). Only matches items that are actually in
+        // a backup job, so unknown/never-backed-up names just land on the picker.
+        if (initialType && initialName && selectedItems.size === 0) {
+          const key = `${initialType}:${initialName}`
+          const item = allItems.find(i => `${i.type}:${i.name}` === key)
+          if (item) selectedItems.set(key, item)
         }
       }
     } catch { /* ignore */ } finally {
@@ -340,6 +354,28 @@
   }
 
   let selectedItemsArray = $derived(Array.from(selectedItems.values()))
+
+  // Overwrite-banner target (issue #205 / E5). Only ever show a concrete path
+  // when it's actually known — otherwise say "original location" honestly.
+  //   { path }     → show this exact path
+  //   { original } → say the restore goes to its original location
+  //   null         → show no location clause (multi-item / indeterminate)
+  // folder/flash items store their filesystem path as the item name. Containers
+  // and VMs have no single persisted source path (appdata can live off
+  // /mnt/user; container/VM restores may touch several mounts), so we do NOT
+  // fabricate a /mnt/user/appdata path for them.
+  let restoreTargetPath = $derived.by(() => {
+    if (showDestOverride) {
+      const dest = restoreDestination.trim()
+      // Blank custom destination → backend falls back to original location.
+      return dest ? { path: dest } : { original: true }
+    }
+    if (selectedCount !== 1) return null
+    const item = selectedItemsArray[0]
+    if (!item) return null
+    if (item.type === 'folder' || item.type === 'flash') return { path: item.name }
+    return { original: true }
+  })
   // The newest restore point is the recommended one to restore from.
   let recommendedRpId = $derived(restorePoints[0]?.id ?? null)
 
@@ -782,6 +818,11 @@
             <strong class="text-text">{selectedItemsArray[0].name}</strong>
           {:else}
             <strong class="text-text">{selectedCount} selected items</strong>
+          {/if}
+          {#if restoreTargetPath?.path}
+            at <code class="text-text font-mono break-all">{restoreTargetPath.path}</code>
+          {:else if restoreTargetPath?.original}
+            at its original location
           {/if}
           with the backup version.
         </p>

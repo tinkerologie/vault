@@ -1,12 +1,13 @@
 <script>
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { relTime, formatBytes, formatDuration, prettyAnomalySummary } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
+  import Tooltip from '../components/Tooltip.svelte'
 
   // --- Filter state ---
   let filterState    = $state('open')
@@ -275,6 +276,13 @@
     <p class="text-sm text-text-muted mt-1">Detected deviations from expected backup behaviour</p>
   </div>
 
+  {#if isReplicaMode()}
+    <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <span>Read-only replica — write actions are disabled on this instance.</span>
+    </div>
+  {/if}
+
   <!-- Filters -->
   <div class="bg-surface-2 border border-border rounded-xl p-4 mb-6">
     <div class="flex flex-wrap gap-3 items-end">
@@ -318,7 +326,7 @@
   </div>
 
   <!-- Bulk action bar -->
-  {#if selected.size > 0}
+  {#if selected.size > 0 && !isReplicaMode()}
     <div class="bg-surface-2 border border-border rounded-xl px-4 py-3 mb-4 flex flex-wrap items-center gap-3">
       <span class="text-sm font-medium text-text">{selected.size} selected</span>
       <div class="w-px h-5 bg-border"></div>
@@ -342,6 +350,7 @@
       >
         Mark expected
       </button>
+      <Tooltip text="Mark these as normal so future runs like them won't be flagged — this teaches the baseline. Dismiss only clears them once." />
       <button onclick={clearSelected} class="text-xs text-text-muted hover:text-text transition-colors">
         Clear
       </button>
@@ -375,6 +384,7 @@
     <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
       <!-- Table header -->
       <div class="px-4 py-3 border-b border-border flex items-center gap-3 text-xs font-medium text-text-muted">
+        {#if !isReplicaMode()}
         <input
           type="checkbox"
           checked={allSelected}
@@ -382,6 +392,7 @@
           class="accent-vault w-3.5 h-3.5 shrink-0"
           aria-label="Select all anomalies"
         />
+        {/if}
         <span class="w-20 shrink-0">Severity</span>
         <span class="flex-1">Summary</span>
         <span class="w-24 shrink-0 hidden sm:block">Scope</span>
@@ -395,6 +406,7 @@
           <div class="hover:bg-surface-3 transition-colors {selected.has(anomaly.id) ? 'bg-vault/5' : ''}">
             <div class="px-4 py-3 flex items-start gap-3">
               <!-- Checkbox -->
+              {#if !isReplicaMode()}
               <input
                 type="checkbox"
                 checked={selected.has(anomaly.id)}
@@ -403,6 +415,7 @@
                 class="accent-vault w-3.5 h-3.5 shrink-0 mt-0.5 cursor-pointer"
                 aria-label="Select anomaly {anomaly.id}"
               />
+              {/if}
 
               <!-- Severity badge -->
               <div class="w-20 shrink-0">
@@ -434,7 +447,7 @@
 
               <!-- Per-row ack actions (only for open) -->
               <div class="w-32 shrink-0 flex items-center gap-1">
-                {#if anomaly.state === 'open'}
+                {#if anomaly.state === 'open' && !isReplicaMode()}
                   <button
                     onclick={() => ackRow(anomaly, 'dismiss')}
                     disabled={ackingId === anomaly.id}

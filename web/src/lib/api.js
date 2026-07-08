@@ -9,18 +9,35 @@ export function isReplicaMode() { return _isReplica }
 /** Set replica mode (called once during app init). */
 export function setReplicaMode(val) { _isReplica = val }
 
-async function request(method, path, body = null) {
+const REQUEST_TIMEOUT_MS = 15000
+// Connection tests reach an arbitrary, possibly slow remote, so they get a
+// longer ceiling than normal CRUD calls (which stay at REQUEST_TIMEOUT_MS).
+const TEST_TIMEOUT_MS = 60000
+
+async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
   const { url, options } = buildApiRequest(method, path, { body })
-  const res = await fetch(url, options)
-  if (res.status === 204) return null
-  // Read as text first so we don't throw on empty / non-JSON bodies
-  // (e.g. 502 from an upstream proxy). Errors should surface a clean
-  // HTTP status message rather than a JSON parse error.
-  const text = await res.text()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let res
+  let text
+  try {
+    res = await fetch(url, { ...options, signal: controller.signal })
+    if (res.status === 204) return null
+    // Read the body under the same abort timer — a slow body read must time out
+    // too. Read as text first so empty / non-JSON bodies (e.g. a 502 from an
+    // upstream proxy) surface a clean HTTP status rather than a JSON parse error.
+    text = await res.text()
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Request timed out', { cause: err })
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
   let data = null
   if (text) {
     try { data = JSON.parse(text) } catch { /* non-JSON body */ }
   }
+  if (res.status === 401) throw new Error('Not authorized — your session or API key may have expired.')
   if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`)
   return data
 }
@@ -49,7 +66,10 @@ export const api = {
     const qs = params.toString()
     return request('DELETE', `/storage/${id}${qs ? '?' + qs : ''}`)
   },
-  testStorage: (id) => request('POST', `/storage/${id}/test`),
+  testStorage: (id) => request('POST', `/storage/${id}/test`, null, { timeoutMs: TEST_TIMEOUT_MS }),
+  // Test an unsaved config from the add/edit modal ({ type, config } where
+  // config is the JSON-stringified blob). Returns { success, error? }.
+  testStorageConfig: (payload) => request('POST', '/storage/test', payload, { timeoutMs: TEST_TIMEOUT_MS }),
   // On-demand storage capacity probe (Task 9 in storage-capacity feature).
   // 30s ceiling on the server side; returns { capacity: {...} } on success.
   refreshCapacity: (id) => request('POST', `/storage/${id}/capacity-check`),
@@ -214,8 +234,8 @@ export const api = {
   createReplicationSource: (data) => request('POST', '/replication', data),
   updateReplicationSource: (id, data) => request('PUT', `/replication/${id}`, data),
   deleteReplicationSource: (id) => request('DELETE', `/replication/${id}`),
-  testReplicationSource: (id) => request('POST', `/replication/${id}/test`),
-  testReplicationURL: (url, apiKey = '') => request('POST', '/replication/test-url', { url, api_key: apiKey }),
+  testReplicationSource: (id) => request('POST', `/replication/${id}/test`, null, { timeoutMs: TEST_TIMEOUT_MS }),
+  testReplicationURL: (url, apiKey = '') => request('POST', '/replication/test-url', { url, api_key: apiKey }, { timeoutMs: TEST_TIMEOUT_MS }),
   syncReplicationSource: (id) => request('POST', `/replication/${id}/sync`),
   listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
 }

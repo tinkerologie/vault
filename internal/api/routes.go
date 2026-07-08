@@ -93,6 +93,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			// storage destinations configured for replication targets.
 			r.Get("/", storageH.List)
 			r.Post("/", storageH.Create)
+			r.Post("/test", storageH.TestConfig)
 			r.Get("/{id}", storageH.Get)
 			r.Put("/{id}", storageH.Update)
 			r.Delete("/{id}", storageH.Delete)

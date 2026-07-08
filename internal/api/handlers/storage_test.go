@@ -194,6 +194,63 @@ func TestRunDedupGCMissingDest(t *testing.T) {
 	}
 }
 
+func TestTestConfigSuccess(t *testing.T) {
+	h, _ := newDedupStorageHandler(t, false)
+	dir := t.TempDir()
+	cfg, _ := json.Marshal(map[string]string{"path": dir})
+	body, _ := json.Marshal(map[string]string{"type": "local", "config": string(cfg)})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/test", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.TestConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["success"] != true {
+		t.Errorf("success = %v, want true; body: %s", resp["success"], w.Body.String())
+	}
+}
+
+func TestTestConfigMissingType(t *testing.T) {
+	h, _ := newDedupStorageHandler(t, false)
+	body, _ := json.Marshal(map[string]string{"config": "{}"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/test", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.TestConfig(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestTestConfigBogusType(t *testing.T) {
+	h, _ := newDedupStorageHandler(t, false)
+	body, _ := json.Marshal(map[string]string{"type": "bogus", "config": "{}"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/test", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.TestConfig(w, req)
+
+	// Unknown type is a soft failure: 200 with success:false so the modal can
+	// show the error inline rather than throwing.
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["success"] != false {
+		t.Errorf("success = %v, want false; body: %s", resp["success"], w.Body.String())
+	}
+}
+
 func TestRedactConfig(t *testing.T) {
 	t.Parallel()
 

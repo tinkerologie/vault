@@ -14,6 +14,9 @@
   --color-amber-900: #78350f;
   --color-vault: #f59e0b;
   --color-vault-dark: #d97706;
+  /* On-light accent for small text/links/captions — amber-700 ~5.3:1 on #fff (WCAG AA).
+     Dark/retro themes remap this to their own accent below so they stay unchanged. */
+  --color-vault-text: #b45309;
   /* Light mode (default) */
   --color-surface: #ffffff;
   --color-surface-2: #f9fafb;
@@ -33,6 +36,7 @@
 
 /* Dark mode overrides */
 .dark {
+  --color-vault-text: var(--color-vault);
   --color-surface: #111827;
   --color-surface-2: #1f2937;
   --color-surface-3: #374151;
@@ -55,6 +59,7 @@
 
 /* 1-Bit Light: white bg, black text */
 .theme-1bit {
+  --color-vault-text: var(--color-vault);
   --color-vault: #000000;
   --color-vault-dark: #333333;
   --color-surface: #ffffff;
@@ -99,6 +104,7 @@
 
 /* 8-Bit Light: warm parchment + NES palette */
 .theme-8bit {
+  --color-vault-text: var(--color-vault);
   --color-vault: #e4003a;
   --color-vault-dark: #c00030;
   --color-surface: #f5e6c8;
@@ -143,6 +149,7 @@
 
 /* 16-Bit Light: warm parchment + deep blue RPG windows */
 .theme-16bit {
+  --color-vault-text: var(--color-vault);
   --color-vault: #2038a0;
   --color-vault-dark: #182880;
   --color-surface: #e8e0d0;

@@ -187,7 +187,10 @@
 
   // Wizard step
   let step = $state(1)
-  const totalSteps = 6
+  const totalSteps = 4
+  // Express mode renders every primary field on one scrollable page for power
+  // users; the step-by-step wizard stays the default (issue #207 / E10).
+  let expressMode = $state(false)
 
   // Form state
   let form = $state(defaultForm())
@@ -573,6 +576,7 @@
     autoAppliedRecommended.clear()
     if (storageList.length > 0) form.storage_dest_id = storageList[0].id
     step = 1
+    expressMode = false
     showModal = true
   }
 
@@ -628,6 +632,7 @@
         if (it.item_type === 'folder') autoAppliedRecommended.add(it.item_name)
       }
       step = 1
+      expressMode = false
       showModal = true
     } catch (e) {
       showToast(e.message, 'error')
@@ -740,9 +745,13 @@
           settings: i.settings,
           sort_order: i.sort_order,
         })),
+        // Mirror openEdit: derive the type selection from the copied items, else
+        // step 1 is invalid and the duplicated job can't advance/save (#dupbug).
+        selectedTypes: deriveTypesFromItems(data.items || []),
       }
       editing = null
-      step = 3
+      step = 2
+      expressMode = false
       showModal = true
     } catch (e) {
       showToast(e.message, 'error')
@@ -755,6 +764,9 @@
   }
 
   async function saveJobName(job) {
+    // Enter and blur can both fire this; the first clears editingNameId so the
+    // second is a no-op (otherwise the rename PATCH fires twice on stale state).
+    if (editingNameId !== job.id) return
     const trimmed = editName.trim()
     editingNameId = null
     if (!trimmed || trimmed === job.name) return
@@ -783,24 +795,42 @@
     return storageList.find(s => s.id === id)?.name || 'Unknown'
   }
 
-  // Wizard validation
+  // Wizard validation. 4 steps, each merging what used to be separate screens:
+  // 1 What (type + items) · 2 Where & when (storage + schedule) ·
+  // 3 How (mode/type/compression/encryption + Advanced accordions) ·
+  // 4 Name & review (name/description + summary).
   let canNext = $derived.by(() => {
-    if (step === 1) return form.selectedTypes.length > 0
-    if (step === 2) return form.items.length > 0
-    if (step === 3) return form.storage_dest_id > 0
-    if (step === 4) return form.name.trim().length > 0
-    if (step === 5) return vmRestoreVerifyErrors.length === 0
+    if (step === 1) return form.selectedTypes.length > 0 && form.items.length > 0
+    if (step === 2) return form.storage_dest_id > 0
+    if (step === 3) return vmRestoreVerifyErrors.length === 0
     return true
   })
 
   let stepHint = $derived.by(() => {
     if (step === 1 && form.selectedTypes.length === 0) return 'Select at least one backup type'
-    if (step === 2 && form.items.length === 0) return 'Select at least one item to back up'
-    if (step === 3 && form.storage_dest_id === 0) return 'Select a storage destination'
-    if (step === 4 && !form.name.trim()) return 'Enter a job name to continue'
-    if (step === 5 && vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
+    if (step === 1 && form.items.length === 0) return 'Select at least one item to back up'
+    if (step === 2 && form.storage_dest_id === 0) return 'Select a storage destination'
+    if (step === 3 && vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
+    // Review step: the final save needs every requirement, so name the first
+    // unmet one (a jumped stepper can reach here with an earlier step blank).
+    if (step === 4) {
+      if (form.selectedTypes.length === 0) return 'Select at least one backup type'
+      if (form.items.length === 0) return 'Select at least one item to back up'
+      if (form.storage_dest_id === 0) return 'Select a storage destination'
+      if (vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
+      if (!form.name.trim()) return 'Enter a job name to continue'
+    }
     return ''
   })
+
+  // Combined gate for the express one-page form: every required field at once.
+  let canSaveExpress = $derived(
+    form.selectedTypes.length > 0 &&
+    form.items.length > 0 &&
+    form.storage_dest_id > 0 &&
+    form.name.trim().length > 0 &&
+    vmRestoreVerifyErrors.length === 0
+  )
 
   // Auto-suggest job name based on selected types
   let suggestedName = $derived.by(() => {
@@ -1085,7 +1115,7 @@
       </span>
       {#if filtersActive}
         <button type="button" onclick={clearFilters}
-          class="text-xs text-vault hover:underline cursor-pointer">Clear filters</button>
+          class="text-xs text-vault-text hover:underline cursor-pointer">Clear filters</button>
       {/if}
     </div>
   {/if}
@@ -1102,7 +1132,7 @@
     <div class="text-center py-12">
       <div class="mb-3 opacity-30 flex justify-center"><svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg></div>
       <p class="text-sm text-text-muted">No jobs match these filters.</p>
-      <button type="button" onclick={clearFilters} class="mt-2 text-sm text-vault hover:underline cursor-pointer">Clear filters</button>
+      <button type="button" onclick={clearFilters} class="mt-2 text-sm text-vault-text hover:underline cursor-pointer">Clear filters</button>
     </div>
   {:else}
     <div class="space-y-3 stagger">
@@ -1271,45 +1301,142 @@
 <Modal show={showModal} title={editing ? 'Edit Job' : 'Create Backup Job'} size="lg" onclose={() => showModal = false}>
   {#snippet stepper()}
     <!-- Step indicator – rendered outside the scrollable body so it stays always visible -->
-    <div class="flex items-center gap-1 sm:gap-2">
-      {#each [{n:1, label:'Type'}, {n:2, label:'Items'}, {n:3, label:'Schedule'}, {n:4, label:'Details'}, {n:5, label:'Advanced'}, {n:6, label:'Review'}] as s (s.n)}
-        <button
-          type="button"
-          onclick={() => { if (s.n < step || canNext) step = s.n }}
-          class="flex items-center gap-2 {s.n === step ? '' : 'opacity-60'}"
-        >
-          <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-white' : s.n === step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
-            {#if s.n < step}
-              <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
-            {:else}
-              {s.n}
-            {/if}
-          </div>
-          <span class="text-xs font-medium {s.n === step ? 'text-text' : 'text-text-muted'} hidden sm:inline">{s.label}</span>
+    <div class="space-y-3">
+      <!-- Mode toggle on its own row so it never collides with the 7-step rail -->
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-xs font-medium text-text-dim">{expressMode ? 'Full form' : `Step ${step} of ${totalSteps}`}</span>
+        <button type="button" onclick={() => expressMode = !expressMode}
+          class="text-xs font-medium text-vault-text hover:text-vault-dark whitespace-nowrap shrink-0">
+          {expressMode ? 'Switch to step-by-step' : 'Switch to full form'}
         </button>
-        {#if s.n < totalSteps}
-          <div class="flex-1 h-px {s.n < step ? 'bg-vault' : 'bg-border'}"></div>
-        {/if}
-      {/each}
+      </div>
+      {#if !expressMode}
+        <div class="flex items-center gap-1 sm:gap-2 overflow-x-auto">
+          {#each [{n:1, label:'What'}, {n:2, label:'Where & when'}, {n:3, label:'How'}, {n:4, label:'Name & review'}] as s (s.n)}
+            <button
+              type="button"
+              onclick={() => { if (s.n < step || canNext) step = s.n }}
+              class="flex items-center gap-2 {s.n === step ? '' : 'opacity-60'}"
+            >
+              <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-white' : s.n === step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
+                {#if s.n < step}
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                {:else}
+                  {s.n}
+                {/if}
+              </div>
+              <span class="text-xs font-medium {s.n === step ? 'text-text' : 'text-text-muted'} hidden sm:inline">{s.label}</span>
+            </button>
+            {#if s.n < totalSteps}
+              <div class="flex-1 h-px {s.n < step ? 'bg-vault' : 'bg-border'}"></div>
+            {/if}
+          {/each}
+        </div>
+      {/if}
     </div>
   {/snippet}
 
-  <form onsubmit={(e) => { e.preventDefault(); if (step < totalSteps) step++; else saveJob() }}>
-    <!-- Step 1: Choose Backup Types -->
+  <form onsubmit={(e) => {
+    e.preventDefault()
+    if (expressMode) {
+      if (canSaveExpress) saveJob()
+    } else if (step < totalSteps) {
+      if (canNext) step++
+    } else if (canSaveExpress) {
+      saveJob()
+    }
+  }}>
+    {#if expressMode}
+      <!-- Express one-page form (#207 / E10). Reuses the same components and
+           `form` bindings as the wizard; Advanced settings keep their defaults
+           and stay available via the step-by-step view. A few field markups are
+           duplicated from the wizard instead of being snippet-extracted to avoid
+           restructuring the step chain. -->
+      <div class="space-y-6">
+        <div>
+          <span class="block text-sm font-medium text-text-muted mb-1.5">Backup Types</span>
+          <TypePicker bind:selectedTypes={form.selectedTypes} />
+        </div>
+        <div>
+          <span class="block text-sm font-medium text-text-muted mb-1.5">Items</span>
+          <ItemPicker bind:items={form.items} allowedTypes={form.selectedTypes} />
+        </div>
+        <div>
+          <label for="ex_name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name</label>
+          <input id="ex_name" type="text" bind:value={form.name} required placeholder={suggestedName || 'My Backup Job'}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        </div>
+        <div>
+          <span class="block text-sm font-medium text-text-muted mb-1.5">Schedule</span>
+          <ScheduleBuilder bind:value={form.schedule} />
+        </div>
+        <div>
+          <label for="ex_storage" class="block text-sm font-medium text-text-muted mb-1.5">Storage Destination</label>
+          <select id="ex_storage" bind:value={form.storage_dest_id}
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+            <option value={0}>– Select –</option>
+            {#each storageList as s (s.id)}
+              <option value={s.id}>{s.name} ({s.type})</option>
+            {/each}
+          </select>
+        </div>
+        <div>
+          <span class="block text-sm font-medium text-text-muted mb-1.5">Backup Mode</span>
+          <BackupModeSelector bind:containerMode={form.container_mode} bind:vmMode={form.vm_mode} {hasContainers} {hasVMs} />
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label for="ex_backup_type" class="block text-sm font-medium text-text-muted mb-1.5">Backup Type</label>
+            <select id="ex_backup_type" bind:value={form.backup_type_chain}
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+              <option value="full">Full</option>
+              {#if !vmDiskFormatRestriction}
+                <option value="incremental">Incremental</option>
+                <option value="differential">Differential</option>
+              {/if}
+            </select>
+          </div>
+          <div>
+            <label for="ex_compression" class="block text-sm font-medium text-text-muted mb-1.5">Compression</label>
+            <select id="ex_compression" bind:value={form.compression}
+              onchange={() => { if (form.compression === 'none') form.compression_level = '' }}
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+              <option value="none">None</option>
+              <option value="gzip">Gzip</option>
+              <option value="zstd">Zstandard (recommended)</option>
+            </select>
+          </div>
+          <div>
+            <label for="ex_encryption" class="block text-sm font-medium text-text-muted mb-1.5">Encryption</label>
+            <select id="ex_encryption" bind:value={form.encryption}
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+              <option value="none">None</option>
+              <option value="age">Age Encryption</option>
+            </select>
+          </div>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-text">
+          <input type="checkbox" bind:checked={form.enabled} class="accent-vault" />
+          Enable scheduled execution
+        </label>
+        <p class="text-xs text-text-dim">Advanced settings (retention, verification, scripts, retry) use sensible defaults here — switch to step-by-step to fine-tune them.</p>
+      </div>
+    {:else}
+    <!-- Step 1 · What — backup types then the items for those types -->
     {#if step === 1}
       <div class="space-y-4">
         <TypePicker bind:selectedTypes={form.selectedTypes} />
       </div>
-
-    <!-- Step 2: Select Items -->
-    {:else if step === 2}
-      <div class="space-y-4">
+    {/if}
+    {#if step === 1}
+      <div class="space-y-4 mt-6">
         <p class="text-sm text-text-muted">Select the specific items to include in this backup job.</p>
         <ItemPicker bind:items={form.items} allowedTypes={form.selectedTypes} />
       </div>
+    {/if}
 
-    <!-- Step 3: Schedule & Configuration -->
-    {:else if step === 3}
+    <!-- Step 2 · Where & when — storage destination + schedule -->
+    {#if step === 2}
       <div class="space-y-5">
         <div>
           <span class="block text-sm font-medium text-text-muted mb-1.5">Schedule</span>
@@ -1345,7 +1472,13 @@
             </div>
           {/if}
         </div>
+      </div>
 
+    {/if}
+
+    <!-- Step 3 · How — mode/type/compression/encryption, then Advanced accordions -->
+    {#if step === 3}
+      <div class="space-y-5">
         <div>
           <span class="block text-sm font-medium text-text-muted mb-1.5">Backup Mode</span>
           <BackupModeSelector
@@ -1418,8 +1551,10 @@
         </div>
       </div>
 
-    <!-- Step 4: Job Details -->
-    {:else if step === 4}
+    {/if}
+
+    <!-- Step 4 · Name & review — details then the plain-language summary -->
+    {#if step === 4}
       <div class="space-y-5">
         <div>
           <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name <Tooltip text="Used for display and log identification. No strict naming constraints." /></label>
@@ -1443,9 +1578,15 @@
         </div>
       </div>
 
-    <!-- Step 5: Advanced Settings -->
-    {:else if step === 5}
-      <div class="space-y-5">
+    {/if}
+
+    <!-- Step 3 (cont.) · Advanced options — same accordions, now hosted under How -->
+    {#if step === 3}
+      <div class="space-y-5 mt-6 pt-6 border-t border-border">
+        <div class="flex items-center gap-2">
+          <h3 class="text-sm font-semibold text-text">Advanced options</h3>
+          <span class="text-xs text-text-muted">optional — sensible defaults applied</span>
+        </div>
         <!-- Advanced: Retention -->
         <details class="group" open>
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
@@ -1929,9 +2070,11 @@
         {/if}
       </div>
 
-    <!-- Step 6: Review & Create -->
-    {:else}
-      <div class="space-y-5">
+    {/if}
+
+    <!-- Step 4 (cont.) · Review — plain-language summary of the job -->
+    {#if step === 4}
+      <div class="space-y-5 mt-6 pt-6 border-t border-border">
         <!-- Summary card -->
         <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3 text-sm">
           <div class="flex justify-between">
@@ -2012,10 +2155,34 @@
         </div>
       </div>
     {/if}
+    {/if}
 
     <!-- Navigation buttons -->
     <div class="flex flex-col gap-3 pt-5 mt-5 border-t border-border">
-      {#if stepHint && !canNext}
+      {#if expressMode}
+      {#if !canSaveExpress}
+        <p class="text-xs text-warning flex items-center gap-1.5">
+          <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          Pick a type, at least one item, a storage destination and a job name to continue.
+        </p>
+      {/if}
+      <div class="flex items-center justify-between">
+        <button type="button" onclick={() => showModal = false} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
+          Cancel
+        </button>
+        <div class="flex gap-2">
+          <button type="button" disabled={saving || !canSaveExpress} onclick={() => saveJob(true)}
+            class="px-4 py-2 text-sm font-medium text-vault border border-vault/50 hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40">
+            {editing ? 'Save & Run' : 'Create & Run Now'}
+          </button>
+          <button type="submit" disabled={saving || !canSaveExpress}
+            class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40">
+            {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Create Job'}{/if}
+          </button>
+        </div>
+      </div>
+      {:else}
+      {#if stepHint && (step < totalSteps ? !canNext : !canSaveExpress)}
         <p class="text-xs text-warning flex items-center gap-1.5">
           <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
           {stepHint}
@@ -2043,9 +2210,12 @@
             Next
           </button>
         {:else}
+          <!-- Final save is gated by the full validation (canSaveExpress), not
+               just the current step, so jumping the stepper straight to Review
+               can't save a job with a missing name/item/storage. -->
           <button
             type="button"
-            disabled={saving || !canNext}
+            disabled={saving || !canSaveExpress}
             onclick={() => saveJob(true)}
             class="px-4 py-2 text-sm font-medium text-vault border border-vault/50 hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
           >
@@ -2053,7 +2223,7 @@
           </button>
           <button
             type="submit"
-            disabled={saving || !canNext}
+            disabled={saving || !canSaveExpress}
             class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40"
           >
             {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Create Job'}{/if}
@@ -2061,6 +2231,7 @@
         {/if}
       </div>
       </div>
+      {/if}
     </div>
   </form>
 </Modal>

@@ -102,12 +102,14 @@
     }
   }
 
-  // Prune selected items when allowed types change while component is mounted
+  // Prune selected items when allowed types change while component is mounted.
   $effect(() => {
     if (!allowedTypes) return
-    // Read allowedTypes here so the effect re-runs when it changes;
-    // the actual filtering happens inside untrack().
-    void allowedTypes.length
+    // Track allowedTypes *content* (joined), not just its length — otherwise a
+    // same-length switch (e.g. containers → vms) wouldn't re-run and the picker
+    // would keep showing/holding the old type. The wizard now lets you toggle
+    // types on the same screen as the picker, which is what exposed this.
+    allowedTypes.join(',')
     untrack(() => {
       let changed = false
       for (const [key, item] of selected) {
@@ -117,6 +119,17 @@
         }
       }
       if (changed) emitChange()
+    })
+  })
+
+  // Keep the active tab valid as allowed types change. Content is gated on
+  // activeTab, and tabs are hidden entirely for a single type, so a stale
+  // activeTab renders the wrong list (e.g. "VMs selected" showing containers).
+  $effect(() => {
+    if (!allowedTypes || allowedTypes.length === 0) return
+    allowedTypes.join(',') // track content
+    untrack(() => {
+      if (!isTabAllowed(activeTab)) activeTab = allowedTypes[0]
     })
   })
 
@@ -345,6 +358,8 @@
       Failed to discover items: {error}
       <button onclick={discover} class="ml-2 underline hover:no-underline">Retry</button>
     </div>
+  {:else if allowedTypes && allowedTypes.length === 0}
+    <p class="text-sm text-text-muted py-6 text-center">Select a backup type above to choose items.</p>
   {:else}
     <!-- Tabs (hidden when single type selected) -->
     {#if !singleTab}

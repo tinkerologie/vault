@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { formatBytes, formatDate, formatDateCompact, parseConfig, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
@@ -13,6 +13,7 @@
   import CapacityTrend from '../components/CapacityTrend.svelte'
 
   let loading = $state(true)
+  let loadError = $state('')
   let destinations = $state([])
   let showModal = $state(false)
   let editing = $state(null)
@@ -226,6 +227,7 @@
     loading = true
     try {
       destinations = (await api.listStorage()) || []
+      loadError = ''
       // Load dependent job counts for each storage
       const counts = new SvelteMap()
       await Promise.all(destinations.map(async (d) => {
@@ -238,7 +240,11 @@
       refreshDedupStats()
       refreshTrajectories()
     } catch (e) {
-      showToast(e.message, 'error')
+      // Surface the failure as an error state (not a silent empty list that
+      // looks like "no storage configured") when we have nothing to show.
+      const msg = e.message || 'Failed to load storage destinations'
+      loadError = msg
+      showToast(msg, 'error')
     } finally {
       loading = false
     }
@@ -247,6 +253,7 @@
   function openCreate() {
     editing = null
     form = defaultForm()
+    formTestResult = null
     showModal = true
   }
 
@@ -267,6 +274,7 @@
       // the card is still the primary control.
       backup_database_enabled: !!dest.backup_database_enabled,
     }
+    formTestResult = null
     showModal = true
   }
 
@@ -417,8 +425,7 @@
     }
   }
 
-  function onTypeChange(event) {
-    const nextType = event?.currentTarget?.value || form.type
+  function applyType(nextType) {
     const defaults = {
       local: { path: '' },
       sftp: { host: '', port: 22, user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
@@ -433,6 +440,68 @@
       ...form,
       type: nextType,
       config: defaults[nextType] || {},
+    }
+    formTestResult = null
+  }
+
+  // Backend types offered in the add/edit picker (issue #206 / E8).
+  const storageTypes = [
+    { value: 'local', label: 'Local Path' },
+    { value: 'sftp', label: 'SFTP' },
+    { value: 'smb', label: 'SMB / CIFS' },
+    { value: 'nfs', label: 'NFS' },
+    { value: 'webdav', label: 'WebDAV' },
+    { value: 's3', label: 'S3 / S3-Compatible' },
+  ]
+
+  // Quick-select S3 providers — prefill endpoint/region hints. Placeholders with
+  // <angle-brackets> mark values the user must fill in (account-specific hosts).
+  const s3Presets = [
+    { label: 'AWS S3', endpoint: '', region: 'us-east-1', forcePathStyle: false },
+    { label: 'Backblaze B2', endpoint: 'https://s3.us-west-002.backblazeb2.com', region: 'us-west-002', forcePathStyle: false },
+    { label: 'Cloudflare R2', endpoint: 'https://<accountid>.r2.cloudflarestorage.com', region: 'auto', forcePathStyle: false },
+    { label: 'Wasabi', endpoint: 'https://s3.wasabisys.com', region: 'us-east-1', forcePathStyle: false },
+    { label: 'MinIO', endpoint: 'http://<host>:9000', region: 'us-east-1', forcePathStyle: true },
+    { label: 'IDrive E2', endpoint: 'https://<region>.idrivee2-XX.com', region: 'us-east-1', forcePathStyle: false },
+    { label: 'MEGA S4', endpoint: 'https://s3.g.s4.mega.io', region: 'g', forcePathStyle: false },
+  ]
+  function applyS3Preset(p) {
+    form.config = { ...form.config, endpoint: p.endpoint, region: p.region, force_path_style: p.forcePathStyle }
+    formTestResult = null
+  }
+
+  // Test the current (unsaved) form config before saving.
+  let formTesting = $state(false)
+  /** @type {{ success: boolean, error?: string } | null} */
+  let formTestResult = $state(null)
+  // A test result only describes the config it ran against — invalidate it as
+  // soon as any config field changes so a stale "Connection OK" can't linger.
+  // Tracks form.config only (not formTesting), so completing a test — which
+  // doesn't mutate config — never re-runs this and wipes the fresh result.
+  $effect(() => {
+    JSON.stringify(form.config) // track all nested config fields
+    formTestResult = null
+  })
+  async function testFormConnection() {
+    formTesting = true
+    formTestResult = null
+    // Snapshot the config under test so a result that lands after the user has
+    // since edited the form is dropped, rather than showing a stale result for
+    // the old config (the invalidation $effect can't undo an in-flight test).
+    const testedKey = JSON.stringify({ type: form.type, config: form.config })
+    const isStale = () => JSON.stringify({ type: form.type, config: form.config }) !== testedKey
+    try {
+      const result = await api.testStorageConfig({ type: form.type, config: JSON.stringify(form.config) })
+      if (isStale()) return
+      formTestResult = result
+      showToast(result.success ? 'Connection successful!' : `Connection failed: ${result.error || 'unknown error'}`, result.success ? 'success' : 'error')
+    } catch (e) {
+      if (isStale()) return
+      const msg = e?.message || 'Connection test failed'
+      formTestResult = { success: false, error: msg }
+      showToast(msg, 'error')
+    } finally {
+      formTesting = false
     }
   }
 
@@ -463,7 +532,7 @@
       <h1 class="text-2xl font-bold text-text">Storage Destinations</h1>
       <p class="text-sm text-text-muted mt-1">Configure where your backups are stored</p>
     </div>
-    {#if destinations.length > 0}
+    {#if destinations.length > 0 && !isReplicaMode()}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Add Storage
@@ -471,10 +540,22 @@
     {/if}
   </div>
 
+  {#if isReplicaMode()}
+    <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <span>Read-only replica — write actions are disabled on this instance.</span>
+    </div>
+  {/if}
+
   {#if loading}
     <Spinner text="Loading storage..." />
+  {:else if loadError && destinations.length === 0}
+    <div class="bg-danger/10 border border-danger/30 text-danger rounded-xl p-4 flex items-center gap-3">
+      <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <span class="text-sm">{loadError}</span>
+    </div>
   {:else if destinations.length === 0}
-    <EmptyState title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel="Add Storage" onaction={() => openCreate()}>
+    <EmptyState title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel={isReplicaMode() ? null : "Add Storage"} onaction={isReplicaMode() ? null : () => openCreate()}>
       {#snippet iconSlot()}
         <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons.local}/></svg>
       {/snippet}
@@ -505,6 +586,7 @@
                 <span class="text-xs text-text-dim uppercase">{dest.type}</span>
               </div>
             </div>
+            {#if !isReplicaMode()}
             <div class="flex items-center gap-1">
               <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
                 <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
@@ -517,6 +599,7 @@
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
             </div>
+            {/if}
           </div>
 
           <!-- Config summary -->
@@ -623,6 +706,7 @@
                Lets the user opt-in this destination to receive the daily
                encrypted DB snapshot. Hidden during dbBackupBusy flicker
                to keep the row from flashing. -->
+          {#if !isReplicaMode()}
           <div class="flex items-center justify-between gap-3 py-2 border-t border-border">
             <div class="min-w-0">
               <p class="text-xs font-medium text-text">Include in DB backup</p>
@@ -642,6 +726,7 @@
               </div>
             </button>
           </div>
+          {/if}
 
           {#if dest.dedup_enabled}
             {@const s = dedupStats.get(dest.id)}
@@ -677,6 +762,7 @@
                     {/if}
                   </span>
                 </div>
+                {#if !isReplicaMode()}
                 <div class="pt-1">
                   <button
                     type="button"
@@ -687,6 +773,7 @@
                     {cleanupBusy.has(dest.id) ? 'Cleaning…' : 'Run cleanup'}
                   </button>
                 </div>
+                {/if}
               {:else}
                 <div class="text-text-dim italic">Dedup repo not initialised yet – first backup populates it.</div>
               {/if}
@@ -714,6 +801,7 @@
               >
                 Breaker open
               </span>
+              {#if !isReplicaMode()}
               <button
                 type="button"
                 onclick={() => resetBreaker(dest.id)}
@@ -722,6 +810,7 @@
               >
                 {breakerBusy.has(dest.id) ? 'Resetting…' : 'Reset breaker'}
               </button>
+              {/if}
             {/if}
             <button
               onclick={() => testConnection(dest.id)}
@@ -756,16 +845,18 @@
     </div>
 
     <div>
-      <label for="stype" class="block text-sm font-medium text-text-muted mb-1.5">Type</label>
-      <select id="stype" value={form.type} onchange={onTypeChange}
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
-        <option value="local">Local Path</option>
-        <option value="sftp">SFTP</option>
-        <option value="smb">SMB / CIFS</option>
-        <option value="nfs">NFS</option>
-        <option value="webdav">WebDAV</option>
-        <option value="s3">S3 / S3-Compatible</option>
-      </select>
+      <span class="block text-sm font-medium text-text-muted mb-1.5">Type</span>
+      <div role="group" aria-label="Storage type" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {#each storageTypes as t (t.value)}
+          <button type="button" aria-pressed={form.type === t.value}
+            onclick={() => applyType(t.value)}
+            class="flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm text-left transition-colors
+              {form.type === t.value ? 'border-vault bg-vault/10 text-text' : 'border-border bg-surface-3 text-text-muted hover:border-border-hover hover:text-text'}">
+            <svg aria-hidden="true" class="w-5 h-5 shrink-0 {storageColors[t.value] || 'text-text-muted'}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons[t.value]}/></svg>
+            <span class="font-medium truncate">{t.label}</span>
+          </button>
+        {/each}
+      </div>
     </div>
 
     <!-- Dynamic config fields per type -->
@@ -926,6 +1017,17 @@
         </div>
       </details>
     {:else if form.type === 's3'}
+      <div>
+        <span class="block text-sm font-medium text-text-muted mb-1.5">Provider preset <Tooltip text="Prefills endpoint and region for common S3 providers. You can still edit any field. Placeholders in <angle-brackets> must be filled in with your account details." /></span>
+        <div class="flex flex-wrap gap-2">
+          {#each s3Presets as p (p.label)}
+            <button type="button" onclick={() => applyS3Preset(p)}
+              class="px-2.5 py-1 text-xs font-medium rounded-full border border-border bg-surface-3 text-text-muted hover:border-vault/40 hover:text-text transition-colors">
+              {p.label}
+            </button>
+          {/each}
+        </div>
+      </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label for="s3_bucket" class="block text-sm font-medium text-text-muted mb-1.5">Bucket</label>
@@ -1031,13 +1133,33 @@
       </label>
     </div>
 
-    <div class="flex justify-end gap-3 pt-4 border-t border-border">
-      <button type="button" onclick={() => showModal = false} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
-        Cancel
+    <div class="flex items-center justify-between gap-3 pt-4 border-t border-border">
+      <button type="button" onclick={testFormConnection} disabled={formTesting || saving}
+        class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+          {formTestResult?.success === true ? 'border-success text-success bg-success/10'
+           : formTestResult?.success === false ? 'border-danger text-danger bg-danger/10'
+           : 'border-vault/50 text-vault-text hover:bg-vault/10'}">
+        {#if formTesting}
+          <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          Testing…
+        {:else if formTestResult?.success === true}
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          Connection OK
+        {:else if formTestResult?.success === false}
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          Failed — retry
+        {:else}
+          Test connection
+        {/if}
       </button>
-      <button type="submit" disabled={saving} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-        {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Add Storage'}{/if}
-      </button>
+      <div class="flex gap-3">
+        <button type="button" onclick={() => showModal = false} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
+          Cancel
+        </button>
+        <button type="submit" disabled={saving || formTesting} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Add Storage'}{/if}
+        </button>
+      </div>
     </div>
   </form>
 </Modal>

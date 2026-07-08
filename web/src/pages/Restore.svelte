@@ -12,16 +12,20 @@
   let jobs = $state([])
   let toast = $state({ message: '', type: 'info', key: 0 })
 
-  // Parse query params from hash route (e.g. #/restore?job=1)
-  function getInitialJobId() {
+  // Parse query params from hash route (e.g. #/restore?job=1 or
+  // #/restore?type=container&name=plex from the Dashboard / command palette).
+  function getInitialParams() {
     const raw = getRawHash()
     const qIdx = raw.indexOf('?')
-    if (qIdx === -1) return null
+    if (qIdx === -1) return {}
     const params = new URLSearchParams(raw.slice(qIdx))
-    return params.get('job')
+    return { job: params.get('job'), type: params.get('type'), name: params.get('name') }
   }
 
-  const initialJobId = getInitialJobId()
+  const initialParams = getInitialParams()
+  const initialJobId = initialParams.job ?? null
+  const initialType = initialParams.type ?? null
+  const initialName = initialParams.name ?? null
 
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
@@ -76,6 +80,6 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <RestoreWizard {jobs} onrestore={handleRestore} {initialJobId} />
+    <RestoreWizard {jobs} onrestore={handleRestore} {initialJobId} {initialType} {initialName} />
   {/if}
 </div>

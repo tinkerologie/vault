@@ -1,6 +1,7 @@
 <script>
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { navigate } from '../lib/router.svelte.js'
+  import { formatDate } from '../lib/utils.js'
   import Toast from './Toast.svelte'
 
   let { show = $bindable(false), onclose = () => {} } = $props()
@@ -10,6 +11,11 @@
   let inputEl = $state(null)
   let jobs = $state([])
   let storages = $state([])
+  let containers = $state([])
+  let vms = $state([])
+  let folders = $state([])
+  /** @type {Array<{ jobId: number, jobName: string, date: string }>} */
+  let latestPoints = $state([])
   let loaded = $state(false)
   let toastMessage = $state('')
   let toastType = $state('info')
@@ -21,15 +27,20 @@
     toastKey++
   }
 
+  const ICON_CONTAINER = 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'
+  const ICON_VM = 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'
+  const ICON_FOLDER = 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z'
+  const ICON_CLOCK = 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'
+
   // Static navigation commands
   const navCommands = [
-    { id: 'nav-dashboard', label: 'Go to Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6', action: () => navigate('/') },
-    { id: 'nav-jobs', label: 'Go to Jobs', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', action: () => navigate('/jobs') },
-    { id: 'nav-storage', label: 'Go to Storage', icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4', action: () => navigate('/storage') },
-    { id: 'nav-history', label: 'Go to History', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', action: () => navigate('/history') },
-    { id: 'nav-restore', label: 'Go to Restore', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', action: () => navigate('/restore') },
-    { id: 'nav-logs', label: 'Go to Logs', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', action: () => navigate('/logs') },
-    { id: 'nav-settings', label: 'Go to Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z', action: () => navigate('/settings') },
+    { id: 'nav-dashboard', label: 'Go to Dashboard', category: 'Pages', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6', action: () => navigate('/') },
+    { id: 'nav-jobs', label: 'Go to Jobs', category: 'Pages', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', action: () => navigate('/jobs') },
+    { id: 'nav-storage', label: 'Go to Storage', category: 'Pages', icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4', action: () => navigate('/storage') },
+    { id: 'nav-history', label: 'Go to History', category: 'Pages', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', action: () => navigate('/history') },
+    { id: 'nav-restore', label: 'Go to Restore', category: 'Pages', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', action: () => navigate('/restore') },
+    { id: 'nav-logs', label: 'Go to Logs', category: 'Pages', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', action: () => navigate('/logs') },
+    { id: 'nav-settings', label: 'Go to Settings', category: 'Pages', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z', action: () => navigate('/settings') },
   ]
 
   // Load dynamic data when palette opens
@@ -46,18 +57,70 @@
 
   async function loadData() {
     try {
-      const [j, s] = await Promise.all([
+      const [j, s, c, v, f] = await Promise.all([
         api.listJobs().catch((err) => { console.error('CommandPalette: listJobs failed', err); return [] }),
         api.listStorage().catch((err) => { console.error('CommandPalette: listStorage failed', err); return [] }),
+        api.listContainers().catch(() => []),
+        api.listVMs().catch(() => []),
+        api.listFolders().catch(() => []),
       ])
       jobs = j || []
       storages = s || []
+      // /containers, /vms, /folders return { available, items } — not bare arrays.
+      containers = c?.items || []
+      vms = v?.items || []
+      folders = f?.items || []
       loaded = true
+      // Restore-point index: the single most-recent point per job (run once and
+      // cached). getRestorePoints returns points newest-first, so [0] is the
+      // latest. Capped at a small concurrency so opening the palette on an
+      // install with many jobs can't burst one request per job at once.
+      const points = []
+      const CONCURRENCY = 4
+      for (let i = 0; i < jobs.length; i += CONCURRENCY) {
+        const chunk = await Promise.all(
+          jobs.slice(i, i + CONCURRENCY).map(job =>
+            api.getRestorePoints(job.id)
+              .then(rps => (rps && rps[0]) ? { jobId: job.id, jobName: job.name, date: rps[0].created_at } : null)
+              .catch(() => null)
+          )
+        )
+        points.push(...chunk)
+      }
+      latestPoints = points.filter(Boolean)
     } catch (err) { console.error('CommandPalette: loadData failed', err) }
   }
 
   let dynamicCommands = $derived.by(() => {
     const cmds = []
+    // Backup items — jump straight to the item's restore view (issue #210 / E9).
+    const items = [
+      ...containers.map(c => ({ name: c.name, type: 'container', icon: ICON_CONTAINER })),
+      ...vms.map(v => ({ name: v.name, type: 'vm', icon: ICON_VM })),
+      ...folders.map(f => ({ name: f.name, type: 'folder', icon: ICON_FOLDER })),
+    ]
+    for (const it of items) {
+      if (!it.name) continue
+      cmds.push({
+        id: `item-${it.type}-${it.name}`,
+        label: it.name,
+        meta: it.type,
+        icon: it.icon,
+        category: 'Items',
+        action: () => navigate(`/restore?type=${it.type}&name=${encodeURIComponent(it.name)}`),
+      })
+    }
+    // Latest restore point per job — open the job's restore view.
+    for (const p of latestPoints) {
+      cmds.push({
+        id: `rp-${p.jobId}`,
+        label: `Restore: ${p.jobName}`,
+        meta: p.date ? formatDate(p.date) : 'latest',
+        icon: ICON_CLOCK,
+        category: 'Restore Points',
+        action: () => navigate(`/restore?job=${p.jobId}`),
+      })
+    }
     for (const job of jobs) {
       cmds.push({
         id: `job-${job.id}`,
@@ -99,12 +162,24 @@
     return cmds
   })
 
-  let allCommands = $derived([...navCommands, ...dynamicCommands])
+  let allCommands = $derived.by(() => {
+    const cmds = [...navCommands, ...dynamicCommands]
+    if (!isReplicaMode()) return cmds
+    // Replica mode: hide daemon-only routes (Jobs/Restore nav + item &
+    // restore-point deep-links, which all go to /restore) and write actions
+    // (Run Job). Read-only entries (Test Storage, other pages) stay.
+    return cmds.filter(c =>
+      c.id !== 'nav-jobs' && c.id !== 'nav-restore' &&
+      c.category !== 'Items' && c.category !== 'Restore Points' && c.category !== 'Jobs'
+    )
+  })
 
   let filteredCommands = $derived.by(() => {
     if (!query.trim()) return allCommands
     const q = query.toLowerCase()
-    return allCommands.filter(c => c.label.toLowerCase().includes(q))
+    return allCommands.filter(c =>
+      c.label.toLowerCase().includes(q) || (c.meta && c.meta.toLowerCase().includes(q))
+    )
   })
 
   // Reset selection when results change
@@ -169,6 +244,9 @@
           </div>
         {:else}
           {#each filteredCommands as cmd, i (cmd.id)}
+            {#if cmd.category && cmd.category !== filteredCommands[i - 1]?.category}
+              <div class="px-4 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-text-dim select-none">{cmd.category}</div>
+            {/if}
             <button
               type="button"
               class="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors
@@ -180,8 +258,8 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={cmd.icon}/>
               </svg>
               <span class="text-sm flex-1 truncate">{cmd.label}</span>
-              {#if cmd.category}
-                <span class="text-xs text-text-dim">{cmd.category}</span>
+              {#if cmd.meta}
+                <span class="text-xs text-text-dim capitalize shrink-0">{cmd.meta}</span>
               {/if}
               {#if i === selectedIndex}
                 <kbd class="text-xs text-text-dim bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">↵</kbd>

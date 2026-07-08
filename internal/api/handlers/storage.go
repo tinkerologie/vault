@@ -267,6 +267,35 @@ func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	defer storage.CloseAdapter(adapter)
+	if err := adapter.TestConnection(); err != nil {
+		respondJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// TestConfig handles POST /api/v1/storage/test — tests an unsaved config blob so
+// the add/edit modal can validate a destination before persisting it (issue
+// #206 / E8). Mirrors TestConnection but builds an ephemeral adapter from the
+// posted {type, config} instead of loading a saved row.
+func (h *StorageHandler) TestConfig(w http.ResponseWriter, r *http.Request) {
+	var dest db.StorageDestination
+	if err := json.NewDecoder(r.Body).Decode(&dest); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	dest.Type = strings.TrimSpace(dest.Type)
+	if dest.Type == "" {
+		respondError(w, http.StatusBadRequest, "type is required")
+		return
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		respondJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	defer storage.CloseAdapter(adapter)
 	if err := adapter.TestConnection(); err != nil {
 		respondJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
 		return

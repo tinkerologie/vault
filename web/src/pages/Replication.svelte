@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getLiveMode } from '../lib/runtime-config.js'
   import { formatDate, describeSchedule } from '../lib/utils.js'
@@ -52,6 +52,33 @@
     const cfg = { ...cloudConfig }
     cfg[key] = value
     form.config = JSON.stringify(cfg)
+  }
+
+  // Secret keys inside the config blob that must never be wiped by an edit
+  // that left them blank or showed a redaction marker.
+  const SECRET_KEYS = ['api_key']
+  const REDACTED_RE = /^(?:•+|\*+|<?redacted>?)$/i
+
+  function isBlankOrRedacted(v) {
+    return v == null || v === '' || REDACTED_RE.test(String(v).trim())
+  }
+
+  // On edit-save, keep any secret the user didn't retype. If the field is blank
+  // or a redaction marker, restore the value we originally loaded (the GET
+  // response still carries the real key today). If the original is ALSO masked
+  // (i.e. server-side redaction was added and we never held the real value),
+  // fail fast: the backend overwrites the whole config blob, so omitting the key
+  // would wipe the stored secret — make the user re-enter it instead.
+  function preserveSecrets(newConfigStr, originalConfigStr) {
+    let cfg, orig
+    try { cfg = JSON.parse(newConfigStr || '{}') } catch { cfg = {} }
+    try { orig = JSON.parse(originalConfigStr || '{}') } catch { orig = {} }
+    for (const key of SECRET_KEYS) {
+      if (!isBlankOrRedacted(cfg[key])) continue
+      if (!isBlankOrRedacted(orig[key])) { cfg[key] = orig[key]; continue }
+      throw new Error(`Please re-enter the ${key.replace(/_/g, ' ')} — it can't be preserved automatically.`)
+    }
+    return JSON.stringify(cfg)
   }
 
   function showToast(message, type = 'info') {
@@ -142,6 +169,7 @@
     try {
       const payload = { ...form }
       if (editing) {
+        payload.config = preserveSecrets(form.config, editing.config)
         await api.updateReplicationSource(editing.id, payload)
         showToast('Target updated', 'success')
       } else {
@@ -241,7 +269,7 @@
       <h1 class="text-2xl font-bold text-text">Replication</h1>
       <p class="text-sm text-text-muted mt-1">Replicate backups to remote Vault servers for disaster recovery</p>
     </div>
-    {#if sources.length > 0}
+    {#if sources.length > 0 && !isReplicaMode()}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Add Target
@@ -249,10 +277,17 @@
     {/if}
   </div>
 
+  {#if isReplicaMode()}
+    <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <span>Read-only replica — write actions are disabled on this instance.</span>
+    </div>
+  {/if}
+
   {#if loading}
     <Spinner text="Loading replication targets..." />
   {:else if sources.length === 0}
-    <EmptyState title="No replication targets" description="Add a remote Vault server to replicate backups for disaster recovery." actionLabel="Add Target" onaction={() => openCreate()}>
+    <EmptyState title="No replication targets" description="Add a remote Vault server to replicate backups for disaster recovery." actionLabel={isReplicaMode() ? null : "Add Target"} onaction={isReplicaMode() ? null : () => openCreate()}>
       {#snippet iconSlot()}
         <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
       {/snippet}
@@ -304,6 +339,7 @@
             {/if}
 
             <div class="flex items-center gap-2 mt-4 pt-4 border-t border-border">
+              {#if !isReplicaMode()}
               <button onclick={() => syncNow(src.id)} disabled={syncing === src.id}
                 class="px-3 py-1.5 bg-vault/10 hover:bg-vault/20 text-vault text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5">
                 {#if syncing === src.id}
@@ -314,6 +350,7 @@
                   Sync Now
                 {/if}
               </button>
+              {/if}
               <button onclick={() => testConnection(src.id)} disabled={testing === src.id}
                 class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5
                   {testResult?.id === src.id ? (testResult.success ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger') : 'bg-surface-3 hover:bg-surface-4 text-text'}">
@@ -333,6 +370,7 @@
                   <svg aria-hidden="true" class="w-3 h-3 transition-transform {expandedSource === src.id ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                   Jobs
                 </button>
+                {#if !isReplicaMode()}
                 <button onclick={() => openEdit(src)}
                   class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors"
                   aria-label="Edit replication target">
@@ -343,6 +381,7 @@
                   aria-label="Delete replication target">
                   Delete
                 </button>
+                {/if}
               </div>
             </div>
           </div>
@@ -406,9 +445,13 @@
         <div>
           <label for="repl-apikey" class="block text-sm font-medium text-text mb-1">
             Remote Vault API Key
-            <span class="text-danger ml-1" aria-hidden="true">*</span>
+            {#if editing}
+              <span class="text-text-dim font-normal ml-1">— leave blank to keep current</span>
+            {:else}
+              <span class="text-danger ml-1" aria-hidden="true">*</span>
+            {/if}
           </label>
-          <input id="repl-apikey" type="password" autocomplete="off" required value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder="Enter the remote server's API key"
+          <input id="repl-apikey" type="password" autocomplete="off" required={!editing} value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder={editing ? 'Leave blank to keep the current key' : "Enter the remote server's API key"}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <div class="mt-2 p-2.5 bg-warning/5 border border-warning/20 rounded-lg flex items-start gap-2">
             <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
