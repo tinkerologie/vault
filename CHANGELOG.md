@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.02] - 2026-07-09
+
 ### Added
 
 - **VM backup jobs now detect raw vs qcow2 disks and only offer supported backup types** (closes #163). Vault reads each VM's disk format at discovery time and exposes it (`disk_format`, `supports_incremental`) on `GET /api/v1/vms`. Because libvirt checkpoint-based incremental/differential backups require qcow2 disks, the job wizard now hides those options — and falls back to Full — when a selected VM uses raw or mixed disks, with an inline note naming the affected VM. This surfaces up front the constraint the engine previously enforced silently by downgrading raw-disk VMs to full backups.
