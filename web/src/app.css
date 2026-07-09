@@ -623,17 +623,18 @@ body {
   animation: slide-out 0.2s ease-in both;
 }
 
-/* Respect reduced motion preference */
+/* Respect reduced motion preference — app-wide. Runs every animation/transition
+   to completion in ~0 time (rather than `animation: none`, which would strand
+   opacity-0 entrance keyframes like `.stagger > *` invisible). Covers Tailwind's
+   animate-pulse/animate-spin and all duration-* transitions, which the previous
+   targeted list missed. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up,
-  .animate-backdrop,
-  .animate-panel-up,
-  .stagger > *,
-  .shimmer-bar,
-  .nav-active,
-  .animate-slide-out {
-    animation: none !important;
-    opacity: 1 !important;
-    transform: none !important;
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

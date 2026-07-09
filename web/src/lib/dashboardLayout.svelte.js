@@ -97,12 +97,14 @@ export function createDashboardLayout(validIds) {
     },
 
     // Resize a tile by cycling its width one step narrower (-1) or wider (+1)
-    // through SPAN_OPTIONS, starting from its current effective span.
-    resize(id, currentSpan, dir) {
+    // through SPAN_OPTIONS, starting from its current effective span. `maxSpan`
+    // caps growth for compact KPI tiles that look awkward stretched full-width.
+    resize(id, currentSpan, dir, maxSpan = 12) {
       const i = SPAN_OPTIONS.indexOf(currentSpan)
       const from = i < 0 ? SPAN_OPTIONS.indexOf(SPAN_OPTIONS.find(s => s >= currentSpan) ?? currentSpan) : i
       const next = Math.min(SPAN_OPTIONS.length - 1, Math.max(0, (from < 0 ? 0 : from) + dir))
-      spans = { ...spans, [id]: SPAN_OPTIONS[next] }
+      const capped = Math.min(SPAN_OPTIONS[next], maxSpan)
+      spans = { ...spans, [id]: capped }
       persist()
     },
 

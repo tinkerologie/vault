@@ -198,6 +198,10 @@
       })
       const allRuns = await Promise.all(runPromises)
       recentRuns = allRuns.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()).slice(0, 10)
+      // Retention prune counts change whenever a backup runs or a policy edits,
+      // both of which reload the dashboard — drop the cache so the $effect below
+      // re-fetches instead of showing stale prunable counts until remount.
+      retentionSummary = null
       error = ''
     } catch (e) {
       error = e.message || 'Failed to load dashboard'
@@ -436,11 +440,72 @@
     } catch { /* ignore */ } finally { forecastLoading = false }
   }
 
+  // Jobs with any Long-Term Retention policy set — these get pruned on their next
+  // run, so they drive the Retention tile. keep_* come with the jobs list.
+  const jobsWithRetention = $derived(jobs.filter(j =>
+    (j.keep_latest || 0) + (j.keep_daily || 0) + (j.keep_weekly || 0) + (j.keep_monthly || 0) + (j.keep_yearly || 0) > 0
+  ))
+
+  // Earliest next run among policied jobs only — the actual next prune. (The
+  // global soonestNextRun could be a job with no retention policy.)
+  const soonestRetentionNextRun = $derived.by(() => {
+    let best = Infinity
+    for (const job of jobsWithRetention) {
+      const t = nextRuns[job.id]
+      if (!t) continue
+      const ms = new Date(t).getTime()
+      if (!isNaN(ms) && ms < best) best = ms
+    }
+    return best === Infinity ? null : new Date(best).toISOString()
+  })
+
+  /** @type {{ prunable: number, total: number } | null} */
+  let retentionSummary = $state(null)
+  let retentionLoading = $state(false)
+  async function loadRetention() {
+    if (retentionLoading || retentionSummary) return
+    retentionLoading = true
+    try {
+      // Ask each policied job what its own policy would prune right now. The
+      // server returns restore-point IDs (no byte sizes), so we surface counts —
+      // there's no reclaimable-bytes source to honestly show.
+      const results = await Promise.all(jobsWithRetention.map(j =>
+        api.getRetentionPreview(j.id, {
+          keep_latest: j.keep_latest, keep_daily: j.keep_daily, keep_weekly: j.keep_weekly,
+          keep_monthly: j.keep_monthly, keep_yearly: j.keep_yearly,
+        }).catch(() => null)))
+      let prunable = 0, total = 0
+      for (const r of results) { if (r) { prunable += r.would_delete?.length || 0; total += r.total_restore_points || 0 } }
+      retentionSummary = { prunable, total }
+    } catch { /* ignore */ } finally { retentionLoading = false }
+  }
+
+  // Offsite replication rollup for the Replication-status tile. replicationSources
+  // is already loaded; no separate fetch. No lag field exists server-side, so we
+  // surface sync state + last-synced only.
+  const replicationSummary = $derived.by(() => {
+    const srcs = replicationSources || []
+    if (!srcs.length) return null
+    // Health is judged over enabled sources only — a disabled target is off by
+    // choice and must not block an "all synced" state. Mirror the Replication
+    // page's status buckets (success / error|failed / partial).
+    const enabled = srcs.filter(s => s.enabled)
+    const synced = enabled.filter(s => s.last_sync_status === 'success').length
+    const failed = enabled.filter(s => s.last_sync_status === 'error' || s.last_sync_status === 'failed').length
+    const partial = enabled.filter(s => s.last_sync_status === 'partial').length
+    // Scope "last synced" to enabled sources too, so a disabled source's stale
+    // timestamp can't outrank the newest active replication.
+    const times = enabled.map(s => s.last_sync_at).filter(Boolean).map(t => new Date(t).getTime()).filter(n => !isNaN(n))
+    const lastSync = times.length ? new Date(Math.max(...times)).toISOString() : null
+    return { total: srcs.length, enabled: enabled.length, synced, failed, partial, lastSync }
+  })
+
   // Trigger the lazy loaders whenever a tile that needs their data is present.
   $effect(() => {
     if ((layout.order.includes('sizeTrend') || layout.order.includes('calendar')) && !trendData) loadTrend()
     if (layout.order.includes('savings') && !dedupSummary) loadDedup()
     if (layout.order.includes('forecast') && !forecastSummary) loadForecast()
+    if (layout.order.includes('retention') && !retentionSummary && jobsWithRetention.length) loadRetention()
   })
 
   const trendChange = $derived.by(() => {
@@ -532,27 +597,29 @@
   // span = 12-col width. `bare` tiles render their own card (they reuse a
   // self-carding component/panel); the rest get the shared card shell.
   const CATALOG = {
-    health:       { name: 'Health score',       span: 3, icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
-    protected:    { name: 'Protected items',    span: 3, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-    nextrun:      { name: 'Next run',           span: 3, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-    lastbackup:   { name: 'Last backup',        span: 3, icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
+    health:       { name: 'Health score',       span: 3, maxSpan: 6, icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
+    protected:    { name: 'Protected items',    span: 3, maxSpan: 6, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+    nextrun:      { name: 'Next run',           span: 3, maxSpan: 6, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+    lastbackup:   { name: 'Last backup',        span: 3, maxSpan: 6, icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
     threetwoone:  { name: '3-2-1 rule',         span: 12, bare: true, icon: 'M9 17V9m3 8v-5m3 5v-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
     progress:     { name: 'Backup in progress', span: 6, bare: true, icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
     activity:     { name: 'Recent activity',    span: 6, bare: true, icon: 'M4 6h16M4 10h16M4 14h16M4 18h16' },
     jobs:         { name: 'Backup jobs',        span: 6, bare: true, icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
     protection:   { name: 'Protection status',  span: 6, bare: true, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-    storageCombined:  { name: 'Storage — combined',  span: 4, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
+    storageCombined:  { name: 'Storage — combined',  span: 4, maxSpan: 6, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
     storagePerTarget: { name: 'Storage — per target', span: 6, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
-    recovery:     { name: 'Recovery readiness', span: 4, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-    attention:    { name: 'Needs attention',    span: 4, icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
-    successrate:  { name: 'Success rate',       span: 4, icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
-    anomalies:    { name: 'Anomalies',          span: 4, icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
-    quickactions: { name: 'Quick actions',      span: 4, icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
+    recovery:     { name: 'Recovery readiness', span: 4, maxSpan: 6, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+    attention:    { name: 'Needs attention',    span: 4, maxSpan: 6, icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
+    successrate:  { name: 'Success rate',       span: 4, maxSpan: 6, icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+    anomalies:    { name: 'Anomalies',          span: 4, maxSpan: 6, icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
+    quickactions: { name: 'Quick actions',      span: 4, maxSpan: 6, icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
     sizeTrend:    { name: 'Backup size trend',  span: 6, icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
     calendar:     { name: 'Backup calendar',    span: 4, icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
-    savings:      { name: 'Dedup & compression', span: 4, icon: 'M19 14l-7 7m0 0l-7-7m7 7V3' },
-    forecast:     { name: 'Storage forecast',   span: 4, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+    savings:      { name: 'Dedup & compression', span: 4, maxSpan: 6, icon: 'M19 14l-7 7m0 0l-7-7m7 7V3' },
+    forecast:     { name: 'Storage forecast',   span: 4, maxSpan: 6, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
     largest:      { name: 'Largest backups',    span: 6, icon: 'M3 4h18M3 4v16M7 20V10m5 10V6m5 14v-8' },
+    retention:    { name: 'Retention & cleanup', span: 4, maxSpan: 6, icon: 'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' },
+    replicationStatus: { name: 'Replication status', span: 4, maxSpan: 6, icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
   }
 
   const layout = createDashboardLayout(Object.keys(CATALOG))
@@ -566,12 +633,14 @@
     if (id === 'protection') return totalItems > 0
     if (id === 'savings') return storage.some(s => s.dedup_enabled)
     if (id === 'largest') return largestBackups.length > 0
+    if (id === 'retention') return jobsWithRetention.length > 0
+    if (id === 'replicationStatus') return replicationSources.length > 0
     // sizeTrend / calendar / forecast render their own loading/empty state, so
     // they stay visible while data loads or if the series is thin.
     return true
   }
 
-  const tiles = $derived(layout.order.map((id, idx) => ({ id, idx, ...CATALOG[id], span: layout.spans[id] ?? CATALOG[id].span })))
+  const tiles = $derived(layout.order.map((id, idx) => ({ id, idx, ...CATALOG[id], span: Math.min(layout.spans[id] ?? CATALOG[id].span, CATALOG[id].maxSpan ?? 12) })))
   const visibleTiles = $derived(layout.editMode ? tiles : tiles.filter(t => tileAvailable(t.id)))
   const catalogList = $derived(
     Object.keys(CATALOG).map(id => ({ id, ...CATALOG[id], shown: layout.order.includes(id) }))
@@ -713,7 +782,7 @@
 {/snippet}
 
 {#snippet tHealth()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" title="View backup history" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
     {@render mHead(CATALOG.health.icon, 'Health score')}
     <div class="flex items-center gap-3 mt-auto">
       <div class="relative w-12 h-12 shrink-0">
@@ -771,7 +840,7 @@
         <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : partial ? 'bg-warning' : 'bg-danger'}"></span>
         {ok ? 'Success' : running ? 'Running' : partial ? 'Partial' : 'Failed'}
       </p>
-      <p class="text-[11px] text-text-dim mt-1 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
+      <p class="text-[11px] text-text-muted mt-1 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
       {#if lastBackup.size_bytes || lastBackup.duration_seconds}
         <p class="text-[11px] text-text-muted mt-auto pt-1 tabular-nums">{formatBytes(lastBackup.size_bytes || 0)}{lastBackup.duration_seconds ? ` · ${fmtDur(lastBackup.duration_seconds)}` : ''}</p>
       {/if}
@@ -971,7 +1040,7 @@
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
       {@render mHead(CATALOG.storageCombined.icon, 'Storage used')}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{formatBytes(storageCombined.used)}</p>
-      <p class="text-[11px] text-text-dim mt-1 tabular-nums">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
+      <p class="text-[11px] text-text-muted mt-1 tabular-nums">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
       <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full bg-vault" style="width: {storageCombined.pct}%"></div></div>
     </div>
   {:else}{@render metricCardEmpty(CATALOG.storageCombined.icon, 'Storage used')}{/if}
@@ -999,7 +1068,7 @@
     {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
     <p class="text-[26px] leading-none font-bold tabular-nums {fullyProtected ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {protectionBar}" style="width: {protectionPct}%"></div></div>
-    <p class="text-[11px] text-text-dim mt-1.5 tabular-nums">{totalProtected}/{totalItems} items recoverable</p>
+    <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{totalProtected}/{totalItems} items recoverable</p>
   </div>
 {/snippet}
 
@@ -1007,7 +1076,7 @@
   <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
     {@render mHead(CATALOG.attention.icon, 'Needs attention')}
     <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
-    <p class="text-[11px] text-text-dim mt-auto pt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
+    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
   </div>
 {/snippet}
 
@@ -1017,7 +1086,7 @@
     {#if successStats}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{successStats.pct}%</p>
       <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {successStats.pct >= 90 ? 'bg-success' : successStats.pct >= 50 ? 'bg-warning' : 'bg-danger'}" style="width: {successStats.pct}%"></div></div>
-      <p class="text-[11px] text-text-dim mt-1.5 tabular-nums">{successStats.ok} of {successStats.total} recent runs</p>
+      <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{successStats.ok} of {successStats.total} recent runs</p>
     {:else}
       <p class="text-[26px] leading-none font-bold text-text-dim">—</p>
       <p class="text-[11px] text-text-dim mt-auto pt-1.5">No completed runs yet</p>
@@ -1123,7 +1192,7 @@
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
       <p class="text-[26px] leading-none font-bold text-success tabular-nums">{dedupSummary.ratio.toFixed(1)}×</p>
-      <p class="text-[11px] text-text-dim mt-auto pt-1.5 tabular-nums">{formatBytes(dedupSummary.logical)} → {formatBytes(dedupSummary.physical)} stored</p>
+      <p class="text-[11px] text-text-muted mt-auto pt-1.5 tabular-nums">{formatBytes(dedupSummary.logical)} → {formatBytes(dedupSummary.physical)} stored</p>
     </div>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
@@ -1138,7 +1207,7 @@
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">~{forecastSummary.days}<span class="text-base text-text-dim font-semibold"> days</span></p>
-      <p class="text-[11px] text-text-dim mt-1.5">until {forecastSummary.name} is full</p>
+      <p class="text-[11px] text-text-muted mt-1.5">until {forecastSummary.name} is full</p>
       <p class="text-[11px] text-warning mt-auto pt-1 font-medium tabular-nums">+{formatBytes(forecastSummary.perDay)}/day</p>
     </div>
   {:else}
@@ -1168,6 +1237,39 @@
   </div>
 {/snippet}
 
+{#snippet tRetention()}
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => cardKey(e, () => navigate('/jobs'))}>
+    {@render mHead(CATALOG.retention.icon, 'Retention & cleanup')}
+    {#if retentionSummary}
+      <p class="text-[26px] leading-none font-bold text-text tabular-nums">{retentionSummary.prunable}<span class="text-base text-text-dim font-semibold"> prunable</span></p>
+      <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">of {retentionSummary.total} restore point{retentionSummary.total === 1 ? '' : 's'}{#if soonestRetentionNextRun} · next prune {relTimeUntil(soonestRetentionNextRun)}{/if}</p>
+    {:else}
+      <p class="text-[11px] text-text-dim mt-auto">{retentionLoading ? 'Loading…' : 'No retention policy set'}</p>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet tReplicationStatus()}
+  {#if replicationSummary}
+    {@const rs = replicationSummary}
+    {@const noneActive = rs.enabled === 0}
+    {@const ok = !noneActive && rs.failed === 0 && rs.partial === 0 && rs.synced === rs.enabled}
+    {@const caption = rs.failed > 0 ? `${rs.failed} failed` : rs.partial > 0 ? `${rs.partial} partial` : ok ? 'All offsite copies synced' : 'sync pending'}
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/replication')} onkeydown={(e) => cardKey(e, () => navigate('/replication'))}>
+      {@render mHead(CATALOG.replicationStatus.icon, 'Replication status')}
+      {#if noneActive}
+        <p class="text-base font-bold text-text-dim mt-auto">All sources disabled</p>
+        <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{rs.total} configured</p>
+      {:else}
+        <!-- numerator and denominator both scoped to enabled sources, so the
+             count and the caption never disagree (e.g. "2/2 · All synced"). -->
+        <p class="text-[26px] leading-none font-bold tabular-nums {rs.failed > 0 ? 'text-danger' : ok ? 'text-success' : 'text-warning'}">{rs.synced}<span class="text-base text-text-dim font-semibold">/{rs.enabled}</span></p>
+        <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{caption}{#if rs.lastSync} · last {relTime(rs.lastSync)}{/if}</p>
+      {/if}
+    </div>
+  {:else}{@render metricCardEmpty(CATALOG.replicationStatus.icon, 'Replication status')}{/if}
+{/snippet}
+
 {#snippet tileBody(id)}
   {#if id === 'health'}{@render tHealth()}
   {:else if id === 'protected'}{@render tProtected()}
@@ -1190,6 +1292,8 @@
   {:else if id === 'savings'}{@render tSavings()}
   {:else if id === 'forecast'}{@render tForecast()}
   {:else if id === 'largest'}{@render tLargest()}
+  {:else if id === 'retention'}{@render tRetention()}
+  {:else if id === 'replicationStatus'}{@render tReplicationStatus()}
   {/if}
 {/snippet}
 
@@ -1315,13 +1419,15 @@
                   <span class="text-[11px] font-medium text-text-muted truncate">{t.name}</span>
                 </div>
                 <div class="ml-auto flex items-center gap-1 shrink-0">
-                  <button onclick={() => layout.resize(t.id, t.span, -1)} disabled={t.span <= SPAN_OPTIONS[0]} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} narrower" title="Narrower">
-                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
-                  </button>
-                  <button onclick={() => layout.resize(t.id, t.span, 1)} disabled={t.span >= SPAN_OPTIONS[SPAN_OPTIONS.length - 1]} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} wider" title="Wider">
-                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-                  </button>
-                  <span class="w-px h-4 bg-border mx-0.5"></span>
+                  <span class="resize-controls flex items-center gap-1">
+                    <button onclick={() => layout.resize(t.id, t.span, -1, CATALOG[t.id].maxSpan ?? 12)} disabled={t.span <= SPAN_OPTIONS[0]} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} narrower" title="Narrower">
+                      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <button onclick={() => layout.resize(t.id, t.span, 1, CATALOG[t.id].maxSpan ?? 12)} disabled={t.span >= Math.min(SPAN_OPTIONS[SPAN_OPTIONS.length - 1], CATALOG[t.id].maxSpan ?? 12)} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} wider" title="Wider">
+                      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                    <span class="w-px h-4 bg-border mx-0.5"></span>
+                  </span>
                   <button onclick={() => layout.moveBy(t.id, -1)} disabled={t.idx === 0} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move {t.name} up" title="Move up">
                     <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/></svg>
                   </button>
@@ -1400,6 +1506,9 @@
     :global(.dash-tile-grid > .dash-tile[data-span="3"]),
     :global(.dash-tile-grid > .dash-tile[data-span="4"]) { grid-column: span 1 !important; }
     :global(.dash-cat-list) { grid-template-columns: minmax(0, 1fr); }
+    /* Below 720px the grid is forced to 1–2 columns, so a tile's stored span
+       can't visibly change — hide the resize arrows (reorder + remove stay). */
+    :global(.resize-controls) { display: none; }
   }
 
   /* Very small phones only: single column. Above this (e.g. 375/390px) small
