@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **License changed from MIT to AGPL-3.0.** Vault is now distributed under the GNU Affero General Public License v3.0 to keep derivative and network-served modifications open source.
+
 ## [v2026.07.02] - 2026-07-09
 
 ### Added

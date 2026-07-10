@@ -107,4 +107,5 @@ Home Assistant users: use the ready-to-use custom integration at
 
 ## License
 
-Vault is licensed under the [MIT License](LICENSE). It is a third-party community plugin for Unraid OS.
+Vault is licensed under the [GNU Affero General Public License v3.0](LICENSE). It is a third-party
+community plugin for Unraid OS.
