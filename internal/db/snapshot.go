@@ -141,6 +141,20 @@ func validateSnapshotPath(path string) (string, error) {
 	return absPath, nil
 }
 
+// removeValidated deletes p only when it is an absolute, traversal-free path.
+// The substring ".." check is the barrier CodeQL recognises for
+// go/path-injection (validateSnapshotPath's element-wise check deliberately
+// is not). Stricter than the validator — it would reject a filename like
+// "backups..2026" — but every caller passes internally-derived names
+// (validated-path + ".tmp", rotated/<base>.<timestamp>), so nothing
+// legitimate can hit that edge.
+func removeValidated(p string) error {
+	if !filepath.IsAbs(p) || strings.Contains(p, "..") {
+		return fmt.Errorf("refusing to remove suspicious path %q", p)
+	}
+	return os.Remove(p)
+}
+
 // SetSnapshotPath changes the snapshot path at runtime and immediately saves
 // a fresh snapshot at the new location. If newPath is empty, the default
 // snapshot path is used. This ensures the target location has up-to-date data.
@@ -306,7 +320,7 @@ func (sm *SnapshotManager) pruneRotated(dir string) {
 	toDelete := entries[:len(entries)-rotatedSnapshotsKept]
 	for _, e := range toDelete {
 		p := filepath.Join(dir, e.Name())
-		if err := os.Remove(p); err != nil {
+		if err := removeValidated(p); err != nil {
 			log.Printf("snapshot rotation: remove %s: %v", p, err)
 		}
 	}
@@ -335,7 +349,7 @@ func (sm *SnapshotManager) backupWorkingDBToPath(dest string) error {
 	defer sm.writeMu.Unlock()
 
 	tmp := dest + ".tmp"
-	_ = os.Remove(tmp)
+	_ = removeValidated(tmp)
 
 	conn, err := sm.db.Conn(context.Background())
 	if err != nil {

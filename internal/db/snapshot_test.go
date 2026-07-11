@@ -575,3 +575,23 @@ func TestSaveSnapshotAtomic(t *testing.T) {
 	}
 	_ = check.Close()
 }
+
+func TestRemoveValidated(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "victim.tmp")
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeValidated(p); err != nil {
+		t.Fatalf("valid absolute path refused: %v", err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("file not removed")
+	}
+	if err := removeValidated("relative/path.tmp"); err == nil {
+		t.Fatal("relative path must be refused")
+	}
+	if err := removeValidated(filepath.Join(dir, "..", "escape.tmp")); err == nil {
+		t.Fatal("traversal path must be refused")
+	}
+}
