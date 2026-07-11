@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -26,4 +27,13 @@ func DecryptReader(passphrase string, src io.Reader) (io.ReadCloser, error) {
 	}
 
 	return io.NopCloser(r), nil
+}
+
+// IsWrongPassphrase reports whether err (from DecryptReader) means the
+// supplied passphrase does not match the age file. age returns
+// *NoIdentityMatchError from header parsing, before any payload is read,
+// and DecryptReader wraps it with %w, so errors.As sees through the chain.
+func IsWrongPassphrase(err error) bool {
+	var nim *age.NoIdentityMatchError
+	return errors.As(err, &nim)
 }

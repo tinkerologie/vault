@@ -1344,7 +1344,7 @@
       <span class="text-sm">{error}</span>
     </div>
   {:else if storage.length === 0 && jobs.length === 0}
-    <Welcome onstart={() => navigate('/storage')} />
+    <Welcome onstart={() => navigate('/storage')} onrecover={isReplicaMode() ? undefined : () => navigate('/recover')} />
   {:else}
     <!-- Getting Started Guide (shown when no storage or no jobs) -->
     {#if storage.length === 0 || jobs.length === 0}

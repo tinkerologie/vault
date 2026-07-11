@@ -144,7 +144,7 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 | **Base Path**                   | Optional key prefix prepended to every object Vault writes.                                                                                                                                                            |
 | **Force path-style addressing** | Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual-hosted-style buckets. AWS S3 does not need this.                                                                                  |
 | **Upload timeout (minutes)**    | Optional. Hard ceiling on a single object upload (including multipart transfers). Default `0` = 240 (4 hours). Raise for very large files over slow links.                                                             |
-| **Part size (MiB)**             | Optional. Multipart part size used for uploads. S3 caps the number of parts at 10,000 so this directly sets the per-object ceiling (`part_size × 10,000`). Default `0` = 64 MiB → 640 GB ceiling. Range 5–5120 MiB.   |
+| **Part size (MiB)**             | Optional. Multipart part size used for uploads. S3 caps the number of parts at 10,000 so this directly sets the per-object ceiling (`part_size × 10,000`). Default `0` = 64 MiB → 640 GB ceiling. Range 5–5120 MiB.    |
 
 **Provider notes:**
 
@@ -160,20 +160,21 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 
 - Vault uses the AWS SDK v2's reusable client, which pools HTTP connections internally — a single S3 destination can sustain many concurrent uploads.
 - Server-side encryption is your provider's responsibility. Vault's own encryption (Settings → Security) layers on top and protects backups even from the storage operator.
-- **Custom endpoints and the AWS SDK flexible-checksum trailer** — Since AWS SDK Go v2 v1.32, every `PutObject` and `UploadPart` is signed with an `x-amz-checksum-crc32` trailer header. AWS S3 includes that trailer in the SigV4 canonical request; most S3-compatible gateways (MEGA, Backblaze B2, IDrive E2, older MinIO builds) do not, so they recompute the signature without it and respond `403 SignatureDoesNotMatch`. The most common symptom is "Test Connection succeeds but every upload fails", because the test path (`HeadBucket`) has no body and no trailer. Vault now automatically dials back the checksum behaviour to `WhenRequired` whenever a custom **Endpoint** is configured — real AWS keeps the trailer for end-to-end integrity, S3-compat services get a clean request and accept the PUT. Vault's own SHA-256 verification in the runner (`verify_backup`) continues to guarantee object integrity end-to-end regardless of whether the trailer is sent.
+- **"Test connection succeeds but every upload fails with `SignatureDoesNotMatch`"** — a known quirk of many S3-compatible providers (MEGA, Backblaze B2, IDrive E2, older MinIO), and Vault handles it for you automatically whenever a custom **Endpoint** is set. Background: recent AWS SDK versions add a checksum trailer to every upload that these providers don't understand, so they reject the request; the connection test passes because it sends no data. With a custom endpoint Vault omits the trailer (real AWS S3 keeps it), and Vault's own SHA-256 verification still guarantees backup integrity either way. If you see this error anyway, double-check the Endpoint URL and region.
 - **Sizing Part size** — the S3 protocol caps a multipart upload at 10,000 parts, so the maximum object Vault can upload is `part_size × 10,000`. Default 64 MiB → 640 GB ceiling, which fits typical home-server workloads. For Immich libraries, full-disk images, or other multi-TB datasets, raise the value: 256 → 2.5 TB, 512 → 5 TB, 1024 → 10 TB. Peak upload memory ≈ `part_size × concurrency` (default 5), so 1 GiB parts cost ~5 GiB RAM during an active upload. Backblaze B2, MinIO, AWS S3, Cloudflare R2, and Wasabi all accept parts in the 5 MiB – 5 GiB range.
 
 ---
 
 ## Testing a Connection
 
-After filling in the fields, always click **Test Connection** before saving. Vault will:
+After filling in the fields, always click **Test connection** before saving. What the test checks depends on the destination type:
 
-1. Attempt to connect using the provided credentials
-2. Try to create and delete a temporary test file in the configured path
-3. Report success or a specific error (wrong password, path not found, permission denied, etc.)
+- **All types** — the destination is reachable and the credentials work.
+- **Local, SFTP, NFS, WebDAV** — Vault also writes and deletes a small test file, so write access is confirmed.
+- **S3** — Vault only checks that the bucket exists and is accessible (no data is written).
+- **SMB** — Vault only lists the configured directory (no data is written).
 
-If the test fails, fix the error before saving — the destination will not work for backups until the connection succeeds.
+On failure you get a specific error (wrong password, path not found, permission denied, etc.) — fix it before saving. Note that on S3 and SMB a passing test can still be followed by an upload failure if the bucket or share is read-only, because the test does not write any data there.
 
 ---
 
@@ -193,6 +194,13 @@ Imported backups appear as restore points on the relevant jobs so you can restor
 
 ## Encryption
 
-If you have configured an encryption passphrase under **Settings → Security → Encryption**, all backup archives written to storage are encrypted with AES-256-GCM before they leave the server. The encryption key is derived from your passphrase — make sure to keep it safe, as there is no recovery path if it is lost.
+If you have configured an encryption passphrase under **Settings → Security → Encryption**, all backup archives written to storage are encrypted with your backup password (age encryption — a modern, audited standard) before they leave the server. Make sure to keep the password safe, as there is no recovery path if it is lost.
 
 Encryption is transparent to storage destinations — it applies regardless of destination type.
+
+---
+
+## Next steps
+
+- Create a job that writes to your new destination: [Backup Jobs](backup-jobs.md)
+- Keep a copy of your settings with your data for recovery: [Disaster Recovery](disaster-recovery.md)

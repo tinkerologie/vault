@@ -42,11 +42,12 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
-  - How Backup Works: how-backup-works.md
   - Guides:
       - Backup Jobs: guides/backup-jobs.md
       - Storage Destinations: guides/storage-destinations.md
       - Anomaly Detection: guides/anomaly-detection.md
+      - Disaster Recovery: guides/disaster-recovery.md
+  - How Backup Works: how-backup-works.md
   - Settings Reference:
       - App / Daemon Settings: reference/app-settings.md
       - Job Configuration: reference/job-config.md
@@ -61,5 +62,5 @@ nav:
   - API & MCP:
       - REST API: api.md
       - MCP Server: mcp.md
-  - Changelog: changelog.md
   - FAQ: faq.md
+  - Changelog: changelog.md

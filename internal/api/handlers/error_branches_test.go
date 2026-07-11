@@ -505,7 +505,7 @@ func TestStorageCloseBreaker_NilRunner(t *testing.T) {
 		t.Fatalf("create dest: %v", err)
 	}
 
-	h := NewStorageHandler(d, nil) // explicit nil runner.
+	h := NewStorageHandler(d, nil, nil) // explicit nil runner.
 	idStr := strconv.FormatInt(destID, 10)
 	w := httptest.NewRecorder()
 	h.CloseBreaker(w, reqWithID(http.MethodPost, "/api/v1/storage/x/breaker/close", idStr, nil))

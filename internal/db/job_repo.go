@@ -204,6 +204,19 @@ func (d *DB) GetJobItems(jobID int64) ([]JobItem, error) {
 	return items, rows.Err()
 }
 
+// UpdateJobItemSettings replaces the settings JSON of one job item. Used by
+// the DR path-remap endpoint; there is deliberately no full UpdateJobItem.
+func (d *DB) UpdateJobItemSettings(id int64, settings string) error {
+	res, err := d.Exec(`UPDATE job_items SET settings = ? WHERE id = ?`, settings, id)
+	if err != nil {
+		return fmt.Errorf("updating job item settings: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (d *DB) DeleteJobItems(jobID int64) error {
 	_, err := d.Exec("DELETE FROM job_items WHERE job_id = ?", jobID)
 	return err

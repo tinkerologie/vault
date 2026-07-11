@@ -15,6 +15,7 @@
   import Settings from './pages/Settings.svelte'
   import Replication from './pages/Replication.svelte'
   import Recovery from './pages/Recovery.svelte'
+  import RecoverWizard from './pages/RecoverWizard.svelte'
   import Anomalies from './pages/Anomalies.svelte'
   import Spinner from './components/Spinner.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
@@ -87,6 +88,7 @@
     const route = getRoute()
     if (route === '/anomalies' && !getAnomalyEnabled()) navigate('/')
     else if (route === '/replication' && !replicaMode && !getReplicationEnabled()) navigate('/')
+    else if (route === '/recover' && replicaMode) navigate('/')
   })
 
   let ready = $state(false)
@@ -240,6 +242,8 @@
         <Replication />
       {:else if getRoute() === '/recovery'}
         <Recovery />
+      {:else if getRoute() === '/recover'}
+        <RecoverWizard />
       {:else if getRoute() === '/anomalies'}
         <Anomalies />
       {:else if getRoute() === '/settings'}

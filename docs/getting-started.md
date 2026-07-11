@@ -45,7 +45,7 @@ The Dashboard shows a three-step welcome guide: add storage → create job → r
 Vault needs somewhere to write your backups before you can create any jobs.
 
 1. Go to **Storage** in the left sidebar
-2. Click **Add Destination**
+2. Click **Add Storage**
 3. Give it a name (e.g. "NAS Backups")
 4. Choose a type:
 
@@ -59,7 +59,7 @@ Vault needs somewhere to write your backups before you can create any jobs.
    | **S3**     | AWS S3 and S3-compatible object storage — Backblaze B2, MinIO, Cloudflare R2, Wasabi, MEGA |
 
 5. Fill in the connection details. See [Storage Destinations](guides/storage-destinations.md) for field-by-field guidance.
-6. Click **Test Connection** to verify Vault can reach the destination.
+6. Click **Test connection** to verify Vault can reach the destination.
 7. Click **Save**.
 
 ![Storage destinations page](screenshots/03-storage.png)
@@ -74,25 +74,25 @@ A job defines _what_ to back up, _where_ to put it, _when_ to run, and how many 
 2. Click **Create Job**
 3. Work through the wizard:
 
-   **Step 1 — Name & Type**
-
-   - Give the job a descriptive name (e.g. "Weekly Container Backup")
-   - Choose a backup type: **Full**, **Incremental**, or **Differential**
-
-   **Step 2 — Select Items**
+   **Step 1 — What**
 
    - Pick which Docker containers, VMs, ZFS datasets, folders, or plugins to include
    - Items are listed automatically from what Vault discovers on your server
    - For containers you can also list sub-paths to exclude (e.g. Plex transcode cache)
 
-   **Step 3 — Storage Destination**
+   **Step 2 — Where & when**
 
-   - Select the destination you created in step 3
+   - Select the storage destination you created earlier
+   - Set a schedule (hourly, daily, weekly, monthly, yearly, or custom cron) — or leave it empty for a manual-only job
 
-   **Step 4 — Schedule & Retention**
+   **Step 3 — How**
 
-   - Set a cron schedule (hourly, daily, weekly, monthly, yearly, or custom cron)
-   - Choose retention: either _keep last N restore points_ or a Long-Term Retention (LTR) policy that keeps a tunable number of daily / weekly / monthly / yearly snapshots
+   - Choose a backup type: **Full**, **Incremental**, or **Differential**
+   - Optionally adjust compression and advanced options like retention: either _keep last N restore points_ or a Long-Term Retention (LTR) policy that keeps a tunable number of daily / weekly / monthly / yearly snapshots
+
+   **Step 4 — Name & review**
+
+   - Give the job a descriptive name (e.g. "Weekly Container Backup")
 
 4. Review the summary and click **Save**.
 
@@ -143,13 +143,11 @@ Each restore point also shows chain health annotations so you can see if a full 
 | Use the REST API                                  | [API Reference](api.md)                                        |
 | Use the MCP server                                | [MCP](mcp.md)                                                  |
 
-For a ready-to-use Home Assistant custom integration, see
-[ha-vault](https://github.com/ruaan-deysel/ha-vault).
-
-> **Disaster recovery:** Back up **both** `vault.db` and `vault.key` (siblings in
-> `/boot/config/plugins/vault/`). To rebuild a lost dedup index from intact storage,
-> run `vault dedup repair --dest <id>`. If you restored `vault.key` to a different
-> location, pass `--key /path/to/vault.key`.
+> **Prepare for disaster now:** Enable **Include in DB backup** on at least one
+> storage destination so your Vault settings travel with your data, and keep
+> your backup password somewhere safe off the server. If you ever lose the
+> server, the [Disaster Recovery guide](guides/disaster-recovery.md) walks you
+> through bringing everything back.
 
 ---
 

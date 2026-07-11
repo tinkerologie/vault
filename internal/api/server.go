@@ -44,6 +44,7 @@ type Server struct {
 	storageHandler     *handlers.StorageHandler
 	replicationHandler *handlers.ReplicationHandler
 	anomalyHandler     *handlers.AnomalyHandler
+	recoveryHandler    *handlers.RecoveryHandler
 
 	// configChangeHook is called after any handler mutates persistent
 	// configuration. It flushes the DB to USB flash.
@@ -126,6 +127,9 @@ func (s *Server) SetConfigChangeHook(fn handlers.ConfigChangeHook) {
 	}
 	if s.replicationHandler != nil {
 		s.replicationHandler.SetConfigChangeHook(fn)
+	}
+	if s.recoveryHandler != nil {
+		s.recoveryHandler.SetConfigChangeHook(fn)
 	}
 }
 

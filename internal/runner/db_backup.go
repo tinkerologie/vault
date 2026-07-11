@@ -45,7 +45,7 @@ func (r *Runner) backupDatabase(ctx context.Context, jobDest db.StorageDestinati
 	// it byte-by-byte. Best-effort: a busy checkpoint is fine, the file is
 	// still readable via SQLite's recovery on the destination side, just
 	// slightly larger.
-	if conn, err := r.db.DB.Conn(context.Background()); err == nil {
+	if conn, err := r.db.Conn(context.Background()); err == nil {
 		if _, ckErr := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); ckErr != nil {
 			log.Printf("db_backup: wal_checkpoint failed: %v (continuing)", ckErr)
 		}

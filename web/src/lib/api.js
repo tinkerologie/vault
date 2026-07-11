@@ -79,7 +79,18 @@ export const api = {
   closeBreaker: (id) => request('POST', `/storage/${id}/breaker/close`),
   scanStorage: (id, path = '') => request('POST', `/storage/${id}/scan${path ? '?path=' + encodeURIComponent(path) : ''}`),
   importBackups: (id, backups) => request('POST', `/storage/${id}/import`, { backups }),
-  restoreDB: (id, storagePath) => request('POST', `/storage/${id}/restore-db`, { storage_path: storagePath }),
+  // Restore the Vault database from a backup on this destination. With
+  // verifyOnly the server only checks the file (and passphrase, when
+  // encrypted) without touching the live DB.
+  restoreDB: (id, storagePath, passphrase = '', verifyOnly = false) =>
+    request('POST', `/storage/${id}/restore-db`,
+      { storage_path: storagePath, passphrase, verify_only: verifyOnly },
+      // A real restore downloads + swaps the whole DB — give it 10 minutes
+      // so a slow remote doesn't abort the request client-side mid-restore.
+      { timeoutMs: verifyOnly ? TEST_TIMEOUT_MS : 600000 }),
+  // List database backups found under _vault on this destination, latest
+  // first then newest→oldest.
+  listDBBackups: (id) => request('GET', `/storage/${id}/db-backups`),
   getDependentJobs: (id) => request('GET', `/storage/${id}/jobs`),
 
   // Jobs
@@ -206,6 +217,10 @@ export const api = {
 
   // Recovery
   getRecoveryPlan: () => request('GET', '/recovery/plan'),
+  // Disaster recovery: audit configured storage/job-item paths against this
+  // server's filesystem, then remap the ones that no longer exist.
+  pathAudit: () => request('GET', '/recovery/path-audit'),
+  pathRemap: (updates) => request('POST', '/recovery/path-remap', { updates }),
 
   // Anomalies
   listAnomalies: (filter = {}) => {

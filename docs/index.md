@@ -11,10 +11,17 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 - **Back up more than containers** — Docker containers, libvirt VMs, ZFS datasets, folders, and installed Unraid plugins.
 - **Send backups anywhere** — local disk, SFTP, SMB, NFS, WebDAV, or S3-compatible object storage, with per-destination bandwidth throttling.
 - **Choose a strategy** — full, incremental, and differential chains with simple-count or Long-Term Retention.
-- **Stay safe** — AES-256-GCM encryption, content-defined deduplication, and per-run SHA-256 verification.
+- **Stay safe** — backups encrypted with your backup password (age encryption — a modern, audited standard), content-defined deduplication, and per-run SHA-256 verification.
 - **Monitor in real time** — live WebSocket progress streaming across Dashboard, Jobs, Restore, Storage, History, Replication, Recovery, Logs, and Settings pages.
 
 See [How Backup Works](how-backup-works.md) for the concepts behind these features.
+
+## Finding your way
+
+- **New to Vault?** [Getting Started](getting-started.md) walks you from install to your first backup in about ten minutes.
+- **Setting things up?** The [Guides](guides/backup-jobs.md) are step-by-step recipes for jobs, storage, anomaly detection, and disaster recovery.
+- **Curious how it works?** [How Backup Works](how-backup-works.md) explains full/incremental chains, retention, encryption, and deduplication in plain language.
+- **Automating?** See the [REST API](api.md) and [MCP server](mcp.md).
 
 ## Integrations
 

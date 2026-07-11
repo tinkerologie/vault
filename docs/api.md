@@ -69,7 +69,8 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 | POST   | `/storage/{id}/gc`             | Run mark-and-sweep GC on the destination's dedup repo                                                              |
 | POST   | `/storage/{id}/scan`           | Scan storage for importable backups                                                                                |
 | POST   | `/storage/{id}/import`         | Import backups discovered during scan (preserves dedup manifest IDs)                                               |
-| POST   | `/storage/{id}/restore-db`     | Restore the Vault database from a centralized backup at `_vault/vault.db`                                          |
+| GET    | `/storage/{id}/db-backups`     | List Vault database backups found under `_vault/` on the destination (newest first)                                |
+| POST   | `/storage/{id}/restore-db`     | Restore the Vault database from a `_vault/` backup — see body fields below                                         |
 | GET    | `/storage/{id}/jobs`           | Returns `{ jobs: [{id, name}], job_count: N }` — dependent-job list                                                |
 | GET    | `/storage/{id}/list`           | List files under a storage path                                                                                    |
 | GET    | `/storage/{id}/files`          | Download a file from storage                                                                                       |
@@ -140,9 +141,21 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Recovery
 
-| Method | Endpoint         | Description                                                                                                  |
-| ------ | ---------------- | ------------------------------------------------------------------------------------------------------------ |
-| GET    | `/recovery/plan` | Recovery plan with per-step item status; step downgrades to `warning` if any item is missing a restore point |
+| Method | Endpoint               | Description                                                                                                  |
+| ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| GET    | `/recovery/plan`       | Recovery plan with per-step item status; step downgrades to `warning` if any item is missing a restore point |
+| GET    | `/recovery/path-audit` | List job/item paths that don't exist on this server (used by the Recover Vault wizard's path check)          |
+| POST   | `/recovery/path-remap` | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                              |
+
+### Restoring the database (`restore-db`)
+
+`POST /storage/{id}/restore-db` takes a JSON body:
+
+- `storage_path` — path of the database backup on the destination, e.g. `_vault/vault.db.latest.age` (encrypted) or a timestamped copy like `_vault/vault.db.2026-07-01T02-00-00.age`. Unencrypted backups use the `.db` extension.
+- `passphrase` — the backup password; required when the backup is encrypted.
+- `verify_only` — when `true`, validates the backup (and passphrase) without replacing the current database.
+
+List the available backups first with `GET /storage/{id}/db-backups`.
 
 ## MCP (Model Context Protocol)
 

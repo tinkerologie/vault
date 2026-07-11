@@ -77,7 +77,7 @@ func TestRestoreDB_BadStorageConfig(t *testing.T) {
 		t.Fatalf("create dest: %v", err)
 	}
 
-	h := NewStorageHandler(d, nil)
+	h := NewStorageHandler(d, nil, nil)
 	idStr := strconv.FormatInt(destID, 10)
 	body := []byte(`{"storage_path":"any-path"}`)
 	w := httptest.NewRecorder()
@@ -106,7 +106,7 @@ func TestRefreshCapacity_BadAdapterConfig(t *testing.T) {
 		t.Fatalf("create dest: %v", err)
 	}
 
-	h := NewStorageHandler(d, nil)
+	h := NewStorageHandler(d, nil, nil)
 	idStr := strconv.FormatInt(destID, 10)
 	w := httptest.NewRecorder()
 	h.RefreshCapacity(w, reqWithID(http.MethodPost, "/api/v1/storage/x/capacity-check", idStr, nil))
@@ -135,7 +135,7 @@ func TestRefreshCapacity_AdapterGetCapacityFails(t *testing.T) {
 		t.Fatalf("create dest: %v", err)
 	}
 
-	h := NewStorageHandler(d, nil)
+	h := NewStorageHandler(d, nil, nil)
 	idStr := strconv.FormatInt(destID, 10)
 	w := httptest.NewRecorder()
 	h.RefreshCapacity(w, reqWithID(http.MethodPost, "/api/v1/storage/x/capacity-check", idStr, nil))
@@ -149,7 +149,7 @@ func TestRefreshCapacity_AdapterGetCapacityFails(t *testing.T) {
 func TestRefreshCapacity_DestNotFound(t *testing.T) {
 	t.Parallel()
 	d := newTestDB(t)
-	h := NewStorageHandler(d, nil)
+	h := NewStorageHandler(d, nil, nil)
 	w := httptest.NewRecorder()
 	h.RefreshCapacity(w, reqWithID(http.MethodPost, "/api/v1/storage/9999/capacity-check", "9999", nil))
 	if w.Code != http.StatusNotFound {

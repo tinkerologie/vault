@@ -167,5 +167,5 @@ func newStorageHandlerForTest(t *testing.T) *StorageHandler {
 	hub := ws.NewHub()
 	go hub.Run()
 	r := runner.New(d, hub, bytes.Repeat([]byte{0xcd}, 32))
-	return NewStorageHandler(d, r)
+	return NewStorageHandler(d, r, bytes.Repeat([]byte{0xcd}, 32))
 }

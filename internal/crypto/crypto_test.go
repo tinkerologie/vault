@@ -171,3 +171,35 @@ func TestUnsealTooShort(t *testing.T) {
 		t.Error("expected too-short error")
 	}
 }
+
+func TestIsWrongPassphrase(t *testing.T) {
+	enc, err := EncryptReader("correct-passphrase", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := io.ReadAll(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = enc.Close()
+
+	_, err = DecryptReader("wrong-passphrase", bytes.NewReader(ciphertext))
+	if err == nil {
+		t.Fatal("expected error for wrong passphrase")
+	}
+	if !IsWrongPassphrase(err) {
+		t.Fatalf("expected wrong-passphrase detection, got: %v", err)
+	}
+
+	_, err = DecryptReader("whatever", strings.NewReader("not an age file"))
+	if err == nil {
+		t.Fatal("expected error for garbage input")
+	}
+	if IsWrongPassphrase(err) {
+		t.Fatal("garbage input must not read as wrong passphrase")
+	}
+
+	if IsWrongPassphrase(nil) {
+		t.Fatal("nil must not read as wrong passphrase")
+	}
+}

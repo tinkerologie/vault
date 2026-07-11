@@ -40,7 +40,7 @@ func TestRestoreDB_InMemoryDatabaseRejected(t *testing.T) {
 	hub := ws.NewHub()
 	go hub.Run()
 	r := runner.New(d, hub, serverKey)
-	h := NewStorageHandler(d, r)
+	h := NewStorageHandler(d, r, serverKey)
 
 	// Write a valid db file at the storage path.
 	srcDBPath := filepath.Join(t.TempDir(), "src.db")

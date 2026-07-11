@@ -92,6 +92,16 @@
     <p class="text-sm text-text-muted mt-1">Your disaster recovery plan – what to do if your server dies.</p>
   </div>
 
+  <div class="bg-surface-2 border border-border rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
+    <div class="flex-1">
+      <h2 class="text-sm font-medium text-text">Recovering after a server rebuild?</h2>
+      <p class="text-xs text-text-muted">
+        The Recover Vault wizard reconnects your backup storage and restores your settings step by step.
+      </p>
+    </div>
+    <button class="btn btn-primary shrink-0" onclick={() => navigate('/recover')}>Recover Vault</button>
+  </div>
+
   {#if loading}
     <Spinner text="Loading recovery plan..." />
   {:else if error}

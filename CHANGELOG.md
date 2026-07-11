@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Recover Vault wizard — guided disaster recovery after a server rebuild** (closes #220). A fresh install now offers a clear choice — **Set up Vault** or **Recover from a backup** — and the new five-step wizard walks you through reconnecting your backup storage, entering your backup password, restoring the Vault database (jobs, storage, history, settings), and fixing folder paths that changed on the rebuilt server. Also reachable any time from Recovery → **Recover Vault**.
+- **Database restore now works with encrypted backups.** `POST /api/v1/storage/{id}/restore-db` restores the encrypted `vault.db.latest.age` snapshots Vault writes by default (previously only a plaintext `vault.db` could be restored), verifies your backup password before touching anything (`verify_only`), re-seals the password with the new server's key so scheduled DB backups stay encrypted after recovery, and reloads the database in-process — **no daemon restart needed** after a restore.
+- `GET /api/v1/storage/{id}/db-backups` lists the database snapshots available on a destination (newest first, with the latest pointer flagged).
+- **Path check after recovery**: `GET /api/v1/recovery/path-audit` flags folder and local-storage paths from the restored config that don't exist on this server, and `POST /api/v1/recovery/path-remap` updates them in place — the exact "my array and shares are different now" pain from #220.
+- **Disaster Recovery guide** in the docs — including why hand-copying `vault.db` to the flash drive doesn't work and what to do instead.
+
+### Fixed
+
+- **Vault's own database now reliably runs in WAL mode with a 30-second lock timeout.** The SQLite driver was silently ignoring the connection options that were meant to set these, so freshly created databases ran in rollback-journal mode with no busy timeout — slower under concurrent access and more prone to "database is locked" errors. All connection settings are now applied in a form the driver understands, and Vault logs a warning if WAL is unavailable on the filesystem.
+
 ### Changed
 
 - **License changed from MIT to AGPL-3.0.** Vault is now distributed under the GNU Affero General Public License v3.0 to keep derivative and network-served modifications open source.

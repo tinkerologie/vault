@@ -8,26 +8,7 @@ Go to **Jobs** → **Create Job**. The wizard has four steps.
 
 ---
 
-### Step 1 — Name & Type
-
-| Field           | Description                                                                     |
-| --------------- | ------------------------------------------------------------------------------- |
-| **Name**        | A unique name for this job. Shown on the Dashboard, History, and Restore pages. |
-| **Backup Type** | The backup strategy: Full, Incremental, or Differential (see below).            |
-
-#### Backup Types
-
-| Type             | What it backs up                          | Restore speed                        | Storage use                   |
-| ---------------- | ----------------------------------------- | ------------------------------------ | ----------------------------- |
-| **Full**         | Everything, every run                     | Fastest — single archive             | Highest — full copy each time |
-| **Incremental**  | Changes since the last backup of any type | Slowest — may need to chain archives | Lowest                        |
-| **Differential** | Changes since the last _full_ backup      | Medium — needs full + one diff       | Medium                        |
-
-For most home server use cases, a weekly **Full** backup with daily **Incremental** runs gives a good balance between storage cost and restore speed.
-
----
-
-### Step 2 — Select Items
+### Step 1 — What
 
 Pick which items to include in this job. Vault discovers items automatically from your server:
 
@@ -39,18 +20,18 @@ Pick which items to include in this job. Vault discovers items automatically fro
 | **Folders**          | Any arbitrary path on your server (e.g. `/mnt/user/appdata`, `/boot/config`)                         |
 | **Plugins**          | Installed Unraid plugins                                                                             |
 
-**Notes on containers:**
+#### Notes on containers
 
 - Vault backs up the container image, its XML template, and all host paths mapped into the container.
 - Special files (Unix sockets, device nodes, named pipes) are skipped automatically — they cannot be archived and their presence does not fail the backup.
 - Tailscale-enabled containers are fully supported.
 - Bind-mounts that point at the host root (`/` → `/rootfs`, used by Glances, Telegraf, Netdata, cAdvisor, node-exporter) are detected and skipped without walking the host filesystem.
 
-**Excluding container sub-paths:**
+#### Excluding container sub-paths
 
 You can list paths to exclude from a container backup (e.g. `/config/Library/Application Support/Plex Media Server/Cache` or `/config/Sonarr/MediaCover`). The job wizard exposes a free-text list per container, and Vault ships a `GET /api/v1/presets/exclusions` catalogue of common rules for popular containers (Plex, Sonarr, Radarr, etc.) the UI offers as starting points. For some apps the response also carries advisory `notes`/`warnings` (e.g. the Immich database caveat below), which the wizard shows inline.
 
-**Backing up Immich:**
+#### Backing up Immich
 
 Immich detection works for both the official `ghcr.io/immich-app/immich-server` image (media root mounted at `/data`) and the imagegenius fork `ghcr.io/imagegenius/immich` (`/photos`). The recommended exclusions cover both layouts:
 
@@ -67,26 +48,22 @@ Thumbnails and re-encoded video are re-created by Immich on demand after a resto
 2. **Back up the Postgres container as its own Vault job.** Add the Immich Postgres container to a separate job; Vault stops it before archiving, giving a consistent copy of its data directory.
 3. **Dump via a pre-backup script.** Vault runs a job's **Pre-backup script** before stopping any containers, with `VAULT_JOB_NAME`, `VAULT_STATUS`, `VAULT_JOB_ID`, and `VAULT_RUN_ID` exported into its environment. A script can `docker exec` a `pg_dump` into the media root before the backup runs.
 
-**Notes on ZFS datasets:**
+#### Notes on ZFS datasets
 
 - Vault uses `zfs send` (full) and `zfs send -i` (incremental) under the hood and manages the snapshot lifecycle itself.
 - Restoration goes through `zfs receive`, preserving properties and child datasets.
 - The host `zfs` binary must be on `PATH` — true on any Unraid system with a ZFS pool.
 
-**Notes on folders:**
+#### Notes on folders
 
 - You can back up `/mnt/user/appdata` to get all container appdata in one shot without selecting individual containers.
 - Folder backups only wake the destination disk when writing — the source array is read sequentially.
 
 ---
 
-### Step 3 — Storage Destination
+### Step 2 — Where & when
 
-Select which storage destination this job will write to. If you have not added one yet, save the wizard and go to **Storage** first — see [Storage Destinations](storage-destinations.md).
-
----
-
-### Step 4 — Schedule & Retention
+Select which storage destination this job will write to. If you have not added one yet, save the wizard and go to **Storage** first — see [Storage Destinations](storage-destinations.md). This step also sets the schedule.
 
 #### Schedule
 
@@ -105,11 +82,27 @@ Instead of a fixed day number, you can choose _First day of month_ or _Last day 
 **Time format:**
 The schedule UI uses your Unraid time format setting (12-hour or 24-hour) automatically.
 
-> **Unscheduled / manual-only jobs:** Currently all jobs require a schedule. To run a backup ad hoc, use the **Run Now** button. A dedicated "no schedule" option is planned.
+> **Manual-only jobs:** Leave the schedule empty to create a job that never runs on its own — you run it on demand with the **Run Now** button.
+
+---
+
+### Step 3 — How
+
+Choose the backup strategy and, under _Advanced options_, tune compression, retention, verification, and scripts.
+
+#### Backup Types
+
+| Type             | What it backs up                          | Restore speed                        | Storage use                   |
+| ---------------- | ----------------------------------------- | ------------------------------------ | ----------------------------- |
+| **Full**         | Everything, every run                     | Fastest — single archive             | Highest — full copy each time |
+| **Incremental**  | Changes since the last backup of any type | Slowest — may need to chain archives | Lowest                        |
+| **Differential** | Changes since the last _full_ backup      | Medium — needs full + one diff       | Medium                        |
+
+For most home server use cases, a weekly **Full** backup with daily **Incremental** runs gives a good balance between storage cost and restore speed.
 
 #### Retention
 
-Retention controls how many restore points are kept before the oldest is deleted. Vault supports two modes; you can use either or both at once.
+Retention controls how many restore points are kept before the oldest is deleted. (A _restore point_ is one completed backup you can restore from.) Vault supports two modes. If any Long-Term Retention value is set, LTR is used and the simple settings are ignored.
 
 **Mode 1 — Simple count**
 
@@ -131,13 +124,23 @@ Good for "always keep my last 7 backups" type policies.
 
 Long-Term Retention (LTR) lets you keep, say, "last 7 days + last 4 weeks + last 6 months + last 3 years" without paying for hundreds of restore points. The Job UI shows a _retention preview_ — exactly which restore points the policy would prune on the next run — before you save.
 
-If you leave the LTR counters at 0 and set only _Keep last N_, classic simple-count retention applies. If any LTR counter is greater than 0, Vault uses LTR for that job and ignores the simple _Keep last N_ count.
+If you leave all LTR counters at 0, classic simple retention applies. If any LTR counter is greater than 0, Vault uses LTR for that job and ignores the simple settings (_Keep last N_ and _keep-for-N-days_).
 
 Set retention based on storage budget and how far back you want to be able to restore:
 
 - 7 daily backups → simple count = 7
 - A weekly full + 6 daily incrementals → simple count = 7, two jobs (one weekly full, one daily incremental)
 - Year of history without storage bloat → LTR with `keep_daily=7`, `keep_weekly=4`, `keep_monthly=12`, `keep_yearly=3`
+
+---
+
+### Step 4 — Name & review
+
+| Field    | Description                                                                     |
+| -------- | ------------------------------------------------------------------------------- |
+| **Name** | A unique name for this job. Shown on the Dashboard, History, and Restore pages. |
+
+Check the plain-language summary of what the job will do, then click **Save**.
 
 ---
 
@@ -171,10 +174,9 @@ To stop an in-progress backup:
 
 Vault signals cancellation through the entire pipeline — file I/O, directory traversal, and engine handlers all check for cancellation and stop gracefully. The job is marked as "cancelled" in History.
 
-Jobs also have automatic safeguards:
+Jobs also have an automatic safeguard:
 
-- **4-hour hard timeout** — a job running longer than 4 hours is automatically cancelled
-- **2-hour stall detection** — a job with no progress for 2 hours is cancelled (with a warning at 30 minutes)
+- **2-hour stall detection** — a job with no progress for 2 hours is cancelled (with a warning at 30 minutes). There is no overall time limit: a backup that is still transferring data can run for as long as it needs.
 
 ---
 
@@ -222,13 +224,15 @@ Both paths use the same code, so per-run and on-demand results are directly comp
 
 ## Encryption
 
-If you set a passphrase under **Settings → Security → Encryption**, all backup archives are encrypted with AES-256-GCM before they leave the host. The encryption key is derived from your passphrase and a per-installation salt; without the passphrase, restoring is not possible. Encryption is transparent to storage destinations — it applies equally to local, SFTP, SMB, NFS, WebDAV, and S3.
+If you set a passphrase under **Settings → Security → Encryption**, all backup archives are encrypted with your backup password (age encryption — a modern, audited standard) before they leave the host. Without the passphrase, restoring is not possible. Encryption is transparent to storage destinations — it applies equally to local, SFTP, SMB, NFS, WebDAV, and S3.
 
 The encryption status is shown on the Dashboard's 3-2-1 compliance widget, and on each restore point's chain-health badge.
 
 ---
 
 ## Deduplication
+
+Deduplication stores each unique piece of data only once, so repeated data across runs and sources doesn't cost extra space — see [How Backup Works](../how-backup-works.md#deduplication) for the concept. The rest of this section covers the operational details.
 
 When you enable _Dedup_ on a storage destination, Vault chunks every backup with Keyed-FastCDC (256 KiB / 1 MiB / 4 MiB min/avg/max) and stores only one copy of each chunk in a per-destination dedup repo at `<dest>/_vault/packs/` and `<dest>/_vault/index/`. The repo's chunker is keyed off a 32-byte secret per destination, which closes the fingerprinting-attack class described in Truong et al. 2025 — observers without the secret can't recompute chunk boundaries from public corpora.
 
@@ -241,3 +245,11 @@ Operational notes:
 - Dedup-mode and non-dedup destinations can coexist on the same Vault install; the flag is per-destination and immutable after creation.
 
 Imported backups (Storage → _Scan_ + _Import_) carry per-item dedup manifest IDs in their `manifest.json`, so dedup restore points produced on one Vault instance can be re-discovered and restored on another.
+
+---
+
+## Next steps
+
+- Point your job at the right target: [Storage Destinations](storage-destinations.md)
+- Let Vault warn you when backups drift from normal: [Anomaly Detection](anomaly-detection.md)
+- Make sure you can recover if the server dies: [Disaster Recovery](disaster-recovery.md)

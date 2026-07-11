@@ -86,8 +86,14 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/latest", releaseH.Latest)
 		})
 
-		storageH := handlers.NewStorageHandler(s.db, s.runner)
+		storageH := handlers.NewStorageHandler(s.db, s.runner, s.config.ServerKey)
 		s.storageHandler = storageH
+		storageH.SetScheduleReloadHook(func() error {
+			if s.schedReload != nil {
+				return s.schedReload()
+			}
+			return nil
+		})
 		r.Route("/storage", func(r chi.Router) {
 			// Storage CRUD is allowed in replica mode — replicas need
 			// storage destinations configured for replication targets.
@@ -107,7 +113,14 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/{id}/gc", storageH.RunDedupGC)
 			r.Post("/{id}/scan", storageH.Scan)
 			r.Post("/{id}/import", storageH.Import)
-			r.Post("/{id}/restore-db", storageH.RestoreDB)
+			// Restoring the DB is a full-config overwrite — blocked on
+			// replicas like the other write endpoints (see path-remap).
+			if s.config.ReadOnly {
+				r.With(ReadOnlyGuard).Post("/{id}/restore-db", storageH.RestoreDB)
+			} else {
+				r.Post("/{id}/restore-db", storageH.RestoreDB)
+			}
+			r.Get("/{id}/db-backups", storageH.ListDBBackups)
 			r.Get("/{id}/jobs", storageH.DependentJobs)
 			r.Get("/{id}/list", storageH.ListFiles)
 			r.Get("/{id}/files", storageH.DownloadFile)
@@ -235,7 +248,17 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/destinations/{id}/capacity-trajectory", anomalyH.GetTrajectory)
 
 		recoveryH := handlers.NewRecoveryHandler(s.db, s.config.Version)
+		s.recoveryHandler = recoveryH
+		// Share the restore lifecycle lock: a path remap must never commit
+		// while restore-db is swapping the database file out from under it.
+		recoveryH.SetMaintenanceLock(storageH.MaintenanceLock())
 		r.Get("/recovery/plan", recoveryH.GetPlan)
+		r.Get("/recovery/path-audit", recoveryH.PathAudit)
+		if s.config.ReadOnly {
+			r.With(ReadOnlyGuard).Post("/recovery/path-remap", recoveryH.PathRemap)
+		} else {
+			r.Post("/recovery/path-remap", recoveryH.PathRemap)
+		}
 
 		// MCP is only available in daemon mode.
 		if !s.config.ReadOnly {

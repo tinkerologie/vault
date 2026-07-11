@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -642,5 +643,31 @@ func TestPurgeEligibleRuns(t *testing.T) {
 	}
 	if n, _ := d.PurgeEligibleRuns(0); n != 0 {
 		t.Errorf("keepDays=0 purged %d, want 0", n)
+	}
+}
+
+func TestUpdateJobItemSettings(t *testing.T) {
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "settings-dest", Type: "local", Config: "{}"})
+	jobID, err := d.CreateJob(Job{Name: "settings-job", StorageDestID: destID, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatalf("CreateJob error = %v", err)
+	}
+	itemID, err := d.AddJobItem(JobItem{JobID: jobID, ItemType: "folder", ItemName: "docs", ItemID: "docs", Settings: `{"path":"/old/path"}`})
+	if err != nil {
+		t.Fatalf("AddJobItem error = %v", err)
+	}
+	if err := d.UpdateJobItemSettings(itemID, `{"path":"/new/path"}`); err != nil {
+		t.Fatalf("UpdateJobItemSettings error = %v", err)
+	}
+	items, err := d.GetJobItems(jobID)
+	if err != nil {
+		t.Fatalf("GetJobItems error = %v", err)
+	}
+	if len(items) != 1 || items[0].Settings != `{"path":"/new/path"}` {
+		t.Fatalf("settings = %+v", items)
+	}
+	if err := d.UpdateJobItemSettings(999999, `{}`); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }

@@ -133,10 +133,10 @@ type Handler interface {
 ### SQLite Configuration
 
 ```go
-sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
+sql.Open("sqlite", path+"?_txlock=immediate&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(67108864)")
 ```
 
-WAL mode for concurrent reads. Foreign keys enabled via PRAGMA. Schema applied inline at `Open()` time via `CREATE TABLE IF NOT EXISTS` (no migration versioning framework).
+WAL mode for concurrent reads. Foreign keys, busy timeout and WAL are set as DSN pragmas so every connection gets them (modernc.org/sqlite ignores the mattn-style \_journal_mode=/\_busy_timeout= keys). Schema applied inline at `Open()` time via `CREATE TABLE IF NOT EXISTS` (no migration versioning framework).
 
 ## Build Commands
 
@@ -177,6 +177,7 @@ Defaults: DB at `/boot/config/plugins/vault/vault.db`, API on port 24085.
 Both `rg` (ripgrep) and `ast-grep` are available. **Default to `rg` for most queries** (~5–20 ms on this repo, handles every file type, no parser surprises). Reach for `ast-grep` (~30–130 ms) only when you need AST-aware matching — typically a structural refactor or a pattern whose meaning depends on syntactic context.
 
 **Use `rg` for:**
+
 - Literal strings (log messages, error strings, URLs, JSON keys)
 - Definitions by name: `rg -n '^func .*FolderHandler.* Backup\b' --type go`
 - **Package-qualified call sites**: `rg -n 'runner\.New\(' --type go` — ast-grep returns zero matches for this; see Gotchas
@@ -185,12 +186,14 @@ Both `rg` (ripgrep) and `ast-grep` are available. **Default to `rg` for most que
 - Svelte files: `rg --type-add 'svelte:*.svelte' --type svelte 'pattern'` — **ast-grep does not support svelte** (0.42.3)
 
 **Use `ast-grep` for:**
+
 - Function definitions matching a structural shape: `ast-grep run -p 'func ($H *FolderHandler) Backup($$$ARGS) $$$RET { $$$BODY }' -l go`
 - All `fmt.Errorf(...)` calls without false-positive matches in strings/comments
 - Struct/interface declarations
 - Multi-clause queries via `ast-grep scan --rule rule.yml` (`has` / `inside` / `where`)
 
 **Verified gotchas:**
+
 - Package-qualified calls (`db.Open(...)`, `runner.New(...)`) return **zero** matches with the obvious pattern because the Go parser treats them as type conversions. Workaround: a YAML rule with `kind: call_expression`, or use `rg`.
 - Languages confirmed working: `go`, `ts`, `tsx`, `js`, `html`, `css`, `yaml`, `json`, `bash`, `python`, `rust`, `java`. **Not** `svelte` or `sh`.
 - Variadic metavariables must be **named** and usually preceded by a positional: `fmt.Errorf($FMT, $$$ARGS)`, not `fmt.Errorf($$$)`.
@@ -296,8 +299,8 @@ go test ./internal/db/... -run TestJobCreate -v  # Single test
 3. **Verify API:** Run `make verify` (endpoint checks + folder/VM smoke tests against Unraid). Fix any failures before proceeding.
 4. **Verify UI:** Use Playwright, browser MCP tools, or manual testing to navigate affected pages on `http://<unraid-server>:24085`. Take snapshots to confirm the UI renders correctly.
 5. **Update CHANGELOG.md (NON-NEGOTIABLE):** Add entries under `## [Unreleased]` using [Keep a Changelog](https://keepachangelog.com/) format. `CHANGELOG.md` is consumed by THREE systems: the in-app View Changelog modal (Settings → About Vault, parser at `internal/release/changelog.go`), the `release.yml` GitHub-release notes extractor, and operator-facing upgrade diffs — a missing or malformed entry breaks all three. Required format:
-   - Section headings (per version): `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security` — any other `### ` heading is silently dropped.
-   - Bullets start with `- ` at column 0. Inline markdown that renders in the modal: `**bold**`, `` `code` ``, `*italic*`. Nothing else is interpreted.
+   - Section headings (per version): `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security` — any other `###` heading is silently dropped.
+   - Bullets start with `-` (dash + space) at column 0 — the parser only recognizes that exact prefix. Inline markdown that renders in the modal: `**bold**`, `` `code` ``, `*italic*`. Nothing else is interpreted.
    - Be concise but descriptive — entries stand alone with no PR context. Reference issue numbers (e.g. `closes #123`) where applicable.
    - `[Unreleased]` is intentionally hidden from the modal. At release time, promote it to `## [vX.Y.Z] - YYYY-MM-DD` (heading must match the tag exactly) BEFORE pushing the `v*` tag.
 

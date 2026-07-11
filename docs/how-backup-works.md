@@ -34,7 +34,7 @@ For the exact retention fields on a job, see the [Job Configuration reference](r
 
 ## Encryption
 
-Backups can be encrypted with **AES-256-GCM**, using a key derived from your passphrase. Encryption is applied to the backup content so that data at rest on the destination cannot be read without the passphrase.
+Backups can be encrypted with your backup password using **age** encryption — a modern, audited standard. Encryption is applied to the backup content so that data at rest on the destination cannot be read without the password.
 
 ## Deduplication
 

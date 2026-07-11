@@ -33,7 +33,7 @@ func (d *DB) ValidateHasConfiguration(ctx context.Context) (*ConfigurationSummar
 
 	count := func(table string) (int, error) {
 		var n int
-		row := d.DB.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", table)) // #nosec G201 — table names are compile-time constants below
+		row := d.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", table)) // #nosec G201 — table names are compile-time constants below
 		if err := row.Scan(&n); err != nil {
 			return 0, fmt.Errorf("counting %s: %w", table, err)
 		}

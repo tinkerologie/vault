@@ -198,7 +198,7 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 	// path. Failure is logged but does not block the snapshot — the
 	// Online Backup API copies WAL frames correctly even without an
 	// explicit checkpoint.
-	if conn, cerr := sm.db.DB.Conn(context.Background()); cerr == nil {
+	if conn, cerr := sm.db.Conn(context.Background()); cerr == nil {
 		if _, ckErr := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); ckErr != nil {
 			log.Printf("snapshot: wal_checkpoint(TRUNCATE) failed: %v (continuing)", ckErr)
 		}
@@ -337,7 +337,7 @@ func (sm *SnapshotManager) backupWorkingDBToPath(dest string) error {
 	tmp := dest + ".tmp"
 	_ = os.Remove(tmp)
 
-	conn, err := sm.db.DB.Conn(context.Background())
+	conn, err := sm.db.Conn(context.Background())
 	if err != nil {
 		return fmt.Errorf("acquire connection: %w", err)
 	}
@@ -395,7 +395,7 @@ func (sm *SnapshotManager) RestoreFromSnapshot() error {
 		return nil
 	}
 
-	conn, err := sm.db.DB.Conn(context.Background())
+	conn, err := sm.db.Conn(context.Background())
 	if err != nil {
 		return fmt.Errorf("acquire connection: %w", err)
 	}
@@ -535,7 +535,7 @@ func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {
 		return fmt.Errorf("snapshot file does not exist: %s", validPath)
 	}
 
-	conn, err := sm.db.DB.Conn(context.Background())
+	conn, err := sm.db.Conn(context.Background())
 	if err != nil {
 		return fmt.Errorf("acquire connection: %w", err)
 	}

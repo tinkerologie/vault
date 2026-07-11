@@ -71,7 +71,7 @@ func newDedupStorageHandler(t *testing.T, dedupEnabled bool) (*StorageHandler, i
 		storage.CloseAdapter(adapter)
 	}
 
-	return NewStorageHandler(d, r), destID
+	return NewStorageHandler(d, r, serverKey), destID
 }
 
 // reqWithID is a small helper that attaches an `id` URL parameter to a
@@ -999,7 +999,7 @@ func TestStorageSetConfigChangeHook(t *testing.T) {
 func TestStorageBroadcastConfigChange_NilRunner(t *testing.T) {
 	t.Parallel()
 	// Handler with nil runner should not panic.
-	h := NewStorageHandler(newTestDB(t), nil)
+	h := NewStorageHandler(newTestDB(t), nil, nil)
 	h.broadcastConfigChange("storage") // should not panic
 }
 

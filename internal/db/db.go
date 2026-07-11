@@ -1,19 +1,70 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite"
 )
 
 var ErrNotFound = errors.New("not found")
 
+// DB wraps *sql.DB behind an atomic pointer so Reopen can swap the handle
+// in place without a data race against concurrent queries. All query
+// methods forward to the current handle.
 type DB struct {
-	*sql.DB
-	path string
+	handle atomic.Pointer[sql.DB]
+	path   string
 }
+
+// sql returns the current underlying handle.
+func (d *DB) sql() *sql.DB { return d.handle.Load() }
+
+// Thin forwarders for the *sql.DB methods the codebase calls. They keep
+// every existing call site compiling unchanged now that the handle is no
+// longer an embedded field.
+
+func (d *DB) Exec(query string, args ...any) (sql.Result, error) {
+	return d.sql().Exec(query, args...)
+}
+
+func (d *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return d.sql().ExecContext(ctx, query, args...)
+}
+
+func (d *DB) Query(query string, args ...any) (*sql.Rows, error) {
+	return d.sql().Query(query, args...)
+}
+
+func (d *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return d.sql().QueryContext(ctx, query, args...)
+}
+
+func (d *DB) QueryRow(query string, args ...any) *sql.Row {
+	return d.sql().QueryRow(query, args...)
+}
+
+func (d *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return d.sql().QueryRowContext(ctx, query, args...)
+}
+
+func (d *DB) Begin() (*sql.Tx, error) { return d.sql().Begin() }
+
+func (d *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return d.sql().BeginTx(ctx, opts)
+}
+
+func (d *DB) Ping() error { return d.sql().Ping() }
+
+func (d *DB) PingContext(ctx context.Context) error { return d.sql().PingContext(ctx) }
+
+func (d *DB) Conn(ctx context.Context) (*sql.Conn, error) { return d.sql().Conn(ctx) }
+
+func (d *DB) Close() error { return d.sql().Close() }
 
 // Path returns the filesystem path of the database.
 func (d *DB) Path() string {
@@ -21,7 +72,18 @@ func (d *DB) Path() string {
 }
 
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=30000&_txlock=immediate")
+	// modernc.org/sqlite only understands the _pragma=name(value) DSN form
+	// (plus _txlock/_time_format). The old _journal_mode=/_busy_timeout=
+	// params were silently ignored, leaving fresh databases in rollback
+	// journal mode with no busy timeout. DSN pragmas apply to every
+	// connection database/sql opens, unlike a one-off Exec.
+	// journal_size_limit bounds how large the WAL file stays after
+	// checkpoints; it can still grow past it during long transactions.
+	sqlDB, err := sql.Open("sqlite", path+"?_txlock=immediate"+
+		"&_pragma=busy_timeout(30000)"+
+		"&_pragma=journal_mode(WAL)"+
+		"&_pragma=foreign_keys(ON)"+
+		"&_pragma=journal_size_limit(67108864)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -35,17 +97,12 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
-	// Bound the WAL file size between checkpoints so a write burst does
-	// not leave a permanently-large WAL on disk. 64 MiB is comfortable
-	// for Vault's write rate.
-	if _, err := sqlDB.Exec(`PRAGMA journal_size_limit = 67108864`); err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("setting journal_size_limit: %w", err)
+	// The journal_mode pragma reports the resulting mode instead of erroring
+	// when WAL can't be enabled (e.g. a filesystem without shared-memory
+	// support), and the driver discards that result — so check explicitly.
+	var mode string
+	if err := sqlDB.QueryRow("PRAGMA journal_mode").Scan(&mode); err == nil && mode != "wal" {
+		log.Printf("Warning: database %s runs in journal_mode=%s — WAL is unavailable on this filesystem; access under contention will be slower", path, mode)
 	}
 
 	if _, err := sqlDB.Exec(schema); err != nil {
@@ -58,12 +115,35 @@ func Open(path string) (*DB, error) {
 		_, _ = sqlDB.Exec(m) //nolint:errcheck // duplicate column errors expected
 	}
 
-	d := &DB{DB: sqlDB, path: path}
+	d := &DB{path: path}
+	d.handle.Store(sqlDB)
 	if err := d.insertDefaultSettings(); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("seed default settings: %w", err)
 	}
 	return d, nil
+}
+
+// Reopen re-opens the database at the same path and atomically swaps the
+// underlying handle in place. Every component (server, scheduler, runner,
+// hub) shares this *DB pointer, so after Reopen they all see the new
+// database. Used after RestoreDB swaps the file on disk, so the daemon
+// keeps running without a restart.
+// Known limitation: concurrent queries during the Close→Reopen window can
+// see transient "database is closed" errors — an availability blip during
+// deliberate maintenance, not corruption and not a data race (the swap is
+// atomic). Fallback if this misbehaves in practice: a restart endpoint.
+func (d *DB) Reopen() error {
+	nd, err := Open(d.path)
+	if err != nil {
+		return fmt.Errorf("reopening database: %w", err)
+	}
+	// Close the old handle; sql.DB.Close is idempotent, so this is safe
+	// even when the caller (restore flow) already closed it.
+	if old := d.handle.Swap(nd.handle.Load()); old != nil {
+		_ = old.Close()
+	}
+	return nil
 }
 
 // Vacuum reclaims free space in the database file.

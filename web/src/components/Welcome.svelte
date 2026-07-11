@@ -1,6 +1,6 @@
 <script>
-  /** @type {{ onstart?: (e: MouseEvent) => void }} */
-  let { onstart = () => {} } = $props()
+  /** @type {{ onstart?: (e: MouseEvent) => void, onrecover?: ((e: MouseEvent) => void) | null }} */
+  let { onstart = () => {}, onrecover = null } = $props()
 </script>
 
 <div class="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
@@ -36,7 +36,15 @@
     </div>
   </div>
 
-  <button onclick={onstart} class="btn btn-primary text-base px-8 py-3">
-    Get Started
-  </button>
+  <div class="flex flex-col sm:flex-row gap-3 justify-center items-center">
+    <button onclick={onstart} class="btn btn-primary text-base px-8 py-3">Get Started</button>
+    {#if onrecover}
+      <button onclick={onrecover} class="btn btn-secondary text-base px-6 py-3">Recover from a backup</button>
+    {/if}
+  </div>
+  {#if onrecover}
+    <p class="text-xs text-text-dim mt-3">
+      Had Vault before? "Recover from a backup" brings your jobs, storage and history back.
+    </p>
+  {/if}
 </div>

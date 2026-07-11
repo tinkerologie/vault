@@ -245,7 +245,7 @@ func TestRunDedupGC_NoRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create dest: %v", err)
 	}
-	h := NewStorageHandler(d, nil)
+	h := NewStorageHandler(d, nil, nil)
 
 	w := httptest.NewRecorder()
 	h.RunDedupGC(w, reqWithID(http.MethodPost, "/api/v1/storage/x/gc",

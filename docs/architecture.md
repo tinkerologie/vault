@@ -1,5 +1,7 @@
 # Architecture
 
+This page is for developers and contributors — it describes Vault's internal design. If you just want to use Vault, start with [Getting Started](getting-started.md).
+
 Vault is a single Go binary that runs as a daemon on Unraid servers. It provides backup and restore for Docker containers, libvirt VMs, ZFS datasets, folders, and plugins.
 
 ## Layered Design
@@ -33,13 +35,21 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 ```go
 type Adapter interface {
     Write(path string, reader io.Reader) error
+    WriteFrom(path string, open func() (io.ReadCloser, error)) error
     Read(path string) (io.ReadCloser, error)
+    ReadRange(path string, offset, length int64) (io.ReadCloser, error)
     Delete(path string) error
     List(prefix string) ([]FileInfo, error)
     Stat(path string) (FileInfo, error)
     TestConnection() error
+    GetCapacity(ctx context.Context) (Capacity, error)
+    Usage() (free, total int64, err error)
 }
 ```
+
+`WriteFrom` lets the retry layer re-issue a failed upload from a fresh stream;
+`ReadRange` serves the dedup layer's partial pack reads; `GetCapacity` and
+`Usage` feed the capacity widgets and trajectory detector.
 
 Adapters that hold persistent resources (SFTP, SMB) implement `io.Closer` and
 are released by `storage.CloseAdapter`. Bandwidth throttling is layered on
@@ -50,8 +60,8 @@ constructed via `storage.NewAdapter(type, configJSON)`.
 
 ```go
 type Handler interface {
-    Backup(item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
-    Restore(item BackupItem, source string, progress ProgressFunc) error
+    Backup(ctx context.Context, item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
+    Restore(ctx context.Context, item BackupItem, source string, progress ProgressFunc) error
     ListItems() ([]BackupItem, error)
 }
 ```
@@ -72,7 +82,7 @@ can route them through the dedup repo on dedup-enabled destinations.
 SQLite with WAL mode and busy timeout. Pure Go driver via `modernc.org/sqlite` (no CGO).
 
 ```go
-sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
+sql.Open("sqlite", path+"?_txlock=immediate&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(67108864)")
 ```
 
 Schema is applied inline at open time via `CREATE TABLE IF NOT EXISTS` (no versioned migrations). Twelve tables: `storage_destinations`, `jobs`, `job_items`, `job_runs`, `restore_points`, `settings`, `activity_log`, `verify_runs`, `replication_sources`, `dedup_packs`, `dedup_chunks`, `dedup_gc_runs`.
