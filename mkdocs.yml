@@ -17,11 +17,17 @@ validation:
 theme:
   name: material
   palette:
+    # "custom" defers to the Vault brand colors in stylesheets/extra.css,
+    # matching the app's amber theme instead of Material's stock indigo.
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle: { icon: material/weather-night, name: Switch to dark mode }
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle: { icon: material/weather-sunny, name: Switch to light mode }
   features:
     - navigation.sections

@@ -1,3 +1,19 @@
+/* Vault brand palette — the same amber tokens the app uses
+   (web/src/app.css: --color-vault #f59e0b, --color-vault-dark #d97706),
+   applied via Material's "custom" palette hooks. */
+:root {
+  --md-primary-fg-color: #f59e0b;
+  --md-primary-fg-color--light: #fbbf24;
+  --md-primary-fg-color--dark: #d97706;
+  --md-accent-fg-color: #d97706;
+}
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #f59e0b;
+  --md-primary-fg-color--light: #fbbf24;
+  --md-primary-fg-color--dark: #d97706;
+  --md-accent-fg-color: #fbbf24;
+}
+
 /* Keep setting keys and struct field names (the first table column of the
    generated Settings Reference) on a single line. Long identifiers such as
    `dedup_compaction_min_dead_ratio` were breaking mid-token. Tables remain
