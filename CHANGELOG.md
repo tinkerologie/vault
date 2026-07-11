@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Vault's own database now reliably runs in WAL mode with a 30-second lock timeout.** The SQLite driver was silently ignoring the connection options that were meant to set these, so freshly created databases ran in rollback-journal mode with no busy timeout — slower under concurrent access and more prone to "database is locked" errors. All connection settings are now applied in a form the driver understands, and Vault logs a warning if WAL is unavailable on the filesystem.
 
+### Security
+
+- Snapshot rotation and database-backup temp-file cleanup now refuse to delete any path that isn't absolute and traversal-free — hardening flagged by CodeQL; no user-visible behavior change.
+
 ### Changed
 
 - **License changed from MIT to AGPL-3.0.** Vault is now distributed under the GNU Affero General Public License v3.0 to keep derivative and network-served modifications open source.
