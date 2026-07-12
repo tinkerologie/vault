@@ -4,6 +4,8 @@ Vault writes compressed (and optionally encrypted) backup archives to a storage 
 
 ## Overview
 
+![Storage type picker](../screenshots/13-add-storage-picker.png)
+
 | Type       | When to use                                                                                 |
 | ---------- | ------------------------------------------------------------------------------------------- |
 | **Local**  | Unraid array share, directly attached USB/SSD, or any locally mounted path                  |

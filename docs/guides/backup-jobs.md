@@ -6,6 +6,8 @@ A backup job defines _what_ to back up, _where_ to put it, _when_ to run, and ho
 
 Go to **Jobs** → **Create Job**. The wizard has four steps.
 
+![Create backup job wizard](../screenshots/14-job-wizard.png)
+
 ---
 
 ### Step 1 — What
