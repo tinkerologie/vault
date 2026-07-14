@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.03] - 2026-07-14
+
 ### Added
 
 - **Recover Vault wizard — guided disaster recovery after a server rebuild** (closes #220). A fresh install now offers a clear choice — **Set up Vault** or **Recover from a backup** — and the new five-step wizard walks you through reconnecting your backup storage, entering your backup password, restoring the Vault database (jobs, storage, history, settings), and fixing folder paths that changed on the rebuilt server. Also reachable any time from Recovery → **Recover Vault**.
