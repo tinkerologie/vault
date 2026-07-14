@@ -640,8 +640,19 @@
     return true
   }
 
+  // During setup (no storage or no first job) only the at-a-glance KPI tiles are
+  // meaningful; the heavier panels (jobs, protection, activity, analytics) would
+  // all render empty, so we hold them back until the first job exists. The
+  // Getting Started card above the grid carries the setup flow.
+  const setupComplete = $derived(storage.length > 0 && jobs.length > 0)
+  const SETUP_TILES = ['health', 'protected', 'nextrun', 'lastbackup']
+
   const tiles = $derived(layout.order.map((id, idx) => ({ id, idx, ...CATALOG[id], span: Math.min(layout.spans[id] ?? CATALOG[id].span, CATALOG[id].maxSpan ?? 12) })))
-  const visibleTiles = $derived(layout.editMode ? tiles : tiles.filter(t => tileAvailable(t.id)))
+  const visibleTiles = $derived(
+    layout.editMode
+      ? tiles
+      : tiles.filter(t => tileAvailable(t.id) && (setupComplete || SETUP_TILES.includes(t.id)))
+  )
   const catalogList = $derived(
     Object.keys(CATALOG).map(id => ({ id, ...CATALOG[id], shown: layout.order.includes(id) }))
   )
@@ -1312,7 +1323,7 @@
         {/if}
       </div>
     </div>
-    {#if !loading && !error && (storage.length > 0 || jobs.length > 0)}
+    {#if !loading && !error && storage.length > 0 && jobs.length > 0}
       <div class="dash-head-actions flex gap-2 w-full sm:w-auto">
         {#if layout.editMode}
           <button onclick={layout.reset} class="flex-1 sm:flex-none min-h-[44px] px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-2 border border-border hover:bg-surface-3 rounded-lg transition-colors">Reset</button>

@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Dashboard is now uncluttered on a fresh install.** Until you've configured storage _and_ your first backup job, the dashboard shows just the Getting Started guide plus the four at-a-glance KPI tiles (Health, Protected, Next Run, Last Backup). The heavier panels — Backup Jobs, Protection status, Recent Activity, 3-2-1 rule, and the storage/analytics tiles — stay hidden until there's real data to fill them, so they no longer render empty. They appear automatically once your first job exists.
 - **Documentation screenshots refreshed** to match the current Vault dashboard, storage, job wizard, recovery, responsive, and theme-aware UI.
 - **License changed from MIT to AGPL-3.0.** Vault is now distributed under the GNU Affero General Public License v3.0 to keep derivative and network-served modifications open source.
 
