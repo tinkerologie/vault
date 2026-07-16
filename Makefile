@@ -75,6 +75,7 @@ release: internal/release/CHANGELOG.md build-web
 
 package: release
 	@echo "Creating plugin package..."
+	@rm -rf $(BUILD_DIR)/pkg
 	@mkdir -p $(BUILD_DIR)/pkg/usr/local/sbin
 	@mkdir -p $(BUILD_DIR)/pkg/etc/rc.d
 	@mkdir -p $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)

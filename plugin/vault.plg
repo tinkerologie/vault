@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
     <!ENTITY name      "vault">
     <!ENTITY author    "Ruaan Deysel">
-    <!ENTITY version   "2026.07.03">
+    <!ENTITY version   "2026.07.04">
     <!ENTITY launch    "Settings/Vault">
     <!ENTITY gitURL    "https://github.com/ruaan-deysel/&name;">
     <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/&name;/main/plugin/vault.plg">
@@ -108,6 +108,10 @@ mkdir -p /boot/config/plugins/vault
 # Ensure permissions
 chmod 755 /usr/local/sbin/vault
 chmod 755 /etc/rc.d/rc.vault
+# apply.sh is executed directly by /update.php via popen() after a settings
+# save; without the exec bit the call fails with a silent "Permission denied"
+# and the daemon never restarts onto the new bind address/port.
+chmod 755 /usr/local/emhttp/plugins/vault/include/apply.sh
 
 # Restart cleanly: stop any leftover daemon (e.g. from an aborted previous
 # upgrade) before starting the new binary. This guarantees the user is

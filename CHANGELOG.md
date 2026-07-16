@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.04] - 2026-07-16
+
+### Fixed
+
+- **Bind address and port changes now actually restart the daemon** (Settings → Vault → Apply). The plugin package shipped `apply.sh` without execute permission, so Unraid's settings-save hook failed with a silent "Permission denied" and the daemon kept running on its previous address. Selecting a NIC address (e.g. `192.168.20.21`) then made the web UI report **Vault daemon unavailable** while Start insisted it was **already running**, because the daemon was still bound to `127.0.0.1`. The package now ships `apply.sh` executable and the installer re-applies the permission on every install/upgrade, healing existing installs.
+
 ## [v2026.07.03] - 2026-07-14
 
 ### Added
