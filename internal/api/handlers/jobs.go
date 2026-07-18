@@ -595,7 +595,7 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		if chainErr != nil || len(chain) < 2 {
 			// Fail closed: a broken/incomplete chain must not silently browse
 			// as just this increment's delta.
-			log.Printf("api: restore point %d: chain walk failed (len=%d): %v", rp.ID, len(chain), chainErr)
+			log.Printf("api: restore point %d: chain walk failed (len=%d): %v", rp.ID, len(chain), chainErr) // #nosec G706 //nolint:gosec // IDs are validated int64s, err is from the internal DB layer
 			respondError(w, http.StatusNotFound, "restore chain is incomplete; file browsing is unavailable for this restore point")
 			return
 		}
@@ -732,7 +732,7 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 				respondError(w, http.StatusFailedDependency, errIndexEncryptedNoPassphrase.Error())
 				return
 			}
-			log.Printf("api: restore point %d: chain step %d index unavailable: %v", chain[len(chain)-1].ID, step.ID, err)
+			log.Printf("api: restore point %d: chain step %d index unavailable: %v", chain[len(chain)-1].ID, step.ID, err) // #nosec G706 //nolint:gosec // IDs are validated int64s, err is from an admin-configured adapter
 			respondError(w, http.StatusNotFound, fmt.Sprintf(
 				"index for chain step %d is missing or unreadable; file browsing is unavailable for this restore point", step.ID))
 			return
