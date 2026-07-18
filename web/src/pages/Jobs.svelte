@@ -1395,6 +1395,9 @@
                 <option value="differential">Differential</option>
               {/if}
             </select>
+            {#if form.backup_type_chain !== 'full'}
+              <p class="text-xs text-text-dim mt-1">The first run is automatically a full backup; later runs capture only changes.</p>
+            {/if}
           </div>
           <div>
             <label for="ex_compression" class="block text-sm font-medium text-text-muted mb-1.5">Compression</label>
@@ -1419,7 +1422,15 @@
           <input type="checkbox" bind:checked={form.enabled} class="accent-vault" />
           Enable scheduled execution
         </label>
-        <p class="text-xs text-text-dim">Advanced settings (retention, verification, scripts, retry) use sensible defaults here — switch to step-by-step to fine-tune them.</p>
+        <div class="bg-info/10 border border-info/30 rounded-xl p-4 flex items-start gap-3">
+          <svg aria-hidden="true" class="w-5 h-5 text-info shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+          </svg>
+          <div>
+            <p class="text-sm font-medium text-info">Advanced settings use sensible defaults here</p>
+            <p class="text-sm text-text-muted mt-0.5">Retention, verification, scripts and retry are preconfigured in Full Form — switch to step-by-step to fine-tune them.</p>
+          </div>
+        </div>
       </div>
     {:else}
     <!-- Step 1 · What — backup types then the items for those types -->
@@ -1502,8 +1513,8 @@
             </select>
             <p class="text-xs text-text-dim mt-1">
               {form.backup_type_chain === 'full' ? 'Backs up everything every time. Largest but most reliable.' :
-               form.backup_type_chain === 'incremental' ? 'Only backs up changes since last backup. Fastest and smallest.' :
-               form.backup_type_chain === 'differential' ? 'Backs up changes since last full backup. Balance of speed and safety.' : ''}
+               form.backup_type_chain === 'incremental' ? 'Only backs up changes since last backup. Fastest and smallest. The first run is automatically a full backup.' :
+               form.backup_type_chain === 'differential' ? 'Backs up changes since last full backup. Balance of speed and safety. The first run is automatically a full backup.' : ''}
             </p>
             {#if vmDiskFormatRestriction}
               <p class="text-xs text-warning mt-1">Incremental and differential backups require qcow2 disks. {incrementalBlockedSummary} don't, so only Full is available.</p>

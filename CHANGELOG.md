@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **The Full Form "sensible defaults" note in the job editor is now a prominent info callout** instead of small dim text, so it's clear why Advanced Options are not shown in Full Form mode (closes #232).
+- **Documentation is now linked directly from the sidebar** — a new "Documentation" entry in the System section opens the Vault manual in a new tab (closes #233).
+- **Backup type docs and job editor now explain first-run behavior**: selecting Incremental or Differential on a new job automatically performs a Full backup on the first run, so no manual initial Full is needed. Clarified in the manual, the API reference, the `backup_type_chain` field description, and the job editor's helper text (closes #234).
+
 ## [v2026.07.06] - 2026-07-18
 
 ### Fixed

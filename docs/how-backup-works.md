@@ -23,6 +23,10 @@ Vault supports three backup strategies that trade off speed against storage:
 
 Chains form from these building blocks: a full backup anchors the chain, and subsequent incremental or differential runs attach to it. Restoring reconstructs a point in time by combining the anchoring full with the necessary incrementals or the relevant differential.
 
+!!! note "The first run is always a full backup"
+
+    Selecting **Incremental** or **Differential** on a brand-new job is safe: the very first run automatically performs a **Full** backup (there is nothing yet for an increment to attach to), and only subsequent runs capture changes — `Full → Incremental → Incremental → …`. You do **not** need to run a manual Full first before switching the job to Incremental.
+
 ## Retention
 
 Retention decides how many backups to keep and which to prune. Vault offers two models:

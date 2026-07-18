@@ -137,7 +137,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"Job.Description":         "Optional free-text description of the job's purpose.",
 	"Job.Enabled":             "Whether the scheduler runs this job automatically.",
 	"Job.Schedule":            "Cron expression controlling when the job runs. Empty means manual-only.",
-	"Job.BackupTypeChain":     "Ordered chain of backup types to run (e.g. container, VM).",
+	"Job.BackupTypeChain":     "Backup mode for the job: full, incremental, or differential. Incremental and differential jobs automatically run as a full backup on their first run, when the job has no previous restore point to attach to.",
 	"Job.RetentionCount":      "Number of most-recent restore points to keep. Ignored when LTR buckets are set.",
 	"Job.RetentionDays":       "Age in days after which restore points are pruned. Ignored when LTR buckets are set.",
 	"Job.Compression":         "Compression algorithm applied to the archive (e.g. zstd, gzip, none).",

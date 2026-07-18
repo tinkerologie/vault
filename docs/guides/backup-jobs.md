@@ -100,6 +100,10 @@ Choose the backup strategy and, under _Advanced options_, tune compression, rete
 | **Incremental**  | Changes since the last backup of any type | Slowest — may need to chain archives | Lowest                        |
 | **Differential** | Changes since the last _full_ backup      | Medium — needs full + one diff       | Medium                        |
 
+!!! note "First run of an Incremental or Differential job"
+
+    On the very first run there is no parent backup to attach to, so an **Incremental** or **Differential** job automatically performs a **Full** backup and only later runs capture changes. Choosing Incremental or Differential from the start is the correct workflow — there is no need to run a manual Full first.
+
 For most home server use cases, a weekly **Full** backup with daily **Incremental** runs gives a good balance between storage cost and restore speed.
 
 #### Retention
