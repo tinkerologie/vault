@@ -1059,6 +1059,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		if item.ItemType == "folder" {
 			backupItem.Settings["path"] = settings["path"]
 			backupItem.Settings["preset"] = settings["preset"]
+			if ep, ok := settings["exclude_paths"]; ok {
+				backupItem.Settings["exclude_paths"] = ep
+			}
 		}
 
 		// ZFS items need the dataset and related metadata from settings.
