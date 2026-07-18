@@ -948,13 +948,32 @@ func (h *StorageHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Traversal guard — adapters treat the prefix as relative to the
+	// destination root; never let it climb out. Validate per path component
+	// and across BOTH separator styles: the SMB adapter converts '/' to '\',
+	// so a backslash-smuggled ".." would survive a POSIX-only path.Clean.
+	prefix := r.URL.Query().Get("prefix")
+	if prefix != "" {
+		normalized := strings.ReplaceAll(prefix, "\\", "/")
+		if strings.HasPrefix(normalized, "/") {
+			respondError(w, http.StatusBadRequest, "invalid prefix")
+			return
+		}
+		for _, seg := range strings.Split(normalized, "/") {
+			if seg == "." || seg == ".." {
+				respondError(w, http.StatusBadRequest, "invalid prefix")
+				return
+			}
+		}
+	}
+
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		respondInternalError(w, err)
 		return
 	}
+	defer storage.CloseAdapter(adapter)
 
-	prefix := r.URL.Query().Get("prefix")
 	files, err := adapter.List(prefix)
 	if err != nil {
 		respondInternalError(w, err)

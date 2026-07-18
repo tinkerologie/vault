@@ -7,6 +7,7 @@
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
+  import StorageBrowser from '../components/StorageBrowser.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import CapacityTrend from '../components/CapacityTrend.svelte'
   import StorageForm from '../components/StorageForm.svelte'
@@ -16,6 +17,7 @@
   let destinations = $state([])
   let showModal = $state(false)
   let editing = $state(null)
+  let browseDest = $state(null)
   let testing = $state(null)
   let testResults = $state(new SvelteMap())
   let toast = $state({ message: '', type: 'info', key: 0 })
@@ -451,8 +453,12 @@
                 <span class="text-xs text-text-dim uppercase">{dest.type}</span>
               </div>
             </div>
-            {#if !isReplicaMode()}
             <div class="flex items-center gap-1">
+              <!-- Browse is read-only, so it stays available in replica mode. -->
+              <button onclick={() => browseDest = dest} class="p-1.5 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Browse files" aria-label="Browse destination files">
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+              </button>
+              {#if !isReplicaMode()}
               <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
                 <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                 Import
@@ -463,8 +469,8 @@
               <button onclick={() => deleteStorage(dest.id, dest.name)} class="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete storage">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
+              {/if}
             </div>
-            {/if}
           </div>
 
           <!-- Config summary -->
@@ -880,3 +886,7 @@
     </div>
   {/if}
 </Modal>
+
+{#if browseDest}
+  <StorageBrowser destId={browseDest.id} destName={browseDest.name} onclose={() => browseDest = null} />
+{/if}

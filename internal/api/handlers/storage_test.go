@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -864,6 +865,23 @@ func TestStorageListFiles_Local(t *testing.T) {
 	h.ListFiles(w, reqWithID(http.MethodGet, "/api/v1/storage/"+idStr+"/list", idStr, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestStorageListFiles_TraversalPrefixRejected covers the defence-in-depth
+// prefix validation added for the destination file browser (issue #236).
+func TestStorageListFiles_TraversalPrefixRejected(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	for _, prefix := range []string{"../etc", "/etc", "a/../../b", `safe\..\..`, `..\smbshare`, `a\..`} {
+		w := httptest.NewRecorder()
+		h.ListFiles(w, reqWithID(http.MethodGet,
+			"/api/v1/storage/"+idStr+"/list?prefix="+url.QueryEscape(prefix), idStr, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("prefix %q: status = %d, want 400", prefix, w.Code)
+		}
 	}
 }
 

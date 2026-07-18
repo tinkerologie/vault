@@ -1,5 +1,7 @@
 # Storage Destinations
 
+Every destination card has a **Browse** button that opens a read-only file browser — drill into folders like an FTP client to see exactly what Vault sees on the destination. It never writes anything, so it's also available in replica mode.
+
 Vault writes compressed (and optionally encrypted) backup archives to a storage destination. This page explains how to configure each supported type.
 
 ## Overview
