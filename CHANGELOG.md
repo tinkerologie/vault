@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Adaptive upload throttling — Vault now yields bandwidth to Plex, Jellyfin and friends** (closes #237). An opt-in "Upload Throttling" section in Settings lets you enter your link's upload capacity; Vault then continuously measures non-Vault traffic on the network interface and slows its own uploads to network destinations so streaming keeps its bandwidth, speeding back up when the link goes quiet. A configurable minimum rate keeps backups progressing, per-destination bandwidth caps still apply (stricter limit wins), and changes take effect within seconds without a restart.
 - **Browse the files on a storage destination like an FTP client** (closes #236). Each destination card on the Storage page now has a Browse button that opens a read-only file browser — drill into folders with breadcrumb navigation and see file sizes and modification times for whatever Vault sees on the destination (local, SFTP, SMB, NFS, WebDAV, S3). Available in replica mode too since it never writes anything.
 
 ### Changed

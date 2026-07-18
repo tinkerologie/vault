@@ -41,6 +41,7 @@
     { id: 'set-appearance', label: 'Appearance' },
     { id: 'set-targets', label: 'Backup Targets' },
     { id: 'set-retry', label: 'Retry Policy' },
+    { id: 'set-throttle', label: 'Upload Throttling' },
     { id: 'set-dedup', label: 'Dedup' },
     { id: 'set-anomaly', label: 'Anomaly Detection' },
     { id: 'set-logging', label: 'Storage Logging' },
@@ -121,6 +122,11 @@
   // emits a valid JSON array string (or '' for "unset"), so no client-side
   // validator is needed any more.
   let retryMax = $state('')
+  // Adaptive upload throttle (issue #237)
+  let autoThrottleEnabled = $state(false)
+  let autoThrottleLink = $state('')
+  let autoThrottleFloor = $state('')
+  let autoThrottleSaving = $state(false)
   let retryDelays = $state('')
   let retrySaving = $state(false)
 
@@ -230,6 +236,9 @@
       historyRetention = String(s.history_retention_days ?? '365')
       retryMax = s?.retry_max_default ?? ''
       retryDelays = s?.retry_delays_default ?? ''
+      autoThrottleEnabled = s?.auto_throttle_enabled === 'true'
+      autoThrottleLink = s?.auto_throttle_link_mbps ?? ''
+      autoThrottleFloor = s?.auto_throttle_floor_mbps ?? ''
       // Anomaly detection settings (Task 19)
       anomalyEnabled = s?.anomaly_detection_enabled !== 'false'
       anomalySensitivityDefault = s?.anomaly_sensitivity_default || 'balanced'
@@ -520,6 +529,35 @@
       showToast(e.message, 'error')
     } finally {
       compactionSaving = false
+    }
+  }
+
+  async function saveAutoThrottle() {
+    if (readOnly) return
+    autoThrottleSaving = true
+    try {
+      const link = Number.parseInt(String(autoThrottleLink).trim() || '0', 10)
+      const floor = Number.parseInt(String(autoThrottleFloor).trim() || '5', 10)
+      if (autoThrottleEnabled && (!Number.isInteger(link) || link <= 0)) {
+        showToast('Set your link upload capacity in Mbps to enable adaptive throttling', 'error')
+        autoThrottleSaving = false
+        return
+      }
+      if (!Number.isInteger(floor) || floor < 0 || (link > 0 && floor > link)) {
+        showToast('Minimum rate must be between 0 and the link capacity', 'error')
+        autoThrottleSaving = false
+        return
+      }
+      settings = await api.updateSettings({
+        auto_throttle_enabled: autoThrottleEnabled ? 'true' : 'false',
+        auto_throttle_link_mbps: String(link),
+        auto_throttle_floor_mbps: String(floor),
+      })
+      showToast('Upload throttling saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      autoThrottleSaving = false
     }
   }
 
@@ -1026,6 +1064,50 @@
             >
               {#if retrySaving}<InlineSpinner />{/if}
               Save Retry Policy
+            </button>
+          </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Adaptive Upload Throttling (issue #237) -->
+      <div id="set-throttle" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Upload Throttling <Tooltip text="When enabled, Vault continuously measures non-Vault traffic on the network link and slows its own uploads so streaming services like Plex or Jellyfin keep their bandwidth. Vault speeds back up when the link goes quiet." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">Automatically yield upload bandwidth to other services using your internet link.</p>
+        </div>
+        <div class="p-5 space-y-4">
+          <label class="flex items-center gap-2 text-sm text-text">
+            <input type="checkbox" bind:checked={autoThrottleEnabled} disabled={readOnly} class="accent-vault" />
+            Adaptively throttle uploads when the link is busy
+          </label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label for="throttle-link" class="block text-sm font-medium text-text-muted mb-1.5">
+                Link upload capacity (Mbps)
+                <Tooltip text="Your internet connection's upstream speed as quoted by your ISP, in megabits per second. Vault targets this minus current non-Vault traffic minus 10% headroom." />
+              </label>
+              <input id="throttle-link" type="number" min="1" bind:value={autoThrottleLink} disabled={readOnly}
+                placeholder="e.g. 40"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            </div>
+            <div>
+              <label for="throttle-floor" class="block text-sm font-medium text-text-muted mb-1.5">
+                Minimum Vault rate (Mbps)
+                <Tooltip text="Vault never throttles below this rate, so backups always keep progressing even while the link is busy." />
+              </label>
+              <input id="throttle-floor" type="number" min="0" bind:value={autoThrottleFloor} disabled={readOnly}
+                placeholder="5"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            </div>
+          </div>
+          <p class="text-xs text-text-dim">Applies to uploads to network destinations (SFTP, SMB, NFS, WebDAV, S3). Per-destination bandwidth caps still apply — the stricter limit wins. Takes effect within a few seconds of saving, no restart needed.</p>
+          {#if !readOnly}
+          <div class="flex justify-end">
+            <button onclick={saveAutoThrottle} disabled={autoThrottleSaving}
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              {#if autoThrottleSaving}<InlineSpinner />{/if}
+              Save Upload Throttling
             </button>
           </div>
           {/if}

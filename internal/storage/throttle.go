@@ -20,6 +20,10 @@ import (
 type throttledAdapter struct {
 	inner   Adapter
 	limiter *rate.Limiter
+	// dynamic marks the process-wide adaptive throttle wrapper (issue #237):
+	// readers consult the runtime-tunable global limiter on every read and
+	// count upload bytes for the control loop's external-traffic estimate.
+	dynamic bool
 }
 
 // WrapThrottled returns adapter unchanged when mbps <= 0; otherwise wraps it
@@ -39,7 +43,7 @@ func WrapThrottled(adapter Adapter, mbps int) Adapter {
 }
 
 func (t *throttledAdapter) Write(p string, reader io.Reader) error {
-	return t.inner.Write(p, &throttledReader{r: reader, limiter: t.limiter})
+	return t.inner.Write(p, &throttledReader{r: reader, limiter: t.limiter, dynamic: t.dynamic, countUpload: t.dynamic})
 }
 
 func (t *throttledAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
@@ -48,7 +52,7 @@ func (t *throttledAdapter) WriteFrom(p string, open func() (io.ReadCloser, error
 		if err != nil {
 			return nil, err
 		}
-		return &throttledReadCloser{rc: rc, limiter: t.limiter}, nil
+		return &throttledReadCloser{rc: rc, limiter: t.limiter, dynamic: t.dynamic, countUpload: t.dynamic}, nil
 	})
 }
 
@@ -57,7 +61,7 @@ func (t *throttledAdapter) Read(p string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &throttledReadCloser{rc: rc, limiter: t.limiter}, nil
+	return &throttledReadCloser{rc: rc, limiter: t.limiter, dynamic: t.dynamic}, nil
 }
 
 func (t *throttledAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
@@ -65,7 +69,7 @@ func (t *throttledAdapter) ReadRange(p string, offset, length int64) (io.ReadClo
 	if err != nil {
 		return nil, err
 	}
-	return &throttledReadCloser{rc: rc, limiter: t.limiter}, nil
+	return &throttledReadCloser{rc: rc, limiter: t.limiter, dynamic: t.dynamic}, nil
 }
 
 func (t *throttledAdapter) Delete(p string) error { return t.inner.Delete(p) }
@@ -80,31 +84,68 @@ func (t *throttledAdapter) TestConnection() error           { return t.inner.Tes
 // reader that returns 4 KiB on a 5 Mbps cap (= ~625 KB/s) waits ~6.4 ms
 // per read \xe2\x80\x94 imperceptible to the caller but enforces the cap.
 type throttledReader struct {
-	r       io.Reader
-	limiter *rate.Limiter
+	r           io.Reader
+	limiter     *rate.Limiter
+	dynamic     bool
+	countUpload bool
+}
+
+// throttleChunk applies static and/or adaptive limiting to one read's bytes.
+func throttleChunk(n int, limiter *rate.Limiter, dynamic, countUpload bool) {
+	if countUpload {
+		autoUploaded.Add(int64(n))
+	}
+	waitPaced(limiter, n)
+	if dynamic {
+		waitPaced(currentAutoLimiter(), n)
+	}
+}
+
+// waitPaced blocks until the limiter has released n tokens. Reads larger
+// than the burst (e.g. S3's multi-MiB part buffers) are paced in
+// burst-sized chunks — a single WaitN(n > burst) errors immediately in
+// x/time/rate, which would silently let the whole read through unthrottled.
+func waitPaced(lim *rate.Limiter, n int) {
+	if lim == nil || n <= 0 {
+		return
+	}
+	burst := lim.Burst()
+	if burst < 1 {
+		return
+	}
+	for n > 0 {
+		c := n
+		if c > burst {
+			c = burst
+		}
+		// WaitN blocks until enough tokens accumulate. Burst capacity
+		// equals one second of bytes so the very first read after a
+		// quiet period drains the bucket without blocking; sustained
+		// throughput is then capped at the configured rate.
+		_ = lim.WaitN(context.Background(), c)
+		n -= c
+	}
 }
 
 func (tr *throttledReader) Read(p []byte) (int, error) {
 	n, err := tr.r.Read(p)
 	if n > 0 {
-		// WaitN blocks until enough tokens accumulate. Burst capacity
-		// equals one second of bytes so the very first read after a
-		// quiet period drains the bucket without blocking; sustained
-		// throughput is then capped at the configured rate.
-		_ = tr.limiter.WaitN(context.Background(), n)
+		throttleChunk(n, tr.limiter, tr.dynamic, tr.countUpload)
 	}
 	return n, err
 }
 
 type throttledReadCloser struct {
-	rc      io.ReadCloser
-	limiter *rate.Limiter
+	rc          io.ReadCloser
+	limiter     *rate.Limiter
+	dynamic     bool
+	countUpload bool
 }
 
 func (trc *throttledReadCloser) Read(p []byte) (int, error) {
 	n, err := trc.rc.Read(p)
 	if n > 0 {
-		_ = trc.limiter.WaitN(context.Background(), n)
+		throttleChunk(n, trc.limiter, trc.dynamic, trc.countUpload)
 	}
 	return n, err
 }

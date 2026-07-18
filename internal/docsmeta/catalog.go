@@ -53,6 +53,9 @@ var AppSettings = []SettingDoc{
 	{"replication_enabled", "string", "", "Master toggle for the replication subsystem. Empty/false disables replication scheduling; \"true\" enables it.", GroupGeneral},
 
 	// Backup engine
+	{"auto_throttle_enabled", "bool", "false", "Adaptively slow Vault's uploads when other services (e.g. Plex remote streams) are using the internet uplink. Requires the link capacity below to be set.", GroupBackup},
+	{"auto_throttle_link_mbps", "int", "0", "Upstream capacity of the internet link in Mbps (as quoted by the ISP). The adaptive throttle targets this minus current non-Vault traffic minus 10% headroom.", GroupBackup},
+	{"auto_throttle_floor_mbps", "int", "5", "Minimum upload rate in Mbps the adaptive throttle will always leave Vault, so backups keep progressing even on a busy link.", GroupBackup},
 	{"retry_max_default", "int", "2", "Default maximum number of automatic retries for a failed backup when a job has no per-job override.", GroupBackup},
 	{"retry_delays_default", "json", "[900,3600,14400]", "Default retry backoff schedule (JSON array of seconds) used when a job has no per-job override.", GroupBackup},
 	{"breaker_fail_threshold", "int", "3", "Consecutive storage failures required before a destination's circuit breaker opens.", GroupBackup},

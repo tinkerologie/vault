@@ -567,6 +567,11 @@ var daemonCmd = &cobra.Command{
 
 		hb.Start(ctx)
 
+		// Adaptive upload throttle controller (issue #237). Idles until the
+		// auto_throttle_enabled setting is turned on; settings are re-read
+		// every tick so no restart is needed.
+		go srv.Runner().RunAutoThrottleLoop(ctx)
+
 		// Periodic USB safety-net refresh. Belt-and-braces for the
 		// case where event-driven flushes (configChangeHook on every
 		// mutation, post-backup snapshot, SIGTERM pre-drain) all

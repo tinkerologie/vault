@@ -52,6 +52,9 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 	// link to protect, so throttling would only slow backups for no benefit.
 	if storageType != "local" {
 		a = WrapThrottled(a, common.BandwidthLimitMbps)
+		// Adaptive throttle (issue #237): consults the runtime-tunable
+		// global limiter per read; a pure pass-through while disabled.
+		a = wrapAutoThrottled(a)
 	}
 	// retry wraps throttle so a throttled-then-failed attempt is re-issued.
 	a = withRetry(a, DefaultRetryPolicy)
