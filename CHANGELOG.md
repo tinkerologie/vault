@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.05] - 2026-07-18
+
+### Fixed
+
+- **Folder backups now honor the `exclude_paths` setting** (#230). The runner never passed a folder item's configured exclusions to the backup engine, so exclusion patterns (e.g. `*.log` or a `logs` directory) were silently ignored and excluded files still ended up in folder backups. Exclusions now apply to both classic tar and dedup/chunked folder backups, matching the container behavior. Note: exclusions added to an existing incremental/differential chain take full effect from the next **full** backup (#231). Thanks to **@0x1917** for the fix and regression tests!
+
 ## [v2026.07.04] - 2026-07-16
 
 ### Fixed
