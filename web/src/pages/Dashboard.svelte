@@ -210,6 +210,17 @@
     }
   }
 
+  async function cancelActiveRun() {
+    const run = progress.activeRun
+    if (!run) return
+    try {
+      await api.cancelJob(run.job_id)
+      showToast(`Cancelling "${run.job_name}"…`, 'info')
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
   async function runNow(job) {
     runningJob = job.id
     try {
@@ -881,6 +892,13 @@
         <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
         <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{activeRunLabel}</span>
         <span class="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-vault/15 text-vault font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
+        {#if progress.activeRun.run_type !== 'restore'}
+          <button onclick={cancelActiveRun} disabled={progress.cancelling}
+            class="text-[11px] px-2 py-0.5 rounded-full border border-danger/40 text-danger hover:bg-danger/10 transition-colors disabled:opacity-50 shrink-0"
+            title="Cancel this backup" aria-label="Cancel running backup">
+            {progress.cancelling ? 'Cancelling…' : 'Cancel'}
+          </button>
+        {/if}
       </div>
       <div class="flex items-center justify-between text-xs text-text-muted mb-1.5">
         <span>Overall progress</span><span class="font-mono text-text-dim tabular-nums">{overallPct}%</span>

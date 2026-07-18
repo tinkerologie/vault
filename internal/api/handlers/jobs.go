@@ -393,6 +393,18 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// surface as a spurious "daemon unavailable" even though the server kept
 	// working and eventually returned 204. We now delete the DB row, respond
 	// immediately (202 Accepted), and sweep storage in the background.
+	// Deleting a job that is currently running (or queued) cancels the run
+	// first, best-effort — previously delete removed the rows while the
+	// backup goroutine kept going, which is what made "delete" look like the
+	// only way to stop a job (issue #235). Restores are the exception:
+	// interrupting one mid-write leaves half-restored data, and deleting the
+	// job would also cascade-delete the restore's records — refuse instead.
+	if st := h.runner.Status(); st.Active && st.JobID == id && st.RunType == "restore" {
+		respondError(w, http.StatusConflict, "a restore for this job is in progress — wait for it to finish before deleting the job")
+		return
+	}
+	_ = h.runner.CancelJob(id)
+
 	deleteFiles := r.URL.Query().Get("deleteFiles") == "true"
 	var (
 		cleanupJobName string

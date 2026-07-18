@@ -142,9 +142,15 @@ type Runner struct {
 	lastProgressMu sync.Mutex
 	lastProgress   time.Time
 
-	// queueMu protects the pending job queue.
-	queueMu sync.Mutex
-	queue   []QueueEntry
+	// queueMu protects the pending job queue and the cancelled-while-queued
+	// set. Queued runs are goroutines blocked on r.mu; a cancelled entry is
+	// removed from the display queue and its jobID recorded here so the
+	// goroutine aborts before running once it acquires the lock (issue #238).
+	// queueCancelled counts cancelled-but-not-yet-woken queued runs per job,
+	// so two queued Run Now invocations cancelled back-to-back both abort.
+	queueMu        sync.Mutex
+	queue          []QueueEntry
+	queueCancelled map[int64]int
 
 	// Drain coordination. activeMu guards activeCount and draining.
 	// activeCond is signalled when activeCount transitions to 0 so Drain
@@ -280,6 +286,15 @@ func (r *Runner) CancelJob(jobID int64) error {
 	}
 	r.statusMu.RUnlock()
 
+	// A job that is queued behind the active run (e.g. Run Now while a
+	// scheduled run holds the lock) has no cancellable context yet — remove
+	// it from the queue and flag it so its goroutine aborts before running.
+	if !active || runningID != jobID {
+		if r.cancelQueued(jobID) {
+			return nil
+		}
+	}
+
 	if !active {
 		return fmt.Errorf("no job is currently running")
 	}
@@ -287,11 +302,15 @@ func (r *Runner) CancelJob(jobID int64) error {
 		return fmt.Errorf("job %d is not running (running: %d)", jobID, runningID)
 	}
 
+	// Read the cancel fn and its owner atomically — between the status
+	// snapshot above and here, run A may have finished and run B installed
+	// its own cancel fn; without the identity check we would cancel B.
 	r.cancelMu.Lock()
 	fn := r.cancelFn
+	fnOwner := r.cancellingJobID
 	r.cancelMu.Unlock()
 
-	if fn == nil {
+	if fn == nil || fnOwner != jobID {
 		return fmt.Errorf("job %d cannot be cancelled", jobID)
 	}
 
@@ -299,7 +318,7 @@ func (r *Runner) CancelJob(jobID int64) error {
 	fn()
 
 	r.statusMu.Lock()
-	if r.currentRun != nil {
+	if r.currentRun != nil && r.currentRun.JobID == jobID {
 		r.currentRun.Cancelling = true
 	}
 	r.statusMu.Unlock()
@@ -310,6 +329,35 @@ func (r *Runner) CancelJob(jobID int64) error {
 	})
 
 	return nil
+}
+
+// cancelQueued removes a pending queue entry for jobID and records the
+// cancellation so the blocked goroutine skips the run when it wakes up.
+// Returns true when a queued entry was cancelled.
+func (r *Runner) cancelQueued(jobID int64) bool {
+	r.queueMu.Lock()
+	found := false
+	for i, e := range r.queue {
+		if e.JobID == jobID {
+			r.queue = append(r.queue[:i], r.queue[i+1:]...)
+			if r.queueCancelled == nil {
+				r.queueCancelled = make(map[int64]int)
+			}
+			r.queueCancelled[jobID]++
+			found = true
+			break
+		}
+	}
+	r.queueMu.Unlock()
+	if found {
+		log.Printf("runner: cancelled queued run of job %d", jobID)
+		r.broadcastQueueUpdate()
+		r.broadcast(map[string]any{
+			"type":   "job_cancelling",
+			"job_id": jobID,
+		})
+	}
+	return found
 }
 
 func (r *Runner) setRunStatus(s *RunStatus) {
@@ -520,17 +568,33 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Remove ourselves from the queue now that we hold the lock.
+	// Remove ourselves from the queue now that we hold the lock. If our
+	// entry is already gone and the job is flagged as cancelled-while-queued,
+	// abort before doing any work (issue #238).
 	r.queueMu.Lock()
+	foundSelf := false
 	for i, e := range r.queue {
 		if e.JobID == jobID && e.QueuedAt == entry.QueuedAt {
 			r.queue = append(r.queue[:i], r.queue[i+1:]...)
+			foundSelf = true
 			break
 		}
+	}
+	cancelled := false
+	if !foundSelf && r.queueCancelled[jobID] > 0 {
+		r.queueCancelled[jobID]--
+		if r.queueCancelled[jobID] == 0 {
+			delete(r.queueCancelled, jobID)
+		}
+		cancelled = true
 	}
 	r.queueMu.Unlock()
 
 	r.broadcastQueueUpdate()
+	if cancelled {
+		log.Printf("runner: job %d was cancelled while queued — skipping run", jobID)
+		return
+	}
 
 	job, err := r.db.GetJob(jobID)
 	if err != nil {

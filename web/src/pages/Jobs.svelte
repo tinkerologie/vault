@@ -5,6 +5,7 @@
   import { api } from '../lib/api.js'
   import { buildApiRequest } from '../lib/runtime-config.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
+  import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
   import { describeSchedule, relTimeUntil } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
@@ -454,7 +455,11 @@
 
   onMount(() => {
     loadData()
+    // Feed the shared progress store so the per-row Cancel control knows
+    // which job is running/queued even when Dashboard was never opened.
+    api.getRunnerStatus().then(s => restoreFromStatus(s)).catch(() => {})
     const unsubWs = onWsMessage((msg) => {
+      handleProgressMessage(msg)
       if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed' || msg.type === 'stale_items_detected') {
         loadData()
       } else if (msg.type === 'job_cleanup_complete') {
@@ -788,6 +793,22 @@
       showToast(e.message, 'error')
     } finally {
       runningJob = null
+    }
+  }
+
+  const progress = getProgress()
+  // A job shows Cancel instead of Run Now while it is the active run or is
+  // waiting in the queue (issues #235/#238).
+  function isRunningOrQueued(jobId) {
+    return progress.activeRun?.job_id === jobId || progress.queue.some(q => q.job_id === jobId)
+  }
+
+  async function cancelRun(job) {
+    try {
+      await api.cancelJob(job.id)
+      showToast(`Cancelling "${job.name}"…`, 'info')
+    } catch (e) {
+      showToast(e.message, 'error')
     }
   }
 
@@ -1222,19 +1243,31 @@
               </div>
             </div>
             <div class="flex items-center gap-1 shrink-0 ml-4">
-              <button
-                onclick={() => runNow(job)}
-                disabled={runningJob === job.id}
-                class="p-2 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors"
-                title="Run Now"
-                aria-label="Run backup now"
-              >
-                {#if runningJob === job.id}
-                  <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                {:else}
-                  <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                {/if}
-              </button>
+              {#if isRunningOrQueued(job.id)}
+                <button
+                  onclick={() => cancelRun(job)}
+                  disabled={progress.cancelling && progress.activeRun?.job_id === job.id}
+                  class="p-2 text-danger hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-50"
+                  title={progress.activeRun?.job_id === job.id ? 'Cancel running backup' : 'Cancel queued backup'}
+                  aria-label="Cancel backup"
+                >
+                  <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9h6v6H9z"/></svg>
+                </button>
+              {:else}
+                <button
+                  onclick={() => runNow(job)}
+                  disabled={runningJob === job.id}
+                  class="p-2 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors"
+                  title="Run Now"
+                  aria-label="Run backup now"
+                >
+                  {#if runningJob === job.id}
+                    <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  {:else}
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  {/if}
+                </button>
+              {/if}
               <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
               </button>

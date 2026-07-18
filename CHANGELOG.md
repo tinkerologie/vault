@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Running and queued backups can now actually be cancelled from the UI** (closes #235, closes #238). The documented Cancel flow never had a button: the Jobs page now shows a Cancel control on the running/queued job's row, and the Dashboard's "Backup in progress" tile has a Cancel button with live "Cancelling…" state. Cancelling a job that is **queued** behind another run (e.g. Run Now on a scheduled job while a backup is active) removes it from the queue before it starts — previously such runs could not be stopped at all. Deleting a running job now cancels its run first instead of leaving the backup goroutine running against deleted records.
+
 ### Changed
 
 - **The Full Form "sensible defaults" note in the job editor is now a prominent info callout** instead of small dim text, so it's clear why Advanced Options are not shown in Full Form mode (closes #232).

@@ -175,10 +175,12 @@ While a job is running:
 
 To stop an in-progress backup:
 
-1. Go to **Jobs**
+1. Go to **Jobs** (or the Dashboard's **Backup in progress** tile)
 2. Click the **Cancel** button on the running job
 
 Vault signals cancellation through the entire pipeline — file I/O, directory traversal, and engine handlers all check for cancellation and stop gracefully. The job is marked as "cancelled" in History.
+
+Cancel also works on a job that is **queued** behind another run (for example after clicking Run Now while a scheduled backup is active) — the queued run is removed before it starts. Deleting a job that is currently running cancels the run first.
 
 Jobs also have an automatic safeguard:
 

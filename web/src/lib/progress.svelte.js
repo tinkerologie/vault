@@ -11,7 +11,9 @@ let overallTotal = $state(0)
 let phaseMessage = $state(null)
 let elapsedSec = $state(0)
 let jobQueue = $state([])
+let cancelling = $state(false)
 let _elapsedInterval = null
+let _completionTimer = null
 
 function defaultProgressMessage(runType) {
   return runType === 'restore' ? 'Preparing restore...' : 'In progress...'
@@ -27,6 +29,7 @@ export function getProgress() {
     get elapsedSec() { return elapsedSec },
     get phaseMessage() { return phaseMessage },
     get queue() { return jobQueue },
+    get cancelling() { return cancelling },
   }
 }
 
@@ -49,6 +52,7 @@ export function restoreFromStatus(status) {
   overallFailed = status.items_failed || 0
   overallTotal = status.items_total || 0
   jobQueue = status.queue || []
+  cancelling = !!status.cancelling
   itemProgress = {}
   if (status.current_item) {
     itemProgress = {
@@ -88,6 +92,7 @@ export function syncFromStatus(status) {
   overallFailed = status.items_failed || 0
   overallTotal = status.items_total || 0
   jobQueue = status.queue || []
+  cancelling = !!status.cancelling
 
   if (status.current_item) {
     const existing = itemProgress[status.current_item] || {}
@@ -145,6 +150,10 @@ export function handleProgressMessage(msg, jobNameResolver) {
 
   switch (msg.type) {
     case 'job_run_started': {
+      cancelling = false
+      // A previous run's delayed cleanup must not wipe this new run's state.
+      clearTimeout(_completionTimer)
+      _completionTimer = null
       const jName = msg.job_name || activeRun?.job_name || jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
       activeRun = {
         job_id: msg.job_id,
@@ -283,11 +292,20 @@ export function handleProgressMessage(msg, jobNameResolver) {
       jobQueue = msg.queue || []
       return true
     }
+    case 'job_cancelling': {
+      if (activeRun && msg.job_id === activeRun.job_id) cancelling = true
+      return true
+    }
     case 'job_run_completed': {
       phaseMessage = null
+      cancelling = false
       clearInterval(_elapsedInterval)
       if (activeRun) {
-        setTimeout(() => {
+        const completedRunId = activeRun.run_id
+        clearTimeout(_completionTimer)
+        _completionTimer = setTimeout(() => {
+          // Only clear if a newer run hasn't taken over in the meantime.
+          if (activeRun?.run_id !== completedRunId) return
           activeRun = null
           itemProgress = {}
           overallDone = 0
