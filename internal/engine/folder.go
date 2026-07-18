@@ -116,6 +116,15 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 		result.Files = append(result.Files, backupFileInfo(archivePath+IndexSuffix))
 	}
 
+	// Authoritative point-in-time listing (full effective file set after
+	// exclusions) — lets chain restore prune files deleted or newly excluded
+	// since the base full backup (issue #231). Best-effort like the index.
+	if err := WriteEffectiveListing(srcPath, archivePath, exclusions); err != nil {
+		_ = err
+	} else {
+		result.Files = append(result.Files, backupFileInfo(archivePath+ListingSuffix))
+	}
+
 	// Store source path metadata so restore knows the original location.
 	metaPath := filepath.Join(destDir, "folder_meta.json")
 	metaJSON := fmt.Sprintf(`{"path":%q,"name":%q}`, srcPath, item.Name)
@@ -336,8 +345,16 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	// is stored off-host and could in principle be tampered with — every
 	// entry path is therefore re-validated through safepath.JoinUnderBase
 	// to guarantee the resulting path stays inside destPath (CWE-22).
+	// Honour the partial-restore file picker: when restore_file_paths is
+	// set, only reconstruct the selected entries (and descendants of any
+	// selected directory) — mirroring untarDirectoryFiltered's semantics.
+	include := newIncludeSet(extractRestoreFilePaths(item.Settings))
+
 	var dirs, files []string
 	for p, e := range m.Files {
+		if !include.matches(p) {
+			continue
+		}
 		if e.IsDir {
 			dirs = append(dirs, p)
 		} else {

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2893,6 +2894,18 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		if usesMergedRestoreChain(itemType) {
 			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, reporter)
 		}
+		// Dedup folder points carry a COMPLETE manifest (BackupChunked walks
+		// the whole tree every run — increments reuse chunks, not manifest
+		// entries). Restoring the selected point alone reproduces the exact
+		// point-in-time state and cannot resurrect files deleted or excluded
+		// after the base full backup (issue #231).
+		if itemType == "folder" {
+			if _, ok := resolveManifestID(restorePoint, itemName); ok {
+				log.Printf("runner: dedup folder restore point %d has a complete manifest — restoring it directly (no chain replay)", restorePoint.ID)
+				return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+			}
+		}
+		replayStart := time.Now()
 		for i, rp := range chain {
 			log.Printf("runner: restoring chain step %d/%d (type=%s, id=%d)",
 				i+1, len(chain), rp.BackupType, rp.ID)
@@ -2900,9 +2913,191 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 				return fmt.Errorf("restoring chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
 		}
+		// Classic folder chains overlay without deletion tracking; prune
+		// files the overlay wrote that are absent from the newest point's
+		// authoritative listing (issue #231). Whole-item restores only — a
+		// partial file-picker restore writes nothing prunable.
+		if itemType == "folder" && len(filePaths) == 0 {
+			r.pruneChainResurrected(chain, itemName, destination, passphrase, replayStart)
+		}
 		return nil
 	}
 	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+}
+
+// pruneChainResurrected removes files that the classic chain overlay wrote
+// but that are absent from the newest restore point's authoritative listing
+// (deleted or newly excluded after the base full — issue #231). Best-effort:
+// without a listing (pre-listing backups) or without every step's tar index
+// the prune is skipped, preserving the old overlay behaviour.
+func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destination, passphrase string, replayStart time.Time) {
+	newest := chain[len(chain)-1]
+
+	job, err := r.db.GetJob(newest.JobID)
+	if err != nil {
+		return
+	}
+	dest, err := r.db.GetStorageDestination(job.StorageDestID)
+	if err != nil {
+		return
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return
+	}
+	defer storage.CloseAdapter(adapter)
+
+	listing, ok := r.readItemSidecar(adapter, newest, itemName, engine.ListingSuffix, passphrase)
+	if !ok {
+		log.Printf("runner: restore point %d has no effective listing — skipping chain prune", newest.ID)
+		return
+	}
+	keep := make(map[string]struct{}, len(listing.Files))
+	for _, f := range listing.Files {
+		keep[f.Path] = struct{}{}
+	}
+
+	// Union of everything the earlier chain steps could have written (later
+	// steps win so the recorded size matches the surviving extraction). If
+	// any step's index is unreadable we cannot know its writes — skip
+	// pruning rather than guess.
+	type writtenEntry struct {
+		isDir bool
+		size  int64
+	}
+	written := make(map[string]writtenEntry)
+	for _, step := range chain[:len(chain)-1] {
+		idx, ok := r.readItemSidecar(adapter, step, itemName, engine.IndexSuffix, passphrase)
+		if !ok {
+			log.Printf("runner: chain step %d has no readable tar index — skipping chain prune", step.ID)
+			return
+		}
+		for _, f := range idx.Files {
+			written[f.Path] = writtenEntry{isDir: f.IsDir, size: f.Size}
+		}
+	}
+
+	destPath := destination
+	if destPath == "" {
+		if jobItems, itemsErr := r.db.GetJobItems(newest.JobID); itemsErr == nil {
+			for _, ji := range jobItems {
+				if ji.ItemName == itemName && ji.ItemType == "folder" {
+					var s map[string]any
+					if json.Unmarshal([]byte(ji.Settings), &s) == nil {
+						if p, ok := s["path"].(string); ok {
+							destPath = p
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+	if destPath == "" {
+		return
+	}
+
+	pruned := 0
+	var pruneDirs []string
+	for rel, we := range written {
+		if _, ok := keep[rel]; ok {
+			continue
+		}
+		if rel == "" || !filepath.IsLocal(rel) {
+			continue // never follow traversal paths from an index
+		}
+		if we.isDir {
+			pruneDirs = append(pruneDirs, rel)
+			continue
+		}
+		full := filepath.Join(destPath, rel)
+		// Ownership guard: only remove what this replay demonstrably wrote —
+		// a regular file whose mtime falls after the replay started (classic
+		// untar stamps extraction time) and whose size matches the archived
+		// entry. Anything modified or replaced since extraction is left
+		// alone rather than guessed at.
+		info, statErr := os.Lstat(full)
+		if statErr != nil || !info.Mode().IsRegular() ||
+			info.ModTime().Before(replayStart) || info.Size() != we.size {
+			continue
+		}
+		if err := os.Remove(full); err == nil {
+			pruned++
+		}
+	}
+	// Directories last, deepest first, and only when empty.
+	sort.Slice(pruneDirs, func(i, j int) bool { return len(pruneDirs[i]) > len(pruneDirs[j]) })
+	for _, rel := range pruneDirs {
+		if err := os.Remove(filepath.Join(destPath, rel)); err == nil {
+			pruned++
+		}
+	}
+	if pruned > 0 {
+		log.Printf("runner: chain prune removed %d entr%s deleted/excluded since restore point %d's chain base",
+			pruned, map[bool]string{true: "y", false: "ies"}[pruned == 1], newest.ID)
+	}
+}
+
+// ReadItemSidecar exposes sidecar reading for API handlers (the restore
+// wizard's file picker filters merged chain contents by the listing).
+func (r *Runner) ReadItemSidecar(dest db.StorageDestination, rp db.RestorePoint, itemName, suffix string) (engine.TarIndex, bool) {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return engine.TarIndex{}, false
+	}
+	defer storage.CloseAdapter(adapter)
+	return r.readItemSidecar(adapter, rp, itemName, suffix, "")
+}
+
+// readItemSidecar reads a per-item JSON sidecar (tar index or effective
+// listing) for a restore point, decrypting .age variants with the supplied
+// passphrase (falling back to the configured one when empty).
+func (r *Runner) readItemSidecar(adapter storage.Adapter, rp db.RestorePoint, itemName, suffix, passphrase string) (engine.TarIndex, bool) {
+	itemPrefix := path.Join(rp.StoragePath, itemName)
+	entries, err := adapter.List(itemPrefix)
+	if err != nil {
+		return engine.TarIndex{}, false
+	}
+	var candidate string
+	for _, e := range entries {
+		if e.IsDir {
+			continue
+		}
+		base := path.Base(e.Path)
+		if strings.HasSuffix(base, suffix) || strings.HasSuffix(base, suffix+".age") {
+			candidate = e.Path
+			break
+		}
+	}
+	if candidate == "" {
+		return engine.TarIndex{}, false
+	}
+	rc, err := adapter.Read(candidate)
+	if err != nil {
+		return engine.TarIndex{}, false
+	}
+	defer rc.Close()
+	var src io.Reader = rc
+	if strings.HasSuffix(candidate, ".age") {
+		pass := passphrase
+		if pass == "" {
+			pass = r.ResolvePassphrase()
+		}
+		if pass == "" {
+			return engine.TarIndex{}, false
+		}
+		dec, decErr := crypto.DecryptReader(pass, rc)
+		if decErr != nil {
+			return engine.TarIndex{}, false
+		}
+		defer dec.Close()
+		src = dec
+	}
+	idx, err := engine.ReadTarIndex(src)
+	if err != nil {
+		return engine.TarIndex{}, false
+	}
+	return idx, true
 }
 
 func usesMergedRestoreChain(itemType string) bool {
@@ -2968,7 +3163,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 // the chunked restore path is taken instead of the classic stage + restore.
 func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
 	if manifestID, ok := resolveManifestID(restorePoint, itemName); ok {
-		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, reporter)
+		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, filePaths, reporter)
 	}
 
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
@@ -3019,7 +3214,7 @@ func resolveManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool) {
 // manifest_id was persisted for a handler that can't chunk), and invokes
 // RestoreChunked. destPath is passed through to the handler so it can write
 // directly to the target — no local staging required.
-func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, filePaths []string, reporter restoreProgressReporter) error {
 	job, err := r.db.GetJob(rp.JobID)
 	if err != nil {
 		return fmt.Errorf("getting job: %w", err)
@@ -3077,6 +3272,11 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 	}
 	if destination != "" {
 		item.Settings["restore_destination"] = destination
+	}
+	// Partial-restore include list from the file picker — RestoreChunked
+	// filters manifest entries by it (whole tree when empty).
+	if len(filePaths) > 0 {
+		item.Settings["restore_file_paths"] = filePaths
 	}
 
 	progress := func(name string, pct int, msg string) {

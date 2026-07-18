@@ -598,10 +598,23 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Restoring an incremental/differential point replays the whole chain,
-	// so the file picker must show the merged chain contents — this point's
-	// own index only lists the files that changed in this increment (often
-	// none, which rendered as an empty picker).
+	// Dedup points carry a complete manifest and restore directly from it —
+	// no chain merge (and no resurrection, issue #231). Check before the
+	// chain branch so dedup increments browse as exactly their manifest.
+	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
+		manifest, err := h.runner.GetDedupManifest(dest, mID)
+		if err != nil {
+			respondInternalError(w, err)
+			return
+		}
+		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, manifest))
+		return
+	}
+
+	// Restoring a classic incremental/differential point replays the whole
+	// chain, so the file picker must show the merged chain contents — this
+	// point's own index only lists the files that changed in this increment
+	// (often none, which rendered as an empty picker).
 	if rp.BackupType == "incremental" || rp.BackupType == "differential" {
 		chain, chainErr := h.runner.BuildRestoreChain(rp)
 		if chainErr != nil || len(chain) < 2 {
@@ -612,20 +625,6 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 			return
 		}
 		h.respondMergedChainContents(w, chain, dest, itemName, archiveName)
-		return
-	}
-
-	// Dedup restore points have no per-item tar archive (chunks live in
-	// /_vault/packs/), so the tar-index sidecar path is irrelevant. Instead,
-	// synthesize a TarIndex from the dedup manifest so the file picker UI
-	// can render the file list the same way it does for classic backups.
-	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
-		manifest, err := h.runner.GetDedupManifest(dest, mID)
-		if err != nil {
-			respondInternalError(w, err)
-			return
-		}
-		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, manifest))
 		return
 	}
 
@@ -751,6 +750,23 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 		}
 		for _, f := range idx.Files {
 			merged[f.Path] = f
+		}
+	}
+
+	// When the newest point has an authoritative listing, drop merged
+	// entries absent from it — the chain-restore prune pass removes those
+	// files, so the picker must not offer them (issue #231). Without a
+	// listing (pre-listing backups) the union stays, matching the restore.
+	newest := chain[len(chain)-1]
+	if listing, ok := h.runner.ReadItemSidecar(dest, newest, itemName, engine.ListingSuffix); ok {
+		keep := make(map[string]struct{}, len(listing.Files))
+		for _, f := range listing.Files {
+			keep[f.Path] = struct{}{}
+		}
+		for p := range merged {
+			if _, ok := keep[p]; !ok {
+				delete(merged, p)
+			}
 		}
 	}
 
