@@ -2812,6 +2812,14 @@ func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, d
 }
 
 func (r *Runner) restoreItemWithReporter(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+	// Notify exactly once per item restore, after the whole chain (if any)
+	// has been replayed — not once per chain step.
+	err := r.restoreItemChain(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+	r.sendRestoreNotification(itemName, itemType, err)
+	return err
+}
+
+func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
 		chain, err := r.buildRestoreChain(restorePoint)
@@ -3015,9 +3023,7 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 		r.reportRestoreProgress(reporter, pct, msg)
 	}
 
-	restoreErr := chunked.RestoreChunked(ctx, item, repo, manifestID, destPath, progress)
-	r.sendRestoreNotification(itemName, itemType, restoreErr)
-	return restoreErr
+	return chunked.RestoreChunked(ctx, item, repo, manifestID, destPath, progress)
 }
 
 func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter) error {
@@ -3317,9 +3323,7 @@ func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, i
 		backupItem.Settings["restore_file_paths"] = filePaths
 	}
 
-	restoreErr := handler.Restore(ctx, backupItem, tmpDir, progress)
-	r.sendRestoreNotification(itemName, itemType, restoreErr)
-	return restoreErr
+	return handler.Restore(ctx, backupItem, tmpDir, progress)
 }
 
 // broadcast sends a JSON message to all connected WebSocket clients.
@@ -4760,6 +4764,12 @@ func (r *Runner) resolveBackupType(job db.Job) backupTypeResult {
 		// Unknown chain type — fall back to full.
 		return backupTypeResult{BackupType: "full"}
 	}
+}
+
+// BuildRestoreChain exposes the restore chain walk for API handlers (the
+// restore wizard's file picker merges the chain's indexes).
+func (r *Runner) BuildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error) {
+	return r.buildRestoreChain(rp)
 }
 
 // buildRestoreChain walks the parent_restore_point_id chain to build an ordered

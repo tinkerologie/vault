@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Restoring an incremental or differential backup no longer sends duplicate "Restore completed" notifications.** The runner notified once per chain step (base full + each increment), so a single folder restore could produce several identical Unraid notifications — some arriving while the restore was still running. One notification is now sent per restored item, after the whole chain has been replayed.
+- **The restore wizard's file picker now works on incremental and differential restore points.** Browsing a restore point only listed the files captured by that specific increment — often nothing, showing an empty "No files match" picker even though a restore would recover the full folder. The picker now merges the file lists of the entire backup chain (base full plus increments, newest version of each file winning), matching what a restore actually produces.
+
 ## [v2026.07.05] - 2026-07-18
 
 ### Fixed

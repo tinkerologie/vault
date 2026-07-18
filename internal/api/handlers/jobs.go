@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -584,6 +585,24 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		respondInternalError(w, err)
 		return
 	}
+
+	// Restoring an incremental/differential point replays the whole chain,
+	// so the file picker must show the merged chain contents — this point's
+	// own index only lists the files that changed in this increment (often
+	// none, which rendered as an empty picker).
+	if rp.BackupType == "incremental" || rp.BackupType == "differential" {
+		chain, chainErr := h.runner.BuildRestoreChain(rp)
+		if chainErr != nil || len(chain) < 2 {
+			// Fail closed: a broken/incomplete chain must not silently browse
+			// as just this increment's delta.
+			log.Printf("api: restore point %d: chain walk failed (len=%d): %v", rp.ID, len(chain), chainErr)
+			respondError(w, http.StatusNotFound, "restore chain is incomplete; file browsing is unavailable for this restore point")
+			return
+		}
+		h.respondMergedChainContents(w, chain, dest, itemName, archiveName)
+		return
+	}
+
 	// Dedup restore points have no per-item tar archive (chunks live in
 	// /_vault/packs/), so the tar-index sidecar path is irrelevant. Instead,
 	// synthesize a TarIndex from the dedup manifest so the file picker UI
@@ -661,6 +680,129 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		return
 	}
 	respondJSON(w, http.StatusOK, idx)
+}
+
+// errIndexEncryptedNoPassphrase marks a chain-step index that cannot be read
+// because it is age-encrypted and no passphrase is configured.
+var errIndexEncryptedNoPassphrase = errors.New("index is encrypted but no passphrase is configured")
+
+// respondMergedChainContents merges the per-item indexes of every restore
+// point in the chain (oldest full first) and responds with the union, later
+// steps overriding earlier ones by path — mirroring what a chain restore
+// actually produces on disk. A step is skipped only when its metadata
+// conclusively shows the item was not captured by that step; a missing or
+// unreadable index otherwise fails the request (fail closed) so the wizard
+// falls back to whole-item restore instead of presenting a partial file list.
+func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []db.RestorePoint, dest db.StorageDestination, itemName, archiveName string) {
+	var adapter storage.Adapter
+	getAdapter := func() (storage.Adapter, error) {
+		if adapter == nil {
+			a, err := storage.NewAdapter(dest.Type, dest.Config)
+			if err != nil {
+				return nil, err
+			}
+			adapter = a
+		}
+		return adapter, nil
+	}
+	defer func() {
+		if adapter != nil {
+			storage.CloseAdapter(adapter)
+		}
+	}()
+
+	merged := make(map[string]engine.TarIndexEntry)
+	for i, step := range chain {
+		// Skip steps that conclusively did not capture this item (e.g. the
+		// item was added to the job after this step's backup ran).
+		if members, known := step.BackedUpItems(); known {
+			if _, ok := members[itemName]; !ok {
+				continue
+			}
+		}
+		// The `file` query targets the selected (newest) point's archive;
+		// parent steps auto-discover their own sidecar.
+		stepArchive := ""
+		if i == len(chain)-1 {
+			stepArchive = archiveName
+		}
+		idx, err := h.itemIndexForPoint(getAdapter, step, dest, itemName, stepArchive)
+		if err != nil {
+			if errors.Is(err, errIndexEncryptedNoPassphrase) {
+				respondError(w, http.StatusFailedDependency, errIndexEncryptedNoPassphrase.Error())
+				return
+			}
+			log.Printf("api: restore point %d: chain step %d index unavailable: %v", chain[len(chain)-1].ID, step.ID, err)
+			respondError(w, http.StatusNotFound, fmt.Sprintf(
+				"index for chain step %d is missing or unreadable; file browsing is unavailable for this restore point", step.ID))
+			return
+		}
+		for _, f := range idx.Files {
+			merged[f.Path] = f
+		}
+	}
+
+	files := make([]engine.TarIndexEntry, 0, len(merged))
+	for _, f := range merged {
+		files = append(files, f)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	respondJSON(w, http.StatusOK, engine.TarIndex{Version: 1, Archive: itemName, Files: files})
+}
+
+// itemIndexForPoint fetches one restore point's index for an item: the dedup
+// manifest for chunked points, otherwise the tar-index sidecar (decrypting
+// .age sidecars with the configured passphrase).
+func (h *JobHandler) itemIndexForPoint(getAdapter func() (storage.Adapter, error), rp db.RestorePoint, dest db.StorageDestination, itemName, archiveName string) (engine.TarIndex, error) {
+	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
+		manifest, err := h.runner.GetDedupManifest(dest, mID)
+		if err != nil {
+			return engine.TarIndex{}, err
+		}
+		return dedupManifestToTarIndex(itemName, manifest), nil
+	}
+
+	adapter, err := getAdapter()
+	if err != nil {
+		return engine.TarIndex{}, err
+	}
+	itemPrefix := path.Join(rp.StoragePath, itemName)
+	candidates, err := resolveIndexCandidates(adapter, itemPrefix, archiveName)
+	if err != nil {
+		return engine.TarIndex{}, err
+	}
+	var (
+		indexReader io.ReadCloser
+		sidecarPath string
+	)
+	for _, candidate := range candidates {
+		rc, readErr := adapter.Read(candidate)
+		if readErr != nil {
+			continue
+		}
+		indexReader = rc
+		sidecarPath = candidate
+		break
+	}
+	if indexReader == nil {
+		return engine.TarIndex{}, fmt.Errorf("no readable tar index sidecar under %s", itemPrefix)
+	}
+	defer indexReader.Close()
+
+	var src io.Reader = indexReader
+	if strings.HasSuffix(sidecarPath, ".age") {
+		pass := h.runner.ResolvePassphrase()
+		if pass == "" {
+			return engine.TarIndex{}, errIndexEncryptedNoPassphrase
+		}
+		dec, decErr := crypto.DecryptReader(pass, indexReader)
+		if decErr != nil {
+			return engine.TarIndex{}, decErr
+		}
+		defer dec.Close()
+		src = dec
+	}
+	return engine.ReadTarIndex(src)
 }
 
 // resolveIndexCandidates returns the list of storage paths to probe for the
