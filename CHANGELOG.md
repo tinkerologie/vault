@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.06] - 2026-07-18
+
 ### Fixed
 
 - **Restoring an incremental or differential backup no longer sends duplicate "Restore completed" notifications.** The runner notified once per chain step (base full + each increment), so a single folder restore could produce several identical Unraid notifications — some arriving while the restore was still running. One notification is now sent per restored item, after the whole chain has been replayed.
