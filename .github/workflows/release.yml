@@ -111,9 +111,9 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           NOTES_FILE="build/RELEASE_NOTES_BASE.md"
 
-          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+          if grep -qE "^## \[v?$VERSION\]" CHANGELOG.md; then
             awk -v version="$VERSION" '
-              $0 ~ "^## \\[" version "\\]" { capture = 1; next }
+              $0 ~ "^## \\[v?" version "\\]" { capture = 1; next }
               capture && $0 ~ "^## \\[" { exit }
               capture { print }
             ' CHANGELOG.md > "$NOTES_FILE"
