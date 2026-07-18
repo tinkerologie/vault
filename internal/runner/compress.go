@@ -113,6 +113,13 @@ func transportCompressReader(compression string, src io.Reader) (io.ReadCloser, 
 	}
 
 	go func() {
+		// A compressor panic must surface as a read error on the pipe, not
+		// kill the daemon (issue #239).
+		defer func() {
+			if rec := recover(); rec != nil {
+				_ = pw.CloseWithError(fmt.Errorf("compressor panicked: %v", rec))
+			}
+		}()
 		_, copyErr := io.Copy(cw, src)
 		if closeErr := cw.Close(); copyErr == nil {
 			copyErr = closeErr

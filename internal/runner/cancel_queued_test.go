@@ -183,3 +183,19 @@ func TestCancelJobNothingRunning(t *testing.T) {
 		t.Fatal("CancelJob with no active or queued run should error")
 	}
 }
+
+// TestGuardPanicRecovers verifies the fire-and-forget goroutine guard
+// swallows panics (issue #239 — background task panics crashed the daemon).
+func TestGuardPanicRecovers(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer guardPanic("test worker")
+		panic("boom")
+	}()
+	select {
+	case <-done: // recovered — the goroutine exited cleanly
+	case <-time.After(2 * time.Second):
+		t.Fatal("goroutine did not exit")
+	}
+}

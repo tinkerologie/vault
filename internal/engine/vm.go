@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	libvirt "github.com/digitalocean/go-libvirt"
@@ -220,6 +221,18 @@ func (h *VMHandler) Backup(ctx context.Context, item BackupItem, destDir string,
 	}
 	if actualType == "full" {
 		parentCheckpoint = ""
+	}
+
+	// Fail fast when the staging dir cannot hold the disks about to be
+	// copied — a mid-copy out-of-space failure on a 100 GB+ VM wastes hours
+	// and has historically destabilised the daemon (issue #239). Checked
+	// after the fallback decision so an incremental that degrades to a full
+	// is covered too; delta sizes are unpredictable, so only fulls are
+	// checked.
+	if actualType == "full" {
+		if err := checkStagingSpaceForDisks(destDir, item.Name, disks); err != nil {
+			return nil, err
+		}
 	}
 
 	// For libvirt-checkpoint based incremental we ignore the file-mtime gate
@@ -888,7 +901,11 @@ func (h *VMHandler) prepareDomainForBackup(ctx context.Context, name string, dom
 }
 
 func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Domain, name string, artifacts []vmBackupArtifact, progress ProgressFunc) error {
-	const backupTimeout = 2 * time.Hour
+	// Idle timeout, not a wall-clock deadline: a very large VM (100 GB+)
+	// legitimately copies for many hours, so the clock resets whenever the
+	// libvirt job reports forward progress. Only a job that stops moving for
+	// this long is aborted (issue #239).
+	const idleTimeout = 30 * time.Minute
 	// The job can vanish without a completed-stats record (libvirt reports
 	// that as a successful query with job type DomainJobNone — see issue
 	// #160). Give the artifacts a few polls to appear before concluding the
@@ -896,16 +913,15 @@ func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Dom
 	const vanishedGraceAttempts = 5
 
 	vanishedPolls := 0
-	deadline := time.Now().Add(backupTimeout)
+	lastActivity := time.Now()
+	lastProgressSig := ""
 	for {
 		// Cancellation (operator Cancel or stall watchdog) must stop the
 		// libvirt push-mode job itself — otherwise the hypervisor keeps
 		// writing into a staging dir the runner is about to delete (#171).
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			log.Printf("engine/vm: backup for %s cancelled — aborting libvirt backup job", name)
-			if aerr := h.conn.DomainAbortJob(dom); aerr != nil && !isLibvirtNoDomainError(aerr) {
-				log.Printf("engine/vm: aborting backup job for %s: %v", name, aerr)
-			}
+			h.abortBackupJobWithRetry(dom, name)
 			return ctxErr
 		}
 		jobType, params, err := h.conn.DomainGetJobStats(dom, 0)
@@ -944,16 +960,52 @@ func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Dom
 				}
 			default:
 				vanishedPolls = 0
-				progress(name, backupProgressPercent(params), backupProgressMessage(params))
+				pct := backupProgressPercent(params)
+				msg := backupProgressMessage(params)
+				if sig := fmt.Sprintf("%d|%s", pct, msg); sig != lastProgressSig {
+					lastProgressSig = sig
+					lastActivity = time.Now()
+				}
+				progress(name, pct, msg)
 			}
 		}
 
-		if time.Now().After(deadline) {
-			return fmt.Errorf("waiting for backup completion: timed out after %s", backupTimeout)
+		if time.Since(lastActivity) > idleTimeout {
+			// Abort the in-flight libvirt job before returning — otherwise
+			// the hypervisor keeps writing into a staging dir the runner is
+			// about to tear down (same hazard as cancellation, #171).
+			log.Printf("engine/vm: backup for %s made no progress for %s — aborting libvirt backup job", name, idleTimeout)
+			h.abortBackupJobWithRetry(dom, name)
+			return fmt.Errorf("waiting for backup completion: no progress for %s", idleTimeout)
 		}
 
 		_ = sleepCtx(ctx, vmShutdownPollInterval) // cancellation handled at loop top
 	}
+}
+
+// abortBackupJobWithRetry tries to stop the in-flight libvirt job before the
+// caller tears down domain state and the runner deletes the staging dir — a
+// still-running job would keep writing into the path being removed (#171).
+// Abort can fail transiently while the job is mid-transition, so retry a few
+// times and verify the job actually reached a terminal state.
+func (h *VMHandler) abortBackupJobWithRetry(dom libvirt.Domain, name string) {
+	for attempt := 1; attempt <= 3; attempt++ {
+		aerr := h.conn.DomainAbortJob(dom)
+		if aerr == nil || isLibvirtNoDomainError(aerr) {
+			return
+		}
+		// The job may already be gone — treat "no active job" as success.
+		if jobType, _, jerr := h.conn.DomainGetJobStats(dom, 0); jerr != nil ||
+			libvirt.DomainJobType(jobType) == libvirt.DomainJobNone ||
+			libvirt.DomainJobType(jobType) == libvirt.DomainJobCompleted ||
+			libvirt.DomainJobType(jobType) == libvirt.DomainJobCancelled ||
+			libvirt.DomainJobType(jobType) == libvirt.DomainJobFailed {
+			return
+		}
+		log.Printf("engine/vm: aborting backup job for %s (attempt %d/3): %v", name, attempt, aerr)
+		time.Sleep(2 * time.Second)
+	}
+	log.Printf("engine/vm: WARNING: could not abort backup job for %s after 3 attempts — hypervisor may still be writing into the staging dir", name)
 }
 
 // vanishedBackupJobOutcome consults the completed-job stats once the active
@@ -1181,4 +1233,32 @@ func (h *VMHandler) cleanStaleSnapshots(ctx context.Context, name string, dom li
 	}
 
 	return finalDisks, nil
+}
+
+// checkStagingSpaceForDisks compares the summed on-disk size of the VM's
+// disk images against the free space where the backup will be staged and
+// fails fast with an actionable message when it cannot fit (issue #239).
+// Sizes use the images' apparent size (os.Stat), which OVERSTATES the need
+// for sparse images — the safe direction for a preflight, since compression
+// and sparseness only shrink what the copy actually writes.
+func checkStagingSpaceForDisks(destDir, vmName string, disks []domainDisk) error {
+	var needed int64
+	for _, d := range disks {
+		if info, err := os.Stat(d.Path); err == nil {
+			needed += info.Size()
+		}
+	}
+	if needed == 0 {
+		return nil
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(destDir, &st); err != nil {
+		return nil //nolint:nilerr // preflight is advisory; the copy itself will surface real I/O errors
+	}
+	free := int64(st.Bavail) * st.Bsize // #nosec G115 -- Bavail/Bsize are non-negative filesystem counters
+	if free < needed {
+		return fmt.Errorf("VM %s needs ~%d GiB of staging space but only %d GiB is free under %s — free up space or move the staging directory (Settings → Backup)",
+			vmName, needed>>30, free>>30, destDir)
+	}
+	return nil
 }

@@ -84,6 +84,13 @@ func ParallelRangeDownload(ctx context.Context, adapter Adapter, path string, ou
 		go func(pt part) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// A part-worker panic must fail the download, not kill the
+			// daemon (issue #239).
+			defer func() {
+				if rec := recover(); rec != nil {
+					setErr(fmt.Errorf("download part worker at offset %d panicked: %v", pt.off, rec))
+				}
+			}()
 			if err := downloadPart(ctx, adapter, path, out, pt.off, pt.length, onBytes); err != nil {
 				setErr(err)
 			}

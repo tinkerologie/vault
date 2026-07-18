@@ -1311,6 +1311,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			// In per-item mode the engine handler restarts each container after backup.
 			if item.ItemType == "container" && job.ContainerMode != "stop_all" {
 				go func(itemID, itemName string) {
+					defer guardPanic("container health check")
 					result, err := engine.VerifyContainerHealth(itemID, itemName, 60*time.Second)
 					if err != nil {
 						log.Printf("runner: health check error for %s: %v", itemName, err)
@@ -2382,6 +2383,14 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.
 		go func(entryName string) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// A panic in one upload worker must fail the run, not kill the
+			// daemon (issue #239 — large-VM uploads crashing the process).
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Printf("runner: PANIC in upload worker for %s: %v", entryName, rec)
+					errOnce.Do(func() { firstErr = fmt.Errorf("upload worker for %s panicked: %v", entryName, rec) })
+				}
+			}()
 			storageName, checksum, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName, progress)
 			if storageName != "" {
 				mu.Lock()
@@ -3100,6 +3109,15 @@ func (r *Runner) readItemSidecar(adapter storage.Adapter, rp db.RestorePoint, it
 	return idx, true
 }
 
+// guardPanic recovers and logs a panic in a fire-and-forget worker goroutine
+// so a single failing background task can never crash the daemon (issue
+// #239). Use only where there is no error channel to propagate into.
+func guardPanic(label string) {
+	if rec := recover(); rec != nil {
+		log.Printf("runner: PANIC in %s (recovered): %v", label, rec)
+	}
+}
+
 func usesMergedRestoreChain(itemType string) bool {
 	switch itemType {
 	case "container", "vm":
@@ -3373,6 +3391,12 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		go func(fi storage.FileInfo) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Printf("runner: PANIC in download worker for %s: %v", fi.Path, rec)
+					errOnce.Do(func() { firstErr = fmt.Errorf("download worker for %s panicked: %v", fi.Path, rec) })
+				}
+			}()
 			if err := r.downloadRestoreFile(ctx, adapter, fi, tmpDir, passphrase, job.Compression, expectedChecksums, heartbeat, storage.RestorePartSize, concurrency); err != nil {
 				errOnce.Do(func() { firstErr = err })
 			}
@@ -4191,6 +4215,19 @@ func (r *Runner) CleanupJobStorage(jobID int64) error {
 // here because the job (and its restore points) are gone by the time this runs.
 func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.StorageDestination, storagePaths []string) {
 	go func() {
+		// A cleanup panic must stay observable: the job row is already gone,
+		// so a silent partial sweep would orphan remote data with no record.
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("runner: PANIC in async job storage cleanup for job %d (recovered): %v", jobID, rec)
+				r.logActivity("error", "cleanup", fmt.Sprintf("Backup file cleanup for deleted job %q crashed — files may remain on storage", jobName),
+					structuredDetails(map[string]any{"job_id": jobID, "panic": fmt.Sprint(rec), "storage_paths": storagePaths}))
+				r.broadcast(map[string]any{
+					"type": "job_cleanup_failed", "job_id": jobID, "job_name": jobName,
+					"error": fmt.Sprintf("cleanup panicked: %v — some backup files may remain on storage", rec),
+				})
+			}
+		}()
 		adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 		if err != nil {
 			log.Printf("runner: async cleanup for job %d: creating storage adapter: %v", jobID, err)
@@ -4298,6 +4335,17 @@ func (r *Runner) reclaimDedupAfterJobDelete(adapter storage.Adapter, jobID int64
 // and the remote sweep happens here.
 func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.StorageDestination, storagePath string) {
 	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("runner: PANIC in async restore point cleanup for rp %d (recovered): %v", rpID, rec)
+				r.logActivity("error", "cleanup", fmt.Sprintf("Backup file cleanup for deleted restore point %d crashed — files may remain on storage", rpID),
+					structuredDetails(map[string]any{"job_id": jobID, "restore_point_id": rpID, "panic": fmt.Sprint(rec), "storage_path": storagePath}))
+				r.broadcast(map[string]any{
+					"type": "restore_point_cleanup_failed", "job_id": jobID, "restore_point_id": rpID,
+					"error": fmt.Sprintf("cleanup panicked: %v — some backup files may remain on storage", rec),
+				})
+			}
+		}()
 		adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 		if err != nil {
 			log.Printf("runner: async cleanup for restore point %d: creating storage adapter: %v", rpID, err)
