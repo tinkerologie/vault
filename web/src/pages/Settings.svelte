@@ -1098,10 +1098,21 @@
           <p class="text-xs text-text-muted mt-0.5">Automatically yield upload bandwidth to other services using your internet link.</p>
         </div>
         <div class="p-5 space-y-4">
-          <label class="flex items-center gap-2 text-sm text-text">
-            <input type="checkbox" bind:checked={autoThrottleEnabled} disabled={readOnly} class="accent-vault" />
-            Adaptively throttle uploads when the link is busy
-          </label>
+          <div class="flex items-center justify-between">
+            <p class="text-sm font-medium text-text">Adaptively throttle uploads when the link is busy</p>
+            <button
+              onclick={() => { if (!readOnly) autoThrottleEnabled = !autoThrottleEnabled }}
+              disabled={readOnly}
+              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
+              role="switch"
+              aria-checked={autoThrottleEnabled}
+              aria-label="Toggle adaptive upload throttling"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {autoThrottleEnabled ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {autoThrottleEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label for="throttle-link" class="block text-sm font-medium text-text-muted mb-1.5">
