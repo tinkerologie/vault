@@ -2300,3 +2300,67 @@ func parseDNSAddrs(servers []string) []netip.Addr {
 	}
 	return addrs
 }
+
+// ProbeActivity measures a container's CPU and network activity over a short
+// interval (issue #240 adaptive backups). Two one-shot stats samples ~1s
+// apart: CPU%% from the second sample's cpu/precpu delta, network rate from
+// the cumulative counter difference. Any failure returns an unknown sample
+// (fail-open — callers treat unknown as idle).
+func (h *ContainerHandler) ProbeActivity(ctx context.Context, containerID string) ActivitySample {
+	first, err := h.readStatsSample(ctx, containerID)
+	if err != nil {
+		return ActivitySample{}
+	}
+	select {
+	case <-ctx.Done():
+		return ActivitySample{}
+	case <-time.After(1 * time.Second):
+	}
+	second, err := h.readStatsSample(ctx, containerID)
+	if err != nil {
+		return ActivitySample{}
+	}
+
+	sample := ActivitySample{Known: true}
+
+	// Docker CPU%% formula computed across OUR two samples — one-shot
+	// responses may carry empty precpu counters depending on daemon/client
+	// version, so never trust PreCPUStats.
+	cpuDelta := float64(second.CPUStats.CPUUsage.TotalUsage) - float64(first.CPUStats.CPUUsage.TotalUsage)
+	sysDelta := float64(second.CPUStats.SystemUsage) - float64(first.CPUStats.SystemUsage)
+	onlineCPUs := float64(second.CPUStats.OnlineCPUs)
+	if onlineCPUs == 0 {
+		onlineCPUs = float64(len(second.CPUStats.CPUUsage.PercpuUsage))
+	}
+	if cpuDelta > 0 && sysDelta > 0 && onlineCPUs > 0 {
+		sample.CPUPercent = cpuDelta / sysDelta * onlineCPUs * 100
+	}
+
+	sumNet := func(s *container.StatsResponse) (total uint64) {
+		for _, n := range s.Networks {
+			total += n.RxBytes + n.TxBytes
+		}
+		return total
+	}
+	interval := second.Read.Sub(first.Read).Seconds()
+	if interval <= 0 {
+		interval = 1
+	}
+	if n2, n1 := sumNet(second), sumNet(first); n2 >= n1 {
+		sample.NetBytesPerSec = float64(n2-n1) / interval
+	}
+	return sample
+}
+
+func (h *ContainerHandler) readStatsSample(ctx context.Context, containerID string) (*container.StatsResponse, error) {
+	res, err := h.cli.ContainerStats(ctx, containerID, client.ContainerStatsOptions{Stream: false})
+	if err != nil {
+		return nil, fmt.Errorf("container stats for %s: %w", containerID, err)
+	}
+	defer res.Body.Close()
+	var s container.StatsResponse
+	if err := json.NewDecoder(res.Body).Decode(&s); err != nil {
+		return nil, fmt.Errorf("decoding stats for %s: %w", containerID, err)
+	}
+	return &s, nil
+}

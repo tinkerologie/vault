@@ -595,6 +595,9 @@ func (m *mockDockerClient) ContainerStop(ctx context.Context, _ string, _ client
 func (m *mockDockerClient) ContainerRemove(ctx context.Context, _ string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	return client.ContainerRemoveResult{}, errors.New("mockDockerClient: ContainerRemove not implemented")
 }
+func (m *mockDockerClient) ContainerStats(ctx context.Context, _ string, _ client.ContainerStatsOptions) (client.ContainerStatsResult, error) {
+	return client.ContainerStatsResult{}, errors.New("mockDockerClient: ContainerStats not implemented")
+}
 func (m *mockDockerClient) ImageSave(ctx context.Context, _ []string, _ ...client.ImageSaveOption) (client.ImageSaveResult, error) {
 	return nil, errors.New("mockDockerClient: ImageSave not implemented")
 }

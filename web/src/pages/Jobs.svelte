@@ -275,6 +275,7 @@
       notify_on: 'failure',
       verify_backup: true,
       defer_remote_upload: false,
+      adaptive_enabled: false,
       encryption: 'none',
       storage_dest_id: 0,
       retry_max_override: '',
@@ -616,6 +617,7 @@
         notify_on: data.job.notify_on || 'failure',
         verify_backup: data.job.verify_backup ?? true,
         defer_remote_upload: data.job.defer_remote_upload ?? false,
+        adaptive_enabled: data.job.adaptive_enabled ?? false,
         encryption: data.job.encryption || 'none',
         storage_dest_id: data.job.storage_dest_id || 0,
         // Backend uses null to mean "fall back to the global default". The
@@ -738,6 +740,7 @@
         notify_on: fullJob.notify_on || 'failure',
         verify_backup: fullJob.verify_backup ?? true,
         defer_remote_upload: fullJob.defer_remote_upload ?? false,
+        adaptive_enabled: fullJob.adaptive_enabled ?? false,
         retry_max_override: fullJob.retry_max_override == null ? '' : String(fullJob.retry_max_override),
         retry_delays_override: fullJob.retry_delays_override == null ? '' : String(fullJob.retry_delays_override),
         anomaly_sensitivity: fullJob.anomaly_sensitivity || '',
@@ -1890,6 +1893,25 @@
             </div>
           </details>
         {/if}
+
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Adaptive Backup <Tooltip text="Checks whether this job's containers, VMs, or folders are actively in use before each scheduled run. Busy workloads (e.g. Plex mid-stream, a folder still being written to) postpone the backup, re-checking every few minutes until idle — or until the max-postpone window elapses, when the backup runs anyway. Manual Run Now always runs immediately. Idle thresholds are configured in Settings." />
+          </summary>
+          <div class="mt-3 pl-6">
+            <div class="flex items-start gap-3">
+              <label class="relative inline-flex items-center cursor-pointer mt-0.5">
+                <input type="checkbox" bind:checked={form.adaptive_enabled} aria-label="Only back up when workloads are idle" class="sr-only peer" />
+                <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+              </label>
+              <div>
+                <p class="text-sm text-text">Only back up when workloads are idle</p>
+                <p class="text-xs text-text-dim mt-0.5">Scheduled runs are postponed while containers or VMs are busy (CPU/network) or folders were recently written to, and retried automatically once things quiet down.</p>
+              </div>
+            </div>
+          </div>
+        </details>
 
         {#if hasVMs}
           <details class="group" open>

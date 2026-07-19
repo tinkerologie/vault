@@ -153,6 +153,13 @@ type Runner struct {
 	queue          []QueueEntry
 	queueCancelled map[int64]int
 
+	// postponeMu guards postponedSince: per-job adaptive postpone window
+	// state (issue #240), cleared when the job runs. In-memory only: a
+	// daemon restart forgets an open window, degrading to the next
+	// scheduled cron run rather than a fast re-check.
+	postponeMu     sync.Mutex
+	postponedSince map[int64]*postponeState
+
 	// Drain coordination. activeMu guards activeCount and draining.
 	// activeCond is signalled when activeCount transitions to 0 so Drain
 	// wakes without polling.
@@ -688,6 +695,23 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		r.breaker.RecordFailure(r.db, dest)
 		return
 	}
+
+	// Adaptive backups gate (issue #240): defer the run while any of the
+	// job's workloads are actively in use. Manual "Run Now" is exempt — an
+	// operator clicking the button wants the backup immediately. The probe
+	// deadline matters: this code holds the global run mutex, so a hung
+	// Docker/libvirt socket must degrade to fail-open, not block all jobs.
+	if job.AdaptiveEnabled && !opts.manual {
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		reason := r.adaptiveBusyReason(probeCtx, items)
+		probeCancel()
+		if reason != "" && r.adaptivePostpone(jobID, job.Name, reason) {
+			return
+		}
+	}
+	// Any run that proceeds (scheduled, manual, or forced after max
+	// postpone) closes the job's postpone window.
+	r.adaptiveClearPostpone(jobID)
 
 	// Resolve the actual backup type for this run (full/incremental/differential).
 	btResult := r.resolveBackupType(job)

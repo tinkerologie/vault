@@ -35,3 +35,8 @@ func (h *VMHandler) Close() error { return nil }
 
 // DeleteCheckpoint is a no-op on non-Linux platforms.
 func (h *VMHandler) DeleteCheckpoint(_, _ string) error { return nil }
+
+// ProbeActivity is unavailable without libvirt; unknown = treated as idle.
+func (h *VMHandler) ProbeActivity(_ context.Context, _ string) ActivitySample {
+	return ActivitySample{}
+}

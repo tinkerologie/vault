@@ -53,6 +53,11 @@ var AppSettings = []SettingDoc{
 	{"replication_enabled", "string", "", "Master toggle for the replication subsystem. Empty/false disables replication scheduling; \"true\" enables it.", GroupGeneral},
 
 	// Backup engine
+	{"adaptive_idle_cpu_percent", "int", "20", "Adaptive backups: a container or VM is considered busy above this CPU percentage (single-core units).", GroupBackup},
+	{"adaptive_idle_net_kbps", "int", "500", "Adaptive backups: a container is considered busy above this network rate in kilobits per second.", GroupBackup},
+	{"adaptive_folder_idle_minutes", "int", "5", "Adaptive backups: a folder is considered busy when any file in it changed within this many minutes.", GroupBackup},
+	{"adaptive_recheck_minutes", "int", "2", "Adaptive backups: how often a postponed job re-checks whether its workloads have gone idle.", GroupBackup},
+	{"adaptive_max_postpone_minutes", "int", "60", "Adaptive backups: after postponing this long, the backup runs anyway so busy workloads still get protected.", GroupBackup},
 	{"auto_throttle_enabled", "bool", "false", "Adaptively slow Vault's uploads when other services (e.g. Plex remote streams) are using the internet uplink. Requires the link capacity below to be set.", GroupBackup},
 	{"auto_throttle_link_mbps", "int", "0", "Upstream capacity of the internet link in Mbps (as quoted by the ISP). The adaptive throttle targets this minus current non-Vault traffic minus 10% headroom.", GroupBackup},
 	{"auto_throttle_floor_mbps", "int", "5", "Minimum upload rate in Mbps the adaptive throttle will always leave Vault, so backups keep progressing even on a busy link.", GroupBackup},
@@ -166,6 +171,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"Job.RetryDelaysOverride": "Per-job override for the retry backoff schedule (JSON array of seconds). Null uses the global default.",
 	"Job.AnomalySensitivity":  "Per-job anomaly-detection sensitivity override. Empty uses the global default.",
 	"Job.MaxParallelUploads":  "Maximum concurrent upload workers for this job. 0 uses the default of 3.",
+	"Job.AdaptiveEnabled":     "Adaptive backups: postpone this job's runs while its containers, VMs, or folders are actively in use, re-checking until they go idle (or the max-postpone window elapses). Idle thresholds come from the global adaptive settings.",
 	"Job.CreatedAt":           "Timestamp when the job was created.",
 	"Job.UpdatedAt":           "Timestamp when the job was last modified.",
 

@@ -1262,3 +1262,47 @@ func checkStagingSpaceForDisks(destDir, vmName string, disks []domainDisk) error
 	}
 	return nil
 }
+
+// ProbeActivity measures a VM's CPU activity over a short interval (issue
+// #240 adaptive backups). Shut-off/paused domains are trivially idle. CPU%%
+// comes from the cpuTime delta of DomainGetInfo across ~1s; network stats
+// are not sampled in this first cut (CPU is a strong busy proxy for VMs and
+// needs no XML interface parsing). Failures return an unknown sample
+// (fail-open).
+func (h *VMHandler) ProbeActivity(ctx context.Context, name string) ActivitySample {
+	dom, err := h.conn.DomainLookupByName(name)
+	if err != nil {
+		return ActivitySample{}
+	}
+	state, _, err := h.conn.DomainGetState(dom, 0)
+	if err != nil {
+		return ActivitySample{}
+	}
+	if libvirt.DomainState(state) != libvirt.DomainRunning {
+		return ActivitySample{Known: true}
+	}
+	_, _, _, _, cpu1, err := h.conn.DomainGetInfo(dom)
+	if err != nil {
+		return ActivitySample{}
+	}
+	start := time.Now()
+	select {
+	case <-ctx.Done():
+		return ActivitySample{}
+	case <-time.After(1 * time.Second):
+	}
+	_, _, _, _, cpu2, err := h.conn.DomainGetInfo(dom)
+	if err != nil {
+		return ActivitySample{}
+	}
+	elapsed := time.Since(start).Nanoseconds()
+	if elapsed <= 0 || cpu2 < cpu1 {
+		return ActivitySample{}
+	}
+	// cpuTime is cumulative ns across all vCPUs; delta/elapsed*100 = CPU%%
+	// in single-core units, matching the container probe's scale.
+	return ActivitySample{
+		CPUPercent: float64(cpu2-cpu1) / float64(elapsed) * 100,
+		Known:      true,
+	}
+}

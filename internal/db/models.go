@@ -52,9 +52,12 @@ type Job struct {
 	// EffectiveUploadConcurrency). Existing rows default to 1 (serial) via the
 	// DB column DEFAULT; new rows that don't set this field get 3 from the
 	// method.
-	MaxParallelUploads int       `json:"max_parallel_uploads"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	MaxParallelUploads int `json:"max_parallel_uploads"`
+	// AdaptiveEnabled defers this job's runs while its containers/VMs/folders
+	// are actively in use (issue #240); thresholds come from global settings.
+	AdaptiveEnabled bool      `json:"adaptive_enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // EffectiveUploadConcurrency returns the upload concurrency to use, mapping the
