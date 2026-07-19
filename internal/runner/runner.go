@@ -3057,11 +3057,13 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 		// Ownership guard: only remove what this replay demonstrably wrote —
 		// a regular file whose mtime falls after the replay started (classic
 		// untar stamps extraction time) and whose size matches the archived
-		// entry. Anything modified or replaced since extraction is left
-		// alone rather than guessed at.
+		// entry. The 2s tolerance absorbs kernel coarse-clock granularity:
+		// on Linux a file extracted milliseconds after replayStart can carry
+		// an mtime slightly BEFORE it (file timestamps tick coarser than
+		// time.Now()), which shielded freshly-extracted files from the prune.
 		info, statErr := root.Lstat(rel)
 		if statErr != nil || !info.Mode().IsRegular() ||
-			info.ModTime().Before(replayStart) || info.Size() != we.size {
+			info.ModTime().Before(replayStart.Add(-2*time.Second)) || info.Size() != we.size {
 			continue
 		}
 		if err := root.Remove(rel); err == nil {
