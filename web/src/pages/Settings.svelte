@@ -784,7 +784,11 @@
     }
   }
 
-  async function saveReplicationEnabled() {
+  // Both toggles save immediately on flip (no separate Save button); on
+  // failure the switch rolls back so the UI never lies about server state.
+  async function toggleReplicationEnabled() {
+    if (replicationSaving || readOnly) return
+    replicationEnabledSetting = !replicationEnabledSetting
     replicationSaving = true
     try {
       settings = await api.updateSettings({
@@ -793,14 +797,25 @@
       setReplicationEnabled(replicationEnabledSetting)
       showToast(replicationEnabledSetting ? 'Replication enabled' : 'Replication disabled', 'success')
     } catch (e) {
+      // The PUT may have persisted even though the response was lost —
+      // reconcile from the server rather than blindly inverting, so the
+      // switch never disagrees with actual daemon state.
+      try {
+        settings = await api.getSettings()
+        replicationEnabledSetting = settings?.replication_enabled === 'true'
+        setReplicationEnabled(replicationEnabledSetting)
+      } catch {
+        replicationEnabledSetting = !replicationEnabledSetting
+      }
       showToast(e.message, 'error')
     } finally {
       replicationSaving = false
     }
   }
 
-  async function saveStorageVerboseLogging() {
-    if (readOnly) return
+  async function toggleStorageVerboseLogging() {
+    if (readOnly || storageVerboseSaving) return
+    storageVerboseLogging = !storageVerboseLogging
     storageVerboseSaving = true
     try {
       settings = await api.updateSettings({
@@ -808,6 +823,12 @@
       })
       showToast(storageVerboseLogging ? 'Verbose storage logging enabled' : 'Verbose storage logging disabled', 'success')
     } catch (e) {
+      try {
+        settings = await api.getSettings()
+        storageVerboseLogging = settings?.storage_verbose_logging === 'true'
+      } catch {
+        storageVerboseLogging = !storageVerboseLogging
+      }
       showToast(e.message, 'error')
     } finally {
       storageVerboseSaving = false
@@ -1250,8 +1271,9 @@
               <p class="text-xs text-text-muted mt-0.5">When off, Replication is hidden from the sidebar and scheduled syncs are paused.</p>
             </div>
             <button
-              onclick={() => replicationEnabledSetting = !replicationEnabledSetting}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              onclick={toggleReplicationEnabled}
+              disabled={replicationSaving || readOnly}
+              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
               role="switch"
               aria-checked={replicationEnabledSetting}
               aria-label="Toggle replication"
@@ -1259,18 +1281,6 @@
               <div class="w-11 h-6 rounded-full transition-colors {replicationEnabledSetting ? 'bg-vault' : 'bg-surface-4'}">
                 <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {replicationEnabledSetting ? 'translate-x-5' : 'translate-x-0'}"></div>
               </div>
-            </button>
-          </div>
-          <div class="px-5 py-3 flex justify-end">
-            <button
-              onclick={saveReplicationEnabled}
-              disabled={replicationSaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {#if replicationSaving}
-                <InlineSpinner />
-              {/if}
-              Save Replication Settings
             </button>
           </div>
         </div>
@@ -1290,9 +1300,9 @@
               <p class="text-xs text-text-muted mt-0.5">Per-operation trace in the daemon log; off by default.</p>
             </div>
             <button
-              onclick={() => storageVerboseLogging = !storageVerboseLogging}
-              disabled={readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
+              onclick={toggleStorageVerboseLogging}
+              disabled={readOnly || storageVerboseSaving}
+              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
               role="switch"
               aria-checked={storageVerboseLogging}
               aria-label="Toggle verbose storage logging"
@@ -1302,20 +1312,6 @@
               </div>
             </button>
           </div>
-          {#if !readOnly}
-          <div class="px-5 py-3 flex justify-end">
-            <button
-              onclick={saveStorageVerboseLogging}
-              disabled={storageVerboseSaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {#if storageVerboseSaving}
-                <InlineSpinner />
-              {/if}
-              Save
-            </button>
-          </div>
-          {/if}
         </div>
       </div>
 
