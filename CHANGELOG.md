@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Security
+
+- **Storage adapters now contain symlinks to the destination root.** A symlink planted under a local destination can no longer redirect reads, listings, or deletes outside the configured base path (resolved-to-resolved comparison, so destinations that legitimately live behind symlinks like `/mnt/user` fuse paths keep working). SFTP destinations get the same server-side check (via `realpath`) on the browse/download surface. S3 has no symlinks; SMB/NFS client libraries offer no resolution primitive and follow their server's own symlink policy.
+
 ### Fixed
 
 - **Very large VM backups (100 GB+) no longer fail or destabilise the daemon** (closes #239). The VM engine's fixed 2-hour wall-clock limit is replaced by a progress-resetting 30-minute idle timeout, so a huge disk that is still copying can run for as long as it needs — only a genuinely stalled job is aborted, and Vault now attempts (with retries and verification) to abort the in-flight libvirt job on stall or cancellation so the hypervisor stops writing into the staging area. Full VM backups check staging free space up front and fail fast with an actionable message instead of dying mid-copy, and background worker panics (uploads, downloads, health checks, async cleanups) are contained as failed runs instead of crashing the whole daemon.

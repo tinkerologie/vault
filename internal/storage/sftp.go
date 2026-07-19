@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -160,6 +161,51 @@ func (s *SFTPAdapter) fullPath(path string, allowRoot bool) (string, error) {
 	return fullPath, nil
 }
 
+// verifyRemoteNoSymlinkEscape resolves fullPath on the server (RealPath) and
+// rejects the operation when it lands outside the resolved base — a symlink
+// planted under the destination root must not redirect operations elsewhere
+// on the remote host. JoinUnderBase is lexical only. The check is
+// best-effort defence in depth: SFTP has no atomic resolve-beneath
+// primitive, so a server-side swap between this check and the operation is
+// not preventable at this layer — a chrooted or permission-confined SFTP
+// account remains the hard boundary.
+func verifyRemoteNoSymlinkEscape(client *sftp.Client, basePath, fullPath string) error {
+	resolvedBase, err := client.RealPath(basePath)
+	if err != nil {
+		// Some servers restrict REALPATH; the containment check cannot run.
+		// Proceed (a hard failure would brick the whole destination) but
+		// leave an operator-visible trace that the protection is inactive.
+		log.Printf("storage/sftp: cannot resolve base %q for symlink containment (server may restrict REALPATH): %v", basePath, err)
+		return nil
+	}
+	p := fullPath
+	for {
+		resolved, rerr := client.RealPath(p)
+		if rerr == nil {
+			if !pathWithinBase(resolved, resolvedBase) {
+				return fmt.Errorf("path %q resolves outside the destination root via symlink", fullPath)
+			}
+			return nil
+		}
+		parent := path.Dir(p)
+		if parent == p {
+			return nil // nothing of the path exists yet — a fresh write
+		}
+		p = parent
+	}
+}
+
+// pathWithinBase reports whether resolved is base itself or beneath it,
+// handling a base of "/" (everything absolute is beneath the root) and
+// trailing separators.
+func pathWithinBase(resolved, base string) bool {
+	base = strings.TrimSuffix(base, "/")
+	if base == "" { // base was "/"
+		return strings.HasPrefix(resolved, "/")
+	}
+	return resolved == base || strings.HasPrefix(resolved, base+"/")
+}
+
 // hostKeyCallback returns the appropriate SSH host key callback based on config.
 // Priority: known_hosts_file → host_key fingerprint → insecure (backward compat).
 func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
@@ -206,6 +252,9 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, full); err != nil {
+		return err
+	}
 	if err := client.MkdirAll(filepath.Dir(full)); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
@@ -245,6 +294,10 @@ func (s *SFTPAdapter) Read(path string) (io.ReadCloser, error) {
 	fullPath, err := s.fullPath(path, false)
 	if err != nil {
 		s.pool.put(conn, err)
+		return nil, err
+	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
+		s.pool.put(conn, nil)
 		return nil, err
 	}
 	f, err := client.Open(fullPath)
@@ -291,6 +344,10 @@ func (s *SFTPAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, 
 		s.pool.put(conn, err)
 		return nil, err
 	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
+		s.pool.put(conn, nil)
+		return nil, err
+	}
 	info, err := client.Stat(fullPath)
 	if err != nil {
 		s.pool.put(conn, err)
@@ -325,6 +382,9 @@ func (s *SFTPAdapter) Delete(path string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
+		return err
+	}
 	return client.Remove(fullPath)
 }
 
@@ -338,6 +398,9 @@ func (s *SFTPAdapter) List(prefix string) (_ []FileInfo, retErr error) {
 
 	fullPath, err := s.fullPath(prefix, true)
 	if err != nil {
+		return nil, err
+	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
 		return nil, err
 	}
 	entries, err := client.ReadDir(fullPath)
@@ -367,6 +430,9 @@ func (s *SFTPAdapter) Stat(path string) (_ FileInfo, retErr error) {
 
 	fullPath, err := s.fullPath(path, false)
 	if err != nil {
+		return FileInfo{}, err
+	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
 		return FileInfo{}, err
 	}
 	info, err := client.Stat(fullPath)
@@ -514,6 +580,9 @@ func (s *SFTPAdapter) RemoveEmptyDir(dir string) (retErr error) {
 	client := conn.(*sftpConnection).sftp
 	fullPath, err := s.fullPath(dir, false)
 	if err != nil {
+		return err
+	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
 		return err
 	}
 	return client.RemoveDirectory(fullPath)

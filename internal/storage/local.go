@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -26,7 +27,49 @@ func (l *LocalAdapter) fullPath(path string, allowRoot bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid path %q: %w", path, err)
 	}
+	// JoinUnderBase is lexical only — a symlink planted under the base could
+	// still redirect the operation (including Delete) outside the
+	// destination root. Verify the resolved target stays under the resolved
+	// base (resolving both sides tolerates bases that legitimately live
+	// behind symlinks, e.g. /mnt/user fuse paths).
+	if err := verifyNoSymlinkEscape(l.basePath, fullPath); err != nil {
+		return "", err
+	}
 	return fullPath, nil
+}
+
+// verifyNoSymlinkEscape resolves the deepest existing ancestor of fullPath
+// and rejects the operation when it lands outside the resolved base.
+//
+// This is static containment, not a TOCTOU-proof boundary: a same-host
+// attacker who can swap a checked directory for a symlink between this check
+// and the operation can still race it. Closing that would require an
+// openat2/RESOLVE_BENEATH rework of every file op; for a single-admin LAN
+// daemon where such an attacker already holds filesystem write access, the
+// static check is the proportionate defence.
+func verifyNoSymlinkEscape(basePath, fullPath string) error {
+	resolvedBase, err := filepath.EvalSymlinks(basePath)
+	if err != nil {
+		// Base missing/unreadable — let the operation itself surface the
+		// real error rather than masking it with a containment failure.
+		return nil
+	}
+	p := fullPath
+	for {
+		resolved, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			rel, relErr := filepath.Rel(resolvedBase, resolved)
+			if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("path %q resolves outside the destination root via symlink", fullPath)
+			}
+			return nil
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return nil // nothing of the path exists yet — a fresh write
+		}
+		p = parent
+	}
 }
 
 func (l *LocalAdapter) Write(path string, reader io.Reader) error {
