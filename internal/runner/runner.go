@@ -3006,38 +3006,49 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 		return
 	}
 
+	// The index sidecar is stored off-host and could be tampered with. All
+	// prune I/O goes through an os.Root scoped to the restore destination:
+	// the kernel-enforced boundary rejects absolute paths, ".." traversal,
+	// AND escapes through symlinked intermediate directories (CWE-22),
+	// while operating on the exact index path with no normalization.
+	root, err := os.OpenRoot(destPath)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+
 	pruned := 0
 	var pruneDirs []string
 	for rel, we := range written {
-		if _, ok := keep[rel]; ok {
+		if rel == "" {
 			continue
 		}
-		if rel == "" || !filepath.IsLocal(rel) {
-			continue // never follow traversal paths from an index
+		if _, ok := keep[rel]; ok {
+			continue
 		}
 		if we.isDir {
 			pruneDirs = append(pruneDirs, rel)
 			continue
 		}
-		full := filepath.Join(destPath, rel)
 		// Ownership guard: only remove what this replay demonstrably wrote —
 		// a regular file whose mtime falls after the replay started (classic
 		// untar stamps extraction time) and whose size matches the archived
 		// entry. Anything modified or replaced since extraction is left
 		// alone rather than guessed at.
-		info, statErr := os.Lstat(full)
+		info, statErr := root.Lstat(rel)
 		if statErr != nil || !info.Mode().IsRegular() ||
 			info.ModTime().Before(replayStart) || info.Size() != we.size {
 			continue
 		}
-		if err := os.Remove(full); err == nil {
+		if err := root.Remove(rel); err == nil {
 			pruned++
 		}
 	}
-	// Directories last, deepest first, and only when empty.
+	// Directories last, deepest first, and only when empty (Remove, not
+	// RemoveAll, so a non-empty directory is left alone).
 	sort.Slice(pruneDirs, func(i, j int) bool { return len(pruneDirs[i]) > len(pruneDirs[j]) })
 	for _, rel := range pruneDirs {
-		if err := os.Remove(filepath.Join(destPath, rel)); err == nil {
+		if err := root.Remove(rel); err == nil {
 			pruned++
 		}
 	}
