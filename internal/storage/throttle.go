@@ -24,6 +24,11 @@ type throttledAdapter struct {
 	// readers consult the runtime-tunable global limiter on every read and
 	// count upload bytes for the control loop's external-traffic estimate.
 	dynamic bool
+	// writeOnly limits only Write/WriteFrom, leaving Read/ReadRange at full
+	// speed. Used for local destinations, where the cap exists to leave
+	// disk I/O headroom during backups — an urgent restore or verification
+	// must never be slowed by a backup-time setting.
+	writeOnly bool
 }
 
 // WrapThrottled returns adapter unchanged when mbps <= 0; otherwise wraps it
@@ -40,6 +45,18 @@ func WrapThrottled(adapter Adapter, mbps int) Adapter {
 	bytesPerSec := float64(mbps) * 1_000_000 / 8
 	limiter := rate.NewLimiter(rate.Limit(bytesPerSec), int(bytesPerSec))
 	return &throttledAdapter{inner: adapter, limiter: limiter}
+}
+
+// WrapThrottledWriteOnly caps only writes, leaving reads (restores,
+// verification, disaster recovery) at full speed. Used for local
+// destinations (issue #237 follow-up).
+func WrapThrottledWriteOnly(adapter Adapter, mbps int) Adapter {
+	if mbps <= 0 || adapter == nil {
+		return adapter
+	}
+	bytesPerSec := float64(mbps) * 1_000_000 / 8
+	limiter := rate.NewLimiter(rate.Limit(bytesPerSec), int(bytesPerSec))
+	return &throttledAdapter{inner: adapter, limiter: limiter, writeOnly: true}
 }
 
 func (t *throttledAdapter) Write(p string, reader io.Reader) error {
@@ -61,6 +78,9 @@ func (t *throttledAdapter) Read(p string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
+	if t.writeOnly {
+		return rc, nil
+	}
 	return &throttledReadCloser{rc: rc, limiter: t.limiter, dynamic: t.dynamic}, nil
 }
 
@@ -68,6 +88,9 @@ func (t *throttledAdapter) ReadRange(p string, offset, length int64) (io.ReadClo
 	rc, err := t.inner.ReadRange(p, offset, length)
 	if err != nil {
 		return nil, err
+	}
+	if t.writeOnly {
+		return rc, nil
 	}
 	return &throttledReadCloser{rc: rc, limiter: t.limiter, dynamic: t.dynamic}, nil
 }

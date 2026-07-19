@@ -85,7 +85,7 @@
     // Re-clicking the selected type must not wipe entered credentials.
     if (nextType === form.type) return
     const defaults = {
-      local: { path: '' },
+      local: { path: '', bandwidth_limit_mbps: 0 },
       sftp: { host: '', port: 22, user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
       smb: { host: '', share: '', user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
       nfs: { host: '', export: '', base_path: '', version: '4', options: '', bandwidth_limit_mbps: 0 },
@@ -438,20 +438,22 @@
   {/if}
   {/key}
 
-  <!-- Universal (remote only): bandwidth throttling. Local destinations
-       talk directly to the host's filesystem; there is no upstream link
-       to protect, so the field is hidden + the backend factory skips the
-       throttle wrapper for `type === 'local'`. -->
-  {#if form.type !== 'local'}
-    <div>
-      <label for="bandwidth_limit_mbps" class="block text-sm font-medium text-text-muted mb-1.5">
-        Bandwidth limit (Mbps)
+  <!-- Universal: bandwidth/write-rate throttling. For network destinations
+       this protects the internet uplink; for local destinations it caps the
+       disk write rate so streaming apps (Plex, Jellyfin) reading from the
+       same array keep their I/O headroom during backups (issue #237). -->
+  <div>
+    <label for="bandwidth_limit_mbps" class="block text-sm font-medium text-text-muted mb-1.5">
+      {form.type === 'local' ? 'Disk write speed limit (Mbps)' : 'Bandwidth limit (Mbps)'}
+      {#if form.type === 'local'}
+        <Tooltip text="Caps how fast backups WRITE to this destination so apps streaming from the same disks (e.g. Plex or Jellyfin) keep their I/O headroom while a backup runs. Restores and verification always read at full speed. Note the unit is megabits: 8 Mbps = 1 MB/s, so to cap at 100 MB/s enter 800. Recommended: 0 (unlimited) unless playback stutters during backups." />
+      {:else}
         <Tooltip text="Limits how much bandwidth this destination may use, in megabits per second, so backups don't saturate a shared internet line. Recommended: 0 (unlimited) on a dedicated link; set a cap if backups slow down other traffic." />
-      </label>
-      <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
-    </div>
-  {/if}
+      {/if}
+    </label>
+    <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
+      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+  </div>
 
   <!-- Universal: deduplication. Top-level column on storage_destinations.
        Immutable after creation – backend ignores any update attempt and

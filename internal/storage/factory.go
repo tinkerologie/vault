@@ -47,13 +47,22 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 	}
 
 	a := provider
-	// throttle (innermost wrapper): skipped for local; no-op when limit <= 0.
-	// Local storage talks directly to the host filesystem — there is no network
-	// link to protect, so throttling would only slow backups for no benefit.
-	if storageType != "local" {
+	// Static throttle (innermost wrapper): no-op when limit <= 0. For
+	// network destinations this protects the internet uplink (symmetric —
+	// both directions share the link). For local destinations it caps ONLY
+	// the disk write rate so streaming apps reading from the same array
+	// keep their I/O headroom during backups (#237); restores and
+	// verification reads always run at full speed.
+	if storageType == "local" {
+		a = WrapThrottledWriteOnly(a, common.BandwidthLimitMbps)
+	} else {
 		a = WrapThrottled(a, common.BandwidthLimitMbps)
+	}
+	if storageType != "local" {
 		// Adaptive throttle (issue #237): consults the runtime-tunable
 		// global limiter per read; a pure pass-through while disabled.
+		// Network-only — its control signal is NIC traffic, which local
+		// disk backups never touch.
 		a = wrapAutoThrottled(a)
 	}
 	// retry wraps throttle so a throttled-then-failed attempt is re-issued.
