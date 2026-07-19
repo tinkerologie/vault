@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.07] - 2026-07-19
+
 ### Security
 
 - **Storage adapters now contain symlinks to the destination root.** A symlink planted under a local destination can no longer redirect reads, listings, or deletes outside the configured base path (resolved-to-resolved comparison, so destinations that legitimately live behind symlinks like `/mnt/user` fuse paths keep working). SFTP destinations get the same server-side check (via `realpath`) on the browse/download surface. S3 has no symlinks; SMB/NFS client libraries offer no resolution primitive and follow their server's own symlink policy.
