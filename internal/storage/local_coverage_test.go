@@ -154,7 +154,7 @@ func TestLocalDelete_InvalidPath(t *testing.T) {
 func TestLocalTestConnection_NotDirectory(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	filePath := filepath.Join(dir, "afile")
+	filePath := filepath.Join(dir, "somefile")
 	if err := os.WriteFile(filePath, []byte("x"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}

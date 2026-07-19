@@ -655,8 +655,8 @@ func TestRepoGetTooShortChunk(t *testing.T) {
 	defer cleanup()
 
 	// Write a 1-byte file (just the flags byte) and register a chunk that
-	// claims length=0 — ReadRange returns an empty body and Get's
-	// `len(raw) < 1` branch fires.
+	// claims length=0 — ReadRange returns an empty body and the
+	// `len(raw) < 1` branch in Get fires.
 	packPath := "_vault/packs/aa/short"
 	if err := r.adapter.Write(packPath, bytes.NewReader([]byte{0x00})); err != nil {
 		t.Fatal(err)

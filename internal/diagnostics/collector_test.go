@@ -474,7 +474,7 @@ func TestCollectorDedupStatsError(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	if _, err := d.CreateStorageDestination(db.StorageDestination{
-		Name: "ded", Type: "local", Config: `{}`, DedupEnabled: true,
+		Name: "dedup-dest", Type: "local", Config: `{}`, DedupEnabled: true,
 	}); err != nil {
 		t.Fatalf("dest: %v", err)
 	}

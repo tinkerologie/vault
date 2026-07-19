@@ -4,7 +4,7 @@ import "testing"
 
 // TestNewAdapter_BadJSON_AllTypes exercises the parse-error branch in each
 // case of newRawAdapter. The happy paths are already covered by
-// TestNewAdapterX; here we feed each storage type an unparseable JSON
+// TestNewAdapterX; here we feed each storage type an unparsable JSON
 // blob to drive its bad-JSON return.
 func TestNewAdapter_BadJSON_AllTypes(t *testing.T) {
 	t.Parallel()
