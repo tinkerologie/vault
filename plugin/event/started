@@ -1,0 +1,11 @@
+#!/bin/bash
+# Unraid emhttp event: array started (pools are mounted).
+#
+# The plugin's boot-time start can race the array mount; the daemon retries
+# pool detection for 30 s, but a slow array (spinning disks, parity checks)
+# can outlast that and strand the daemon in USB-direct mode — or the boot
+# start can fail outright. Ensure the daemon is running once the array is
+# actually up (issue #241). Never restarts a running daemon.
+if [ -x /etc/rc.d/rc.vault ] && ! pidof vault >/dev/null 2>&1; then
+    /etc/rc.d/rc.vault start
+fi

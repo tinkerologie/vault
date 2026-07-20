@@ -1,0 +1,11 @@
+#!/bin/bash
+# Unraid emhttp event: array stop / system shutdown.
+#
+# Nothing else stops the Vault daemon during an OS reboot — the generic
+# shutdown sequence just kills it, which can cut short the working-DB flush
+# and leave the cache snapshot / USB shadow stale, so the next boot restores
+# an old configuration (issue #241). Stop it gracefully here: rc.vault stop
+# sends SIGTERM and waits for the daemon's pre-drain flush to complete.
+if [ -x /etc/rc.d/rc.vault ]; then
+    /etc/rc.d/rc.vault stop
+fi
