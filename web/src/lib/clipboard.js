@@ -39,9 +39,7 @@ export async function copyText(text) {
   let copied = false
   try {
     copied = document.execCommand('copy')
-  } catch {
-    copied = false
-  }
+  } catch { /* keep the false default */ }
 
   textarea.remove()
 

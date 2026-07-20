@@ -75,6 +75,62 @@ func TestCreateJob_StorageDestZeroAllowed(t *testing.T) {
 	}
 }
 
+func TestCreateJob_RejectsFolderOutsideBrowseRoots(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	h.SetPathValidator(NewBrowseHandler().ValidatePath)
+	destID := seedStorageDest(t, d)
+	body := `{"name":"outside-root","storage_dest_id":` + strconv.FormatInt(destID, 10) +
+		`,"items":[{"item_type":"folder","item_name":"private","item_id":"/tmp/private","settings":"{\"path\":\"/tmp/private\"}"}]}`
+
+	w := postJob(t, h, body)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+
+	malformed := `{"name":"malformed-folder","storage_dest_id":` + strconv.FormatInt(destID, 10) +
+		`,"items":[{"item_type":"folder","item_name":"private","item_id":"/tmp/private","settings":"{not-json"}]}`
+	w = postJob(t, h, malformed)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("malformed settings status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+
+	legacyPath := `{"name":"legacy-folder","storage_dest_id":` + strconv.FormatInt(destID, 10) +
+		`,"items":[{"item_type":"folder","item_name":"private","item_id":"/tmp/private","settings":""}]}`
+	w = postJob(t, h, legacyPath)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("item_id path status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+
+	jobID, err := d.CreateJob(db.Job{
+		Name: "existing-job", Enabled: true, StorageDestID: destID,
+		BackupTypeChain: "full", Schedule: "0 3 * * *",
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	if _, err := d.AddJobItem(db.JobItem{
+		JobID: jobID, ItemType: "container", ItemName: "keep-me", ItemID: "keep-me",
+	}); err != nil {
+		t.Fatalf("add existing item: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	r := newReq(http.MethodPut, "/api/v1/jobs/1", []byte(body))
+	r = withURLParam(r, "id", strconv.FormatInt(jobID, 10))
+	h.Update(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("update status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	items, err := d.GetJobItems(jobID)
+	if err != nil {
+		t.Fatalf("get existing items: %v", err)
+	}
+	if len(items) != 1 || items[0].ItemName != "keep-me" {
+		t.Fatalf("items changed after rejected update: %#v", items)
+	}
+}
+
 // TestCreateJob_RejectsInvalidEnums covers the QA finding that free-string
 // fields accepted arbitrary junk that only failed later inside the engine.
 func TestCreateJob_RejectsInvalidEnums(t *testing.T) {

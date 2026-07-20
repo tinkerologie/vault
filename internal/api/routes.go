@@ -126,12 +126,18 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/{id}/files", storageH.DownloadFile)
 		})
 
+		browseH := handlers.NewBrowseHandler()
+		s.browseHandler = browseH
+		r.Get("/browse", browseH.List)
+		r.Get("/path-exists", browseH.Exists)
+
 		jobH := handlers.NewJobHandler(s.db, s.runner, func() error {
 			if s.schedReload != nil {
 				return s.schedReload()
 			}
 			return nil
 		})
+		jobH.SetPathValidator(browseH.ValidatePath)
 		s.jobHandler = jobH
 		if s.nextRunResolver != nil {
 			jobH.SetNextRunResolver(s.nextRunResolver)
@@ -188,11 +194,6 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Delete("/api-key", settingsH.RevokeAPIKey)
 		})
 
-		browseH := handlers.NewBrowseHandler()
-		s.browseHandler = browseH
-		r.Get("/browse", browseH.List)
-		r.Get("/path-exists", browseH.Exists)
-
 		activityH := handlers.NewActivityHandler(s.db)
 		r.Route("/activity", func(r chi.Router) {
 			r.Get("/", activityH.List)
@@ -200,6 +201,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		})
 
 		historyH := handlers.NewHistoryHandler(s.db)
+		r.Get("/history", historyH.List)
 		r.Delete("/history", historyH.Purge)
 		r.Get("/history/trend", historyH.Trend)
 

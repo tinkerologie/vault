@@ -109,6 +109,7 @@
                 <h4 class="text-sm font-semibold text-text mb-1">{section}</h4>
                 <ul class="text-sm text-text-muted space-y-1 list-disc pl-5">
                   {#each bullets as b, bi (bi)}
+                    <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderInline escapes HTML before adding the supported markdown subset. -->
                     <li>{@html renderInline(b)}</li>
                   {/each}
                 </ul>

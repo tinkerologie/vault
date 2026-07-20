@@ -1,7 +1,9 @@
 package db
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -585,6 +587,63 @@ func TestGetJobRunsSince(t *testing.T) {
 		if r.SizeBytes != 100 || r.Status != "success" {
 			t.Errorf("lean fields not populated: %+v", r)
 		}
+	}
+}
+
+func TestListJobRunsLimitsEachJobAndSortsGlobally(t *testing.T) {
+	d := setupTestDB(t)
+	destID, err := d.CreateStorageDestination(StorageDestination{Name: "history-all", Type: "local", Config: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jobIDs := make([]int64, 2)
+	for i := range jobIDs {
+		jobIDs[i], err = d.CreateJob(Job{Name: fmt.Sprintf("job-%d", i), StorageDestID: destID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 3; j++ {
+			runID, createErr := d.CreateJobRun(JobRun{JobID: jobIDs[i], Status: "success", BackupType: "full"})
+			if createErr != nil {
+				t.Fatal(createErr)
+			}
+			if _, updateErr := d.Exec(`UPDATE job_runs SET started_at = datetime('2026-01-01', ? || ' hours') WHERE id = ?`, i*10+j, runID); updateErr != nil {
+				t.Fatal(updateErr)
+			}
+		}
+	}
+
+	for _, tc := range []struct {
+		name       string
+		limit      int
+		wantPerJob int
+	}{
+		{name: "one", limit: 1, wantPerJob: 1},
+		{name: "bounded", limit: 2, wantPerJob: 2},
+		{name: "larger than available", limit: 10, wantPerJob: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runs, listErr := d.ListJobRuns(context.Background(), tc.limit)
+			if listErr != nil {
+				t.Fatal(listErr)
+			}
+			if len(runs) != tc.wantPerJob*len(jobIDs) {
+				t.Fatalf("ListJobRuns returned %d runs, want %d", len(runs), tc.wantPerJob*len(jobIDs))
+			}
+			counts := map[int64]int{}
+			for i, run := range runs {
+				counts[run.JobID]++
+				if i > 0 && runs[i-1].StartedAt.Before(run.StartedAt) {
+					t.Fatalf("runs are not globally newest-first: %s before %s", runs[i-1].StartedAt, run.StartedAt)
+				}
+			}
+			for _, jobID := range jobIDs {
+				if counts[jobID] != tc.wantPerJob {
+					t.Errorf("job %d returned %d runs, want %d", jobID, counts[jobID], tc.wantPerJob)
+				}
+			}
+		})
 	}
 }
 

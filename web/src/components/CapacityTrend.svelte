@@ -102,6 +102,9 @@
       : runway.kind === 'full' && runway.days < 90 ? 'text-amber-500'
       : 'text-text-dim'
   )
+  let trendDays = $derived(points.length < 2 ? 0 : Math.round((points[points.length - 1].t - points[0].t) / DAY_MS))
+  let trendLabel = $derived(trendDays > 0 ? `Last ${trendDays}-day trend` : 'Recent trend')
+  let trendSummary = $derived(`Capacity usage trend: ${trendLabel}. ${runwayText(runway)}`)
 </script>
 
 {#if points.length < 2}
@@ -109,11 +112,11 @@
 {:else}
   <div class="space-y-1">
     <div class="flex items-center justify-between text-text-muted">
-      <span>Last {Math.round((points[points.length - 1].t - points[0].t) / DAY_MS)}-day trend</span>
+      <span>{trendLabel}</span>
       <span class={runwayTone}>{runwayText(runway)}</span>
     </div>
     <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="w-full h-10" role="img"
-      aria-label="Capacity usage trend">
+      aria-label={trendSummary}>
       <polygon points={paths.area} class="{tone} opacity-10" fill="currentColor" />
       <polyline points={paths.line} class={tone} fill="none" stroke="currentColor"
         stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />

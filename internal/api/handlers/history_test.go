@@ -1,12 +1,107 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 )
+
+func TestHistoryList(t *testing.T) {
+	d := newTestDB(t)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "history-list", Type: "local", Config: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		jobID, createErr := d.CreateJob(db.Job{Name: fmt.Sprintf("job-%d", i), StorageDestID: destID})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		for j := 0; j < 2; j++ {
+			if _, createErr = d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"}); createErr != nil {
+				t.Fatal(createErr)
+			}
+		}
+	}
+
+	h := NewHistoryHandler(d)
+	for _, tc := range []struct {
+		name       string
+		query      string
+		wantStatus int
+		wantRuns   int
+		wantPerJob int
+	}{
+		{name: "default", wantStatus: http.StatusOK, wantRuns: 4, wantPerJob: 2},
+		{name: "bounded", query: "?limit_per_job=1", wantStatus: http.StatusOK, wantRuns: 2, wantPerJob: 1},
+		{name: "capped", query: "?limit_per_job=1001", wantStatus: http.StatusOK, wantRuns: 4, wantPerJob: 2},
+		{name: "invalid", query: "?limit_per_job=zero", wantStatus: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.List(w, newReq(http.MethodGet, "/api/v1/history"+tc.query, nil))
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantStatus != http.StatusOK {
+				return
+			}
+			var runs []db.JobRun
+			if err := json.Unmarshal(w.Body.Bytes(), &runs); err != nil {
+				t.Fatal(err)
+			}
+			if len(runs) != tc.wantRuns {
+				t.Fatalf("returned %d runs, want %d", len(runs), tc.wantRuns)
+			}
+			perJob := map[int64]int{}
+			for _, run := range runs {
+				perJob[run.JobID]++
+			}
+			if len(perJob) != 2 {
+				t.Fatalf("returned runs for %d jobs, want 2: %#v", len(perJob), perJob)
+			}
+			for jobID, count := range perJob {
+				if count != tc.wantPerJob {
+					t.Errorf("job %d returned %d runs, want %d", jobID, count, tc.wantPerJob)
+				}
+			}
+		})
+	}
+}
+
+func TestHistoryListCapsLimitPerJob(t *testing.T) {
+	d := newTestDB(t)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "history-cap", Type: "local", Config: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := d.CreateJob(db.Job{Name: "capped-job", StorageDestID: destID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 1001; i++ {
+		if _, err = d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	NewHistoryHandler(d).List(w, newReq(http.MethodGet, "/api/v1/history?limit_per_job=1001", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var runs []db.JobRun
+	if err = json.Unmarshal(w.Body.Bytes(), &runs); err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1000 {
+		t.Fatalf("returned %d runs, want capped 1000", len(runs))
+	}
+}
 
 func TestNewHistoryHandler(t *testing.T) {
 	d := newTestDB(t)

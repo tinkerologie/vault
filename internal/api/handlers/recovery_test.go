@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +179,8 @@ func TestRecoveryGetPlan_WithMixedItems(t *testing.T) {
 		{JobID: jobID, ItemType: "container", ItemName: "nginx"},
 		{JobID: jobID, ItemType: "vm", ItemName: "windows10"},
 		{JobID: jobID, ItemType: "folder", ItemName: "/mnt/user/data"},
+		{JobID: jobID, ItemType: "folder", ItemName: "/boot", Settings: `{"preset":"flash"}`},
+		{JobID: jobID, ItemType: "folder", ItemName: "/mnt/user/broken", Settings: `{not-json`},
 	} {
 		if _, err := d.AddJobItem(item); err != nil {
 			t.Fatalf("add item %s: %v", item.ItemName, err)
@@ -203,12 +206,22 @@ func TestRecoveryGetPlan_WithMixedItems(t *testing.T) {
 	if len(warnings) < 3 {
 		t.Errorf("expected >= 3 warnings for unprotected items, got %d", len(warnings))
 	}
+	hasInvalidSettingsWarning := false
+	for _, rawWarning := range warnings {
+		if strings.Contains(rawWarning.(string), "invalid folder settings") {
+			hasInvalidSettingsWarning = true
+		}
+	}
+	if !hasInvalidSettingsWarning {
+		t.Errorf("expected invalid folder settings warning, got %v", warnings)
+	}
 
 	// Each item type should generate its own step.
 	steps := resp["steps"].([]any)
 	hasContainers := false
 	hasVMs := false
 	hasFolders := false
+	hasFlashPreset := false
 	for _, s := range steps {
 		sm := s.(map[string]any)
 		title, _ := sm["title"].(string)
@@ -219,6 +232,12 @@ func TestRecoveryGetPlan_WithMixedItems(t *testing.T) {
 			hasVMs = true
 		case len(title) >= 15 && title[:15] == "Restore Folders":
 			hasFolders = true
+			for _, rawItem := range sm["items"].([]any) {
+				item := rawItem.(map[string]any)
+				if item["name"] == "/boot" && item["preset"] == "flash" {
+					hasFlashPreset = true
+				}
+			}
 		}
 	}
 	if !hasContainers {
@@ -229,6 +248,9 @@ func TestRecoveryGetPlan_WithMixedItems(t *testing.T) {
 	}
 	if !hasFolders {
 		t.Error("missing Restore Folders step")
+	}
+	if !hasFlashPreset {
+		t.Error("flash folder item did not preserve its preset discriminator")
 	}
 }
 

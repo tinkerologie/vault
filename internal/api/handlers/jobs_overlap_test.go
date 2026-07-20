@@ -62,6 +62,8 @@ func TestFolderSourceOverlap(t *testing.T) {
 	// "folder" guard covers them; a container item's path must be ignored.
 	items := []db.JobItem{
 		{ItemType: "folder", Settings: `{"path":"/mnt/user/documents"}`},
+		{ItemType: "folder", ItemID: "/mnt/user/by-id"},
+		{ItemType: "folder", ItemName: "/mnt/user/by-name"},
 		{ItemType: "container", Settings: `{"path":"/mnt/user/backups"}`},
 	}
 	tests := []struct {
@@ -70,6 +72,8 @@ func TestFolderSourceOverlap(t *testing.T) {
 		want bool
 	}{
 		{"dest inside folder source", "/mnt/user/documents/backups", true},
+		{"item ID fallback", "/mnt/user/by-id/backups", true},
+		{"item name fallback", "/mnt/user/by-name/backups", true},
 		{"dest outside any source", "/mnt/user/backups", false},
 		{"remote (empty) dest never overlaps", "", false},
 		{"container path is not a folder source", "/mnt/user/backups/sub", false},

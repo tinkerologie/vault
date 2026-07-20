@@ -113,7 +113,7 @@
     await Promise.all(targets.map(async (d) => {
       try {
         next.set(d.id, await api.dedupStats(d.id))
-      } catch (e) {
+      } catch (_e) {
         // 404 is expected briefly before the first backup creates the repo.
         // Keep any previous stats; don't clear on transient failure.
       }

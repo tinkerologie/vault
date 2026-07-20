@@ -24,6 +24,8 @@
   let activeTab = $state('containers')
   let showAddFolder = $state(false)
   let customFolderPath = $state('')
+  let customFolderError = $state('')
+  let customFolderChecking = $state(false)
 
   // Determine which tabs to show based on allowedTypes
   function isTabAllowed(tabId) {
@@ -266,15 +268,34 @@
     emitChange()
   }
 
-  function addCustomFolder() {
-    if (!customFolderPath.trim()) return
-    const name = customFolderPath.split('/').filter(Boolean).pop() || customFolderPath
+  async function addCustomFolder() {
+	const path = customFolderPath.trim()
+	customFolderError = ''
+	if (!path) return
+	customFolderChecking = true
+	try {
+	  const result = await api.pathExists(path)
+	  if (customFolderPath.trim() !== path) return
+	  if (!result?.exists || !result?.is_dir) {
+		customFolderError = 'Choose an existing folder under /mnt, /boot, or a discovered ZFS mountpoint.'
+		return
+	  }
+	} catch {
+	  if (customFolderPath.trim() === path) {
+		customFolderError = 'Could not validate this folder. Check the connection and try again.'
+	  }
+	  return
+	} finally {
+	  customFolderChecking = false
+	}
+	if (customFolderPath.trim() !== path) return
+	const name = path.split('/').filter(Boolean).pop() || path
     const fKey = `folder:${name}`
     selected.set(fKey, {
       item_type: 'folder',
       item_name: name,
-      item_id: customFolderPath,
-      settings: JSON.stringify({ path: customFolderPath, preset: '' }),
+	  item_id: path,
+	  settings: JSON.stringify({ path, preset: '' }),
     })
     // PathBrowser only exposes paths under allowed roots that already
     // exist, so we can pre-populate as exists=true and skip the probe.
@@ -627,10 +648,11 @@
       {#if showAddFolder}
         <div class="bg-surface-3/50 border border-border rounded-lg p-3 mb-2 space-y-2">
           <p class="text-xs text-text-muted">Browse to a folder on the server to add it as a backup item.</p>
-          <PathBrowser bind:value={customFolderPath} />
-          <div class="flex justify-end gap-2">
+		  <PathBrowser bind:value={customFolderPath} label="Custom folder path" />
+		  {#if customFolderError}<p class="text-xs text-danger" role="alert">{customFolderError}</p>{/if}
+		  <div class="flex justify-end gap-2">
             <button type="button" onclick={() => (showAddFolder = false)} class="px-3 py-1.5 text-xs text-text-muted hover:text-text bg-surface-3 rounded-lg">Cancel</button>
-            <button type="button" onclick={addCustomFolder} disabled={!customFolderPath.trim()} class="px-3 py-1.5 text-xs text-white bg-vault hover:bg-vault-dark rounded-lg disabled:opacity-40">Add Folder</button>
+			<button type="button" onclick={addCustomFolder} disabled={!customFolderPath.trim() || customFolderChecking} class="px-3 py-1.5 text-xs text-white bg-vault hover:bg-vault-dark rounded-lg disabled:opacity-40">{customFolderChecking ? 'Checking...' : 'Add Folder'}</button>
           </div>
         </div>
       {/if}

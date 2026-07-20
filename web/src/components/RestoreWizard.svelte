@@ -159,15 +159,12 @@
     gatherItems()
   })
 
-  async function gatherItems() {
-    loading = true
-    try {
-      const details = await Promise.all(
-        jobs.map(j => api.getJob(j.id).catch(() => null))
-      )
-      const itemMap = new SvelteMap()
-      for (const detail of details) {
-        if (!detail?.items) continue
+  function gatherItems() {
+	loading = true
+	try {
+	  const itemMap = new SvelteMap()
+	  for (const detail of jobs) {
+		if (!detail?.items) continue
         for (const item of detail.items) {
           const key = `${item.item_type}:${item.item_name}`
           if (!itemMap.has(key)) {
@@ -177,14 +174,13 @@
               jobs: [],
             })
           }
-          const job = jobs.find(j => j.id === detail.job.id)
-          if (job) itemMap.get(key).jobs.push(job)
+		  itemMap.get(key).jobs.push(detail)
         }
       }
       allItems = Array.from(itemMap.values())
       // Deep-link auto-select runs once per mount so a later gatherItems refresh
       // (e.g. a WS event) can't re-select items the user has since cleared.
-      if (!autoSelectApplied) {
+      if (!autoSelectApplied && jobs.length > 0) {
         autoSelectApplied = true
         // Auto-select items from a pre-selected job (e.g. quick restore from Dashboard)
         if (initialJobId) {
@@ -714,7 +710,7 @@
         </div>
         {#if showDestOverride}
           <div class="mt-2">
-            <PathBrowser bind:value={restoreDestination} />
+            <PathBrowser bind:value={restoreDestination} label="Custom restore destination" />
             <p class="text-xs text-text-dim mt-1">Files will be written under this path instead of their original location.</p>
           </div>
         {/if}

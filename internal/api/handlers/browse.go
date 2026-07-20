@@ -95,6 +95,13 @@ func (h *BrowseHandler) normalizePath(path string) (string, error) {
 	return safepath.NormalizeAbsoluteUnderRoots(path, roots)
 }
 
+// ValidatePath applies the same allowed-root policy used by browse and
+// path-exists without requiring the path to exist.
+func (h *BrowseHandler) ValidatePath(path string) error {
+	_, err := h.normalizePath(path)
+	return err
+}
+
 // dirEntry represents a single directory in the browse response.
 type dirEntry struct {
 	Name  string `json:"name"`

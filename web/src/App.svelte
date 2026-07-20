@@ -3,6 +3,7 @@
   import { connectWs } from './lib/ws.svelte.js'
   import { initTheme, getMode, setMode, getIsThemed } from './lib/theme.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
+  import { shouldRedirectRoute } from './lib/route-guard.js'
   import { loadFeatureFlags, getAnomalyEnabled, getReplicationEnabled, getFeatureFlagsLoaded } from './lib/settings.svelte.js'
   import { onMount } from 'svelte'
 
@@ -87,9 +88,12 @@
   $effect(() => {
     if (!getFeatureFlagsLoaded()) return
     const route = getRoute()
-    if (route === '/anomalies' && !getAnomalyEnabled()) navigate('/')
-    else if (route === '/replication' && !replicaMode && !getReplicationEnabled()) navigate('/')
-    else if (route === '/recover' && replicaMode) navigate('/')
+    if (shouldRedirectRoute({
+      route,
+      replicaMode,
+      anomalyEnabled: getAnomalyEnabled(),
+      replicationEnabled: getReplicationEnabled(),
+    })) navigate('/')
   })
 
   let ready = $state(false)

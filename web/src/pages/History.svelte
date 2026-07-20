@@ -29,9 +29,6 @@
 
   let loading = $state(true)
   let error = $state('')
-  // Non-blocking notice when SOME job histories failed but others loaded, so
-  // the partial list still renders (a full outage uses the blocking `error`).
-  let historyWarning = $state('')
   let jobs = $state([])
   let allRuns = $state([])
   let selectedJob = $state(0)
@@ -43,6 +40,7 @@
   let expandedRunIds = $state(new SvelteSet())
   // Runs we've already auto-expanded once, so a user collapsing a failed run
   // isn't undone on the next refresh.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- one-shot guard; it is intentionally not rendered.
   const autoExpandedRunIds = new Set()
   let confirmPurge = $state(false)
   let purging = $state(false)
@@ -74,41 +72,12 @@
   async function loadData(silent = false) {
     if (!silent) loading = true
     try {
-      const jobsList = (await api.listJobs()) || []
-      // Hydrate each job with its items so SizeChart can categorise runs by
-      // backup-target type (containers / vms / folder / flash). We do this
-      // in parallel and tolerate per-job failures – a missing items array
-      // just falls into the "Other" category.
-      jobs = await Promise.all(
-        jobsList.map(j =>
-          api
-            .getJob(j.id)
-            .then(d => ({ ...j, items: d?.items || [] }))
-            .catch(() => ({ ...j, items: [] }))
-        )
-      )
-      let historyErrors = 0
-      const promises = jobs.map(async (job) => {
-        try {
-          const runs = await api.getJobHistory(job.id, 200)
-          return (runs || []).map(r => ({ ...r, jobName: job.name }))
-        } catch { historyErrors++; return [] }
-      })
-      const results = await Promise.all(promises)
-      allRuns = results.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-      // Don't let a total run-history outage masquerade as a clean, empty
-      // history: if every job's fetch failed and we ended up with nothing,
-      // surface it as an error instead of the falsely-empty timeline.
-      if (allRuns.length === 0 && historyErrors > 0 && historyErrors === jobs.length) {
-        error = 'Failed to load run history'
-        historyWarning = ''
-      } else {
-        error = ''
-        historyWarning = historyErrors > 0
-          ? `Couldn't load history for ${historyErrors} job${historyErrors === 1 ? '' : 's'} — the list below may be incomplete.`
-          : ''
-        autoExpandRecentFailures()
-      }
+      jobs = (await api.listJobs()) || []
+      const names = new Map(jobs.map(job => [job.id, job.name]))
+      const runs = (await api.getHistory(200)) || []
+      allRuns = runs.map(run => ({ ...run, jobName: names.get(run.job_id) || `Job ${run.job_id}` }))
+      error = ''
+      autoExpandRecentFailures()
     } catch (e) {
       error = e.message || 'Failed to load history'
     } finally {
@@ -271,12 +240,6 @@
       <span class="text-sm">{error}</span>
     </div>
   {:else}
-    {#if historyWarning}
-      <div class="bg-warning/10 border border-warning/30 text-warning rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2 text-sm">
-        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-        <span>{historyWarning}</span>
-      </div>
-    {/if}
     <!-- Stats bar -->
     <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6 stagger">
       <div class="bg-surface-2 border border-border rounded-xl p-3 text-center">

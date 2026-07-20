@@ -232,6 +232,7 @@ export function formatDuration(seconds) {
 export function prettyAnomalySummary(summary) {
   if (!summary) return summary
   return summary
+    .replace(/This backup grew(?=\s+to\s+.*?,\s*about <1× its usual)/g, 'This backup shrank')
     .replace(/(\d+)\s*bytes/g, (_, n) => formatBytes(Number(n)))
     .replace(/\b(\d+)s\b(?=\s|$|[),.])/g, (_, n) => formatDuration(Number(n)))
 }

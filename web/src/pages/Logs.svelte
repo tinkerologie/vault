@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
-  import { formatDate, relTime, formatBytes } from '../lib/utils.js'
+  import { formatDate, relTime, formatBytes, prettyAnomalySummary } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getLiveMode } from '../lib/runtime-config.js'
@@ -193,7 +193,7 @@
   }
 
   async function copyEntry(entry) {
-    const text = `[${entry.level?.toUpperCase()}] [${entry.category}] ${entry.message}${entry.details ? '\n' + entry.details : ''}`
+    const text = `[${entry.level?.toUpperCase()}] [${entry.category}] ${prettyAnomalySummary(entry.message)}${entry.details ? '\n' + entry.details : ''}`
     if (await copyText(text)) {
       copiedId = entry.id
       setTimeout(() => { copiedId = null }, 2000)
@@ -203,7 +203,7 @@
   function exportLogs() {
     const lines = filteredEntries.map(e => {
       const ts = formatDate(e.created_at)
-      return `[${ts}] [${e.level?.toUpperCase()}] [${e.category}] ${e.message}${e.details ? ' – ' + e.details : ''}`
+      return `[${ts}] [${e.level?.toUpperCase()}] [${e.category}] ${prettyAnomalySummary(e.message)}${e.details ? ' – ' + e.details : ''}`
     })
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
@@ -352,7 +352,7 @@
                     {/if}
                   </button>
                 </div>
-                <p class="text-sm text-text {entry.level === 'error' ? 'font-medium' : ''}">{entry.message}</p>
+                <p class="text-sm text-text {entry.level === 'error' ? 'font-medium' : ''}">{prettyAnomalySummary(entry.message)}</p>
                 {#if entry.details}
                   {@const parsed = tryParseJSON(entry.details)}
                   {#if parsed}

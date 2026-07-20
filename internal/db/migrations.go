@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS job_runs (
 	size_bytes INTEGER DEFAULT 0
 );
 
+CREATE INDEX IF NOT EXISTS idx_job_runs_job_started ON job_runs(job_id, started_at DESC);
+
 CREATE TABLE IF NOT EXISTS restore_points (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	job_run_id INTEGER NOT NULL REFERENCES job_runs(id) ON DELETE CASCADE,

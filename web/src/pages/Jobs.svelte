@@ -34,19 +34,16 @@
   let nextRuns = $state({})
   let editingNameId = $state(null)
   let editName = $state('')
+  let dataLoadId = 0
 
   // Anomaly / baseline per-job data
   const anomalyState = getAnomalies()
   /** @type {Record<number, {sample_count: number}|null>} */
   let baselines = $state({})
 
-  // Monotonic counter to discard out-of-order baseline fetch responses.
-  let baselineLoadId = 0
-
   // Stale-item remediation (#119): items whose underlying container/VM/folder
   // no longer exists on the system (persisted missing_since on the job item).
   let staleItems = $state({})          // jobId -> array of stale job items (persisted missing_since)
-  let staleLoadId = 0
   let remediating = $state(null)       // the job currently shown in the remediation dialog (or null)
   let remediateBusy = $state(false)
 
@@ -479,61 +476,27 @@
   })
 
   async function loadData() {
+	const loadId = ++dataLoadId
     loading = true
     try {
-      const [j, s, nr] = await Promise.all([api.listJobs(), api.listStorage(), api.getNextRuns()])
-      jobs = j || []
-      storageList = s || []
-      nextRuns = nr || {}
-      // Fetch baselines for all jobs in parallel; always returns 200 (sample_count=0 when still learning).
-      void loadBaselines(jobs)
-      // Fetch persisted stale items per job (no live inventory scan).
-      void loadStaleItems(jobs)
+      const [details, s, nr] = await Promise.all([api.listJobs(true), api.listStorage(), api.getNextRuns()])
+	  if (loadId !== dataLoadId) return
+      const baselineMap = {}
+      const staleMap = {}
+      jobs = (details || []).map(({ items = [], baseline, ...job }) => {
+        baselineMap[job.id] = baseline || { job_id: job.id, sample_count: 0 }
+        staleMap[job.id] = items.filter(item => item.missing_since)
+        return job
+      })
+	  storageList = s || []
+	  nextRuns = nr || {}
+      baselines = baselineMap
+      staleItems = staleMap
     } catch (e) {
-      showToast(e.message, 'error')
+	  if (loadId === dataLoadId) showToast(e.message, 'error')
     } finally {
-      loading = false
+	  if (loadId === dataLoadId) loading = false
     }
-  }
-
-  async function loadBaselines(jobList) {
-    const reqId = ++baselineLoadId
-    const results = await Promise.all(
-      jobList.map(async (j) => {
-        try {
-          const b = await api.getJobBaseline(j.id)
-          return [j.id, b]
-        } catch {
-          return [j.id, null]
-        }
-      })
-    )
-    if (reqId !== baselineLoadId) return // stale response – discard
-    const map = {}
-    for (const [id, b] of results) map[id] = b
-    baselines = map
-  }
-
-  // Mirror loadBaselines: uses api.getJob (persisted items, no live Docker/
-  // libvirt scan) and keeps only items the backend has already flagged with a
-  // missing_since timestamp.
-  async function loadStaleItems(jobList) {
-    const reqId = ++staleLoadId
-    const results = await Promise.all(
-      jobList.map(async (j) => {
-        try {
-          const d = await api.getJob(j.id)
-          const stale = (d.items || []).filter((it) => it.missing_since)
-          return [j.id, stale]
-        } catch {
-          return [j.id, []]
-        }
-      })
-    )
-    if (reqId !== staleLoadId) return // stale response – discard
-    const map = {}
-    for (const [id, s] of results) map[id] = s
-    staleItems = map
   }
 
   function openRemediate(job) {
@@ -936,6 +899,7 @@
       const containerName = item.item_name || ''
       if (!image && !containerName) continue
       try {
+        // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local request builder, never read by the template.
         const params = new URLSearchParams()
         if (image) params.set('image', image)
         if (containerName) params.set('container', containerName)
@@ -2051,7 +2015,7 @@
                   <!-- Advisory notes/warnings for known apps (e.g. Immich DB) -->
                   {#if containerPresetMeta[cItem.item_name]}
                     {@const meta = containerPresetMeta[cItem.item_name]}
-                    {#each meta.warnings as warning}
+                    {#each meta.warnings as warning, warningIndex (`${warning}:${warningIndex}`)}
                       <div class="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
                         <svg aria-hidden="true" class="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
@@ -2059,7 +2023,7 @@
                         <span>{warning}</span>
                       </div>
                     {/each}
-                    {#each meta.notes as note}
+                    {#each meta.notes as note, noteIndex (`${note}:${noteIndex}`)}
                       <p class="text-xs text-text-dim">{note}</p>
                     {/each}
                   {/if}

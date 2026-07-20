@@ -120,4 +120,9 @@ describe('prettyAnomalySummary', () => {
     expect(prettyAnomalySummary('size anomaly: 1048576 bytes (0.8x)')).toContain('1 MB')
     expect(prettyAnomalySummary('duration anomaly: 90s (0.8x)')).toContain('1m 30s')
   })
+
+  it('corrects contradictory legacy size summaries without rewriting history', () => {
+    expect(prettyAnomalySummary('This backup grew to 2.7 GB, about <1× its usual 2.8 GB.'))
+      .toBe('This backup shrank to 2.7 GB, about <1× its usual 2.8 GB.')
+  })
 })

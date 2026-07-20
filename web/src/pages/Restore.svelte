@@ -43,7 +43,7 @@
 
   async function loadJobs() {
     try {
-      jobs = (await api.listJobs()) || []
+      jobs = (await api.listJobs(true)) || []
     } catch (e) {
       showToast(e.message, 'error')
     } finally {

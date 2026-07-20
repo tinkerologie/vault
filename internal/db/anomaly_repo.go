@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
@@ -408,6 +409,32 @@ func (d *DB) GetJobBaseline(jobID int64) (JobBaseline, error) {
 		return b, fmt.Errorf("get job baseline %d: %w", jobID, err)
 	}
 	return b, nil
+}
+
+// ListJobBaselines returns all computed baselines for bulk job-list hydration.
+func (d *DB) ListJobBaselines(ctx context.Context) ([]JobBaseline, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT job_id, sample_count, bytes_median, bytes_mad,
+		        duration_median, duration_mad, failure_rate, updated_at
+		 FROM job_baselines ORDER BY job_id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list job baselines: %w", err)
+	}
+	defer rows.Close()
+	var baselines []JobBaseline
+	for rows.Next() {
+		var baseline JobBaseline
+		if err := rows.Scan(&baseline.JobID, &baseline.SampleCount, &baseline.BytesMedian, &baseline.BytesMAD,
+			&baseline.DurationMedian, &baseline.DurationMAD, &baseline.FailureRate, &baseline.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan job baseline: %w", err)
+		}
+		baselines = append(baselines, baseline)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job baselines: %w", err)
+	}
+	return baselines, nil
 }
 
 // InsertCapacitySample appends a single capacity measurement for a destination.

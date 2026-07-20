@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,32 @@ type HistoryHandler struct {
 // NewHistoryHandler creates a new HistoryHandler.
 func NewHistoryHandler(database *db.DB) *HistoryHandler {
 	return &HistoryHandler{db: database}
+}
+
+// List returns a single bounded collection containing the newest runs for
+// every job.
+//
+//	GET /api/v1/history?limit_per_job=200
+func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
+	const maxLimit = 1000
+	limit := 200
+	if raw := r.URL.Query().Get("limit_per_job"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			respondError(w, http.StatusBadRequest, "limit_per_job must be a positive integer")
+			return
+		}
+		limit = min(parsed, maxLimit)
+	}
+	runs, err := h.db.ListJobRuns(r.Context(), limit)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	if runs == nil {
+		runs = []db.JobRun{}
+	}
+	respondJSON(w, http.StatusOK, runs)
 }
 
 // Purge deletes all job run history records.

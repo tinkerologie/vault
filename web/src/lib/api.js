@@ -42,6 +42,10 @@ async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_
   return data
 }
 
+const discovery = (path) => _isReplica
+  ? Promise.resolve({ items: [], available: false })
+  : request('GET', path)
+
 export const api = {
   // Health
   health: () => request('GET', '/health'),
@@ -94,7 +98,7 @@ export const api = {
   getDependentJobs: (id) => request('GET', `/storage/${id}/jobs`),
 
   // Jobs
-  listJobs: () => request('GET', '/jobs'),
+  listJobs: (details = false) => request('GET', details ? '/jobs?details=true' : '/jobs'),
   getJob: (id) => request('GET', `/jobs/${id}`),
   createJob: (data) => request('POST', '/jobs', data),
   updateJob: (id, data) => request('PUT', `/jobs/${id}`, data),
@@ -103,6 +107,7 @@ export const api = {
   deleteJobItem: (id, itemId) => request('DELETE', `/jobs/${id}/items/${itemId}`),
   removeStaleItems: (id) => request('POST', `/jobs/${id}/stale-items/remove`),
   getJobHistory: (id, limit = 50) => request('GET', `/jobs/${id}/history?limit=${limit}`),
+  getHistory: (limitPerJob = 200) => request('GET', `/history?limit_per_job=${limitPerJob}`),
   // getHistoryTrend returns server-bucketed backup-size totals (run/day/week
   // buckets depending on period) for the History page's SizeChart.
   getHistoryTrend: (period = '30d') => request('GET', `/history/trend?period=${encodeURIComponent(period)}`),
@@ -168,11 +173,11 @@ export const api = {
   // folder items. Returns {exists, is_dir} and never errors for missing
   // paths.
   pathExists: (path) => request('GET', `/path-exists?path=${encodeURIComponent(path)}`),
-  listContainers: () => request('GET', '/containers'),
-  listVMs: () => request('GET', '/vms'),
-  listFolders: () => request('GET', '/folders'),
-  listPlugins: () => request('GET', '/plugins'),
-  listZFSDatasets: () => request('GET', '/zfs'),
+  listContainers: () => discovery('/containers'),
+  listVMs: () => discovery('/vms'),
+  listFolders: () => discovery('/folders'),
+  listPlugins: () => discovery('/plugins'),
+  listZFSDatasets: () => discovery('/zfs'),
 
   // Settings
   getSettings: () => request('GET', '/settings'),

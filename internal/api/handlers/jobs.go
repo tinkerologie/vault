@@ -60,6 +60,58 @@ type JobHandler struct {
 	schedReload    ScheduleReloader
 	nextRun        NextRunResolver
 	onConfigChange ConfigChangeHook
+	validatePath   func(string) error
+}
+
+// SetPathValidator applies the browse handler's allowed-root policy to custom
+// folder items submitted through job create/update requests.
+func (h *JobHandler) SetPathValidator(fn func(string) error) {
+	h.validatePath = fn
+}
+
+func folderSourcePath(item db.JobItem) (string, error) {
+	var settings struct {
+		Path string `json:"path"`
+	}
+	if item.Settings != "" {
+		if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
+			return "", err
+		}
+	}
+	if path := strings.TrimSpace(settings.Path); path != "" {
+		return path, nil
+	}
+	if path := strings.TrimSpace(item.ItemID); strings.HasPrefix(path, "/") {
+		return path, nil
+	}
+	if path := strings.TrimSpace(item.ItemName); strings.HasPrefix(path, "/") {
+		return path, nil
+	}
+	return "", nil
+}
+
+func (h *JobHandler) validateFolderPaths(w http.ResponseWriter, items []db.JobItem) bool {
+	if h.validatePath == nil {
+		return true
+	}
+	for _, item := range items {
+		if item.ItemType != "folder" {
+			continue
+		}
+		path, err := folderSourcePath(item)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "folder item settings must be valid JSON")
+			return false
+		}
+		if path == "" {
+			continue
+		}
+		if err = h.validatePath(path); err != nil {
+			respondError(w, http.StatusBadRequest, "folder path must be under /mnt, /boot, or a discovered ZFS mountpoint")
+			return false
+		}
+	}
+	return true
 }
 
 func NewJobHandler(database *db.DB, r *runner.Runner, reload ScheduleReloader) *JobHandler {
@@ -113,7 +165,44 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, jobs)
+	if r.URL.Query().Get("details") != "true" {
+		respondJSON(w, http.StatusOK, jobs)
+		return
+	}
+	items, err := h.db.ListJobItems(r.Context())
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	baselines, err := h.db.ListJobBaselines(r.Context())
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	itemsByJob := make(map[int64][]db.JobItem, len(jobs))
+	for _, item := range items {
+		itemsByJob[item.JobID] = append(itemsByJob[item.JobID], item)
+	}
+	baselineByJob := make(map[int64]db.JobBaseline, len(baselines))
+	for _, baseline := range baselines {
+		baselineByJob[baseline.JobID] = baseline
+	}
+	type detailedJob struct {
+		db.Job
+		Items    []db.JobItem   `json:"items"`
+		Baseline db.JobBaseline `json:"baseline"`
+	}
+	result := make([]detailedJob, 0, len(jobs))
+	for _, job := range jobs {
+		jobItems := itemsByJob[job.ID]
+		if jobItems == nil {
+			jobItems = []db.JobItem{}
+		}
+		baseline := baselineByJob[job.ID]
+		baseline.JobID = job.ID
+		result = append(result, detailedJob{Job: job, Items: jobItems, Baseline: baseline})
+	}
+	respondJSON(w, http.StatusOK, result)
 }
 
 // validateJobInput validates and normalizes a job's name and schedule in place
@@ -308,16 +397,14 @@ func folderSourceOverlap(destPath string, items []db.JobItem) (string, bool) {
 		if it.ItemType != "folder" {
 			continue
 		}
-		var s struct {
-			Path string `json:"path"`
-		}
-		if json.Unmarshal([]byte(it.Settings), &s) != nil || s.Path == "" {
+		sourcePath, err := folderSourcePath(it)
+		if err != nil || sourcePath == "" {
 			continue
 		}
-		if pathsOverlap(resolvePath(s.Path), dest) {
+		if pathsOverlap(resolvePath(sourcePath), dest) {
 			return fmt.Sprintf(
 				"backup destination %q overlaps the backup source %q — the job would back up into its own source; choose a destination outside the source tree",
-				filepath.Clean(destPath), filepath.Clean(s.Path)), true
+				filepath.Clean(destPath), filepath.Clean(sourcePath)), true
 		}
 	}
 	return "", false
@@ -356,6 +443,9 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.validateJobStorageDest(w, &req.Job) {
+		return
+	}
+	if !h.validateFolderPaths(w, req.Items) {
 		return
 	}
 	if reason, bad := folderSourceOverlap(h.localDestPath(req.StorageDestID), req.Items); bad {
@@ -437,6 +527,9 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.validateJobStorageDest(w, &req.Job) {
+		return
+	}
+	if req.Items != nil && !h.validateFolderPaths(w, req.Items) {
 		return
 	}
 	// A PUT that omits items leaves the persisted items in place, so check the

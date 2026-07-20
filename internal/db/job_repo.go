@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -205,6 +206,28 @@ func (d *DB) GetJobItems(jobID int64) ([]JobItem, error) {
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// ListJobItems returns every persisted item in job/sort order for bulk UI
+// hydration without one query per job.
+func (d *DB) ListJobItems(ctx context.Context) ([]JobItem, error) {
+	rows, err := d.QueryContext(ctx, "SELECT id, job_id, item_type, item_name, item_id, settings, sort_order, missing_since FROM job_items ORDER BY job_id, sort_order")
+	if err != nil {
+		return nil, fmt.Errorf("list job items: %w", err)
+	}
+	defer rows.Close()
+	var items []JobItem
+	for rows.Next() {
+		var item JobItem
+		if err := rows.Scan(&item.ID, &item.JobID, &item.ItemType, &item.ItemName, &item.ItemID, &item.Settings, &item.SortOrder, &item.MissingSince); err != nil {
+			return nil, fmt.Errorf("scan job item: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job items: %w", err)
+	}
+	return items, nil
 }
 
 // UpdateJobItemSettings replaces the settings JSON of one job item. Used by
@@ -434,6 +457,45 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
+}
+
+// ListJobRuns returns the newest runs for every job in one globally sorted
+// result. The per-job bound preserves the History page's existing retention
+// window without issuing one query per job.
+func (d *DB) ListJobRuns(ctx context.Context, limitPerJob int) ([]JobRun, error) {
+	rows, err := d.QueryContext(ctx,
+		`WITH ranked AS (
+			SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup') AS run_type,
+				started_at, completed_at, log, items_total, items_done, items_failed, size_bytes,
+				CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END AS duration_seconds,
+				retry_of_run_id, COALESCE(retry_attempt, 0) AS retry_attempt, retry_next_at,
+				ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY started_at DESC, id DESC) AS row_num
+			FROM job_runs
+		)
+		SELECT id, job_id, status, backup_type, run_type, started_at, completed_at, log,
+			items_total, items_done, items_failed, size_bytes, duration_seconds,
+			retry_of_run_id, retry_attempt, retry_next_at
+		FROM ranked WHERE row_num <= ? ORDER BY started_at DESC, id DESC`, limitPerJob,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list job runs: %w", err)
+	}
+	defer rows.Close()
+	var runs []JobRun
+	for rows.Next() {
+		var run JobRun
+		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
+			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
+			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
+			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt); err != nil {
+			return nil, fmt.Errorf("scan job run: %w", err)
+		}
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job runs: %w", err)
+	}
+	return runs, nil
 }
 
 // GetJobRun returns a single job run row by primary key.

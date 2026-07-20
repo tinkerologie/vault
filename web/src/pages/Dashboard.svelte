@@ -403,7 +403,7 @@
   // the user adds the tile). Each guards against duplicate in-flight loads. ──
   /** @type {{ points: Array<{start: string, total_bytes: number}> } | null} */
   let trendData = $state(null)
-  let trendLoading = false
+  let trendLoading = $state(false)
   async function loadTrend() {
     if (trendLoading || trendData) return
     trendLoading = true
@@ -412,7 +412,7 @@
 
   /** @type {{ ratio: number, logical: number, physical: number } | null} */
   let dedupSummary = $state(null)
-  let dedupLoading = false
+  let dedupLoading = $state(false)
   async function loadDedup() {
     if (dedupLoading || dedupSummary) return
     dedupLoading = true
@@ -427,7 +427,7 @@
 
   /** @type {{ name: string, days: number, perDay: number } | null} */
   let forecastSummary = $state(null)
-  let forecastLoading = false
+  let forecastLoading = $state(false)
   async function loadForecast() {
     if (forecastLoading || forecastSummary) return
     forecastLoading = true

@@ -357,6 +357,58 @@ func TestJobCreate_WithItems(t *testing.T) {
 	}
 }
 
+func TestJobListDetailsIncludesItemsAndBaseline(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	destID := seedStorageDest(t, d)
+	jobID, err := d.CreateJob(db.Job{Name: "detailed-job-" + nextUnique(), StorageDestID: destID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.AddJobItem(db.JobItem{JobID: jobID, ItemType: "folder", ItemName: "data", Settings: `{"path":"/mnt/user/data"}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err = d.UpsertJobBaseline(db.JobBaseline{JobID: jobID, SampleCount: 7, UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	emptyJobID, err := d.CreateJob(db.Job{Name: "empty-detailed-job-" + nextUnique(), StorageDestID: destID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	h.List(w, newReq(http.MethodGet, "/api/v1/jobs?details=true", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var rows []struct {
+		ID       int64          `json:"id"`
+		Items    []db.JobItem   `json:"items"`
+		Baseline db.JobBaseline `json:"baseline"`
+	}
+	if err = json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d detailed jobs, want 2: %+v", len(rows), rows)
+	}
+	byID := make(map[int64]struct {
+		items    []db.JobItem
+		baseline db.JobBaseline
+	}, len(rows))
+	for _, row := range rows {
+		byID[row.ID] = struct {
+			items    []db.JobItem
+			baseline db.JobBaseline
+		}{row.Items, row.Baseline}
+	}
+	if len(byID[jobID].items) != 1 || byID[jobID].baseline.SampleCount != 7 {
+		t.Fatalf("populated detail mismatch: %+v", byID[jobID])
+	}
+	if len(byID[emptyJobID].items) != 0 || byID[emptyJobID].baseline.JobID != emptyJobID || byID[emptyJobID].baseline.SampleCount != 0 {
+		t.Fatalf("empty detail mismatch: %+v", byID[emptyJobID])
+	}
+}
+
 func TestJobCreate_InvalidJSON(t *testing.T) {
 	h := newJobHandler(t)
 	w := httptest.NewRecorder()

@@ -75,6 +75,7 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 		StorageName     string     `json:"storage_name"`
 		SizeBytes       int64      `json:"size_bytes"`
 		HasRestorePoint bool       `json:"has_restore_point"`
+		Preset          string     `json:"preset,omitempty"`
 	}
 
 	type step struct {
@@ -120,6 +121,16 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 				Type:            item.ItemType,
 				StorageName:     storageNames[job.StorageDestID],
 				HasRestorePoint: latestRP != nil,
+			}
+			if item.ItemType == "folder" {
+				var settings struct {
+					Preset string `json:"preset"`
+				}
+				if err := json.Unmarshal([]byte(item.Settings), &settings); err == nil {
+					si.Preset = settings.Preset
+				} else if item.Settings != "" {
+					warnings = append(warnings, item.ItemName+" has invalid folder settings")
+				}
 			}
 			if latestRP != nil {
 				si.LastBackup = &latestRP.CreatedAt

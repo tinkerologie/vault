@@ -1,7 +1,7 @@
 <script>
   import { api } from '../lib/api.js'
 
-  let { value = $bindable(''), onselect = () => {}, includeZfs = false } = $props()
+  let { value = $bindable(''), onselect = () => {}, includeZfs = false, label = 'Path' } = $props()
 
   let open = $state(false)
   let entries = $state([])
@@ -54,6 +54,7 @@
     <input
       type="text"
       bind:value
+      aria-label={label}
       placeholder="/mnt/user/backups"
       class="flex-1 bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50"
     />

@@ -3,7 +3,8 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { navigate } from '../lib/router.svelte.js'
   import { api } from '../lib/api.js'
-  import { formatBytes, formatDate } from '../lib/utils.js'
+	import { formatBytes, formatDate } from '../lib/utils.js'
+	import { recoveryCounts } from '../lib/recovery.js'
   import Spinner from '../components/Spinner.svelte'
 
   let loading = $state(true)
@@ -11,7 +12,10 @@
   let error = $state('')
   let containers = $state([])
   let vms = $state([])
-  let folders = $state([])
+	let folders = $state([])
+	let containersAvailable = $state(false)
+	let vmsAvailable = $state(false)
+	let foldersAvailable = $state(false)
   let protectedItems = $state(new SvelteSet())
   let expandedSteps = $state(new SvelteSet())
   /** @type {Record<string, string>} */
@@ -21,15 +25,18 @@
     try {
       const [p, cRes, vRes, fRes, sett] = await Promise.all([
         api.getRecoveryPlan(),
-        api.listContainers().catch(() => ({ items: [] })),
-        api.listVMs().catch(() => ({ items: [] })),
-        api.listFolders().catch(() => ({ items: [] })),
+		api.listContainers().catch(() => ({ items: [], available: false })),
+		api.listVMs().catch(() => ({ items: [], available: false })),
+		api.listFolders().catch(() => ({ items: [], available: false })),
         api.getSettings().catch(() => ({})),
       ])
       plan = p
       containers = cRes.items || []
       vms = vRes.items || []
-      folders = fRes.items || []
+	  folders = fRes.items || []
+	  containersAvailable = cRes.available !== false
+	  vmsAvailable = vRes.available !== false
+	  foldersAvailable = fRes.available !== false
       settings = sett || {}
 
       // Derive protected items from the actual existence of restore points
@@ -64,10 +71,13 @@
   let trackedFlash = $derived(flashBackupOn ? folders.filter(f => f.settings?.preset === 'flash') : [])
   let unprotectedFolders = $derived(trackedFolders.filter(f => !protectedItems.has(`folder:${f.name}`)))
   let unprotectedFlash = $derived(trackedFlash.filter(f => !protectedItems.has(`folder:${f.name}`)))
-  let totalUnprotected = $derived(unprotectedContainers.length + unprotectedVMs.length + unprotectedFolders.length + unprotectedFlash.length)
-  let trackedContainerCount = $derived(containerBackupOn ? containers.length : 0)
-  let trackedVMCount = $derived(vmBackupOn ? vms.length : 0)
-  let totalItems = $derived(trackedContainerCount + trackedVMCount + trackedFolders.length + trackedFlash.length)
+	let counts = $derived(recoveryCounts({
+	  plan, containers, vms, folders,
+	  available: { containers: containersAvailable, vms: vmsAvailable, folders: foldersAvailable },
+	  enabled: { containers: containerBackupOn, vms: vmBackupOn, folders: folderBackupOn, flash: flashBackupOn },
+	}))
+	let totalItems = $derived(counts.totalItems)
+	let totalUnprotected = $derived(counts.totalUnprotected)
   let readinessPct = $derived(totalItems > 0 ? Math.round(((totalItems - totalUnprotected) / totalItems) * 100) : 100)
 
   function toggleStep(step) {
@@ -134,7 +144,7 @@
              `Action needed — most items are unprotected (${totalUnprotected} of ${totalItems}).`}
           </p>
           <p class="text-xs text-text-dim mt-1">
-            {plan.server_info?.total_protected_items || 0} items protected · Vault v{plan.server_info?.vault_version || '?'}
+            {plan.server_info?.total_protected_items || 0} items tracked · Vault v{plan.server_info?.vault_version || '?'}
           </p>
         </div>
       </div>
