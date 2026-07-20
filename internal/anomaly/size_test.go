@@ -2,6 +2,7 @@ package anomaly
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,5 +265,46 @@ func TestSizeDrift_FloorSuppression(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("expected nil (floor suppressed), got %+v", got)
+	}
+}
+
+// TestSizeDriftSummary_DirectionMatchesNumbers is the regression test for the
+// QA finding that the high-side size anomaly always said "grew" — producing
+// "This backup grew to 2.7 GB, about <1× its usual 2.8 GB", which contradicts
+// its own figures.
+func TestSizeDriftSummary_DirectionMatchesNumbers(t *testing.T) {
+	tests := []struct {
+		name       string
+		observed   float64
+		median     float64
+		factor     float64
+		wantVerb   string
+		unwantVerb string
+	}{
+		{
+			name:     "observed below median says shrank",
+			observed: 2.7 * 1000 * 1000 * 1000,
+			median:   2.8 * 1000 * 1000 * 1000,
+			factor:   0.964,
+			wantVerb: "shrank", unwantVerb: "grew",
+		},
+		{
+			name:     "observed above median says grew",
+			observed: 20 * 1000 * 1000 * 1000,
+			median:   4 * 1000 * 1000 * 1000,
+			factor:   5,
+			wantVerb: "grew", unwantVerb: "shrank",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sizeDriftSummary(tc.observed, tc.median, tc.factor)
+			if !strings.Contains(got, tc.wantVerb) {
+				t.Errorf("summary %q should contain %q", got, tc.wantVerb)
+			}
+			if strings.Contains(got, tc.unwantVerb) {
+				t.Errorf("summary %q must not contain %q — it contradicts the figures", got, tc.unwantVerb)
+			}
+		})
 	}
 }

@@ -281,3 +281,152 @@ func assertFloat(t *testing.T, m map[string]any, key string, want float64) {
 		t.Errorf("key %q = %v, want %v", key, v, want)
 	}
 }
+
+// TestHealthSummary_ItemInTwoJobsCountedOnce is the regression test for the QA
+// finding that /health/summary counted job-item PAIRS rather than distinct
+// items: a VM backed up by two jobs appeared twice in protected_keys and
+// inflated protected_items/total_items.
+func TestHealthSummary_ItemInTwoJobsCountedOnce(t *testing.T) {
+	d := newTestDB(t)
+	h := NewHealthHandler(d)
+
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "dup-dest", Type: "local", Config: `{"path":"/tmp"}`,
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+
+	// Two jobs that both back up the same VM, each with its own restore point.
+	for _, jobName := range []string{"vm-job-a", "vm-job-b"} {
+		jobID, err := d.CreateJob(db.Job{
+			Name: jobName, Enabled: true, StorageDestID: destID,
+			BackupTypeChain: "full", Schedule: "@daily",
+		})
+		if err != nil {
+			t.Fatalf("create job %s: %v", jobName, err)
+		}
+		if _, err := d.AddJobItem(db.JobItem{JobID: jobID, ItemType: "vm", ItemName: "Fedora"}); err != nil {
+			t.Fatalf("add item to %s: %v", jobName, err)
+		}
+		runID, err := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+		if err != nil {
+			t.Fatalf("create run for %s: %v", jobName, err)
+		}
+		if _, err := d.CreateRestorePoint(db.RestorePoint{
+			JobRunID: runID, JobID: jobID, BackupType: "full",
+			StoragePath: jobName, Metadata: `{"item_sizes":{"Fedora":999}}`,
+		}); err != nil {
+			t.Fatalf("create rp for %s: %v", jobName, err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	h.Summary(w, newReq(http.MethodGet, "/api/v1/health/summary", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TotalItems     int      `json:"total_items"`
+		ProtectedItems int      `json:"protected_items"`
+		ProtectedKeys  []string `json:"protected_keys"`
+		PendingKeys    []string `json:"pending_keys"`
+		ProtectionPct  int      `json:"protection_pct"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if resp.TotalItems != 1 || resp.ProtectedItems != 1 {
+		t.Errorf("total=%d protected=%d, want 1/1 (one distinct VM across two jobs)",
+			resp.TotalItems, resp.ProtectedItems)
+	}
+	if got := countOccurrences(resp.ProtectedKeys, "vm:Fedora"); got != 1 {
+		t.Errorf("vm:Fedora appears %d times in protected_keys %v, want exactly 1", got, resp.ProtectedKeys)
+	}
+	if resp.ProtectionPct != 100 {
+		t.Errorf("protection_pct = %d, want 100", resp.ProtectionPct)
+	}
+}
+
+// TestHealthSummary_ProtectedByOneJobNotAlsoPending covers the contradictory
+// state the pair-counting bug produced: when an item belongs to two jobs and
+// only one has a restore point, the item must be reported protected ONCE and
+// must NOT also appear in pending_keys.
+func TestHealthSummary_ProtectedByOneJobNotAlsoPending(t *testing.T) {
+	d := newTestDB(t)
+	h := NewHealthHandler(d)
+
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "mixed-dest", Type: "local", Config: `{"path":"/tmp"}`,
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+
+	// Job A has backed the item up.
+	jobA, err := d.CreateJob(db.Job{
+		Name: "backed-up-job", Enabled: true, StorageDestID: destID,
+		BackupTypeChain: "full", Schedule: "@daily",
+	})
+	if err != nil {
+		t.Fatalf("create job a: %v", err)
+	}
+	if _, err := d.AddJobItem(db.JobItem{JobID: jobA, ItemType: "container", ItemName: "grafana"}); err != nil {
+		t.Fatalf("add item a: %v", err)
+	}
+	runID, err := d.CreateJobRun(db.JobRun{JobID: jobA, Status: "success", BackupType: "full"})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := d.CreateRestorePoint(db.RestorePoint{
+		JobRunID: runID, JobID: jobA, BackupType: "full",
+		StoragePath: "a", Metadata: `{"item_sizes":{"grafana":42}}`,
+	}); err != nil {
+		t.Fatalf("create rp: %v", err)
+	}
+
+	// Job B holds the same item but has never run.
+	jobB, err := d.CreateJob(db.Job{
+		Name: "never-run-job", Enabled: true, StorageDestID: destID,
+		BackupTypeChain: "full", Schedule: "@daily",
+	})
+	if err != nil {
+		t.Fatalf("create job b: %v", err)
+	}
+	if _, err := d.AddJobItem(db.JobItem{JobID: jobB, ItemType: "container", ItemName: "grafana"}); err != nil {
+		t.Fatalf("add item b: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	h.Summary(w, newReq(http.MethodGet, "/api/v1/health/summary", nil))
+	var resp struct {
+		TotalItems     int      `json:"total_items"`
+		ProtectedItems int      `json:"protected_items"`
+		ProtectedKeys  []string `json:"protected_keys"`
+		PendingKeys    []string `json:"pending_keys"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if !contains(resp.ProtectedKeys, "container:grafana") {
+		t.Errorf("protected_keys %v must contain container:grafana", resp.ProtectedKeys)
+	}
+	if contains(resp.PendingKeys, "container:grafana") {
+		t.Errorf("container:grafana must not be in BOTH protected and pending; pending_keys=%v", resp.PendingKeys)
+	}
+	if resp.TotalItems != 1 || resp.ProtectedItems != 1 {
+		t.Errorf("total=%d protected=%d, want 1/1", resp.TotalItems, resp.ProtectedItems)
+	}
+}
+
+func countOccurrences(xs []string, want string) int {
+	n := 0
+	for _, x := range xs {
+		if x == want {
+			n++
+		}
+	}
+	return n
+}

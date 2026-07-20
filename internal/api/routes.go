@@ -288,11 +288,26 @@ func (s *Server) setupRoutes() *chi.Mux {
 		if path != "" {
 			if f, err := distFS.Open(path); err == nil {
 				_ = f.Close()
+				// Vite emits content-hashed filenames under /assets, so those
+				// bytes can never change identity — cache them hard. Anything
+				// else keeps the conservative revalidate policy below.
+				if strings.HasPrefix(path, "assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else {
+					w.Header().Set("Cache-Control", "no-cache")
+				}
 				fileServer.ServeHTTP(w, r)
 				return
 			}
 		}
 		// Fall back to injected index.html for SPA client-side routing.
+		//
+		// index.html must never be cached: it is the only document that names
+		// the current content-hashed bundle. Served without cache headers the
+		// browser applied heuristic caching and kept loading the PREVIOUS
+		// bundle after a plugin upgrade, so users ran stale UI against a new
+		// API until they manually hard-refreshed.
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(injectedIndex)

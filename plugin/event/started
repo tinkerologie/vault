@@ -3,9 +3,38 @@
 #
 # The plugin's boot-time start can race the array mount; the daemon retries
 # pool detection for 30 s, but a slow array (spinning disks, parity checks)
-# can outlast that and strand the daemon in USB-direct mode — or the boot
-# start can fail outright. Ensure the daemon is running once the array is
-# actually up (issue #241). Never restarts a running daemon.
-if [ -x /etc/rc.d/rc.vault ] && ! pidof vault >/dev/null 2>&1; then
+# can outlast that and strand the daemon in USB-direct mode until a manual
+# restart (issue #241). Once the array is up: start the daemon if it is not
+# running, and restart it if it is running but reported a non-hybrid
+# (USB-direct) startup — the restart re-runs pool detection against the now
+# mounted pools. A daemon already in hybrid mode is left untouched.
+[ -x /etc/rc.d/rc.vault ] || exit 0
+
+if ! pidof vault >/dev/null 2>&1; then
     /etc/rc.d/rc.vault start
+    exit 0
+fi
+
+# Read bind address/port the same way rc.vault does (no sourcing).
+CONFIG=/boot/config/plugins/vault/vault.cfg
+BIND_ADDRESS=127.0.0.1
+PORT=24085
+if [ -f "$CONFIG" ]; then
+    _val="$(grep -E '^BIND_ADDRESS=' "$CONFIG" | head -1 | sed "s/^BIND_ADDRESS=//; s/^[\"']//; s/[\"'].*//")"
+    [ -n "$_val" ] && BIND_ADDRESS="$_val"
+    _val="$(grep -E '^PORT=' "$CONFIG" | head -1 | sed "s/^PORT=//; s/^[\"']//; s/[\"'].*//")"
+    if [ -n "$_val" ] && echo "$_val" | grep -Eq '^[0-9]+$'; then
+        PORT="$_val"
+    fi
+fi
+[ "$BIND_ADDRESS" = "0.0.0.0" ] && BIND_ADDRESS=127.0.0.1
+URL_HOST="$BIND_ADDRESS"
+if [[ "$URL_HOST" == *:* && "$URL_HOST" != \[* ]]; then
+    URL_HOST="[$URL_HOST]"
+fi
+
+HEALTH="$(curl -s --max-time 10 "http://${URL_HOST}:${PORT}/api/v1/health" 2>/dev/null)"
+if printf '%s' "$HEALTH" | grep -q '"hybrid_mode":false'; then
+    echo "Vault daemon is running in USB-direct mode after array start; restarting to engage hybrid mode"
+    /etc/rc.d/rc.vault restart
 fi

@@ -221,3 +221,33 @@ func reqWithAddr(addr string) *http.Request {
 	r.RemoteAddr = addr
 	return r
 }
+
+// TestSPACacheHeaders is the regression test for the QA finding that neither
+// index.html nor the hashed assets carried any cache directives, so browsers
+// applied heuristic caching and kept serving the PREVIOUS bundle after a
+// plugin upgrade — users ran stale UI against a new API until a hard refresh.
+func TestSPACacheHeaders(t *testing.T) {
+	database := testDB(t)
+	srv := NewServer(database, ServerConfig{Addr: ":0"})
+
+	t.Run("index.html must not be cached", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		srv.router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		cc := w.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "no-cache") && !strings.Contains(cc, "no-store") {
+			t.Errorf("Cache-Control = %q, want a no-cache/no-store directive", cc)
+		}
+	})
+
+	t.Run("SPA deep link must not be cached", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		srv.router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/some/spa/route", nil))
+		cc := w.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "no-cache") && !strings.Contains(cc, "no-store") {
+			t.Errorf("Cache-Control = %q, want a no-cache/no-store directive", cc)
+		}
+	})
+}

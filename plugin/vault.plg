@@ -112,6 +112,10 @@ chmod 755 /etc/rc.d/rc.vault
 # save; without the exec bit the call fails with a silent "Permission denied"
 # and the daemon never restarts onto the new bind address/port.
 chmod 755 /usr/local/emhttp/plugins/vault/include/apply.sh
+# emhttp event scripts (array started / stopping_svcs) must be executable or
+# Unraid silently skips them — the graceful reboot flush depends on them (#241).
+chmod 755 /usr/local/emhttp/plugins/vault/event/started \
+          /usr/local/emhttp/plugins/vault/event/stopping_svcs 2>/dev/null || true
 
 # Restart cleanly: stop any leftover daemon (e.g. from an aborted previous
 # upgrade) before starting the new binary. This guarantees the user is

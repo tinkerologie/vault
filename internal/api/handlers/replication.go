@@ -10,10 +10,33 @@ import (
 	"github.com/ruaan-deysel/vault/internal/replication"
 )
 
+// ServerWriteTimeout is the http.Server WriteTimeout used by the API server.
+// It lives here (rather than in package api) so outbound-probe timeouts can be
+// derived from it without an import cycle — package api imports handlers.
+const ServerWriteTimeout = 15 * time.Second
+
+// probeTimeoutHeadroom is how far every outbound connectivity probe must
+// finish ahead of ServerWriteTimeout, leaving time to serialise and flush the
+// error response.
+const probeTimeoutHeadroom = 5 * time.Second
+
+// probeTimeout returns the deadline every outbound connectivity/capacity probe
+// must respect so its error response is still writable. Shared by the
+// replication and storage handlers.
+func probeTimeout() time.Duration {
+	return ServerWriteTimeout - probeTimeoutHeadroom
+}
+
 // testConnectionTimeout is the HTTP client timeout used for connectivity
 // checks so that Test Connection / Test URL fail fast instead of blocking
 // for the default 10-minute transfer timeout.
-const testConnectionTimeout = 15 * time.Second
+//
+// It MUST stay comfortably below ServerWriteTimeout. When the two are equal,
+// probing a blackholed host (packets dropped, no RST) makes the probe deadline
+// and the response write deadline expire at the same instant, so the 502 this
+// handler writes is never flushed and the caller sees an empty reply instead
+// of an error (QA: replication test-url returned HTTP 000 at exactly 15.002s).
+const testConnectionTimeout = ServerWriteTimeout - probeTimeoutHeadroom
 
 // SyncerProvider returns the replication syncer (resolved lazily).
 type SyncerProvider = func() *replication.Syncer

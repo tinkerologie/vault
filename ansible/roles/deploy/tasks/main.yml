@@ -155,6 +155,26 @@
       ansible.builtin.raw: "chmod 0755 {{ plugin_dir }}/include/apply.sh"
       changed_when: true
 
+    - name: Recreate emhttp event script directory
+      ansible.builtin.raw: "mkdir -p {{ plugin_dir }}/event"
+      changed_when: true
+
+    - name: Upload emhttp event scripts via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p '{{ ansible_password }}'
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          {{ playbook_dir }}/../plugin/event/started
+          {{ playbook_dir }}/../plugin/event/stopping_svcs
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/event/
+      changed_when: true
+
+    - name: Set event script permissions
+      ansible.builtin.raw: "chmod 0755 {{ plugin_dir }}/event/started {{ plugin_dir }}/event/stopping_svcs"
+      changed_when: true
+
     - name: Recreate proxied web UI directory
       ansible.builtin.raw: "mkdir -p {{ plugin_dir }}/ui"
       changed_when: true

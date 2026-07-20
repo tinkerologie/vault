@@ -912,6 +912,13 @@ func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Dom
 	// job died without producing them.
 	const vanishedGraceAttempts = 5
 
+	// Durable milestone trail: a very large VM copies for hours with no log
+	// output at all, so a later failure is undiagnosable from the diagnostics
+	// bundle (issue #242). Log a coarse heartbeat instead of per-poll spam.
+	const milestoneInterval = 5 * time.Minute
+	started := time.Now()
+	lastMilestone := time.Now()
+
 	vanishedPolls := 0
 	lastActivity := time.Now()
 	lastProgressSig := ""
@@ -965,6 +972,11 @@ func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Dom
 				if sig := fmt.Sprintf("%d|%s", pct, msg); sig != lastProgressSig {
 					lastProgressSig = sig
 					lastActivity = time.Now()
+				}
+				if time.Since(lastMilestone) >= milestoneInterval {
+					lastMilestone = time.Now()
+					log.Printf("engine/vm: %s backup progress: %d%% (%s) elapsed=%s",
+						name, pct, msg, time.Since(started).Round(time.Second))
 				}
 				progress(name, pct, msg)
 			}

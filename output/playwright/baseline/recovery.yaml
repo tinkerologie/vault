@@ -1,0 +1,145 @@
+- generic [ref=e2]:
+    - link "Skip to main content" [ref=e3] [cursor=pointer]:
+        - /url: "#main-content"
+    - generic [ref=e4]:
+        - complementary [ref=e9]:
+            - generic [ref=e10]:
+                - img [ref=e12]
+                - generic [ref=e14]:
+                    - text: VAULT
+                    - generic [ref=e15]: Backup Manager
+            - navigation [ref=e16]:
+                - button "Dashboard" [ref=e17]:
+                    - img [ref=e18]
+                    - text: Dashboard
+                - generic [ref=e20]: Protect
+                - button "Jobs" [ref=e21]:
+                    - img [ref=e22]
+                    - text: Jobs
+                - button "Storage" [ref=e24]:
+                    - img [ref=e25]
+                    - text: Storage
+                - generic [ref=e27]: Recover
+                - button "Restore" [ref=e28]:
+                    - img [ref=e29]
+                    - text: Restore
+                - button "History" [ref=e31]:
+                    - img [ref=e32]
+                    - text: History
+                - button "Recovery" [ref=e34]:
+                    - img [ref=e35]
+                    - text: Recovery
+                - generic [ref=e37]: System
+                - button "Logs" [ref=e38]:
+                    - img [ref=e39]
+                    - text: Logs
+                - button "Anomalies" [ref=e41]:
+                    - img [ref=e42]
+                    - text: Anomalies
+                - button "Settings" [ref=e44]:
+                    - img [ref=e45]
+                    - text: Settings
+                - link "Documentation (opens in a new tab)" [ref=e47] [cursor=pointer]:
+                    - /url: https://ruaan-deysel.github.io/vault/
+                    - img [ref=e48]
+                    - text: Documentation
+        - main [ref=e50]:
+            - generic [ref=e1498]:
+                - generic [ref=e1499]:
+                    - heading "Recovery Guide" [level=1] [ref=e1500]
+                    - paragraph [ref=e1501]: Your disaster recovery plan – what to do if your server dies.
+                - generic [ref=e1502]:
+                    - generic [ref=e1503]:
+                        - heading "Recovering after a server rebuild?" [level=2] [ref=e1504]
+                        - paragraph [ref=e1505]: The Recover Vault wizard reconnects your backup storage and restores your settings step by step.
+                    - button "Recover Vault" [ref=e1506]
+                - generic [ref=e1508]:
+                    - generic [ref=e1509]:
+                        - img [ref=e1510]
+                        - generic [ref=e1514]: 33%
+                    - generic [ref=e1515]:
+                        - heading "Recovery Readiness" [level=2] [ref=e1516]
+                        - paragraph [ref=e1517]: Action needed — most items are unprotected (12 of 18).
+                        - paragraph [ref=e1518]: 9 items protected · Vault v2026.07.07
+                - generic [ref=e1519]:
+                    - heading "Warnings" [level=3] [ref=e1520]
+                    - list [ref=e1521]:
+                        - listitem [ref=e1522]: • 12 items not included in any backup job
+                    - button "Configure backup jobs →" [ref=e1523]
+                - generic [ref=e1524]:
+                    - button "1 Install Vault Plugin Install the Vault plugin from Community Applications and restore the database from your backup storage." [ref=e1526] [cursor=pointer]:
+                        - generic [ref=e1527]: "1"
+                        - generic [ref=e1528]:
+                            - generic [ref=e1529]:
+                                - heading "Install Vault Plugin" [level=3] [ref=e1530]
+                                - img [ref=e1532]
+                            - paragraph [ref=e1534]: Install the Vault plugin from Community Applications and restore the database from your backup storage.
+                        - img [ref=e1535]
+                    - button "2 Restore Containers (5) Restore all Docker container appdata from backup. 942.5 MB" [ref=e1538] [cursor=pointer]:
+                        - generic [ref=e1539]: "2"
+                        - generic [ref=e1540]:
+                            - generic [ref=e1541]:
+                                - heading "Restore Containers (5)" [level=3] [ref=e1542]
+                                - img [ref=e1544]
+                            - paragraph [ref=e1546]: Restore all Docker container appdata from backup.
+                        - generic [ref=e1547]: 942.5 MB
+                        - img [ref=e1548]
+                    - button "3 Restore Virtual Machines (2) Restore VM disk images and configurations from backup. 5.6 GB" [ref=e1551] [cursor=pointer]:
+                        - generic [ref=e1552]: "3"
+                        - generic [ref=e1553]:
+                            - generic [ref=e1554]:
+                                - heading "Restore Virtual Machines (2)" [level=3] [ref=e1555]
+                                - img [ref=e1557]
+                            - paragraph [ref=e1559]: Restore VM disk images and configurations from backup.
+                        - generic [ref=e1560]: 5.6 GB
+                        - img [ref=e1561]
+                    - button "4 Restore Folders (1) Restore custom folder backups (Flash Drive, shares, etc.). 11.4 GB" [ref=e1564] [cursor=pointer]:
+                        - generic [ref=e1565]: "4"
+                        - generic [ref=e1566]:
+                            - generic [ref=e1567]:
+                                - heading "Restore Folders (1)" [level=3] [ref=e1568]
+                                - img [ref=e1570]
+                            - paragraph [ref=e1572]: Restore custom folder backups (Flash Drive, shares, etc.).
+                        - generic [ref=e1573]: 11.4 GB
+                        - img [ref=e1574]
+                - generic [ref=e1576]:
+                    - generic [ref=e1577]:
+                        - heading "Unprotected Items" [level=3] [ref=e1578]
+                        - paragraph [ref=e1579]: These items are not included in any backup job.
+                    - generic [ref=e1580]:
+                        - generic [ref=e1581]:
+                            - generic [ref=e1583]: sonarr
+                            - generic [ref=e1584]: container
+                        - generic [ref=e1585]:
+                            - generic [ref=e1587]: plex
+                            - generic [ref=e1588]: container
+                        - generic [ref=e1589]:
+                            - generic [ref=e1591]: radarr
+                            - generic [ref=e1592]: container
+                        - generic [ref=e1593]:
+                            - generic [ref=e1595]: sabnzbd
+                            - generic [ref=e1596]: container
+                        - generic [ref=e1597]:
+                            - generic [ref=e1599]: seerr
+                            - generic [ref=e1600]: container
+                        - generic [ref=e1601]:
+                            - generic [ref=e1603]: privoxyvpn
+                            - generic [ref=e1604]: container
+                        - generic [ref=e1605]:
+                            - generic [ref=e1607]: unmanic
+                            - generic [ref=e1608]: container
+                        - generic [ref=e1609]:
+                            - generic [ref=e1611]: recyclarr
+                            - generic [ref=e1612]: container
+                        - generic [ref=e1613]:
+                            - generic [ref=e1615]: Home Assistant
+                            - generic [ref=e1616]: vm
+                        - generic [ref=e1617]:
+                            - generic [ref=e1619]: Azure Linux
+                            - generic [ref=e1620]: vm
+                        - generic [ref=e1621]:
+                            - generic [ref=e1623]: Server 2025
+                            - generic [ref=e1624]: vm
+                        - generic [ref=e1625]:
+                            - generic [ref=e1627]: Flash Drive
+                            - generic [ref=e1628]: flash

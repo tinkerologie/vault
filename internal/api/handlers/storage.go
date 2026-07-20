@@ -268,13 +268,36 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Forced delete with dependents: disable them and clear the reference
+	// before the destination row disappears. Leaving them enabled pointed a
+	// scheduled job at a destination that no longer exists — the UI showed
+	// "Unknown" and the scheduler kept firing runs that could never write.
+	disabled := 0
+	if jobCount > 0 {
+		var disableErr error
+		if disabled, disableErr = h.db.DisableJobsByStorageDestID(id); disableErr != nil {
+			respondInternalError(w, disableErr)
+			return
+		}
+	}
+
 	if err := h.db.DeleteStorageDestination(id); err != nil {
 		respondInternalError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if disabled > 0 {
+		log.Printf("storage: deleted destination %d and disabled %d dependent job(s)", id, disabled) // #nosec G706 //nolint:gosec // ids are ints, not request-controlled strings
+		respondJSON(w, http.StatusOK, map[string]any{
+			"deleted":         true,
+			"disabled_jobs":   disabled,
+			"disabled_notice": "dependent jobs were disabled and must be re-pointed at a storage destination",
+		})
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
 	h.broadcastConfigChange("storage")
 	h.notifyConfigChange()
+	h.broadcastConfigChange("jobs")
 }
 
 func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
@@ -1318,7 +1341,10 @@ func (h *StorageHandler) RefreshCapacity(w http.ResponseWriter, r *http.Request)
 	}
 	defer storage.CloseAdapter(adapter)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	// Must finish before the server's WriteTimeout or the 504/502 below can
+	// never be flushed and the caller sees an empty reply (see
+	// probeTimeoutHeadroom).
+	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout())
 	defer cancel()
 	cap, capErr := adapter.GetCapacity(ctx)
 	if capErr != nil {

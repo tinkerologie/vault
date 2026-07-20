@@ -885,3 +885,78 @@ func TestWebDAVWriteRetriesMkdirOnLocked(t *testing.T) {
 		t.Errorf("leaf MKCOL attempts = %d, want >= 3 (409 probe, 423, retried success)", got)
 	}
 }
+
+// TestWebDAVWriteToleratesMkdir403OnExistingDir reproduces issue #242: Hetzner
+// storage boxes answer MKCOL on an *existing* collection with 403 instead of
+// the RFC 4918 405, which failed the final metadata write of a multi-hour VM
+// backup even though the target directory was already there. A failed MKCOL
+// must be tolerated when the directory verifiably exists.
+func TestWebDAVWriteToleratesMkdir403OnExistingDir(t *testing.T) {
+	root := t.TempDir()
+	real := testWebDAVHandler(root)
+
+	// Hetzner behaviour: MKCOL on a directory that already exists → 403.
+	var mkcol403s, propfindProbes int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PROPFIND" {
+			atomic.AddInt32(&propfindProbes, 1)
+		}
+		if r.Method == "MKCOL" {
+			p := filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(r.URL.Path, "/")))
+			if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+				atomic.AddInt32(&mkcol403s, 1)
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+		}
+		real.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First write creates the directory tree.
+	if err := a.Write("vm/run1/disk.img", strings.NewReader("disk")); err != nil {
+		t.Fatalf("initial Write: %v", err)
+	}
+	// Second write into the now-existing directory: MKCOL answers 403.
+	if err := a.Write("vm/run1/domain.xml", strings.NewReader("<domain/>")); err != nil {
+		t.Fatalf("Write into existing dir should tolerate MKCOL 403, got: %v", err)
+	}
+	// Prove the tolerance path actually ran: the server rejected at least one
+	// MKCOL with 403 and the transport probed existence via PROPFIND.
+	if atomic.LoadInt32(&mkcol403s) == 0 {
+		t.Error("test server never returned a 403 MKCOL — scenario not exercised")
+	}
+	if atomic.LoadInt32(&propfindProbes) == 0 {
+		t.Error("transport never issued a PROPFIND existence probe")
+	}
+}
+
+// TestWebDAVMkdir403WithoutDirStaysFatal: a genuine 403 (permission denied,
+// directory does NOT exist) must not be converted to success by the
+// existence probe — the write has to fail with the real error.
+func TestWebDAVMkdir403WithoutDirStaysFatal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "MKCOL":
+			w.WriteHeader(http.StatusForbidden) // permission denied, nothing exists
+		case "PROPFIND":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Write("denied/dir/file.txt", strings.NewReader("x")); err == nil {
+		t.Fatal("Write should fail when MKCOL 403 targets a directory that does not exist")
+	}
+}

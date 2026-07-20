@@ -1209,3 +1209,67 @@ func TestStorageHealthCheck_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestStorageDelete_ForceDisablesDependentJobs is the regression test for the
+// QA finding that a forced delete removed the destination while leaving every
+// dependent job ENABLED with storage_dest_id pointing at the now-dead id. The
+// Jobs page rendered that as "Unknown" and the scheduler kept firing runs that
+// could never write anywhere.
+func TestStorageDelete_ForceDisablesDependentJobs(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	jobID, err := h.db.CreateJob(db.Job{
+		Name:            "dep-job-force",
+		Enabled:         true,
+		StorageDestID:   destID,
+		BackupTypeChain: "full",
+		Schedule:        "0 3 * * *",
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	h.Delete(w, reqWithID(http.MethodDelete,
+		"/api/v1/storage/"+idStr+"?force=true", idStr, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with a disabled-jobs notice; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got, _ := resp["disabled_jobs"].(float64); got != 1 {
+		t.Errorf("disabled_jobs = %v, want 1; body: %s", resp["disabled_jobs"], w.Body.String())
+	}
+
+	job, err := h.db.GetJob(jobID)
+	if err != nil {
+		t.Fatalf("get job after delete: %v", err)
+	}
+	if job.Enabled {
+		t.Error("dependent job must be disabled after its destination is force-deleted")
+	}
+	if job.StorageDestID != 0 {
+		t.Errorf("job.StorageDestID = %d, want 0 (dangling reference cleared)", job.StorageDestID)
+	}
+}
+
+// TestStorageDelete_ForceWithoutDependentsStillNoContent keeps the common path
+// unchanged: nothing to disable means the original 204 contract holds.
+func TestStorageDelete_ForceWithoutDependentsStillNoContent(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	w := httptest.NewRecorder()
+	h.Delete(w, reqWithID(http.MethodDelete,
+		"/api/v1/storage/"+idStr+"?force=true", idStr, nil))
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body: %s", w.Code, w.Body.String())
+	}
+}

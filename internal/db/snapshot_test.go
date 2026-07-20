@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -259,6 +260,70 @@ func TestFlushToUSB(t *testing.T) {
 	}
 	if !fi2.ModTime().After(modTime1) {
 		t.Error("FlushToUSB did not bypass throttle — USB file was not updated")
+	}
+}
+
+// TestFlushToUSB_USBIsSnapshotArtifact: when the primary snapshot save
+// succeeds, the USB shadow must be a byte-copy of that exact artifact with an
+// identical mtime, so the boot-time freshest-source selection (issue #241)
+// sees an exact tie and reports the primary — never a "newer" USB shadow that
+// could mask or be masked by interleaved mutations.
+func TestFlushToUSB_USBIsSnapshotArtifact(t *testing.T) {
+	dir := t.TempDir()
+	d := setupTestDB(t)
+
+	snapshotPath := filepath.Join(dir, "snap.db")
+	usbPath := filepath.Join(dir, "usb", "vault.db.backup")
+
+	sm := NewSnapshotManager(d, snapshotPath, snapshotPath)
+	sm.SetUSBBackupPath(usbPath)
+
+	if err := sm.FlushToUSB(); err != nil {
+		t.Fatalf("FlushToUSB: %v", err)
+	}
+	snapFi, err := os.Stat(snapshotPath)
+	if err != nil {
+		t.Fatalf("stat snapshot: %v", err)
+	}
+	usbFi, err := os.Stat(usbPath)
+	if err != nil {
+		t.Fatalf("stat usb: %v", err)
+	}
+	if !usbFi.ModTime().Equal(snapFi.ModTime()) {
+		t.Errorf("USB mtime %v != snapshot mtime %v — same-flush copies must tie exactly", usbFi.ModTime(), snapFi.ModTime())
+	}
+	snapBytes, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	usbBytes, err := os.ReadFile(usbPath)
+	if err != nil {
+		t.Fatalf("read usb: %v", err)
+	}
+	if !bytes.Equal(snapBytes, usbBytes) {
+		t.Error("USB shadow is not a byte-copy of the primary snapshot artifact")
+	}
+}
+
+// TestSaveUSBBackup_NoLiveFallbackWhenArtifactCopyFails: when the primary
+// save reportedly succeeded but the artifact copy fails, the shadow must NOT
+// be captured from the live DB — a mutation committed after the primary save
+// would give it divergent, newer-mtime content. Keep the previous shadow.
+func TestSaveUSBBackup_NoLiveFallbackWhenArtifactCopyFails(t *testing.T) {
+	dir := t.TempDir()
+	d := setupTestDB(t)
+
+	// snapshotPath does not exist, so copySnapshotArtifact must fail.
+	sm := NewSnapshotManager(d, filepath.Join(dir, "missing-snap.db"), filepath.Join(dir, "missing-snap.db"))
+	usbPath := filepath.Join(dir, "usb", "vault.db.backup")
+	sm.SetUSBBackupPath(usbPath)
+
+	if err := sm.saveUSBBackup(true, true); err == nil {
+		t.Error("expected an artifact-copy error from saveUSBBackup, got nil")
+	}
+
+	if _, err := os.Stat(usbPath); !os.IsNotExist(err) {
+		t.Errorf("USB shadow was written from the live DB despite fromSnapshot=true and a failed artifact copy (stat err = %v)", err)
 	}
 }
 

@@ -219,6 +219,21 @@
     return ['all', ...types]
   })
 
+  // Naive `type + 's'` rendered the ZFS chip as "zfss" and lowercased the
+  // acronym. Label each type explicitly instead.
+  const TYPE_LABELS = {
+    all: 'All',
+    container: 'Containers',
+    vm: 'VMs',
+    folder: 'Folders',
+    flash: 'Flash Drive',
+    plugin: 'Plugins',
+    zfs: 'ZFS Datasets',
+  }
+  function typeLabel(t) {
+    return TYPE_LABELS[t] ?? t + 's'
+  }
+
   let selectedCount = $derived(selectedItems.size)
 
   function typeIcon(type) {
@@ -493,8 +508,8 @@
         <div class="flex items-center gap-2">
           {#each typeOptions as t (t)}
             <button type="button" onclick={() => typeFilter = t}
-              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors capitalize {typeFilter === t ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
-              {t === 'all' ? 'All' : t + 's'}
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {typeFilter === t ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
+              {typeLabel(t)}
             </button>
           {/each}
         </div>

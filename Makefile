@@ -87,6 +87,7 @@ package: release
 	cp plugin/README.md $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/README.md
 	cp -r web/dist/. $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui/
 	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
+	cp -r plugin/event $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/
 	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"
 

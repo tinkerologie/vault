@@ -134,6 +134,12 @@ func isWebDAVRetriable(err error) bool {
 // 423 Locked on MKCOL right after a directory's children are deleted — e.g. the
 // partial-upload cleanup that precedes an upload retry — which otherwise fails
 // the whole write even though 423 is already classified as retriable.
+//
+// A failed MKCOL is tolerated when the directory verifiably exists: RFC 4918
+// prescribes 405 for MKCOL on an existing collection (gowebdav already maps
+// that to success), but some servers answer differently — Hetzner storage
+// boxes return 403 — which previously failed an entire multi-hour VM backup
+// on the final metadata write into an already-created directory (issue #242).
 func mkdirAllWithRetry(c *gowebdav.Client, dir string) error {
 	var lastErr error
 	for attempt := 0; attempt <= len(webDAVChunkRetryBackoffs); attempt++ {
@@ -141,7 +147,13 @@ func mkdirAllWithRetry(c *gowebdav.Client, dir string) error {
 			time.Sleep(webDAVChunkRetryBackoffs[attempt-1])
 		}
 		lastErr = c.MkdirAll(dir, 0750)
-		if lastErr == nil || !isWebDAVRetriable(lastErr) {
+		if lastErr == nil {
+			return nil
+		}
+		if info, statErr := c.Stat(dir); statErr == nil && info.IsDir() {
+			return nil // dir exists — non-standard MKCOL status (e.g. 403), not a real failure
+		}
+		if !isWebDAVRetriable(lastErr) {
 			return lastErr
 		}
 		log.Printf("webdav: retriable mkdir error for %s (attempt %d): %v", dir, attempt+1, lastErr)
@@ -245,7 +257,7 @@ func NewWebDAVAdapter(cfg WebDAVConfig) (*WebDAVAdapter, error) {
 // Power-users can still cap total request lifetime via TimeoutSeconds.
 func (w *WebDAVAdapter) client() *gowebdav.Client {
 	c := gowebdav.NewAuthClient(w.config.URL, gowebdav.NewAutoAuth(w.config.Username, w.config.Password))
-	c.SetTransport(w.transport())
+	c.SetTransport(&mkcolExistsTransport{base: w.transport()})
 
 	if w.config.TimeoutSeconds > 0 {
 		c.SetTimeout(time.Duration(w.config.TimeoutSeconds) * time.Second)
@@ -253,6 +265,51 @@ func (w *WebDAVAdapter) client() *gowebdav.Client {
 	c.SetHeader("Accept-Encoding", "identity")
 	// else: leave http.Client.Timeout at its default 0 (no overall deadline).
 	return c
+}
+
+// mkcolExistsTransport rewrites non-standard MKCOL "already exists" replies.
+//
+// RFC 4918 prescribes 405 for MKCOL on an existing collection, which gowebdav
+// maps to success — but Hetzner storage boxes answer 403 instead. gowebdav
+// calls MkdirAll internally before every PUT (createParentCollection), so on
+// such servers every upload into an existing directory fails, which killed
+// multi-hour VM backups on the final metadata write (issue #242). When an
+// MKCOL comes back 403, probe the target with PROPFIND Depth:0; if it exists,
+// rewrite the status to 405 so gowebdav treats it as "already exists".
+type mkcolExistsTransport struct {
+	base http.RoundTripper
+}
+
+func (t *mkcolExistsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || req.Method != "MKCOL" || resp.StatusCode != http.StatusForbidden {
+		return resp, err
+	}
+	// Digest authorization is method-bound — a header minted for MKCOL cannot
+	// authorize a PROPFIND — so the probe would always 401 and just waste a
+	// round-trip. Leave the original 403 in place for Digest servers.
+	if strings.HasPrefix(req.Header.Get("Authorization"), "Digest ") {
+		return resp, nil
+	}
+	probe, perr := http.NewRequestWithContext(req.Context(), "PROPFIND", req.URL.String(), nil) // #nosec G704 — same URL the client just sent MKCOL to (operator-configured destination), not user-tainted input
+	if perr != nil {
+		return resp, nil
+	}
+	// Clone headers so the probe carries the same (basic) Authorization.
+	probe.Header = req.Header.Clone()
+	probe.Header.Set("Depth", "0")
+	pr, perr := t.base.RoundTrip(probe)
+	if perr != nil {
+		return resp, nil
+	}
+	// Close without draining: only the status matters, and a slow or
+	// oversized multistatus body must not stall the upload path.
+	_ = pr.Body.Close()
+	if pr.StatusCode == http.StatusMultiStatus || pr.StatusCode == http.StatusOK {
+		resp.StatusCode = http.StatusMethodNotAllowed
+		resp.Status = "405 Method Not Allowed"
+	}
+	return resp, nil
 }
 
 // transport builds the http.Transport used by both the gowebdav client

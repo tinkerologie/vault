@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,6 +21,98 @@ func openTestDB(t *testing.T) *db.DB {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d
+}
+
+// TestRestoreUSBPrimaryFromBackup_PreservesMtime: the non-hybrid restore copy
+// must not mint a fresh mtime for stale backup content — the boot-time
+// freshest-source selection ranks by raw mtime, and a stale live DB with
+// mtime=now would outrank a logically newer cache snapshot (issue #241).
+func TestRestoreUSBPrimaryFromBackup_PreservesMtime(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	src := filepath.Join(dir, "vault.db.backup")
+	srcDB, err := db.Open(src)
+	if err != nil {
+		t.Fatalf("create backup DB: %v", err)
+	}
+	_ = srcDB.Close()
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(src, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(dir, "vault.db")
+	if err := restoreUSBPrimaryFromBackup(src, dst); err != nil {
+		t.Fatalf("restoreUSBPrimaryFromBackup: %v", err)
+	}
+	fi, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.ModTime().Sub(old).Abs() > 2*time.Second {
+		t.Errorf("restored DB mtime = %v, want ≈ backup mtime %v", fi.ModTime(), old)
+	}
+}
+
+// TestRestoreUSBPrimaryFromBackup_CorruptBackupKeepsLiveDB: a corrupt-but-
+// newer backup must never destroy the existing valid live DB — validation
+// happens on a temp copy before any replacement.
+func TestRestoreUSBPrimaryFromBackup_CorruptBackupKeepsLiveDB(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	src := filepath.Join(dir, "vault.db.backup")
+	if err := os.WriteFile(src, []byte("not a sqlite database at all"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "vault.db")
+	liveContent := []byte("live-db-bytes")
+	if err := os.WriteFile(dst, liveContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := restoreUSBPrimaryFromBackup(src, dst); err == nil {
+		t.Fatal("expected error for corrupt backup, got nil")
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(liveContent) {
+		t.Error("live DB was modified despite corrupt backup")
+	}
+}
+
+// TestRetireUSBLiveDB: after a hybrid boot absorbs the live USB DB's state,
+// the file must be renamed aside (with sidecars removed) so a later
+// USB-direct session cannot falsely promote stale content (issue #241).
+func TestRetireUSBLiveDB(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "vault.db")
+	for _, f := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	retireUSBLiveDB(dbPath)
+
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Errorf("live DB still present after retire (err = %v)", err)
+	}
+	if _, err := os.Stat(dbPath + ".migrated"); err != nil {
+		t.Errorf("retired copy missing: %v", err)
+	}
+	for _, f := range []string{dbPath + "-wal", dbPath + "-shm"} {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("sidecar %s not removed (err = %v)", f, err)
+		}
+	}
+
+	// Idempotent when nothing exists.
+	retireUSBLiveDB(dbPath)
 }
 
 // ── buildAnomalyEvaluator gating tests ─────────────────────────────────────

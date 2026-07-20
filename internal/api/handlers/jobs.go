@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -120,10 +121,48 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 // schedule is trimmed (whitespace becomes "" = manual-only) and must be one the
 // scheduler can actually run — otherwise the job would be saved but silently
 // never fire. On failure it writes a 400 response and returns false.
+// maxJobNameLen bounds the job name so a pathological value cannot bloat the
+// row or break list rendering.
+const maxJobNameLen = 255
+
+// jobEnums lists the accepted values for each free-string job field. Anything
+// outside these sets used to persist verbatim and only fail later inside the
+// engine, where the error is far from the user's action.
+var jobEnums = map[string][]string{
+	"backup_type_chain": {"full", "incremental", "differential"},
+	"compression":       {"none", "gzip", "zstd"},
+	"encryption":        {"none", "age"},
+	"container_mode":    {"one_by_one", "all_at_once"},
+	"vm_mode":           {"snapshot", "cold"},
+	"verify_mode":       {"quick", "deep"},
+	"notify_on":         {"always", "failure", "never"},
+}
+
+// validateJobEnum reports whether value is allowed for field. An empty value is
+// accepted: the DB layer applies the column default, and the wizard omits
+// fields that do not apply to the selected item types.
+func validateJobEnum(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	allowed, ok := jobEnums[field]
+	if !ok {
+		return nil
+	}
+	if slices.Contains(allowed, value) {
+		return nil
+	}
+	return fmt.Errorf("invalid %s %q (expected one of: %s)", field, value, strings.Join(allowed, ", "))
+}
+
 func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 	job.Name = strings.TrimSpace(job.Name)
 	if job.Name == "" {
 		respondError(w, http.StatusBadRequest, "name is required")
+		return false
+	}
+	if len(job.Name) > maxJobNameLen {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("name must be %d characters or fewer", maxJobNameLen))
 		return false
 	}
 	// Normalize the schedule in place so a whitespace-only value is stored as
@@ -136,7 +175,67 @@ func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 		respondError(w, http.StatusBadRequest, "invalid schedule: "+err.Error())
 		return false
 	}
+	for field, value := range map[string]string{
+		"backup_type_chain": job.BackupTypeChain,
+		"compression":       job.Compression,
+		"encryption":        job.Encryption,
+		"container_mode":    job.ContainerMode,
+		"vm_mode":           job.VMMode,
+		"verify_mode":       job.VerifyMode,
+		"notify_on":         job.NotifyOn,
+	} {
+		if err := validateJobEnum(field, value); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return false
+		}
+	}
+
+	if job.RetentionCount < 0 {
+		respondError(w, http.StatusBadRequest, "retention_count must not be negative")
+		return false
+	}
+	if job.RetentionDays < 0 {
+		respondError(w, http.StatusBadRequest, "retention_days must not be negative")
+		return false
+	}
+	// max_parallel_uploads is deliberately CLAMPED rather than rejected — the
+	// create/update handlers already normalise it and Job.EffectiveUploadConcurrency
+	// bounds it to [1,16] at use time. Rejecting here would break that contract.
+	if job.RetryMaxOverride != nil && (*job.RetryMaxOverride < 0 || *job.RetryMaxOverride > retryMaxLimit) {
+		respondError(w, http.StatusBadRequest,
+			fmt.Sprintf("retry_max_override must be between 0 and %d", retryMaxLimit))
+		return false
+	}
+
 	job.CompressionLevel = normalizeCompressionLevel(job.Compression, job.CompressionLevel)
+	return true
+}
+
+// retryMaxLimit mirrors the bound the UI enforces on the same input, so an API
+// client cannot persist a value the UI would reject.
+const retryMaxLimit = 10
+
+// validateJobStorageDest rejects a storage_dest_id that does not exist. Without
+// this the bad foreign key reached SQLite and surfaced as an opaque 500; the
+// caller could not tell a typo from a server fault. A job may legitimately have
+// no destination yet (0), which the runner treats as unconfigured.
+func (h *JobHandler) validateJobStorageDest(w http.ResponseWriter, job *db.Job) bool {
+	if job.StorageDestID == 0 {
+		return true
+	}
+	if _, err := h.db.GetStorageDestination(job.StorageDestID); err != nil {
+		// Only a genuinely absent row is the caller's fault. Any other error
+		// (DB closed, I/O failure) must stay a 500 — reporting it as
+		// "destination not found" would send the operator hunting for a
+		// config mistake during an outage.
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusBadRequest,
+				fmt.Sprintf("storage destination %d not found", job.StorageDestID))
+		} else {
+			respondInternalError(w, err)
+		}
+		return false
+	}
 	return true
 }
 
@@ -256,6 +355,9 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !validateJobInput(w, &req.Job) {
 		return
 	}
+	if !h.validateJobStorageDest(w, &req.Job) {
+		return
+	}
 	if reason, bad := folderSourceOverlap(h.localDestPath(req.StorageDestID), req.Items); bad {
 		respondError(w, http.StatusBadRequest, reason)
 		return
@@ -332,6 +434,9 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validateJobInput(w, &req.Job) {
+		return
+	}
+	if !h.validateJobStorageDest(w, &req.Job) {
 		return
 	}
 	// A PUT that omits items leaves the persisted items in place, so check the

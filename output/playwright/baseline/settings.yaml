@@ -1,0 +1,415 @@
+- generic [ref=e2]:
+    - link "Skip to main content" [ref=e3] [cursor=pointer]:
+        - /url: "#main-content"
+    - generic [ref=e4]:
+        - complementary [ref=e9]:
+            - generic [ref=e10]:
+                - img [ref=e12]
+                - generic [ref=e14]:
+                    - text: VAULT
+                    - generic [ref=e15]: Backup Manager
+            - navigation [ref=e16]:
+                - button "Dashboard" [ref=e17]:
+                    - img [ref=e18]
+                    - text: Dashboard
+                - generic [ref=e20]: Protect
+                - button "Jobs" [ref=e21]:
+                    - img [ref=e22]
+                    - text: Jobs
+                - button "Storage" [ref=e24]:
+                    - img [ref=e25]
+                    - text: Storage
+                - generic [ref=e27]: Recover
+                - button "Restore" [ref=e28]:
+                    - img [ref=e29]
+                    - text: Restore
+                - button "History" [ref=e31]:
+                    - img [ref=e32]
+                    - text: History
+                - button "Recovery" [ref=e34]:
+                    - img [ref=e35]
+                    - text: Recovery
+                - generic [ref=e37]: System
+                - button "Logs" [ref=e38]:
+                    - img [ref=e39]
+                    - text: Logs
+                - button "Anomalies" [ref=e41]:
+                    - img [ref=e42]
+                    - text: Anomalies
+                - button "Settings" [ref=e44]:
+                    - img [ref=e45]
+                    - text: Settings
+                - link "Documentation (opens in a new tab)" [ref=e47] [cursor=pointer]:
+                    - /url: https://ruaan-deysel.github.io/vault/
+                    - img [ref=e48]
+                    - text: Documentation
+        - main [ref=e50]:
+            - generic [ref=e3903]:
+                - generic [ref=e3904]:
+                    - heading "Settings" [level=1] [ref=e3905]
+                    - paragraph [ref=e3906]: Server information and preferences
+                - generic [ref=e3907]:
+                    - button "General" [ref=e3908]
+                    - button "Security" [ref=e3909]
+                    - button "Notifications" [ref=e3910]
+                    - button "Reference" [ref=e3911]
+                - generic [ref=e3912]:
+                    - generic [ref=e3913]:
+                        - generic [ref=e3914]: Jump to
+                        - button "Appearance" [ref=e3915]
+                        - button "Backup Targets" [ref=e3916]
+                        - button "Retry Policy" [ref=e3917]
+                        - button "Upload Throttling" [ref=e3918]
+                        - button "Dedup" [ref=e3919]
+                        - button "Anomaly Detection" [ref=e3920]
+                        - button "Storage Logging" [ref=e3921]
+                        - button "History Retention" [ref=e3922]
+                        - button "Server Info" [ref=e3923]
+                        - button "Database" [ref=e3924]
+                        - button "Diagnostics" [ref=e3925]
+                        - button "About" [ref=e3926]
+                    - generic [ref=e3927]:
+                        - heading "Appearance" [level=2] [ref=e3929]
+                        - generic [ref=e3930]:
+                            - generic [ref=e3931]:
+                                - paragraph [ref=e3932]: Theme style
+                                - generic [ref=e3933]:
+                                    - button "Default" [ref=e3934]:
+                                        - img [ref=e3935]
+                                        - text: Default
+                                    - button "1-Bit" [ref=e3937]:
+                                        - img [ref=e3938]
+                                        - text: 1-Bit
+                                    - button "8-Bit" [ref=e3940]:
+                                        - img [ref=e3941]
+                                        - text: 8-Bit
+                                    - button "16-Bit" [ref=e3943]:
+                                        - img [ref=e3944]
+                                        - text: 16-Bit
+                            - generic [ref=e3946]:
+                                - paragraph [ref=e3947]: Color mode
+                                - generic [ref=e3948]:
+                                    - button "Light" [ref=e3949]:
+                                        - img [ref=e3950]
+                                        - text: Light
+                                    - button "System" [ref=e3952]:
+                                        - img [ref=e3953]
+                                        - text: System
+                                    - button "Dark" [ref=e3955]:
+                                        - img [ref=e3956]
+                                        - text: Dark
+                    - generic [ref=e3958]:
+                        - generic [ref=e3959]:
+                            - heading "Backup Targets" [level=2] [ref=e3960]
+                            - paragraph [ref=e3961]: Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery.
+                        - generic [ref=e3962]:
+                            - generic [ref=e3963]:
+                                - generic [ref=e3964]:
+                                    - paragraph [ref=e3965]: Containers
+                                    - paragraph [ref=e3966]: Docker containers on this server
+                                - switch "Toggle container backup tracking" [checked] [ref=e3967] [cursor=pointer]
+                            - generic [ref=e3970]:
+                                - generic [ref=e3971]:
+                                    - paragraph [ref=e3972]: Virtual Machines
+                                    - paragraph [ref=e3973]: Libvirt VMs on this server
+                                - switch "Toggle VM backup tracking" [checked] [ref=e3974] [cursor=pointer]
+                            - generic [ref=e3977]:
+                                - generic [ref=e3978]:
+                                    - paragraph [ref=e3979]: Folders & Files
+                                    - paragraph [ref=e3980]: Custom folder and file path backups
+                                - switch "Toggle folder backup tracking" [checked] [ref=e3981] [cursor=pointer]
+                            - generic [ref=e3984]:
+                                - generic [ref=e3985]:
+                                    - paragraph [ref=e3986]: Flash Drive
+                                    - paragraph [ref=e3987]: Unraid USB boot drive backup
+                                - switch "Toggle flash drive backup tracking" [checked] [ref=e3988] [cursor=pointer]
+                    - generic [ref=e3991]:
+                        - generic [ref=e3992]:
+                            - heading "Dashboard" [level=2] [ref=e3993]
+                            - paragraph [ref=e3994]: Control which optional panels appear on the Dashboard.
+                        - generic [ref=e3996]:
+                            - generic [ref=e3997]:
+                                - paragraph [ref=e3998]: 3-2-1 Backup Rule
+                                - paragraph [ref=e3999]: Show the 3-2-1 best-practice compliance panel. Hide it if you run an intentionally simple setup.
+                            - switch "Toggle 3-2-1 Backup Rule panel" [ref=e4000] [cursor=pointer]
+                    - generic [ref=e4003]:
+                        - generic [ref=e4004]:
+                            - heading "Retry Policy More info" [level=2] [ref=e4005]:
+                                - text: Retry Policy
+                                - button "More info" [ref=e4007]:
+                                    - img [ref=e4008]
+                                    - generic [ref=e4011]: More info
+                            - paragraph [ref=e4012]: How failed runs are retried before being marked permanently failed.
+                        - generic [ref=e4013]:
+                            - generic [ref=e4014]:
+                                - generic [ref=e4015]:
+                                    - generic [ref=e4016]:
+                                        - text: Max retries
+                                        - button "More info" [ref=e4018]:
+                                            - img [ref=e4019]
+                                            - generic [ref=e4022]: More info
+                                    - spinbutton "Max retries More info" [ref=e4023]: "2"
+                                - generic [ref=e4024]:
+                                    - generic [ref=e4025]:
+                                        - generic [ref=e4026]: Delays between retries
+                                        - button "More info" [ref=e4028]:
+                                            - img [ref=e4029]
+                                            - generic [ref=e4032]: More info
+                                    - generic [ref=e4034]:
+                                        - generic [ref=e4035]:
+                                            - generic [ref=e4036]: Preset
+                                            - combobox "Preset" [ref=e4037]:
+                                                - option "Default (15 m / 1 h / 4 h)" [selected]
+                                                - option "Aggressive (1 m / 5 m / 15 m)"
+                                                - option "Patient (1 h / 6 h / 24 h)"
+                                                - option "Custom"
+                                        - list [ref=e4038]:
+                                            - listitem [ref=e4039]:
+                                                - generic [ref=e4040]: Retry 1
+                                                - spinbutton "Retry 1 value" [ref=e4041]: "15"
+                                                - combobox "Retry 1 unit" [ref=e4042]:
+                                                    - option "Seconds"
+                                                    - option "Minutes" [selected]
+                                                    - option "Hours"
+                                                    - option "Days"
+                                                - button "Remove retry 1" [ref=e4043]:
+                                                    - img [ref=e4044]
+                                            - listitem [ref=e4046]:
+                                                - generic [ref=e4047]: Retry 2
+                                                - spinbutton "Retry 2 value" [ref=e4048]: "1"
+                                                - combobox "Retry 2 unit" [ref=e4049]:
+                                                    - option "Seconds"
+                                                    - option "Minutes"
+                                                    - option "Hours" [selected]
+                                                    - option "Days"
+                                                - button "Remove retry 2" [ref=e4050]:
+                                                    - img [ref=e4051]
+                                            - listitem [ref=e4053]:
+                                                - generic [ref=e4054]: Retry 3
+                                                - spinbutton "Retry 3 value" [ref=e4055]: "4"
+                                                - combobox "Retry 3 unit" [ref=e4056]:
+                                                    - option "Seconds"
+                                                    - option "Minutes"
+                                                    - option "Hours" [selected]
+                                                    - option "Days"
+                                                - button "Remove retry 3" [ref=e4057]:
+                                                    - img [ref=e4058]
+                                        - button "Add retry" [ref=e4060]:
+                                            - img [ref=e4061]
+                                            - text: Add retry
+                            - button "Save Retry Policy" [ref=e4064]
+                    - generic [ref=e4065]:
+                        - generic [ref=e4066]:
+                            - heading "Upload Throttling More info" [level=2] [ref=e4067]:
+                                - text: Upload Throttling
+                                - button "More info" [ref=e4069]:
+                                    - img [ref=e4070]
+                                    - generic [ref=e4073]: More info
+                            - paragraph [ref=e4074]: Automatically yield upload bandwidth to other services using your internet link.
+                        - generic [ref=e4075]:
+                            - generic [ref=e4076]:
+                                - paragraph [ref=e4077]: Adaptively throttle uploads when the link is busy
+                                - switch "Toggle adaptive upload throttling" [ref=e4078] [cursor=pointer]
+                            - generic [ref=e4081]:
+                                - generic [ref=e4082]:
+                                    - generic [ref=e4083]:
+                                        - text: Link upload capacity (Mbps)
+                                        - button "More info" [ref=e4085]:
+                                            - img [ref=e4086]
+                                            - generic [ref=e4089]: More info
+                                    - spinbutton "Link upload capacity (Mbps) More info" [ref=e4090]: "40"
+                                - generic [ref=e4091]:
+                                    - generic [ref=e4092]:
+                                        - text: Minimum Vault rate (Mbps)
+                                        - button "More info" [ref=e4094]:
+                                            - img [ref=e4095]
+                                            - generic [ref=e4098]: More info
+                                    - spinbutton "Minimum Vault rate (Mbps) More info" [ref=e4099]: "5"
+                            - paragraph [ref=e4100]: Applies to uploads to network destinations (SFTP, SMB, NFS, WebDAV, S3). Per-destination bandwidth caps still apply — the stricter limit wins. Takes effect within a few seconds of saving, no restart needed.
+                            - button "Save Upload Throttling" [ref=e4102]
+                    - generic [ref=e4103]:
+                        - generic [ref=e4104]:
+                            - heading "Dedup Compaction More info" [level=2] [ref=e4105]:
+                                - text: Dedup Compaction
+                                - button "More info" [ref=e4107]:
+                                    - img [ref=e4108]
+                                    - generic [ref=e4111]: More info
+                            - paragraph [ref=e4112]: Threshold for repacking partially-dead dedup packs during cleanup.
+                        - generic [ref=e4114]:
+                            - generic [ref=e4115]: Compaction threshold (% dead bytes)
+                            - paragraph [ref=e4116]: '"Run cleanup" repacks a mixed dedup pack when its dead bytes ≥ this percentage of its size. 100 disables compaction; smaller values compact more aggressively. Applies to every dedup destination.'
+                            - generic [ref=e4117]:
+                                - spinbutton "Compaction threshold (% dead bytes)" [ref=e4118]: "50"
+                                - generic [ref=e4119]: "%"
+                                - button "Save" [ref=e4120]
+                    - generic [ref=e4121]:
+                        - generic [ref=e4122]:
+                            - heading "Anomaly Detection More info" [level=2] [ref=e4123]:
+                                - text: Anomaly Detection
+                                - button "More info" [ref=e4125]:
+                                    - img [ref=e4126]
+                                    - generic [ref=e4129]: More info
+                            - paragraph [ref=e4130]: Automatically detect unusual patterns in backup behaviour.
+                        - generic [ref=e4131]:
+                            - generic [ref=e4132]:
+                                - generic [ref=e4133]:
+                                    - paragraph [ref=e4134]: Anomaly detection enabled
+                                    - paragraph [ref=e4135]: Evaluate each completed backup run for statistical anomalies.
+                                - switch "Toggle anomaly detection" [checked] [ref=e4136] [cursor=pointer]
+                            - generic [ref=e4139]:
+                                - generic [ref=e4140]:
+                                    - text: Default sensitivity
+                                    - button "More info" [ref=e4142]:
+                                        - img [ref=e4143]
+                                        - generic [ref=e4146]: More info
+                                - combobox "Default sensitivity More info" [ref=e4147]:
+                                    - option "Strict – flag small deviations"
+                                    - option "Balanced – moderate threshold (recommended)" [selected]
+                                    - option "Permissive – flag large deviations only"
+                            - generic [ref=e4148]:
+                                - generic [ref=e4149]:
+                                    - text: Notify minimum severity
+                                    - button "More info" [ref=e4151]:
+                                        - img [ref=e4152]
+                                        - generic [ref=e4155]: More info
+                                - combobox "Notify minimum severity More info" [ref=e4156]:
+                                    - option "Info – notify on all anomalies"
+                                    - option "Warning – skip informational"
+                                    - option "Critical – only urgent anomalies" [selected]
+                            - button "Save Anomaly Settings" [ref=e4158]
+                    - generic [ref=e4159]:
+                        - generic [ref=e4160]:
+                            - heading "Replication More info" [level=2] [ref=e4161]:
+                                - text: Replication
+                                - button "More info" [ref=e4163]:
+                                    - img [ref=e4164]
+                                    - generic [ref=e4167]: More info
+                            - paragraph [ref=e4168]: Show the Replication page and run scheduled replication syncs.
+                        - generic [ref=e4170]:
+                            - generic [ref=e4171]:
+                                - paragraph [ref=e4172]: Replication enabled
+                                - paragraph [ref=e4173]: When off, Replication is hidden from the sidebar and scheduled syncs are paused.
+                            - switch "Toggle replication" [ref=e4174] [cursor=pointer]
+                    - generic [ref=e4177]:
+                        - generic [ref=e4178]:
+                            - heading "Storage Logging More info" [level=2] [ref=e4179]:
+                                - text: Storage Logging
+                                - button "More info" [ref=e4181]:
+                                    - img [ref=e4182]
+                                    - generic [ref=e4185]: More info
+                            - paragraph [ref=e4186]: Per-operation trace logging for storage adapters.
+                        - generic [ref=e4188]:
+                            - generic [ref=e4189]:
+                                - paragraph [ref=e4190]: Verbose storage logging
+                                - paragraph [ref=e4191]: Per-operation trace in the daemon log; off by default.
+                            - switch "Toggle verbose storage logging" [ref=e4192] [cursor=pointer]
+                    - generic [ref=e4195]:
+                        - generic [ref=e4196]:
+                            - heading "Temporary Work Area More info" [level=2] [ref=e4197]:
+                                - text: Temporary Work Area
+                                - button "More info" [ref=e4199]:
+                                    - img [ref=e4200]
+                                    - generic [ref=e4203]: More info
+                            - paragraph [ref=e4204]: Where Vault assembles backup files before transferring them to storage.
+                        - generic [ref=e4205]:
+                            - generic [ref=e4206]:
+                                - paragraph [ref=e4207]: /mnt/cache/.vault-stage
+                                - paragraph [ref=e4208]: Using SSD cache for fast backup processing
+                            - paragraph [ref=e4212]: 354.8 GB free of 476.9 GB
+                            - generic [ref=e4213]:
+                                - generic [ref=e4214]: Custom Location
+                                - paragraph [ref=e4215]: Override the automatic location. Use this if you want backups to be assembled on a specific drive. NVMe-backed ZFS pools are automatically prioritized when detected.
+                                - generic [ref=e4216]:
+                                    - generic [ref=e4219]:
+                                        - textbox "/mnt/user/backups" [ref=e4220]
+                                        - button "Browse directories" [ref=e4221]:
+                                            - img [ref=e4222]
+                                    - button "Apply" [disabled] [ref=e4224]
+                    - generic [ref=e4225]:
+                        - generic [ref=e4226]:
+                            - heading "History Retention" [level=2] [ref=e4227]
+                            - paragraph [ref=e4228]: How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.
+                        - generic [ref=e4229]:
+                            - combobox [ref=e4230] [cursor=pointer]:
+                                - option "30 days"
+                                - option "90 days"
+                                - option "6 months"
+                                - option "1 year" [selected]
+                                - option "2 years"
+                                - option "Keep everything"
+                            - button "Save" [ref=e4231]
+                    - generic [ref=e4232]:
+                        - heading "Server Information" [level=2] [ref=e4234]
+                        - generic [ref=e4235]:
+                            - generic [ref=e4236]:
+                                - generic [ref=e4237]: Status
+                                - generic [ref=e4238]: Online
+                            - generic [ref=e4239]:
+                                - generic [ref=e4240]: Version
+                                - generic [ref=e4241]: 2026.07.07
+                            - generic [ref=e4242]:
+                                - generic [ref=e4243]: API Endpoint
+                                - code [ref=e4244]: http://127.0.0.1:42486/api/v1
+                    - generic [ref=e4245]:
+                        - generic [ref=e4246]:
+                            - heading "Database Location" [level=2] [ref=e4247]
+                            - paragraph [ref=e4248]: Vault's database tracks your jobs, schedules, and restore points. The storage mode determines where this data is written.
+                        - generic [ref=e4249]:
+                            - generic [ref=e4250]:
+                                - generic [ref=e4251]:
+                                    - text: Mode
+                                    - button "More info" [ref=e4253]:
+                                        - img [ref=e4254]
+                                        - generic [ref=e4257]: More info
+                                - generic [ref=e4258]: Hybrid – runs in memory for speed, saves to SSD periodically
+                            - generic [ref=e4259]:
+                                - generic "Where the database currently operates from. In hybrid mode this is in RAM." [ref=e4260]: Active database
+                                - generic [ref=e4261]: /var/local/vault/vault.db
+                            - generic [ref=e4262]:
+                                - generic [ref=e4263]: Saved copy
+                                - generic [ref=e4264]: /mnt/cache/.vault/vault.db
+                            - generic [ref=e4265]:
+                                - generic [ref=e4266]: Last saved
+                                - generic [ref=e4267]: 20 Jul 2026, 02:51 pm
+                            - generic [ref=e4268]:
+                                - generic [ref=e4269]: Saved copy size
+                                - generic [ref=e4270]: 964 KB
+                        - generic [ref=e4271]:
+                            - generic [ref=e4272]:
+                                - text: Custom save location
+                                - button "More info" [ref=e4274]:
+                                    - img [ref=e4275]
+                                    - generic [ref=e4278]: More info
+                            - paragraph [ref=e4279]: Choose where the persistent database copy is stored. Defaults to SSD cache. ZFS zpools are also available as high-performance locations.
+                            - generic [ref=e4280]:
+                                - generic [ref=e4283]:
+                                    - textbox "/mnt/user/backups" [ref=e4284]
+                                    - button "Browse directories" [ref=e4285]:
+                                        - img [ref=e4286]
+                                - button "Apply" [disabled] [ref=e4288]
+                    - generic [ref=e4289]:
+                        - heading "Diagnostics" [level=2] [ref=e4291]
+                        - generic [ref=e4292]:
+                            - paragraph [ref=e4293]: Download a diagnostics bundle containing system information, job configurations, recent run history, and activity logs. Sensitive data such as passwords and API keys are automatically redacted.
+                            - button "Download diagnostics bundle" [ref=e4294]:
+                                - img [ref=e4295]
+                                - text: Download diagnostics bundle
+                    - generic [ref=e4297]:
+                        - heading "About Vault" [level=2] [ref=e4299]
+                        - generic [ref=e4300]:
+                            - paragraph [ref=e4301]: Vault is a backup and restore manager for Unraid servers. It automates scheduled, encrypted backups of Docker containers, libvirt VMs, plugins, ZFS datasets, and arbitrary folders (including the Unraid flash drive) to a wide range of storage destinations — local paths, SFTP, SMB/CIFS, NFS, WebDAV, and S3-compatible object stores (AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi).
+                            - generic [ref=e4302]:
+                                - generic [ref=e4303]:
+                                    - generic [ref=e4304]: Version 2026.07.07
+                                    - generic [ref=e4305]: Up to date
+                                - paragraph [ref=e4306]: Released 1 day ago.
+                            - generic [ref=e4307]:
+                                - button "View Changelog" [ref=e4308]
+                                - link "GitHub Repository" [ref=e4309] [cursor=pointer]:
+                                    - /url: https://github.com/ruaan-deysel/vault
+                                    - img [ref=e4310]
+                                    - text: GitHub Repository
+                                - link "Sponsor" [ref=e4312] [cursor=pointer]:
+                                    - /url: https://github.com/sponsors/ruaan-deysel
+                                    - img [ref=e4313]
+                                    - text: Sponsor

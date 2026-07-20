@@ -157,7 +157,7 @@ Each restore point also shows chain health annotations so you can see if a full 
 This can appear if the daemon restarts mid-request. Wait a few seconds and refresh — your job was likely saved successfully. If the error persists, check the **Logs** page for details.
 
 **Configuration lost after reboot**
-Vault uses a hybrid SQLite layout — a working DB in RAM, a periodic snapshot on a discovered cache pool, and a USB shadow on the Unraid flash drive. On boot it restores in that order. If you've changed the snapshot path manually, confirm it points to persistent storage under **Settings → General → Database Location**.
+Vault uses a hybrid SQLite layout — a working DB in RAM, a periodic snapshot on a discovered cache pool, and a USB shadow on the Unraid flash drive. On boot it restores the freshest valid copy among the persisted copies (cache snapshot, rotated copies, USB shadow, and the USB-direct database left by a boot where no pool was mounted), so configuration — including the Temporary Work Area path — survives reboots and pool-mount races. You can confirm which source was used via `GET /api/v1/health` (`startup.restoration`). If you've changed the snapshot path manually, confirm it points to persistent storage under **Settings → General → Database Location**.
 
 **Mirrored cache pool not detected**
 Vault scans `/mnt/` for pool mounts at startup. If your pool isn't shown, make sure it's mounted before the Vault service starts, then override the snapshot path manually under **Settings → General → Database Location**.

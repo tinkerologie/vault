@@ -1,0 +1,222 @@
+- generic [ref=e2]:
+    - link "Skip to main content" [ref=e3] [cursor=pointer]:
+        - /url: "#main-content"
+    - generic [ref=e4]:
+        - complementary [ref=e9]:
+            - generic [ref=e10]:
+                - img [ref=e12]
+                - generic [ref=e14]:
+                    - text: VAULT
+                    - generic [ref=e15]: Backup Manager
+            - navigation [ref=e16]:
+                - button "Dashboard" [ref=e17]:
+                    - img [ref=e18]
+                    - text: Dashboard
+                - generic [ref=e20]: Protect
+                - button "Jobs" [ref=e21]:
+                    - img [ref=e22]
+                    - text: Jobs
+                - button "Storage" [ref=e24]:
+                    - img [ref=e25]
+                    - text: Storage
+                - generic [ref=e27]: Recover
+                - button "Restore" [ref=e28]:
+                    - img [ref=e29]
+                    - text: Restore
+                - button "History" [ref=e31]:
+                    - img [ref=e32]
+                    - text: History
+                - button "Recovery" [ref=e34]:
+                    - img [ref=e35]
+                    - text: Recovery
+                - generic [ref=e37]: System
+                - button "Logs" [ref=e38]:
+                    - img [ref=e39]
+                    - text: Logs
+                - button "Anomalies" [ref=e41]:
+                    - img [ref=e42]
+                    - text: Anomalies
+                - button "Settings" [ref=e44]:
+                    - img [ref=e45]
+                    - text: Settings
+                - link "Documentation (opens in a new tab)" [ref=e47] [cursor=pointer]:
+                    - /url: https://ruaan-deysel.github.io/vault/
+                    - img [ref=e48]
+                    - text: Documentation
+        - main [ref=e50]:
+            - generic [ref=e630]:
+                - generic [ref=e631]:
+                    - generic [ref=e632]:
+                        - heading "Storage Destinations" [level=1] [ref=e633]
+                        - paragraph [ref=e634]: Configure where your backups are stored
+                    - button "Add Storage" [ref=e635]:
+                        - img [ref=e636]
+                        - text: Add Storage
+                - generic [ref=e641]:
+                    - generic [ref=e642]:
+                        - generic [ref=e643]:
+                            - generic [ref=e644]:
+                                - img [ref=e646]
+                                - generic [ref=e648]:
+                                    - heading "Backblaze" [level=2] [ref=e649]
+                                    - text: s3
+                            - generic [ref=e650]:
+                                - button "Browse destination files" [ref=e651]:
+                                    - img [ref=e652]
+                                - button "Import backups" [ref=e654]:
+                                    - img [ref=e655]
+                                    - text: Import
+                                - button "Edit storage" [ref=e657]:
+                                    - img [ref=e658]
+                                - button "Delete storage" [ref=e660]:
+                                    - img [ref=e661]
+                        - generic [ref=e663]:
+                            - paragraph [ref=e664]: "Bucket: vaultcube1"
+                            - paragraph [ref=e665]: "Region: us-east-005"
+                            - paragraph [ref=e666]: "Endpoint: s3.us-east-005.backblazeb2.com"
+                        - generic [ref=e668]:
+                            - generic [ref=e669]:
+                                - generic [ref=e670]: Used (no quota)
+                                - generic [ref=e671]: 0 B
+                            - generic [ref=e672]: Bucket has no protocol-level quota
+                            - generic [ref=e673]:
+                                - generic [ref=e674]: Updated 11h ago
+                                - button "Refresh" [ref=e675]
+                        - generic [ref=e676]:
+                            - generic [ref=e677]:
+                                - paragraph [ref=e678]: Include in DB backup
+                                - paragraph [ref=e679]: Receive the daily encrypted Vault database snapshot.
+                            - switch "Toggle database backup fan-out" [ref=e680] [cursor=pointer]
+                        - generic [ref=e683]:
+                            - generic "26 May 2026, 08:13 am" [ref=e684]: 26 May, 8:13 am
+                            - generic [ref=e685]: No jobs
+                            - 'generic "Last health check: 20 Jul 2026, 03:30 am" [ref=e686]': Healthy
+                            - button "Test" [ref=e687]
+                    - generic [ref=e688]:
+                        - generic [ref=e689]:
+                            - generic [ref=e690]:
+                                - img [ref=e692]
+                                - generic [ref=e694]:
+                                    - heading "Koofr" [level=2] [ref=e695]
+                                    - text: webdav
+                            - generic [ref=e696]:
+                                - button "Browse destination files" [ref=e697]:
+                                    - img [ref=e698]
+                                - button "Import backups" [ref=e700]:
+                                    - img [ref=e701]
+                                    - text: Import
+                                - button "Edit storage" [ref=e703]:
+                                    - img [ref=e704]
+                                - button "Delete storage" [ref=e706]:
+                                    - img [ref=e707]
+                        - paragraph [ref=e710]: https://app.koofr.net/dav/Koofr
+                        - generic [ref=e712]:
+                            - generic [ref=e713]:
+                                - generic [ref=e714]: Used (no quota)
+                                - generic [ref=e715]: 0 B
+                            - generic [ref=e716]: Quota not reported by server
+                            - generic [ref=e717]:
+                                - generic [ref=e718]: Updated 11h ago
+                                - button "Refresh" [ref=e719]
+                        - generic [ref=e720]:
+                            - generic [ref=e721]:
+                                - paragraph [ref=e722]: Include in DB backup
+                                - paragraph [ref=e723]: Receive the daily encrypted Vault database snapshot.
+                            - switch "Toggle database backup fan-out" [ref=e724] [cursor=pointer]
+                        - generic [ref=e727]:
+                            - generic "26 May 2026, 07:38 am" [ref=e728]: 26 May, 7:38 am
+                            - generic [ref=e729]: No jobs
+                            - 'generic "Last health check: 20 Jul 2026, 03:30 am" [ref=e730]': Healthy
+                            - button "Test" [ref=e731]
+                    - generic [ref=e732]:
+                        - generic [ref=e733]:
+                            - generic [ref=e734]:
+                                - img [ref=e736]
+                                - generic [ref=e738]:
+                                    - heading "TestBackups" [level=2] [ref=e739]
+                                    - text: local
+                            - generic [ref=e740]:
+                                - button "Browse destination files" [ref=e741]:
+                                    - img [ref=e742]
+                                - button "Import backups" [ref=e744]:
+                                    - img [ref=e745]
+                                    - text: Import
+                                - button "Edit storage" [ref=e747]:
+                                    - img [ref=e748]
+                                - button "Delete storage" [ref=e750]:
+                                    - img [ref=e751]
+                        - paragraph [ref=e754]: "Path: /mnt/user/TestBackups"
+                        - generic [ref=e756]:
+                            - generic [ref=e757]:
+                                - generic [ref=e758]: Used
+                                - generic [ref=e759]: 97.1 GB / 476.9 GB
+                            - generic [ref=e762]:
+                                - generic [ref=e763]: 20.4% used
+                                - generic [ref=e764]: 379.8 GB free
+                            - generic [ref=e765]:
+                                - generic [ref=e766]: Updated 11h ago
+                                - button "Refresh" [ref=e767]
+                        - generic [ref=e768]:
+                            - generic [ref=e769]:
+                                - paragraph [ref=e770]: Include in DB backup
+                                - paragraph [ref=e771]: Receive the daily encrypted Vault database snapshot.
+                            - switch "Toggle database backup fan-out" [ref=e772] [cursor=pointer]
+                        - generic [ref=e775]:
+                            - generic "11 Jul 2026, 03:06 pm" [ref=e776]: 11 Jul, 3:06 pm
+                            - generic [ref=e777]: 4 jobs
+                            - 'generic "Last health check: 20 Jul 2026, 03:30 am" [ref=e778]': Healthy
+                            - button "Test" [ref=e779]
+                    - generic [ref=e780]:
+                        - generic [ref=e781]:
+                            - generic [ref=e782]:
+                                - img [ref=e784]
+                                - generic [ref=e786]:
+                                    - heading "TestBackupsDedup" [level=2] [ref=e787]
+                                    - text: local
+                            - generic [ref=e788]:
+                                - button "Browse destination files" [ref=e789]:
+                                    - img [ref=e790]
+                                - button "Import backups" [ref=e792]:
+                                    - img [ref=e793]
+                                    - text: Import
+                                - button "Edit storage" [ref=e795]:
+                                    - img [ref=e796]
+                                - button "Delete storage" [ref=e798]:
+                                    - img [ref=e799]
+                        - paragraph [ref=e802]: "Path: /mnt/user/TestBackupsDedup"
+                        - generic [ref=e804]:
+                            - generic [ref=e805]:
+                                - generic [ref=e806]: Used
+                                - generic [ref=e807]: 2.1 TB / 38.2 TB
+                            - generic [ref=e810]:
+                                - generic [ref=e811]: 5.5% used
+                                - generic [ref=e812]: 36.1 TB free
+                            - generic [ref=e813]:
+                                - generic [ref=e814]: Updated 6h ago
+                                - button "Refresh" [ref=e815]
+                            - generic [ref=e817]:
+                                - generic [ref=e818]:
+                                    - generic [ref=e819]: Last 7-day trend
+                                    - generic [ref=e820]: Years of runway at current growth
+                                - img "Capacity usage trend" [ref=e821]
+                        - generic [ref=e824]:
+                            - generic [ref=e825]:
+                                - paragraph [ref=e826]: Include in DB backup
+                                - paragraph [ref=e827]: Receive the daily encrypted Vault database snapshot.
+                            - switch "Toggle database backup fan-out" [ref=e828] [cursor=pointer]
+                        - generic [ref=e831]:
+                            - generic [ref=e832]:
+                                - generic [ref=e833]: Dedup
+                                - generic [ref=e834]: 1.0× (0 B → 0 B)
+                            - generic [ref=e835]:
+                                - generic [ref=e836]: Chunks · Packs
+                                - generic [ref=e837]: 0 · 0
+                            - generic [ref=e838]:
+                                - generic [ref=e839]: Reclaimable
+                                - generic [ref=e840]: 0 B
+                            - button "Run cleanup" [ref=e842]
+                        - generic [ref=e843]:
+                            - generic "3 Jul 2026, 04:18 pm" [ref=e844]: 3 Jul, 4:18 pm
+                            - generic [ref=e845]: 1 job
+                            - 'generic "path not accessible: stat /mnt/user/backups2: no such file or directory" [ref=e846]': Unhealthy
+                            - button "Test" [ref=e847]

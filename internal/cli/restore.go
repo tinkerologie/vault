@@ -10,56 +10,91 @@ import (
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
 )
 
-// restoreWithFallback attempts to restore the database from a chain of
-// snapshot sources. It tries each source in order and returns information
-// about which source was used (or that a fresh database was started).
+// restoreWithFallback attempts to restore the database from the freshest
+// integrity-passing snapshot source and returns information about which
+// source was used (or that a fresh database was started).
 //
-// Fallback chain:
-//  1. Configured snapshot path (from vault.cfg SNAPSHOT_PATH)
-//  2. Default cache path (/mnt/cache/.vault/vault.db)
-//  3. USB backup (/boot/config/plugins/vault/vault.db.backup)
-//  4. Fresh database (no restoration)
-func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePath, usbBackupPath string) *db.RestorationInfo {
-	tryTier := func(label, path, reason string) *db.RestorationInfo {
-		if path == "" {
-			return nil
-		}
-		if _, err := os.Stat(path); err != nil {
-			return nil
-		}
-		if err := sm.RestoreFromPath(path); err != nil {
-			log.Printf("Warning: failed to restore from %s path %s: %v", label, path, err)
-			return nil
-		}
-		if err := sm.IntegrityCheck(); err != nil {
-			log.Printf("Warning: %s snapshot %s failed integrity check: %v", label, path, err)
-			return nil
-		}
-		return &db.RestorationInfo{
-			Source: label,
-			Path:   path,
-			Reason: reason,
-		}
+// Candidate sources:
+//   - Configured snapshot path (from vault.cfg SNAPSHOT_PATH)  → "primary"
+//   - Default cache path (/mnt/cache/.vault/vault.db)          → "default_cache"
+//   - Newest rotated copies next to the snapshots              → "rotated"
+//   - USB-direct live DB (/boot/.../vault.db)                  → "usb_direct"
+//   - USB backup (/boot/.../vault.db.backup)                   → "usb_backup"
+//   - Fresh database (no restoration)                          → "fresh"
+//
+// Candidates are ordered by modification time (newest first), with the tier
+// order above as tie-break, instead of a strict tier order. A strict order
+// restored a stale-but-valid cache snapshot over newer state when boots
+// alternated between hybrid and USB-direct modes — a USB-direct boot writes
+// the newest configuration to the live USB DB, which the old chain never
+// even considered, so every later hybrid boot silently reverted the
+// configuration (issue #241).
+func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePath, usbLiveDBPath, usbBackupPath string) *db.RestorationInfo {
+	type candidate struct {
+		label  string
+		path   string
+		reason string
+		tier   int
+		mod    int64
 	}
 
-	if info := tryTier("primary", configuredPath, "restored from configured snapshot path"); info != nil {
-		return info
-	}
-	if defaultCachePath != configuredPath {
-		if info := tryTier("default_cache", defaultCachePath, "restored from default cache snapshot (configured path unavailable or invalid)"); info != nil {
-			return info
+	var candidates []candidate
+	addCandidate := func(label, path, reason string, tier int) {
+		if path == "" {
+			return
 		}
+		fi, err := os.Stat(path)
+		if err != nil || fi.Size() == 0 {
+			return
+		}
+		candidates = append(candidates, candidate{
+			label: label, path: path, reason: reason,
+			tier: tier, mod: newestDBMtime(path),
+		})
+	}
+
+	addCandidate("primary", configuredPath, "restored from configured snapshot path", 0)
+	if defaultCachePath != configuredPath {
+		addCandidate("default_cache", defaultCachePath, "restored from default cache snapshot", 1)
 	}
 	// Rotated copies (written by rotateSnapshot after every successful save)
-	// sit next to the snapshot; try the newest ones before falling back to
-	// the (up to 1 h stale) USB copy or a fresh database (issue #182).
+	// sit next to the snapshot (issue #182).
 	for _, rotated := range newestRotatedSnapshots(configuredPath, defaultCachePath) {
-		if info := tryTier("rotated", rotated, "restored from rotated snapshot copy (primary snapshot unavailable or invalid)"); info != nil {
-			return info
-		}
+		addCandidate("rotated", rotated, "restored from rotated snapshot copy", 2)
 	}
-	if info := tryTier("usb_backup", usbBackupPath, "restored from USB flash backup (other snapshots unavailable or invalid)"); info != nil {
-		return info
+	// The live USB DB is written by USB-direct boots (pool unavailable) and
+	// is then the freshest state on the system — see issue #241 above.
+	addCandidate("usb_direct", usbLiveDBPath, "restored from USB-direct database (newest available state)", 3)
+	addCandidate("usb_backup", usbBackupPath, "restored from USB flash backup", 4)
+
+	// Newest first on raw mtime; tier order breaks exact ties only. Exact
+	// ties are the normal case for same-flush copies: rotated copies are
+	// hard-linked from the primary, and FlushToUSB aligns the USB shadow's
+	// mtime with the primary snapshot it was written alongside (see
+	// SnapshotManager.alignUSBTwinMtime). A USB shadow written while the
+	// primary save FAILED keeps its own newer mtime and correctly outranks
+	// the stale primary — freshness is never traded away for tier order.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].mod != candidates[j].mod {
+			return candidates[i].mod > candidates[j].mod
+		}
+		return candidates[i].tier < candidates[j].tier
+	})
+
+	for _, c := range candidates {
+		if err := sm.RestoreFromPath(c.path); err != nil {
+			log.Printf("Warning: failed to restore from %s path %s: %v", c.label, c.path, err)
+			continue
+		}
+		if err := sm.IntegrityCheck(); err != nil {
+			log.Printf("Warning: %s snapshot %s failed integrity check: %v", c.label, c.path, err)
+			continue
+		}
+		return &db.RestorationInfo{
+			Source: c.label,
+			Path:   c.path,
+			Reason: c.reason + " (freshest valid source)",
+		}
 	}
 	log.Println("Warning: no valid snapshot source available — starting with fresh database")
 	return &db.RestorationInfo{
@@ -67,6 +102,23 @@ func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePat
 		Path:   "",
 		Reason: "no snapshot files passed integrity check; configuration will need to be reconfigured",
 	}
+}
+
+// newestDBMtime returns the newest modification time (UnixNano) across a
+// database file and its -wal sidecar. A live WAL-mode DB can hold committed
+// transactions only in the sidecar after an abrupt stop, leaving the main
+// file's mtime stale; freshness must reflect the newest committed state.
+// SQLite applies the WAL when the file is opened/restored. Snapshot
+// artifacts have no sidecars, so for them this is just the file mtime.
+func newestDBMtime(path string) int64 {
+	var mod int64
+	if fi, err := os.Stat(path); err == nil {
+		mod = fi.ModTime().UnixNano()
+	}
+	if wfi, err := os.Stat(path + "-wal"); err == nil && wfi.ModTime().UnixNano() > mod {
+		mod = wfi.ModTime().UnixNano()
+	}
+	return mod
 }
 
 // maxRotatedCandidates caps how many rotated snapshot copies the fallback

@@ -1,0 +1,131 @@
+- generic [ref=e2]:
+    - link "Skip to main content" [ref=e3] [cursor=pointer]:
+        - /url: "#main-content"
+    - generic [ref=e4]:
+        - complementary [ref=e9]:
+            - generic [ref=e10]:
+                - img [ref=e12]
+                - generic [ref=e14]:
+                    - text: VAULT
+                    - generic [ref=e15]: Backup Manager
+            - navigation [ref=e16]:
+                - button "Dashboard" [ref=e17]:
+                    - img [ref=e18]
+                    - text: Dashboard
+                - generic [ref=e20]: Protect
+                - button "Jobs" [ref=e21]:
+                    - img [ref=e22]
+                    - text: Jobs
+                - button "Storage" [ref=e24]:
+                    - img [ref=e25]
+                    - text: Storage
+                - generic [ref=e27]: Recover
+                - button "Restore" [ref=e28]:
+                    - img [ref=e29]
+                    - text: Restore
+                - button "History" [ref=e31]:
+                    - img [ref=e32]
+                    - text: History
+                - button "Recovery" [ref=e34]:
+                    - img [ref=e35]
+                    - text: Recovery
+                - generic [ref=e37]: System
+                - button "Logs" [ref=e38]:
+                    - img [ref=e39]
+                    - text: Logs
+                - button "Anomalies" [ref=e41]:
+                    - img [ref=e42]
+                    - text: Anomalies
+                - button "Settings" [ref=e44]:
+                    - img [ref=e45]
+                    - text: Settings
+                - link "Documentation (opens in a new tab)" [ref=e47] [cursor=pointer]:
+                    - /url: https://ruaan-deysel.github.io/vault/
+                    - img [ref=e48]
+                    - text: Documentation
+        - main [ref=e50]:
+            - generic [ref=e849]:
+                - generic [ref=e850]:
+                    - heading "Restore" [level=1] [ref=e851]
+                    - paragraph [ref=e852]: Browse and restore from backup snapshots
+                - generic [ref=e853]:
+                    - generic [ref=e854]:
+                        - button "1 Select Items" [ref=e855]:
+                            - generic [ref=e856]: "1"
+                            - generic [ref=e857]: Select Items
+                        - button "2 Choose Version" [ref=e859]:
+                            - generic [ref=e860]: "2"
+                            - generic [ref=e861]: Choose Version
+                        - button "3 Restore" [ref=e863]:
+                            - generic [ref=e864]: "3"
+                            - generic [ref=e865]: Restore
+                    - generic [ref=e869]:
+                        - generic [ref=e870]:
+                            - button "All" [ref=e871]
+                            - button "Folders" [ref=e872]
+                            - button "Containers" [ref=e873]
+                            - button "VMs" [ref=e874]
+                            - button "ZFS Datasets" [ref=e875]
+                        - button "Select All" [ref=e877]
+                    - generic [ref=e878]:
+                        - 'button "isos folder In 1 job: ISOs Backup" [ref=e879]':
+                            - generic [ref=e880]:
+                                - img [ref=e883]
+                                - generic [ref=e885]:
+                                    - paragraph [ref=e886]: isos
+                                    - paragraph [ref=e887]: folder
+                            - paragraph [ref=e888]: "In 1 job: ISOs Backup"
+                        - 'button "mosquitto container In 1 job: Test Containers Backup" [ref=e889]':
+                            - generic [ref=e890]:
+                                - img [ref=e893]
+                                - generic [ref=e895]:
+                                    - paragraph [ref=e896]: mosquitto
+                                    - paragraph [ref=e897]: container
+                            - paragraph [ref=e898]: "In 1 job: Test Containers Backup"
+                        - 'button "jellyfin container In 1 job: Test Containers Backup" [ref=e899]':
+                            - generic [ref=e900]:
+                                - img [ref=e903]
+                                - generic [ref=e905]:
+                                    - paragraph [ref=e906]: jellyfin
+                                    - paragraph [ref=e907]: container
+                            - paragraph [ref=e908]: "In 1 job: Test Containers Backup"
+                        - 'button "telegraf container In 1 job: Test Containers Backup" [ref=e909]':
+                            - generic [ref=e910]:
+                                - img [ref=e913]
+                                - generic [ref=e915]:
+                                    - paragraph [ref=e916]: telegraf
+                                    - paragraph [ref=e917]: container
+                            - paragraph [ref=e918]: "In 1 job: Test Containers Backup"
+                        - 'button "Glances container In 1 job: Test Containers Backup" [ref=e919]':
+                            - generic [ref=e920]:
+                                - img [ref=e923]
+                                - generic [ref=e925]:
+                                    - paragraph [ref=e926]: Glances
+                                    - paragraph [ref=e927]: container
+                            - paragraph [ref=e928]: "In 1 job: Test Containers Backup"
+                        - 'button "Grafana container In 1 job: Test Containers Backup" [ref=e929]':
+                            - generic [ref=e930]:
+                                - img [ref=e933]
+                                - generic [ref=e935]:
+                                    - paragraph [ref=e936]: Grafana
+                                    - paragraph [ref=e937]: container
+                            - paragraph [ref=e938]: "In 1 job: Test Containers Backup"
+                        - 'button "Fedora vm In 2 jobs: Test Dedup VM Backup, Test VMs Backup" [ref=e939]':
+                            - generic [ref=e940]:
+                                - img [ref=e943]
+                                - generic [ref=e945]:
+                                    - paragraph [ref=e946]: Fedora
+                                    - paragraph [ref=e947]: vm
+                            - paragraph [ref=e948]: "In 2 jobs: Test Dedup VM Backup, Test VMs Backup"
+                        - 'button "garbage zfs In 1 job: Test ZFS Backups" [ref=e949]':
+                            - generic [ref=e950]:
+                                - img [ref=e953]
+                                - generic [ref=e955]:
+                                    - paragraph [ref=e956]: garbage
+                                    - paragraph [ref=e957]: zfs
+                            - paragraph [ref=e958]: "In 1 job: Test ZFS Backups"
+                    - generic [ref=e959]:
+                        - generic [ref=e960]: Select items to restore
+                        - button "Next" [disabled] [ref=e961]:
+                            - text: Next
+                            - img [ref=e962]

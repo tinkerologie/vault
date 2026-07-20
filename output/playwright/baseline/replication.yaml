@@ -1,0 +1,343 @@
+- generic [ref=e2]:
+    - link "Skip to main content" [ref=e3] [cursor=pointer]:
+        - /url: "#main-content"
+    - generic [ref=e4]:
+        - complementary [ref=e9]:
+            - generic [ref=e10]:
+                - img [ref=e12]
+                - generic [ref=e14]:
+                    - text: VAULT
+                    - generic [ref=e15]: Backup Manager
+            - navigation [ref=e16]:
+                - button "Dashboard" [ref=e17]:
+                    - img [ref=e18]
+                    - text: Dashboard
+                - generic [ref=e20]: Protect
+                - button "Jobs" [ref=e21]:
+                    - img [ref=e22]
+                    - text: Jobs
+                - button "Storage" [ref=e24]:
+                    - img [ref=e25]
+                    - text: Storage
+                - generic [ref=e27]: Recover
+                - button "Restore" [ref=e28]:
+                    - img [ref=e29]
+                    - text: Restore
+                - button "History" [ref=e31]:
+                    - img [ref=e32]
+                    - text: History
+                - button "Recovery" [ref=e34]:
+                    - img [ref=e35]
+                    - text: Recovery
+                - generic [ref=e37]: System
+                - button "Logs" [ref=e38]:
+                    - img [ref=e39]
+                    - text: Logs
+                - button "Anomalies" [ref=e41]:
+                    - img [ref=e42]
+                    - text: Anomalies
+                - button "Settings" [ref=e44]:
+                    - img [ref=e45]
+                    - text: Settings
+                - link "Documentation (opens in a new tab)" [ref=e47] [cursor=pointer]:
+                    - /url: https://ruaan-deysel.github.io/vault/
+                    - img [ref=e48]
+                    - text: Documentation
+        - main [ref=e50]:
+            - generic [ref=e1631]:
+                - generic [ref=e1632]:
+                    - generic [ref=e1633]:
+                        - heading "Dashboard" [level=1] [ref=e1634]
+                        - generic [ref=e1635]:
+                            - paragraph [ref=e1636]: Overview of your backup system
+                            - generic [ref=e1637]: Online · v2026.07.07
+                    - button "Customize" [ref=e1698]:
+                        - img [ref=e1699]
+                        - text: Customize
+                - list [ref=e1702]:
+                    - listitem [ref=e1703]:
+                        - button "Health score 100 All backups healthy avg 63.8 MB/s" [ref=e1704] [cursor=pointer]:
+                            - generic [ref=e1705]:
+                                - img [ref=e1707]
+                                - generic [ref=e1709]: Health score
+                            - generic [ref=e1710]:
+                                - generic [ref=e1711]:
+                                    - img [ref=e1712]
+                                    - generic [ref=e1715]: "100"
+                                - generic [ref=e1716]:
+                                    - paragraph [ref=e1717]: All backups healthy
+                                    - paragraph [ref=e1718]: avg 63.8 MB/s
+                    - listitem [ref=e1719]:
+                        - generic [ref=e1720]:
+                            - generic [ref=e1721]:
+                                - img [ref=e1723]
+                                - generic [ref=e1725]: Protected
+                            - paragraph [ref=e1726]: 6/18
+                            - button "12 unprotected →" [ref=e1729]
+                    - listitem [ref=e1730]:
+                        - button "Next run No schedule 5 jobs · 0 enabled" [ref=e1731] [cursor=pointer]:
+                            - generic [ref=e1732]:
+                                - img [ref=e1734]
+                                - generic [ref=e1736]: Next run
+                            - paragraph [ref=e1737]: No schedule
+                            - paragraph [ref=e1738]: 5 jobs · 0 enabled
+                    - listitem [ref=e1739]:
+                        - button "Last backup Success Test VMs Backup · 22m ago 2.8 GB · 25s" [ref=e1740] [cursor=pointer]:
+                            - generic [ref=e1741]:
+                                - img [ref=e1743]
+                                - generic [ref=e1745]: Last backup
+                            - paragraph [ref=e1746]: Success
+                            - paragraph [ref=e1748]: Test VMs Backup · 22m ago
+                            - paragraph [ref=e1749]: 2.8 GB · 25s
+                    - listitem [ref=e1750]:
+                        - generic [ref=e1751]:
+                            - generic [ref=e1752]:
+                                - img [ref=e1754]
+                                - generic [ref=e1756]: Backup in progress
+                            - generic [ref=e1757]:
+                                - img [ref=e1758]
+                                - paragraph [ref=e1761]: No backup running
+                    - listitem [ref=e1762]:
+                        - generic [ref=e1763]:
+                            - heading "Recent Activity" [level=2] [ref=e1765]
+                            - generic [ref=e1767]:
+                                - generic [ref=e1768]: Today
+                                - generic [ref=e1772]:
+                                    - generic [ref=e1773]:
+                                        - generic [ref=e1774]:
+                                            - generic [ref=e1775]: Test VMs Backup
+                                            - generic [ref=e1776]: completed
+                                        - generic "22m ago" [ref=e1777]: 20 Jul 2026, 02:29 pm
+                                    - generic [ref=e1779]:
+                                        - img [ref=e1780]
+                                        - text: Fedora
+                                    - generic [ref=e1782]:
+                                        - generic [ref=e1783]: 26s
+                                        - generic [ref=e1784]: 2.8 GB
+                                        - generic [ref=e1785]: 114.4 MB/s
+                                        - generic [ref=e1786]: 1/1 items
+                                - generic [ref=e1790]:
+                                    - generic [ref=e1791]:
+                                        - generic [ref=e1792]:
+                                            - generic [ref=e1793]: Test VMs Backup
+                                            - generic [ref=e1794]: completed
+                                        - generic "26m ago" [ref=e1795]: 20 Jul 2026, 02:25 pm
+                                    - generic [ref=e1797]:
+                                        - img [ref=e1798]
+                                        - text: Fedora
+                                    - generic [ref=e1800]:
+                                        - generic [ref=e1801]: 26s
+                                        - generic [ref=e1802]: 2.8 GB
+                                        - generic [ref=e1803]: 110 MB/s
+                                        - generic [ref=e1804]: 1/1 items
+                                - generic [ref=e1808]:
+                                    - generic [ref=e1809]:
+                                        - generic [ref=e1810]:
+                                            - img [ref=e1811]
+                                            - generic [ref=e1813]: Test VMs Backup
+                                            - generic [ref=e1814]: restored
+                                        - generic "28m ago" [ref=e1815]: 20 Jul 2026, 02:23 pm
+                                    - generic [ref=e1817]:
+                                        - img [ref=e1818]
+                                        - text: Fedora
+                                    - generic [ref=e1820]:
+                                        - generic [ref=e1821]: 14s
+                                        - generic [ref=e1822]: 2.8 GB
+                                        - generic [ref=e1823]: 204.2 MB/s
+                                        - generic [ref=e1824]: 1/1 items
+                                - generic [ref=e1828]:
+                                    - generic [ref=e1829]:
+                                        - generic [ref=e1830]:
+                                            - generic [ref=e1831]: ISOs Backup
+                                            - generic [ref=e1832]: completed
+                                        - generic "44m ago" [ref=e1833]: 20 Jul 2026, 02:07 pm
+                                    - generic [ref=e1835]:
+                                        - img [ref=e1836]
+                                        - text: isos
+                                    - generic [ref=e1838]:
+                                        - generic [ref=e1839]: 3m 29s
+                                        - generic [ref=e1840]: 11.4 GB
+                                        - generic [ref=e1841]: 56.1 MB/s
+                                        - generic [ref=e1842]: 1/1 items
+                                - generic [ref=e1846]:
+                                    - generic [ref=e1847]:
+                                        - generic [ref=e1848]:
+                                            - generic [ref=e1849]: Test ZFS Backups
+                                            - generic [ref=e1850]: completed
+                                        - generic "44m ago" [ref=e1851]: 20 Jul 2026, 02:07 pm
+                                    - generic [ref=e1853]:
+                                        - img [ref=e1854]
+                                        - text: garbage
+                                    - generic [ref=e1856]:
+                                        - generic [ref=e1857]: 1s
+                                        - generic [ref=e1858]: 101.9 KB
+                                        - generic [ref=e1859]: 1/1 items
+                                - generic [ref=e1863]:
+                                    - generic [ref=e1864]:
+                                        - generic [ref=e1865]:
+                                            - generic [ref=e1866]: Test VMs Backup
+                                            - generic [ref=e1867]: completed
+                                        - generic "45m ago" [ref=e1868]: 20 Jul 2026, 02:06 pm
+                                    - generic [ref=e1870]:
+                                        - img [ref=e1871]
+                                        - text: Fedora
+                                    - generic [ref=e1873]:
+                                        - generic [ref=e1874]: 26s
+                                        - generic [ref=e1875]: 2.8 GB
+                                        - generic [ref=e1876]: 114.3 MB/s
+                                        - generic [ref=e1877]: 1/1 items
+                    - listitem [ref=e1878]:
+                        - generic [ref=e1879]:
+                            - generic [ref=e1880]:
+                                - img [ref=e1882]
+                                - generic [ref=e1884]: Backup jobs
+                                - button "View all →" [ref=e1885]
+                            - generic [ref=e1886]:
+                                - generic [ref=e1887]:
+                                    - generic [ref=e1888]:
+                                        - paragraph [ref=e1889]: ISOs Backup
+                                        - paragraph [ref=e1890]: Disabled · zstd
+                                    - generic [ref=e1891]:
+                                        - button "Restore" [ref=e1892]:
+                                            - img [ref=e1893]
+                                            - text: Restore
+                                        - button "Run Now" [ref=e1895]:
+                                            - img [ref=e1896]
+                                            - text: Run Now
+                                - generic [ref=e1898]:
+                                    - generic [ref=e1899]:
+                                        - paragraph [ref=e1900]: Test Containers Backup
+                                        - paragraph [ref=e1901]: Disabled · zstd
+                                    - generic [ref=e1902]:
+                                        - button "Restore" [ref=e1903]:
+                                            - img [ref=e1904]
+                                            - text: Restore
+                                        - button "Run Now" [ref=e1906]:
+                                            - img [ref=e1907]
+                                            - text: Run Now
+                                - generic [ref=e1909]:
+                                    - generic [ref=e1910]:
+                                        - paragraph [ref=e1911]: Test Dedup VM Backup
+                                        - paragraph [ref=e1912]: Disabled · zstd
+                                    - generic [ref=e1913]:
+                                        - button "Restore" [ref=e1914]:
+                                            - img [ref=e1915]
+                                            - text: Restore
+                                        - button "Run Now" [ref=e1917]:
+                                            - img [ref=e1918]
+                                            - text: Run Now
+                                - generic [ref=e1920]:
+                                    - generic [ref=e1921]:
+                                        - paragraph [ref=e1922]: Test VMs Backup
+                                        - paragraph [ref=e1923]: Disabled · zstd
+                                    - generic [ref=e1924]:
+                                        - button "Restore" [ref=e1925]:
+                                            - img [ref=e1926]
+                                            - text: Restore
+                                        - button "Run Now" [ref=e1928]:
+                                            - img [ref=e1929]
+                                            - text: Run Now
+                                - generic [ref=e1931]:
+                                    - generic [ref=e1932]:
+                                        - paragraph [ref=e1933]: Test ZFS Backups
+                                        - paragraph [ref=e1934]: Disabled · zstd
+                                    - generic [ref=e1935]:
+                                        - button "Restore" [ref=e1936]:
+                                            - img [ref=e1937]
+                                            - text: Restore
+                                        - button "Run Now" [ref=e1939]:
+                                            - img [ref=e1940]
+                                            - text: Run Now
+                    - listitem [ref=e1942]:
+                        - generic [ref=e1943]:
+                            - generic [ref=e1944]:
+                                - generic [ref=e1945]:
+                                    - img [ref=e1947]
+                                    - generic [ref=e1949]: Protection
+                                    - generic [ref=e1950]: 6/18 · 33%
+                                - button "+ Add to Backup" [ref=e1951]
+                            - generic [ref=e1955]:
+                                - generic [ref=e1956]:
+                                    - generic [ref=e1957]:
+                                        - img [ref=e1958]
+                                        - heading "Containers" [level=3] [ref=e1960]
+                                        - generic [ref=e1961]: 5/13
+                                    - generic [ref=e1962]:
+                                        - generic [ref=e1963]:
+                                            - generic [ref=e1965]: Grafana
+                                            - button "Restore Grafana" [ref=e1966]:
+                                                - img [ref=e1967]
+                                            - img [ref=e1969]
+                                        - generic [ref=e1971]:
+                                            - generic [ref=e1973]: Glances
+                                            - button "Restore Glances" [ref=e1974]:
+                                                - img [ref=e1975]
+                                            - img [ref=e1977]
+                                        - generic [ref=e1979]:
+                                            - generic [ref=e1981]: telegraf
+                                            - button "Restore telegraf" [ref=e1982]:
+                                                - img [ref=e1983]
+                                            - img [ref=e1985]
+                                        - generic [ref=e1987]:
+                                            - generic [ref=e1989]: jellyfin
+                                            - button "Restore jellyfin" [ref=e1990]:
+                                                - img [ref=e1991]
+                                            - img [ref=e1993]
+                                        - generic [ref=e1995]:
+                                            - generic [ref=e1997]: mosquitto
+                                            - button "Restore mosquitto" [ref=e1998]:
+                                                - img [ref=e1999]
+                                            - img [ref=e2001]
+                                        - generic [ref=e2003]:
+                                            - generic [ref=e2005]: sonarr
+                                            - generic [ref=e2006]: unprotected
+                                        - generic [ref=e2007]:
+                                            - generic [ref=e2009]: plex
+                                            - generic [ref=e2010]: unprotected
+                                        - generic [ref=e2011]:
+                                            - generic [ref=e2013]: radarr
+                                            - generic [ref=e2014]: unprotected
+                                        - generic [ref=e2015]:
+                                            - generic [ref=e2017]: sabnzbd
+                                            - generic [ref=e2018]: unprotected
+                                        - generic [ref=e2019]:
+                                            - generic [ref=e2021]: seerr
+                                            - generic [ref=e2022]: unprotected
+                                        - generic [ref=e2023]:
+                                            - generic [ref=e2025]: privoxyvpn
+                                            - generic [ref=e2026]: unprotected
+                                        - generic [ref=e2027]:
+                                            - generic [ref=e2029]: unmanic
+                                            - generic [ref=e2030]: unprotected
+                                        - generic [ref=e2031]:
+                                            - generic [ref=e2033]: recyclarr
+                                            - generic [ref=e2034]: unprotected
+                                - generic [ref=e2035]:
+                                    - generic [ref=e2036]:
+                                        - img [ref=e2037]
+                                        - heading "Virtual Machines" [level=3] [ref=e2039]
+                                        - generic [ref=e2040]: 1/4
+                                    - generic [ref=e2041]:
+                                        - generic [ref=e2042]:
+                                            - generic [ref=e2044]: Fedora
+                                            - button "Restore Fedora" [ref=e2045]:
+                                                - img [ref=e2046]
+                                            - img [ref=e2048]
+                                        - generic [ref=e2050]:
+                                            - generic [ref=e2052]: Home Assistant
+                                            - generic [ref=e2053]: unprotected
+                                        - generic [ref=e2054]:
+                                            - generic [ref=e2056]: Azure Linux
+                                            - generic [ref=e2057]: unprotected
+                                        - generic [ref=e2058]:
+                                            - generic [ref=e2060]: Server 2025
+                                            - generic [ref=e2061]: unprotected
+                                - generic [ref=e2062]:
+                                    - generic [ref=e2063]:
+                                        - img [ref=e2064]
+                                        - heading "Flash Drive" [level=3] [ref=e2066]
+                                        - generic [ref=e2067]: 0/1
+                                    - generic [ref=e2069]:
+                                        - generic [ref=e2071]: Flash Drive
+                                        - generic [ref=e2072]: USB boot drive
+                                        - generic [ref=e2073]: unprotected

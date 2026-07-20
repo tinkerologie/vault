@@ -110,7 +110,7 @@ func TestRestoreWithFallbackRotatedTier(t *testing.T) {
 	defer working.Close()
 	sm := db.NewSnapshotManager(working, primary, primary)
 
-	info := restoreWithFallback(sm, primary, primary, filepath.Join(dir, "missing-usb.db"))
+	info := restoreWithFallback(sm, primary, primary, "", filepath.Join(dir, "missing-usb.db"))
 	if info.Source != "rotated" {
 		t.Fatalf("restoration source = %q, want rotated (reason: %s)", info.Source, info.Reason)
 	}

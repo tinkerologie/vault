@@ -139,10 +139,25 @@ func (d *SizeDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 			Expected:    &median,
 			Deviation:   &dev,
 			JobRunID:    &runID,
-			Summary:     fmt.Sprintf("This backup grew to %s, about %s its usual %s.", humanizeBytes(observed), humanizeMultiplier(growthFactor), humanizeBytes(median)),
+			Summary:     sizeDriftSummary(observed, median, growthFactor),
 			Details:     details,
 		},
 	}, nil
+}
+
+// sizeDriftSummary phrases the high-side size anomaly using the direction the
+// numbers actually show. The verb used to be hardcoded to "grew", which
+// produced self-contradictory text whenever the rule fired on a run that was
+// marginally BELOW the median — e.g. "This backup grew to 2.7 GB, about <1×
+// its usual 2.8 GB." Users are asked to act on these signals, so the sentence
+// must not disagree with its own figures.
+func sizeDriftSummary(observed, median, growthFactor float64) string {
+	verb := "grew"
+	if observed < median {
+		verb = "shrank"
+	}
+	return fmt.Sprintf("This backup %s to %s, about %s its usual %s.",
+		verb, humanizeBytes(observed), humanizeMultiplier(growthFactor), humanizeBytes(median))
 }
 
 // higherSeverity returns the more severe of two Severity values.

@@ -197,8 +197,11 @@ func (s *Server) StartWithContext(ctx context.Context) error {
 		Handler:           s.router,
 		ReadTimeout:       15 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// Single source of truth: outbound connectivity probes derive their
+		// own deadline from this so they always finish early enough for the
+		// error response to be flushed (handlers.probeTimeoutHeadroom).
+		WriteTimeout: handlers.ServerWriteTimeout,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	go func() {

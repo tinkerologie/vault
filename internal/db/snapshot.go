@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -446,10 +447,14 @@ func (sm *SnapshotManager) RestoreFromSnapshot() error {
 // changes (job/storage/settings CRUD) so the USB flash always has fresh data.
 // The USB backup is attempted even if the primary snapshot fails, since the
 // USB backup copies directly from the working in-memory DB.
+//
+// A nil return guarantees BOTH persistent copies were durably updated —
+// callers gate destructive follow-ups (e.g. retiring the USB live DB after
+// hybrid restoration) on that guarantee.
 func (sm *SnapshotManager) FlushToUSB() error {
 	snapErr := sm.SaveSnapshot()
-	sm.saveUSBBackup(true)
-	return snapErr
+	usbErr := sm.saveUSBBackup(true, snapErr == nil)
+	return errors.Join(snapErr, usbErr)
 }
 
 // ScheduleFlush asynchronously flushes the working DB to the primary snapshot
@@ -486,49 +491,119 @@ func (sm *SnapshotManager) Close() error {
 // The USB backup is attempted even if the primary snapshot fails.
 func (sm *SnapshotManager) SaveSnapshotAndUSBBackup() error {
 	snapErr := sm.SaveSnapshot()
-	sm.saveUSBBackup(false)
+	_ = sm.saveUSBBackup(false, snapErr == nil) // throttled; failures are logged
 	return snapErr
 }
 
-// saveUSBBackup writes a shadow copy of the working DB to USB flash.
+// saveUSBBackup writes a shadow copy of the database to USB flash.
 // If force is false, the write is throttled to usbMinInterval to reduce flash wear.
-func (sm *SnapshotManager) saveUSBBackup(force bool) {
+//
+// When fromSnapshot is true (the primary snapshot save in the same flush
+// succeeded), the shadow is a byte-copy of that exact snapshot artifact and
+// carries the artifact's mtime. This makes the two persistent copies
+// identical by construction — a mutation committed between the snapshot and
+// USB writes can never make the shadow silently newer — so the boot-time
+// freshest-source selection (issue #241) sees an exact mtime tie and reports
+// the primary as the restore source. When the primary save failed, the shadow
+// is captured from the live working DB instead and keeps its own newer mtime,
+// so it correctly outranks the stale primary on the next boot.
+func (sm *SnapshotManager) saveUSBBackup(force, fromSnapshot bool) error {
 	sm.mu.Lock()
 	usbPath := sm.usbBackupPath
+	snapshotPath := sm.snapshotPath
 	lastBackup := sm.lastUSBBackup
 	interval := sm.usbMinInterval
 	sm.mu.Unlock()
 
 	if usbPath == "" {
-		return
+		return nil // shadow disabled — nothing to persist
 	}
 
 	validPath, err := validateSnapshotPath(usbPath)
 	if err != nil {
 		log.Printf("Warning: invalid USB backup path: %v", err)
-		return
+		return fmt.Errorf("invalid USB backup path: %w", err)
 	}
 
 	if !force && !lastBackup.IsZero() && time.Since(lastBackup) < interval {
-		return
+		return nil // throttled — deliberate skip, not a failure
 	}
 
 	if err := os.MkdirAll(filepath.Dir(validPath), 0o750); err != nil {
 		log.Printf("Warning: failed to create USB backup directory: %v", err)
-		return
+		return fmt.Errorf("create USB backup directory: %w", err)
+	}
+
+	if fromSnapshot {
+		// No live-DB fallback here: a mutation committed after the successful
+		// primary save would give the shadow divergent content with a newer
+		// mtime — the exact hazard the artifact copy exists to prevent. On
+		// failure keep the previous shadow; the next flush retries.
+		if err := sm.copySnapshotArtifact(snapshotPath, validPath); err != nil {
+			log.Printf("Warning: USB backup copy from snapshot failed: %v — keeping previous USB shadow", err)
+			return fmt.Errorf("USB backup copy from snapshot: %w", err)
+		}
+		sm.mu.Lock()
+		sm.lastUSBBackup = time.Now()
+		sm.mu.Unlock()
+		log.Printf("USB shadow backup saved to %s", validPath)
+		return nil
 	}
 
 	// Atomic write (temp + rename) so a crash mid-save never corrupts the
 	// USB safety-net copy (issue #182).
 	if err := sm.backupWorkingDBToPath(validPath); err != nil {
 		log.Printf("Warning: USB backup failed: %v", err)
-		return
+		return fmt.Errorf("USB backup: %w", err)
 	}
 
 	sm.mu.Lock()
 	sm.lastUSBBackup = time.Now()
 	sm.mu.Unlock()
 	log.Printf("USB shadow backup saved to %s", validPath)
+	return nil
+}
+
+// copySnapshotArtifact byte-copies the just-written primary snapshot file to
+// dest (temp + rename, preserving the snapshot's mtime) so the USB shadow is
+// exactly the snapshot the same flush produced. See saveUSBBackup.
+func (sm *SnapshotManager) copySnapshotArtifact(snapshotPath, dest string) error {
+	validSnap, err := validateSnapshotPath(snapshotPath)
+	if err != nil {
+		return fmt.Errorf("validating snapshot source: %w", err)
+	}
+	// Callers pass an already-validated dest; re-validate so this function is
+	// safe standalone (same pattern as backupWorkingDBToPath).
+	validDest, err := validateSnapshotPath(dest)
+	if err != nil {
+		return fmt.Errorf("validating USB copy destination: %w", err)
+	}
+	dest = validDest
+
+	sm.writeMu.Lock()
+	defer sm.writeMu.Unlock()
+
+	// Stat under writeMu so the recorded mtime matches the bytes copied —
+	// a concurrent flush cannot swap the snapshot between stat and copy.
+	fi, err := os.Stat(validSnap)
+	if err != nil {
+		return fmt.Errorf("stat snapshot source: %w", err)
+	}
+
+	tmp := dest + ".tmp"
+	_ = removeValidated(tmp)
+	if err := copyFile(validSnap, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("copy snapshot artifact: %w", err)
+	}
+	if err := os.Chtimes(tmp, fi.ModTime(), fi.ModTime()); err != nil {
+		log.Printf("Warning: preserving snapshot mtime on USB copy: %v", err)
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("activating USB copy: %w", err)
+	}
+	return nil
 }
 
 // IntegrityCheck runs PRAGMA integrity_check on the working database.

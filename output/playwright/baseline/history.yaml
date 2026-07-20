@@ -1,0 +1,470 @@
+- generic [ref=e2]:
+    - link "Skip to main content" [ref=e3] [cursor=pointer]:
+        - /url: "#main-content"
+    - generic [ref=e4]:
+        - complementary [ref=e9]:
+            - generic [ref=e10]:
+                - img [ref=e12]
+                - generic [ref=e14]:
+                    - text: VAULT
+                    - generic [ref=e15]: Backup Manager
+            - navigation [ref=e16]:
+                - button "Dashboard" [ref=e17]:
+                    - img [ref=e18]
+                    - text: Dashboard
+                - generic [ref=e20]: Protect
+                - button "Jobs" [ref=e21]:
+                    - img [ref=e22]
+                    - text: Jobs
+                - button "Storage" [ref=e24]:
+                    - img [ref=e25]
+                    - text: Storage
+                - generic [ref=e27]: Recover
+                - button "Restore" [ref=e28]:
+                    - img [ref=e29]
+                    - text: Restore
+                - button "History" [ref=e31]:
+                    - img [ref=e32]
+                    - text: History
+                - button "Recovery" [ref=e34]:
+                    - img [ref=e35]
+                    - text: Recovery
+                - generic [ref=e37]: System
+                - button "Logs" [ref=e38]:
+                    - img [ref=e39]
+                    - text: Logs
+                - button "Anomalies" [ref=e41]:
+                    - img [ref=e42]
+                    - text: Anomalies
+                - button "Settings" [ref=e44]:
+                    - img [ref=e45]
+                    - text: Settings
+                - link "Documentation (opens in a new tab)" [ref=e47] [cursor=pointer]:
+                    - /url: https://ruaan-deysel.github.io/vault/
+                    - img [ref=e48]
+                    - text: Documentation
+        - main [ref=e50]:
+            - generic [ref=e966]:
+                - generic [ref=e967]:
+                    - generic [ref=e968]:
+                        - heading "Backup & Restore History" [level=1] [ref=e969]
+                        - paragraph [ref=e970]: View past backup and restore runs and their results
+                    - button "Purge" [ref=e972]:
+                        - img [ref=e973]
+                        - text: Purge
+                - generic [ref=e1012]:
+                    - generic [ref=e1013]:
+                        - paragraph [ref=e1014]: "55"
+                        - paragraph [ref=e1015]: Total Runs
+                    - generic [ref=e1016]:
+                        - paragraph [ref=e1017]: "52"
+                        - paragraph [ref=e1018]: Successful
+                    - generic [ref=e1019]:
+                        - paragraph [ref=e1020]: "0"
+                        - paragraph [ref=e1021]: Failed
+                    - generic [ref=e1022]:
+                        - paragraph [ref=e1023]: "0"
+                        - paragraph [ref=e1024]: Running
+                    - generic [ref=e1025]:
+                        - paragraph [ref=e1026]: 149.8 GB
+                        - paragraph [ref=e1027]: Total Size
+                - generic [ref=e1028]:
+                    - generic [ref=e1029]:
+                        - img [ref=e1030]
+                        - textbox "Search runs" [ref=e1032]:
+                            - /placeholder: Search runs...
+                    - group "Filter by status" [ref=e1033]:
+                        - generic [ref=e1034]: Status
+                        - button "All" [pressed] [ref=e1035]
+                        - button "Completed" [ref=e1036]
+                        - button "Failed" [ref=e1037]
+                        - button "Running" [ref=e1038]
+                        - button "Skipped" [ref=e1039]
+                    - generic [ref=e1040]:
+                        - generic [ref=e1041]: Kind
+                        - group "Filter by type" [ref=e1042]:
+                            - button "All" [pressed] [ref=e1043]
+                            - button "Backups" [ref=e1044]
+                            - button "Restores" [ref=e1045]
+                    - combobox "Filter by job" [ref=e1046]:
+                        - option "All Jobs" [selected]
+                        - option "ISOs Backup"
+                        - option "Test Containers Backup"
+                        - option "Test Dedup VM Backup"
+                        - option "Test VMs Backup"
+                        - option "Test ZFS Backups"
+                - generic [ref=e1048]:
+                    - button "7d" [ref=e1049] [cursor=pointer]
+                    - button "30d" [pressed] [ref=e1050] [cursor=pointer]
+                    - button "90d" [ref=e1051] [cursor=pointer]
+                    - button "6m" [ref=e1052] [cursor=pointer]
+                    - button "1y" [ref=e1053] [cursor=pointer]
+                - generic [ref=e1054]:
+                    - generic [ref=e1055]:
+                        - heading "Backup Size Trend" [level=3] [ref=e1056]
+                        - generic [ref=e1057]:
+                            - generic [ref=e1060]: Containers
+                            - generic [ref=e1063]: VMs
+                            - generic [ref=e1066]: Folders & Files
+                            - generic [ref=e1069]: Other
+                            - generic [ref=e1070]:
+                                - img [ref=e1071]
+                                - generic [ref=e1073]: +1126%
+                    - img "Backup size trend chart" [ref=e1074]:
+                        - img [ref=e1075]:
+                            - generic [ref=e1076]:
+                                - img [ref=e1077] [cursor=pointer]
+                                - img [ref=e1080] [cursor=pointer]
+                                - img [ref=e1084] [cursor=pointer]
+                                - img [ref=e1089] [cursor=pointer]
+                                - img [ref=e1093] [cursor=pointer]
+                                - img [ref=e1098] [cursor=pointer]
+                                - generic [ref=e1104]: 30 Jun
+                                - generic [ref=e1105]: 20 Jul
+                    - generic [ref=e1106]:
+                        - generic [ref=e1107]: 6 data points
+                        - generic [ref=e1108]: "Latest: 73.5 GB"
+                - generic [ref=e1110]:
+                    - generic [ref=e1111]:
+                        - heading "Monday, 20 July 2026" [level=2] [ref=e1113]
+                        - generic [ref=e1115]: 20 runs
+                    - generic [ref=e1116]:
+                        - button "Test VMs Backup completed backup full 20 Jul 2026, 02:29 pm 26s 1/1 items 2.8 GB 114.4 MB/s" [ref=e1117] [cursor=pointer]:
+                            - generic [ref=e1118]:
+                                - generic [ref=e1119]:
+                                    - img [ref=e1120]
+                                    - generic [ref=e1122]:
+                                        - generic [ref=e1123]:
+                                            - generic [ref=e1124]: Test VMs Backup
+                                            - generic [ref=e1125]: completed
+                                            - generic [ref=e1126]: backup
+                                            - generic [ref=e1127]: full
+                                        - generic [ref=e1128]:
+                                            - generic "22m ago" [ref=e1129]: 20 Jul 2026, 02:29 pm
+                                            - generic [ref=e1130]: 26s
+                                            - generic [ref=e1131]: 1/1 items
+                                            - generic [ref=e1132]: 2.8 GB
+                                            - generic [ref=e1133]: 114.4 MB/s
+                                - img [ref=e1134]
+                        - button "Test VMs Backup completed backup full 20 Jul 2026, 02:25 pm 26s 1/1 items 2.8 GB 110 MB/s" [ref=e1136] [cursor=pointer]:
+                            - generic [ref=e1137]:
+                                - generic [ref=e1138]:
+                                    - img [ref=e1139]
+                                    - generic [ref=e1141]:
+                                        - generic [ref=e1142]:
+                                            - generic [ref=e1143]: Test VMs Backup
+                                            - generic [ref=e1144]: completed
+                                            - generic [ref=e1145]: backup
+                                            - generic [ref=e1146]: full
+                                        - generic [ref=e1147]:
+                                            - generic "25m ago" [ref=e1148]: 20 Jul 2026, 02:25 pm
+                                            - generic [ref=e1149]: 26s
+                                            - generic [ref=e1150]: 1/1 items
+                                            - generic [ref=e1151]: 2.8 GB
+                                            - generic [ref=e1152]: 110 MB/s
+                                - img [ref=e1153]
+                        - button "Test VMs Backup completed restore full 20 Jul 2026, 02:23 pm 14s 1/1 items 2.8 GB 204.2 MB/s" [ref=e1155] [cursor=pointer]:
+                            - generic [ref=e1156]:
+                                - generic [ref=e1157]:
+                                    - img [ref=e1158]
+                                    - generic [ref=e1160]:
+                                        - generic [ref=e1161]:
+                                            - generic [ref=e1162]: Test VMs Backup
+                                            - generic [ref=e1163]: completed
+                                            - generic [ref=e1164]: restore
+                                            - generic [ref=e1165]: full
+                                        - generic [ref=e1166]:
+                                            - generic "28m ago" [ref=e1167]: 20 Jul 2026, 02:23 pm
+                                            - generic [ref=e1168]: 14s
+                                            - generic [ref=e1169]: 1/1 items
+                                            - generic [ref=e1170]: 2.8 GB
+                                            - generic [ref=e1171]: 204.2 MB/s
+                                - img [ref=e1172]
+                        - button "ISOs Backup completed backup full 20 Jul 2026, 02:07 pm 3m 29s 1/1 items 11.4 GB 56.1 MB/s" [ref=e1174] [cursor=pointer]:
+                            - generic [ref=e1175]:
+                                - generic [ref=e1176]:
+                                    - img [ref=e1177]
+                                    - generic [ref=e1179]:
+                                        - generic [ref=e1180]:
+                                            - generic [ref=e1181]: ISOs Backup
+                                            - generic [ref=e1182]: completed
+                                            - generic [ref=e1183]: backup
+                                            - generic [ref=e1184]: full
+                                        - generic [ref=e1185]:
+                                            - generic "44m ago" [ref=e1186]: 20 Jul 2026, 02:07 pm
+                                            - generic [ref=e1187]: 3m 29s
+                                            - generic [ref=e1188]: 1/1 items
+                                            - generic [ref=e1189]: 11.4 GB
+                                            - generic [ref=e1190]: 56.1 MB/s
+                                - img [ref=e1191]
+                        - button "Test ZFS Backups completed backup full 20 Jul 2026, 02:07 pm 1s 1/1 items 101.9 KB" [ref=e1193] [cursor=pointer]:
+                            - generic [ref=e1194]:
+                                - generic [ref=e1195]:
+                                    - img [ref=e1196]
+                                    - generic [ref=e1198]:
+                                        - generic [ref=e1199]:
+                                            - generic [ref=e1200]: Test ZFS Backups
+                                            - generic [ref=e1201]: completed
+                                            - generic [ref=e1202]: backup
+                                            - generic [ref=e1203]: full
+                                        - generic [ref=e1204]:
+                                            - generic "44m ago" [ref=e1205]: 20 Jul 2026, 02:07 pm
+                                            - generic [ref=e1206]: 1s
+                                            - generic [ref=e1207]: 1/1 items
+                                            - generic [ref=e1208]: 101.9 KB
+                                - img [ref=e1209]
+                        - button "Test VMs Backup completed backup full 20 Jul 2026, 02:06 pm 26s 1/1 items 2.8 GB 114.3 MB/s" [ref=e1211] [cursor=pointer]:
+                            - generic [ref=e1212]:
+                                - generic [ref=e1213]:
+                                    - img [ref=e1214]
+                                    - generic [ref=e1216]:
+                                        - generic [ref=e1217]:
+                                            - generic [ref=e1218]: Test VMs Backup
+                                            - generic [ref=e1219]: completed
+                                            - generic [ref=e1220]: backup
+                                            - generic [ref=e1221]: full
+                                        - generic [ref=e1222]:
+                                            - generic "45m ago" [ref=e1223]: 20 Jul 2026, 02:06 pm
+                                            - generic [ref=e1224]: 26s
+                                            - generic [ref=e1225]: 1/1 items
+                                            - generic [ref=e1226]: 2.8 GB
+                                            - generic [ref=e1227]: 114.3 MB/s
+                                - img [ref=e1228]
+                        - button "Test Dedup VM Backup completed backup full 20 Jul 2026, 02:06 pm 33s 1/1 items 2.8 GB 86.6 MB/s" [ref=e1230] [cursor=pointer]:
+                            - generic [ref=e1231]:
+                                - generic [ref=e1232]:
+                                    - img [ref=e1233]
+                                    - generic [ref=e1235]:
+                                        - generic [ref=e1236]:
+                                            - generic [ref=e1237]: Test Dedup VM Backup
+                                            - generic [ref=e1238]: completed
+                                            - generic [ref=e1239]: backup
+                                            - generic [ref=e1240]: full
+                                        - generic [ref=e1241]:
+                                            - generic "45m ago" [ref=e1242]: 20 Jul 2026, 02:06 pm
+                                            - generic [ref=e1243]: 33s
+                                            - generic [ref=e1244]: 1/1 items
+                                            - generic [ref=e1245]: 2.8 GB
+                                            - generic [ref=e1246]: 86.6 MB/s
+                                - img [ref=e1247]
+                        - button "Test Containers Backup completed backup full 20 Jul 2026, 02:04 pm 1m 6s 5/5 items 942.5 MB 14.5 MB/s" [ref=e1249] [cursor=pointer]:
+                            - generic [ref=e1250]:
+                                - generic [ref=e1251]:
+                                    - img [ref=e1252]
+                                    - generic [ref=e1254]:
+                                        - generic [ref=e1255]:
+                                            - generic [ref=e1256]: Test Containers Backup
+                                            - generic [ref=e1257]: completed
+                                            - generic [ref=e1258]: backup
+                                            - generic [ref=e1259]: full
+                                        - generic [ref=e1260]:
+                                            - generic "46m ago" [ref=e1261]: 20 Jul 2026, 02:04 pm
+                                            - generic [ref=e1262]: 1m 6s
+                                            - generic [ref=e1263]: 5/5 items
+                                            - generic [ref=e1264]: 942.5 MB
+                                            - generic [ref=e1265]: 14.5 MB/s
+                                - img [ref=e1266]
+                        - button "ISOs Backup completed backup full 20 Jul 2026, 02:01 pm 3m 30s 1/1 items 11.4 GB 55.8 MB/s" [ref=e1268] [cursor=pointer]:
+                            - generic [ref=e1269]:
+                                - generic [ref=e1270]:
+                                    - img [ref=e1271]
+                                    - generic [ref=e1273]:
+                                        - generic [ref=e1274]:
+                                            - generic [ref=e1275]: ISOs Backup
+                                            - generic [ref=e1276]: completed
+                                            - generic [ref=e1277]: backup
+                                            - generic [ref=e1278]: full
+                                        - generic [ref=e1279]:
+                                            - generic "50m ago" [ref=e1280]: 20 Jul 2026, 02:01 pm
+                                            - generic [ref=e1281]: 3m 30s
+                                            - generic [ref=e1282]: 1/1 items
+                                            - generic [ref=e1283]: 11.4 GB
+                                            - generic [ref=e1284]: 55.8 MB/s
+                                - img [ref=e1285]
+                        - button "Test ZFS Backups completed backup full 20 Jul 2026, 02:01 pm 1s 1/1 items 101.9 KB" [ref=e1287] [cursor=pointer]:
+                            - generic [ref=e1288]:
+                                - generic [ref=e1289]:
+                                    - img [ref=e1290]
+                                    - generic [ref=e1292]:
+                                        - generic [ref=e1293]:
+                                            - generic [ref=e1294]: Test ZFS Backups
+                                            - generic [ref=e1295]: completed
+                                            - generic [ref=e1296]: backup
+                                            - generic [ref=e1297]: full
+                                        - generic [ref=e1298]:
+                                            - generic "50m ago" [ref=e1299]: 20 Jul 2026, 02:01 pm
+                                            - generic [ref=e1300]: 1s
+                                            - generic [ref=e1301]: 1/1 items
+                                            - generic [ref=e1302]: 101.9 KB
+                                - img [ref=e1303]
+                        - button "Test VMs Backup completed backup full 20 Jul 2026, 02:00 pm 27s 1/1 items 2.8 GB 109.9 MB/s" [ref=e1305] [cursor=pointer]:
+                            - generic [ref=e1306]:
+                                - generic [ref=e1307]:
+                                    - img [ref=e1308]
+                                    - generic [ref=e1310]:
+                                        - generic [ref=e1311]:
+                                            - generic [ref=e1312]: Test VMs Backup
+                                            - generic [ref=e1313]: completed
+                                            - generic [ref=e1314]: backup
+                                            - generic [ref=e1315]: full
+                                        - generic [ref=e1316]:
+                                            - generic "51m ago" [ref=e1317]: 20 Jul 2026, 02:00 pm
+                                            - generic [ref=e1318]: 27s
+                                            - generic [ref=e1319]: 1/1 items
+                                            - generic [ref=e1320]: 2.8 GB
+                                            - generic [ref=e1321]: 109.9 MB/s
+                                - img [ref=e1322]
+                        - button "Test Dedup VM Backup completed backup full 20 Jul 2026, 02:00 pm 25s 1/1 items 2.8 GB 119.1 MB/s" [ref=e1324] [cursor=pointer]:
+                            - generic [ref=e1325]:
+                                - generic [ref=e1326]:
+                                    - img [ref=e1327]
+                                    - generic [ref=e1329]:
+                                        - generic [ref=e1330]:
+                                            - generic [ref=e1331]: Test Dedup VM Backup
+                                            - generic [ref=e1332]: completed
+                                            - generic [ref=e1333]: backup
+                                            - generic [ref=e1334]: full
+                                        - generic [ref=e1335]:
+                                            - generic "51m ago" [ref=e1336]: 20 Jul 2026, 02:00 pm
+                                            - generic [ref=e1337]: 25s
+                                            - generic [ref=e1338]: 1/1 items
+                                            - generic [ref=e1339]: 2.8 GB
+                                            - generic [ref=e1340]: 119.1 MB/s
+                                - img [ref=e1341]
+                        - button "Test Containers Backup completed backup full 20 Jul 2026, 01:59 pm 1m 8s 5/5 items 942.5 MB 14.1 MB/s" [ref=e1343] [cursor=pointer]:
+                            - generic [ref=e1344]:
+                                - generic [ref=e1345]:
+                                    - img [ref=e1346]
+                                    - generic [ref=e1348]:
+                                        - generic [ref=e1349]:
+                                            - generic [ref=e1350]: Test Containers Backup
+                                            - generic [ref=e1351]: completed
+                                            - generic [ref=e1352]: backup
+                                            - generic [ref=e1353]: full
+                                        - generic [ref=e1354]:
+                                            - generic "52m ago" [ref=e1355]: 20 Jul 2026, 01:59 pm
+                                            - generic [ref=e1356]: 1m 8s
+                                            - generic [ref=e1357]: 5/5 items
+                                            - generic [ref=e1358]: 942.5 MB
+                                            - generic [ref=e1359]: 14.1 MB/s
+                                - img [ref=e1360]
+                        - button "ISOs Backup completed backup full 20 Jul 2026, 01:55 pm 3m 46s 1/1 items 11.4 GB 51.8 MB/s" [ref=e1362] [cursor=pointer]:
+                            - generic [ref=e1363]:
+                                - generic [ref=e1364]:
+                                    - img [ref=e1365]
+                                    - generic [ref=e1367]:
+                                        - generic [ref=e1368]:
+                                            - generic [ref=e1369]: ISOs Backup
+                                            - generic [ref=e1370]: completed
+                                            - generic [ref=e1371]: backup
+                                            - generic [ref=e1372]: full
+                                        - generic [ref=e1373]:
+                                            - generic "56m ago" [ref=e1374]: 20 Jul 2026, 01:55 pm
+                                            - generic [ref=e1375]: 3m 46s
+                                            - generic [ref=e1376]: 1/1 items
+                                            - generic [ref=e1377]: 11.4 GB
+                                            - generic [ref=e1378]: 51.8 MB/s
+                                - img [ref=e1379]
+                        - button "Test ZFS Backups completed backup full 20 Jul 2026, 01:55 pm 1s 1/1 items 101.9 KB" [ref=e1381] [cursor=pointer]:
+                            - generic [ref=e1382]:
+                                - generic [ref=e1383]:
+                                    - img [ref=e1384]
+                                    - generic [ref=e1386]:
+                                        - generic [ref=e1387]:
+                                            - generic [ref=e1388]: Test ZFS Backups
+                                            - generic [ref=e1389]: completed
+                                            - generic [ref=e1390]: backup
+                                            - generic [ref=e1391]: full
+                                        - generic [ref=e1392]:
+                                            - generic "56m ago" [ref=e1393]: 20 Jul 2026, 01:55 pm
+                                            - generic [ref=e1394]: 1s
+                                            - generic [ref=e1395]: 1/1 items
+                                            - generic [ref=e1396]: 101.9 KB
+                                - img [ref=e1397]
+                        - button "Test VMs Backup completed backup full 20 Jul 2026, 01:54 pm 29s 1/1 items 2.8 GB 98.6 MB/s" [ref=e1399] [cursor=pointer]:
+                            - generic [ref=e1400]:
+                                - generic [ref=e1401]:
+                                    - img [ref=e1402]
+                                    - generic [ref=e1404]:
+                                        - generic [ref=e1405]:
+                                            - generic [ref=e1406]: Test VMs Backup
+                                            - generic [ref=e1407]: completed
+                                            - generic [ref=e1408]: backup
+                                            - generic [ref=e1409]: full
+                                        - generic [ref=e1410]:
+                                            - generic "57m ago" [ref=e1411]: 20 Jul 2026, 01:54 pm
+                                            - generic [ref=e1412]: 29s
+                                            - generic [ref=e1413]: 1/1 items
+                                            - generic [ref=e1414]: 2.8 GB
+                                            - generic [ref=e1415]: 98.6 MB/s
+                                - img [ref=e1416]
+                        - button "Test Dedup VM Backup completed backup full 20 Jul 2026, 01:54 pm 31s 1/1 items 2.8 GB 95.3 MB/s" [ref=e1418] [cursor=pointer]:
+                            - generic [ref=e1419]:
+                                - generic [ref=e1420]:
+                                    - img [ref=e1421]
+                                    - generic [ref=e1423]:
+                                        - generic [ref=e1424]:
+                                            - generic [ref=e1425]: Test Dedup VM Backup
+                                            - generic [ref=e1426]: completed
+                                            - generic [ref=e1427]: backup
+                                            - generic [ref=e1428]: full
+                                        - generic [ref=e1429]:
+                                            - generic "57m ago" [ref=e1430]: 20 Jul 2026, 01:54 pm
+                                            - generic [ref=e1431]: 31s
+                                            - generic [ref=e1432]: 1/1 items
+                                            - generic [ref=e1433]: 2.8 GB
+                                            - generic [ref=e1434]: 95.3 MB/s
+                                - img [ref=e1435]
+                        - button "ISOs Backup completed backup full 20 Jul 2026, 01:49 pm 4m 7s 1/1 items 11.4 GB 47.4 MB/s" [ref=e1437] [cursor=pointer]:
+                            - generic [ref=e1438]:
+                                - generic [ref=e1439]:
+                                    - img [ref=e1440]
+                                    - generic [ref=e1442]:
+                                        - generic [ref=e1443]:
+                                            - generic [ref=e1444]: ISOs Backup
+                                            - generic [ref=e1445]: completed
+                                            - generic [ref=e1446]: backup
+                                            - generic [ref=e1447]: full
+                                        - generic [ref=e1448]:
+                                            - generic "1h ago" [ref=e1449]: 20 Jul 2026, 01:49 pm
+                                            - generic [ref=e1450]: 4m 7s
+                                            - generic [ref=e1451]: 1/1 items
+                                            - generic [ref=e1452]: 11.4 GB
+                                            - generic [ref=e1453]: 47.4 MB/s
+                                - img [ref=e1454]
+                        - button "Test Containers Backup completed backup full 20 Jul 2026, 01:48 pm 1m 26s 5/5 items 942.5 MB 11 MB/s" [ref=e1456] [cursor=pointer]:
+                            - generic [ref=e1457]:
+                                - generic [ref=e1458]:
+                                    - img [ref=e1459]
+                                    - generic [ref=e1461]:
+                                        - generic [ref=e1462]:
+                                            - generic [ref=e1463]: Test Containers Backup
+                                            - generic [ref=e1464]: completed
+                                            - generic [ref=e1465]: backup
+                                            - generic [ref=e1466]: full
+                                        - generic [ref=e1467]:
+                                            - generic "1h ago" [ref=e1468]: 20 Jul 2026, 01:48 pm
+                                            - generic [ref=e1469]: 1m 26s
+                                            - generic [ref=e1470]: 5/5 items
+                                            - generic [ref=e1471]: 942.5 MB
+                                            - generic [ref=e1472]: 11 MB/s
+                                - img [ref=e1473]
+                        - button "Test VMs Backup completed backup full 20 Jul 2026, 08:12 am 43s 1/1 items 2.8 GB 68.1 MB/s" [ref=e1475] [cursor=pointer]:
+                            - generic [ref=e1476]:
+                                - generic [ref=e1477]:
+                                    - img [ref=e1478]
+                                    - generic [ref=e1480]:
+                                        - generic [ref=e1481]:
+                                            - generic [ref=e1482]: Test VMs Backup
+                                            - generic [ref=e1483]: completed
+                                            - generic [ref=e1484]: backup
+                                            - generic [ref=e1485]: full
+                                        - generic [ref=e1486]:
+                                            - generic "6h ago" [ref=e1487]: 20 Jul 2026, 08:12 am
+                                            - generic [ref=e1488]: 43s
+                                            - generic [ref=e1489]: 1/1 items
+                                            - generic [ref=e1490]: 2.8 GB
+                                            - generic [ref=e1491]: 68.1 MB/s
+                                - img [ref=e1492]
+                - button "Load More (35 remaining)" [ref=e1495]
+                - paragraph [ref=e1496]: 55 runs total

@@ -217,10 +217,22 @@ var daemonCmd = &cobra.Command{
 			if !primaryExists && backupExists {
 				log.Printf("Non-hybrid mode: primary DB %s missing or empty; restoring from USB backup %s (%d bytes)",
 					actualDBPath, usbBackupPath, backupSize)
-				if err := copyFile(usbBackupPath, actualDBPath); err != nil {
+				if err := restoreUSBPrimaryFromBackup(usbBackupPath, actualDBPath); err != nil {
 					log.Printf("Warning: USB backup restore failed: %v — daemon will start with a fresh database", err)
 				} else {
 					log.Printf("Configuration restored from USB backup at %s", usbBackupPath)
+				}
+			} else if primaryExists && backupExists &&
+				newestDBMtime(usbBackupPath) > newestDBMtime(actualDBPath) {
+				// A leftover live DB from an older USB-direct session must not
+				// shadow a newer USB backup: serving it would run this session
+				// on stale configuration, and its mtime would advance as the
+				// daemon writes, letting stale state outrank newer snapshots
+				// on the next hybrid boot (issue #241 review).
+				log.Printf("Non-hybrid mode: USB backup %s is newer than live DB %s; restoring from backup",
+					usbBackupPath, actualDBPath)
+				if err := restoreUSBPrimaryFromBackup(usbBackupPath, actualDBPath); err != nil {
+					log.Printf("Warning: USB backup restore failed: %v — continuing with existing live DB", err)
 				}
 			} else if !primaryExists && !backupExists {
 				log.Printf("Warning: neither primary DB nor USB backup found — daemon will start with a fresh database (configuration will need to be reconfigured)")
@@ -236,7 +248,7 @@ var daemonCmd = &cobra.Command{
 		// In hybrid mode, attempt restoration using a fallback chain.
 		if hybridMode {
 			snapshotMgr = db.NewSnapshotManager(database, snapshotPath, defaultSnapPath)
-			restorationInfo := restoreWithFallback(snapshotMgr, snapshotPath, defaultSnapPath, usbBackupPath)
+			restorationInfo := restoreWithFallback(snapshotMgr, snapshotPath, defaultSnapPath, dbPath, usbBackupPath)
 			snapshotMgr.SetRestorationInfo(restorationInfo)
 			log.Printf("Database restoration: source=%s path=%s (%s)",
 				restorationInfo.Source, restorationInfo.Path, restorationInfo.Reason)
@@ -272,6 +284,13 @@ var daemonCmd = &cobra.Command{
 				} else {
 					log.Printf("Refreshed USB backup at %s after restoration from %s",
 						usbBackupPath, restorationInfo.Source)
+					// The live USB DB's state is now captured by the snapshot
+					// pipeline (it either was the restored source or was older
+					// than it). Retire it so a later USB-direct session — whose
+					// maintenance writes advance its mtime without advancing
+					// its content — can never falsely outrank newer snapshots
+					// on a subsequent hybrid boot (issue #241 review).
+					retireUSBLiveDB(dbPath)
 				}
 			}
 		}
@@ -780,6 +799,66 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
+}
+
+// restoreUSBPrimaryFromBackup materializes the live USB DB from the shadow
+// backup, preserving the backup's mtime. The copy must not mint a fresh
+// mtime: the boot-time freshest-source selection ranks candidates by raw
+// modification time, and a just-copied-but-stale live DB with mtime=now
+// would outrank a logically newer cache snapshot on the next hybrid boot
+// (issue #241 review). Once the daemon actually writes to the live DB its
+// mtime advances honestly.
+func restoreUSBPrimaryFromBackup(src, dst string) error {
+	// Copy to a sibling temp file and validate BEFORE touching dst: an
+	// in-place overwrite (O_TRUNC) would destroy the only valid live DB on a
+	// copy failure or when the newer backup turns out to be corrupt.
+	tmp := dst + ".restore-tmp"
+	defer func() {
+		_ = os.Remove(tmp)
+		_ = os.Remove(tmp + "-wal")
+		_ = os.Remove(tmp + "-shm")
+	}()
+	if err := copyFile(src, tmp); err != nil {
+		return fmt.Errorf("copying USB backup to temp file: %w", err)
+	}
+	vdb, err := db.Open(tmp)
+	if err != nil {
+		return fmt.Errorf("opening USB backup copy for validation: %w", err)
+	}
+	integrityErr := vdb.IntegrityCheck()
+	_ = vdb.Close()
+	if integrityErr != nil {
+		return fmt.Errorf("USB backup failed integrity check: %w", integrityErr)
+	}
+	if fi, statErr := os.Stat(src); statErr == nil {
+		if err := os.Chtimes(tmp, fi.ModTime(), fi.ModTime()); err != nil {
+			log.Printf("Warning: preserving USB backup mtime on restored DB: %v", err)
+		}
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return fmt.Errorf("activating restored DB: %w", err)
+	}
+	// Stale sidecars from a previous live session would be replayed over the
+	// freshly restored bytes on open — remove them.
+	_ = os.Remove(dst + "-wal")
+	_ = os.Remove(dst + "-shm")
+	return nil
+}
+
+// retireUSBLiveDB renames the live USB DB aside (vault.db → vault.db.migrated)
+// and removes its WAL sidecars after a hybrid boot has absorbed its state into
+// the snapshot pipeline. See the call site for why it must not linger.
+func retireUSBLiveDB(dbPath string) {
+	if _, err := os.Stat(dbPath); err != nil {
+		return
+	}
+	if err := os.Rename(dbPath, dbPath+".migrated"); err != nil {
+		log.Printf("Warning: retiring USB live DB %s: %v", dbPath, err)
+		return
+	}
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+	log.Printf("Retired USB live DB to %s.migrated after hybrid restoration", dbPath)
 }
 
 // buildAnomalyEvaluator constructs and wires the anomaly Evaluator when the

@@ -95,7 +95,7 @@ To survive Unraid's USB-backed boot (where writing every commit to flash would w
 2. **Primary snapshot** — `<discovered cache pool>/.vault/vault.db` (periodic copies; the authoritative on-disk source)
 3. **USB shadow** — `/boot/config/plugins/vault/vault.db.backup` (refreshed after config changes via the `SetConfigChangeHook` pathway, so the flash copy stays current without per-row writes)
 
-On startup, `internal/db/snapshot.go` restores from the primary snapshot if present, otherwise from the USB shadow — falling back to a fresh DB only if neither exists.
+On startup the daemon restores from the **freshest integrity-passing source** among the primary snapshot, the default cache snapshot, rotated snapshot copies, the USB-direct live DB (written when a boot ran without a mounted pool), and the USB shadow — falling back to a fresh DB only if none pass. Freshness is compared by modification time so a boot that ran in USB-direct mode can never be silently reverted by an older cache snapshot on the next hybrid boot (issue #241). An emhttp event script (`event/stopping_svcs`) stops the daemon gracefully on array stop/reboot so the final flush completes, and `event/started` ensures the daemon is running once the array is up.
 
 ## Project Structure
 

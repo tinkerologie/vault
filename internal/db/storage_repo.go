@@ -276,6 +276,33 @@ func (d *DB) CountJobsByStorageDestID(storageDestID int64) (int, error) {
 	return count, err
 }
 
+// DisableJobsByStorageDestID disables every job that references the given
+// storage destination and clears the reference, returning the number of jobs
+// changed.
+//
+// Called on a forced destination delete. Previously the destination row was
+// removed while dependent jobs kept `storage_dest_id` pointing at the dead id
+// (the UI renders that as "Unknown") AND kept `enabled = 1`, so the scheduler
+// would keep firing a job that can never write anywhere. Disabling makes the
+// breakage explicit and stops the pointless runs; the operator re-points the
+// job at a live destination and re-enables it.
+func (d *DB) DisableJobsByStorageDestID(storageDestID int64) (int, error) {
+	// NULL, not 0: the column is a nullable FK to storage_destinations(id), so
+	// 0 would violate the constraint. Go scans NULL back as 0, which the API
+	// and UI already treat as "no destination configured".
+	res, err := d.Exec(
+		"UPDATE jobs SET enabled = 0, storage_dest_id = NULL WHERE storage_dest_id = ?",
+		storageDestID)
+	if err != nil {
+		return 0, fmt.Errorf("disable jobs for storage destination %d: %w", storageDestID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("disable jobs for storage destination %d: rows affected: %w", storageDestID, err)
+	}
+	return int(n), nil
+}
+
 // DeleteDedupState removes all deduplication index rows (packs, chunks, GC
 // runs) for a storage destination. Called when the last dedup job on a
 // destination is deleted and its shared _vault repo is removed from storage, so
