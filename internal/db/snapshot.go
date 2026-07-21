@@ -169,6 +169,27 @@ func removeValidated(p string) error {
 	return os.Remove(p)
 }
 
+// mkdirAllValidated creates dir only when it is an absolute, traversal-free
+// path. Same barrier, and same reason for it, as removeValidated: the snapshot
+// directory is derived from the operator-configured database location, which
+// reaches this package straight from the settings endpoint.
+func mkdirAllValidated(dir string, perm os.FileMode) error {
+	if !filepath.IsAbs(dir) || strings.Contains(dir, "..") {
+		return fmt.Errorf("refusing to create suspicious path %q", dir)
+	}
+	return os.MkdirAll(dir, perm)
+}
+
+// statValidated inspects p only when it is an absolute, traversal-free path.
+// Same barrier as removeValidated — see that comment for why the check is
+// written as a substring test rather than reusing validateSnapshotPath.
+func statValidated(p string) (os.FileInfo, error) {
+	if !filepath.IsAbs(p) || strings.Contains(p, "..") {
+		return nil, fmt.Errorf("refusing to inspect suspicious path %q", p)
+	}
+	return os.Stat(p)
+}
+
 // SetSnapshotPath changes the snapshot path at runtime and immediately saves
 // a fresh snapshot at the new location. If newPath is empty, the default
 // snapshot path is used. This ensures the target location has up-to-date data.
@@ -186,7 +207,7 @@ func (sm *SnapshotManager) SetSnapshotPath(newPath string) (*SnapshotMigration, 
 		return nil, fmt.Errorf("validating snapshot path: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(validPath), 0o750); err != nil {
+	if err := mkdirAllValidated(filepath.Dir(validPath), 0o750); err != nil {
 		return nil, fmt.Errorf("creating snapshot directory: %w", err)
 	}
 
@@ -244,7 +265,7 @@ func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) *Sna
 	m := &SnapshotMigration{From: oldValid, To: newPath}
 
 	// Confirm the new snapshot actually landed before deleting anything.
-	if fi, statErr := os.Stat(newPath); statErr != nil || fi.Size() == 0 {
+	if fi, statErr := statValidated(newPath); statErr != nil || fi.Size() == 0 {
 		log.Printf("snapshot migration: new snapshot %s is not usable — leaving %s in place",
 			newPath, oldValid)
 		m.Warning = "the new copy could not be verified, so the database was left at its previous location"
@@ -253,7 +274,7 @@ func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) *Sna
 
 	failed := 0
 	for _, p := range []string{oldValid, oldValid + ".tmp"} {
-		switch err := os.Remove(p); {
+		switch err := removeValidated(p); {
 		case err == nil:
 			m.FilesRetired++
 		case !os.IsNotExist(err):
@@ -272,7 +293,7 @@ func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) *Sna
 			if e.IsDir() || !strings.HasPrefix(e.Name(), base+".") {
 				continue
 			}
-			if err := os.Remove(filepath.Join(rotatedDir, e.Name())); err != nil {
+			if err := removeValidated(filepath.Join(rotatedDir, e.Name())); err != nil {
 				log.Printf("snapshot migration: removing rotated copy %s: %v", e.Name(), err)
 				failed++
 				continue
@@ -280,13 +301,13 @@ func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) *Sna
 			m.FilesRetired++
 		}
 		// Succeeds only when empty, so foreign files are never forced out.
-		_ = os.Remove(rotatedDir)
+		_ = removeValidated(rotatedDir)
 	}
 
 	// ".vault" is Vault's own default directory, so dropping it once empty is
 	// safe. Any other directory belongs to the user and is left alone.
 	if filepath.Base(oldDir) == ".vault" {
-		_ = os.Remove(oldDir)
+		_ = removeValidated(oldDir)
 	}
 
 	m.Completed = failed == 0

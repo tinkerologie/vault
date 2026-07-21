@@ -829,3 +829,50 @@ func TestRetireSnapshotArtifactsNoOpOnSamePath(t *testing.T) {
 		t.Errorf("snapshot deleted when path was unchanged: %v", err)
 	}
 }
+
+// TestPathBarriersRejectSuspiciousPaths locks in the guards that stand between
+// the operator-configured database location and the filesystem. They are the
+// barrier CodeQL recognises for go/path-injection, so weakening them silently
+// re-opens those alerts as well as the underlying exposure.
+func TestPathBarriersRejectSuspiciousPaths(t *testing.T) {
+	t.Parallel()
+
+	bad := []struct{ name, path string }{
+		{"relative", "relative/vault.db"},
+		{"traversal", "/mnt/user/../../etc/vault.db"},
+		{"bare traversal", ".."},
+		{"empty", ""},
+	}
+
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := removeValidated(tc.path); err == nil {
+				t.Errorf("removeValidated(%q) = nil, want refusal", tc.path)
+			}
+			if err := mkdirAllValidated(tc.path, 0o750); err == nil {
+				t.Errorf("mkdirAllValidated(%q) = nil, want refusal", tc.path)
+			}
+			if _, err := statValidated(tc.path); err == nil {
+				t.Errorf("statValidated(%q) = nil, want refusal", tc.path)
+			}
+		})
+	}
+
+	// A legitimate absolute path must still work, or the guards would break
+	// the feature they protect.
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "pool", ".vault")
+	if err := mkdirAllValidated(nested, 0o750); err != nil {
+		t.Fatalf("mkdirAllValidated(%q): %v", nested, err)
+	}
+	snap := filepath.Join(nested, "vault.db")
+	if err := os.WriteFile(snap, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := statValidated(snap); err != nil {
+		t.Errorf("statValidated(%q): %v", snap, err)
+	}
+	if err := removeValidated(snap); err != nil {
+		t.Errorf("removeValidated(%q): %v", snap, err)
+	}
+}
