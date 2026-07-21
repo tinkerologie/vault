@@ -36,6 +36,16 @@ theme:
     - search.suggest
 extra_css:
   - stylesheets/extra.css
+extra:
+  # Rendered as icons in the site footer, so the sponsor link is present on
+  # every page rather than only where it is written into the prose.
+  social:
+    - icon: octicons/heart-fill-16
+      link: https://github.com/sponsors/ruaan-deysel
+      name: Sponsor Vault on GitHub
+    - icon: fontawesome/brands/github
+      link: https://github.com/ruaan-deysel/vault
+      name: Vault on GitHub
 markdown_extensions:
   - admonition
   - pymdownx.details
