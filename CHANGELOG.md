@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Browsing for a Database Location or Temporary Work Area no longer applies the change on its own.** Confirming a folder in the directory browser saved and applied it immediately, while typing the same path required clicking **Apply** — so the two ways of setting the field behaved differently, and picking a folder could move the database before you had a chance to review it. Browsing now only fills the field; **Apply** commits it in both cases.
 - **Changing the database location now moves the database instead of copying it.** Pointing Vault at a custom location (or reverting to the default) previously wrote a fresh copy at the new path but left the old one behind, so a stale `vault.db` — plus its rotated copies — stayed on the previous drive indefinitely. Because startup picks the _freshest_ valid database across all known locations, that leftover was not merely untidy: if the new drive was ever slow to mount (a ZFS pool importing after the cache pool, for example), the old copy could be selected and silently undo the move. The previous location is now retired once the new one is confirmed written, so nothing is left to go stale. Only Vault's own files are removed — a custom location that is a share or pool root keeps everything else in it untouched, and the old copy is always left in place if the new one did not write successfully.
 
 ## [v2026.07.08] - 2026-07-21

@@ -1741,7 +1741,9 @@
             <p class="text-xs text-text-dim mb-2">Override the automatic location. Use this if you want backups to be assembled on a specific drive. NVMe-backed ZFS pools are automatically prioritized when detected.</p>
             <div class="flex gap-2 items-end">
               <div class="flex-1" class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
-                <PathBrowser bind:value={stagingOverrideInput} onselect={saveStagingOverride} includeZfs={true} />
+                <!-- Browsing only fills the field; Apply commits it, matching a
+                     typed path so neither entry route saves without a click. -->
+                <PathBrowser bind:value={stagingOverrideInput} includeZfs={true} />
               </div>
               {#if !readOnly}
               <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
@@ -2025,7 +2027,10 @@
           <p class="text-xs text-text-dim mb-2">Choose where the persistent database copy is stored. Defaults to SSD cache. ZFS zpools are also available as high-performance locations.</p>
           <div class="flex gap-2 items-end">
             <div class="flex-1">
-              <PathBrowser bind:value={snapshotPathInput} onselect={saveSnapshotPath} includeZfs={true} />
+              <!-- Browsing only fills the field. Applying moves the database and
+                   removes the previous location, so it must be a deliberate
+                   click rather than a side effect of confirming a folder. -->
+              <PathBrowser bind:value={snapshotPathInput} includeZfs={true} />
             </div>
             <button onclick={saveSnapshotPath} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
               {#if snapshotPathSaving}<InlineSpinner />{/if}
