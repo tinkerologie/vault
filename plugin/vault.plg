@@ -114,8 +114,8 @@ chmod 755 /etc/rc.d/rc.vault
 chmod 755 /usr/local/emhttp/plugins/vault/include/apply.sh
 # emhttp event scripts (array started / stopping_svcs) must be executable or
 # Unraid silently skips them — the graceful reboot flush depends on them (#241).
-chmod 755 /usr/local/emhttp/plugins/vault/event/started \
-          /usr/local/emhttp/plugins/vault/event/stopping_svcs 2>/dev/null || true
+chmod 755 /usr/local/emhttp/webGui/event/started/vault \
+          /usr/local/emhttp/webGui/event/stopping_svcs/vault 2>/dev/null || true
 
 # Restart cleanly: stop any leftover daemon (e.g. from an aborted previous
 # upgrade) before starting the new binary. This guarantees the user is
@@ -188,6 +188,9 @@ fi
 rm -f "$DAEMON"
 rm -f /etc/rc.d/rc.vault
 rm -rf /usr/local/emhttp/plugins/vault
+# Remove only our own event scripts — the event directories are Unraid's.
+rm -f /usr/local/emhttp/webGui/event/started/vault
+rm -f /usr/local/emhttp/webGui/event/stopping_svcs/vault
 rm -f /var/log/vault.log
 rm -f /var/run/vault.pid
 rm -rf /boot/config/plugins/vault/*.txz
