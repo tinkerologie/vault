@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.09] - 2026-07-21
+
 ### Added
 
 - **Changing the database location now reports whether the database actually moved.** Saving a new location previously confirmed only "Snapshot path updated", which said nothing about the data itself. Settings now reports the migration — for example _"Database migrated to /mnt/garbage/vault.db — 5 files removed from /mnt/cache/.vault/vault.db"_ — and if the move could not be completed it says so as an error, naming the reason, so it is clear the database is still readable at its previous location.
