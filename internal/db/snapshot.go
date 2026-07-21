@@ -46,6 +46,19 @@ type SnapshotManager struct {
 	writeMu sync.Mutex
 }
 
+// SnapshotMigration reports the outcome of moving the database to a new
+// location, so the UI can confirm the move rather than only that the setting
+// was saved. Completed is false when the previous location could not be fully
+// retired — the new location still holds current data in that case, but the
+// old copy (or part of it) remains and Warning explains why.
+type SnapshotMigration struct {
+	From         string `json:"from"`
+	To           string `json:"to"`
+	FilesRetired int    `json:"files_retired"`
+	Completed    bool   `json:"completed"`
+	Warning      string `json:"warning,omitempty"`
+}
+
 // RestorationInfo records which source was used to restore the database at
 // startup. This is used by the health endpoint to report degraded state.
 type RestorationInfo struct {
@@ -159,18 +172,22 @@ func removeValidated(p string) error {
 // SetSnapshotPath changes the snapshot path at runtime and immediately saves
 // a fresh snapshot at the new location. If newPath is empty, the default
 // snapshot path is used. This ensures the target location has up-to-date data.
-func (sm *SnapshotManager) SetSnapshotPath(newPath string) error {
+// SetSnapshotPath points the manager at newPath (empty selects the default),
+// writes a current snapshot there and retires the previous location. The
+// returned SnapshotMigration describes that move, or is nil when there was
+// nothing to move (first configuration, or the path did not change).
+func (sm *SnapshotManager) SetSnapshotPath(newPath string) (*SnapshotMigration, error) {
 	if newPath == "" {
 		newPath = sm.defaultSnapshotPath
 	}
 
 	validPath, err := validateSnapshotPath(newPath)
 	if err != nil {
-		return fmt.Errorf("validating snapshot path: %w", err)
+		return nil, fmt.Errorf("validating snapshot path: %w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(validPath), 0o750); err != nil {
-		return fmt.Errorf("creating snapshot directory: %w", err)
+		return nil, fmt.Errorf("creating snapshot directory: %w", err)
 	}
 
 	sm.mu.Lock()
@@ -180,13 +197,12 @@ func (sm *SnapshotManager) SetSnapshotPath(newPath string) error {
 
 	// Save a fresh snapshot to the new location so it is never stale.
 	if err := sm.SaveSnapshot(); err != nil {
-		return fmt.Errorf("saving initial snapshot at new path: %w", err)
+		return nil, fmt.Errorf("saving initial snapshot at new path: %w", err)
 	}
 
 	// The new location now holds current data, so the old one can be retired:
 	// changing the database location moves it rather than leaving a copy.
-	sm.retireSnapshotArtifacts(oldPath, validPath)
-	return nil
+	return sm.retireSnapshotArtifacts(oldPath, validPath), nil
 }
 
 // retireSnapshotArtifacts deletes the snapshot files Vault owns at oldPath
@@ -205,36 +221,44 @@ func (sm *SnapshotManager) SetSnapshotPath(newPath string) error {
 //   - the parent directory is removed only when it is Vault's own ".vault"
 //     directory and is already empty.
 //
-// Failures are logged, never returned: the location change itself has already
-// succeeded and must not be reported as failed because a leftover file could
-// not be unlinked.
-func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) {
+// The returned SnapshotMigration reports the outcome so the caller can tell
+// the user whether the move completed. A failure to unlink a leftover file is
+// never fatal: the location change itself has already succeeded, so it is
+// reported as an incomplete migration rather than an error.
+func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) *SnapshotMigration {
 	if oldPath == "" || oldPath == newPath {
-		return
+		return nil
 	}
 	oldValid, err := validateSnapshotPath(oldPath)
 	if err != nil {
 		log.Printf("snapshot migration: skipping cleanup of previous location: %v", err)
-		return
+		return &SnapshotMigration{
+			From: oldPath, To: newPath,
+			Warning: "previous location could not be read, so it was left untouched",
+		}
 	}
 	if oldValid == newPath {
-		return
+		return nil
 	}
+
+	m := &SnapshotMigration{From: oldValid, To: newPath}
 
 	// Confirm the new snapshot actually landed before deleting anything.
 	if fi, statErr := os.Stat(newPath); statErr != nil || fi.Size() == 0 {
 		log.Printf("snapshot migration: new snapshot %s is not usable — leaving %s in place",
 			newPath, oldValid)
-		return
+		m.Warning = "the new copy could not be verified, so the database was left at its previous location"
+		return m
 	}
 
-	retired := 0
+	failed := 0
 	for _, p := range []string{oldValid, oldValid + ".tmp"} {
 		switch err := os.Remove(p); {
 		case err == nil:
-			retired++
+			m.FilesRetired++
 		case !os.IsNotExist(err):
 			log.Printf("snapshot migration: removing %s: %v", p, err)
+			failed++
 		}
 	}
 
@@ -250,9 +274,10 @@ func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) {
 			}
 			if err := os.Remove(filepath.Join(rotatedDir, e.Name())); err != nil {
 				log.Printf("snapshot migration: removing rotated copy %s: %v", e.Name(), err)
+				failed++
 				continue
 			}
-			retired++
+			m.FilesRetired++
 		}
 		// Succeeds only when empty, so foreign files are never forced out.
 		_ = os.Remove(rotatedDir)
@@ -264,8 +289,13 @@ func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) {
 		_ = os.Remove(oldDir)
 	}
 
-	log.Printf("snapshot migration: database moved to %s (%d file(s) retired from %s)",
-		newPath, retired, oldDir)
+	m.Completed = failed == 0
+	if !m.Completed {
+		m.Warning = fmt.Sprintf("%d file(s) could not be removed from %s", failed, oldDir)
+	}
+	log.Printf("snapshot migration: database moved to %s (%d file(s) retired from %s, completed=%t)",
+		newPath, m.FilesRetired, oldDir, m.Completed)
+	return m
 }
 
 // LastSnapshot returns the time of the last successful snapshot (mutex-protected).

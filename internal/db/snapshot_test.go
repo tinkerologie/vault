@@ -52,7 +52,7 @@ func TestSetSnapshotPath_RejectsEmptyDefault(t *testing.T) {
 	// Create a manager with an empty default path — SetSnapshotPath("") should fail
 	// because validateSnapshotPath rejects empty strings.
 	sm := NewSnapshotManager(d, filepath.Join(t.TempDir(), "snap.db"), "")
-	err := sm.SetSnapshotPath("")
+	_, err := sm.SetSnapshotPath("")
 	if err == nil {
 		t.Fatal("SetSnapshotPath with empty default should fail validation")
 	}
@@ -442,7 +442,7 @@ func TestSetSnapshotPath(t *testing.T) {
 
 	// Change to a custom path — should save a fresh snapshot there.
 	customPath := filepath.Join(dir, "custom", "vault.db")
-	if err := sm.SetSnapshotPath(customPath); err != nil {
+	if _, err := sm.SetSnapshotPath(customPath); err != nil {
 		t.Fatalf("SetSnapshotPath custom: %v", err)
 	}
 	if sm.SnapshotPath() != customPath {
@@ -453,7 +453,7 @@ func TestSetSnapshotPath(t *testing.T) {
 	}
 
 	// Reset to default (empty string) — should use defaultPath.
-	if err := sm.SetSnapshotPath(""); err != nil {
+	if _, err := sm.SetSnapshotPath(""); err != nil {
 		t.Fatalf("SetSnapshotPath reset: %v", err)
 	}
 	if sm.SnapshotPath() != defaultPath {
@@ -705,8 +705,25 @@ func TestSetSnapshotPathMovesDatabase(t *testing.T) {
 	}
 
 	// Default -> custom.
-	if err := sm.SetSnapshotPath(customPath); err != nil {
+	migration, err := sm.SetSnapshotPath(customPath)
+	if err != nil {
 		t.Fatalf("SetSnapshotPath(custom): %v", err)
+	}
+	// The move must be reportable so the UI can confirm it, not just that the
+	// setting was saved.
+	if migration == nil {
+		t.Fatal("expected a migration result for a location change")
+	}
+	if !migration.Completed {
+		t.Errorf("migration not reported complete: %+v", migration)
+	}
+	if migration.To != customPath || migration.From != defaultPath {
+		t.Errorf("migration reported %s -> %s, want %s -> %s",
+			migration.From, migration.To, defaultPath, customPath)
+	}
+	// vault.db plus the rotated copy created above.
+	if migration.FilesRetired < 2 {
+		t.Errorf("FilesRetired = %d, want at least 2", migration.FilesRetired)
 	}
 	if fi, err := os.Stat(customPath); err != nil || fi.Size() == 0 {
 		t.Fatalf("expected snapshot at custom path, got %v (%v)", fi, err)
@@ -723,7 +740,7 @@ func TestSetSnapshotPathMovesDatabase(t *testing.T) {
 	}
 
 	// Custom -> back to default (empty string selects defaultSnapshotPath).
-	if err := sm.SetSnapshotPath(""); err != nil {
+	if _, err := sm.SetSnapshotPath(""); err != nil {
 		t.Fatalf("SetSnapshotPath(default): %v", err)
 	}
 	if fi, err := os.Stat(defaultPath); err != nil || fi.Size() == 0 {
@@ -758,7 +775,7 @@ func TestSetSnapshotPathPreservesForeignFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := sm.SetSnapshotPath(newPath); err != nil {
+	if _, err := sm.SetSnapshotPath(newPath); err != nil {
 		t.Fatalf("SetSnapshotPath: %v", err)
 	}
 

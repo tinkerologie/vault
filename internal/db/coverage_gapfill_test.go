@@ -1119,7 +1119,7 @@ func TestSetSnapshotPathMkdirFails(t *testing.T) {
 	originalPath := filepath.Join(dir, "ok", "snap.db")
 	sm := NewSnapshotManager(d, originalPath, originalPath)
 
-	if err := sm.SetSnapshotPath(badNewPath); err == nil {
+	if _, err := sm.SetSnapshotPath(badNewPath); err == nil {
 		t.Fatal("SetSnapshotPath should fail when MkdirAll cannot create parent dir")
 	}
 }

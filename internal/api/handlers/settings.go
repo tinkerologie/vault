@@ -27,7 +27,7 @@ type SettingsHandler struct {
 	snapshotManager interface {
 		SnapshotPath() string
 		DefaultSnapshotPath() string
-		SetSnapshotPath(string) error
+		SetSnapshotPath(string) (*db.SnapshotMigration, error)
 		LastSnapshot() time.Time
 		RestorationSource() *db.RestorationInfo
 	}
@@ -45,7 +45,7 @@ func NewSettingsHandler(database *db.DB, serverKey []byte) *SettingsHandler {
 func (h *SettingsHandler) SetSnapshotManager(sm interface {
 	SnapshotPath() string
 	DefaultSnapshotPath() string
-	SetSnapshotPath(string) error
+	SetSnapshotPath(string) (*db.SnapshotMigration, error)
 	LastSnapshot() time.Time
 	RestorationSource() *db.RestorationInfo
 }) {
@@ -113,6 +113,13 @@ func (h *SettingsHandler) GetDiagnostics(w http.ResponseWriter, _ *http.Request)
 //
 //	GET /api/v1/settings/database
 func (h *SettingsHandler) GetDatabaseInfo(w http.ResponseWriter, _ *http.Request) {
+	respondJSON(w, http.StatusOK, h.databaseInfo())
+}
+
+// databaseInfo builds the database mode/location payload shared by
+// GetDatabaseInfo and SetSnapshotPath, so a location change can return the
+// updated state alongside the migration outcome.
+func (h *SettingsHandler) databaseInfo() map[string]any {
 	info := map[string]any{
 		"mode":         "legacy_usb",
 		"working_path": h.db.Path(),
@@ -149,7 +156,7 @@ func (h *SettingsHandler) GetDatabaseInfo(w http.ResponseWriter, _ *http.Request
 		}
 	}
 
-	respondJSON(w, http.StatusOK, info)
+	return info
 }
 
 // SetSnapshotPath sets or clears the snapshot path override.
@@ -199,14 +206,34 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 	// Apply the path change to the running snapshot manager immediately so
 	// that a fresh snapshot is written at the new location. This eliminates
 	// the stale-snapshot problem where the old location retains outdated data.
+	var (
+		migration *db.SnapshotMigration
+		applyErr  error
+	)
 	if h.snapshotManager != nil {
-		if err := h.snapshotManager.SetSnapshotPath(req.SnapshotPath); err != nil {
-			log.Printf("Warning: failed to apply snapshot path change at runtime: %v", err)
+		migration, applyErr = h.snapshotManager.SetSnapshotPath(req.SnapshotPath)
+		if applyErr != nil {
+			log.Printf("Warning: failed to apply snapshot path change at runtime: %v", applyErr)
 		}
 	}
 
 	h.notifyConfigChange()
-	h.GetDatabaseInfo(w, r)
+
+	// Report the migration outcome alongside the updated state so the UI can
+	// confirm the database actually moved, rather than only that the setting
+	// was saved. A runtime failure is surfaced here rather than as an error
+	// status: the preference was stored, but the data did not move.
+	info := h.databaseInfo()
+	switch {
+	case applyErr != nil:
+		info["migration"] = &db.SnapshotMigration{
+			To:      req.SnapshotPath,
+			Warning: "the database could not be written to the new location; it remains at the previous one",
+		}
+	case migration != nil:
+		info["migration"] = migration
+	}
+	respondJSON(w, http.StatusOK, info)
 }
 
 // List returns all settings as a JSON object.

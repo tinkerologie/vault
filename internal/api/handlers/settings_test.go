@@ -312,9 +312,9 @@ type mockSnapshotManager struct {
 
 func (m *mockSnapshotManager) SnapshotPath() string        { return m.snapshotPath }
 func (m *mockSnapshotManager) DefaultSnapshotPath() string { return "/default/vault.db" }
-func (m *mockSnapshotManager) SetSnapshotPath(p string) error {
+func (m *mockSnapshotManager) SetSnapshotPath(p string) (*db.SnapshotMigration, error) {
 	m.snapshotPath = p
-	return nil
+	return nil, nil
 }
 func (m *mockSnapshotManager) LastSnapshot() time.Time                { return time.Time{} }
 func (m *mockSnapshotManager) RestorationSource() *db.RestorationInfo { return nil }

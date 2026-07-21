@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { api, isReplicaMode } from '../lib/api.js'
-  import { formatBytes, formatDate } from '../lib/utils.js'
+  import { formatBytes, formatDate, snapshotMigrationMessage } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
   import Toast from '../components/Toast.svelte'
@@ -388,7 +388,11 @@
     try {
       databaseInfo = await api.setSnapshotPath(snapshotPathInput)
       snapshotPathInput = databaseInfo?.snapshot_path_override || ''
-      showToast(snapshotPathInput ? 'Snapshot path updated' : 'Snapshot path reset to default', 'success')
+      const { text, tone } = snapshotMigrationMessage(
+        databaseInfo,
+        snapshotPathInput ? 'Snapshot path updated' : 'Snapshot path reset to default',
+      )
+      showToast(text, tone)
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -401,7 +405,8 @@
     snapshotPathSaving = true
     try {
       databaseInfo = await api.setSnapshotPath('')
-      showToast('Snapshot path reset to default', 'success')
+      const { text, tone } = snapshotMigrationMessage(databaseInfo, 'Snapshot path reset to default')
+      showToast(text, tone)
     } catch (e) {
       showToast(e.message, 'error')
     } finally {

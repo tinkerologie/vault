@@ -255,3 +255,17 @@ export function formatSpeed(bytes, seconds) {
   const i = Math.min(Math.floor(Math.log(bps) / Math.log(k)), units.length - 1);
   return parseFloat((bps / Math.pow(k, i)).toFixed(1)) + ' ' + units[i];
 }
+
+// Describes the outcome of a database location change for the Settings toast,
+// so the user is told whether the database actually moved rather than only
+// that the setting was saved. A `warning` means the move did not complete —
+// the database is still readable at its previous location.
+export function snapshotMigrationMessage(info, fallback) {
+  const m = info?.migration
+  if (!m) return { text: fallback, tone: 'success' }
+  if (m.warning) return { text: `Database not migrated — ${m.warning}`, tone: 'error' }
+  const count = m.files_retired ?? 0
+  const detail =
+    count > 0 ? ` — ${count === 1 ? '1 file' : `${count} files`} removed from ${m.from}` : ''
+  return { text: `Database migrated to ${m.to}${detail}`, tone: 'success' }
+}

@@ -14,6 +14,7 @@ import {
   describeSchedule,
   relTimeUntil,
   prettyAnomalySummary,
+  snapshotMigrationMessage,
 } from './utils.js'
 
 describe('formatBytes', () => {
@@ -124,5 +125,49 @@ describe('prettyAnomalySummary', () => {
   it('corrects contradictory legacy size summaries without rewriting history', () => {
     expect(prettyAnomalySummary('This backup grew to 2.7 GB, about <1× its usual 2.8 GB.'))
       .toBe('This backup shrank to 2.7 GB, about <1× its usual 2.8 GB.')
+  })
+})
+
+describe('snapshotMigrationMessage', () => {
+  it('falls back when no migration happened', () => {
+    expect(snapshotMigrationMessage({}, 'Snapshot path updated')).toEqual({
+      text: 'Snapshot path updated',
+      tone: 'success',
+    })
+    expect(snapshotMigrationMessage(null, 'Snapshot path updated').text).toBe('Snapshot path updated')
+  })
+
+  it('confirms a completed migration and where the old copy was removed from', () => {
+    const { text, tone } = snapshotMigrationMessage({
+      migration: { from: '/mnt/cache/.vault/vault.db', to: '/mnt/garbage/vault.db', files_retired: 5, completed: true },
+    })
+    expect(tone).toBe('success')
+    expect(text).toBe('Database migrated to /mnt/garbage/vault.db — 5 files removed from /mnt/cache/.vault/vault.db')
+  })
+
+  it('uses the singular for a single retired file', () => {
+    const { text } = snapshotMigrationMessage({
+      migration: { from: '/old/vault.db', to: '/new/vault.db', files_retired: 1, completed: true },
+    })
+    expect(text).toContain('1 file removed')
+    expect(text).not.toContain('1 files')
+  })
+
+  it('omits the cleanup detail when nothing needed removing', () => {
+    const { text, tone } = snapshotMigrationMessage({
+      migration: { from: '/old/vault.db', to: '/new/vault.db', files_retired: 0, completed: true },
+    })
+    expect(tone).toBe('success')
+    expect(text).toBe('Database migrated to /new/vault.db')
+  })
+
+  // An incomplete migration must read as a failure: the database did not move,
+  // so the user needs to know it is still at the previous location.
+  it('reports a warning as an error', () => {
+    const { text, tone } = snapshotMigrationMessage({
+      migration: { from: '/old/vault.db', to: '/new/vault.db', warning: 'the new copy could not be verified' },
+    })
+    expect(tone).toBe('error')
+    expect(text).toBe('Database not migrated — the new copy could not be verified')
   })
 })

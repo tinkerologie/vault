@@ -20,9 +20,9 @@ type restoreInfoMockSnapshotManager struct {
 
 func (m *restoreInfoMockSnapshotManager) SnapshotPath() string        { return m.snapshotPath }
 func (m *restoreInfoMockSnapshotManager) DefaultSnapshotPath() string { return "/default/vault.db" }
-func (m *restoreInfoMockSnapshotManager) SetSnapshotPath(p string) error {
+func (m *restoreInfoMockSnapshotManager) SetSnapshotPath(p string) (*db.SnapshotMigration, error) {
 	m.snapshotPath = p
-	return nil
+	return nil, nil
 }
 func (m *restoreInfoMockSnapshotManager) LastSnapshot() time.Time { return time.Now() }
 func (m *restoreInfoMockSnapshotManager) RestorationSource() *db.RestorationInfo {
