@@ -17,21 +17,35 @@
       : []
   )
 
+  // Returns whether the listing succeeded, so openBrowser can fall back
+  // rather than leaving the dialog blank. Browsing the root legitimately
+  // yields an empty currentPath, so success cannot be inferred from it.
   async function browse(path = '') {
     loading = true
+    let ok = false
     try {
       const res = await api.browse(path, { includeZfs })
       entries = res.entries || []
       currentPath = res.path || ''
+      ok = true
     } catch {
       entries = []
     }
     loading = false
+    return ok
   }
 
-  function openBrowser() {
+  async function openBrowser() {
     open = true
-    browse(value || '')
+    const start = value || ''
+    if (await browse(start)) return
+    // The field may hold a file path — the database location is a vault.db
+    // file, which the browse API rejects — or a directory that no longer
+    // exists. Fall back to the containing directory, then to the root
+    // listing, so the dialog always opens somewhere usable.
+    const parent = start.slice(0, start.lastIndexOf('/'))
+    if (parent && (await browse(parent))) return
+    await browse('')
   }
 
   function selectDir(entry) {

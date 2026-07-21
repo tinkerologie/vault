@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Changing the database location now reports whether the database actually moved.** Saving a new location previously confirmed only "Snapshot path updated", which said nothing about the data itself. Settings now reports the migration — for example _"Database migrated to /mnt/garbage/vault.db — 5 files removed from /mnt/cache/.vault/vault.db"_ — and if the move could not be completed it says so as an error, naming the reason, so it is clear the database is still readable at its previous location.
 
+### Fixed
+
+- **The directory browser no longer opens empty when the field holds a file path.** The Database Location field stores a file (`vault.db`), which the browse API rejects, so opening the browser from it silently failed and showed a blank dialog with no way to navigate. The browser now falls back to the containing directory — and to the top-level listing if that also fails — so it always opens somewhere usable.
+
 ### Changed
 
 - **Browsing for a Database Location or Temporary Work Area no longer applies the change on its own.** Confirming a folder in the directory browser saved and applied it immediately, while typing the same path required clicking **Apply** — so the two ways of setting the field behaved differently, and picking a folder could move the database before you had a chance to review it. Browsing now only fills the field; **Apply** commits it in both cases.
