@@ -408,3 +408,115 @@ func TestFolderChunkedHonoursExclusions(t *testing.T) {
 		}
 	}
 }
+
+// TestFolderBackupFollowsSymlinkSource verifies that folder backups (both
+// classic tar and dedup/chunked) traverse into a directory that is a symlink.
+// This covers Unraid cache-only shares where /mnt/user/<share> is a symlink
+// to /mnt/cache/<share>. Without EvalSymlinks, filepath.Walk uses os.Lstat
+// on the root, sees a symlink (not a directory), and never descends into
+// the target — producing an empty archive.
+func TestFolderBackupFollowsSymlinkSource(t *testing.T) {
+	t.Parallel()
+
+	// Create a real directory with files.
+	realDir := t.TempDir()
+	mustWrite := func(rel string, data []byte) {
+		p := filepath.Join(realDir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite("file1.txt", []byte("hello"))
+	mustWrite("subdir/file2.txt", []byte("world"))
+
+	// Create a symlink pointing to the real directory.
+	linkDir := filepath.Join(t.TempDir(), "linked_folder")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Skip("filesystem does not support symlinks")
+	}
+
+	h := &FolderHandler{}
+	ctx := context.Background()
+	progress := func(string, int, string) {}
+
+	// Test classic tar path (Backup).
+	t.Run("classic_tar", func(t *testing.T) {
+		t.Parallel()
+		dest := t.TempDir()
+		item := BackupItem{
+			Name:        "symlink-folder",
+			Type:        "folder",
+			Settings:    map[string]any{"path": linkDir},
+			Compression: CompressionGzip,
+		}
+		res, err := h.Backup(ctx, item, dest, progress)
+		if err != nil {
+			t.Fatalf("backup: %v", err)
+		}
+		if !res.Success {
+			t.Fatal("expected success")
+		}
+
+		// Verify folder_meta.json stores the original symlink path, not the
+		// resolved target.
+		metaData, err := os.ReadFile(filepath.Join(dest, "folder_meta.json"))
+		if err != nil {
+			t.Fatalf("reading folder_meta.json: %v", err)
+		}
+		if !bytes.Contains(metaData, []byte(linkDir)) {
+			t.Errorf("folder_meta.json should contain original path %q, got %s", linkDir, metaData)
+		}
+
+		// Verify the archive contains files (not empty).
+		restoreDest := t.TempDir()
+		if err := h.Restore(ctx, BackupItem{
+			Name:     "symlink-folder",
+			Type:     "folder",
+			Settings: map[string]any{"restore_destination": restoreDest},
+		}, dest, progress); err != nil {
+			t.Fatalf("restore: %v", err)
+		}
+
+		if _, err := os.Stat(filepath.Join(restoreDest, "file1.txt")); err != nil {
+			t.Errorf("missing file1.txt after restore: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(restoreDest, "subdir/file2.txt")); err != nil {
+			t.Errorf("missing subdir/file2.txt after restore: %v", err)
+		}
+	})
+
+	// Test dedup/chunked path (BackupChunked).
+	t.Run("chunked", func(t *testing.T) {
+		t.Parallel()
+		r, _, cleanup := dedup.NewTestRepoForEngine(t)
+		defer cleanup()
+
+		item := BackupItem{
+			Name:     "symlink-folder",
+			Type:     "folder",
+			Settings: map[string]any{"path": linkDir},
+		}
+		manifestID, err := h.BackupChunked(ctx, item, r, nil)
+		if err != nil {
+			t.Fatalf("chunked backup: %v", err)
+		}
+		if err := r.Flush(); err != nil {
+			t.Fatal(err)
+		}
+
+		m, err := r.GetManifest(manifestID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, ok := m.Files["file1.txt"]; !ok {
+			t.Errorf("manifest missing file1.txt")
+		}
+		if _, ok := m.Files["subdir/file2.txt"]; !ok {
+			t.Errorf("manifest missing subdir/file2.txt")
+		}
+	})
+}

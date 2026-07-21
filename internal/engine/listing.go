@@ -24,6 +24,11 @@ const ListingSuffix = ".listing.json"
 // ignore failures; without a listing, chain restore simply skips the prune
 // pass (its prior behaviour).
 func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) error {
+	// Resolve symlinks so cache-only Unraid shares are traversed correctly.
+	if resolved, err := filepath.EvalSymlinks(srcPath); err == nil {
+		srcPath = resolved
+	}
+
 	idx := TarIndex{Version: tarIndexVersion, Archive: filepath.Base(archivePath)}
 
 	err := filepath.Walk(srcPath, func(p string, info os.FileInfo, walkErr error) error {

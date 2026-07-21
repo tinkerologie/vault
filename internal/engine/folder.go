@@ -65,6 +65,20 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	}
 
 	srcPath = filepath.Clean(srcPath)
+
+	// Preserve the user-configured path for folder_meta.json so that
+	// restore targets the share path (e.g. /mnt/user/myshare), not the
+	// internally-resolved cache path (e.g. /mnt/cache/myshare).
+	originalPath := srcPath
+
+	// Resolve symlinks so cache-only Unraid shares (which appear as
+	// symlinks under /mnt/user/ pointing to /mnt/cache/) are traversed
+	// correctly by filepath.Walk, which uses os.Lstat and does not follow
+	// symbolic links.
+	if resolved, err := filepath.EvalSymlinks(srcPath); err == nil {
+		srcPath = resolved
+	}
+
 	if _, err := os.Stat(srcPath); err != nil {
 		return nil, fmt.Errorf("source path not accessible: %w", err)
 	}
@@ -126,8 +140,10 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	}
 
 	// Store source path metadata so restore knows the original location.
+	// Use the pre-resolution path so restores target the user-configured
+	// share path, not the internal symlink target.
 	metaPath := filepath.Join(destDir, "folder_meta.json")
-	metaJSON := fmt.Sprintf(`{"path":%q,"name":%q}`, srcPath, item.Name)
+	metaJSON := fmt.Sprintf(`{"path":%q,"name":%q}`, originalPath, item.Name)
 	if err := os.WriteFile(metaPath, []byte(metaJSON), 0600); err != nil {
 		return nil, fmt.Errorf("writing folder metadata: %w", err)
 	}
@@ -212,6 +228,14 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	if srcPath == "" {
 		return dedup.ID{}, fmt.Errorf("folder: missing path setting")
 	}
+	srcPath = filepath.Clean(srcPath)
+	// Resolve symlinks so cache-only Unraid shares (symlinks under
+	// /mnt/user/ → /mnt/cache/) are traversed by filepath.Walk which
+	// uses os.Lstat and does not follow symbolic links.
+	if resolved, err := filepath.EvalSymlinks(srcPath); err == nil {
+		srcPath = resolved
+	}
+
 	// Honour user exclusion patterns, matching the classic tar path
 	// (tarDirectoryFiltered). For container volumes these arrive already
 	// mapped to volume-relative paths via mapExclusionsToVolume.
