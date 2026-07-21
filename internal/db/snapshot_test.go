@@ -660,3 +660,155 @@ func TestRemoveValidated(t *testing.T) {
 		t.Fatal("traversal path must be refused")
 	}
 }
+
+// newMigrationTestManager returns a SnapshotManager whose snapshot already
+// exists at customPath, together with its default path, for exercising
+// database-location changes.
+func newMigrationTestManager(t *testing.T, dir, snapshotPath, defaultPath string) *SnapshotManager {
+	t.Helper()
+	srcDB, err := Open(filepath.Join(dir, "source.db"))
+	if err != nil {
+		t.Fatalf("open source DB: %v", err)
+	}
+	t.Cleanup(func() { srcDB.Close() })
+	if _, err := srcDB.CreateStorageDestination(StorageDestination{
+		Name: "migration-dest", Type: "local", Config: `{"path":"/mnt/backups"}`,
+	}); err != nil {
+		t.Fatalf("insert storage destination: %v", err)
+	}
+	sm := NewSnapshotManager(srcDB, snapshotPath, defaultPath)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatalf("initial SaveSnapshot: %v", err)
+	}
+	return sm
+}
+
+// TestSetSnapshotPathMovesDatabase covers the round trip a user makes when
+// pointing the database at a custom pool and later reverting to the default:
+// the snapshot must exist at the new location and leave nothing behind at the
+// old one, in both directions. A leftover stale copy is not cosmetic — the
+// boot-time freshest-source scan ranks it as a restore candidate, so it can
+// silently undo the location change on a later boot.
+func TestSetSnapshotPathMovesDatabase(t *testing.T) {
+	dir := t.TempDir()
+	defaultPath := filepath.Join(dir, "cache", ".vault", "vault.db")
+	customPath := filepath.Join(dir, "garbage", "vault.db")
+	if err := os.MkdirAll(filepath.Dir(customPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	sm := newMigrationTestManager(t, dir, defaultPath, defaultPath)
+
+	// Rotated copies accumulate beside the snapshot and must travel with it.
+	sm.rotateSnapshot()
+	if entries, err := os.ReadDir(filepath.Join(filepath.Dir(defaultPath), "rotated")); err != nil || len(entries) == 0 {
+		t.Fatalf("expected a rotated copy at the default location, got %v (%v)", entries, err)
+	}
+
+	// Default -> custom.
+	if err := sm.SetSnapshotPath(customPath); err != nil {
+		t.Fatalf("SetSnapshotPath(custom): %v", err)
+	}
+	if fi, err := os.Stat(customPath); err != nil || fi.Size() == 0 {
+		t.Fatalf("expected snapshot at custom path, got %v (%v)", fi, err)
+	}
+	if _, err := os.Stat(defaultPath); !os.IsNotExist(err) {
+		t.Errorf("old snapshot still present at %s (err=%v)", defaultPath, err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(defaultPath), "rotated")); !os.IsNotExist(err) {
+		t.Errorf("rotated copies left behind at the default location")
+	}
+	// ".vault" is Vault's own directory, so it is removed once emptied.
+	if _, err := os.Stat(filepath.Dir(defaultPath)); !os.IsNotExist(err) {
+		t.Errorf("empty .vault directory left behind at %s", filepath.Dir(defaultPath))
+	}
+
+	// Custom -> back to default (empty string selects defaultSnapshotPath).
+	if err := sm.SetSnapshotPath(""); err != nil {
+		t.Fatalf("SetSnapshotPath(default): %v", err)
+	}
+	if fi, err := os.Stat(defaultPath); err != nil || fi.Size() == 0 {
+		t.Fatalf("expected snapshot back at default path, got %v (%v)", fi, err)
+	}
+	if _, err := os.Stat(customPath); !os.IsNotExist(err) {
+		t.Errorf("snapshot still present at custom path %s after reverting", customPath)
+	}
+}
+
+// TestSetSnapshotPathPreservesForeignFiles guards the most dangerous case: a
+// user pointing the database at a share or pool root (e.g. /mnt/garbage).
+// Retiring the old location must remove only Vault's own files and must never
+// delete the directory itself or anything else living in it.
+func TestSetSnapshotPathPreservesForeignFiles(t *testing.T) {
+	dir := t.TempDir()
+	poolRoot := filepath.Join(dir, "garbage")
+	oldPath := filepath.Join(poolRoot, "vault.db")
+	newPath := filepath.Join(dir, "cache", ".vault", "vault.db")
+	if err := os.MkdirAll(poolRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// A user file and a foreign file inside Vault's rotated directory.
+	userFile := filepath.Join(poolRoot, "important-user-data.txt")
+	if err := os.WriteFile(userFile, []byte("do not delete"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sm := newMigrationTestManager(t, dir, oldPath, newPath)
+	sm.rotateSnapshot()
+	foreignRotated := filepath.Join(poolRoot, "rotated", "someone-elses.db")
+	if err := os.WriteFile(foreignRotated, []byte("not ours"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sm.SetSnapshotPath(newPath); err != nil {
+		t.Fatalf("SetSnapshotPath: %v", err)
+	}
+
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Errorf("vault.db not retired from %s", poolRoot)
+	}
+	if _, err := os.Stat(poolRoot); err != nil {
+		t.Fatalf("pool root directory was removed: %v", err)
+	}
+	if b, err := os.ReadFile(userFile); err != nil || string(b) != "do not delete" {
+		t.Errorf("user file was disturbed: %q (%v)", b, err)
+	}
+	if _, err := os.Stat(foreignRotated); err != nil {
+		t.Errorf("foreign file inside rotated/ was removed: %v", err)
+	}
+}
+
+// TestSetSnapshotPathKeepsOldWhenNewUnusable ensures the old copy survives if
+// the new snapshot did not materialise — the database must never be deleted
+// from a location that still holds the only good copy.
+func TestSetSnapshotPathKeepsOldWhenNewUnusable(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := filepath.Join(dir, "old", "vault.db")
+	newPath := filepath.Join(dir, "new", "vault.db")
+	sm := newMigrationTestManager(t, dir, oldPath, oldPath)
+
+	// Simulate a save that reported success but produced nothing usable.
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sm.retireSnapshotArtifacts(oldPath, newPath)
+
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Errorf("old snapshot removed despite unusable new snapshot: %v", err)
+	}
+}
+
+// TestRetireSnapshotArtifactsNoOpOnSamePath ensures re-applying the current
+// path never deletes the live snapshot.
+func TestRetireSnapshotArtifactsNoOpOnSamePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vault.db")
+	sm := newMigrationTestManager(t, dir, path, path)
+
+	sm.retireSnapshotArtifacts(path, path)
+
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("snapshot deleted when path was unchanged: %v", err)
+	}
+}

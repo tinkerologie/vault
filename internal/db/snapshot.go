@@ -174,6 +174,7 @@ func (sm *SnapshotManager) SetSnapshotPath(newPath string) error {
 	}
 
 	sm.mu.Lock()
+	oldPath := sm.snapshotPath
 	sm.snapshotPath = validPath
 	sm.mu.Unlock()
 
@@ -181,7 +182,90 @@ func (sm *SnapshotManager) SetSnapshotPath(newPath string) error {
 	if err := sm.SaveSnapshot(); err != nil {
 		return fmt.Errorf("saving initial snapshot at new path: %w", err)
 	}
+
+	// The new location now holds current data, so the old one can be retired:
+	// changing the database location moves it rather than leaving a copy.
+	sm.retireSnapshotArtifacts(oldPath, validPath)
 	return nil
+}
+
+// retireSnapshotArtifacts deletes the snapshot files Vault owns at oldPath
+// once newPath holds a freshly written snapshot, so switching the database
+// location moves the data instead of copying it. Without this the previous
+// location keeps a stale vault.db that the boot-time freshest-source scan
+// still ranks as a restore candidate (see cli.restoreWithFallback), which is
+// how a location change could later be silently undone.
+//
+// Deletion is deliberately conservative:
+//   - nothing is removed until the new snapshot is confirmed present and
+//     non-empty, so a failed switch always leaves the old copy recoverable;
+//   - only files Vault itself writes are removed (<base>, <base>.tmp and
+//     rotated/<base>.*), never a user-chosen directory, which may be a share
+//     or pool root such as /mnt/garbage;
+//   - the parent directory is removed only when it is Vault's own ".vault"
+//     directory and is already empty.
+//
+// Failures are logged, never returned: the location change itself has already
+// succeeded and must not be reported as failed because a leftover file could
+// not be unlinked.
+func (sm *SnapshotManager) retireSnapshotArtifacts(oldPath, newPath string) {
+	if oldPath == "" || oldPath == newPath {
+		return
+	}
+	oldValid, err := validateSnapshotPath(oldPath)
+	if err != nil {
+		log.Printf("snapshot migration: skipping cleanup of previous location: %v", err)
+		return
+	}
+	if oldValid == newPath {
+		return
+	}
+
+	// Confirm the new snapshot actually landed before deleting anything.
+	if fi, statErr := os.Stat(newPath); statErr != nil || fi.Size() == 0 {
+		log.Printf("snapshot migration: new snapshot %s is not usable — leaving %s in place",
+			newPath, oldValid)
+		return
+	}
+
+	retired := 0
+	for _, p := range []string{oldValid, oldValid + ".tmp"} {
+		switch err := os.Remove(p); {
+		case err == nil:
+			retired++
+		case !os.IsNotExist(err):
+			log.Printf("snapshot migration: removing %s: %v", p, err)
+		}
+	}
+
+	oldDir := filepath.Dir(oldValid)
+	base := filepath.Base(oldValid)
+	rotatedDir := filepath.Join(oldDir, "rotated")
+	if entries, readErr := os.ReadDir(rotatedDir); readErr == nil {
+		for _, e := range entries {
+			// Rotated copies are always "<base>.<timestamp>" — anything else
+			// in this directory is not ours and is left untouched.
+			if e.IsDir() || !strings.HasPrefix(e.Name(), base+".") {
+				continue
+			}
+			if err := os.Remove(filepath.Join(rotatedDir, e.Name())); err != nil {
+				log.Printf("snapshot migration: removing rotated copy %s: %v", e.Name(), err)
+				continue
+			}
+			retired++
+		}
+		// Succeeds only when empty, so foreign files are never forced out.
+		_ = os.Remove(rotatedDir)
+	}
+
+	// ".vault" is Vault's own default directory, so dropping it once empty is
+	// safe. Any other directory belongs to the user and is left alone.
+	if filepath.Base(oldDir) == ".vault" {
+		_ = os.Remove(oldDir)
+	}
+
+	log.Printf("snapshot migration: database moved to %s (%d file(s) retired from %s)",
+		newPath, retired, oldDir)
 }
 
 // LastSnapshot returns the time of the last successful snapshot (mutex-protected).
