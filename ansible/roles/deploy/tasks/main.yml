@@ -155,13 +155,11 @@
       ansible.builtin.raw: "chmod 0755 {{ plugin_dir }}/include/apply.sh"
       changed_when: true
 
-    # emhttp only executes scripts that live INSIDE webGui/event/<event>/;
-    # a plugin-local event/ directory is never scanned (issue #241).
-    - name: Ensure emhttp event directories exist
-      ansible.builtin.raw: "mkdir -p {{ emhttp_event_dir }}/started {{ emhttp_event_dir }}/stopping_svcs"
+    - name: Recreate emhttp event script directory
+      ansible.builtin.raw: "mkdir -p {{ plugin_dir }}/event"
       changed_when: true
 
-    - name: Upload array-started event script via SCP
+    - name: Upload emhttp event scripts via SCP
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
@@ -169,26 +167,12 @@
           scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
           -o PubkeyAuthentication=no -o PreferredAuthentications=password
           {{ playbook_dir }}/../plugin/event/started
-          {{ ansible_user }}@{{ ansible_host }}:{{ emhttp_event_dir }}/started/vault
-      changed_when: true
-
-    - name: Upload stopping_svcs event script via SCP
-      delegate_to: localhost
-      ansible.builtin.command:
-        cmd: >
-          sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
           {{ playbook_dir }}/../plugin/event/stopping_svcs
-          {{ ansible_user }}@{{ ansible_host }}:{{ emhttp_event_dir }}/stopping_svcs/vault
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/event/
       changed_when: true
 
     - name: Set event script permissions
-      ansible.builtin.raw: "chmod 0755 {{ emhttp_event_dir }}/started/vault {{ emhttp_event_dir }}/stopping_svcs/vault"
-      changed_when: true
-
-    - name: Remove stale plugin-local event directory
-      ansible.builtin.raw: "rm -rf {{ plugin_dir }}/event"
+      ansible.builtin.raw: "chmod 0755 {{ plugin_dir }}/event/started {{ plugin_dir }}/event/stopping_svcs"
       changed_when: true
 
     - name: Recreate proxied web UI directory

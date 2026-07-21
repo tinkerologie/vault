@@ -80,8 +80,6 @@ package: release
 	@mkdir -p $(BUILD_DIR)/pkg/etc/rc.d
 	@mkdir -p $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)
 	@mkdir -p $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui
-	@mkdir -p $(BUILD_DIR)/pkg/usr/local/emhttp/webGui/event/started
-	@mkdir -p $(BUILD_DIR)/pkg/usr/local/emhttp/webGui/event/stopping_svcs
 	cp $(BUILD_DIR)/$(BINARY)-linux-amd64 $(BUILD_DIR)/pkg/usr/local/sbin/$(BINARY)
 	cp plugin/rc.vault $(BUILD_DIR)/pkg/etc/rc.d/rc.vault
 	cp -r plugin/pages/*.page $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
@@ -89,10 +87,7 @@ package: release
 	cp plugin/README.md $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/README.md
 	cp -r web/dist/. $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui/
 	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
-	# emhttp only executes scripts that live INSIDE webGui/event/<event>/ —
-	# a plugin-local event/ directory is never scanned (issue #241).
-	cp plugin/event/started $(BUILD_DIR)/pkg/usr/local/emhttp/webGui/event/started/$(BINARY)
-	cp plugin/event/stopping_svcs $(BUILD_DIR)/pkg/usr/local/emhttp/webGui/event/stopping_svcs/$(BINARY)
+	cp -r plugin/event $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/
 	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"
 
