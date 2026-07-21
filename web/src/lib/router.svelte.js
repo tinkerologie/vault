@@ -25,10 +25,17 @@ if (typeof window !== 'undefined') {
   window.addEventListener('hashchange', handleHashChange)
   w.__vaultRouterHandler = handleHashChange
 
+  // Bind `import.meta.hot` to a local before use. A statement that *starts*
+  // with `import` is parsed as an import declaration by CodeQL's JavaScript
+  // extractor, which then fails on the `.` of `import.meta` and reports the
+  // whole file as a syntax error. Reading it in expression position avoids
+  // that, so the router stays in scope for scanning. Vite still replaces
+  // `import.meta.hot` with undefined in production, so the block is dead code
+  // there and drops out of the bundle as before.
   // @ts-ignore – Vite injects `import.meta.hot` only in dev builds.
-  if (import.meta.hot) {
-    // @ts-ignore
-    import.meta.hot.dispose(() => {
+  const hot = import.meta.hot
+  if (hot) {
+    hot.dispose(() => {
       window.removeEventListener('hashchange', handleHashChange)
       if (w.__vaultRouterHandler === handleHashChange) {
         w.__vaultRouterHandler = null
