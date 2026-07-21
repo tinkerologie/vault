@@ -3,16 +3,16 @@ name: "Vault CodeQL config"
 # Files to skip during analysis. Grouped by reason so future edits stay
 # coherent — don't drop unrelated paths into one bucket.
 paths-ignore:
-  # Svelte 5 rune modules (*.svelte.js / *.svelte.ts / *.svelte) — runes
-  # like $state, $derived, $effect, $props are compile-time macros
-  # transformed by the Svelte compiler. They are not valid plain
-  # JavaScript, so CodeQL's JS parser fails on them and reports a
-  # "Could not process some files due to syntax errors" warning
-  # (web/src/lib/router.svelte.js was the original symptom). The Svelte
-  # compiler does the static analysis on these files during the Vite
-  # build, and the runtime output is plain JS that CodeQL can scan.
-  - "web/src/**/*.svelte.js"
-  - "web/src/**/*.svelte.ts"
+  # Svelte components. A .svelte file is markup with an embedded <script>
+  # block, so it is not valid JavaScript and CodeQL's parser fails on the
+  # very first token, reporting "Could not process some files due to
+  # syntax errors". Components are covered by the Svelte compiler during
+  # the Vite build and by ESLint.
+  #
+  # Note: *.svelte.js / *.svelte.ts rune modules are deliberately NOT
+  # excluded. Runes such as $state and $derived are ordinary call
+  # expressions as far as a JS parser is concerned, so these files parse
+  # fine — and they hold real logic worth scanning.
   - "web/src/**/*.svelte"
 
   # Build output and third-party code — not our source, scanning it
