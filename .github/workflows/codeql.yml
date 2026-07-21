@@ -57,6 +57,18 @@ jobs:
         with:
           go-version: "1.26.5"
 
+      - uses: actions/setup-node@v7
+        if: matrix.language == 'go'
+        with:
+          node-version: "22"
+
+      # web/embed.go embeds dist/* , so the bundle must exist before autobuild
+      # compiles the package — otherwise the build dies with
+      # "pattern dist/*: no matching files found".
+      - name: Build web assets
+        if: matrix.language == 'go'
+        run: cd web && npm ci && npm run build
+
       # internal/release embeds CHANGELOG.md via //go:embed, and Go's embed
       # rules forbid parent-directory paths, so the repo-root copy must be in
       # place before autobuild compiles the package (same step as build.yml).
