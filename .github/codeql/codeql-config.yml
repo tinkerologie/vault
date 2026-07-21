@@ -3,17 +3,22 @@ name: "Vault CodeQL config"
 # Files to skip during analysis. Grouped by reason so future edits stay
 # coherent — don't drop unrelated paths into one bucket.
 paths-ignore:
-  # Svelte components. A .svelte file is markup with an embedded <script>
-  # block, so it is not valid JavaScript and CodeQL's parser fails on the
-  # very first token, reporting "Could not process some files due to
-  # syntax errors". Components are covered by the Svelte compiler during
-  # the Vite build and by ESLint.
+  # The HMR router is the one file CodeQL's JavaScript extractor cannot
+  # parse. It uses `import.meta.hot` for Vite's hot-module cleanup, and the
+  # extractor reports:
   #
-  # Note: *.svelte.js / *.svelte.ts rune modules are deliberately NOT
-  # excluded. Runes such as $state and $derived are ordinary call
-  # expressions as far as a JS parser is concerned, so these files parse
-  # fine — and they hold real logic worth scanning.
-  - "web/src/**/*.svelte"
+  #   web/src/lib/router.svelte.js#L31: A parse error occurred:
+  #   `Unexpected token`
+  #
+  # `import.meta` is module-only syntax the extractor does not accept here,
+  # and it cannot be avoided without dropping HMR cleanup, so the single
+  # file is excluded rather than the whole rune-module glob.
+  #
+  # Deliberately NOT excluded: the other *.svelte.js rune modules. Runes
+  # such as $state and $derived are ordinary call expressions to a parser,
+  # those files extract cleanly (confirmed in the extractor log), and they
+  # hold real logic worth scanning.
+  - "web/src/lib/router.svelte.js"
 
   # Build output and third-party code — not our source, scanning it
   # produces noisy alerts against upstream code we don't control.
