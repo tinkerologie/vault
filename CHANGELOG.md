@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.08] - 2026-07-21
+
 ### Fixed
 
 - **The web UI no longer keeps running the old version after a plugin upgrade.** `index.html` was served with no cache headers at all, so browsers applied their own heuristic caching and could keep loading the _previous_ JavaScript bundle against the freshly-upgraded API until the user manually hard-refreshed. `index.html` is now explicitly never cached, while the content-hashed assets under `/assets/` are cached permanently (they can never change identity), so upgrades take effect on the next normal page load.
