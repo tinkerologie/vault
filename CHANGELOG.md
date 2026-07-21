@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Security
+
+- **Cleared three high-severity advisories in build-time dependencies.** `brace-expansion` (reachable through ESLint) is updated to a patched release in the web UI's dependency tree. The repository root also carried a second, unused npm project whose only declared dependency was the `shadcn` CLI — it was referenced nowhere, excluded from every build, yet still accumulated advisories (`brace-expansion`, `js-yaml`) that had to be patched. It has been removed rather than patched again. None of these packages ship in the daemon or the web UI, so no runtime behaviour changes.
+
 ## [v2026.07.09] - 2026-07-21
 
 ### Added
