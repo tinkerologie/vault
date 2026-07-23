@@ -1,6 +1,7 @@
 /** WebSocket client with auto-reconnect */
 
 import { buildApiRequest, getLiveMode } from './runtime-config.js'
+import { backoffDelay } from './ws-backoff.js'
 import {
   handleAnomalyRaised,
   handleAnomalyUpdated,
@@ -16,6 +17,19 @@ let pollTimer = null
 let previousStatus = null
 let pollEnabled = false
 let status = $state('disconnected')
+
+// Bounded exponential backoff for reconnection. A fixed 3s uncapped loop churned
+// silently forever when the daemon was unreachable; jittered, capped backoff
+// (see ws-backoff.js) makes persistent failures gentle on the daemon and
+// diagnosable via the connection indicator (issue #250).
+let reconnectAttempts = 0
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer)
+  const delay = backoffDelay(reconnectAttempts)
+  reconnectAttempts++
+  reconnectTimer = setTimeout(connectWs, delay)
+}
 
 export function getWsStatus() {
   return status
@@ -128,14 +142,33 @@ export function connectWs() {
   let url = `${proto}//${location.host}/api/v1/ws`
 
   status = 'connecting'
-  ws = new WebSocket(url)
+  // Capture this socket locally so a stale handler (from a socket that was
+  // replaced) can never mutate shared state for the current connection.
+  let socket
+  try {
+    socket = new WebSocket(url)
+  } catch {
+    // The WebSocket constructor can throw (blocked API / SecurityError). This
+    // runs from the reconnect timer too, so swallow it and keep the bounded
+    // retry loop alive instead of letting the exception kill reconnection.
+    ws = null
+    status = 'reconnecting'
+    scheduleReconnect()
+    return
+  }
+  ws = socket
 
-  ws.onopen = () => {
+  socket.onopen = () => {
+    if (ws !== socket) return
     status = 'connected'
+    reconnectAttempts = 0
     clearTimeout(reconnectTimer)
   }
 
-  ws.onmessage = (e) => {
+  socket.onmessage = (e) => {
+    // Drop late messages from a superseded socket so a reconnect race can't
+    // emit stale events — same guard as onopen/onclose.
+    if (ws !== socket) return
     try {
       const msg = JSON.parse(e.data)
       emitMessage(msg)
@@ -144,14 +177,18 @@ export function connectWs() {
     }
   }
 
-  ws.onclose = () => {
-    status = 'disconnected'
+  socket.onclose = () => {
+    if (ws !== socket) return
+    // Every onclose schedules an automatic retry (disconnectWs detaches this
+    // handler for manual/terminal closes), so 'reconnecting' is the honest
+    // status — 'disconnected' is reserved for the idle/torn-down state.
+    status = 'reconnecting'
     ws = null
-    reconnectTimer = setTimeout(connectWs, 3000)
+    scheduleReconnect()
   }
 
-  ws.onerror = () => {
-    ws?.close()
+  socket.onerror = () => {
+    socket.close()
   }
 }
 
@@ -161,6 +198,7 @@ export function disconnectWs() {
   pollTimer = null
   pollEnabled = false
   previousStatus = null
+  reconnectAttempts = 0
   if (ws) {
     ws.onclose = null
     ws.close()

@@ -20,6 +20,36 @@ let isThemed = $state(false)
 /** @type {MediaQueryList | null} */
 let mediaQuery = null
 
+// Brave's aggressive Shields (and Safari private mode / sandboxed iframes) can
+// throw SecurityError on any localStorage access. These helpers degrade to
+// in-memory defaults instead of throwing, so a blocked storage API can never
+// abort theme init and, in turn, the whole boot sequence (issue #250).
+/** @param {string} key @returns {string | null} */
+function safeGet(key) {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+/** @param {string} key @param {string} value @returns {boolean} true when persisted */
+function safeSet(key, value) {
+  try {
+    localStorage.setItem(key, value)
+    return true
+  } catch {
+    return false // storage blocked or quota exceeded – keep in-memory value only
+  }
+}
+
+/** @param {string} key */
+function safeRemove(key) {
+  try {
+    localStorage.removeItem(key)
+  } catch { /* storage blocked – nothing to remove */ }
+}
+
 const STYLE_CLASSES = ['theme-1bit', 'theme-8bit', 'theme-16bit']
 const VALID_STYLES = /** @type {const} */ (['default', '1bit', '8bit', '16bit'])
 const VALID_MODES = /** @type {const} */ (['light', 'system', 'dark'])
@@ -58,7 +88,7 @@ function applyTheme() {
 
 /** Migrate from old single-key 'vault-theme' to two-key system */
 function migrateOldTheme() {
-  const old = localStorage.getItem('vault-theme')
+  const old = safeGet('vault-theme')
   if (!old) return
   /** @type {Record<string, {style: string, mode: string}>} */
   const map = {
@@ -70,16 +100,30 @@ function migrateOldTheme() {
   }
   const mapped = map[old]
   if (mapped) {
-    localStorage.setItem(STYLE_KEY, mapped.style)
-    localStorage.setItem(MODE_KEY, mapped.mode)
+    // Apply the migrated preference in memory immediately so it takes effect
+    // this session even if persistence fails. initTheme reads the new keys
+    // after this returns, but on a failed write those keys are null and won't
+    // override what we set here.
+    style = /** @type {'default' | '1bit' | '8bit' | '16bit'} */ (mapped.style)
+    mode = /** @type {'light' | 'system' | 'dark'} */ (mapped.mode)
+    // Only retire the legacy key once BOTH new keys are durably written, so a
+    // partial write (e.g. quota exceeded mid-migration) can't drop the setting;
+    // vault-theme is retained for a retry on the next boot.
+    const wroteStyle = safeSet(STYLE_KEY, mapped.style)
+    const wroteMode = safeSet(MODE_KEY, mapped.mode)
+    if (wroteStyle && wroteMode) {
+      safeRemove('vault-theme')
+    }
+    return
   }
-  localStorage.removeItem('vault-theme')
+  // Unrecognised legacy value – nothing to preserve, drop it.
+  safeRemove('vault-theme')
 }
 
 export function initTheme() {
   migrateOldTheme()
-  const storedStyle = localStorage.getItem(STYLE_KEY)
-  const storedMode = localStorage.getItem(MODE_KEY)
+  const storedStyle = safeGet(STYLE_KEY)
+  const storedMode = safeGet(MODE_KEY)
   if (storedStyle && VALID_STYLES.includes(/** @type {any} */ (storedStyle))) {
     style = /** @type {'default' | '1bit' | '8bit' | '16bit'} */ (storedStyle)
   }
@@ -91,10 +135,18 @@ export function initTheme() {
   // to actually unregister the old listener – a fresh matchMedia() returns a
   // brand-new object that has no listeners attached.
   if (mediaQuery) {
-    mediaQuery.removeEventListener('change', applyTheme)
+    try {
+      mediaQuery.removeEventListener('change', applyTheme)
+    } catch { /* ignore – listener may not be attachable in this browser */ }
   }
-  mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-  mediaQuery.addEventListener('change', applyTheme)
+  // matchMedia is blocked by Brave's fingerprinting protection in some
+  // configs; degrade to the dark default rather than throwing (issue #250).
+  try {
+    mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    mediaQuery.addEventListener('change', applyTheme)
+  } catch {
+    mediaQuery = null
+  }
   applyTheme()
 }
 
@@ -124,13 +176,13 @@ export const getIsRetro = getIsThemed
 /** @param {'default' | '1bit' | '8bit' | '16bit'} newStyle */
 export function setStyle(newStyle) {
   style = newStyle
-  localStorage.setItem(STYLE_KEY, newStyle)
+  safeSet(STYLE_KEY, newStyle)
   applyTheme()
 }
 
 /** @param {'light' | 'system' | 'dark'} newMode */
 export function setMode(newMode) {
   mode = newMode
-  localStorage.setItem(MODE_KEY, newMode)
+  safeSet(MODE_KEY, newMode)
   applyTheme()
 }

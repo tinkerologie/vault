@@ -107,6 +107,25 @@ func ReadOnlyGuard(next http.Handler) http.Handler {
 	})
 }
 
+// PrivateNetworkAccess answers Chrome/Brave Private Network Access (PNA)
+// preflights. When a page on a more-public origin (e.g. the Unraid webGUI on
+// *.myunraid.net) fetches the daemon on a private LAN/loopback address, the
+// browser sends an OPTIONS preflight carrying
+// Access-Control-Request-Private-Network: true and blocks the request unless the
+// response echoes Access-Control-Allow-Private-Network: true. go-chi/cors does
+// not emit this header, so add it here without touching the origin allow-list.
+// Registered outside cors.Handler so the header survives the preflight response
+// (issue #250).
+func PrivateNetworkAccess(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions &&
+			r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+			w.Header().Set("Access-Control-Allow-Private-Network", "true")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // BodySizeLimit returns middleware that limits the request body to maxBytes.
 // Requests exceeding the limit receive a 413 Payload Too Large response.
 func BodySizeLimit(maxBytes int64) func(http.Handler) http.Handler {

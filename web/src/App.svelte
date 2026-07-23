@@ -1,6 +1,6 @@
 <script>
   import { getRoute, navigate } from './lib/router.svelte.js'
-  import { connectWs } from './lib/ws.svelte.js'
+  import { connectWs, getWsStatus } from './lib/ws.svelte.js'
   import { initTheme, getMode, setMode, getIsThemed } from './lib/theme.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
   import { shouldRedirectRoute } from './lib/route-guard.js'
@@ -99,21 +99,58 @@
   let ready = $state(false)
   let replicaMode = $state(false)
 
-  onMount(async () => {
-    initTheme()
-    // Detect replica mode from health endpoint.
-    try {
-      const health = await api.health()
-      if (health.mode === 'replica') {
-        setReplicaMode(true)
-        replicaMode = true
+  // Watchdog threshold: how long any boot step may stall before we force the
+  // shell to render anyway. Brave's blocked storage APIs and an unreachable
+  // daemon (the LAN-IP workaround) could otherwise hang the SPA forever.
+  const BOOT_WATCHDOG_MS = 8000
+
+  onMount(() => {
+    let watchdog = setTimeout(() => {
+      ready = true
+    }, BOOT_WATCHDOG_MS)
+
+    ;(async () => {
+      try {
+        // initTheme is guarded internally, but keep a belt-and-braces catch so a
+        // future unguarded line here can never abort the boot sequence.
+        try { initTheme() } catch { /* theme failures must never block boot */ }
+
+        // Detect replica mode from health endpoint.
+        try {
+          const health = await api.health()
+          if (health.mode === 'replica') {
+            setReplicaMode(true)
+            replicaMode = true
+          }
+        } catch { /* ignore – default to daemon mode */ }
+
+        // connectWs is synchronous; guard it so a throwing WebSocket constructor
+        // can't reject this IIFE. The ws layer owns its own retry/backoff.
+        try { connectWs() } catch { /* ignore – ws layer reconnects on its own */ }
+
+        try {
+          await loadFeatureFlags()
+        } catch { /* ignore – store fails open; never block the app from becoming ready */ }
+      } finally {
+        clearTimeout(watchdog)
+        ready = true
       }
-    } catch { /* ignore – default to daemon mode */ }
-    connectWs()
-    try {
-      await loadFeatureFlags()
-    } catch { /* ignore – store fails open; never block the app from becoming ready */ }
-    ready = true
+    })()
+
+    // Clear the watchdog on unmount so a pending timeout can't fire against a
+    // destroyed component (e.g. during dev HMR).
+    return () => clearTimeout(watchdog)
+  })
+
+  // Surface persistent connection trouble in a small, non-blocking banner so a
+  // failing daemon/WebSocket is diagnosable instead of appearing as a frozen
+  // page. Driven purely by the live-connection status: 'polling', 'connecting',
+  // and 'connected' are healthy/transient and stay silent. Deliberately NOT tied
+  // to boot-degraded state — a browser that merely blocks storage must not be
+  // reported as a daemon outage.
+  let connectionLost = $derived.by(() => {
+    const wsStatus = getWsStatus()
+    return ready && (wsStatus === 'disconnected' || wsStatus === 'reconnecting')
   })
 
   function isActive(path) {
@@ -159,6 +196,15 @@
 <CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
 
 <a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-white focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
+
+{#if connectionLost}
+  <div role="status" aria-live="polite"
+    class="fixed top-0 left-0 right-0 z-[150] flex items-center justify-center gap-3 px-4 py-2 text-sm bg-amber-500/95 text-amber-950">
+    <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+    <span>Live connection to the Vault daemon is unavailable. Data may be out of date.</span>
+    <button onclick={() => location.reload()} class="underline font-medium hover:no-underline">Reload</button>
+  </div>
+{/if}
 
 <div class="flex h-screen bg-surface">
   {#if !ready}

@@ -9,8 +9,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Differential backups to dedup/chunked destinations now skip unchanged data at the filesystem level.** The chunked/dedup backup path did not honour the `changed_since` reference that the classic tar path already used, so an incremental run re-read and re-processed files (and whole container volumes) that had not changed since the last backup. Files and volumes older than the reference are now skipped in the chunked walk — matching the differential behaviour of the tar path — while directories are still recorded. A malformed or absent `changed_since` safely falls back to a full backup. Closes #249.
+- **The web UI no longer hangs forever on the loading spinner in Brave (and other privacy-hardened browsers).** Brave's default Shields can make `localStorage` and `matchMedia` throw a `SecurityError` — most often when the console is embedded in the Unraid page as an iframe — which aborted theme setup during boot before the app ever became interactive, so the tab loaded endlessly ("Tab is not responding"). Every storage/media-query access during startup is now guarded and degrades to sensible in-memory defaults, and a boot watchdog guarantees the interface always becomes usable even if a startup step stalls. Closes #250.
+
+### Changed
+
+- **A connection banner now appears when the live link to the Vault daemon is lost.** Instead of a silently frozen page, a banner explains that data may be out of date and offers a one-click reload, so a persistent connection problem is visible and recoverable rather than invisible.
+- **The live-update WebSocket now reconnects with exponential backoff and jitter** (capped at 30s) instead of a fixed 3-second loop, so an unreachable daemon no longer churns the network and many clients reconnecting after a restart don't stampede in lockstep.
 
 ### Security
+
+- **Direct LAN access to the daemon now answers browser Private Network Access preflights.** Chrome and Brave (130+/Edge 143+) block requests from a more-public origin to a private LAN/loopback address unless the daemon echoes `Access-Control-Allow-Private-Network: true` on the preflight. The daemon now returns this header alongside its existing CORS response, without changing the origin allow-list, so the Unraid-embedded and LAN-IP access paths keep working across browsers.
 
 - **Cleared three high-severity advisories in build-time dependencies.** `brace-expansion` (reachable through ESLint) is updated to a patched release in the web UI's dependency tree. The repository root also carried a second, unused npm project whose only declared dependency was the `shadcn` CLI — it was referenced nowhere, excluded from every build, yet still accumulated advisories (`brace-expansion`, `js-yaml`) that had to be patched. It has been removed rather than patched again. None of these packages ship in the daemon or the web UI, so no runtime behaviour changes.
 

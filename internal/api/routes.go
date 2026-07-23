@@ -44,6 +44,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Heartbeat("/ping"))
 	r.Use(BodySizeLimit(maxRequestBodySize))
+	// Answer Private Network Access preflights before cors.Handler writes the
+	// preflight response, so Chrome/Brave don't block LAN/loopback fetches from
+	// a more-public origin (issue #250).
+	r.Use(PrivateNetworkAccess)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://*.myunraid.net", "http://localhost:*", "http://127.0.0.1:*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
