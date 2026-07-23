@@ -240,6 +240,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	// (tarDirectoryFiltered). For container volumes these arrive already
 	// mapped to volume-relative paths via mapExclusionsToVolume.
 	exclusions := extractExcludePaths(item.Settings)
+	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	chunker, err := dedup.NewChunker(repo.SplitterSecret())
 	if err != nil {
 		return dedup.ID{}, err
@@ -300,6 +301,12 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 		}
 		if !info.Mode().IsRegular() {
 			log.Printf("engine: skipping non-regular file %s (mode %v)", rel, info.Mode())
+			return nil
+		}
+		// Skip files whose mtime is not after the changed_since reference.
+		// Consistent with pathChangedSince and tarDirectoryFiltered.
+		// Directory entries are still recorded above for restore structure.
+		if hasChangedSince && !info.ModTime().After(changedSince) {
 			return nil
 		}
 		warnIfSparse(rel, info)

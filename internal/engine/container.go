@@ -1373,6 +1373,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// (shouldExcludeMount) and surviving mounts get their patterns mapped to
 	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
 	exclusions := containerExclusions(item.Settings)
+	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	if progress != nil {
 		progress(item.Name, 50, "backing up volumes")
 	}
@@ -1403,6 +1404,20 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
 			continue
 		}
+		// For differential backups, skip volumes whose entire tree is
+		// unchanged since the reference time. Mirrors the classic Backup
+		// path's pathChangedSince check.
+		if hasChangedSince {
+			changed, err := pathChangedSince(mnt.Source, changedSince)
+			if err != nil {
+				return dedup.ID{}, fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
+			}
+			if !changed {
+				log.Printf("engine: chunked: skipping volume %s for %s: unchanged since reference", mnt.Source, item.Name)
+				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+				continue
+			}
+		}
 		volItem := BackupItem{
 			Name: mnt.Destination,
 			Type: "folder",
@@ -1410,6 +1425,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				"path":          mnt.Source,
 				"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 			},
+		}
+		// Propagate changed_since for per-file filtering inside
+		// FolderHandler.BackupChunked (Task 1).
+		if hasChangedSince {
+			volItem.Settings["changed_since"] = item.Settings["changed_since"]
 		}
 		volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
 		if vErr != nil {
