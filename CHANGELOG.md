@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Differential backups to dedup/chunked destinations now skip unchanged data at the filesystem level.** The chunked/dedup backup path did not honour the `changed_since` reference that the classic tar path already used, so an incremental run re-read and re-processed files (and whole container volumes) that had not changed since the last backup. Files and volumes older than the reference are now skipped in the chunked walk — matching the differential behaviour of the tar path — while directories are still recorded. A malformed or absent `changed_since` safely falls back to a full backup. Closes #249.
+
 ### Security
 
 - **Cleared three high-severity advisories in build-time dependencies.** `brace-expansion` (reachable through ESLint) is updated to a patched release in the web UI's dependency tree. The repository root also carried a second, unused npm project whose only declared dependency was the `shadcn` CLI — it was referenced nowhere, excluded from every build, yet still accumulated advisories (`brace-expansion`, `js-yaml`) that had to be patched. It has been removed rather than patched again. None of these packages ship in the daemon or the web UI, so no runtime behaviour changes.
