@@ -571,7 +571,7 @@ type mockDockerClient struct {
 
 	stopCalled  bool
 	startCalled bool
-	stopErr    error
+	stopErr     error
 }
 
 func (m *mockDockerClient) ContainerInspect(ctx context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
