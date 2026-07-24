@@ -568,6 +568,10 @@ type mockDockerClient struct {
 	inspectResp client.ContainerInspectResult
 	inspectErr  error
 	imageResp   client.ImageInspectResult
+
+	stopCalled  bool
+	startCalled bool
+	stopErr    error
 }
 
 func (m *mockDockerClient) ContainerInspect(ctx context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
@@ -587,10 +591,12 @@ func (m *mockDockerClient) ContainerCreate(ctx context.Context, _ client.Contain
 	return client.ContainerCreateResult{}, errors.New("mockDockerClient: ContainerCreate not implemented")
 }
 func (m *mockDockerClient) ContainerStart(ctx context.Context, _ string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {
-	return client.ContainerStartResult{}, errors.New("mockDockerClient: ContainerStart not implemented")
+	m.startCalled = true
+	return client.ContainerStartResult{}, nil
 }
 func (m *mockDockerClient) ContainerStop(ctx context.Context, _ string, _ client.ContainerStopOptions) (client.ContainerStopResult, error) {
-	return client.ContainerStopResult{}, errors.New("mockDockerClient: ContainerStop not implemented")
+	m.stopCalled = true
+	return client.ContainerStopResult{}, m.stopErr
 }
 func (m *mockDockerClient) ContainerRemove(ctx context.Context, _ string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	return client.ContainerRemoveResult{}, errors.New("mockDockerClient: ContainerRemove not implemented")

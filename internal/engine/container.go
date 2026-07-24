@@ -559,7 +559,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	if wasRunning && !noStop {
 		progress(item.Name, 20, "stopping container")
 		if _, err := h.cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{}); err != nil {
-			return nil, fmt.Errorf("stopping container: %w", err)
+			return nil, fmt.Errorf("stopping container %s: %w", item.Name, err)
 		}
 	}
 
@@ -811,7 +811,9 @@ func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, 
 		return runErr
 	}
 
-	progress(itemName, 92, "restarting container")
+	if progress != nil {
+		progress(itemName, 92, "restarting container")
+	}
 	restartErr := restart()
 	if restartErr == nil {
 		return runErr
@@ -1318,6 +1320,12 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		if err != nil {
 			return dedup.ID{}, fmt.Errorf("inspecting container: %w", err)
 		}
+		// Reassign containerID from the fresh inspect so that
+		// ContainerStop/ContainerStart below target the current container,
+		// not a stale ID from a previous run. Mirrors the classic Backup
+		// path (see containerID reassignment after fallback inspect).
+		containerID = inspectResult.Container.ID
+		log.Printf("[backup-chunked] container %q: resolved by name (ID changed from stored value to %s)", item.Name, ShortID(containerID))
 	}
 	inspect := inspectResult.Container
 	warnNetworkDependency(inspect, item.Name)
@@ -1374,71 +1382,92 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
 	exclusions := containerExclusions(item.Settings)
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
-	if progress != nil {
-		progress(item.Name, 50, "backing up volumes")
+	// Stop container for consistent backup (mirrors classic Backup path).
+	wasRunning := inspect.State.Running
+	noStop, _ := item.Settings["no_stop"].(bool)
+	if wasRunning && !noStop {
+		if progress != nil {
+			progress(item.Name, 20, "stopping container")
+		}
+		if _, err := h.cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{}); err != nil {
+			return dedup.ID{}, fmt.Errorf("stopping container %s: %w", item.Name, err)
+		}
 	}
-	for _, mnt := range inspect.Mounts {
-		if !backupableMount(string(mnt.Type)) {
-			continue
-		}
-		if mnt.Source == "" || mnt.Destination == "" {
-			continue
-		}
-		key := containerVolPrefix + mnt.Destination
-		if !restorableVolume(string(mnt.Type), mnt.Name) {
-			log.Printf("engine: chunked: skipping anonymous volume %q for %s (not restorable)", mnt.Destination, item.Name)
-			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
-			continue
-		}
-		if skip, reason := shouldSkipVolume(mnt.Source); skip {
-			log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
-			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
-			continue
-		}
-		// Honour exclusion patterns at the volume level — for a `/` → `/rootfs`
-		// bind mount (Glances, Telegraf, Netdata) this prevents walking the
-		// entire host filesystem. Recorded as skipped so RestoreChunked keeps
-		// the diagnostic entry without dereferencing a missing sub-manifest.
-		if shouldExcludeMount(exclusions, mnt.Destination) {
-			log.Printf("engine: chunked: skipping volume %s for %s: matches exclusion pattern", mnt.Source, item.Name)
-			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
-			continue
-		}
-		// For differential backups, skip volumes whose entire tree is
-		// unchanged since the reference time. Mirrors the classic Backup
-		// path's pathChangedSince check.
-		if hasChangedSince {
-			changed, err := pathChangedSince(mnt.Source, changedSince)
-			if err != nil {
-				return dedup.ID{}, fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
+	if progress != nil {
+		progress(item.Name, 60, "backing up volumes")
+	}
+
+	err = runWithRestart(wasRunning && !noStop, item.Name, progress, func() error {
+		for _, mnt := range inspect.Mounts {
+			if !backupableMount(string(mnt.Type)) {
+				continue
 			}
-			if !changed {
-				log.Printf("engine: chunked: skipping volume %s for %s: unchanged since reference", mnt.Source, item.Name)
+			if mnt.Source == "" || mnt.Destination == "" {
+				continue
+			}
+			key := containerVolPrefix + mnt.Destination
+			if !restorableVolume(string(mnt.Type), mnt.Name) {
+				log.Printf("engine: chunked: skipping anonymous volume %q for %s (not restorable)", mnt.Destination, item.Name)
 				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
 				continue
 			}
+			if skip, reason := shouldSkipVolume(mnt.Source); skip {
+				log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
+				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+				continue
+			}
+			// Honour exclusion patterns at the volume level — for a `/` → `/rootfs`
+			// bind mount (Glances, Telegraf, Netdata) this prevents walking the
+			// entire host filesystem. Recorded as skipped so RestoreChunked keeps
+			// the diagnostic entry without dereferencing a missing sub-manifest.
+			if shouldExcludeMount(exclusions, mnt.Destination) {
+				log.Printf("engine: chunked: skipping volume %s for %s: matches exclusion pattern", mnt.Source, item.Name)
+				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+				continue
+			}
+			// For differential backups, skip volumes whose entire tree is
+			// unchanged since the reference time. Mirrors the classic Backup
+			// path's pathChangedSince check.
+			if hasChangedSince {
+				changed, err := pathChangedSince(mnt.Source, changedSince)
+				if err != nil {
+					return fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
+				}
+				if !changed {
+					log.Printf("engine: chunked: skipping volume %s for %s: unchanged since reference", mnt.Source, item.Name)
+					m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+					continue
+				}
+			}
+			volItem := BackupItem{
+				Name: mnt.Destination,
+				Type: "folder",
+				Settings: map[string]any{
+					"path":          mnt.Source,
+					"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
+				},
+			}
+			// Propagate changed_since for per-file filtering inside
+			// FolderHandler.BackupChunked.
+			if hasChangedSince {
+				volItem.Settings["changed_since"] = item.Settings["changed_since"]
+			}
+			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
+			if vErr != nil {
+				return fmt.Errorf("backup volume %s: %w", mnt.Destination, vErr)
+			}
+			m.Files[key] = dedup.ManifestEntry{
+				Size:   0,
+				Chunks: []dedup.ID{volManifestID},
+			}
 		}
-		volItem := BackupItem{
-			Name: mnt.Destination,
-			Type: "folder",
-			Settings: map[string]any{
-				"path":          mnt.Source,
-				"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
-			},
-		}
-		// Propagate changed_since for per-file filtering inside
-		// FolderHandler.BackupChunked (Task 1).
-		if hasChangedSince {
-			volItem.Settings["changed_since"] = item.Settings["changed_since"]
-		}
-		volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
-		if vErr != nil {
-			return dedup.ID{}, fmt.Errorf("backup volume %s: %w", mnt.Destination, vErr)
-		}
-		m.Files[key] = dedup.ManifestEntry{
-			Size:   0,
-			Chunks: []dedup.ID{volManifestID},
-		}
+		return nil
+	}, func() error {
+		_, err := h.cli.ContainerStart(ctx, containerID, client.ContainerStartOptions{})
+		return err
+	})
+	if err != nil {
+		return dedup.ID{}, err
 	}
 
 	manifestID, err := repo.PutManifest(item.Name, m)
