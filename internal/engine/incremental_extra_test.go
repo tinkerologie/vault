@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestParseChangedSince(t *testing.T) {
 
 func TestPathChangedSinceMissing(t *testing.T) {
 	t.Parallel()
-	_, err := pathChangedSince(filepath.Join(t.TempDir(), "missing"), time.Now())
+	_, err := pathChangedSince(context.Background(), filepath.Join(t.TempDir(), "missing"), time.Now())
 	if err == nil {
 		t.Error("expected error for missing path")
 	}
@@ -43,7 +44,7 @@ func TestPathChangedSinceMissing(t *testing.T) {
 func TestPathChangedSinceZeroTime(t *testing.T) {
 	t.Parallel()
 	// Zero time → always changed (shortcut return)
-	got, err := pathChangedSince("/tmp", time.Time{})
+	got, err := pathChangedSince(context.Background(), "/tmp", time.Time{})
 	if err != nil {
 		t.Errorf("zero time err: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestPathChangedSinceZeroTime(t *testing.T) {
 func TestFilterChangedDomainDisksZeroTime(t *testing.T) {
 	t.Parallel()
 	disks := []domainDisk{{Path: "/x"}, {Path: "/y"}}
-	got, err := filterChangedDomainDisks(disks, time.Time{})
+	got, err := filterChangedDomainDisks(context.Background(), disks, time.Time{})
 	if err != nil {
 		t.Errorf("err: %v", err)
 	}
@@ -67,6 +68,7 @@ func TestFilterChangedDomainDisksZeroTime(t *testing.T) {
 func TestFilterChangedDomainDisksError(t *testing.T) {
 	t.Parallel()
 	_, err := filterChangedDomainDisks(
+		context.Background(),
 		[]domainDisk{{Path: "/nonexistent-disk-xyz"}},
 		time.Now(),
 	)

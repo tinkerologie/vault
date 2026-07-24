@@ -245,7 +245,7 @@ func (h *VMHandler) Backup(ctx context.Context, item BackupItem, destDir string,
 		// backups — preserved here for parity with previous behaviour.
 		changedSince, hasChangedSince := parseChangedSince(item.Settings)
 		if hasChangedSince {
-			copyDisks, err = filterChangedDomainDisks(disks, changedSince)
+			copyDisks, err = filterChangedDomainDisks(ctx, disks, changedSince)
 			if err != nil {
 				return nil, fmt.Errorf("filtering changed disks: %w", err)
 			}

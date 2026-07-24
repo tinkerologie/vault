@@ -323,13 +323,19 @@ func (r *Runner) CancelJob(jobID int64) error {
 	}
 
 	log.Printf("runner: cancelling job %d", jobID)
-	fn()
 
+	// Mark the operator cancel BEFORE cancelling the context. Cancellation is
+	// now prompt (the differential pre-scan honours ctx — issue #251), so the
+	// run goroutine can unwind and classify the outcome the instant fn() runs.
+	// If Cancelling were still false at that point the operator cancel would be
+	// misread as a stall-watchdog cancel and scheduled for an unwanted retry.
 	r.statusMu.Lock()
 	if r.currentRun != nil && r.currentRun.JobID == jobID {
 		r.currentRun.Cancelling = true
 	}
 	r.statusMu.Unlock()
+
+	fn()
 
 	r.broadcast(map[string]any{
 		"type":   "job_cancelling",

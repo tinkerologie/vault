@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -34,9 +35,12 @@ func parseChangedSince(settings map[string]any) (time.Time, bool) {
 	return changedSince, true
 }
 
-func pathChangedSince(path string, changedSince time.Time) (bool, error) {
+func pathChangedSince(ctx context.Context, path string, changedSince time.Time) (bool, error) {
 	if changedSince.IsZero() {
 		return true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
 
 	info, err := os.Lstat(path)
@@ -56,6 +60,11 @@ func pathChangedSince(path string, changedSince time.Time) (bool, error) {
 		if walkErr != nil {
 			return walkErr
 		}
+		// Honour cancellation between files so a large unchanged tree does
+		// not block backup cancellation (issue #251).
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkInfo.ModTime().After(changedSince) {
 			return errPathChanged
 		}
@@ -71,7 +80,7 @@ func pathChangedSince(path string, changedSince time.Time) (bool, error) {
 	return false, nil
 }
 
-func filterChangedDomainDisks(disks []domainDisk, changedSince time.Time) ([]domainDisk, error) {
+func filterChangedDomainDisks(ctx context.Context, disks []domainDisk, changedSince time.Time) ([]domainDisk, error) {
 	if changedSince.IsZero() {
 		copied := make([]domainDisk, len(disks))
 		copy(copied, disks)
@@ -80,7 +89,7 @@ func filterChangedDomainDisks(disks []domainDisk, changedSince time.Time) ([]dom
 
 	changed := make([]domainDisk, 0, len(disks))
 	for _, disk := range disks {
-		diskChanged, err := pathChangedSince(disk.Path, changedSince)
+		diskChanged, err := pathChangedSince(ctx, disk.Path, changedSince)
 		if err != nil {
 			return nil, fmt.Errorf("checking disk %s changes: %w", disk.Path, err)
 		}

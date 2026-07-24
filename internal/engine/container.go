@@ -649,19 +649,6 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				continue
 			}
 
-			if hasChangedSince {
-				changed, err := pathChangedSince(mount.Source, changedSince)
-				if err != nil {
-					return fmt.Errorf("checking volume %s changes: %w", mount.Source, err)
-				}
-				if !changed {
-					entry.BackedUp = false
-					entry.SkipReason = "unchanged since reference"
-					manifest = append(manifest, entry)
-					continue
-				}
-			}
-
 			// Honour exclusion patterns at the volume level for BOTH directory
 			// and file mounts. Historically this check only applied to
 			// file-based mounts, which meant exclusions like `/rootfs` for
@@ -676,13 +663,28 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			// called first; for a `/` → `/rootfs` mount that meant a
 			// filepath.Walk of the entire host filesystem before the volume
 			// was skipped, regressing the original #70 fix (a 37 s Test
-			// Containers job degraded to 14 minutes).
+			// Containers job degraded to 14 minutes). The differential
+			// pathChangedSince pre-scan below is another such walk, so it
+			// likewise runs only after the exclusion check.
 			if shouldExcludeMount(exclusions, mount.Destination) {
 				log.Printf("engine: skipping volume %s for %s: matches exclusion pattern", mount.Source, item.Name)
 				entry.BackedUp = false
 				entry.SkipReason = "matches exclusion pattern"
 				manifest = append(manifest, entry)
 				continue
+			}
+
+			if hasChangedSince {
+				changed, err := pathChangedSince(ctx, mount.Source, changedSince)
+				if err != nil {
+					return fmt.Errorf("checking volume %s changes: %w", mount.Source, err)
+				}
+				if !changed {
+					entry.BackedUp = false
+					entry.SkipReason = "unchanged since reference"
+					manifest = append(manifest, entry)
+					continue
+				}
 			}
 
 			// Detect file-based bind mounts (e.g. Tailscale hook files).
@@ -774,7 +776,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		if data, err := os.ReadFile(templatePath); err == nil { // #nosec G304 G703 — templatePath is fixed base dir + item.Name from Docker inspect
 			includeTemplate := true
 			if hasChangedSince {
-				changed, changeErr := pathChangedSince(templatePath, changedSince)
+				changed, changeErr := pathChangedSince(ctx, templatePath, changedSince)
 				if changeErr != nil {
 					return fmt.Errorf("checking template changes: %w", changeErr)
 				}
@@ -792,7 +794,9 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 
 		return nil
 	}, func() error {
-		_, err := h.cli.ContainerStart(ctx, containerID, client.ContainerStartOptions{})
+		restartCtx, cancel := restartCleanupCtx(ctx)
+		defer cancel()
+		_, err := h.cli.ContainerStart(restartCtx, containerID, client.ContainerStartOptions{})
 		return err
 	}); err != nil {
 		return nil, err
@@ -801,6 +805,16 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	progress(item.Name, 100, "backup complete")
 	result.Success = true
 	return result, nil
+}
+
+// restartCleanupCtx returns a bounded context for the post-backup container
+// restart that is detached from cancellation of the backup context. Without
+// this, a cancelled backup (operator Cancel or the stall watchdog) would also
+// fail the restart — the Moby client ties ContainerStart to its request
+// context — leaving a previously-running container stopped. The timeout keeps
+// cleanup from hanging on an unresponsive daemon. See issue #251.
+func restartCleanupCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 }
 
 // runWithRestart ensures a previously running container is started again even
@@ -1429,7 +1443,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			// unchanged since the reference time. Mirrors the classic Backup
 			// path's pathChangedSince check.
 			if hasChangedSince {
-				changed, err := pathChangedSince(mnt.Source, changedSince)
+				changed, err := pathChangedSince(ctx, mnt.Source, changedSince)
 				if err != nil {
 					return fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
 				}
@@ -1463,7 +1477,9 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		}
 		return nil
 	}, func() error {
-		_, err := h.cli.ContainerStart(ctx, containerID, client.ContainerStartOptions{})
+		restartCtx, cancel := restartCleanupCtx(ctx)
+		defer cancel()
+		_, err := h.cli.ContainerStart(restartCtx, containerID, client.ContainerStartOptions{})
 		return err
 	})
 	if err != nil {
