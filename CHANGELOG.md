@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.07.10] - 2026-07-24
+
 ### Fixed
 
 - **Cancelling a differential backup now takes effect immediately, even during the pre-scan of unchanged data.** The `changed_since` pre-scan (`pathChangedSince`) walked a volume or VM disk tree to completion before honouring a cancel request, so cancelling a differential backup of a large, mostly-unchanged path could hang until the whole tree had been read. The scan now checks for cancellation between files — matching the rest of the backup engine — so container (classic and dedup/chunked) and VM differential backups stop promptly. As part of making cancellation prompt: a cancelled container backup now always restarts the container it stopped (the restart no longer rides on the cancelled request context, which previously could leave a running container stopped), and an operator **Cancel** is no longer occasionally misclassified as a stall and scheduled for an automatic retry. Closes #251.
