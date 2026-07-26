@@ -120,19 +120,76 @@ func TestRestoreCommandKeepsPasswordsOutOfArgv(t *testing.T) {
 	}
 }
 
-// TestDumpCommandCoversWholeServer: a per-database dump omits users, roles and
-// grants, so a restore would come back missing the accounts the application
-// authenticates with.
-func TestDumpCommandCoversWholeServer(t *testing.T) {
-	pg, _ := dumpCommand(DatabasePostgres, dbCredentials{User: "postgres"})
+// TestRootDumpCoversWholeServer: a per-database dump omits users, roles and
+// grants, so where privileges allow it the whole server is taken.
+func TestRootDumpCoversWholeServer(t *testing.T) {
+	pg, _ := dumpCommand(DatabasePostgres, dbCredentials{User: "postgres", IsRoot: true})
 	if pg[0] != "pg_dumpall" {
 		t.Errorf("postgres should use pg_dumpall, got %v", pg)
 	}
 	for _, kind := range []DatabaseKind{DatabaseMySQL, DatabaseMariaDB} {
-		cmd, _ := dumpCommand(kind, dbCredentials{User: "root"})
+		cmd, _ := dumpCommand(kind, dbCredentials{User: "root", IsRoot: true})
 		if !strings.Contains(strings.Join(cmd, " "), "--all-databases") {
-			t.Errorf("%s should dump all databases, got %v", kind, cmd)
+			t.Errorf("%s should dump all databases as root, got %v", kind, cmd)
 		}
+	}
+}
+
+// TestNonRootDumpIsScopedAndUnprivileged reflects what a live MySQL container
+// actually rejected: --all-databases needs privileges an application user
+// lacks, and the FLUSH TABLES that --single-transaction issues needs RELOAD.
+func TestNonRootDumpIsScopedAndUnprivileged(t *testing.T) {
+	for _, kind := range []DatabaseKind{DatabaseMySQL, DatabaseMariaDB} {
+		cmd, _ := dumpCommand(kind, dbCredentials{User: "app", Database: "appdb"})
+		joined := strings.Join(cmd, " ")
+		if strings.Contains(joined, "--all-databases") {
+			t.Errorf("%s: non-root dump must not attempt every database: %v", kind, cmd)
+		}
+		if !strings.Contains(joined, "--databases appdb") {
+			t.Errorf("%s: non-root dump should be scoped to the configured database: %v", kind, cmd)
+		}
+		if strings.Contains(joined, "--single-transaction") {
+			t.Errorf("%s: non-root dump must not use --single-transaction (needs RELOAD): %v", kind, cmd)
+		}
+		if !strings.Contains(joined, "--no-tablespaces") {
+			t.Errorf("%s: non-root dump should avoid needing PROCESS: %v", kind, cmd)
+		}
+	}
+}
+
+// TestRandomRootPasswordIsNotTrusted covers the trap that broke live MariaDB
+// and MySQL containers: with *_RANDOM_ROOT_PASSWORD set the image generates
+// root's password at initialisation and IGNORES the supplied ROOT_PASSWORD,
+// which is nonetheless still present in the environment.
+func TestRandomRootPasswordIsNotTrusted(t *testing.T) {
+	c := databaseCredentials(DatabaseMariaDB, []string{
+		"MARIADB_ROOT_PASSWORD=decoy",
+		"MARIADB_RANDOM_ROOT_PASSWORD=yes",
+		"MARIADB_USER=app", "MARIADB_PASSWORD=apppw", "MARIADB_DATABASE=appdb",
+	})
+	if c.IsRoot {
+		t.Fatalf("root credentials trusted despite a randomly generated password: %+v", c)
+	}
+	if c.User != "app" || c.Password != "apppw" {
+		t.Fatalf("should fall back to the application user, got %+v", c)
+	}
+
+	// MySQL's variant, where ROOT_PASSWORD is present but empty.
+	m := databaseCredentials(DatabaseMySQL, []string{
+		"MYSQL_ROOT_PASSWORD=",
+		"MYSQL_RANDOM_ROOT_PASSWORD=yes",
+		"MYSQL_USER=app", "MYSQL_PASSWORD=apppw",
+	})
+	if m.IsRoot || m.User != "app" {
+		t.Fatalf("got %+v, want the application user", m)
+	}
+}
+
+// TestRootIsUsedWhenTheRootPasswordIsReal keeps the preferred path intact.
+func TestRootIsUsedWhenTheRootPasswordIsReal(t *testing.T) {
+	c := databaseCredentials(DatabaseMySQL, []string{"MYSQL_ROOT_PASSWORD=real", "MYSQL_USER=app", "MYSQL_PASSWORD=a"})
+	if !c.IsRoot || c.User != "root" || c.Password != "real" {
+		t.Fatalf("got %+v, want root", c)
 	}
 }
 

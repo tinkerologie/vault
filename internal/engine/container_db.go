@@ -46,6 +46,10 @@ type dbCredentials struct {
 	User     string
 	Password string
 	Database string
+	// IsRoot records that these credentials are the server's superuser. A
+	// non-root dump has to be scoped to the one database the user can see and
+	// must avoid the server-wide operations that need elevated privileges.
+	IsRoot bool
 }
 
 // DetectDatabaseByImage is the image-only hint used by discovery, where the
@@ -134,18 +138,27 @@ func databaseCredentials(kind DatabaseKind, env []string) dbCredentials {
 			User:     user,
 			Password: get("POSTGRES_PASSWORD"),
 			Database: get("POSTGRES_DB"),
+			// The postgres image's POSTGRES_USER is created as a superuser, so
+			// whichever name is configured can dump the whole cluster.
+			IsRoot: true,
 		}
 	case DatabaseMySQL, DatabaseMariaDB:
-		// Prefer root: a dump taken as an application user silently omits every
-		// database that user cannot see, which would look like a successful
-		// backup of an incomplete server.
-		if pw := get("MYSQL_ROOT_PASSWORD", "MARIADB_ROOT_PASSWORD"); pw != "" {
-			return dbCredentials{User: "root", Password: pw, Database: get("MYSQL_DATABASE", "MARIADB_DATABASE")}
+		db := get("MYSQL_DATABASE", "MARIADB_DATABASE")
+		// A RANDOM_ROOT_PASSWORD makes the image generate root's password at
+		// initialisation and IGNORE whatever ROOT_PASSWORD says. The variable is
+		// still present, so trusting it means authenticating with a value that
+		// was never the real password — observed on live MariaDB and MySQL
+		// containers, which failed with "Access denied for user 'root'".
+		randomRoot := get("MYSQL_RANDOM_ROOT_PASSWORD", "MARIADB_RANDOM_ROOT_PASSWORD") != ""
+		if pw := get("MYSQL_ROOT_PASSWORD", "MARIADB_ROOT_PASSWORD"); pw != "" && !randomRoot {
+			// Prefer root: it can see every database, where an application user
+			// sees only its own.
+			return dbCredentials{User: "root", Password: pw, Database: db, IsRoot: true}
 		}
 		return dbCredentials{
 			User:     get("MYSQL_USER", "MARIADB_USER"),
 			Password: get("MYSQL_PASSWORD", "MARIADB_PASSWORD"),
-			Database: get("MYSQL_DATABASE", "MARIADB_DATABASE"),
+			Database: db,
 		}
 	}
 	return dbCredentials{}
@@ -172,17 +185,14 @@ func dumpCommand(kind DatabaseKind, creds dbCredentials) (cmd []string, env []st
 	case DatabaseMariaDB:
 		// mariadb-dump is the current name; older images only ship mysqldump,
 		// so fall back rather than failing on a still-supported image.
-		cmd = []string{"sh", "-c",
-			"if command -v mariadb-dump >/dev/null 2>&1; then exec mariadb-dump \"$@\"; else exec mysqldump \"$@\"; fi",
-			"sh", "--all-databases", "--single-transaction", "--quick", "-u", creds.User}
+		args := append([]string{"sh"}, mysqlDumpArgs(creds)...)
+		cmd = append([]string{"sh", "-c",
+			"if command -v mariadb-dump >/dev/null 2>&1; then exec mariadb-dump \"$@\"; else exec mysqldump \"$@\"; fi"}, args...)
 		if creds.Password != "" {
 			env = append(env, "MYSQL_PWD="+creds.Password)
 		}
 	case DatabaseMySQL:
-		// --single-transaction takes a consistent snapshot without locking the
-		// server for the duration; --quick streams rows instead of buffering a
-		// whole table in memory.
-		cmd = []string{"mysqldump", "--all-databases", "--single-transaction", "--quick", "-u", creds.User}
+		cmd = append([]string{"mysqldump"}, mysqlDumpArgs(creds)...)
 		if creds.Password != "" {
 			env = append(env, "MYSQL_PWD="+creds.Password)
 		}
@@ -242,6 +252,9 @@ func (h *ContainerHandler) dumpDatabase(ctx context.Context, containerID, itemNa
 		return nil, nil
 	}
 	creds := databaseCredentials(kind, env)
+	if err := validateDumpCredentials(kind, creds); err != nil {
+		return nil, fmt.Errorf("cannot dump %s database for %s: %w", kind, itemName, err)
+	}
 	cmd, cmdEnv := dumpCommand(kind, creds)
 	if len(cmd) == 0 {
 		return nil, nil
@@ -342,6 +355,9 @@ func (h *ContainerHandler) dumpDatabaseToTemp(ctx context.Context, containerID, 
 		return "", nil, nil
 	}
 	creds := databaseCredentials(kind, env)
+	if err := validateDumpCredentials(kind, creds); err != nil {
+		return "", nil, fmt.Errorf("cannot dump %s database for %s: %w", kind, itemName, err)
+	}
 	cmd, cmdEnv := dumpCommand(kind, creds)
 	if len(cmd) == 0 {
 		return "", nil, nil
@@ -470,4 +486,51 @@ func (h *ContainerHandler) waitForDatabaseReady(ctx context.Context, containerID
 		case <-time.After(databaseReadyPoll):
 		}
 	}
+}
+
+// mysqlDumpArgs builds the mysqldump/mariadb-dump arguments for the privileges
+// the credentials actually have.
+//
+// Root dumps the whole server with --single-transaction, which gives a
+// consistent snapshot without holding locks.
+//
+// An application user can do neither. --all-databases needs privileges it
+// lacks, and --single-transaction issues a FLUSH TABLES that needs RELOAD or
+// FLUSH_TABLES — verified against a live MySQL 9 container, where every
+// variant carrying --single-transaction failed with "Access denied ... you
+// need (at least one of) the RELOAD or FLUSH_TABLES privilege(s)" and every
+// variant without it succeeded.
+//
+// So a non-root dump is scoped to the one database the user owns and relies on
+// mysqldump's default table locking, which that user does hold on its own
+// database. That is still a consistent dump of that database — just not of the
+// whole server, which it could not read anyway.
+//
+// --quick streams rows rather than buffering a whole table in memory.
+// --no-tablespaces avoids the PROCESS privilege MySQL 8+ requires otherwise.
+func mysqlDumpArgs(creds dbCredentials) []string {
+	args := []string{"--quick", "--no-tablespaces", "-u", creds.User}
+	if creds.IsRoot {
+		return append(args, "--single-transaction", "--all-databases")
+	}
+	return append(args, "--databases", creds.Database)
+}
+
+// validateDumpCredentials rejects combinations that cannot produce a usable
+// dump, so the failure names the missing configuration instead of surfacing a
+// raw driver error.
+func validateDumpCredentials(kind DatabaseKind, creds dbCredentials) error {
+	if creds.User == "" {
+		return fmt.Errorf("no database user found in the container's environment")
+	}
+	switch kind {
+	case DatabaseMySQL, DatabaseMariaDB:
+		// Without root there is nothing to scope a dump to: an application user
+		// cannot read every database, so a database name is required.
+		if !creds.IsRoot && creds.Database == "" {
+			return fmt.Errorf("the container exposes no usable root password and no MYSQL_DATABASE/MARIADB_DATABASE to dump; " +
+				"set a root password (not the random one) or name a database")
+		}
+	}
+	return nil
 }

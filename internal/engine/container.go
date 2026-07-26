@@ -695,8 +695,14 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	// that would otherwise have been taken, which is also why a running server
 	// is required rather than started for the purpose.
 	if databaseDumpEnabled(item.Settings) {
-		if !wasRunning {
-			log.Printf("engine: %s: skipping database dump — the container is not running", item.Name)
+		// State.Running is true for a container caught mid-restart, and exec
+		// against one fails with "is restarting, wait until the container is
+		// running" — seen on a live PostgreSQL container in a crash loop. Check
+		// the status string so a flapping container is skipped with a clear
+		// reason instead of failing the whole backup.
+		if !wasRunning || inspect.State.Restarting {
+			log.Printf("engine: %s: skipping database dump — the container is not running (status %q)",
+				item.Name, inspect.State.Status)
 		} else if dumpFile, err := h.dumpDatabase(ctx, containerID, item.Name,
 			inspect.Config.Image, inspect.Config.Env, destDir, item.Compression, progress); err != nil {
 			return nil, err
@@ -1594,8 +1600,9 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// than compressed to a file, so successive dumps deduplicate against each
 	// other instead of each one landing as an entirely new blob.
 	if databaseDumpEnabled(item.Settings) && inspect.Config != nil {
-		if !wasRunning {
-			log.Printf("engine: chunked: %s: skipping database dump — the container is not running", item.Name)
+		if !wasRunning || inspect.State.Restarting {
+			log.Printf("engine: chunked: %s: skipping database dump — the container is not running (status %q)",
+				item.Name, inspect.State.Status)
 		} else {
 			dumpPath, cleanupDump, dErr := h.dumpDatabaseToTemp(ctx, containerID, item.Name, inspect.Config.Image, inspect.Config.Env)
 			if dErr != nil {
