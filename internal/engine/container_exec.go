@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
@@ -14,6 +16,10 @@ import (
 // the error message. Enough to carry a real diagnostic, bounded so a command
 // that fails by emitting megabytes cannot be turned into an unreadable error.
 const execLimitStderr = 8 << 10
+
+// execStdinDrainTimeout bounds how long the stdin writer is given to unwind
+// after the command has finished and the connection has been closed.
+const execStdinDrainTimeout = 10 * time.Second
 
 // execInContainer runs cmd inside a running container, streaming stdout to
 // stdout and returning the command's exit status.
@@ -42,7 +48,9 @@ func (h *ContainerHandler) execInContainer(ctx context.Context, containerID stri
 	if err != nil {
 		return fmt.Errorf("attaching to exec: %w", err)
 	}
-	defer attached.Close()
+	// Closed exactly once, from whichever of the paths below gets there first.
+	var closeOnce sync.Once
+	defer closeOnce.Do(attached.Close)
 
 	// StdCopy and the stdin copy both block directly on the hijacked
 	// connection, which nothing else closes. Without this a database command
@@ -54,7 +62,7 @@ func (h *ContainerHandler) execInContainer(ctx context.Context, containerID stri
 	go func() {
 		select {
 		case <-ctx.Done():
-			attached.Close()
+			closeOnce.Do(attached.Close)
 		case <-done:
 		}
 	}()
@@ -78,14 +86,26 @@ func (h *ContainerHandler) execInContainer(ctx context.Context, containerID stri
 	}
 
 	var stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(stdout, limitWriter(&stderr, execLimitStderr), attached.Reader); err != nil {
-		return fmt.Errorf("reading exec output: %w", err)
+	_, copyErr := stdcopy.StdCopy(stdout, limitWriter(&stderr, execLimitStderr), attached.Reader)
+
+	// Close BEFORE waiting on the stdin goroutine. A command that exits early —
+	// psql aborting on a conflict, say — stops draining stdin, leaving the
+	// writer blocked on a socket nobody reads. Waiting on it first therefore
+	// hangs forever even though the command is already gone: observed wedging a
+	// restore with psql long since exited. Closing here makes that copy return.
+	closeOnce.Do(attached.Close)
+
+	var stdinCopyErr error
+	select {
+	case stdinCopyErr = <-stdinErr:
+	case <-time.After(execStdinDrainTimeout):
+		// Backstop: never let a stuck writer outlive the command it fed.
+		stdinCopyErr = fmt.Errorf("timed out waiting for stdin to finish")
 	}
-	// Deliberately NOT gating on stdin here: a command that exits early stops
-	// draining stdin, so the write fails with a broken pipe. Its own exit
-	// status below is the more useful diagnosis, so stdin's error is only
-	// consulted when the command otherwise looks successful.
-	stdinCopyErr := <-stdinErr
+
+	if copyErr != nil {
+		return fmt.Errorf("reading exec output: %w", copyErr)
+	}
 
 	inspected, err := h.cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
 	if err != nil {
