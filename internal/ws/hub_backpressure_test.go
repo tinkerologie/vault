@@ -52,6 +52,26 @@ func TestBroadcastDeliversAfterProgressFlood(t *testing.T) {
 	c := &Client{hub: h, send: make(chan []byte, 8*cap(h.broadcast))}
 	h.Register(c)
 
+	// Run's select picks pseudo-randomly between register and the already-
+	// buffered broadcasts, so wait until the client is observably registered.
+	// Otherwise the terminal event can be fanned out to an empty client set
+	// and the test fails for a reason it is not testing.
+	regDeadline := time.After(5 * time.Second)
+	for {
+		h.mu.RLock()
+		registered := len(h.clients)
+		h.mu.RUnlock()
+		if registered == 1 {
+			break
+		}
+		select {
+		case <-regDeadline:
+			t.Fatal("client never registered")
+		default:
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+
 	sent := make(chan struct{})
 	go func() {
 		h.Broadcast([]byte("job_run_completed"))

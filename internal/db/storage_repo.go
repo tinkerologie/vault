@@ -394,9 +394,24 @@ func (d *DB) UpsertDedupPack(p DedupPack) error {
 
 // UpsertDedupChunk inserts a chunk-to-pack mapping; idempotent.
 func (d *DB) UpsertDedupChunk(c DedupChunk) error {
+	// Ignore-on-conflict for a live owner (crash-retry idempotency), but
+	// REPOINT when the existing row still names a pack GC has marked for
+	// deletion. HasDedupChunk hides such chunks, so the packer rewrites the
+	// content into a fresh pack — without this the mapping would stay on the
+	// doomed pack, and deleting it would cascade the row away and strand the
+	// backup that just wrote the replacement.
 	_, err := d.Exec(`
-        INSERT OR IGNORE INTO dedup_chunks (chunk_id, storage_id, pack_id, offset, length)
-        VALUES (?, ?, ?, ?, ?)`,
+        INSERT INTO dedup_chunks (chunk_id, storage_id, pack_id, offset, length)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(storage_id, chunk_id) DO UPDATE SET
+            pack_id = excluded.pack_id,
+            offset  = excluded.offset,
+            length  = excluded.length
+        WHERE EXISTS (
+            SELECT 1 FROM dedup_packs p
+             WHERE p.storage_id     = dedup_chunks.storage_id
+               AND p.id             = dedup_chunks.pack_id
+               AND p.pending_delete = 1)`,
 		c.ChunkID, c.StorageID, c.PackID, c.Offset, c.Length)
 	return err
 }

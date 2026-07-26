@@ -3,6 +3,8 @@ package dedup
 import (
 	"bytes"
 	"errors"
+	"io/fs"
+	"strings"
 	"testing"
 )
 
@@ -198,4 +200,126 @@ func countTombstones(t *testing.T, a *FakeAdapter) int {
 		}
 	}
 	return n
+}
+
+// TestGCRewrittenChunkRepointsAwayFromDoomedPack covers the mapping half of
+// the fix.
+//
+// Hiding a doomed pack's chunks makes the packer rewrite the content into a
+// fresh pack, but chunk rows are keyed on (storage_id, chunk_id) and were
+// registered with INSERT OR IGNORE — so the mapping stayed on the doomed
+// pack. When a later sweep finally deleted it, the cascade took the only
+// mapping with it and the backup that wrote the replacement became
+// unrestorable. The row must follow the content to the new pack.
+func TestGCRewrittenChunkRepointsAwayFromDoomedPack(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	adapter := &deleteFailingAdapter{FakeAdapter: NewFakeAdapter()}
+	swapAdapter(r, adapter)
+
+	payload := bytes.Repeat([]byte{0x33}, 4096)
+	id, err := r.Put(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	doomedPath, _, _, err := r.idx.Locate(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adapter.failDelete = true
+	if _, err := RunGC(r, nil, GCOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-backup the same content: it lands in a fresh pack.
+	if _, err := r.Put(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	newPath, _, _, err := r.idx.Locate(id)
+	if err != nil {
+		t.Fatalf("chunk has no mapping after being rewritten: %v", err)
+	}
+	if newPath == doomedPath {
+		t.Fatal("chunk still mapped to the tombstoned pack; deleting it would strand the new backup")
+	}
+
+	// Now let the delete succeed, with a manifest keeping the chunk live. The
+	// doomed pack's cascade must not take the live mapping with it.
+	mID, err := r.PutManifest("item", Manifest{
+		Version: ManifestVersion, Item: "item",
+		Files: map[string]ManifestEntry{"f.bin": {Chunks: []ID{id}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	adapter.failDelete = false
+	if _, err := RunGC(r, []ID{mID}, GCOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("chunk unreadable after the doomed pack was collected: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("chunk content changed after the doomed pack was collected")
+	}
+}
+
+// notFoundDeleteAdapter reports fs.ErrNotExist for deletes, as the local,
+// SFTP, and SMB adapters do when the blob is already gone.
+type notFoundDeleteAdapter struct{ *FakeAdapter }
+
+func (a *notFoundDeleteAdapter) Delete(string) error { return fs.ErrNotExist }
+
+// TestGCAlreadyMissingBlobCompletesDeletion guards the wedge that follows a
+// successful storage delete whose DB delete failed: every later sweep re-issues
+// the delete, the adapter reports not-found, and the row is never reached — so
+// the pack stays pending forever, inflating stats and erroring on every run.
+// An already-absent blob must count as deleted.
+func TestGCAlreadyMissingBlobCompletesDeletion(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	base := NewFakeAdapter()
+	swapAdapter(r, &deleteFailingAdapter{FakeAdapter: base})
+
+	if _, err := r.Put(bytes.Repeat([]byte{0x44}, 4096)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Blob already gone (a prior sweep removed it before failing on the row).
+	missing := &notFoundDeleteAdapter{FakeAdapter: base}
+	r.adapter = missing
+	r.idx.adapter = missing
+	r.packer.adapter = missing
+
+	res, err := RunGC(r, nil, GCOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range res.Errors {
+		if strings.Contains(e, "_vault/packs/") {
+			t.Fatalf("an already-missing blob was reported as a delete failure: %s", e)
+		}
+	}
+	packs, err := r.db.ListDedupPacks(r.storageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packs) != 0 {
+		t.Fatalf("got %d pack rows, want 0 — deletion wedged on a missing blob", len(packs))
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 // GCResult summarises a garbage-collection run.
@@ -135,7 +136,11 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 			// skip this pack and try again next GC. If we deleted DB first
 			// and then storage failed, we'd "lose" the pack from the index
 			// and orphan it on disk forever.
-			if err := r.adapter.Delete(p.Path); err != nil {
+			// An already-missing blob counts as deleted. Without this a run
+			// whose storage delete succeeded but whose DB delete failed would
+			// wedge: every later sweep re-issues the delete, most adapters
+			// surface not-found as an error, and the DB row is never reached.
+			if err := r.adapter.Delete(p.Path); err != nil && !storage.IsNotExist(err) {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", p.Path, err))
 				log.Printf("gc: failed to delete pack %s: %v", p.Path, err)
 				continue
@@ -375,7 +380,7 @@ func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res 
 			log.Printf("gc: %s", msg)
 			continue
 		}
-		if err := r.adapter.Delete(d.pack.Path); err != nil {
+		if err := r.adapter.Delete(d.pack.Path); err != nil && !storage.IsNotExist(err) {
 			msg := fmt.Sprintf("compact storage delete %s: %v", d.pack.Path, err)
 			res.Errors = append(res.Errors, msg)
 			log.Printf("gc: %s", msg)
