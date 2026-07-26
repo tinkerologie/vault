@@ -94,19 +94,33 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	if _, err := io.Copy(tmp, reader); err != nil {
 		_ = tmp.Close()
 		cleanupTmp()
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("write file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		cleanupTmp()
+		// Buffered writes are only guaranteed to reach the disk here, so a
+		// full volume frequently surfaces at Sync rather than Copy.
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("sync file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		cleanupTmp()
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("close file: %w", err)
 	}
 	if err := os.Rename(tmpPath, full); err != nil {
 		cleanupTmp()
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("rename file: %w", err)
 	}
 	return nil
