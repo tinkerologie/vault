@@ -3,9 +3,12 @@ package dedup
 import (
 	"bytes"
 	"errors"
+	"io"
 	"io/fs"
 	"strings"
 	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // deleteFailingAdapter simulates a storage backend that accepts writes but
@@ -85,7 +88,7 @@ func TestGCFailedDeleteHidesChunksFromReuse(t *testing.T) {
 	if len(packs) != 1 {
 		t.Fatalf("got %d pack rows, want 1 retained for retry", len(packs))
 	}
-	if !packs[0].PendingDelete {
+	if packs[0].DeleteState == db.PackLive {
 		t.Fatal("pack was not marked pending delete")
 	}
 }
@@ -169,7 +172,7 @@ func TestGCTombstonedChunkIsRewrittenByNextBackup(t *testing.T) {
 	}
 	var live int
 	for _, p := range packs {
-		if !p.PendingDelete {
+		if p.DeleteState == db.PackLive {
 			live++
 		}
 	}
@@ -322,4 +325,65 @@ func TestGCAlreadyMissingBlobCompletesDeletion(t *testing.T) {
 	if len(packs) != 0 {
 		t.Fatalf("got %d pack rows, want 0 — deletion wedged on a missing blob", len(packs))
 	}
+}
+
+// TestGCCrashBetweenMarkAndTombstoneHidesChunks covers the ordering boundary.
+//
+// The tombstone is durable the instant it lands on storage, and
+// RebuildFromStorage suppresses tombstoned packs. If the row were marked only
+// AFTER the tombstone write, a crash in between would leave SQLite advertising
+// chunks that a repair will drop — so a backup taken before the next GC would
+// be unrestorable. Marking first means the crash window contains no such state.
+//
+// Simulated by failing the tombstone write, which halts the sweep at exactly
+// the point a crash would.
+func TestGCCrashBetweenMarkAndTombstoneHidesChunks(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	base := NewFakeAdapter()
+	swapAdapter(r, &deleteFailingAdapter{FakeAdapter: base})
+
+	id, err := r.Put(bytes.Repeat([]byte{0x66}, 4096))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Writes to the index directory now fail, so the tombstone never lands.
+	blocked := &indexWriteBlockingAdapter{FakeAdapter: base}
+	r.adapter = blocked
+	r.idx.adapter = blocked
+	r.packer.adapter = blocked
+
+	if _, err := RunGC(r, nil, GCOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if r.Has(id) {
+		t.Fatal("chunks still advertised after the sweep began retiring the pack — " +
+			"a crash here would let a backup depend on a pack about to be tombstoned")
+	}
+	packs, err := r.db.ListDedupPacks(r.storageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packs) != 1 || packs[0].DeleteState != db.PackMarked {
+		t.Fatalf("pack state = %v, want exactly one pack at PackMarked", packs)
+	}
+	if got := countTombstones(t, base); got != 0 {
+		t.Fatalf("got %d tombstones, want 0 — the write was meant to fail", got)
+	}
+}
+
+// indexWriteBlockingAdapter fails writes under the index prefix only, so a
+// test can halt the sweep precisely between marking and tombstoning.
+type indexWriteBlockingAdapter struct{ *FakeAdapter }
+
+func (a *indexWriteBlockingAdapter) Write(path string, r io.Reader) error {
+	if strings.HasPrefix(path, indexRootPath) {
+		return errors.New("index write blocked")
+	}
+	return a.FakeAdapter.Write(path, r)
 }
