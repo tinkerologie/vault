@@ -36,6 +36,9 @@ const ContainerDBDumpKey = "__dbdump__"
 const (
 	databaseReadyTimeout = 2 * time.Minute
 	databaseReadyPoll    = 2 * time.Second
+	// Upper bound on a dump reload, after which the restore continues with the
+	// file-level result it already has rather than waiting indefinitely.
+	databaseReloadTimeout = 30 * time.Minute
 )
 
 // dbCredentials are the connection details recovered from a container's own
@@ -176,9 +179,12 @@ func databaseCredentials(kind DatabaseKind, env []string) dbCredentials {
 func dumpCommand(kind DatabaseKind, creds dbCredentials) (cmd []string, env []string) {
 	switch kind {
 	case DatabasePostgres:
-		// --clean so a restore into a populated server replaces objects rather
-		// than failing on every "already exists".
-		cmd = []string{"pg_dumpall", "--clean", "-U", creds.User}
+		// Deliberately NOT --clean: its DROP ROLE targets the very role the
+		// reload connects as, which PostgreSQL refuses ("current user cannot be
+		// dropped") — observed aborting a real restore. Reloading into a
+		// cluster the entrypoint has already initialised means some objects
+		// exist; those conflicts are benign and expected.
+		cmd = []string{"pg_dumpall", "-U", creds.User}
 		if creds.Password != "" {
 			env = append(env, "PGPASSWORD="+creds.Password)
 		}
@@ -205,9 +211,12 @@ func dumpCommand(kind DatabaseKind, creds dbCredentials) (cmd []string, env []st
 func restoreCommand(kind DatabaseKind, creds dbCredentials) (cmd []string, env []string) {
 	switch kind {
 	case DatabasePostgres:
-		// ON_ERROR_STOP: without it psql continues past failing statements and
-		// exits 0, so a reload that applied half the dump would report success.
-		cmd = []string{"psql", "--set", "ON_ERROR_STOP=1", "-U", creds.User, "-d", "postgres"}
+		// NOT ON_ERROR_STOP. Reloading a cluster-wide dump into a server the
+		// image entrypoint has already initialised always hits "role already
+		// exists" style conflicts; aborting on the first one leaves the reload
+		// half-applied, which is worse than completing it. psql's exit status
+		// plus captured stderr still surface a genuinely fatal failure.
+		cmd = []string{"psql", "-U", creds.User, "-d", "postgres"}
 		if creds.Password != "" {
 			env = append(env, "PGPASSWORD="+creds.Password)
 		}
@@ -342,6 +351,13 @@ func (h *ContainerHandler) restoreDatabase(ctx context.Context, containerID, ite
 	}
 	defer func() { _ = closeReader() }()
 
+	// Hard-bounded. The reload is supplementary to the file-level restore that
+	// has already completed, so it must never be able to hold a restore open —
+	// a database command that stops reading stdin wedged one for minutes before
+	// this was here.
+	ctx, cancel := context.WithTimeout(ctx, databaseReloadTimeout)
+	defer cancel()
+
 	log.Printf("engine: %s: reloading %s dump", itemName, kind)
 	if err := h.execInContainer(ctx, containerID, cmd, cmdEnv, reader, io.Discard); err != nil {
 		return fmt.Errorf("reloading %s dump for %s: %w", kind, itemName, err)
@@ -438,7 +454,10 @@ func chunkFileIntoRepo(repo *dedup.Repo, path string) (dedup.ManifestEntry, erro
 func databaseReadyProbe(kind DatabaseKind, creds dbCredentials) (cmd []string, env []string) {
 	switch kind {
 	case DatabasePostgres:
-		cmd = []string{"pg_isready", "-U", creds.User}
+		// -d postgres explicitly: pg_isready otherwise targets a database named
+		// after the user, which usually does not exist ("database \"vaultuser\"
+		// does not exist") and reports the server as unready when it is fine.
+		cmd = []string{"pg_isready", "-U", creds.User, "-d", "postgres"}
 	case DatabaseMariaDB, DatabaseMySQL:
 		cmd = []string{"sh", "-c",
 			"if command -v mariadb-admin >/dev/null 2>&1; then exec mariadb-admin ping -u \"$1\"; else exec mysqladmin ping -u \"$1\"; fi",

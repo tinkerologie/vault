@@ -264,12 +264,22 @@ func TestCountingWriterCountsRealOutput(t *testing.T) {
 	}
 }
 
-// TestPostgresRestoreStopsOnError: without ON_ERROR_STOP psql continues past
-// failing statements and exits 0, so a half-applied reload reports success.
-func TestPostgresRestoreStopsOnError(t *testing.T) {
-	cmd, _ := restoreCommand(DatabasePostgres, dbCredentials{User: "postgres"})
-	if !strings.Contains(strings.Join(cmd, " "), "ON_ERROR_STOP=1") {
-		t.Fatalf("psql must stop on the first error, got %v", cmd)
+// TestPostgresDumpAvoidsDroppingTheConnectedRole: pg_dumpall --clean emits
+// DROP ROLE for the role the reload connects as, which PostgreSQL refuses —
+// observed aborting a real restore.
+func TestPostgresDumpAvoidsDroppingTheConnectedRole(t *testing.T) {
+	cmd, _ := dumpCommand(DatabasePostgres, dbCredentials{User: "vaultuser", IsRoot: true})
+	if strings.Contains(strings.Join(cmd, " "), "--clean") {
+		t.Fatalf("--clean drops the role the reload connects as, got %v", cmd)
+	}
+}
+
+// TestPostgresReadinessProbeNamesADatabase: pg_isready otherwise targets a
+// database named after the user, which usually does not exist.
+func TestPostgresReadinessProbeNamesADatabase(t *testing.T) {
+	cmd, _ := databaseReadyProbe(DatabasePostgres, dbCredentials{User: "vaultuser"})
+	if !strings.Contains(strings.Join(cmd, " "), "-d postgres") {
+		t.Fatalf("probe should name a database that exists, got %v", cmd)
 	}
 }
 

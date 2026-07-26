@@ -21,6 +21,11 @@ const execLimitStderr = 8 << 10
 // after the command has finished and the connection has been closed.
 const execStdinDrainTimeout = 10 * time.Second
 
+// execExitPollInterval is how often the exec is checked for having finished,
+// so a command that exits while stdin is still attached cannot hold the
+// connection — and the run — open indefinitely.
+const execExitPollInterval = time.Second
+
 // execInContainer runs cmd inside a running container, streaming stdout to
 // stdout and returning the command's exit status.
 //
@@ -52,18 +57,40 @@ func (h *ContainerHandler) execInContainer(ctx context.Context, containerID stri
 	var closeOnce sync.Once
 	defer closeOnce.Do(attached.Close)
 
-	// StdCopy and the stdin copy both block directly on the hijacked
-	// connection, which nothing else closes. Without this a database command
-	// that hangs — or one that exits without draining stdin — would wedge the
-	// run past any watchdog, because cancelling the context alone does not
-	// interrupt a blocking read on a net.Conn.
+	// Nothing else closes the hijacked connection, and both StdCopy and the
+	// stdin copy block directly on it. Two things therefore have to force it
+	// shut, or the exec wedges the run:
+	//
+	//  - cancellation, which does not by itself interrupt a blocking net.Conn
+	//    read; and
+	//  - the command exiting while stdin is still attached. Docker keeps the
+	//    connection open until it sees EOF on stdin, but the writer only sends
+	//    EOF after its copy finishes — and that copy is blocked precisely
+	//    because the command stopped reading. StdCopy then waits forever on a
+	//    command that is already gone. Observed wedging a restore for minutes
+	//    with psql long since exited.
+	//
+	// Polling the exec's own state breaks that circle without guessing at a
+	// duration, so a legitimately long dump is never cut short.
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
-		select {
-		case <-ctx.Done():
-			closeOnce.Do(attached.Close)
-		case <-done:
+		ticker := time.NewTicker(execExitPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				closeOnce.Do(attached.Close)
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				st, err := h.cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
+				if err == nil && !st.Running {
+					closeOnce.Do(attached.Close)
+					return
+				}
+			}
 		}
 	}()
 

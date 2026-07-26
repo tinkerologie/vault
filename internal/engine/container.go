@@ -1460,7 +1460,12 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 				if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
 					log.Printf("engine: %s: WARNING database did not become ready, dump not reloaded (the file-level restore stands): %v", item.Name, err)
 				} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, dumpPath); err != nil {
-					return fmt.Errorf("restoring database dump for %s (the database may be partially loaded): %w", item.Name, err)
+					// Warned, not fatal. The volume restore has already put the
+					// database files back and is the primary mechanism; the
+					// dump is a supplement. Failing the whole restore over it
+					// would discard a result that is usually complete, so the
+					// failure is surfaced loudly and the restore stands.
+					log.Printf("engine: %s: WARNING database dump not reloaded (the file-level restore stands): %v", item.Name, err)
 				}
 			}
 		}
