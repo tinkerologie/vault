@@ -374,14 +374,22 @@ func (h *ContainerHandler) ListItems() ([]BackupItem, error) {
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
+		settings := map[string]any{
+			"id":    c.ID,
+			"image": c.Image,
+			"state": string(c.State),
+		}
+		// Advisory hint so the job wizard can offer a logical dump only where
+		// one is plausible. Image-only: the container list carries no
+		// environment, and inspecting every container to get it would put N API
+		// calls behind this endpoint. The backup re-detects authoritatively.
+		if kind := DetectDatabaseByImage(c.Image); kind != DatabaseNone {
+			settings["database_kind"] = string(kind)
+		}
 		items = append(items, BackupItem{
-			Name: name,
-			Type: "container",
-			Settings: map[string]any{
-				"id":    c.ID,
-				"image": c.Image,
-				"state": string(c.State),
-			},
+			Name:     name,
+			Type:     "container",
+			Settings: settings,
 		})
 	}
 	return items, nil
@@ -678,6 +686,24 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	// the checkbox-driven excluded_mounts from the job wizard, plus anything
 	// the container declares for itself via the vault.exclude label.
 	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
+
+	// Step 2a: logical database dump, BEFORE the container is stopped.
+	//
+	// A dump talks to the live server, so it has to happen while the container
+	// is still up. It is written in addition to the volume archives — a dump
+	// that turns out to be misconfigured must not cost the file-level backup
+	// that would otherwise have been taken, which is also why a running server
+	// is required rather than started for the purpose.
+	if databaseDumpEnabled(item.Settings) {
+		if !wasRunning {
+			log.Printf("engine: %s: skipping database dump — the container is not running", item.Name)
+		} else if dumpFile, err := h.dumpDatabase(ctx, containerID, item.Name,
+			inspect.Config.Image, inspect.Config.Env, destDir, item.Compression, progress); err != nil {
+			return nil, err
+		} else if dumpFile != nil {
+			result.Files = append(result.Files, *dumpFile)
+		}
+	}
 
 	if wasRunning && !noStop {
 		progress(item.Name, 20, "stopping container")
@@ -1405,8 +1431,37 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		if _, err := h.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 			return fmt.Errorf("starting restored container: %w", err)
 		}
+
+		// Step 7: reload a logical database dump, if the backup carried one.
+		//
+		// Best-effort: the volume data is already restored by now, so a failure
+		// here leaves the container exactly as the file-level restore left it
+		// rather than losing anything. Logged as a warning instead of failing
+		// the restore, because the files alone are usually still serviceable.
+		if sourceDir != "" {
+			if dumpPath := findDatabaseDump(sourceDir); dumpPath != "" {
+				progress(item.Name, 95, "reloading database dump")
+				if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
+					log.Printf("engine: %s: database did not become ready, skipping dump reload: %v", item.Name, err)
+				} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, dumpPath); err != nil {
+					log.Printf("engine: %s: WARNING restoring database dump: %v", item.Name, err)
+				}
+			}
+		}
 	}
 	return nil
+}
+
+// findDatabaseDump locates the dump file a backup may carry, whatever
+// compression it was written with.
+func findDatabaseDump(sourceDir string) string {
+	for _, ext := range []string{"", ".gz", ".zst"} {
+		candidate := filepath.Join(sourceDir, DatabaseDumpFile+ext)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // Special manifest-key prefixes used by the dedup-chunked container backup
@@ -1533,6 +1588,30 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// Stop container for consistent backup (mirrors classic Backup path).
 	wasRunning := inspect.State.Running
 	noStop, _ := item.Settings["no_stop"].(bool)
+
+	// Logical database dump BEFORE the stop, for the same reason as the classic
+	// path: the dump talks to the live server. Chunked into the repo rather
+	// than compressed to a file, so successive dumps deduplicate against each
+	// other instead of each one landing as an entirely new blob.
+	if databaseDumpEnabled(item.Settings) && inspect.Config != nil {
+		if !wasRunning {
+			log.Printf("engine: chunked: %s: skipping database dump — the container is not running", item.Name)
+		} else {
+			dumpPath, cleanupDump, dErr := h.dumpDatabaseToTemp(ctx, containerID, item.Name, inspect.Config.Image, inspect.Config.Env)
+			if dErr != nil {
+				return dedup.ID{}, dErr
+			}
+			if dumpPath != "" {
+				defer cleanupDump()
+				entry, cErr := chunkFileIntoRepo(repo, dumpPath)
+				if cErr != nil {
+					return dedup.ID{}, fmt.Errorf("chunking database dump for %s: %w", item.Name, cErr)
+				}
+				m.Files[ContainerDBDumpKey] = entry
+			}
+		}
+	}
+
 	if wasRunning && !noStop {
 		if progress != nil {
 			progress(item.Name, 20, "stopping container")

@@ -429,6 +429,37 @@
     return Array.isArray(settings.recommended_exclusions) ? settings.recommended_exclusions : []
   }
 
+  function getDatabaseDump(item) {
+    return parseItemSettings(item).database_dump === true
+  }
+
+  // Vault reports which containers it recognises as a database server during
+  // discovery, so the toggle only appears where a dump can actually be taken.
+  function isDatabaseContainer(item) {
+    const kind = parseItemSettings(item).database_kind
+    return typeof kind === 'string' && kind !== ''
+  }
+
+  function getDatabaseKind(item) {
+    return parseItemSettings(item).database_kind || ''
+  }
+
+  function updateDatabaseDump(itemType, itemName, enabled) {
+    form = {
+      ...form,
+      items: form.items.map((item) => {
+        if (item.item_type !== itemType || item.item_name !== itemName) return item
+        const settings = { ...parseItemSettings(item) }
+        if (enabled) {
+          settings.database_dump = true
+        } else {
+          delete settings.database_dump
+        }
+        return { ...item, settings: JSON.stringify(settings) }
+      }),
+    }
+  }
+
   function updateExclusionPaths(itemType, itemName, paths) {
     form = {
       ...form,
@@ -1977,6 +2008,27 @@
                 {@const mounts = containerMounts[cItem.item_name]}
                 <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3">
                   <p class="text-sm font-medium text-text">{cItem.item_name}</p>
+
+                  <!-- Database dump (issue #259). Offered only for containers
+                       discovery recognised as a database server. -->
+                  {#if isDatabaseContainer(cItem)}
+                    <label class="flex items-start gap-2.5 py-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={getDatabaseDump(cItem)}
+                        onchange={(e) => updateDatabaseDump(cItem.item_type, cItem.item_name, e.currentTarget.checked)}
+                        class="mt-0.5 w-4 h-4 rounded border-border bg-surface-3 text-vault focus:ring-2 focus:ring-vault/50"
+                      />
+                      <span class="text-xs">
+                        <span class="font-medium text-text">Also save a {getDatabaseKind(cItem)} dump</span>
+                        <span class="block text-text-dim mt-0.5">
+                          Exports the databases with the server running, alongside the files below. Copying a database's
+                          files while it is writing can capture a torn state; a dump is always consistent and can be
+                          reloaded into a different version. Uses the credentials already in the container.
+                        </span>
+                      </span>
+                    </label>
+                  {/if}
 
                   <!-- Mount point toggles -->
                   {#if mounts === undefined}

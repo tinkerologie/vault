@@ -1161,6 +1161,11 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				backupItem.Settings["excluded_mounts"] = em
 			}
 			backupItem.Settings["label_exclusions_enabled"] = labelExclusions
+			// Opt-in per item: a dump runs commands inside a live container and
+			// costs extra space, so it is never assumed.
+			if dd, ok := settings["database_dump"]; ok {
+				backupItem.Settings["database_dump"] = dd
+			}
 		}
 
 		// VM items need the backup mode (snapshot or cold).
