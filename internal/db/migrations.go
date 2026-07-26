@@ -116,6 +116,10 @@ CREATE TABLE IF NOT EXISTS dedup_packs (
 	size_bytes   INTEGER NOT NULL,
 	chunk_count  INTEGER NOT NULL,
 	created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	-- Set once GC has written this pack's tombstone but before the blob and
+	-- row are gone. HasDedupChunk ignores chunks belonging to a flagged pack,
+	-- so a retried delete can never leave the chunks advertised for reuse.
+	pending_delete INTEGER DEFAULT 0,
 	FOREIGN KEY (storage_id) REFERENCES storage_destinations(id) ON DELETE CASCADE
 );
 
@@ -222,6 +226,10 @@ var alterMigrations = []string{
 	"ALTER TABLE replication_sources ADD COLUMN type TEXT DEFAULT 'remote_vault'",
 	"ALTER TABLE replication_sources ADD COLUMN config TEXT DEFAULT '{}'",
 	"ALTER TABLE jobs ADD COLUMN defer_remote_upload INTEGER DEFAULT 0",
+	// Marks a dedup pack whose tombstone is written but whose blob/row
+	// deletion has not completed. Keeps its chunks out of HasDedupChunk so a
+	// failed delete cannot leave them advertised for reuse by a later backup.
+	"ALTER TABLE dedup_packs ADD COLUMN pending_delete INTEGER DEFAULT 0",
 	// Long-Term Retention (LTR) buckets. Each defaults to 0 meaning
 	// "ignore this bucket". If any of the five is > 0 the runner uses the
 	// LTR algorithm and ignores retention_count / retention_days.

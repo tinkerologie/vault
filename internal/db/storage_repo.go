@@ -367,6 +367,10 @@ type DedupPack struct {
 	Path       string
 	SizeBytes  int64
 	ChunkCount int
+	// PendingDelete is set once GC has written this pack's tombstone but has
+	// not finished removing the blob and row. Its chunks are excluded from
+	// HasDedupChunk while set.
+	PendingDelete bool
 }
 
 // DedupChunk is one row in the dedup_chunks table: a chunk's location within
@@ -431,7 +435,20 @@ func (d *DB) ReplaceDedupChunk(c DedupChunk) error {
 // HasDedupChunk returns true if the destination already stores this chunk.
 func (d *DB) HasDedupChunk(storageID int64, chunkID []byte) (bool, error) {
 	var one int
-	err := d.QueryRow(`SELECT 1 FROM dedup_chunks WHERE storage_id=? AND chunk_id=?`,
+	// Chunks belonging to a pack GC has tombstoned are NOT present, even while
+	// the row survives a failed delete. Advertising them would let a later
+	// backup reference a pack whose tombstone is already durable on storage,
+	// so a RebuildFromStorage would drop those chunks and leave that backup
+	// unrestorable. NOT EXISTS rather than a join so a chunk with no pack row
+	// still reports present, as before.
+	err := d.QueryRow(`
+		SELECT 1 FROM dedup_chunks c
+		 WHERE c.storage_id=? AND c.chunk_id=?
+		   AND NOT EXISTS (
+		         SELECT 1 FROM dedup_packs p
+		          WHERE p.storage_id = c.storage_id
+		            AND p.id = c.pack_id
+		            AND p.pending_delete = 1)`,
 		storageID, chunkID).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
@@ -520,7 +537,7 @@ func (d *DB) DropDedupState(storageID int64) error {
 
 // ListDedupPacks returns every pack registered for a destination.
 func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
-	rows, err := d.Query(`SELECT id, storage_id, path, size_bytes, chunk_count FROM dedup_packs WHERE storage_id=?`, storageID)
+	rows, err := d.Query(`SELECT id, storage_id, path, size_bytes, chunk_count, COALESCE(pending_delete, 0) FROM dedup_packs WHERE storage_id=?`, storageID)
 	if err != nil {
 		return nil, err
 	}
@@ -528,7 +545,7 @@ func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
 	out := []DedupPack{}
 	for rows.Next() {
 		var p DedupPack
-		if err := rows.Scan(&p.ID, &p.StorageID, &p.Path, &p.SizeBytes, &p.ChunkCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.StorageID, &p.Path, &p.SizeBytes, &p.ChunkCount, &p.PendingDelete); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -548,6 +565,17 @@ func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
 // their adds instead — see the comment there.
 func (d *DB) DeleteDedupPack(storageID int64, packID string) error {
 	_, err := d.Exec(`DELETE FROM dedup_packs WHERE storage_id=? AND id=?`, storageID, packID)
+	return err
+}
+
+// MarkDedupPackPendingDelete records that GC has written this pack's
+// tombstone. It is called BEFORE the storage and row deletions so that a
+// failure in either leaves the pack's chunks unavailable to HasDedupChunk
+// rather than advertised for reuse — the tombstone is already durable, so a
+// later backup referencing those chunks would not survive a rebuild.
+// Idempotent: GC re-marks on every retry.
+func (d *DB) MarkDedupPackPendingDelete(storageID int64, packID string) error {
+	_, err := d.Exec(`UPDATE dedup_packs SET pending_delete=1 WHERE storage_id=? AND id=?`, storageID, packID)
 	return err
 }
 

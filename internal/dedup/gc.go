@@ -109,9 +109,26 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 			// the storage delete. AppendTombstone is idempotent on retry, and
 			// RebuildFromStorage applies tombstones to remove pack rows so a
 			// rebuild after GC does not resurrect swept packs.
-			if err := r.idx.AppendTombstone(p.ID); err != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("tombstone %s: %v", p.ID, err))
-				log.Printf("gc: failed to write tombstone for pack %s: %v", p.ID, err)
+			// Skip re-tombstoning a pack a previous run already marked —
+			// the intent is durable, and rewriting it only adds index blobs.
+			if !p.PendingDelete {
+				if err := r.idx.AppendTombstone(p.ID); err != nil {
+					res.Errors = append(res.Errors, fmt.Sprintf("tombstone %s: %v", p.ID, err))
+					log.Printf("gc: failed to write tombstone for pack %s: %v", p.ID, err)
+					continue
+				}
+			}
+			// Mark pending-delete as soon as the tombstone is durable, BEFORE
+			// touching storage. Either delete below can fail and leave the row
+			// behind; without this the pack's chunks stay visible to
+			// HasDedupChunk, so the next backup of the same content would
+			// reference a pack whose tombstone already exists on storage — and
+			// RebuildFromStorage would then drop those chunks, leaving that
+			// backup unrestorable. The flag keeps the row (so this sweep
+			// retries the delete next run) while hiding its chunks from reuse.
+			if err := r.db.MarkDedupPackPendingDelete(r.storageID, p.ID); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("mark pending delete %s: %v", p.ID, err))
+				log.Printf("gc: failed to mark pack %s pending delete: %v", p.ID, err)
 				continue
 			}
 			// Storage delete BEFORE DB delete — if storage delete fails we
@@ -342,8 +359,18 @@ func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res 
 			log.Printf("gc: %s", msg)
 			continue
 		}
-		if err := r.idx.AppendTombstone(d.pack.ID); err != nil {
-			msg := fmt.Sprintf("compact tombstone %s: %v", d.pack.ID, err)
+		if !d.pack.PendingDelete {
+			if err := r.idx.AppendTombstone(d.pack.ID); err != nil {
+				msg := fmt.Sprintf("compact tombstone %s: %v", d.pack.ID, err)
+				res.Errors = append(res.Errors, msg)
+				log.Printf("gc: %s", msg)
+				continue
+			}
+		}
+		// Same ordering as the dead-pack sweep: the tombstone is durable, so
+		// hide this pack's chunks from reuse before either delete can fail.
+		if err := r.db.MarkDedupPackPendingDelete(r.storageID, d.pack.ID); err != nil {
+			msg := fmt.Sprintf("compact mark pending delete %s: %v", d.pack.ID, err)
 			res.Errors = append(res.Errors, msg)
 			log.Printf("gc: %s", msg)
 			continue
