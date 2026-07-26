@@ -761,8 +761,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		var staleInfo []map[string]any
 		kept := items[:0]
 		for _, item := range items {
-			var settings map[string]any
-			if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
+			settings, err := item.ParsedSettings()
+			if err != nil {
 				log.Printf("runner: job %d: item %d malformed settings JSON: %v", jobID, item.ID, err)
 			}
 			status := inv.Status(item.ItemType, item.ItemName, settings)

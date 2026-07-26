@@ -1615,8 +1615,8 @@ func (h *JobHandler) scanStale(jobID int64) ([]db.JobItem, error) {
 	var stale []db.JobItem
 	var markIDs, clearIDs []int64
 	for _, item := range items {
-		var settings map[string]any
-		if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
+		settings, err := item.ParsedSettings()
+		if err != nil {
 			log.Printf("Warning: job item %d has malformed settings JSON: %v", item.ID, err)
 		}
 		status := inv.Status(item.ItemType, item.ItemName, settings)

@@ -180,10 +180,23 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 	return job, err
 }
 
+// normalizeItemSettings turns a blank settings blob into "{}" so the stored
+// value is always parseable JSON. The column declares DEFAULT '{}', but that
+// only applies when the column is omitted — passing "" explicitly, as a caller
+// that simply left settings unset does, stores an empty string and makes every
+// later read log a malformed-JSON warning. Normalising here covers every
+// writer rather than each caller having to remember.
+func normalizeItemSettings(settings string) string {
+	if strings.TrimSpace(settings) == "" {
+		return "{}"
+	}
+	return settings
+}
+
 func (d *DB) AddJobItem(item JobItem) (int64, error) {
 	res, err := d.Exec(
 		"INSERT INTO job_items (job_id, item_type, item_name, item_id, settings, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-		item.JobID, item.ItemType, item.ItemName, item.ItemID, item.Settings, item.SortOrder,
+		item.JobID, item.ItemType, item.ItemName, item.ItemID, normalizeItemSettings(item.Settings), item.SortOrder,
 	)
 	if err != nil {
 		return 0, err
@@ -233,7 +246,7 @@ func (d *DB) ListJobItems(ctx context.Context) ([]JobItem, error) {
 // UpdateJobItemSettings replaces the settings JSON of one job item. Used by
 // the DR path-remap endpoint; there is deliberately no full UpdateJobItem.
 func (d *DB) UpdateJobItemSettings(id int64, settings string) error {
-	res, err := d.Exec(`UPDATE job_items SET settings = ? WHERE id = ?`, settings, id)
+	res, err := d.Exec(`UPDATE job_items SET settings = ? WHERE id = ?`, normalizeItemSettings(settings), id)
 	if err != nil {
 		return fmt.Errorf("updating job item settings: %w", err)
 	}

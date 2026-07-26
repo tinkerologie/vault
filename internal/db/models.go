@@ -1,6 +1,8 @@
 package db
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -86,6 +88,29 @@ type JobItem struct {
 	// stale-item remediation badge. Never auto-removed — the user clears it
 	// by removing the item.
 	MissingSince *string `json:"missing_since,omitempty"`
+}
+
+// ParsedSettings decodes the item's settings blob into a map.
+//
+// A blank blob is not an error: it means "no settings" and yields an empty
+// map. Rows predating settings normalisation store "" rather than "{}", and
+// treating that as corruption made every backup run log a malformed-JSON
+// warning for a perfectly ordinary item.
+//
+// Genuinely malformed JSON still returns an error, so real corruption stays
+// visible.
+func (i JobItem) ParsedSettings() (map[string]any, error) {
+	if strings.TrimSpace(i.Settings) == "" {
+		return map[string]any{}, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(i.Settings), &out); err != nil {
+		return nil, err
+	}
+	if out == nil { // literal JSON "null"
+		out = map[string]any{}
+	}
+	return out, nil
 }
 
 type JobRun struct {
