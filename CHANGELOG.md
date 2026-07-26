@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **The interface now recovers on its own after losing contact with the daemon.** A browser that stopped keeping up — a background tab, a flaky link — was disconnected by the daemon, and any update in flight at that moment was lost. Since a job's completion notice is what clears the progress display, losing that one message left a finished backup shown as still running until the page was reloaded. On reconnecting, the console now re-reads the current run state and reconciles what it missed, so the display corrects itself. The daemon also states plainly that it dropped a connection for falling behind, instead of closing it in a way indistinguishable from a network failure.
 - **Per-file progress updates are now rate-limited to roughly one per second.** Chunked backups and restores sent a WebSocket event for every single file — 46,000 events for a large music library — each one costing CPU on the server and work in the browser, for updates far faster than anyone can read. Backup, restore, and the restore download phase now report at a steady cadence instead. On-screen progress is unchanged in practice, and the internal stall detector still sees every file and every byte, so a genuinely hung backup is still detected just as quickly.
 
+### Changed
+
+- **The 8-Bit and 16-Bit themes now use fonts bundled with the plugin instead of downloading them from Google Fonts.** Selecting a retro theme previously injected a stylesheet link to `fonts.googleapis.com`, so on a server without internet access — or behind a firewall or DNS filter that blocks Google — the pixel fonts silently fell back to Courier New and the theme lost its character. `Press Start 2P` and `VT323` (both SIL OFL 1.1) now ship inside the web bundle and are served by the daemon itself, so every theme renders identically on an offline Unraid box and Vault makes no third-party network requests. The fonts are still fetched only when a retro theme is actually selected — the Default and 1-Bit themes download nothing.
+
 ## [v2026.07.10] - 2026-07-24
 
 ### Fixed
