@@ -228,15 +228,15 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 // Operator-visible counter `res.Errors` carries the per-chunk failure so
 // retry is informed.
 //
-// Register-failure window (v1): if `idx.Register` returns an error in the
-// packer's onFlush callback (e.g. a SQLite write failure after the new pack
-// blob has been written to storage), the new pack has no `dedup_packs` row.
-// The empty-pack GC rule cannot reap it (the rule walks `ListDedupPacks`,
-// which is row-driven). The orphan blob is only recoverable via
-// `vault dedup repair`, which lists storage and reads pack footers
-// directly. Live data is never lost (the old pack is preserved because
-// `allMoved` is false), but operator action is required to reclaim the
-// orphan's bytes.
+// Register-failure window: if `idx.Register` returns an error in the packer's
+// onFlush callback (e.g. a SQLite write failure after the new pack blob has
+// been written to storage), the new pack has no `dedup_packs` row. The
+// empty-pack GC rule cannot reap it (the rule walks `ListDedupPacks`, which is
+// row-driven), so reclaiming the orphan's bytes needs `vault dedup repair`.
+// Live data is never lost: the old pack is preserved because `allMoved` is
+// false, and the index record is written before Register, so a rebuild
+// recovers the new pack from its own add line rather than having to fall back
+// to scanning pack footers.
 func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res *GCResult) error {
 	// Filter to eligible packs.
 	type drained struct {
@@ -277,17 +277,20 @@ func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res 
 	var totalNewBytes int64
 	// Capture flush callback errors so we can surface them up via res.Errors.
 	pkr := NewPacker(r.adapter, r.master, packsRoot, func(info PackInfo) {
+		// Storage index before SQLite, matching the backup flush path: the
+		// on-storage record is what RebuildFromStorage replays, so it must be
+		// durable before the DB claims the pack exists.
+		if err := r.idx.AppendStorageIndex(info); err != nil {
+			msg := fmt.Sprintf("compact index pack %s: %v", info.ID, err)
+			res.Errors = append(res.Errors, msg)
+			log.Printf("gc: %s", msg)
+			return
+		}
 		// Note: Register's UpsertDedupChunk calls for the new pack's chunks are
 		// idempotent no-ops here — the rows already exist (pointing at the old
 		// pack). The actual location change happens via RepointDedupChunks below.
 		if err := r.idx.Register(info); err != nil {
 			msg := fmt.Sprintf("compact register pack %s: %v", info.ID, err)
-			res.Errors = append(res.Errors, msg)
-			log.Printf("gc: %s", msg)
-			return
-		}
-		if err := r.idx.AppendStorageIndex(info); err != nil {
-			msg := fmt.Sprintf("compact index pack %s: %v", info.ID, err)
 			res.Errors = append(res.Errors, msg)
 			log.Printf("gc: %s", msg)
 			return

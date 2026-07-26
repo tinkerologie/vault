@@ -14,9 +14,14 @@ var errShutdownTimeout = errors.New("domain did not shut down within the timeout
 // escalateToForceStop decides what to do after asking a domain to shut down
 // gracefully.
 //
-// shutdownErr is the result of the shutdown request itself, waitErr the result
-// of waiting for the domain to reach a shut-off state, and shutOff whether it
-// actually got there.
+// ctxErr is the run's cancellation state, shutdownErr the result of the
+// shutdown request itself, waitErr the result of waiting for the domain to
+// reach a shut-off state, and shutOff whether it actually got there.
+//
+// Cancellation is checked first and outranks everything. A cancel can race the
+// shutdown deadline — arriving during a state poll, or while the request
+// itself is failing — and without this an operator cancelling at that boundary
+// could still hard-stop a running guest.
 //
 // A guest that accepts the request and then ignores it — no ACPI handler, a
 // login prompt, an application blocking shutdown — used to fail the whole
@@ -26,7 +31,10 @@ var errShutdownTimeout = errors.New("domain did not shut down within the timeout
 // Any other wait failure is returned as fatal. That distinction matters: a
 // cancelled context must never be converted into a hard power-off of a running
 // VM.
-func escalateToForceStop(shutdownErr, waitErr error, shutOff bool) (force bool, fatal error) {
+func escalateToForceStop(ctxErr, shutdownErr, waitErr error, shutOff bool) (force bool, fatal error) {
+	if ctxErr != nil {
+		return false, ctxErr
+	}
 	if waitErr != nil && !errors.Is(waitErr, errShutdownTimeout) {
 		return false, waitErr
 	}

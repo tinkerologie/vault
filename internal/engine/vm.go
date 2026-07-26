@@ -610,7 +610,7 @@ func (h *VMHandler) reconcileExistingDomainForRestore(ctx context.Context, name 
 		if shutdownErr == nil {
 			stateValue, waitErr = h.waitForLibvirtDomainShutOff(ctx, dom, name, vmShutdownTimeout)
 		}
-		force, fatal := escalateToForceStop(shutdownErr, waitErr, libvirtDomainIsShutOff(stateValue))
+		force, fatal := escalateToForceStop(ctx.Err(), shutdownErr, waitErr, libvirtDomainIsShutOff(stateValue))
 		if fatal != nil {
 			return fatal
 		}
@@ -681,6 +681,12 @@ func (h *VMHandler) stopStartedRestoreDomain(ctx context.Context, dom libvirt.Do
 func (h *VMHandler) waitForLibvirtDomainShutOff(ctx context.Context, dom libvirt.Domain, name string, timeout time.Duration) (libvirt.DomainState, error) {
 	deadline := time.Now().Add(timeout)
 	for {
+		// Cancellation outranks the deadline. Both can be true on the final
+		// poll, and returning the timeout there would let the caller escalate
+		// a backup the operator just cancelled into a forced power-off.
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		state, _, err := h.conn.DomainGetState(dom, 0)
 		if err != nil {
 			return 0, fmt.Errorf("waiting for domain %s to shut off: %w", name, err)
@@ -690,6 +696,13 @@ func (h *VMHandler) waitForLibvirtDomainShutOff(ctx context.Context, dom libvirt
 			return stateValue, nil
 		}
 		if time.Now().After(deadline) {
+			// Re-check: cancellation may have arrived during DomainGetState,
+			// and it would otherwise not be observed until the next iteration
+			// — which never comes once the deadline has passed. Reporting a
+			// timeout here would let the caller escalate to a forced stop.
+			if err := ctx.Err(); err != nil {
+				return stateValue, err
+			}
 			return stateValue, fmt.Errorf("waiting for domain %s to shut off: timed out with state %s: %w",
 				name, domainStateString(stateValue), errShutdownTimeout)
 		}
@@ -801,6 +814,13 @@ func domainStateString(state libvirt.DomainState) string {
 // times out with "Failed to terminate process ... with SIGKILL: Device or
 // resource busy" even though the process exits once the flush completes.
 func (h *VMHandler) destroyDomainWithRetry(ctx context.Context, dom libvirt.Domain, name string) error {
+	// Refuse to start a forced destroy against an already-cancelled context, so
+	// a cancel racing the shutdown deadline cannot still hard-stop a running
+	// guest. Teardown callers deliberately pass context.Background(), which is
+	// never cancelled, so their cleanup is unaffected.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	deadline := time.Now().Add(vmShutdownTimeout)
 	for {
 		err := h.conn.DomainDestroy(dom)
@@ -867,7 +887,7 @@ func (h *VMHandler) prepareDomainForBackup(ctx context.Context, name string, dom
 	if shutdownErr == nil {
 		state, waitErr = h.waitForLibvirtDomainShutOff(ctx, dom, name, vmShutdownTimeout)
 	}
-	force, fatal := escalateToForceStop(shutdownErr, waitErr, libvirtDomainIsShutOff(state))
+	force, fatal := escalateToForceStop(ctx.Err(), shutdownErr, waitErr, libvirtDomainIsShutOff(state))
 	if fatal != nil {
 		return libvirt.Domain{}, nil, fatal
 	}

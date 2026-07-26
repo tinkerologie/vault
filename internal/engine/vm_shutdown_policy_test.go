@@ -12,12 +12,30 @@ func TestEscalateToForceStop(t *testing.T) {
 
 	cases := []struct {
 		name        string
+		ctxErr      error
 		shutdownErr error
 		waitErr     error
 		shutOff     bool
 		wantForce   bool
 		wantFatal   bool
 	}{
+		{
+			// A cancel can land during a state poll or as the deadline
+			// expires, so both can be true at once. Cancellation must win, or
+			// cancelling a backup hard-stops a running guest.
+			name:      "cancelled at the same moment the wait timed out",
+			ctxErr:    context.Canceled,
+			waitErr:   timedOut,
+			shutOff:   false,
+			wantFatal: true,
+		},
+		{
+			name:        "cancelled while the shutdown request was failing",
+			ctxErr:      context.Canceled,
+			shutdownErr: errors.New("libvirt: operation not supported"),
+			shutOff:     false,
+			wantFatal:   true,
+		},
 		{
 			// Issue #255: the request was accepted, the guest ignored it, and
 			// the backup failed instead of escalating.
@@ -60,7 +78,7 @@ func TestEscalateToForceStop(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			force, fatal := escalateToForceStop(tc.shutdownErr, tc.waitErr, tc.shutOff)
+			force, fatal := escalateToForceStop(tc.ctxErr, tc.shutdownErr, tc.waitErr, tc.shutOff)
 			if (fatal != nil) != tc.wantFatal {
 				t.Fatalf("fatal = %v, want fatal=%v", fatal, tc.wantFatal)
 			}
