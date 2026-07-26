@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -222,5 +223,89 @@ func TestUnknownKindProducesNoCommand(t *testing.T) {
 	}
 	if cmd, _ := restoreCommand(DatabaseNone, dbCredentials{}); len(cmd) != 0 {
 		t.Fatalf("got %v, want no command", cmd)
+	}
+}
+
+// TestCountingWriterDetectsEmptyOutput backs the empty-dump guard.
+//
+// The guard cannot use the file size: closing an empty gzip or zstd writer
+// still emits a header frame, so a command that exits 0 having produced no
+// output would leave a non-zero file and be accepted as a valid dump.
+func TestCountingWriterDetectsEmptyOutput(t *testing.T) {
+	for _, compression := range []string{"", "gzip", "zstd"} {
+		var buf bytes.Buffer
+		cw, closeCompress, err := compressedWriter(&buf, compression)
+		if err != nil {
+			t.Fatalf("%s: %v", compression, err)
+		}
+		counted := &dumpByteCounter{w: cw}
+		// Write nothing, as a failed dump command would.
+		if err := closeCompress(); err != nil {
+			t.Fatalf("%s: %v", compression, err)
+		}
+
+		if counted.n != 0 {
+			t.Errorf("%s: counted %d bytes of output, want 0", compression, counted.n)
+		}
+		if compression != "" && buf.Len() == 0 {
+			t.Errorf("%s: expected a non-empty compressed frame — otherwise this test proves nothing", compression)
+		}
+	}
+}
+
+func TestCountingWriterCountsRealOutput(t *testing.T) {
+	var buf bytes.Buffer
+	c := &dumpByteCounter{w: &buf}
+	if _, err := c.Write([]byte("SELECT 1;")); err != nil {
+		t.Fatal(err)
+	}
+	if c.n != 9 {
+		t.Fatalf("counted %d, want 9", c.n)
+	}
+}
+
+// TestPostgresRestoreStopsOnError: without ON_ERROR_STOP psql continues past
+// failing statements and exits 0, so a half-applied reload reports success.
+func TestPostgresRestoreStopsOnError(t *testing.T) {
+	cmd, _ := restoreCommand(DatabasePostgres, dbCredentials{User: "postgres"})
+	if !strings.Contains(strings.Join(cmd, " "), "ON_ERROR_STOP=1") {
+		t.Fatalf("psql must stop on the first error, got %v", cmd)
+	}
+}
+
+// TestValidateDumpCredentials rejects combinations that cannot produce a dump,
+// so the failure names the missing configuration rather than surfacing a raw
+// driver error.
+func TestValidateDumpCredentials(t *testing.T) {
+	if err := validateDumpCredentials(DatabaseMySQL, dbCredentials{}); err == nil {
+		t.Error("no user at all should be rejected")
+	}
+	// The live-observed shape: random root password, so no root, and no
+	// database named to scope a non-root dump to.
+	if err := validateDumpCredentials(DatabaseMySQL, dbCredentials{User: "app"}); err == nil {
+		t.Error("non-root with no database should be rejected")
+	}
+	if err := validateDumpCredentials(DatabaseMySQL, dbCredentials{User: "app", Database: "appdb"}); err != nil {
+		t.Errorf("non-root with a database is valid: %v", err)
+	}
+	if err := validateDumpCredentials(DatabaseMySQL, dbCredentials{User: "root", IsRoot: true}); err != nil {
+		t.Errorf("root needs no database: %v", err)
+	}
+	if err := validateDumpCredentials(DatabasePostgres, dbCredentials{User: "postgres", IsRoot: true}); err != nil {
+		t.Errorf("postgres superuser is valid: %v", err)
+	}
+}
+
+// TestContainerStateDescription distinguishes a crash loop from a plain stop,
+// because the remedy differs.
+func TestContainerStateDescription(t *testing.T) {
+	if got := containerStateDescription("restarting", true); !strings.Contains(got, "crash loop") {
+		t.Errorf("got %q, want a crash-loop hint", got)
+	}
+	if got := containerStateDescription("exited", false); got != "exited" {
+		t.Errorf("got %q, want the plain status", got)
+	}
+	if got := containerStateDescription("", false); got != "not running" {
+		t.Errorf("got %q, want a fallback", got)
 	}
 }

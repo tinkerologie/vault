@@ -205,7 +205,9 @@ func dumpCommand(kind DatabaseKind, creds dbCredentials) (cmd []string, env []st
 func restoreCommand(kind DatabaseKind, creds dbCredentials) (cmd []string, env []string) {
 	switch kind {
 	case DatabasePostgres:
-		cmd = []string{"psql", "-U", creds.User, "-d", "postgres"}
+		// ON_ERROR_STOP: without it psql continues past failing statements and
+		// exits 0, so a reload that applied half the dump would report success.
+		cmd = []string{"psql", "--set", "ON_ERROR_STOP=1", "-U", creds.User, "-d", "postgres"}
 		if creds.Password != "" {
 			env = append(env, "PGPASSWORD="+creds.Password)
 		}
@@ -274,8 +276,12 @@ func (h *ContainerHandler) dumpDatabase(ctx context.Context, containerID, itemNa
 		_ = os.Remove(dumpPath)
 		return nil, fmt.Errorf("compressing database dump: %w", err)
 	}
+	// Counted BEFORE compression: closing an empty gzip or zstd writer still
+	// emits a header frame, so the resulting file is never zero bytes and a
+	// file-size check would accept a command that produced no output at all.
+	counted := &dumpByteCounter{w: cw}
 
-	if err := h.execInContainer(ctx, containerID, cmd, cmdEnv, nil, cw); err != nil {
+	if err := h.execInContainer(ctx, containerID, cmd, cmdEnv, nil, counted); err != nil {
 		_ = closeCompress()
 		_ = out.Close()
 		_ = os.Remove(dumpPath)
@@ -291,16 +297,16 @@ func (h *ContainerHandler) dumpDatabase(ctx context.Context, containerID, itemNa
 		return nil, fmt.Errorf("closing database dump: %w", err)
 	}
 
-	info := backupFileInfo(dumpPath)
 	// An empty dump means the command produced nothing — a server that was not
 	// actually reachable, or credentials that let the tool start but see no
 	// data. Reporting success here would hand back a restore that silently
 	// recreates nothing.
-	if info.Size == 0 {
+	if counted.n == 0 {
 		_ = os.Remove(dumpPath)
 		return nil, fmt.Errorf("dumping %s database for %s: the dump was empty", kind, itemName)
 	}
-	log.Printf("engine: %s: %s dump written (%d bytes compressed)", itemName, kind, info.Size)
+	info := backupFileInfo(dumpPath)
+	log.Printf("engine: %s: %s dump written (%d bytes, %d compressed)", itemName, kind, counted.n, info.Size)
 	return &info, nil
 }
 
@@ -386,9 +392,7 @@ func (h *ContainerHandler) dumpDatabaseToTemp(ctx context.Context, containerID, 
 		cleanup()
 		return "", nil, fmt.Errorf("stat database dump: %w", err)
 	}
-	// An empty dump means the command produced nothing — a server that was not
-	// reachable, or credentials that let the tool start but see no data.
-	// Reporting success would hand back a restore that recreates nothing.
+	// Written uncompressed here, so the file size is the real output size.
 	if info.Size() == 0 {
 		cleanup()
 		return "", nil, fmt.Errorf("dumping %s database for %s: the dump was empty", kind, itemName)
@@ -533,4 +537,30 @@ func validateDumpCredentials(kind DatabaseKind, creds dbCredentials) error {
 		}
 	}
 	return nil
+}
+
+// dumpByteCounter records how many bytes were written through it, so an empty
+// dump is detected from the command's real output rather than from a
+// compressed file that is never zero-length.
+type dumpByteCounter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *dumpByteCounter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// containerStateDescription renders a container's state for an operator-facing
+// message, distinguishing a crash loop from a plain stop — the remedy differs.
+func containerStateDescription(status string, restarting bool) string {
+	if restarting {
+		return "restarting (it may be in a crash loop)"
+	}
+	if status == "" {
+		return "not running"
+	}
+	return status
 }

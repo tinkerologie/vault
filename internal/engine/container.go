@@ -701,8 +701,13 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// the status string so a flapping container is skipped with a clear
 		// reason instead of failing the whole backup.
 		if !wasRunning || inspect.State.Restarting {
-			log.Printf("engine: %s: skipping database dump — the container is not running (status %q)",
-				item.Name, inspect.State.Status)
+			// The user explicitly asked for a dump, so omitting it silently
+			// would hand back a backup missing what they asked for. Note that
+			// the runner's stop_all mode stops every container before the
+			// handler runs, which lands here — hence naming it.
+			return nil, fmt.Errorf("database dump requested for %s but the container is %s; "+
+				"a dump needs the server running — use the one-by-one container mode, or start the container",
+				item.Name, containerStateDescription(string(inspect.State.Status), inspect.State.Restarting))
 		} else if dumpFile, err := h.dumpDatabase(ctx, containerID, item.Name,
 			inspect.Config.Image, inspect.Config.Env, destDir, item.Compression, progress); err != nil {
 			return nil, err
@@ -1440,17 +1445,22 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 
 		// Step 7: reload a logical database dump, if the backup carried one.
 		//
-		// Best-effort: the volume data is already restored by now, so a failure
-		// here leaves the container exactly as the file-level restore left it
-		// rather than losing anything. Logged as a warning instead of failing
-		// the restore, because the files alone are usually still serviceable.
+		// A failure here is NOT swallowed. The reload replays into the server
+		// restored from its volume, and the dump's own DROP/replace statements
+		// mutate that state as soon as it starts — so once it has begun, the
+		// file-level result is no longer an intact fallback. Reporting success
+		// over a half-applied dump would hand back a database that looks
+		// restored and is not.
+		//
+		// Failing to become ready is different: nothing has been replayed, the
+		// volume restore stands on its own, so that is a warning.
 		if sourceDir != "" {
 			if dumpPath := findDatabaseDump(sourceDir); dumpPath != "" {
 				progress(item.Name, 95, "reloading database dump")
 				if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
-					log.Printf("engine: %s: database did not become ready, skipping dump reload: %v", item.Name, err)
+					log.Printf("engine: %s: WARNING database did not become ready, dump not reloaded (the file-level restore stands): %v", item.Name, err)
 				} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, dumpPath); err != nil {
-					log.Printf("engine: %s: WARNING restoring database dump: %v", item.Name, err)
+					return fmt.Errorf("restoring database dump for %s (the database may be partially loaded): %w", item.Name, err)
 				}
 			}
 		}
@@ -1601,8 +1611,9 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// other instead of each one landing as an entirely new blob.
 	if databaseDumpEnabled(item.Settings) && inspect.Config != nil {
 		if !wasRunning || inspect.State.Restarting {
-			log.Printf("engine: chunked: %s: skipping database dump — the container is not running (status %q)",
-				item.Name, inspect.State.Status)
+			return dedup.ID{}, fmt.Errorf("database dump requested for %s but the container is %s; "+
+				"a dump needs the server running — use the one-by-one container mode, or start the container",
+				item.Name, containerStateDescription(string(inspect.State.Status), inspect.State.Restarting))
 		} else {
 			dumpPath, cleanupDump, dErr := h.dumpDatabaseToTemp(ctx, containerID, item.Name, inspect.Config.Image, inspect.Config.Env)
 			if dErr != nil {
@@ -1846,13 +1857,68 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		}
 		restoreDest = normalized
 	}
-	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, "", progress); err != nil {
+	// Reassemble the logical dump, if this backup carried one, so the shared
+	// recreate path reloads it exactly as it does for a classic backup.
+	// Without this a dedup restore would silently ignore a dump the backup
+	// went to the trouble of taking.
+	dumpDir, cleanupDump, err := writeChunkedDatabaseDump(repo, m)
+	if err != nil {
+		return err
+	}
+	if cleanupDump != nil {
+		defer cleanupDump()
+	}
+
+	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, dumpDir, progress); err != nil {
 		return err
 	}
 	if progress != nil {
 		progress(item.Name, 100, "container restored")
 	}
 	return nil
+}
+
+// writeChunkedDatabaseDump materialises a manifest's database dump into a
+// temporary directory shaped like a classic backup's source directory, so the
+// shared restore path finds it with no special-casing. Returns an empty path
+// when the manifest carries no dump.
+func writeChunkedDatabaseDump(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
+	entry, ok := m.Files[ContainerDBDumpKey]
+	if !ok || len(entry.Chunks) == 0 {
+		return "", nil, nil
+	}
+	dir, err := os.MkdirTemp("", "vault-dbrestore-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("creating database dump directory: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+
+	// Stored uncompressed by the chunked backup, so it is written back under
+	// the bare name; findDatabaseDump accepts either form.
+	path := filepath.Join(dir, DatabaseDumpFile)
+	f, err := os.Create(path) // #nosec G304 — path is inside a vault-created temp directory
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("creating database dump file: %w", err)
+	}
+	for _, id := range entry.Chunks {
+		chunk, err := repo.Get(id)
+		if err != nil {
+			_ = f.Close()
+			cleanup()
+			return "", nil, fmt.Errorf("reading database dump chunk: %w", err)
+		}
+		if _, err := f.Write(chunk); err != nil {
+			_ = f.Close()
+			cleanup()
+			return "", nil, fmt.Errorf("writing database dump: %w", err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("closing database dump: %w", err)
+	}
+	return dir, cleanup, nil
 }
 
 // contextCopy copies from src to dst, checking for context cancellation

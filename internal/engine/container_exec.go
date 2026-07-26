@@ -44,6 +44,21 @@ func (h *ContainerHandler) execInContainer(ctx context.Context, containerID stri
 	}
 	defer attached.Close()
 
+	// StdCopy and the stdin copy both block directly on the hijacked
+	// connection, which nothing else closes. Without this a database command
+	// that hangs — or one that exits without draining stdin — would wedge the
+	// run past any watchdog, because cancelling the context alone does not
+	// interrupt a blocking read on a net.Conn.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			attached.Close()
+		case <-done:
+		}
+	}()
+
 	// Feed stdin on its own goroutine: a large restore would otherwise deadlock
 	// against the command's output filling the connection buffer while we are
 	// still writing.
@@ -66,9 +81,11 @@ func (h *ContainerHandler) execInContainer(ctx context.Context, containerID stri
 	if _, err := stdcopy.StdCopy(stdout, limitWriter(&stderr, execLimitStderr), attached.Reader); err != nil {
 		return fmt.Errorf("reading exec output: %w", err)
 	}
-	if err := <-stdinErr; err != nil {
-		return fmt.Errorf("writing exec input: %w", err)
-	}
+	// Deliberately NOT gating on stdin here: a command that exits early stops
+	// draining stdin, so the write fails with a broken pipe. Its own exit
+	// status below is the more useful diagnosis, so stdin's error is only
+	// consulted when the command otherwise looks successful.
+	stdinCopyErr := <-stdinErr
 
 	inspected, err := h.cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
 	if err != nil {
@@ -80,6 +97,9 @@ func (h *ContainerHandler) execInContainer(ctx context.Context, containerID stri
 			return fmt.Errorf("command %q exited %d", cmd[0], inspected.ExitCode)
 		}
 		return fmt.Errorf("command %q exited %d: %s", cmd[0], inspected.ExitCode, msg)
+	}
+	if stdinCopyErr != nil {
+		return fmt.Errorf("writing exec input: %w", stdinCopyErr)
 	}
 	return nil
 }
