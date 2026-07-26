@@ -617,7 +617,13 @@ func (h *VMHandler) reconcileExistingDomainForRestore(ctx context.Context, name 
 
 		if force {
 			progress(name, 14, "forcing existing domain stop")
-			if err := h.conn.DomainDestroy(dom); err != nil {
+			// Via destroyDomainWithRetry, not DomainDestroy directly: a cancel
+			// can still arrive between the decision above and the call (the
+			// progress callback alone is a window), and the helper re-checks
+			// the context before issuing anything. It also brings the D-state
+			// retry this path previously lacked, so a qemu process still
+			// flushing to fuse-backed storage no longer fails the restore.
+			if err := h.destroyDomainWithRetry(ctx, dom, name); err != nil {
 				if shutdownErr != nil {
 					return fmt.Errorf("stopping existing domain: shutdown failed: %v; destroy failed: %w", shutdownErr, err)
 				}

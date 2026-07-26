@@ -26,6 +26,12 @@ let status = $state('disconnected')
 // would suppress the very completion resync this exists to deliver.
 let runStateSeq = 0
 
+// Counts live queue changes, tracked separately from runStateSeq. Folding them
+// together would let ordinary queue churn discard the whole snapshot and
+// suppress the completion resync this exists to deliver; keeping them apart
+// lets a stale queue be dropped on its own.
+let queueSeq = 0
+
 // Bounded exponential backoff for reconnection. A fixed 3s uncapped loop churned
 // silently forever when the daemon was unreachable; jittered, capped backoff
 // (see ws-backoff.js) makes persistent failures gentle on the daemon and
@@ -115,17 +121,27 @@ async function pollRunnerStatus() {
  */
 async function resyncRunnerStatus(socket) {
   const seqAtRequest = runStateSeq
+  const queueAtRequest = queueSeq
   try {
     const { url, options } = buildApiRequest('GET', '/runner/status')
     const res = await fetch(url, options)
     if (!res.ok) return
     const snapshot = await res.json()
-    // Discard the snapshot if this socket was superseded, or if a live event
-    // arrived while the request was in flight — the stream is authoritative and
-    // an older snapshot would roll the UI backwards.
+    // Discard the snapshot if this socket was superseded, or if a live run
+    // transition arrived while the request was in flight — the stream is
+    // authoritative and an older snapshot would roll the UI backwards.
     if (ws !== socket || runStateSeq !== seqAtRequest) return
-    reconcileRunnerStatus(previousStatus, snapshot).forEach(emitMessage)
-    previousStatus = snapshot
+
+    // A queue change during the fetch is newer than the snapshot's queue, but
+    // only that part is stale: drop the queue message and keep the live queue
+    // in the baseline, rather than throwing away a resync the run state needs.
+    const staleQueue = queueSeq !== queueAtRequest
+    reconcileRunnerStatus(previousStatus, snapshot)
+      .filter((m) => !(staleQueue && m.type === 'queue_update'))
+      .forEach(emitMessage)
+    previousStatus = staleQueue
+      ? { ...snapshot, queue: previousStatus?.queue || [] }
+      : snapshot
   } catch {
     // Best-effort: a later reconnect (or the user reloading) resyncs.
   }
@@ -184,6 +200,9 @@ export function connectWs() {
       const msg = JSON.parse(e.data)
       if (msg.type === 'job_run_started' || msg.type === 'job_run_completed') {
         runStateSeq++
+      }
+      if (msg.type === 'queue_update') {
+        queueSeq++
       }
       // Keep the run-state baseline current from live events too, so a
       // reconnect has something to detect a completed run against.
