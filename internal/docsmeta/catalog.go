@@ -66,6 +66,8 @@ var AppSettings = []SettingDoc{
 	{"breaker_fail_threshold", "int", "3", "Consecutive storage failures required before a destination's circuit breaker opens.", GroupBackup},
 	{"breaker_close_successes", "int", "2", "Consecutive successes required to close an open circuit breaker and resume normal operation.", GroupBackup},
 	{"dedup_compaction_min_dead_ratio", "float", "0.5", "Minimum fraction of dead (unreferenced) blocks in a dedup store before compaction runs.", GroupBackup},
+	{"global_exclude_paths", "json", "[]", "Paths excluded from every folder and container backup (JSON array). Merged with each item's own exclusions rather than replacing them, so an item can still add its own.", GroupBackup},
+	{"label_exclusions_enabled", "bool", "true", "Honour the vault.exclude Docker label on containers, treating its comma-separated paths as backup exclusions for that container.", GroupBackup},
 
 	// Anomaly detection
 	{"anomaly_detection_enabled", "bool", "true", "Master toggle for statistical anomaly detection on backup runs.", GroupAnomaly},

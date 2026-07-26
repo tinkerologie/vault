@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Exclude the same paths everywhere, without editing every job.** Settings → Backup Exclusions takes a list of paths that every folder and container backup skips. They are added to whatever a job already excludes rather than replacing it, so a job can still exclude more of its own. Useful for the paths that are never worth backing up anywhere — caches, sockets, scratch directories. Closes #257.
+- **Containers can declare their own exclusions with a Docker label.** Setting `vault.exclude=/config/cache,/tmp` on a container tells Vault to skip those paths when backing it up. The exclusions travel with the container, so a template or compose file carries its own answer and adding the container to a job needs no further setup. The paths are matched exactly like ones typed into the job wizard, and the job editor shows which mounts a label is skipping. On by default; it can be turned off in Settings → Backup Exclusions. Closes #258.
+
 ### Fixed
 
 - **Large backups to a dedup destination no longer slow to a crawl and appear frozen.** Every time a backup finished a 24 MiB pack, Vault listed the entire `_vault/index/` directory on the destination to work out the next index-blob number. That directory gains one entry per pack, so the cost grew with every pack written: a 500 GB folder flushes roughly 21,000 packs and so issued 21,000 listings of a directory holding up to 21,000 entries — hundreds of millions of directory entries pulled across the network in a single run. Progress crawled, got steadily worse the longer a backup ran, and on a remote destination (WebDAV/SFTP/S3) eventually degenerated into connection and DNS timeouts that failed the run. Vault now reads that directory once per backup and counts on from there, so index bookkeeping costs the same on the last pack as on the first. Existing destinations are picked up as-is — no re-upload, repair, or reconfiguration is needed. Closes #256.

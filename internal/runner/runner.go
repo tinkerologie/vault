@@ -1109,6 +1109,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}
 	}()
 
+	// Read once per run rather than per item: both are global settings, and a
+	// mid-run change should not apply to only some of a job's items.
+	globalExcludes := r.globalExcludePaths()
+	labelExclusions, lblErr := r.db.GetSettingBool("label_exclusions_enabled", docsmeta.DefaultBool("label_exclusions_enabled"))
+	if lblErr != nil {
+		log.Printf("runner: reading label_exclusions_enabled: %v", lblErr)
+	}
+
 	for _, item := range items {
 		// Check for cancellation between items.
 		if ctx.Err() != nil {
@@ -1142,12 +1150,17 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			if job.ContainerMode == "stop_all" {
 				backupItem.Settings["no_stop"] = true
 			}
-			if ep, ok := settings["exclude_paths"]; ok {
-				backupItem.Settings["exclude_paths"] = ep
+			// Merge here rather than in the engine: this is the only layer with
+			// both the settings table and the per-item blob, and every engine
+			// consumer already reads exclude_paths, so they all pick the global
+			// list up without change.
+			if merged := mergeExclusions(settings["exclude_paths"], globalExcludes); len(merged) > 0 {
+				backupItem.Settings["exclude_paths"] = merged
 			}
 			if em, ok := settings["excluded_mounts"]; ok {
 				backupItem.Settings["excluded_mounts"] = em
 			}
+			backupItem.Settings["label_exclusions_enabled"] = labelExclusions
 		}
 
 		// VM items need the backup mode (snapshot or cold).
@@ -1177,8 +1190,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		if item.ItemType == "folder" {
 			backupItem.Settings["path"] = settings["path"]
 			backupItem.Settings["preset"] = settings["preset"]
-			if ep, ok := settings["exclude_paths"]; ok {
-				backupItem.Settings["exclude_paths"] = ep
+			if merged := mergeExclusions(settings["exclude_paths"], globalExcludes); len(merged) > 0 {
+				backupItem.Settings["exclude_paths"] = merged
 			}
 		}
 

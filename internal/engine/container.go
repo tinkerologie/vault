@@ -444,12 +444,21 @@ func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]Mount
 	if err != nil {
 		return nil, fmt.Errorf("inspecting container %q: %w", name, err)
 	}
+	// Surface label-declared exclusions the same way as automatic skips, so the
+	// wizard shows why a mount will not be backed up without the user having to
+	// go and read the container's labels.
+	labelPatterns := parseLabelExclusions(containerLabels(inspectResult.Container))
+
 	mounts := make([]MountInfo, 0, len(inspectResult.Container.Mounts))
 	for _, m := range inspectResult.Container.Mounts {
 		if !backupableMount(string(m.Type)) || !restorableVolume(string(m.Type), m.Name) {
 			continue
 		}
 		skip, reason := shouldSkipVolume(m.Source)
+		if !skip && len(labelPatterns) > 0 && shouldExcludeMount(labelPatterns, filepath.Clean(m.Destination)) {
+			skip = true
+			reason = "excluded by the container's " + VaultExcludeLabel + " label"
+		}
 		mounts = append(mounts, MountInfo{
 			Source:      m.Source,
 			Destination: filepath.Clean(m.Destination),
@@ -485,6 +494,74 @@ func extractExcludedMounts(settings map[string]any) []string {
 		return out
 	}
 	return nil
+}
+
+// containerLabels returns a container's labels, tolerating a nil Config —
+// Docker omits it for some container states, and the rest of this file guards
+// it the same way.
+func containerLabels(inspect container.InspectResponse) map[string]string {
+	if inspect.Config == nil {
+		return nil
+	}
+	return inspect.Config.Labels
+}
+
+// VaultExcludeLabel is the Docker label a container uses to declare its own
+// backup exclusions, e.g.
+//
+//	vault.exclude=/config/cache,/tmp
+//
+// Comma-separated so it reads the same as the free-text field in the job
+// wizard, and the patterns are handed to the identical matcher — there is no
+// second matching implementation to keep in sync.
+//
+// Declaring exclusions on the container means they travel with it: a compose
+// file or template carries its own answer, and adding the container to a job
+// needs no further configuration.
+const VaultExcludeLabel = "vault.exclude"
+
+// parseLabelExclusions extracts the exclusion patterns from a container's
+// labels. Entries are trimmed and blanks dropped, so a trailing comma or
+// padded list is tolerated rather than producing an empty pattern that would
+// match everything.
+func parseLabelExclusions(labels map[string]string) []string {
+	raw, ok := labels[VaultExcludeLabel]
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// labelExclusionsEnabled reports whether the vault.exclude label should be
+// honoured. Absent means enabled, matching the catalog default, so a caller
+// that does not thread the setting still gets the documented behaviour.
+func labelExclusionsEnabled(settings map[string]any) bool {
+	v, ok := settings["label_exclusions_enabled"]
+	if !ok {
+		return true
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+// containerExclusionsWithLabels is containerExclusions plus any patterns the
+// container declares via its vault.exclude label.
+//
+// Merged into the same slice on purpose: everything downstream — whole-mount
+// skipping, volume-relative rewriting, the chunked walk — then treats a
+// label-declared path exactly like a typed one.
+func containerExclusionsWithLabels(settings map[string]any, labels map[string]string) []string {
+	exclusions := containerExclusions(settings)
+	if !labelExclusionsEnabled(settings) {
+		return exclusions
+	}
+	return append(exclusions, parseLabelExclusions(labels)...)
 }
 
 // containerExclusions merges free-text exclude_paths with the checkbox-driven
@@ -553,8 +630,9 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 
 	// Extract path exclusions from item settings: free-text exclude_paths plus
-	// the checkbox-driven excluded_mounts from the job wizard.
-	exclusions := containerExclusions(item.Settings)
+	// the checkbox-driven excluded_mounts from the job wizard, plus anything
+	// the container declares for itself via the vault.exclude label.
+	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
 
 	if wasRunning && !noStop {
 		progress(item.Name, 20, "stopping container")
@@ -1394,7 +1472,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// classic tar Backup path: whole excluded mounts are skipped
 	// (shouldExcludeMount) and surviving mounts get their patterns mapped to
 	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
-	exclusions := containerExclusions(item.Settings)
+	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	// Stop container for consistent backup (mirrors classic Backup path).
 	wasRunning := inspect.State.Running

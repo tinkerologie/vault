@@ -129,6 +129,14 @@
   let autoThrottleSaving = $state(false)
   let retryDelays = $state('')
   let retrySaving = $state(false)
+  // Global exclusions (issue #257) and Docker-label exclusions (issue #258).
+  // Edited as one path per line — friendlier than hand-writing JSON — and
+  // converted to/from the stored JSON array on load and save.
+  let globalExcludes = $state('')
+  let labelExclusionsEnabled = $state(true)
+  let exclusionsSaving = $state(false)
+  // Multi-line placeholder needs to be a binding, not an inline literal.
+  const excludePlaceholder = '/tmp\n/config/cache\n*.sock'
 
   // Compaction threshold state. Backend stores as a fractional string "0.0".."1.0";
   // the UI exposes it as an integer percentage 0..100.
@@ -239,6 +247,8 @@
       autoThrottleEnabled = s?.auto_throttle_enabled === 'true'
       autoThrottleLink = s?.auto_throttle_link_mbps ?? ''
       autoThrottleFloor = s?.auto_throttle_floor_mbps ?? ''
+      globalExcludes = parseExcludeList(s?.global_exclude_paths)
+      labelExclusionsEnabled = s?.label_exclusions_enabled !== 'false'
       // Anomaly detection settings (Task 19)
       anomalyEnabled = s?.anomaly_detection_enabled !== 'false'
       anomalySensitivityDefault = s?.anomaly_sensitivity_default || 'balanced'
@@ -563,6 +573,40 @@
       showToast(e.message, 'error')
     } finally {
       autoThrottleSaving = false
+    }
+  }
+
+  // The setting is stored as a JSON array; the textarea shows one path per
+  // line. A malformed stored value degrades to empty rather than throwing,
+  // so a hand-edited setting cannot break the whole Settings page.
+  function parseExcludeList(raw) {
+    if (!raw) return ''
+    try {
+      const arr = JSON.parse(raw)
+      return Array.isArray(arr) ? arr.join('\n') : ''
+    } catch {
+      return ''
+    }
+  }
+
+  async function saveExclusions() {
+    if (readOnly) return
+    exclusionsSaving = true
+    try {
+      const paths = globalExcludes
+        .split('\n')
+        .map((p) => p.trim())
+        .filter((p) => p !== '')
+      settings = await api.updateSettings({
+        global_exclude_paths: JSON.stringify(paths),
+        label_exclusions_enabled: labelExclusionsEnabled ? 'true' : 'false',
+      })
+      globalExcludes = parseExcludeList(settings?.global_exclude_paths)
+      showToast('Exclusions saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      exclusionsSaving = false
     }
   }
 
@@ -1145,6 +1189,53 @@
               class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if autoThrottleSaving}<InlineSpinner />{/if}
               Save Upload Throttling
+            </button>
+          </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Backup Exclusions (issues #257, #258) -->
+      <div id="set-exclusions" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Backup Exclusions <Tooltip text="Paths listed here are skipped by every folder and container backup, so you don't have to repeat them on each job. They are added to whatever a job already excludes rather than replacing it." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">Skip the same paths everywhere, without editing every job.</p>
+        </div>
+        <div class="p-5 space-y-4">
+          <div>
+            <label for="global-excludes" class="block text-sm font-medium text-text-muted mb-1.5">
+              Always exclude these paths
+              <Tooltip text="One path per line. Matched the same way as a job's own exclusions, so the same patterns work here." />
+            </label>
+            <textarea id="global-excludes" rows="5" bind:value={globalExcludes} disabled={readOnly}
+              placeholder={excludePlaceholder}
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim font-mono focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"></textarea>
+            <p class="text-xs text-text-dim mt-1.5">One path per line. Added to each job's own exclusions — a job can still exclude more.</p>
+          </div>
+          <div class="flex items-center justify-between pt-1">
+            <div class="pr-4">
+              <p class="text-sm font-medium text-text">Honour the <code class="font-mono text-xs">vault.exclude</code> label on containers</p>
+              <p class="text-xs text-text-dim mt-0.5">A container can declare its own exclusions, e.g. <code class="font-mono">vault.exclude=/config/cache,/tmp</code>. The exclusions travel with the container, so a template or compose file carries its own answer.</p>
+            </div>
+            <button
+              onclick={() => { if (!readOnly) labelExclusionsEnabled = !labelExclusionsEnabled }}
+              disabled={readOnly}
+              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
+              role="switch"
+              aria-checked={labelExclusionsEnabled}
+              aria-label="Toggle Docker label exclusions"
+            >
+              <div class="w-11 h-6 rounded-full transition-colors {labelExclusionsEnabled ? 'bg-vault' : 'bg-surface-4'}">
+                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {labelExclusionsEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
+              </div>
+            </button>
+          </div>
+          {#if !readOnly}
+          <div class="flex justify-end">
+            <button onclick={saveExclusions} disabled={exclusionsSaving}
+              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              {#if exclusionsSaving}<InlineSpinner />{/if}
+              Save Exclusions
             </button>
           </div>
           {/if}
