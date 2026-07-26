@@ -173,8 +173,27 @@ func (idx *Index) dropDBState() error {
 //   - `vault dedup repair --dest=X` (Task 14)
 //   - TestDisasterRecovery_RebuildIndex (Task 8 integration test)
 //
-// Read order is lexicographic (matches numeric ascending because the names
-// are zero-padded sequence numbers). Each JSONL line is one pack.
+// Replay runs in two passes and is deliberately order-independent. A single
+// in-order pass that applied tombstones as deletes made correctness depend on
+// which blob sorted first, which is not something we can guarantee: two Index
+// instances writing one destination cache their own counters and so hand out
+// equal sequence numbers, leaving the random writerID to break the tie.
+//
+// Order mattered because chunk rows are one-per-(storage_id, chunk_id) with
+// REPLACE semantics, while DeleteDedupPack cascades onto them. After
+// compaction copies chunk C from dying pack X into new pack Y, the sequence
+// add(Y), add(X), tombstone(X) left C pointing at X and then cascaded it away
+// — losing a chunk that live pack Y still held, so restores failed after a
+// repair. Deferring the deletes to the end does not help: C still points at X
+// when the cascade fires.
+//
+// Collecting the tombstones first and skipping their adds sidesteps all of it.
+// dropDBState has already emptied the tables, so a tombstone has nothing to
+// delete — suppressing the add is its entire job. This mirrors restic's
+// RepairIndex, which builds a removePacks set before rewriting the index.
+//
+// Safe because pack IDs are random (see Packer.Flush), never content-derived,
+// so a tombstoned ID is never legitimately reused by a later pack.
 func (idx *Index) RebuildFromStorage() error {
 	if err := idx.dropDBState(); err != nil {
 		return err
@@ -183,7 +202,45 @@ func (idx *Index) RebuildFromStorage() error {
 	if err != nil {
 		return fmt.Errorf("dedup: list index: %w", err)
 	}
+	// Sorted for deterministic replay and error reporting only — the result no
+	// longer depends on this order.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+
+	// Pass 1: which packs were deleted? Only pack IDs are retained, so memory
+	// stays flat regardless of repository size.
+	tombstoned := make(map[string]struct{})
+	if err := idx.forEachIndexEntry(entries, func(e indexEntry) error {
+		if e.Tombstone != "" {
+			tombstoned[e.Tombstone] = struct{}{}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Pass 2: apply the adds that survived.
+	return idx.forEachIndexEntry(entries, func(e indexEntry) error {
+		// Tombstone lines carry zero-valued add fields (no chunks, blank pack
+		// ID). Check this branch first so we never act on those zero values as
+		// an add.
+		if e.Tombstone != "" {
+			return nil
+		}
+		if _, dead := tombstoned[e.PackID]; dead {
+			return nil
+		}
+		return idx.registerForRebuild(PackInfo{
+			ID: e.PackID, Path: e.PackPath,
+			SizeBytes: e.SizeBytes, ChunkCount: e.ChunkCount,
+			Entries: e.Chunks,
+		})
+	})
+}
+
+// forEachIndexEntry reads each index blob in turn and invokes fn once per
+// JSONL line. Shared by both RebuildFromStorage passes so the read, scan, and
+// close handling exists in one place.
+func (idx *Index) forEachIndexEntry(entries []storage.FileInfo, fn func(indexEntry) error) error {
 	for _, e := range entries {
 		if e.IsDir {
 			continue
@@ -200,21 +257,7 @@ func (idx *Index) RebuildFromStorage() error {
 				_ = rc.Close()
 				return fmt.Errorf("dedup: parse index entry: %w", err)
 			}
-			// Tombstone lines carry zero-valued add fields (no chunks, blank pack ID).
-			// Check this branch first so we never act on those zero values as an add.
-			if entry.Tombstone != "" {
-				if err := idx.db.DeleteDedupPack(idx.storageID, entry.Tombstone); err != nil {
-					_ = rc.Close()
-					return fmt.Errorf("dedup: rebuild tombstone %s: %w", entry.Tombstone, err)
-				}
-				continue
-			}
-			info := PackInfo{
-				ID: entry.PackID, Path: entry.PackPath,
-				SizeBytes: entry.SizeBytes, ChunkCount: entry.ChunkCount,
-				Entries: entry.Chunks,
-			}
-			if err := idx.registerForRebuild(info); err != nil {
+			if err := fn(entry); err != nil {
 				_ = rc.Close()
 				return err
 			}

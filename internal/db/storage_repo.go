@@ -539,9 +539,13 @@ func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
 // DeleteDedupPack removes a pack row and (via FK ON DELETE CASCADE) all its
 // chunk rows. Live callers (GC, compaction) should append a tombstone via
 // Index.AppendTombstone and delete the on-storage blob BEFORE calling this,
-// so a crash mid-delete is recoverable via Index.RebuildFromStorage. The
-// rebuild path calls this directly to apply a tombstone — no blob delete
-// needed there because the blob is already gone by definition.
+// so a crash mid-delete is recoverable via Index.RebuildFromStorage.
+//
+// The rebuild path deliberately does NOT call this. Because chunk rows are
+// one-per-(storage_id, chunk_id), the cascade here would remove a chunk that a
+// surviving pack still holds if a dead pack's add line happened to be replayed
+// last. RebuildFromStorage collects tombstoned pack IDs up front and skips
+// their adds instead — see the comment there.
 func (d *DB) DeleteDedupPack(storageID int64, packID string) error {
 	_, err := d.Exec(`DELETE FROM dedup_packs WHERE storage_id=? AND id=?`, storageID, packID)
 	return err
