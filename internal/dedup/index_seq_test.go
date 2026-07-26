@@ -43,7 +43,9 @@ func TestIndexAppendListsDirectoryOnce(t *testing.T) {
 		}
 	}
 
-	if counter.lists > 1 {
+	// Exactly one: more means the quadratic re-scan is back; zero means the
+	// counter never seeds from storage and would overwrite existing history.
+	if counter.lists != 1 {
 		t.Fatalf("nextIndexSeq listed the index directory %d times for %d appends; want 1", counter.lists, appends)
 	}
 	listing, err := fake.List(indexRootPath)
@@ -204,5 +206,29 @@ func TestIndexNextSeqConcurrentSameInstance(t *testing.T) {
 			t.Fatalf("duplicate sequence %d handed out under concurrent access", s)
 		}
 		seen[s] = true
+	}
+}
+
+// TestIndexSeedIgnoresNonIndexFiles confirms a stray artifact in the index
+// directory cannot inflate the counter. strings.TrimSuffix is a no-op when
+// the suffix does not match, so an unguarded parse would read
+// "0000009999-upload.partial" as sequence 9999.
+func TestIndexSeedIgnoresNonIndexFiles(t *testing.T) {
+	idx, fake, _, _, cleanup := newTestIndex(t)
+	defer cleanup()
+
+	if err := fake.Write(indexRootPath+"/0000000007.idx", strings.NewReader("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := fake.Write(indexRootPath+"/0000009999-upload.partial", strings.NewReader("junk")); err != nil {
+		t.Fatal(err)
+	}
+
+	seq, err := idx.nextIndexSeq()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 8 {
+		t.Fatalf("sequence = %d, want 8 — a non-.idx artifact inflated the counter", seq)
 	}
 }

@@ -295,7 +295,14 @@ func (idx *Index) scanMaxIndexSeq() (int64, error) {
 		if e.IsDir {
 			continue
 		}
-		base := strings.TrimSuffix(path.Base(e.Path), ".idx")
+		name := path.Base(e.Path)
+		base := strings.TrimSuffix(name, ".idx")
+		if base == name {
+			// TrimSuffix is a no-op on a non-match, so without this guard a
+			// stray artifact like "0000000042-upload.partial" would parse as
+			// sequence 42 and inflate the counter.
+			continue
+		}
 		if i := strings.IndexByte(base, '-'); i >= 0 {
 			base = base[:i]
 		}
