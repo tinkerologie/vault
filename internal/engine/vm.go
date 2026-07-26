@@ -824,11 +824,16 @@ func (h *VMHandler) destroyDomainWithRetry(ctx context.Context, dom libvirt.Doma
 	// a cancel racing the shutdown deadline cannot still hard-stop a running
 	// guest. Teardown callers deliberately pass context.Background(), which is
 	// never cancelled, so their cleanup is unaffected.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	deadline := time.Now().Add(vmShutdownTimeout)
 	for {
+		// Re-checked every iteration, not just on entry: the retry loop can
+		// run for the full vmShutdownTimeout, and a cancel arriving mid-loop
+		// must stop it issuing further destroys. Teardown callers deliberately
+		// pass context.Background(), which is never cancelled, so their
+		// cleanup is unaffected.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		err := h.conn.DomainDestroy(dom)
 		if err == nil || isLibvirtNoDomainError(err) {
 			return nil

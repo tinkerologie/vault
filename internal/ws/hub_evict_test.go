@@ -88,14 +88,25 @@ func TestEvictedClientGetsPolicyViolationClose(t *testing.T) {
 	}
 }
 
-// TestCloseOnceKeepsFirstStatus covers the guard that stops the eviction's
-// status-carrying Close racing the pumps' CloseNow: whichever fires first wins
-// and the second is a no-op.
-func TestCloseOnceKeepsFirstStatus(t *testing.T) {
-	c := &Client{} // nil conn — closeOnce still arbitrates
+// TestCloseOnceArbitratesClosePaths documents that both close entry points
+// share one sync.Once, so whichever fires first wins and the rest are no-ops.
+//
+// Deliberately asserts the call count rather than merely "did not panic": with
+// a nil conn both bodies short-circuit, so a no-panic check passes even with
+// the guard removed and proves nothing. The observable behaviour — an evicted
+// peer receiving StatusPolicyViolation rather than an abrupt drop — is covered
+// end-to-end by TestEvictedClientGetsPolicyViolationClose above, which runs
+// against a real connection.
+func TestCloseOnceArbitratesClosePaths(t *testing.T) {
+	var calls int
+	c := &Client{}
+
+	c.closeOnce.Do(func() { calls++ })
+	c.closeOnce.Do(func() { calls++ })
 	c.closeSlow()
 	c.closeNow()
-	c.closeSlow()
-	// Reaching here without a panic is the assertion: a second close on an
-	// already-closed connection must not double-fire.
+
+	if calls != 1 {
+		t.Fatalf("close body ran %d times, want exactly 1", calls)
+	}
 }

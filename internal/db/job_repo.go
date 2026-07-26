@@ -186,8 +186,12 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 // that simply left settings unset does, stores an empty string and makes every
 // later read log a malformed-JSON warning. Normalising here covers every
 // writer rather than each caller having to remember.
+// Literal JSON "null" is canonicalised too: it unmarshals successfully into a
+// NIL map, and callers that then add a key to it panic (restoreStagedItem
+// setting restore_destination is one). "{}" yields an empty but usable map.
 func normalizeItemSettings(settings string) string {
-	if strings.TrimSpace(settings) == "" {
+	trimmed := strings.TrimSpace(settings)
+	if trimmed == "" || trimmed == "null" {
 		return "{}"
 	}
 	return settings

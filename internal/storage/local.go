@@ -99,10 +99,15 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	}
 	tmpPath := tmp.Name()
 	cleanupTmp := func() { _ = os.Remove(tmpPath) }
-	if _, err := io.Copy(tmp, reader); err != nil {
+	// io.Copy surfaces read errors too, and a source adapter can raise ENOSPC
+	// of its own. Attribute the failure to this destination only when the
+	// write side is what failed — otherwise the operator gets Unraid guidance
+	// about the wrong volume.
+	dst := &writeFailTracker{w: tmp}
+	if _, err := io.Copy(dst, reader); err != nil {
 		_ = tmp.Close()
 		cleanupTmp()
-		if IsNoSpace(err) {
+		if dst.failed && IsNoSpace(err) {
 			return NoSpaceError(dir, err)
 		}
 		return fmt.Errorf("write file: %w", err)
@@ -294,3 +299,19 @@ func (l *LocalAdapter) RemoveEmptyDir(dir string) error {
 }
 
 var _ Adapter = (*LocalAdapter)(nil)
+
+// writeFailTracker records whether an io.Copy failure came from the
+// destination rather than the source, so a disk-full error is only blamed on
+// the volume that actually filled.
+type writeFailTracker struct {
+	w      io.Writer
+	failed bool
+}
+
+func (t *writeFailTracker) Write(p []byte) (int, error) {
+	n, err := t.w.Write(p)
+	if err != nil {
+		t.failed = true
+	}
+	return n, err
+}

@@ -87,9 +87,13 @@ func (r *enospcReader) Read(p []byte) (int, error) {
 	return 7, nil
 }
 
-// TestLocalWriteSurfacesNoSpaceGuidance confirms the adapter actually uses the
-// enriched error rather than the opaque "write file: ..." wrap.
-func TestLocalWriteSurfacesNoSpaceGuidance(t *testing.T) {
+// TestLocalWriteDoesNotBlameDestinationForSourceErrors covers attribution.
+//
+// io.Copy reports read errors as well as write errors, and a source adapter
+// can raise ENOSPC of its own. Handing the operator Unraid guidance about the
+// destination share in that case sends them to the wrong volume, so the
+// enriched message must apply only when the write side is what failed.
+func TestLocalWriteDoesNotBlameDestinationForSourceErrors(t *testing.T) {
 	dir := t.TempDir()
 	a := &LocalAdapter{basePath: dir}
 
@@ -97,14 +101,14 @@ func TestLocalWriteSurfacesNoSpaceGuidance(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the write to fail")
 	}
+	if strings.Contains(err.Error(), "no space left on the volume backing") {
+		t.Fatalf("a source-side ENOSPC was blamed on the destination: %v", err)
+	}
 	if !IsNoSpace(err) {
 		t.Fatalf("error lost its ENOSPC identity: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no space left on the volume backing") {
-		t.Fatalf("adapter did not apply the enriched message: %v", err)
-	}
 
-	// The partial temp file must not be left behind.
+	// The partial temp file must not be left behind either way.
 	entries, rerr := os.ReadDir(filepath.Join(dir, "sub"))
 	if rerr != nil {
 		t.Fatal(rerr)
@@ -113,6 +117,36 @@ func TestLocalWriteSurfacesNoSpaceGuidance(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".vault-tmp-") {
 			t.Fatalf("partial temp file left behind: %s", e.Name())
 		}
+	}
+}
+
+// failingWriter fails every write with the supplied error.
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write(p []byte) (int, error) { return 0, w.err }
+
+// TestWriteFailTrackerFlagsOnlyWriteErrors covers the discriminator the
+// adapter branches on. A genuine destination-full write cannot be produced
+// portably in a unit test — it needs a real full filesystem — so the branch is
+// covered as its two parts: this, plus TestNoSpaceErrorExplainsUnraidUserShare
+// for the message itself.
+func TestWriteFailTrackerFlagsOnlyWriteErrors(t *testing.T) {
+	// Write side fails.
+	tracker := &writeFailTracker{w: failingWriter{err: &os.PathError{Op: "write", Err: syscall.ENOSPC}}}
+	if _, err := io.Copy(tracker, strings.NewReader("payload")); err == nil {
+		t.Fatal("expected the copy to fail")
+	}
+	if !tracker.failed {
+		t.Fatal("a destination write failure was not flagged")
+	}
+
+	// Read side fails; destination is fine.
+	clean := &writeFailTracker{w: io.Discard}
+	if _, err := io.Copy(clean, &enospcReader{}); err == nil {
+		t.Fatal("expected the copy to fail")
+	}
+	if clean.failed {
+		t.Fatal("a source failure was mis-flagged as a destination failure")
 	}
 }
 

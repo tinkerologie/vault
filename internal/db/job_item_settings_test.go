@@ -26,7 +26,9 @@ func TestAddJobItemNormalisesBlankSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, blank := range []string{"", "   ", "\n"} {
+	// "null" is included deliberately: it unmarshals successfully into a NIL
+	// map, and callers that then add a key to it panic.
+	for _, blank := range []string{"", "   ", "\n", "null", " null "} {
 		id, err := d.AddJobItem(JobItem{JobID: jobID, ItemType: "vm", ItemName: "Fedora", ItemID: "Fedora", Settings: blank})
 		if err != nil {
 			t.Fatal(err)
@@ -36,10 +38,14 @@ func TestAddJobItemNormalisesBlankSettings(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stored string
+		var found bool
 		for _, it := range items {
 			if it.ID == id {
-				stored = it.Settings
+				stored, found = it.Settings, true
 			}
+		}
+		if !found {
+			t.Fatalf("inserted item %d not returned by GetJobItems", id)
 		}
 		if stored != "{}" {
 			t.Fatalf("settings %q stored as %q, want \"{}\"", blank, stored)
@@ -58,7 +64,10 @@ func TestAddJobItemPreservesRealSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, _ := d.GetJobItems(jobID)
+	items, err := d.GetJobItems(jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, it := range items {
 		if it.ID == id && it.Settings != want {
 			t.Fatalf("settings mangled: got %q, want %q", it.Settings, want)

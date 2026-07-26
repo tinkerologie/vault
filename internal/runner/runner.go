@@ -3678,8 +3678,11 @@ func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, i
 		if itemsErr == nil {
 			for _, ji := range jobItems {
 				if ji.ItemName == itemName && ji.ItemType == "folder" {
-					var s map[string]any
-					if json.Unmarshal([]byte(ji.Settings), &s) == nil {
+					// ParsedSettings, not a raw unmarshal: a settings blob of
+					// literal "null" decodes successfully into a NIL map, and
+					// the destination/file-path overrides below write into it.
+					// Assigning to a nil map panics.
+					if s, err := ji.ParsedSettings(); err == nil {
 						backupItem.Settings = s
 					}
 					break
