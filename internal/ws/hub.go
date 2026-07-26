@@ -73,8 +73,17 @@ func (h *Hub) Unregister(c *Client) {
 	h.unregister <- c
 }
 
+// Broadcast queues msg for fan-out to every connected client. The send is
+// non-blocking: if the buffer is full the message is dropped rather than
+// stalling the caller. Progress events are ephemeral — a later one always
+// supersedes a dropped one — and the caller is typically the single backup
+// goroutine, which must never be blocked by WebSocket bookkeeping. This
+// mirrors the per-client fan-out in Run, which already drops slow clients.
 func (h *Hub) Broadcast(msg []byte) {
-	h.broadcast <- msg
+	select {
+	case h.broadcast <- msg:
+	default:
+	}
 }
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {

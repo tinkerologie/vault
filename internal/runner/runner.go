@@ -405,6 +405,29 @@ func (r *Runner) updateCurrentItemProgress(itemType string, percent int, message
 	r.statusMu.Unlock()
 }
 
+// newBroadcastThrottle returns a predicate that admits at most one outbound
+// progress broadcast per second. Terminal updates (percent >= 100) always
+// pass so a completion event is never swallowed.
+//
+// The chunked backup and restore walks invoke their progress callback once
+// per file — 46,000 times for the folder in issue #256 — and each admitted
+// call costs a JSON marshal plus a hub fan-out. Callers still run their
+// in-memory status update on every invocation, so the UI's polled state and
+// the stall watchdog stay fully informed; only the WebSocket chatter is cut.
+//
+// Not safe for concurrent use — matching the existing per-upload throttles
+// in this file, every call site drives it from a single walk goroutine.
+func newBroadcastThrottle() func(percent int) bool {
+	var last time.Time
+	return func(percent int) bool {
+		if percent >= 100 || time.Since(last) >= time.Second {
+			last = time.Now()
+			return true
+		}
+		return false
+	}
+}
+
 func (r *Runner) reportRestoreProgress(reporter restoreProgressReporter, percent int, message string) {
 	if reporter.JobID == 0 && reporter.RunID == 0 && reporter.ItemName == "" {
 		return
@@ -2214,12 +2237,16 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
 	}
 
+	admit := newBroadcastThrottle()
 	progress := func(name string, pct int, msg string) {
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
 		r.lastProgressMu.Unlock()
 
 		r.updateCurrentItemProgress(item.Type, pct, msg)
+		if !admit(pct) {
+			return
+		}
 		r.broadcast(map[string]any{
 			"type":      "backup_progress",
 			"item":      name,
@@ -2302,12 +2329,16 @@ func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, d
 		return "", nil, func() {}, fmt.Errorf("creating %s handler: %w", item.Type, err)
 	}
 
+	admit := newBroadcastThrottle()
 	progress := func(name string, pct int, msg string) {
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
 		r.lastProgressMu.Unlock()
 
 		r.updateCurrentItemProgress(item.Type, pct, msg)
+		if !admit(pct) {
+			return
+		}
 		r.broadcast(map[string]any{
 			"type":      "backup_progress",
 			"item":      name,
@@ -3340,11 +3371,18 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 		item.Settings["restore_file_paths"] = filePaths
 	}
 
+	admit := newBroadcastThrottle()
 	progress := func(name string, pct int, msg string) {
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
 		r.lastProgressMu.Unlock()
 		reporter.ItemName = name
+		// RestoreChunked reports once per restored file. The stall watchdog is
+		// fed above on every call; the status update and broadcast (which
+		// reportRestoreProgress does together, clamping percent) run at ~1 Hz.
+		if !admit(pct) {
+			return
+		}
 		r.reportRestoreProgress(reporter, pct, msg)
 	}
 
@@ -3406,7 +3444,8 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 
 	var (
 		dlMu     sync.Mutex
-		dl       int64 // bytes downloaded across all files (for progress)
+		dl       int64     // bytes downloaded across all files (for progress)
+		dlLast   time.Time // last broadcast, guarded by dlMu (rate limit, issue #256)
 		sem      = make(chan struct{}, concurrency)
 		wg       sync.WaitGroup
 		firstErr error
@@ -3416,11 +3455,18 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
 		r.lastProgressMu.Unlock()
+		// This fires per read across every concurrent download worker. Admit
+		// at most one broadcast per second — the watchdog above still sees
+		// every byte, so a slow remote cannot be mistaken for a stall.
 		dlMu.Lock()
 		dl += n
 		cur := dl
+		emit := time.Since(dlLast) >= time.Second
+		if emit {
+			dlLast = time.Now()
+		}
 		dlMu.Unlock()
-		if totalBytes > 0 {
+		if totalBytes > 0 && emit {
 			r.reportRestoreProgress(reporter, scaleRestorePhaseProgress(phaseStart, phaseEnd, cur, totalBytes), "Downloading")
 		}
 	}

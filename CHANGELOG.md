@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Large backups to a dedup destination no longer slow to a crawl and appear frozen.** Every time a backup finished a 24 MiB pack, Vault listed the entire `_vault/index/` directory on the destination to work out the next index-blob number. That directory gains one entry per pack, so the cost grew with every pack written: a 500 GB folder flushes roughly 21,000 packs and so issued 21,000 listings of a directory holding up to 21,000 entries — hundreds of millions of directory entries pulled across the network in a single run. Progress crawled, got steadily worse the longer a backup ran, and on a remote destination (WebDAV/SFTP/S3) eventually degenerated into connection and DNS timeouts that failed the run. Vault now reads that directory once per backup and counts on from there, so index bookkeeping costs the same on the last pack as on the first. Existing destinations are picked up as-is — no re-upload, repair, or reconfiguration is needed. Closes #256.
+- **A slow or stalled browser can no longer hold up a running backup.** Live progress events were handed to the WebSocket layer with a blocking send, so once the outbound queue filled — a browser tab that had been left open and stopped reading, or a flaky connection — the backup goroutine itself waited on it. Progress events are now dropped rather than queued when the connection cannot keep up, since the next update supersedes them anyway. Backups run at full speed regardless of what any connected browser is doing.
+- **Per-file progress updates are now rate-limited to roughly one per second.** Chunked backups and restores sent a WebSocket event for every single file — 46,000 events for a large music library — each one costing CPU on the server and work in the browser, for updates far faster than anyone can read. Backup, restore, and the restore download phase now report at a steady cadence instead. On-screen progress is unchanged in practice, and the internal stall detector still sees every file and every byte, so a genuinely hung backup is still detected just as quickly.
+
 ## [v2026.07.10] - 2026-07-24
 
 ### Fixed
