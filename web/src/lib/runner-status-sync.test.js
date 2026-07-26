@@ -63,6 +63,14 @@ describe('reconcileRunnerStatus', () => {
     )
   })
 
+  it('treats a missing run id as a new run, not the same one', () => {
+    // undefined === undefined would make consecutive runs indistinguishable
+    // and emit no transition at all.
+    const msgs = reconcileRunnerStatus({ active: true }, { active: true })
+    expect(types(msgs)).toContain('job_run_completed')
+    expect(types(msgs)).toContain('job_run_started')
+  })
+
   it('stays quiet when the same run is still going', () => {
     const same = { active: true, job_id: 1, run_id: 10 }
     const msgs = reconcileRunnerStatus(same, { ...same })

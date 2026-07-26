@@ -68,10 +68,18 @@ func TestAddJobItemPreservesRealSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var found bool
 	for _, it := range items {
-		if it.ID == id && it.Settings != want {
+		if it.ID != id {
+			continue
+		}
+		found = true
+		if it.Settings != want {
 			t.Fatalf("settings mangled: got %q, want %q", it.Settings, want)
 		}
+	}
+	if !found {
+		t.Fatalf("inserted item %d not returned by GetJobItems", id)
 	}
 }
 

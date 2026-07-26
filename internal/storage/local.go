@@ -103,6 +103,12 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	// of its own. Attribute the failure to this destination only when the
 	// write side is what failed — otherwise the operator gets Unraid guidance
 	// about the wrong volume.
+	//
+	// Wrapping tmp costs io.Copy's ReadFrom fast path, which is deliberate:
+	// Vault's uploads are encrypted and/or compressed streams, so the source is
+	// virtually never a plain *os.File and the fast path could not engage
+	// anyway. Correct attribution is the entire point of the enriched message,
+	// so it wins over an optimisation this path rarely reaches.
 	dst := &writeFailTracker{w: tmp}
 	if _, err := io.Copy(dst, reader); err != nil {
 		_ = tmp.Close()

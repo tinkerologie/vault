@@ -31,7 +31,15 @@ export function reconcileRunnerStatus(previous, snapshot) {
   // B started while we were away, both sides are active and a boolean-only
   // check emits nothing at all, leaving consumers displaying A for the whole
   // of B.
-  const sameRun = prevActive && nextActive && previous.run_id === snapshot.run_id
+  // run_id must be defined on both sides: if the status ever omits it while
+  // active is true, undefined === undefined would make every consecutive run
+  // look like the same one and emit no transition at all — precisely the
+  // failure this identity check exists to prevent.
+  const sameRun =
+    prevActive &&
+    nextActive &&
+    previous.run_id != null &&
+    previous.run_id === snapshot.run_id
 
   if (prevActive && !sameRun) {
     messages.push({

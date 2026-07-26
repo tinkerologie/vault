@@ -41,6 +41,11 @@ func TestBroadcastThrottleAlwaysEmitsTerminal(t *testing.T) {
 // TestBroadcastThrottleReopensAfterInterval confirms updates resume once the
 // cadence window has passed, so a long-running item keeps reporting.
 func TestBroadcastThrottleReopensAfterInterval(t *testing.T) {
+	// The throttle reads the wall clock, so proving it reopens needs a real
+	// pause. Skipped under -short so the fast suite stays fast.
+	if testing.Short() {
+		t.Skip("needs a real 1s pause to cross the throttle window")
+	}
 	admit := newBroadcastThrottle()
 
 	if !admit(-1) {

@@ -288,10 +288,8 @@ func (idx *Index) forEachIndexEntry(entries []storage.FileInfo, fn func(indexEnt
 // race). In-daemon this does not arise: RunDedupGC takes the same run slot as
 // a backup, so GC and backup never write one destination concurrently. Their
 // relative replay order at an equal sequence is decided by writerID rather
-// than by wall-clock order; making RebuildFromStorage order-independent
-// (apply tombstones as a pre-pass) is the durable fix and is tracked
-// separately — it is a pre-existing property of the replay format, not
-// something this change introduces.
+// than by wall-clock order. RebuildFromStorage no longer depends on that:
+// it applies tombstones as a pre-pass, so replay is order-independent.
 func (idx *Index) nextIndexSeq() (int64, error) {
 	idx.seqMu.Lock()
 	defer idx.seqMu.Unlock()
