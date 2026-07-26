@@ -14,7 +14,15 @@ import (
 // every backup offline over a mistyped setting. The problem is logged so it is
 // still diagnosable.
 func (r *Runner) globalExcludePaths() []string {
-	raw, _ := r.db.GetSetting("global_exclude_paths", docsmeta.DefaultFor("global_exclude_paths"))
+	// GetSetting returns the default alongside a real database error, so an
+	// unlogged error here would be indistinguishable from "not configured" —
+	// and failing open on exclusions means backing up paths meant to be
+	// skipped. Logged rather than fatal, matching how every other setting in
+	// the runner is read.
+	raw, err := r.db.GetSetting("global_exclude_paths", docsmeta.DefaultFor("global_exclude_paths"))
+	if err != nil {
+		log.Printf("runner: reading global_exclude_paths (continuing without global exclusions): %v", err)
+	}
 	if raw == "" {
 		return nil
 	}

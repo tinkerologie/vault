@@ -37,6 +37,9 @@ func (r *Runner) adaptiveBusyReason(ctx context.Context, items []db.JobItem) str
 		NetKbps:    float64(r.adaptiveSettingInt("adaptive_idle_net_kbps")),
 	}
 	folderWindow := time.Duration(r.adaptiveSettingInt("adaptive_folder_idle_minutes")) * time.Minute
+	// Read once, outside the loop: re-reading per item would let a concurrent
+	// settings change give different items different policies within one probe.
+	globalExcludes := r.globalExcludePaths()
 
 	for _, item := range items {
 		var sample engine.ActivitySample
@@ -63,11 +66,10 @@ func (r *Runner) adaptiveBusyReason(ctx context.Context, items []db.JobItem) str
 			if path == "" {
 				continue
 			}
-			// Merge the global list here too: a path excluded from the backup
-			// must not count as activity, or a globally-ignored cache
-			// directory would postpone the job it is not even backing up.
-			excludes := mergeExclusions(s["exclude_paths"], r.globalExcludePaths())
-			sample = engine.ProbeFolderActivity(ctx, path, excludes, folderWindow)
+			// Merged so a path excluded from the backup does not count as
+			// activity — a globally-ignored cache directory should not
+			// postpone the job that is not even backing it up.
+			sample = engine.ProbeFolderActivity(ctx, path, mergeExclusions(s["exclude_paths"], globalExcludes), folderWindow)
 		default:
 			continue
 		}

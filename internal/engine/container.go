@@ -439,7 +439,12 @@ type MountInfo struct {
 // verdict from shouldSkipVolume. Matches the engine's backup behaviour: tmpfs,
 // device nodes, and anonymous volumes (which can't be reattached on restore)
 // are excluded. Results are sorted by destination for stable UI ordering.
-func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]MountInfo, error) {
+// labelExclusions controls whether the container's own vault.exclude label is
+// evaluated. Passed in rather than read here because the engine holds no
+// database handle — and discovery must agree with what the backup will
+// actually do, or the wizard shows mounts as skipped that will in fact be
+// backed up.
+func (h *ContainerHandler) ListMounts(ctx context.Context, name string, labelExclusions bool) ([]MountInfo, error) {
 	inspectResult, err := h.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("inspecting container %q: %w", name, err)
@@ -447,7 +452,10 @@ func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]Mount
 	// Surface label-declared exclusions the same way as automatic skips, so the
 	// wizard shows why a mount will not be backed up without the user having to
 	// go and read the container's labels.
-	labelPatterns := parseLabelExclusions(containerLabels(inspectResult.Container))
+	var labelPatterns []string
+	if labelExclusions {
+		labelPatterns = parseLabelExclusions(containerLabels(inspectResult.Container))
+	}
 
 	mounts := make([]MountInfo, 0, len(inspectResult.Container.Mounts))
 	for _, m := range inspectResult.Container.Mounts {
@@ -520,10 +528,40 @@ func containerLabels(inspect container.InspectResponse) map[string]string {
 // needs no further configuration.
 const VaultExcludeLabel = "vault.exclude"
 
+// countExcludedMounts reports how many backup-eligible mounts exist and how
+// many of them the exclusion list removes. Used to catch the case where a
+// backup would succeed while containing no volume data at all.
+func countExcludedMounts(mounts []container.MountPoint, exclusions []string) (eligible, excluded int) {
+	for _, m := range mounts {
+		if !backupableMount(string(m.Type)) || !restorableVolume(string(m.Type), m.Name) {
+			continue
+		}
+		eligible++
+		if shouldExcludeMount(exclusions, filepath.Clean(m.Destination)) {
+			excluded++
+		}
+	}
+	return eligible, excluded
+}
+
+// catchAllExclusions are patterns that would exclude every mount. Rejected
+// from labels — see parseLabelExclusions.
+var catchAllExclusions = map[string]struct{}{
+	"*": {}, "**": {}, "/": {}, "/*": {}, "/**": {}, ".": {},
+}
+
 // parseLabelExclusions extracts the exclusion patterns from a container's
 // labels. Entries are trimmed and blanks dropped, so a trailing comma or
 // padded list is tolerated rather than producing an empty pattern that would
 // match everything.
+//
+// Catch-all patterns are refused. Unlike the exclusions an operator types into
+// the job wizard, a label is authored by whoever wrote the image or template —
+// not by the person who owns the backup. A single `vault.exclude=*` would
+// otherwise exclude every mount (shouldExcludeMount globs against the mount's
+// base name), and the backup would still report success while containing
+// nothing. Narrow the blast radius: an image can opt paths out, it cannot opt
+// the whole container out.
 func parseLabelExclusions(labels map[string]string) []string {
 	raw, ok := labels[VaultExcludeLabel]
 	if !ok {
@@ -531,9 +569,16 @@ func parseLabelExclusions(labels map[string]string) []string {
 	}
 	var out []string
 	for _, part := range strings.Split(raw, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
 		}
+		if _, catchAll := catchAllExclusions[p]; catchAll {
+			log.Printf("engine: ignoring catch-all %s pattern %q — a label may exclude paths, not the whole container",
+				VaultExcludeLabel, p)
+			continue
+		}
+		out = append(out, p)
 	}
 	return out
 }
@@ -699,6 +744,17 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 
 		// Step 4: Tar bind mounts and named volumes, skipping large shared data paths.
 		progress(item.Name, 60, "backing up volumes")
+		// A container whose every eligible mount is excluded would otherwise
+		// produce a "successful" backup holding only config and image — the
+		// same silent data-loss trap the VM handler guards against when a
+		// domain has no file-backed disks. Reachable through a broad global
+		// rule or a container's own label, neither of which the person running
+		// the job necessarily wrote, so fail loudly instead.
+		if eligible, excluded := countExcludedMounts(inspect.Mounts, exclusions); eligible > 0 && excluded == eligible {
+			return fmt.Errorf("every backup-eligible mount of container %s is excluded (%d of %d); "+
+				"check the job's exclusions, the global exclusion list, and any %s label on the container",
+				item.Name, excluded, eligible, VaultExcludeLabel)
+		}
 		var manifest []volumeManifestEntry
 		for i, mount := range inspect.Mounts {
 			if !backupableMount(string(mount.Type)) {

@@ -1,19 +1,42 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"
 )
 
 // DiscoverHandler exposes container and VM discovery via the engine.
-type DiscoverHandler struct{}
+type DiscoverHandler struct {
+	// db is used only to read the label_exclusions_enabled setting, so mount
+	// discovery reports the same exclusions the backup will apply. Nil is
+	// tolerated (tests construct the handler bare) and falls back to the
+	// catalog default.
+	db *db.DB
+}
 
 // NewDiscoverHandler creates a new DiscoverHandler.
-func NewDiscoverHandler() *DiscoverHandler {
-	return &DiscoverHandler{}
+func NewDiscoverHandler(database *db.DB) *DiscoverHandler {
+	return &DiscoverHandler{db: database}
+}
+
+// labelExclusionsEnabled reports the setting, defaulting to the catalog value
+// when unavailable — discovery is advisory, so it degrades rather than fails.
+func (h *DiscoverHandler) labelExclusionsEnabled() bool {
+	if h.db == nil {
+		return docsmeta.DefaultBool("label_exclusions_enabled")
+	}
+	on, err := h.db.GetSettingBool("label_exclusions_enabled", docsmeta.DefaultBool("label_exclusions_enabled"))
+	if err != nil {
+		log.Printf("discover: reading label_exclusions_enabled: %v", err)
+		return docsmeta.DefaultBool("label_exclusions_enabled")
+	}
+	return on
 }
 
 // ListContainers returns all Docker containers discoverable by the engine.
@@ -66,7 +89,7 @@ func (h *DiscoverHandler) ContainerMounts(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	mounts, err := handler.ListMounts(r.Context(), name)
+	mounts, err := handler.ListMounts(r.Context(), name, h.labelExclusionsEnabled())
 	if err != nil {
 		respondJSON(w, http.StatusOK, map[string]any{
 			"mounts":    []engine.MountInfo{},
