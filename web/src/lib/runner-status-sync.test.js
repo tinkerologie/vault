@@ -16,7 +16,9 @@ describe('reconcileRunnerStatus', () => {
   })
 
   it('synthesises job_run_started when a run appeared while disconnected', () => {
-    const msgs = reconcileRunnerStatus(null, {
+    // Baseline says nothing was running, so this is a genuine transition —
+    // unlike a null baseline, where we are only discovering current state.
+    const msgs = reconcileRunnerStatus({ active: false }, {
       active: true,
       job_id: 5,
       run_id: 9,
@@ -33,10 +35,47 @@ describe('reconcileRunnerStatus', () => {
     })
   })
 
-  it('always leads with the snapshot', () => {
-    expect(reconcileRunnerStatus(null, { active: false })[0].type).toBe(
-      'runner_status_snapshot',
+  it('ends with the snapshot so it is authoritative', () => {
+    // A synthetic job_run_started zeroes the progress store's counters and
+    // elapsed timer; the snapshot must land after it to repopulate them.
+    const msgs = reconcileRunnerStatus({ active: false }, { active: true, run_id: 1 })
+    expect(msgs[msgs.length - 1].type).toBe('runner_status_snapshot')
+    expect(types(msgs).indexOf('job_run_started')).toBeLessThan(
+      types(msgs).indexOf('runner_status_snapshot'),
     )
+  })
+
+  it('emits completion then start when one run replaced another', () => {
+    // Run A finished and run B started while disconnected. A boolean-only
+    // check sees active on both sides and emits nothing, leaving consumers
+    // showing A for the whole of B.
+    const previous = { active: true, job_id: 1, run_id: 10, run_type: 'backup' }
+    const snapshot = { active: true, job_id: 2, run_id: 11, run_type: 'backup' }
+    const msgs = reconcileRunnerStatus(previous, snapshot)
+
+    expect(types(msgs)).toContain('job_run_completed')
+    expect(types(msgs)).toContain('job_run_started')
+    expect(msgs.find((m) => m.type === 'job_run_completed')).toMatchObject({ run_id: 10 })
+    expect(msgs.find((m) => m.type === 'job_run_started')).toMatchObject({ run_id: 11 })
+    // Completion must precede the start so the store closes A before opening B.
+    expect(types(msgs).indexOf('job_run_completed')).toBeLessThan(
+      types(msgs).indexOf('job_run_started'),
+    )
+  })
+
+  it('stays quiet when the same run is still going', () => {
+    const same = { active: true, job_id: 1, run_id: 10 }
+    const msgs = reconcileRunnerStatus(same, { ...same })
+    expect(types(msgs)).toEqual(['runner_status_snapshot'])
+  })
+
+  it('does not synthesise a start with no baseline to transition from', () => {
+    // First sync of a page opened mid-run: restoreFromStatus populates real
+    // start time and counters from the snapshot, and a synthetic start would
+    // immediately reset them to zero.
+    const msgs = reconcileRunnerStatus(null, { active: true, run_id: 7 })
+    expect(types(msgs)).not.toContain('job_run_started')
+    expect(types(msgs)).toContain('runner_status_snapshot')
   })
 
   it('emits queue_update only when the queue actually changed', () => {

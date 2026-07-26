@@ -23,15 +23,30 @@
  * @returns {Array<object>} messages to emit, in order
  */
 export function reconcileRunnerStatus(previous, snapshot) {
-  const messages = [{ type: 'runner_status_snapshot', status: snapshot }]
+  const messages = []
 
-  const prevQueue = JSON.stringify(previous?.queue || [])
-  const nextQueue = JSON.stringify(snapshot?.queue || [])
-  if (prevQueue !== nextQueue) {
-    messages.push({ type: 'queue_update', queue: snapshot?.queue || [] })
+  const prevActive = !!previous?.active
+  const nextActive = !!snapshot?.active
+  // Compare run identity, not just the active flag: if run A finished and run
+  // B started while we were away, both sides are active and a boolean-only
+  // check emits nothing at all, leaving consumers displaying A for the whole
+  // of B.
+  const sameRun = prevActive && nextActive && previous.run_id === snapshot.run_id
+
+  if (prevActive && !sameRun) {
+    messages.push({
+      type: 'job_run_completed',
+      job_id: previous.job_id,
+      run_id: previous.run_id,
+      run_type: previous.run_type,
+    })
   }
 
-  if (!previous?.active && snapshot?.active) {
+  // Only announce a start we can actually attribute to a transition. With no
+  // baseline at all (previous == null) we are merely discovering the current
+  // state, and a synthetic start would zero the progress store's counters and
+  // start time; the snapshot below restores those faithfully on its own.
+  if (nextActive && !sameRun && previous !== null && previous !== undefined) {
     messages.push({
       type: 'job_run_started',
       job_id: snapshot.job_id,
@@ -42,14 +57,17 @@ export function reconcileRunnerStatus(previous, snapshot) {
     })
   }
 
-  if (previous?.active && !snapshot?.active) {
-    messages.push({
-      type: 'job_run_completed',
-      job_id: previous.job_id,
-      run_id: previous.run_id,
-      run_type: previous.run_type,
-    })
+  const prevQueue = JSON.stringify(previous?.queue || [])
+  const nextQueue = JSON.stringify(snapshot?.queue || [])
+  if (prevQueue !== nextQueue) {
+    messages.push({ type: 'queue_update', queue: snapshot?.queue || [] })
   }
+
+  // Snapshot LAST so it is authoritative. A synthetic job_run_started resets
+  // item progress, overall counts, and the elapsed timer; syncFromStatus then
+  // repopulates them from the real server state. Emitting the snapshot first
+  // would let the synthetic start wipe it.
+  messages.push({ type: 'runner_status_snapshot', status: snapshot })
 
   return messages
 }

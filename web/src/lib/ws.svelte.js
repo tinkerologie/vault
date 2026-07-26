@@ -19,10 +19,12 @@ let previousStatus = null
 let pollEnabled = false
 let status = $state('disconnected')
 
-// Counts messages received over the live socket. resyncRunnerStatus samples it
-// around its fetch so an older snapshot can never overwrite a newer live event
-// that landed while the request was in flight.
-let liveMessageSeq = 0
+// Counts live run-state transitions (start/completion). resyncRunnerStatus
+// samples it around its fetch so an older snapshot cannot overwrite newer live
+// state. Deliberately NOT bumped for every message: anomaly, config, and
+// storage events are constant background chatter, and invalidating on those
+// would suppress the very completion resync this exists to deliver.
+let runStateSeq = 0
 
 // Bounded exponential backoff for reconnection. A fixed 3s uncapped loop churned
 // silently forever when the daemon was unreachable; jittered, capped backoff
@@ -112,7 +114,7 @@ async function pollRunnerStatus() {
  * loaded mid-run also gets a baseline to detect completion against.
  */
 async function resyncRunnerStatus(socket) {
-  const seqAtRequest = liveMessageSeq
+  const seqAtRequest = runStateSeq
   try {
     const { url, options } = buildApiRequest('GET', '/runner/status')
     const res = await fetch(url, options)
@@ -121,7 +123,7 @@ async function resyncRunnerStatus(socket) {
     // Discard the snapshot if this socket was superseded, or if a live event
     // arrived while the request was in flight — the stream is authoritative and
     // an older snapshot would roll the UI backwards.
-    if (ws !== socket || liveMessageSeq !== seqAtRequest) return
+    if (ws !== socket || runStateSeq !== seqAtRequest) return
     reconcileRunnerStatus(previousStatus, snapshot).forEach(emitMessage)
     previousStatus = snapshot
   } catch {
@@ -180,7 +182,9 @@ export function connectWs() {
     if (ws !== socket) return
     try {
       const msg = JSON.parse(e.data)
-      liveMessageSeq++
+      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed') {
+        runStateSeq++
+      }
       // Keep the run-state baseline current from live events too, so a
       // reconnect has something to detect a completed run against.
       previousStatus = trackRunState(previousStatus, msg)
