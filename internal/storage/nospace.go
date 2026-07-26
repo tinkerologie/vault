@@ -32,11 +32,21 @@ func IsNoSpace(err error) bool {
 func NoSpaceError(dir string, err error) error {
 	msg := fmt.Sprintf("no space left on the volume backing %s", dir)
 	if isUnraidUserShare(dir) {
-		msg += ". This is an Unraid user share: each file is written to a single" +
-			" underlying array disk, so a large file can fail even while the array" +
-			" as a whole reports free space. Check the share's Minimum Free Space" +
-			" and Split Level settings, or point this destination at a specific" +
-			" disk or pool (for example /mnt/disk1 or /mnt/cache) instead of /mnt/user"
+		// Deliberately covers both shapes a /mnt/user path can take. An
+		// array-backed share writes each file to one disk, so the array total
+		// is not the limit; a cache-only or pool-backed share lives entirely
+		// on that pool. The path alone cannot distinguish them — shfs is a
+		// FUSE mount, so the name does not resolve to the backing device —
+		// and naming only the array case would misdirect someone whose cache
+		// pool is what actually filled.
+		msg += ". This is an Unraid user share, so the array's total free space" +
+			" is not what limits this write: an array-backed share puts each" +
+			" file on a single disk, and a cache-only or pool-backed share is" +
+			" limited by that pool. Check free space on the disk or pool this" +
+			" share actually uses, review the share's Minimum Free Space and" +
+			" Split Level settings, or point this destination at a specific" +
+			" disk or pool (for example /mnt/disk1 or /mnt/cache) instead of" +
+			" /mnt/user"
 	}
 	return fmt.Errorf("%s: %w", msg, err)
 }

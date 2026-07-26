@@ -387,3 +387,44 @@ func (a *indexWriteBlockingAdapter) Write(path string, r io.Reader) error {
 	}
 	return a.FakeAdapter.Write(path, r)
 }
+
+// TestGCRepeatedFailuresWriteOneTombstone guards the monotonic state write.
+//
+// GC re-applies PackMarked on every retry. When that write was unconditional
+// it downgraded a row that had already reached PackTombstoned, and because the
+// tombstone-skip test reads the state captured at the start of the sweep, the
+// NEXT sweep saw Marked and wrote a second tombstone — re-arming the very
+// churn the third state exists to prevent. Repeated failures must still leave
+// exactly one tombstone.
+func TestGCRepeatedFailuresWriteOneTombstone(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	base := NewFakeAdapter()
+	adapter := &deleteFailingAdapter{FakeAdapter: base}
+	swapAdapter(r, adapter)
+
+	if _, err := r.Put(bytes.Repeat([]byte{0x99}, 4096)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter.failDelete = true
+	for i := 0; i < 4; i++ {
+		if _, err := RunGC(r, nil, GCOptions{}); err != nil {
+			t.Fatalf("sweep %d: %v", i, err)
+		}
+	}
+
+	if got := countTombstones(t, base); got != 1 {
+		t.Fatalf("four failed sweeps wrote %d tombstones, want 1", got)
+	}
+	packs, err := r.db.ListDedupPacks(r.storageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packs) != 1 || packs[0].DeleteState != db.PackTombstoned {
+		t.Fatalf("pack state = %v, want it held at PackTombstoned", packs)
+	}
+}

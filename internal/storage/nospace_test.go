@@ -117,3 +117,18 @@ func TestLocalWriteSurfacesNoSpaceGuidance(t *testing.T) {
 }
 
 var _ io.Reader = (*enospcReader)(nil)
+
+// TestNoSpaceErrorCoversPoolBackedShares guards against misdirection: a
+// cache-only share also lives under /mnt/user but is limited by its pool, not
+// by array split rules. The path cannot tell them apart — shfs is a FUSE mount,
+// so the name does not resolve to a backing device — so the guidance must cover
+// both rather than confidently naming the wrong one.
+func TestNoSpaceErrorCoversPoolBackedShares(t *testing.T) {
+	msg := NoSpaceError("/mnt/user/appdata", syscall.ENOSPC).Error()
+	if !strings.Contains(msg, "pool") {
+		t.Errorf("guidance ignores pool-backed shares:\n%s", msg)
+	}
+	if strings.Contains(msg, "the array as a whole reports free space") {
+		t.Errorf("guidance still asserts the array-only explanation:\n%s", msg)
+	}
+}

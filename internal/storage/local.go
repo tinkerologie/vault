@@ -79,6 +79,11 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	}
 	dir := filepath.Dir(full)
 	if err := os.MkdirAll(dir, 0750); err != nil {
+		// A full filesystem can reject directory creation before any data is
+		// written — metadata blocks or inodes exhausted.
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("create directories: %w", err)
 	}
 	// Write to a sibling temp file, then atomically rename into place. This
@@ -87,6 +92,9 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	// open.
 	tmp, err := os.CreateTemp(dir, ".vault-tmp-*")
 	if err != nil {
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmp.Name()

@@ -602,10 +602,15 @@ const (
 	PackTombstoned
 )
 
-// SetDedupPackDeleteState advances a pack's retirement state. Idempotent: GC
-// re-applies the current state on every retry.
+// SetDedupPackDeleteState advances a pack's retirement state. Monotonic: a
+// lower state is never written over a higher one, so GC re-applying PackMarked
+// on a retry cannot regress a row that already reached PackTombstoned and make
+// the next sweep write a second tombstone. Idempotent for the same state.
 func (d *DB) SetDedupPackDeleteState(storageID int64, packID string, state int) error {
-	_, err := d.Exec(`UPDATE dedup_packs SET pending_delete=? WHERE storage_id=? AND id=?`, state, storageID, packID)
+	_, err := d.Exec(
+		`UPDATE dedup_packs SET pending_delete=?
+		  WHERE storage_id=? AND id=? AND COALESCE(pending_delete, 0) < ?`,
+		state, storageID, packID, state)
 	return err
 }
 
