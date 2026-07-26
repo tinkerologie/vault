@@ -94,3 +94,10 @@ internal/release/CHANGELOG.md
 
 # Generated docs reference (built fresh in CI)
 docs/reference/*.md
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
