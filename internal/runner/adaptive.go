@@ -63,7 +63,11 @@ func (r *Runner) adaptiveBusyReason(ctx context.Context, items []db.JobItem) str
 			if path == "" {
 				continue
 			}
-			sample = engine.ProbeFolderActivity(ctx, path, extractSettingsStrings(s, "exclude_paths"), folderWindow)
+			// Merge the global list here too: a path excluded from the backup
+			// must not count as activity, or a globally-ignored cache
+			// directory would postpone the job it is not even backing up.
+			excludes := mergeExclusions(s["exclude_paths"], r.globalExcludePaths())
+			sample = engine.ProbeFolderActivity(ctx, path, excludes, folderWindow)
 		default:
 			continue
 		}
@@ -77,21 +81,6 @@ func (r *Runner) adaptiveBusyReason(ctx context.Context, items []db.JobItem) str
 		}
 	}
 	return ""
-}
-
-// extractSettingsStrings reads a []string-ish key from an item settings map.
-func extractSettingsStrings(s map[string]any, key string) []string {
-	raw, ok := s[key].([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, e := range raw {
-		if str, ok := e.(string); ok && str != "" {
-			out = append(out, str)
-		}
-	}
-	return out
 }
 
 // postponeState tracks one job's open adaptive postpone window.
