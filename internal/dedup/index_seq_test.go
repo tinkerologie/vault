@@ -1,7 +1,10 @@
 package dedup
 
 import (
+	"errors"
+	"io/fs"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/storage"
@@ -105,5 +108,101 @@ func TestIndexTwoWritersDoNotCollide(t *testing.T) {
 	}
 	if len(listing) != 10 {
 		t.Fatalf("got %d index blobs, want 10 — writers overwrote each other", len(listing))
+	}
+}
+
+// failingListAdapter fails List until enabled is flipped, so a test can model
+// a transient storage outage at seed time.
+type failingListAdapter struct {
+	*FakeAdapter
+	err error
+}
+
+func (f *failingListAdapter) List(prefix string) ([]storage.FileInfo, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.FakeAdapter.List(prefix)
+}
+
+// TestIndexSeedFailurePropagates guards the regression that caching the
+// counter introduced. Swallowing a List error would seed the sequence at 0
+// and keep that wrong baseline for the whole run: every later blob would sort
+// before the history already on storage, so a RebuildFromStorage could replay
+// a stale add after a tombstone and resurrect a pack GC had deleted. A real
+// listing failure must surface, and must not poison the cache.
+func TestIndexSeedFailurePropagates(t *testing.T) {
+	idx, fake, _, _, cleanup := newTestIndex(t)
+	defer cleanup()
+
+	// Existing history the failing scan must not be allowed to ignore.
+	if err := fake.Write(indexRootPath+"/0000000900.idx", strings.NewReader("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	flaky := &failingListAdapter{FakeAdapter: fake, err: errors.New("connection reset")}
+	idx.adapter = flaky
+
+	if err := idx.AppendStorageIndex(PackInfo{ID: "p", Path: "pp"}); err == nil {
+		t.Fatal("AppendStorageIndex succeeded despite a failing index listing")
+	}
+
+	// The failure must not have been cached: once storage recovers, the
+	// counter seeds from the real maximum rather than restarting at 1.
+	flaky.err = nil
+	seq, err := idx.nextIndexSeq()
+	if err != nil {
+		t.Fatalf("nextIndexSeq after recovery: %v", err)
+	}
+	if seq != 901 {
+		t.Fatalf("sequence after recovery = %d, want 901 (seed failure was cached)", seq)
+	}
+}
+
+// TestIndexSeedTreatsMissingDirectoryAsEmpty keeps the first-ever write to a
+// destination working: the index directory does not exist yet, which is not
+// an error.
+func TestIndexSeedTreatsMissingDirectoryAsEmpty(t *testing.T) {
+	idx, fake, _, _, cleanup := newTestIndex(t)
+	defer cleanup()
+	idx.adapter = &failingListAdapter{FakeAdapter: fake, err: fs.ErrNotExist}
+
+	seq, err := idx.nextIndexSeq()
+	if err != nil {
+		t.Fatalf("missing index directory should not be an error: %v", err)
+	}
+	if seq != 1 {
+		t.Fatalf("first sequence = %d, want 1", seq)
+	}
+}
+
+// TestIndexNextSeqConcurrentSameInstance confirms the cached counter never
+// hands the same sequence to two callers. Run under -race.
+func TestIndexNextSeqConcurrentSameInstance(t *testing.T) {
+	idx, _, _, _, cleanup := newTestIndex(t)
+	defer cleanup()
+
+	const n = 100
+	seqs := make([]int64, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			seq, err := idx.nextIndexSeq()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			seqs[i] = seq
+		}(i)
+	}
+	wg.Wait()
+
+	seen := make(map[int64]bool, n)
+	for _, s := range seqs {
+		if seen[s] {
+			t.Fatalf("duplicate sequence %d handed out under concurrent access", s)
+		}
+		seen[s] = true
 	}
 }

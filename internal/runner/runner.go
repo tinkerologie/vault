@@ -441,7 +441,7 @@ func (r *Runner) reportRestoreProgress(reporter restoreProgressReporter, percent
 	}
 
 	r.updateCurrentItemProgress(reporter.ItemType, percent, message)
-	r.broadcast(map[string]any{
+	r.broadcastProgress(map[string]any{
 		"type":         "restore_progress",
 		"job_id":       reporter.JobID,
 		"run_id":       reporter.RunID,
@@ -2247,7 +2247,7 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 		if !admit(pct) {
 			return
 		}
-		r.broadcast(map[string]any{
+		r.broadcastProgress(map[string]any{
 			"type":      "backup_progress",
 			"item":      name,
 			"item_type": item.Type,
@@ -2339,7 +2339,7 @@ func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, d
 		if !admit(pct) {
 			return
 		}
-		r.broadcast(map[string]any{
+		r.broadcastProgress(map[string]any{
 			"type":      "backup_progress",
 			"item":      name,
 			"item_type": item.Type,
@@ -2390,7 +2390,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.
 		r.lastProgressMu.Unlock()
 
 		r.updateCurrentItemProgress(itemType, pct, msg)
-		r.broadcast(map[string]any{
+		r.broadcastProgress(map[string]any{
 			"type":      "backup_progress",
 			"item":      itemName,
 			"item_type": itemType,
@@ -3714,6 +3714,23 @@ func (r *Runner) broadcast(data map[string]any) {
 		return
 	}
 	r.hub.Broadcast(msg)
+}
+
+// broadcastProgress sends a self-superseding progress event. Unlike
+// broadcast it is dropped rather than queued when the hub is saturated, so a
+// browser that has stopped reading can never hold up the backup goroutine.
+// Terminal and control events must keep using broadcast — losing one of
+// those would leave the UI showing a finished job as still running.
+func (r *Runner) broadcastProgress(data map[string]any) {
+	if r.hub == nil {
+		return
+	}
+	msg, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("runner: failed to marshal progress broadcast: %v", err)
+		return
+	}
+	r.hub.BroadcastLossy(msg)
 }
 
 // Broadcast sends a JSON event to every connected WebSocket client. It is

@@ -73,13 +73,22 @@ func (h *Hub) Unregister(c *Client) {
 	h.unregister <- c
 }
 
-// Broadcast queues msg for fan-out to every connected client. The send is
-// non-blocking: if the buffer is full the message is dropped rather than
-// stalling the caller. Progress events are ephemeral — a later one always
-// supersedes a dropped one — and the caller is typically the single backup
-// goroutine, which must never be blocked by WebSocket bookkeeping. This
-// mirrors the per-client fan-out in Run, which already drops slow clients.
+// Broadcast queues msg for fan-out to every connected client, waiting for
+// room if the buffer is full. Use this for events the UI cannot reconstruct
+// by waiting — run completion, item failures, queue changes — since dropping
+// one can leave the interface showing a job as running forever.
 func (h *Hub) Broadcast(msg []byte) {
+	h.broadcast <- msg
+}
+
+// BroadcastLossy queues msg only if there is room, discarding it otherwise.
+// Use this for high-frequency, self-superseding telemetry (backup/restore
+// progress): the next update carries the same information, so dropping one
+// costs nothing, while blocking would stall the caller — in practice the
+// single backup goroutine, which must never wait on WebSocket bookkeeping
+// (issue #256). This mirrors the per-client fan-out in Run, which already
+// drops clients that cannot keep up.
+func (h *Hub) BroadcastLossy(msg []byte) {
 	select {
 	case h.broadcast <- msg:
 	default:

@@ -237,18 +237,32 @@ func (idx *Index) RebuildFromStorage() error {
 // entries pulled over the wire, degrading until the backup appeared frozen
 // (issue #256).
 //
-// Concurrency: the counter is mutex-guarded, and blob names carry a
-// per-instance writerID, so two Index instances writing the same destination
-// (e.g. a backup and a GC compaction) can no longer overwrite each other's
-// blobs — the collision hazard the previous implementation documented but
-// did not prevent. Equal sequence numbers across instances are harmless:
-// RebuildFromStorage applies each line by pack ID, and GC only tombstones
-// packs whose add-line was written at a strictly lower sequence.
+// Concurrency: the counter is mutex-guarded. Caching it means two Index
+// instances against one destination no longer re-read each other's writes,
+// so they can hand out the same sequence number — blob names therefore carry
+// a per-instance writerID and both writes survive rather than one silently
+// overwriting the other (which is what the old code did on a same-sequence
+// race). In-daemon this does not arise: RunDedupGC takes the same run slot as
+// a backup, so GC and backup never write one destination concurrently. Their
+// relative replay order at an equal sequence is decided by writerID rather
+// than by wall-clock order; making RebuildFromStorage order-independent
+// (apply tombstones as a pre-pass) is the durable fix and is tracked
+// separately — it is a pre-existing property of the replay format, not
+// something this change introduces.
 func (idx *Index) nextIndexSeq() (int64, error) {
 	idx.seqMu.Lock()
 	defer idx.seqMu.Unlock()
 	if !idx.seeded {
-		idx.seq = idx.scanMaxIndexSeq()
+		seq, err := idx.scanMaxIndexSeq()
+		if err != nil {
+			// Leave the counter unseeded so a later append retries the scan.
+			// Seeding from a failed listing would restart at 1 and keep that
+			// wrong baseline for the rest of the run: subsequent blobs would
+			// replay before the history already on storage, letting a
+			// RebuildFromStorage resurrect packs GC had tombstoned.
+			return 0, err
+		}
+		idx.seq = seq
 		idx.seeded = true
 	}
 	idx.seq++
@@ -263,13 +277,18 @@ func (idx *Index) indexBlobName(seq int64) string {
 }
 
 // scanMaxIndexSeq returns the largest sequence number already present under
-// _vault/index/, or 0 if the directory is empty, missing, or unreadable.
-// Both the legacy "%010d.idx" and current "%010d-<writer>.idx" forms parse.
-func (idx *Index) scanMaxIndexSeq() int64 {
+// _vault/index/, or 0 when the directory does not exist yet (the first-ever
+// write to a destination). Any other listing failure is propagated: treating
+// it as "no blobs" would silently restart the sequence and let later blobs
+// replay ahead of the history already on storage. Both the legacy
+// "%010d.idx" and current "%010d-<writer>.idx" forms parse.
+func (idx *Index) scanMaxIndexSeq() (int64, error) {
 	entries, err := idx.adapter.List(indexRootPath)
 	if err != nil {
-		// First-ever write — directory may not exist on some adapters.
-		return 0
+		if storage.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("dedup: list index: %w", err)
 	}
 	var maxSeq int64
 	for _, e := range entries {
@@ -285,5 +304,5 @@ func (idx *Index) scanMaxIndexSeq() int64 {
 			maxSeq = n
 		}
 	}
-	return maxSeq
+	return maxSeq, nil
 }

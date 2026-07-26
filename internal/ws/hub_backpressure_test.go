@@ -5,25 +5,25 @@ import (
 	"time"
 )
 
-// TestBroadcastDoesNotBlockWhenBufferFull covers the producer side of the
+// TestBroadcastLossyDoesNotBlockWhenBufferFull covers the producer side of the
 // freeze in issue #256. Hub.Run is not started here, so nothing drains the
-// 256-slot buffer — the old blocking send would wedge the caller (in
-// production, the single backup goroutine) on message 257 forever.
-func TestBroadcastDoesNotBlockWhenBufferFull(t *testing.T) {
+// 256-slot buffer — a blocking send would wedge the caller (in production, the
+// single backup goroutine) on message 257 forever.
+func TestBroadcastLossyDoesNotBlockWhenBufferFull(t *testing.T) {
 	h := NewHub()
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := 0; i < 10*cap(h.broadcast); i++ {
-			h.Broadcast([]byte("progress"))
+			h.BroadcastLossy([]byte("progress"))
 		}
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Broadcast blocked with a full buffer and no consumer")
+		t.Fatal("BroadcastLossy blocked with a full buffer and no consumer")
 	}
 
 	if got := len(h.broadcast); got != cap(h.broadcast) {
@@ -31,8 +31,52 @@ func TestBroadcastDoesNotBlockWhenBufferFull(t *testing.T) {
 	}
 }
 
-// TestBroadcastStillDeliversToClients confirms the non-blocking send did not
-// break normal delivery when a consumer is running.
+// TestBroadcastDeliversAfterProgressFlood is the guard against "fixing" the
+// freeze by making every event droppable. Terminal events (run completion,
+// item failures, queue changes) cannot be reconstructed by waiting, so losing
+// one leaves the UI showing a finished job as still running — the same
+// symptom issue #256 reported. A progress flood must not cost the completion
+// event that follows it.
+func TestBroadcastDeliversAfterProgressFlood(t *testing.T) {
+	h := NewHub()
+
+	// Saturate the queue with droppable progress before any consumer runs.
+	for i := 0; i < 4*cap(h.broadcast); i++ {
+		h.BroadcastLossy([]byte("progress"))
+	}
+	if len(h.broadcast) != cap(h.broadcast) {
+		t.Fatalf("setup: buffer holds %d, want it saturated at %d", len(h.broadcast), cap(h.broadcast))
+	}
+
+	go h.Run()
+	c := &Client{hub: h, send: make(chan []byte, 8*cap(h.broadcast))}
+	h.Register(c)
+
+	sent := make(chan struct{})
+	go func() {
+		h.Broadcast([]byte("job_run_completed"))
+		close(sent)
+	}()
+	select {
+	case <-sent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Broadcast never queued the terminal event after a progress flood")
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case msg := <-c.send:
+			if string(msg) == "job_run_completed" {
+				return // delivered — the terminal event survived the flood
+			}
+		case <-deadline:
+			t.Fatal("terminal event was dropped after a progress flood")
+		}
+	}
+}
+
+// TestBroadcastStillDeliversToClients confirms ordinary delivery is intact.
 func TestBroadcastStillDeliversToClients(t *testing.T) {
 	h := NewHub()
 	go h.Run()
