@@ -606,14 +606,16 @@ func (h *VMHandler) reconcileExistingDomainForRestore(ctx context.Context, name 
 	if !libvirtDomainIsShutOff(stateValue) {
 		progress(name, 12, "stopping existing domain")
 		shutdownErr := h.conn.DomainShutdownFlags(dom, libvirt.DomainShutdownDefault)
+		var waitErr error
 		if shutdownErr == nil {
-			stateValue, err = h.waitForLibvirtDomainShutOff(ctx, dom, name, vmShutdownTimeout)
-			if err != nil {
-				return err
-			}
+			stateValue, waitErr = h.waitForLibvirtDomainShutOff(ctx, dom, name, vmShutdownTimeout)
+		}
+		force, fatal := escalateToForceStop(shutdownErr, waitErr, libvirtDomainIsShutOff(stateValue))
+		if fatal != nil {
+			return fatal
 		}
 
-		if shutdownErr != nil || !libvirtDomainIsShutOff(stateValue) {
+		if force {
 			progress(name, 14, "forcing existing domain stop")
 			if err := h.conn.DomainDestroy(dom); err != nil {
 				if shutdownErr != nil {
@@ -688,7 +690,8 @@ func (h *VMHandler) waitForLibvirtDomainShutOff(ctx context.Context, dom libvirt
 			return stateValue, nil
 		}
 		if time.Now().After(deadline) {
-			return stateValue, fmt.Errorf("waiting for domain %s to shut off: timed out with state %s", name, domainStateString(stateValue))
+			return stateValue, fmt.Errorf("waiting for domain %s to shut off: timed out with state %s: %w",
+				name, domainStateString(stateValue), errShutdownTimeout)
 		}
 
 		if err := sleepCtx(ctx, vmShutdownPollInterval); err != nil {
@@ -860,15 +863,16 @@ func (h *VMHandler) prepareDomainForBackup(ctx context.Context, name string, dom
 
 	progress(name, 20, "shutting down domain for cold backup")
 	shutdownErr := h.conn.DomainShutdownFlags(dom, libvirt.DomainShutdownDefault)
+	var waitErr error
 	if shutdownErr == nil {
-		stateAfterShutdown, err := h.waitForLibvirtDomainShutOff(ctx, dom, name, vmShutdownTimeout)
-		if err != nil {
-			return libvirt.Domain{}, nil, err
-		}
-		state = stateAfterShutdown
+		state, waitErr = h.waitForLibvirtDomainShutOff(ctx, dom, name, vmShutdownTimeout)
+	}
+	force, fatal := escalateToForceStop(shutdownErr, waitErr, libvirtDomainIsShutOff(state))
+	if fatal != nil {
+		return libvirt.Domain{}, nil, fatal
 	}
 
-	if shutdownErr != nil || !libvirtDomainIsShutOff(state) {
+	if force {
 		progress(name, 22, "forcing domain stop for cold backup")
 		if err := h.destroyDomainWithRetry(ctx, dom, name); err != nil {
 			if shutdownErr != nil {
