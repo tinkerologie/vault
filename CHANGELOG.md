@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Differential and incremental container restores on dedup-enabled destinations no longer fail with "no such file or directory".** The dedup shortcut guard in `restoreItemChain` — which bypasses chain replay and restores the selected point directly via the chunked restore path — was gated on `itemType == "folder"` and positioned after the merged-chain dispatch that catches containers. Container dedup backups write a complete manifest every run (like folders), so the single-point restore is correct, but containers never reached the guard. The dedup check now runs before the merged-chain dispatch and applies to all item types. Classic (non-dedup) container restores are unaffected. Closes #266.
+
 ## [v2026.07.10] - 2026-07-24
 
 ### Fixed
