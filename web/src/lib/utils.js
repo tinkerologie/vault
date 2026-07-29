@@ -3,11 +3,43 @@
 import { getHour12 } from './runtime-config.js'
 
 export function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B'
+  // Mirrors Bytes() in internal/format exactly, including these guards: a
+  // rate computed from a zero duration can arrive as NaN or Infinity, and
+  // rendering that as a number would be worse than saying nothing.
+  // Missing data (null/undefined) keeps reading as "0 B" — callers pass it
+  // for a size that has not been measured yet, and an em dash there would be
+  // a behaviour change. NaN/Infinity are different: they mean a computed
+  // value went wrong, which is what Go reports as an em dash too.
+  if (bytes == null) return '0 B'
+  if (!Number.isFinite(bytes)) return '—'
+  if (bytes === 0) return '0 B'
+  if (bytes < 0) return '-' + formatBytes(-bytes)
   const k = 1024
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + units[i]
+  // Keep these units and this rounding in step with Bytes() in
+  // internal/format — the same number is shown by the daemon (notifications,
+  // backup progress, anomaly summaries) and by this interface, and they used
+  // to disagree. PB is included and the index is clamped to it: without the
+  // clamp a petabyte-scale value indexed past the end of the array and
+  // rendered as "1 undefined".
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  // Divide rather than index by Math.log: the logarithm is inexact near a
+  // boundary and picked a different unit than the daemon for values just
+  // under one (1 PB minus a byte came out as '1 PB' here and '1024 TB'
+  // there). A value that rounds up to 1024 promotes, so neither side ever
+  // prints '1024 TB'.
+  let i = 0
+  let v = bytes
+  while (v >= k && i < units.length - 1) {
+    v /= k
+    i++
+  }
+  if (i < units.length - 1 && Math.round(v * 10) / 10 >= k) {
+    v /= k
+    i++
+  }
+  if (i === 0) return `${Math.round(v)} ${units[i]}`
+  // Round half away from zero, matching Go — see the note there.
+  return parseFloat((Math.round(v * 10) / 10).toFixed(1)) + ' ' + units[i]
 }
 
 export function formatDate(str) {

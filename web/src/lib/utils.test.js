@@ -29,6 +29,25 @@ describe('formatBytes', () => {
     expect(formatBytes(1048576)).toBe('1 MB')
     expect(formatBytes(1073741824)).toBe('1 GB')
   })
+
+  it('matches the daemon at and beyond the largest unit', () => {
+    // internal/format.Bytes renders these identically. PB used to be missing
+    // here, so the index ran off the units array and produced '1 undefined'.
+    expect(formatBytes(1024 ** 4)).toBe('1 TB')
+    expect(formatBytes(1024 ** 5)).toBe('1 PB')
+    expect(formatBytes(1024 ** 6)).toBe('1024 PB')
+    // Just under a boundary promotes, matching the daemon exactly. The old
+    // Math.log index disagreed with it here.
+    expect(formatBytes(1024 ** 5 - 1)).toBe('1 PB')
+    expect(formatBytes(1024 ** 2 - 1)).toBe('1 MB')
+    // Rounding tie and degraded inputs, all matching internal/format.Bytes.
+    expect(formatBytes(1280)).toBe('1.3 KB')
+    expect(formatBytes(-1536)).toBe('-1.5 KB')
+    expect(formatBytes(NaN)).toBe('—')
+    expect(formatBytes(Infinity)).toBe('—')
+    expect(formatBytes(0.5)).toBe('1 B')
+    expect(formatBytes(2.5)).toBe('3 B')
+  })
 })
 
 describe('formatDuration', () => {

@@ -27,6 +27,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/ruaan-deysel/vault/internal/format"
 	"github.com/ruaan-deysel/vault/internal/notify"
 	"github.com/ruaan-deysel/vault/internal/storage"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
@@ -3969,10 +3970,10 @@ func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, siz
 
 	fields := []notify.DiscordField{
 		{Name: "Duration", Value: fmtDuration(durationSec), Inline: true},
-		{Name: "Size", Value: fmtSize(sizeBytes), Inline: true},
+		{Name: "Size", Value: format.Bytes(float64(sizeBytes)), Inline: true},
 	}
 	if durationSec > 0 {
-		fields = append(fields, notify.DiscordField{Name: "Speed", Value: fmtSize(sizeBytes/int64(durationSec)) + "/s", Inline: true})
+		fields = append(fields, notify.DiscordField{Name: "Speed", Value: format.Bytes(float64(sizeBytes)/float64(durationSec)) + "/s", Inline: true})
 	}
 	fields = append(fields, notify.DiscordField{
 		Name:   "Items",
@@ -4003,24 +4004,6 @@ func fmtDuration(seconds int) string {
 		return fmt.Sprintf("%dm %ds", seconds/60, seconds%60)
 	}
 	return fmt.Sprintf("%dh %dm", seconds/3600, (seconds%3600)/60)
-}
-
-func fmtSize(bytes int64) string {
-	const (
-		kb = 1024
-		mb = kb * 1024
-		gb = mb * 1024
-	)
-	switch {
-	case bytes >= gb:
-		return fmt.Sprintf("%.1f GB", float64(bytes)/float64(gb))
-	case bytes >= mb:
-		return fmt.Sprintf("%.1f MB", float64(bytes)/float64(mb))
-	case bytes >= kb:
-		return fmt.Sprintf("%.0f KB", float64(bytes)/float64(kb))
-	default:
-		return fmt.Sprintf("%d B", bytes)
-	}
 }
 
 // sendRestoreNotification sends an Unraid notification for restore outcomes.
