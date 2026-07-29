@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	containertypes "github.com/moby/moby/api/types/container"
 	imagetypes "github.com/moby/moby/api/types/image"
@@ -205,5 +206,120 @@ func TestBackupChunked_RestartsOnBackupError(t *testing.T) {
 	}
 	if !mock.startCalled {
 		t.Error("expected ContainerStart to be called even though backup failed (runWithRestart guarantee)")
+	}
+}
+
+// newChunkedMockForChangedSince builds a mockDockerClient with a single
+// bind mount whose file tree (file and containing dir) is pinned to
+// volMtime via os.Chtimes, letting changed_since tests control whether
+// pathChangedSince sees the volume as changed.
+func newChunkedMockForChangedSince(t *testing.T, volMtime time.Time) *mockDockerClient {
+	t.Helper()
+	volSrc := t.TempDir()
+	file := filepath.Join(volSrc, "data.txt")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{file, volSrc} {
+		if err := os.Chtimes(p, volMtime, volMtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "abc123",
+				Name:   "/test",
+				Config: &containertypes.Config{Image: "nginx:latest"},
+				State:  &containertypes.State{Running: true},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: volSrc, Destination: "/data"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+}
+
+// TestBackupChunked_DifferentialStopBehaviour consolidates the differential
+// pre-check tests for BackupChunked into a single table-driven test.
+// Each case varies whether the volume's files are older or newer than the
+// changed_since reference, then asserts whether ContainerStop and
+// ContainerStart were called. The unchanged case additionally verifies
+// the manifest records the volume as skipped.
+func TestBackupChunked_DifferentialStopBehaviour(t *testing.T) {
+	reference := time.Now().Add(-1 * time.Hour)
+
+	cases := []struct {
+		name           string
+		volMtime       time.Time // mtime applied to the volume's file and dir
+		wantStopCall   bool
+		wantStartCall  bool
+		checkSkipEntry bool // when true, verify manifest has volumeSkippedSize entry
+	}{
+		{
+			name:           "no_changes_skips_stop",
+			volMtime:       time.Now().Add(-2 * time.Hour),
+			wantStopCall:   false,
+			wantStartCall:  false,
+			checkSkipEntry: true,
+		},
+		{
+			name:          "volume_changed_stops_and_restarts",
+			volMtime:      time.Now(), // fresh — after the reference
+			wantStopCall:  true,
+			wantStartCall: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := newChunkedMockForChangedSince(t, tc.volMtime)
+
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			h := &ContainerHandler{cli: mock}
+			item := BackupItem{
+				Name: "test",
+				Type: "container",
+				Settings: map[string]any{
+					"id":            "abc123",
+					"changed_since": reference.UTC().Format(time.RFC3339),
+				},
+			}
+
+			manifestID, err := h.BackupChunked(context.Background(), item, r, noopProgress)
+			if err != nil {
+				t.Fatalf("BackupChunked() error = %v", err)
+			}
+			if mock.stopCalled != tc.wantStopCall {
+				t.Errorf("stopCalled = %v, want %v", mock.stopCalled, tc.wantStopCall)
+			}
+			if mock.startCalled != tc.wantStartCall {
+				t.Errorf("startCalled = %v, want %v", mock.startCalled, tc.wantStartCall)
+			}
+
+			if tc.checkSkipEntry {
+				if err := r.Flush(); err != nil {
+					t.Fatalf("Flush() error = %v", err)
+				}
+				m, err := r.GetManifest(manifestID)
+				if err != nil {
+					t.Fatalf("GetManifest() error = %v", err)
+				}
+				entry, ok := m.Files[containerVolPrefix+"/data"]
+				if !ok {
+					t.Fatalf("manifest missing %s/data entry", containerVolPrefix)
+				}
+				if entry.Size != volumeSkippedSize {
+					t.Errorf("volume entry Size = %d, want volumeSkippedSize (%d)", entry.Size, volumeSkippedSize)
+				}
+			}
+		})
 	}
 }

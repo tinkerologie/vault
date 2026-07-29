@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	containertypes "github.com/moby/moby/api/types/container"
 	imagetypes "github.com/moby/moby/api/types/image"
@@ -1004,5 +1005,226 @@ func TestContainerChunkedGCKeepsNestedVolumeData(t *testing.T) {
 		if _, err := r.Get(c); err != nil {
 			t.Fatalf("DATA LOSS: volume data chunk %x was swept by GC: %v", c[:8], err)
 		}
+	}
+}
+
+func TestAnyVolumeChangedSince(t *testing.T) {
+	reference := time.Now().Add(-1 * time.Hour)
+	old := time.Now().Add(-2 * time.Hour)
+	recent := time.Now()
+
+	// mkVolume creates a temp dir with one file whose mtime (and the dir's
+	// own mtime) is pinned to modTime, so pathChangedSince sees a stable
+	// changed/unchanged answer regardless of when the test runs.
+	mkVolume := func(t *testing.T, modTime time.Time) string {
+		t.Helper()
+		dir := t.TempDir()
+		file := filepath.Join(dir, "data.txt")
+		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{file, dir} {
+			if err := os.Chtimes(p, modTime, modTime); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	bind := func(src, dest string) containertypes.MountPoint {
+		return containertypes.MountPoint{Type: mounttypes.TypeBind, Source: src, Destination: dest}
+	}
+
+	cases := []struct {
+		name        string
+		mounts      []containertypes.MountPoint
+		exclusions  []string
+		ctx         context.Context // defaults to context.Background() when nil
+		wantChanged bool
+		wantErr     bool
+	}{
+		{
+			name:        "no mounts returns false",
+			mounts:      nil,
+			wantChanged: false,
+		},
+		{
+			name: "all volumes unchanged returns false",
+			mounts: []containertypes.MountPoint{
+				bind(mkVolume(t, old), "/data"),
+				bind(mkVolume(t, old), "/config"),
+			},
+			wantChanged: false,
+		},
+		{
+			name: "one changed volume returns true",
+			mounts: []containertypes.MountPoint{
+				bind(mkVolume(t, old), "/data"),
+				bind(mkVolume(t, recent), "/config"),
+			},
+			wantChanged: true,
+		},
+		{
+			name: "changed but excluded mount is ignored",
+			mounts: []containertypes.MountPoint{
+				bind(mkVolume(t, recent), "/rootfs"),
+			},
+			exclusions:  []string{"/rootfs"},
+			wantChanged: false,
+		},
+		{
+			name: "non-backupable mount type is ignored",
+			mounts: []containertypes.MountPoint{
+				{Type: mounttypes.TypeTmpfs, Source: "", Destination: "/tmp"},
+			},
+			wantChanged: false,
+		},
+		{
+			name: "missing source returns error",
+			mounts: []containertypes.MountPoint{
+				bind(filepath.Join(t.TempDir(), "nosuchdir"), "/data"),
+			},
+			wantErr: true,
+		},
+		{
+			name: "cancelled context returns error",
+			mounts: []containertypes.MountPoint{
+				bind(mkVolume(t, recent), "/data"),
+			},
+			ctx: func() context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx
+			}(),
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := tc.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, reference)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if anyChanged != tc.wantChanged {
+				t.Errorf("anyChanged = %v, want %v", anyChanged, tc.wantChanged)
+			}
+			// Verify per-volume map is consistent with the aggregate.
+			for _, mnt := range tc.mounts {
+				if cached, ok := volChanges[mnt.Source]; ok {
+					if cached && !tc.wantChanged {
+						t.Errorf("volChanges[%s] = true but wantChanged = false", mnt.Source)
+					}
+				}
+			}
+		})
+	}
+}
+
+// newClassicMock builds a mockDockerClient for classic Backup tests: one
+// bind mount at volSrc and a container whose Created timestamp is supplied
+// by the caller. createdAt must be RFC3339Nano-parseable and older than the
+// test's changed_since reference so the image save is skipped — the mock's
+// ImageSave intentionally returns an error, and the image-save block is the
+// only classic-path caller of it.
+func newClassicMock(t *testing.T, running bool, volSrc, createdAt string) *mockDockerClient {
+	t.Helper()
+	return &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:      "abc123",
+				Name:    "/test",
+				Created: createdAt,
+				Config:  &containertypes.Config{Image: "nginx:latest"},
+				State:   &containertypes.State{Running: running},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: volSrc, Destination: "/data"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+}
+
+// TestBackupDifferentialStopBehaviour consolidates the differential
+// pre-check tests for the classic Backup path into a single table-driven
+// test. Each case varies whether the volume's files are older or newer
+// than the changed_since reference, then asserts whether ContainerStop
+// and ContainerStart were called.
+func TestBackupDifferentialStopBehaviour(t *testing.T) {
+	reference := time.Now().Add(-1 * time.Hour)
+	old := time.Now().Add(-2 * time.Hour)
+
+	cases := []struct {
+		name          string
+		volMtime      time.Time // mtime applied to the volume's file and dir
+		wantStopCall  bool
+		wantStartCall bool
+	}{
+		{
+			name:          "no_changes_skips_stop",
+			volMtime:      old,
+			wantStopCall:  false,
+			wantStartCall: false,
+		},
+		{
+			name:          "volume_changed_stops_and_restarts",
+			volMtime:      time.Now(), // fresh — after the reference
+			wantStopCall:  true,
+			wantStartCall: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			volSrc := t.TempDir()
+			file := filepath.Join(volSrc, "data.txt")
+			if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range []string{file, volSrc} {
+				if err := os.Chtimes(p, tc.volMtime, tc.volMtime); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			mock := newClassicMock(t, true, volSrc, time.Now().Add(-48*time.Hour).UTC().Format(time.RFC3339Nano))
+			h := &ContainerHandler{cli: mock}
+			item := BackupItem{
+				Name: "test",
+				Type: "container",
+				Settings: map[string]any{
+					"id":            "abc123",
+					"changed_since": reference.UTC().Format(time.RFC3339),
+				},
+			}
+
+			result, err := h.Backup(context.Background(), item, t.TempDir(), noopProgress)
+			if err != nil {
+				t.Fatalf("Backup() error = %v", err)
+			}
+			if !result.Success {
+				t.Error("expected result.Success")
+			}
+			if mock.stopCalled != tc.wantStopCall {
+				t.Errorf("stopCalled = %v, want %v", mock.stopCalled, tc.wantStopCall)
+			}
+			if mock.startCalled != tc.wantStartCall {
+				t.Errorf("startCalled = %v, want %v", mock.startCalled, tc.wantStartCall)
+			}
+		})
 	}
 }

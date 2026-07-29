@@ -716,14 +716,45 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		}
 	}
 
-	if wasRunning && !noStop {
+	// Differential runs: when no backupable volume changed since the parent
+	// restore point, skip the stop/restart cycle entirely. The in-loop
+	// per-volume pathChangedSince checks skip every volume anyway, so
+	// stopping would be pure downtime with no consistency benefit. The image
+	// save and template copy inside runWithRestart do NOT gate this decision
+	// — docker save is daemon-side and the template is a file copy; both are
+	// safe on a running container.
+	needsStop := wasRunning && !noStop
+	var volChanges map[string]bool
+	if needsStop && hasChangedSince {
+		// Accepted race: if a file changes between this pre-check and the
+		// archiving loop, that volume is backed up live instead of
+		// stopped. This matches pre-#253 behaviour but it's ultimately
+		// an accepted risk due to how negligible it is.
+		//
+		// When the pre-check runs, per-volume results are cached so the
+		// archiving loop reuses them instead of re-walking the same trees
+		// via pathChangedSince.
+		var anyChanged bool
+		var err error
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince)
+		if err != nil {
+			return nil, err
+		}
+		if !anyChanged {
+			log.Printf("engine: container %s volumes unchanged since %s — skipping stop/restart",
+				item.Name, changedSince.Format(time.RFC3339))
+			needsStop = false
+		}
+	}
+
+	if needsStop {
 		progress(item.Name, 20, "stopping container")
 		if _, err := h.cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{}); err != nil {
 			return nil, fmt.Errorf("stopping container %s: %w", item.Name, err)
 		}
 	}
 
-	if err := runWithRestart(wasRunning && !noStop, item.Name, progress, func() error {
+	if err := runWithRestart(needsStop, item.Name, progress, func() error {
 		// Step 3: Save image.
 		includeImage := true
 		if hasChangedSince {
@@ -797,6 +828,9 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			if !backupableMount(string(mount.Type)) {
 				continue
 			}
+			if mount.Source == "" || mount.Destination == "" {
+				continue
+			}
 
 			entry := volumeManifestEntry{
 				Index:       i,
@@ -846,9 +880,13 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			}
 
 			if hasChangedSince {
-				changed, err := pathChangedSince(ctx, mount.Source, changedSince)
-				if err != nil {
-					return fmt.Errorf("checking volume %s changes: %w", mount.Source, err)
+				changed, cached := volChanges[mount.Source]
+				if !cached {
+					var err error
+					changed, err = pathChangedSince(ctx, mount.Source, changedSince)
+					if err != nil {
+						return fmt.Errorf("checking volume %s changes: %w", mount.Source, err)
+					}
 				}
 				if !changed {
 					entry.BackedUp = false
@@ -1010,6 +1048,48 @@ func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, 
 	}
 
 	return wrappedRestartErr
+}
+
+// anyVolumeChangedSince reports whether at least one backupable, restorable,
+// non-skipped, non-excluded volume in mounts has been modified after
+// changedSince. It applies the same skip filters — in the same order — as
+// the Backup and BackupChunked volume loops: exclusions are checked BEFORE
+// pathChangedSince so an excluded host-root bind mount (/ → /rootfs —
+// Telegraf, Netdata, Glances) is never walked (issues #70, #251).
+//
+// Callers use this to decide whether a differential run needs to stop the
+// container at all: when no volume changed, the in-loop per-volume
+// pathChangedSince checks skip every volume anyway, so the stop/restart
+// cycle would be pure downtime with no consistency benefit.
+func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, changedSince time.Time) (map[string]bool, bool, error) {
+	changes := make(map[string]bool)
+	anyChanged := false
+	for _, mnt := range mounts {
+		if !backupableMount(string(mnt.Type)) {
+			continue
+		}
+		if mnt.Source == "" || mnt.Destination == "" {
+			continue
+		}
+		if !restorableVolume(string(mnt.Type), mnt.Name) {
+			continue
+		}
+		if skip, _ := shouldSkipVolume(mnt.Source); skip {
+			continue
+		}
+		if shouldExcludeMount(exclusions, mnt.Destination) {
+			continue
+		}
+		changed, err := pathChangedSince(ctx, mnt.Source, changedSince)
+		if err != nil {
+			return nil, false, fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
+		}
+		changes[mnt.Source] = changed
+		if changed {
+			anyChanged = true
+		}
+	}
+	return changes, anyChanged, nil
 }
 
 // Restore restores a Docker container from a backup directory:
@@ -1607,6 +1687,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	// Stop container for consistent backup (mirrors classic Backup path).
+	// Differential runs: when no backupable volume changed since the parent
+	// restore point, skip the stop/restart cycle entirely — the in-loop
+	// per-volume pathChangedSince checks skip every volume anyway. The
+	// chunked path saves no image.tar (restore pulls the image), so only
+	// volume changes gate the stop.
 	wasRunning := inspect.State.Running
 	noStop, _ := item.Settings["no_stop"].(bool)
 
@@ -1635,7 +1720,26 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		}
 	}
 
-	if wasRunning && !noStop {
+	needsStop := wasRunning && !noStop
+	var volChanges map[string]bool
+	if needsStop && hasChangedSince {
+		// Accepted race: if a file changes between this pre-check and the
+		// archiving loop, that volume is backed up live instead of stopped.
+		//
+		// Per-volume results are cached so the archiving loop reuses them.
+		var anyChanged bool
+		var err error
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince)
+		if err != nil {
+			return dedup.ID{}, err
+		}
+		if !anyChanged {
+			log.Printf("engine: chunked: container %s volumes unchanged since %s — skipping stop/restart",
+				item.Name, changedSince.Format(time.RFC3339))
+			needsStop = false
+		}
+	}
+	if needsStop {
 		if progress != nil {
 			progress(item.Name, 20, "stopping container")
 		}
@@ -1647,7 +1751,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		progress(item.Name, 60, "backing up volumes")
 	}
 
-	err = runWithRestart(wasRunning && !noStop, item.Name, progress, func() error {
+	err = runWithRestart(needsStop, item.Name, progress, func() error {
 		for _, mnt := range inspect.Mounts {
 			if !backupableMount(string(mnt.Type)) {
 				continue
@@ -1677,11 +1781,15 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			}
 			// For differential backups, skip volumes whose entire tree is
 			// unchanged since the reference time. Mirrors the classic Backup
-			// path's pathChangedSince check.
+			// path. Reuses cached pre-check results when available.
 			if hasChangedSince {
-				changed, err := pathChangedSince(ctx, mnt.Source, changedSince)
-				if err != nil {
-					return fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
+				changed, cached := volChanges[mnt.Source]
+				if !cached {
+					var err error
+					changed, err = pathChangedSince(ctx, mnt.Source, changedSince)
+					if err != nil {
+						return fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
+					}
 				}
 				if !changed {
 					log.Printf("engine: chunked: skipping volume %s for %s: unchanged since reference", mnt.Source, item.Name)

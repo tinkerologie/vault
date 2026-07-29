@@ -2979,19 +2979,20 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		if err != nil {
 			return fmt.Errorf("building restore chain: %w", err)
 		}
+		// Dedup restore points (folder, container, plugin) carry a COMPLETE
+		// manifest — BackupChunked walks the whole item every run, so
+		// increments reuse chunks, not manifest entries. Restoring the
+		// selected point alone reproduces the exact point-in-time state and
+		// cannot resurrect files deleted or excluded after the base full
+		// backup (issue #231). This must run BEFORE the merged-chain dispatch
+		// because containers use merged chains but dedup containers must
+		// take the single-point chunked restore path.
+		if _, ok := resolveManifestID(restorePoint, itemName); ok {
+			log.Printf("runner: dedup restore point %d has a complete manifest — restoring it directly (no chain replay)", restorePoint.ID)
+			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+		}
 		if usesMergedRestoreChain(itemType) {
 			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, reporter)
-		}
-		// Dedup folder points carry a COMPLETE manifest (BackupChunked walks
-		// the whole tree every run — increments reuse chunks, not manifest
-		// entries). Restoring the selected point alone reproduces the exact
-		// point-in-time state and cannot resurrect files deleted or excluded
-		// after the base full backup (issue #231).
-		if itemType == "folder" {
-			if _, ok := resolveManifestID(restorePoint, itemName); ok {
-				log.Printf("runner: dedup folder restore point %d has a complete manifest — restoring it directly (no chain replay)", restorePoint.ID)
-				return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
-			}
 		}
 		replayStart := time.Now()
 		for i, rp := range chain {
