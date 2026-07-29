@@ -1,0 +1,618 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-26T00:00:00Z",
+  "title": "Design System: Vault",
+  "extensions": {
+    "colorMeta": {
+      "signal-amber": {
+        "role": "primary",
+        "displayName": "Signal Amber",
+        "canonical": "#f59e0b",
+        "darkValue": "#f59e0b",
+        "tonalRamp": [
+          "oklch(20% 0.06 70)",
+          "oklch(30% 0.09 70)",
+          "oklch(40% 0.12 70)",
+          "oklch(50% 0.14 70)",
+          "oklch(62% 0.15 70)",
+          "oklch(77% 0.164 70)",
+          "oklch(87% 0.10 70)",
+          "oklch(96% 0.04 70)"
+        ]
+      },
+      "signal-amber-deep": {
+        "role": "primary",
+        "displayName": "Signal Amber Deep",
+        "canonical": "#d97706",
+        "darkValue": "#d97706",
+        "tonalRamp": [
+          "oklch(18% 0.05 65)",
+          "oklch(28% 0.08 65)",
+          "oklch(38% 0.11 65)",
+          "oklch(48% 0.13 65)",
+          "oklch(58% 0.15 65)",
+          "oklch(68% 0.155 65)",
+          "oklch(82% 0.11 65)",
+          "oklch(94% 0.04 65)"
+        ]
+      },
+      "signal-amber-text": {
+        "role": "primary",
+        "displayName": "Readable Amber",
+        "canonical": "#b45309",
+        "darkValue": "#f59e0b",
+        "note": "On-light accent for text under 18px (~5.3:1 on white). Collapses to the active style's own accent under .dark and every retro style.",
+        "tonalRamp": [
+          "oklch(16% 0.05 60)",
+          "oklch(24% 0.08 60)",
+          "oklch(32% 0.10 60)",
+          "oklch(42% 0.12 60)",
+          "oklch(55% 0.13 60)",
+          "oklch(68% 0.12 60)",
+          "oklch(82% 0.08 60)",
+          "oklch(94% 0.03 60)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Console Surface",
+        "canonical": "#ffffff",
+        "darkValue": "#111827",
+        "tonalRamp": [
+          "oklch(15% 0.012 260)",
+          "oklch(25% 0.014 260)",
+          "oklch(35% 0.014 260)",
+          "oklch(50% 0.012 260)",
+          "oklch(65% 0.010 260)",
+          "oklch(80% 0.008 260)",
+          "oklch(90% 0.005 260)",
+          "oklch(100% 0 0)"
+        ]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "canonical": "#f9fafb",
+        "darkValue": "#1f2937",
+        "tonalRamp": [
+          "oklch(17% 0.012 260)",
+          "oklch(27% 0.014 260)",
+          "oklch(37% 0.014 260)",
+          "oklch(52% 0.012 260)",
+          "oklch(67% 0.010 260)",
+          "oklch(82% 0.007 260)",
+          "oklch(92% 0.004 260)",
+          "oklch(98% 0.002 260)"
+        ]
+      },
+      "surface-3": {
+        "role": "neutral",
+        "displayName": "Recess",
+        "canonical": "#f3f4f6",
+        "darkValue": "#374151",
+        "tonalRamp": [
+          "oklch(18% 0.012 260)",
+          "oklch(28% 0.014 260)",
+          "oklch(38% 0.014 260)",
+          "oklch(53% 0.012 260)",
+          "oklch(68% 0.010 260)",
+          "oklch(83% 0.007 260)",
+          "oklch(93% 0.004 260)",
+          "oklch(97% 0.003 260)"
+        ]
+      },
+      "surface-4": {
+        "role": "neutral",
+        "displayName": "Recess Deep",
+        "canonical": "#e5e7eb",
+        "darkValue": "#4b5563",
+        "tonalRamp": [
+          "oklch(19% 0.012 260)",
+          "oklch(29% 0.014 260)",
+          "oklch(40% 0.014 260)",
+          "oklch(55% 0.012 260)",
+          "oklch(70% 0.010 260)",
+          "oklch(84% 0.007 260)",
+          "oklch(91% 0.005 260)",
+          "oklch(96% 0.003 260)"
+        ]
+      },
+      "surface-5": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "canonical": "#d1d5db",
+        "darkValue": "#6b7280",
+        "tonalRamp": [
+          "oklch(20% 0.012 260)",
+          "oklch(30% 0.014 260)",
+          "oklch(42% 0.014 260)",
+          "oklch(57% 0.012 260)",
+          "oklch(72% 0.010 260)",
+          "oklch(86% 0.007 260)",
+          "oklch(92% 0.005 260)",
+          "oklch(96% 0.003 260)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e5e7eb",
+        "darkValue": "#374151",
+        "note": "The 1px default border on every panel, table cell, input, and divider.",
+        "tonalRamp": [
+          "oklch(19% 0.012 260)",
+          "oklch(29% 0.014 260)",
+          "oklch(40% 0.014 260)",
+          "oklch(55% 0.012 260)",
+          "oklch(70% 0.010 260)",
+          "oklch(84% 0.007 260)",
+          "oklch(91% 0.005 260)",
+          "oklch(96% 0.003 260)"
+        ]
+      },
+      "border-hover": {
+        "role": "neutral",
+        "displayName": "Hairline Lit",
+        "canonical": "#d1d5db",
+        "darkValue": "#4b5563",
+        "tonalRamp": [
+          "oklch(20% 0.012 260)",
+          "oklch(30% 0.014 260)",
+          "oklch(42% 0.014 260)",
+          "oklch(57% 0.012 260)",
+          "oklch(72% 0.010 260)",
+          "oklch(86% 0.007 260)",
+          "oklch(92% 0.005 260)",
+          "oklch(96% 0.003 260)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Readout",
+        "canonical": "#111827",
+        "darkValue": "#f9fafb",
+        "tonalRamp": [
+          "oklch(15% 0.012 260)",
+          "oklch(25% 0.014 260)",
+          "oklch(35% 0.014 260)",
+          "oklch(50% 0.012 260)",
+          "oklch(65% 0.010 260)",
+          "oklch(80% 0.008 260)",
+          "oklch(90% 0.005 260)",
+          "oklch(98% 0.002 260)"
+        ]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Readout Muted",
+        "canonical": "#6b7280",
+        "darkValue": "#9ca3af",
+        "tonalRamp": [
+          "oklch(20% 0.012 260)",
+          "oklch(30% 0.014 260)",
+          "oklch(40% 0.014 260)",
+          "oklch(55% 0.012 260)",
+          "oklch(70% 0.010 260)",
+          "oklch(83% 0.007 260)",
+          "oklch(91% 0.005 260)",
+          "oklch(96% 0.003 260)"
+        ]
+      },
+      "text-dim": {
+        "role": "neutral",
+        "displayName": "Readout Dim",
+        "canonical": "#9ca3af",
+        "darkValue": "#6b7280",
+        "note": "The floor of legibility. Nothing lighter exists in the system.",
+        "tonalRamp": [
+          "oklch(22% 0.012 260)",
+          "oklch(32% 0.014 260)",
+          "oklch(44% 0.014 260)",
+          "oklch(58% 0.012 260)",
+          "oklch(72% 0.010 260)",
+          "oklch(85% 0.007 260)",
+          "oklch(92% 0.005 260)",
+          "oklch(96% 0.003 260)"
+        ]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Verified Green",
+        "canonical": "#16a34a",
+        "darkValue": "#22c55e",
+        "note": "Means a run completed AND verified. Never used to make a screen feel reassuring.",
+        "tonalRamp": [
+          "oklch(20% 0.06 145)",
+          "oklch(30% 0.09 145)",
+          "oklch(40% 0.12 145)",
+          "oklch(50% 0.14 145)",
+          "oklch(60% 0.16 145)",
+          "oklch(72% 0.15 145)",
+          "oklch(85% 0.09 145)",
+          "oklch(95% 0.03 145)"
+        ]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Failure Red",
+        "canonical": "#dc2626",
+        "darkValue": "#ef4444",
+        "tonalRamp": [
+          "oklch(20% 0.08 27)",
+          "oklch(30% 0.12 27)",
+          "oklch(40% 0.16 27)",
+          "oklch(50% 0.19 27)",
+          "oklch(58% 0.21 27)",
+          "oklch(70% 0.18 27)",
+          "oklch(84% 0.10 27)",
+          "oklch(95% 0.03 27)"
+        ]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Drift Orange",
+        "canonical": "#d97706",
+        "darkValue": "#f59e0b",
+        "note": "Hue-adjacent to Signal Amber and indistinguishable at a glance. Never carries meaning by color alone.",
+        "tonalRamp": [
+          "oklch(18% 0.05 65)",
+          "oklch(28% 0.08 65)",
+          "oklch(38% 0.11 65)",
+          "oklch(48% 0.13 65)",
+          "oklch(58% 0.15 65)",
+          "oklch(68% 0.155 65)",
+          "oklch(82% 0.11 65)",
+          "oklch(94% 0.04 65)"
+        ]
+      },
+      "info": {
+        "role": "tertiary",
+        "displayName": "Notice Blue",
+        "canonical": "#2563eb",
+        "darkValue": "#3b82f6",
+        "tonalRamp": [
+          "oklch(20% 0.09 262)",
+          "oklch(30% 0.14 262)",
+          "oklch(40% 0.19 262)",
+          "oklch(52% 0.24 262)",
+          "oklch(62% 0.20 262)",
+          "oklch(74% 0.15 262)",
+          "oklch(86% 0.08 262)",
+          "oklch(96% 0.025 262)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The page title. Exactly one per screen, top-left. The only type that reads as a heading from across the room."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Modal titles and empty-state titles — anything that takes over the screen."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Card and section headers inside a page. Used sparingly; most cards label themselves with a Label instead."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "The dominant size by a wide margin. Values, table cells, form fields, button text, descriptions. When unsure, it is Body."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field labels, badges, timestamps, units, metadata, mobile tab labels. A console is mostly labelled readouts."
+      },
+      "label-section": {
+        "displayName": "Section Label",
+        "purpose": "Sidebar group headers only (Protect / Recover / System). The one place uppercase is used in the Default style."
+      }
+    },
+    "fontStacks": [
+      {
+        "name": "system",
+        "value": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+        "purpose": "Every role in the Default style. Deliberately voiceless — Vault renders in whatever the operator's OS already uses."
+      },
+      {
+        "name": "mono",
+        "value": "ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+        "purpose": "The entire interface under the 1-bit style."
+      },
+      {
+        "name": "retro-body",
+        "value": "'VT323', 'Courier New', monospace",
+        "purpose": "Body text under the 8-bit and 16-bit styles. Self-hosted (SIL OFL 1.1) in web/src/assets/fonts; fetched only when a retro style selects the family."
+      },
+      {
+        "name": "retro-display",
+        "value": "'Press Start 2P', monospace",
+        "purpose": "Headings under the 8-bit and 16-bit styles, scaled to 0.7em because the face runs large. Self-hosted (SIL OFL 1.1)."
+      }
+    ],
+    "shadows": [
+      {
+        "name": "detached",
+        "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)",
+        "purpose": "Modal panels and the command palette. The heaviest shadow in the system, for full takeovers only."
+      },
+      {
+        "name": "floating",
+        "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        "purpose": "Toasts and popovers. Present but not dramatic."
+      },
+      {
+        "name": "lift",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Optional hover response on interactive cards and rows, alongside the border-color shift. Never at rest."
+      },
+      {
+        "name": "pixel-bevel-8bit",
+        "value": "inset 2px 2px 0 var(--color-surface-3), inset -2px -2px 0 var(--color-surface-4)",
+        "purpose": "Drawn depth on cards under the 8-bit style, replacing shadow entirely."
+      },
+      {
+        "name": "rpg-frame-16bit",
+        "value": "inset 0 0 0 1px var(--color-border-hover), inset 0 0 0 2px var(--color-surface)",
+        "purpose": "Double-stroked RPG dialog frame on cards under the 16-bit style."
+      }
+    ],
+    "motion": [
+      {
+        "name": "fade-up",
+        "value": "fade-up 0.25s ease-out backwards",
+        "purpose": "Route change and content entrance. Translates 8px up from opacity 0."
+      },
+      {
+        "name": "stagger-step",
+        "value": "50ms",
+        "purpose": "Delay increment for staggered list children, capped at 10 items."
+      },
+      {
+        "name": "panel-up",
+        "value": "panel-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both",
+        "purpose": "Modal panel entrance — 16px rise with a scale(0.98) settle."
+      },
+      {
+        "name": "backdrop-in",
+        "value": "backdrop-in 0.2s ease-out both",
+        "purpose": "Modal scrim fade."
+      },
+      {
+        "name": "slide-out",
+        "value": "slide-out 0.2s ease-in both",
+        "purpose": "Toast dismissal, translating 100% right."
+      },
+      {
+        "name": "nav-pill",
+        "value": "nav-pill 0.2s ease-out both",
+        "purpose": "Active sidebar item settling from scaleX(0.92)."
+      },
+      {
+        "name": "shimmer",
+        "value": "shimmer 1.5s ease-in-out infinite",
+        "purpose": "In-flight progress bars. The only looping animation in the product — must never run while idle."
+      },
+      {
+        "name": "theme-transition",
+        "value": "background-color 0.2s ease, color 0.2s ease",
+        "purpose": "Light/dark swap on the document root. Suppressed under prefers-reduced-motion."
+      },
+      {
+        "name": "reduced-motion-collapse",
+        "value": "0.01ms",
+        "purpose": "Under prefers-reduced-motion: reduce, every animation and transition collapses to 0.01ms rather than being removed — `animation: none` would strand opacity-0 entrance keyframes permanently invisible."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px",
+        "purpose": "Gutter padding only (px-4 → px-6). Not a structural tier."
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "purpose": "The only structural breakpoint. Above: persistent 256px sidebar. Below: fixed top bar + bottom tab bar."
+      }
+    ],
+    "layout": [
+      { "name": "sidebar-width", "value": "256px" },
+      { "name": "content-max-width", "value": "1152px" },
+      { "name": "mobile-top-bar", "value": "56px" },
+      { "name": "mobile-bottom-bar", "value": "64px" },
+      { "name": "touch-target-min", "value": "44px" },
+      {
+        "name": "scroll-surface",
+        "value": "main",
+        "purpose": "html and body are locked to height:100%; overflow:hidden so <main> is the only scroll container in the app."
+      }
+    ],
+    "themeAxes": {
+      "style": ["default", "1bit", "8bit", "16bit"],
+      "mode": ["light", "system", "dark"],
+      "note": "Applied as .theme-{style} + .dark on <html>, persisted to localStorage as vault-style + vault-mode. Eight valid renderings. Default is the design target; the retro styles are a personality layer that squares every radius, removes every shadow, and replaces proportional type."
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single primary action on a screen. One per screen — see the One Amber Per Decision Rule.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Run Now</button>",
+      "css": ".ds-btn { font: 500 0.875rem/1.25rem -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.15s, color 0.15s; } .ds-btn:disabled { opacity: 0.5; cursor: not-allowed; } .ds-btn:focus-visible { outline: 2px solid var(--color-vault, #f59e0b); outline-offset: 2px; } .ds-btn-primary { background: var(--color-vault, #f59e0b); color: #ffffff; } .ds-btn-primary:hover { background: var(--color-vault-dark, #d97706); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The default for everything that is not the primary move. Neutral fill, muted text.",
+      "html": "<button class=\"ds-btn ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn { font: 500 0.875rem/1.25rem -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.15s, color 0.15s; } .ds-btn:focus-visible { outline: 2px solid var(--color-vault, #f59e0b); outline-offset: 2px; } .ds-btn-secondary { background: var(--color-surface-3, #f3f4f6); color: var(--color-text-muted, #6b7280); } .ds-btn-secondary:hover { background: var(--color-surface-4, #e5e7eb); color: var(--color-text, #111827); }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive confirmations only. Never the auto-focused control in a dialog.",
+      "html": "<button class=\"ds-btn ds-btn-danger\">Delete Job</button>",
+      "css": ".ds-btn { font: 500 0.875rem/1.25rem -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.15s; } .ds-btn:focus-visible { outline: 2px solid var(--color-vault, #f59e0b); outline-offset: 2px; } .ds-btn-danger { background: var(--color-danger, #dc2626); color: #ffffff; } .ds-btn-danger:hover { background: color-mix(in srgb, var(--color-danger, #dc2626) 90%, transparent); }"
+    },
+    {
+      "name": "Interactive Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "The most repeated pattern in the app. Flat panel, hairline border, 12px radius; the border warms toward amber on hover.",
+      "html": "<div class=\"ds-card ds-card-interactive\"><span class=\"ds-card-label\">LAST RUN</span><span class=\"ds-card-value\">2 hours ago</span><span class=\"ds-card-meta\">appdata → offsite-sftp</span></div>",
+      "css": ".ds-card { background: var(--color-surface-2, #f9fafb); border: 1px solid var(--color-border, #e5e7eb); border-radius: 12px; padding: 14px; min-height: 104px; display: flex; flex-direction: column; gap: 4px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; } .ds-card-interactive { cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; } .ds-card-interactive:hover { border-color: color-mix(in srgb, var(--color-vault, #f59e0b) 40%, transparent); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); } .ds-card-label { font-size: 0.75rem; font-weight: 500; color: var(--color-text-muted, #6b7280); } .ds-card-value { font-size: 1rem; font-weight: 500; color: var(--color-text, #111827); } .ds-card-meta { font-size: 0.75rem; color: var(--color-text-dim, #9ca3af); margin-top: auto; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Flat field on the page floor tone with a hairline border. No bespoke focus treatment — it takes the global amber ring.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"/mnt/user/appdata\" />",
+      "css": ".ds-input { width: 100%; background: var(--color-surface, #ffffff); color: var(--color-text, #111827); border: 1px solid var(--color-border, #e5e7eb); border-radius: 8px; padding: 8px 12px; font: 400 0.875rem/1.25rem -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; } .ds-input::placeholder { color: var(--color-text-dim, #9ca3af); } .ds-input:hover { border-color: var(--color-border-hover, #d1d5db); } .ds-input:focus-visible { outline: 2px solid var(--color-vault, #f59e0b); outline-offset: 2px; } .ds-input:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge-neutral",
+      "description": "Pill status token filled at 15% of its status color. Never carries meaning by color alone — it always says a word.",
+      "html": "<span class=\"ds-badge ds-badge-success\">Verified</span> <span class=\"ds-badge ds-badge-warning\">Drift</span> <span class=\"ds-badge ds-badge-neutral\">Never run</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 9999px; font: 500 0.75rem/1rem -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; } .ds-badge-success { background: color-mix(in srgb, var(--color-success, #16a34a) 15%, transparent); color: var(--color-success, #16a34a); } .ds-badge-warning { background: color-mix(in srgb, var(--color-warning, #d97706) 15%, transparent); color: var(--color-warning, #d97706); } .ds-badge-neutral { background: var(--color-surface-3, #f3f4f6); color: var(--color-text-muted, #6b7280); }"
+    },
+    {
+      "name": "Sidebar Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Sidebar row at rest and active. Active state is a 10% amber wash with amber text — the orientation half of the accent's job.",
+      "html": "<nav class=\"ds-nav\"><div class=\"ds-nav-section\">Protect</div><button class=\"ds-nav-item\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4\"/></svg>Jobs</button><button class=\"ds-nav-item ds-nav-item-active\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4\"/></svg>Storage</button></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 4px; width: 256px; padding: 0 12px; background: var(--color-surface-2, #f9fafb); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; } .ds-nav-section { padding: 16px 12px 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted, #6b7280); user-select: none; } .ds-nav-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: none; border-radius: 8px; background: transparent; color: var(--color-text-muted, #6b7280); font-size: 0.875rem; font-weight: 500; text-align: left; cursor: pointer; transition: background-color 0.15s, color 0.15s; } .ds-nav-item svg { width: 20px; height: 20px; flex-shrink: 0; } .ds-nav-item:hover { background: var(--color-surface-3, #f3f4f6); color: var(--color-text, #111827); } .ds-nav-item:focus-visible { outline: 2px solid var(--color-vault, #f59e0b); outline-offset: 2px; } .ds-nav-item-active, .ds-nav-item-active:hover { background: color-mix(in srgb, var(--color-vault, #f59e0b) 10%, transparent); color: var(--color-vault, #f59e0b); }"
+    },
+    {
+      "name": "Modal Panel",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "The one place shadow is used at full strength. Bordered header with an 18px title, scrolling body, focus trapped inside.",
+      "html": "<div class=\"ds-modal\"><div class=\"ds-modal-head\"><h2 class=\"ds-modal-title\">Restore appdata</h2><button class=\"ds-modal-close\" aria-label=\"Close\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M6 18L18 6M6 6l12 12\"/></svg></button></div><div class=\"ds-modal-body\">This will overwrite the live contents of <strong>/mnt/user/appdata/plex</strong>. The container will be stopped first.</div></div>",
+      "css": ".ds-modal { background: var(--color-surface-2, #f9fafb); border: 1px solid var(--color-border, #e5e7eb); border-radius: 12px; box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25); max-width: 32rem; display: flex; flex-direction: column; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; } .ds-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--color-border, #e5e7eb); } .ds-modal-title { margin: 0; font-size: 1.125rem; font-weight: 600; line-height: 1.75rem; color: var(--color-text, #111827); } .ds-modal-close { background: none; border: none; padding: 4px; border-radius: 8px; color: var(--color-text-muted, #6b7280); cursor: pointer; transition: background-color 0.15s, color 0.15s; } .ds-modal-close svg { width: 20px; height: 20px; display: block; } .ds-modal-close:hover { background: var(--color-surface-3, #f3f4f6); color: var(--color-text, #111827); } .ds-modal-close:focus-visible { outline: 2px solid var(--color-vault, #f59e0b); outline-offset: 2px; } .ds-modal-body { padding: 16px 24px; font-size: 0.875rem; line-height: 1.25rem; color: var(--color-text-muted, #6b7280); } .ds-modal-body strong { color: var(--color-text, #111827); font-weight: 500; }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "custom",
+      "description": "Quiet and factual. No illustration, no apology, no celebration — and an amber action only when there is a genuine next step.",
+      "html": "<div class=\"ds-empty\"><div class=\"ds-empty-icon\">□</div><h3 class=\"ds-empty-title\">No backup jobs yet</h3><p class=\"ds-empty-desc\">Add a storage destination first, then create a job to choose what gets protected.</p><button class=\"ds-empty-action\">Create Job</button></div>",
+      "css": ".ds-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 64px 16px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; } .ds-empty-icon { font-size: 2.25rem; opacity: 0.3; margin-bottom: 12px; color: var(--color-text, #111827); } .ds-empty-title { margin: 0; font-size: 1.125rem; font-weight: 500; color: var(--color-text-muted, #6b7280); } .ds-empty-desc { margin: 4px 0 0; max-width: 24rem; font-size: 0.875rem; line-height: 1.25rem; color: var(--color-text-dim, #9ca3af); } .ds-empty-action { margin-top: 16px; padding: 8px 16px; border: none; border-radius: 8px; background: var(--color-vault, #f59e0b); color: #ffffff; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: background-color 0.15s; } .ds-empty-action:hover { background: var(--color-vault-dark, #d97706); } .ds-empty-action:focus-visible { outline: 2px solid var(--color-vault, #f59e0b); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Night-Shift Console",
+    "overview": "Vault is an instrument panel built for the session nobody wants to have. Most of the time it is glanced at — is it green, did it run, how much space is left — and it should answer in under two seconds from a phone in a dark room. Occasionally it is read with total attention, by someone whose array just died, who has never opened the Restore page before, and who is about to overwrite live data. The console has to serve both without changing character. It stays quiet, dense, and legible; it raises its voice only when something is actually wrong.\n\nThe material is flat. Depth comes from tonal layering — five stepped surface values and a hairline border — never from decoration. Type is small and functional: 14px body, 12px labels, and a single 24px page title per screen. Everything is a readout. There is exactly one accent, an amber that behaves like an indicator lamp rather than a brand color: it tells you where you are and what you would click next, and nothing else is permitted to borrow it. Because the whole surface is neutral, that one warm point of light does all the work.\n\nVault is also a guest. It lives inside Unraid's plugin chrome and must sit credibly next to Unraid's own pages in both light and dark. That rules out a house style loud enough to fight the host. The identity lives instead in precision: the border weight, the tonal steps, the restraint of the accent, and the honesty of the status vocabulary. On top of that core sits a separate personality layer — three optional retro renderings (1-bit, 8-bit, 16-bit) that reskin the same panel as older hardware. They are delight, not doctrine; the Default style is what new design work is measured against.",
+    "keyCharacteristics": [
+      "Flat by default — tonal layering and 1px borders carry depth, not shadow",
+      "One accent (Signal Amber) with a strict semantic job; every other color is status or neutral",
+      "Dense small type: 14px body, 12px label, one 24px title per page",
+      "Eight valid renderings — 4 styles × light/dark — every component must survive all of them",
+      "Status is a reading, never a mood",
+      "Calm at rest; loud only when something is wrong"
+    ],
+    "rules": [
+      {
+        "name": "The One Amber Per Decision Rule",
+        "body": "On any screen, Signal Amber appears on exactly one primary action and on the orientation markers (active nav, focus ring, brand mark). If two things on screen are amber and both look clickable, one of them is wrong. Amber is not for emphasis, not for headings, not for icons, and not for decorating cards you want people to notice.",
+        "section": "colors"
+      },
+      {
+        "name": "The Readable Amber Rule",
+        "body": "Never render #f59e0b as text below 18px on a light surface. Use the --color-vault-text token, which resolves to #b45309 on light and to the full accent everywhere else. This is a contrast requirement, not a preference.",
+        "section": "colors"
+      },
+      {
+        "name": "The Warning Adjacency Rule",
+        "body": "Drift Orange and Signal Amber are close in hue and cannot be told apart at a glance. Therefore a warning never relies on color alone: it carries an icon, a word, or a badge shape. This applies doubly under 1-bit, where every status color collapses to a single value.",
+        "section": "colors"
+      },
+      {
+        "name": "The Earned Green Rule",
+        "body": "Verified Green means a run completed and its data verified. It may not be used to make a screen feel reassuring. An unverified or unknown state is neutral, not green.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Title Rule",
+        "body": "One 24px Display per screen. Everything below it steps down to 18px or straight to 14px. Vault has no 20px, 30px, or 36px tier; adding one flattens the hierarchy rather than extending it.",
+        "section": "typography"
+      },
+      {
+        "name": "The Two-Size Rule",
+        "body": "90% of the interface is 14px body and 12px label. Reach for anything else only for a page title, a modal title, or a single hero metric. Density is the point — an operator scanning nine pages should never scroll past whitespace to find a number.",
+        "section": "typography"
+      },
+      {
+        "name": "The No-Prose Rule",
+        "body": "Vault does not have a reading width. Nothing in the product surface is set as an article; the longest text is a two-line description under an empty-state title, capped at ~24rem. If a screen needs paragraphs, it belongs in the docs site, not here.",
+        "section": "typography"
+      },
+      {
+        "name": "The Single Scroll Rule",
+        "body": "<main> scrolls; nothing else does. Never introduce a second scroll container in the page body, and never remove overflow: hidden from html/body.",
+        "section": "layout"
+      },
+      {
+        "name": "The One Breakpoint Rule",
+        "body": "Design for two layouts — desktop with a sidebar, and mobile with two fixed bars. Do not invent a tablet tier. If a component needs a third arrangement, it is probably two components.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-At-Rest Rule",
+        "body": "If it is in the document flow and nobody is pointing at it, it has no shadow. Depth at rest comes from bg-surface-2 + border-border. A shadow on a resting card is the single fastest way to make Vault look like a marketing dashboard.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Border-First Hover Rule",
+        "body": "The primary hover affordance for a card is hover:border-vault/40 — the hairline warms toward amber. A shadow-sm lift may accompany it. Reaching for scale or translate transforms on cards is not part of this system.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Two-Radius Rule",
+        "body": "Containers are 12px, controls are 8px, badges are pills. There is no third container radius. Do not add rounded-2xl; uniform heavy rounding is exactly the generic-app-shell look this system rejects.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Drawn-Icon Rule",
+        "body": "Icons are inline SVG path data committed in the component. No package import, no CDN, no <img>. The product must render identically on a machine with no internet.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Offline Parity Rule",
+        "body": "Every asset the interface needs — fonts, icons, images, stylesheets — ships inside the embedded bundle and is served by the daemon. A Vault install on an air-gapped Unraid box must be visually indistinguishable from one with internet. If a design decision requires fetching something at runtime, the decision is wrong.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do use bg-surface-2 border border-border rounded-xl for every card. It is the single most repeated pattern in the codebase and it is correct.",
+      "Do keep one Signal Amber primary action per screen, and let everything else be Secondary or Ghost.",
+      "Do use --color-vault-text for amber text under 18px, so light mode stays above 4.5:1.",
+      "Do pair every status color with an icon, a word, or a badge shape, so the reading survives 1-bit and color-vision deficiency.",
+      "Do set body copy at 14px and labels at 12px. Density is the design.",
+      "Do give every interactive element below lg a 44px minimum touch target.",
+      "Do hover cards with hover:border-vault/40 — the hairline warming toward amber is the house affordance.",
+      "Do commit icons as inline SVG path data. Nothing in the product may fetch an asset at runtime.",
+      "Do keep <main> as the only scroll surface.",
+      "Do show unknown and unverified states as neutral. Silence is more honest than green."
+    ],
+    "donts": [
+      "Don't put a shadow on a resting card, a gradient on a stat tile, or an illustration in an empty state. That is the consumer-SaaS dashboard look, and it is the wrong genre for a backup tool.",
+      "Don't add a second 24px+ heading to a page, or invent a size between 14px and 18px. One title, two working sizes.",
+      "Don't use amber for emphasis, headings, decorative icons, or 'look at this' highlights. It means orientation or primary intent, and its rarity is the entire mechanism.",
+      "Don't show Verified Green for anything that hasn't actually verified, and never ship an 'All Systems Operational' style banner. Fake calm is the one unforgivable error in a backup product.",
+      "Don't stack toolbars, tabs-within-tabs, or grey-on-grey chrome to fit more in. That is the enterprise-console failure mode: dense without hierarchy.",
+      "Don't introduce rounded-2xl, glassmorphic panels, blurred blob backgrounds, indigo/violet accents, or emoji in section headers. Vault has one accent and two radii.",
+      "Don't load a web font, icon package, or any asset from a CDN, in any style. Everything ships in the embedded bundle — see the Offline Parity Rule.",
+      "Don't auto-focus a destructive button in a confirmation dialog, or let a restore proceed without naming exactly what will be overwritten.",
+      "Don't add a tablet breakpoint. lg is the only structural one.",
+      "Don't animate anything that isn't communicating a state change, and never loop an animation while the underlying process is idle."
+    ]
+  }
+}

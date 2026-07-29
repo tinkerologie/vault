@@ -2,11 +2,15 @@ package dedup
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/storage"
@@ -35,11 +39,32 @@ type Index struct {
 	db        *db.DB
 	adapter   storage.Adapter
 	storageID int64
+
+	// seqMu guards the cached blob sequence counter. seq is the last
+	// sequence number this Index handed out; seeded lazily from storage on
+	// first use (see nextIndexSeq). writerID makes blob names unique per
+	// Index instance so two concurrent writers can never collide.
+	seqMu    sync.Mutex
+	seq      int64
+	seeded   bool
+	writerID string
 }
 
 // NewIndex constructs an Index bound to one destination.
 func NewIndex(d *db.DB, a storage.Adapter, storageID int64) *Index {
-	return &Index{db: d, adapter: a, storageID: storageID}
+	return &Index{db: d, adapter: a, storageID: storageID, writerID: newWriterID()}
+}
+
+// newWriterID returns a short random token that disambiguates index blobs
+// written by different Index instances against the same destination. Falls
+// back to a fixed token if the system RNG fails — a collision is then no
+// more likely than it was before writer IDs existed.
+func newWriterID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "00000000"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // Has returns true if the chunk is already present in this destination.
@@ -107,7 +132,7 @@ func (idx *Index) AppendStorageIndex(info PackInfo) error {
 	if err != nil {
 		return err
 	}
-	name := fmt.Sprintf("%010d.idx", seq)
+	name := idx.indexBlobName(seq)
 	line, err := json.Marshal(indexEntry{
 		PackID: info.ID, PackPath: info.Path,
 		SizeBytes: info.SizeBytes, ChunkCount: info.ChunkCount, Chunks: info.Entries,
@@ -128,7 +153,7 @@ func (idx *Index) AppendTombstone(packID string) error {
 	if err != nil {
 		return err
 	}
-	name := fmt.Sprintf("%010d.idx", seq)
+	name := idx.indexBlobName(seq)
 	line, err := json.Marshal(indexEntry{Tombstone: packID})
 	if err != nil {
 		return err
@@ -148,8 +173,27 @@ func (idx *Index) dropDBState() error {
 //   - `vault dedup repair --dest=X` (Task 14)
 //   - TestDisasterRecovery_RebuildIndex (Task 8 integration test)
 //
-// Read order is lexicographic (matches numeric ascending because the names
-// are zero-padded sequence numbers). Each JSONL line is one pack.
+// Replay runs in two passes and is deliberately order-independent. A single
+// in-order pass that applied tombstones as deletes made correctness depend on
+// which blob sorted first, which is not something we can guarantee: two Index
+// instances writing one destination cache their own counters and so hand out
+// equal sequence numbers, leaving the random writerID to break the tie.
+//
+// Order mattered because chunk rows are one-per-(storage_id, chunk_id) with
+// REPLACE semantics, while DeleteDedupPack cascades onto them. After
+// compaction copies chunk C from dying pack X into new pack Y, the sequence
+// add(Y), add(X), tombstone(X) left C pointing at X and then cascaded it away
+// — losing a chunk that live pack Y still held, so restores failed after a
+// repair. Deferring the deletes to the end does not help: C still points at X
+// when the cascade fires.
+//
+// Collecting the tombstones first and skipping their adds sidesteps all of it.
+// dropDBState has already emptied the tables, so a tombstone has nothing to
+// delete — suppressing the add is its entire job. This mirrors restic's
+// RepairIndex, which builds a removePacks set before rewriting the index.
+//
+// Safe because pack IDs are random (see Packer.Flush), never content-derived,
+// so a tombstoned ID is never legitimately reused by a later pack.
 func (idx *Index) RebuildFromStorage() error {
 	if err := idx.dropDBState(); err != nil {
 		return err
@@ -158,7 +202,45 @@ func (idx *Index) RebuildFromStorage() error {
 	if err != nil {
 		return fmt.Errorf("dedup: list index: %w", err)
 	}
+	// Sorted for deterministic replay and error reporting only — the result no
+	// longer depends on this order.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+
+	// Pass 1: which packs were deleted? Only pack IDs are retained, so memory
+	// stays flat regardless of repository size.
+	tombstoned := make(map[string]struct{})
+	if err := idx.forEachIndexEntry(entries, func(e indexEntry) error {
+		if e.Tombstone != "" {
+			tombstoned[e.Tombstone] = struct{}{}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Pass 2: apply the adds that survived.
+	return idx.forEachIndexEntry(entries, func(e indexEntry) error {
+		// Tombstone lines carry zero-valued add fields (no chunks, blank pack
+		// ID). Check this branch first so we never act on those zero values as
+		// an add.
+		if e.Tombstone != "" {
+			return nil
+		}
+		if _, dead := tombstoned[e.PackID]; dead {
+			return nil
+		}
+		return idx.registerForRebuild(PackInfo{
+			ID: e.PackID, Path: e.PackPath,
+			SizeBytes: e.SizeBytes, ChunkCount: e.ChunkCount,
+			Entries: e.Chunks,
+		})
+	})
+}
+
+// forEachIndexEntry reads each index blob in turn and invokes fn once per
+// JSONL line. Shared by both RebuildFromStorage passes so the read, scan, and
+// close handling exists in one place.
+func (idx *Index) forEachIndexEntry(entries []storage.FileInfo, fn func(indexEntry) error) error {
 	for _, e := range entries {
 		if e.IsDir {
 			continue
@@ -175,21 +257,7 @@ func (idx *Index) RebuildFromStorage() error {
 				_ = rc.Close()
 				return fmt.Errorf("dedup: parse index entry: %w", err)
 			}
-			// Tombstone lines carry zero-valued add fields (no chunks, blank pack ID).
-			// Check this branch first so we never act on those zero values as an add.
-			if entry.Tombstone != "" {
-				if err := idx.db.DeleteDedupPack(idx.storageID, entry.Tombstone); err != nil {
-					_ = rc.Close()
-					return fmt.Errorf("dedup: rebuild tombstone %s: %w", entry.Tombstone, err)
-				}
-				continue
-			}
-			info := PackInfo{
-				ID: entry.PackID, Path: entry.PackPath,
-				SizeBytes: entry.SizeBytes, ChunkCount: entry.ChunkCount,
-				Entries: entry.Chunks,
-			}
-			if err := idx.registerForRebuild(info); err != nil {
+			if err := fn(entry); err != nil {
 				_ = rc.Close()
 				return err
 			}
@@ -202,37 +270,87 @@ func (idx *Index) RebuildFromStorage() error {
 	return nil
 }
 
-// nextIndexSeq is not concurrency-safe — it does a list-then-write. Callers
-// (AppendStorageIndex / AppendTombstone) must hold the Repo mutex so there
-// is only one writer per Index at a time; two racing flushes would pick the
-// same sequence number and silently overwrite each other.
+// nextIndexSeq returns the next blob sequence number for this Index.
 //
-// CAVEAT: compaction (RunGC's compact phase) now writes many index entries
-// per GC run, widening the collision window if a backup runs concurrently
-// against the same destination via a separate Repo instance. Runner-level
-// per-destination serialization is the canonical fix; tracking that as a
-// follow-up rather than landing here.
+// The directory is listed ONCE per Index instance to seed the counter; every
+// subsequent call increments in memory. Listing on each call made a large
+// backup quadratic in pack count: a 500 GB folder flushes ~21k packs
+// (PackTargetSize is 24 MiB), so the old code issued ~21k remote listings of
+// a directory growing to ~21k entries — hundreds of millions of directory
+// entries pulled over the wire, degrading until the backup appeared frozen
+// (issue #256).
 //
-// nextIndexSeq returns one greater than the largest existing sequence
-// number under _vault/index/, or 1 if the directory is empty / missing.
+// Concurrency: the counter is mutex-guarded. Caching it means two Index
+// instances against one destination no longer re-read each other's writes,
+// so they can hand out the same sequence number — blob names therefore carry
+// a per-instance writerID and both writes survive rather than one silently
+// overwriting the other (which is what the old code did on a same-sequence
+// race). In-daemon this does not arise: RunDedupGC takes the same run slot as
+// a backup, so GC and backup never write one destination concurrently. Their
+// relative replay order at an equal sequence is decided by writerID rather
+// than by wall-clock order. RebuildFromStorage no longer depends on that:
+// it applies tombstones as a pre-pass, so replay is order-independent.
 func (idx *Index) nextIndexSeq() (int64, error) {
+	idx.seqMu.Lock()
+	defer idx.seqMu.Unlock()
+	if !idx.seeded {
+		seq, err := idx.scanMaxIndexSeq()
+		if err != nil {
+			// Leave the counter unseeded so a later append retries the scan.
+			// Seeding from a failed listing would restart at 1 and keep that
+			// wrong baseline for the rest of the run: subsequent blobs would
+			// replay before the history already on storage, letting a
+			// RebuildFromStorage resurrect packs GC had tombstoned.
+			return 0, err
+		}
+		idx.seq = seq
+		idx.seeded = true
+	}
+	idx.seq++
+	return idx.seq, nil
+}
+
+// indexBlobName renders the on-storage name for one index blob. The
+// zero-padded sequence leads so lexicographic listing order (what
+// RebuildFromStorage relies on) still matches numeric order.
+func (idx *Index) indexBlobName(seq int64) string {
+	return fmt.Sprintf("%010d-%s.idx", seq, idx.writerID)
+}
+
+// scanMaxIndexSeq returns the largest sequence number already present under
+// _vault/index/, or 0 when the directory does not exist yet (the first-ever
+// write to a destination). Any other listing failure is propagated: treating
+// it as "no blobs" would silently restart the sequence and let later blobs
+// replay ahead of the history already on storage. Both the legacy
+// "%010d.idx" and current "%010d-<writer>.idx" forms parse.
+func (idx *Index) scanMaxIndexSeq() (int64, error) {
 	entries, err := idx.adapter.List(indexRootPath)
 	if err != nil {
-		// First-ever write — directory may not exist on some adapters; that's fine.
-		return 1, nil
+		if storage.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("dedup: list index: %w", err)
 	}
 	var maxSeq int64
 	for _, e := range entries {
 		if e.IsDir {
 			continue
 		}
-		var n int64
-		base := strings.TrimSuffix(path.Base(e.Path), ".idx")
-		if _, err := fmt.Sscanf(base, "%d", &n); err == nil {
-			if n > maxSeq {
-				maxSeq = n
-			}
+		name := path.Base(e.Path)
+		base := strings.TrimSuffix(name, ".idx")
+		if base == name {
+			// TrimSuffix is a no-op on a non-match, so without this guard a
+			// stray artifact like "0000000042-upload.partial" would parse as
+			// sequence 42 and inflate the counter.
+			continue
+		}
+		if i := strings.IndexByte(base, '-'); i >= 0 {
+			base = base[:i]
+		}
+		n, err := strconv.ParseInt(base, 10, 64)
+		if err == nil && n > maxSeq {
+			maxSeq = n
 		}
 	}
-	return maxSeq + 1, nil
+	return maxSeq, nil
 }

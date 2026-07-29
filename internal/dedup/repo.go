@@ -190,11 +190,25 @@ func buildRepo(d *db.DB, a storage.Adapter, storageID int64, master []byte) *Rep
 		// onFlush is invoked synchronously inside Add() / Flush() while r.mu
 		// is held, so we can mutate lastFlushErr / pending without re-locking.
 		// The Index calls don't need r.mu (SQLite is concurrency-safe).
-		if err := r.idx.Register(info); err != nil {
+		// Storage index BEFORE SQLite. The pack blob is already on storage by
+		// the time onFlush runs, and RebuildFromStorage reconstructs SQLite
+		// from these index blobs — so storage is the durable record and the DB
+		// is the cache of it.
+		//
+		// Registering first inverted that: a crash or a failed index write in
+		// between left SQLite claiming chunks that had no replayable add
+		// record. The backup succeeded, and only a later `vault dedup repair`
+		// would silently drop those chunks and make it unrestorable.
+		//
+		// This way round the failure is loud and recoverable instead: the run
+		// fails via lastFlushErr, HasDedupChunk does not advertise the chunks
+		// (so a retry rewrites them rather than referencing a pack SQLite has
+		// never heard of), and a rebuild still finds the pack on storage.
+		if err := r.idx.AppendStorageIndex(info); err != nil {
 			r.lastFlushErr = err
 			return
 		}
-		if err := r.idx.AppendStorageIndex(info); err != nil {
+		if err := r.idx.Register(info); err != nil {
 			r.lastFlushErr = err
 			return
 		}

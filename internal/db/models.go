@@ -1,6 +1,8 @@
 package db
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -88,6 +90,29 @@ type JobItem struct {
 	MissingSince *string `json:"missing_since,omitempty"`
 }
 
+// ParsedSettings decodes the item's settings blob into a map.
+//
+// A blank blob is not an error: it means "no settings" and yields an empty
+// map. Rows predating settings normalisation store "" rather than "{}", and
+// treating that as corruption made every backup run log a malformed-JSON
+// warning for a perfectly ordinary item.
+//
+// Genuinely malformed JSON still returns an error, so real corruption stays
+// visible.
+func (i JobItem) ParsedSettings() (map[string]any, error) {
+	if strings.TrimSpace(i.Settings) == "" {
+		return map[string]any{}, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(i.Settings), &out); err != nil {
+		return nil, err
+	}
+	if out == nil { // literal JSON "null"
+		out = map[string]any{}
+	}
+	return out, nil
+}
+
 type JobRun struct {
 	ID              int64      `json:"id"`
 	JobID           int64      `json:"job_id"`
@@ -110,6 +135,15 @@ type JobRun struct {
 	RetryOfRunID *int64     `json:"retry_of_run_id"`
 	RetryAttempt int        `json:"retry_attempt"`
 	RetryNextAt  *time.Time `json:"retry_next_at"`
+	// Stall visibility (#265). StalledAt is set once the runner's watchdog
+	// judges a run to have stopped making progress, with StallReason carrying
+	// the operator-facing explanation. Status deliberately stays "running":
+	// the run genuinely has not finished, and a handler wedged in an
+	// uncancellable call may never let it finish. These fields are what let
+	// the API and UI tell a working backup apart from a stuck one, which
+	// previously read identically.
+	StalledAt   *time.Time `json:"stalled_at"`
+	StallReason string     `json:"stall_reason"`
 }
 
 type RestorePoint struct {

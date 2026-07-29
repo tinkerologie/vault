@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 // GCResult summarises a garbage-collection run.
@@ -109,16 +110,42 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 			// the storage delete. AppendTombstone is idempotent on retry, and
 			// RebuildFromStorage applies tombstones to remove pack rows so a
 			// rebuild after GC does not resurrect swept packs.
-			if err := r.idx.AppendTombstone(p.ID); err != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("tombstone %s: %v", p.ID, err))
-				log.Printf("gc: failed to write tombstone for pack %s: %v", p.ID, err)
+			// Hide the pack's chunks BEFORE writing its tombstone. The
+			// tombstone is durable the instant it lands, and
+			// RebuildFromStorage suppresses tombstoned packs — so any window
+			// in which the tombstone exists while SQLite still advertises the
+			// chunks lets a backup dedupe against data a repair will drop.
+			// Marking first makes a crash anywhere after this point harmless;
+			// the row is retained so a later sweep retries the delete.
+			if err := r.db.SetDedupPackDeleteState(r.storageID, p.ID, db.PackMarked); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("mark pending delete %s: %v", p.ID, err))
+				log.Printf("gc: failed to mark pack %s pending delete: %v", p.ID, err)
 				continue
+			}
+			// Skip re-tombstoning a pack a previous run already tombstoned —
+			// the intent is durable, and rewriting it would add one index blob
+			// per sweep for a pack whose delete keeps failing.
+			if p.DeleteState < db.PackTombstoned {
+				if err := r.idx.AppendTombstone(p.ID); err != nil {
+					res.Errors = append(res.Errors, fmt.Sprintf("tombstone %s: %v", p.ID, err))
+					log.Printf("gc: failed to write tombstone for pack %s: %v", p.ID, err)
+					continue
+				}
+				if err := r.db.SetDedupPackDeleteState(r.storageID, p.ID, db.PackTombstoned); err != nil {
+					res.Errors = append(res.Errors, fmt.Sprintf("record tombstone %s: %v", p.ID, err))
+					log.Printf("gc: failed to record tombstone for pack %s: %v", p.ID, err)
+					continue
+				}
 			}
 			// Storage delete BEFORE DB delete — if storage delete fails we
 			// skip this pack and try again next GC. If we deleted DB first
 			// and then storage failed, we'd "lose" the pack from the index
 			// and orphan it on disk forever.
-			if err := r.adapter.Delete(p.Path); err != nil {
+			// An already-missing blob counts as deleted. Without this a run
+			// whose storage delete succeeded but whose DB delete failed would
+			// wedge: every later sweep re-issues the delete, most adapters
+			// surface not-found as an error, and the DB row is never reached.
+			if err := r.adapter.Delete(p.Path); err != nil && !storage.IsNotExist(err) {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", p.Path, err))
 				log.Printf("gc: failed to delete pack %s: %v", p.Path, err)
 				continue
@@ -201,15 +228,15 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 // Operator-visible counter `res.Errors` carries the per-chunk failure so
 // retry is informed.
 //
-// Register-failure window (v1): if `idx.Register` returns an error in the
-// packer's onFlush callback (e.g. a SQLite write failure after the new pack
-// blob has been written to storage), the new pack has no `dedup_packs` row.
-// The empty-pack GC rule cannot reap it (the rule walks `ListDedupPacks`,
-// which is row-driven). The orphan blob is only recoverable via
-// `vault dedup repair`, which lists storage and reads pack footers
-// directly. Live data is never lost (the old pack is preserved because
-// `allMoved` is false), but operator action is required to reclaim the
-// orphan's bytes.
+// Register-failure window: if `idx.Register` returns an error in the packer's
+// onFlush callback (e.g. a SQLite write failure after the new pack blob has
+// been written to storage), the new pack has no `dedup_packs` row. The
+// empty-pack GC rule cannot reap it (the rule walks `ListDedupPacks`, which is
+// row-driven), so reclaiming the orphan's bytes needs `vault dedup repair`.
+// Live data is never lost: the old pack is preserved because `allMoved` is
+// false, and the index record is written before Register, so a rebuild
+// recovers the new pack from its own add line rather than having to fall back
+// to scanning pack footers.
 func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res *GCResult) error {
 	// Filter to eligible packs.
 	type drained struct {
@@ -250,17 +277,20 @@ func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res 
 	var totalNewBytes int64
 	// Capture flush callback errors so we can surface them up via res.Errors.
 	pkr := NewPacker(r.adapter, r.master, packsRoot, func(info PackInfo) {
+		// Storage index before SQLite, matching the backup flush path: the
+		// on-storage record is what RebuildFromStorage replays, so it must be
+		// durable before the DB claims the pack exists.
+		if err := r.idx.AppendStorageIndex(info); err != nil {
+			msg := fmt.Sprintf("compact index pack %s: %v", info.ID, err)
+			res.Errors = append(res.Errors, msg)
+			log.Printf("gc: %s", msg)
+			return
+		}
 		// Note: Register's UpsertDedupChunk calls for the new pack's chunks are
 		// idempotent no-ops here — the rows already exist (pointing at the old
 		// pack). The actual location change happens via RepointDedupChunks below.
 		if err := r.idx.Register(info); err != nil {
 			msg := fmt.Sprintf("compact register pack %s: %v", info.ID, err)
-			res.Errors = append(res.Errors, msg)
-			log.Printf("gc: %s", msg)
-			return
-		}
-		if err := r.idx.AppendStorageIndex(info); err != nil {
-			msg := fmt.Sprintf("compact index pack %s: %v", info.ID, err)
 			res.Errors = append(res.Errors, msg)
 			log.Printf("gc: %s", msg)
 			return
@@ -342,13 +372,30 @@ func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res 
 			log.Printf("gc: %s", msg)
 			continue
 		}
-		if err := r.idx.AppendTombstone(d.pack.ID); err != nil {
-			msg := fmt.Sprintf("compact tombstone %s: %v", d.pack.ID, err)
+		// Same ordering as the dead-pack sweep: hide the chunks first, so no
+		// window exists where a durable tombstone coexists with a pack SQLite
+		// still advertises.
+		if err := r.db.SetDedupPackDeleteState(r.storageID, d.pack.ID, db.PackMarked); err != nil {
+			msg := fmt.Sprintf("compact mark pending delete %s: %v", d.pack.ID, err)
 			res.Errors = append(res.Errors, msg)
 			log.Printf("gc: %s", msg)
 			continue
 		}
-		if err := r.adapter.Delete(d.pack.Path); err != nil {
+		if d.pack.DeleteState < db.PackTombstoned {
+			if err := r.idx.AppendTombstone(d.pack.ID); err != nil {
+				msg := fmt.Sprintf("compact tombstone %s: %v", d.pack.ID, err)
+				res.Errors = append(res.Errors, msg)
+				log.Printf("gc: %s", msg)
+				continue
+			}
+			if err := r.db.SetDedupPackDeleteState(r.storageID, d.pack.ID, db.PackTombstoned); err != nil {
+				msg := fmt.Sprintf("compact record tombstone %s: %v", d.pack.ID, err)
+				res.Errors = append(res.Errors, msg)
+				log.Printf("gc: %s", msg)
+				continue
+			}
+		}
+		if err := r.adapter.Delete(d.pack.Path); err != nil && !storage.IsNotExist(err) {
 			msg := fmt.Sprintf("compact storage delete %s: %v", d.pack.Path, err)
 			res.Errors = append(res.Errors, msg)
 			log.Printf("gc: %s", msg)

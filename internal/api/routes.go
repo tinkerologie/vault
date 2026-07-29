@@ -211,7 +211,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		// Discovery endpoints are only relevant in daemon mode.
 		if !s.config.ReadOnly {
-			discoverH := handlers.NewDiscoverHandler()
+			discoverH := handlers.NewDiscoverHandler(s.db)
 			r.Get("/containers", discoverH.ListContainers)
 			r.Get("/containers/{name}/mounts", discoverH.ContainerMounts)
 			r.Get("/vms", discoverH.ListVMs)

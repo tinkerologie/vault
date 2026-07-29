@@ -79,6 +79,11 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	}
 	dir := filepath.Dir(full)
 	if err := os.MkdirAll(dir, 0750); err != nil {
+		// A full filesystem can reject directory creation before any data is
+		// written — metadata blocks or inodes exhausted.
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("create directories: %w", err)
 	}
 	// Write to a sibling temp file, then atomically rename into place. This
@@ -87,26 +92,54 @@ func (l *LocalAdapter) Write(path string, reader io.Reader) error {
 	// open.
 	tmp, err := os.CreateTemp(dir, ".vault-tmp-*")
 	if err != nil {
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
 	cleanupTmp := func() { _ = os.Remove(tmpPath) }
-	if _, err := io.Copy(tmp, reader); err != nil {
+	// io.Copy surfaces read errors too, and a source adapter can raise ENOSPC
+	// of its own. Attribute the failure to this destination only when the
+	// write side is what failed — otherwise the operator gets Unraid guidance
+	// about the wrong volume.
+	//
+	// Wrapping tmp costs io.Copy's ReadFrom fast path, which is deliberate:
+	// Vault's uploads are encrypted and/or compressed streams, so the source is
+	// virtually never a plain *os.File and the fast path could not engage
+	// anyway. Correct attribution is the entire point of the enriched message,
+	// so it wins over an optimisation this path rarely reaches.
+	dst := &writeFailTracker{w: tmp}
+	if _, err := io.Copy(dst, reader); err != nil {
 		_ = tmp.Close()
 		cleanupTmp()
+		if dst.failed && IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("write file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		cleanupTmp()
+		// Buffered writes are only guaranteed to reach the disk here, so a
+		// full volume frequently surfaces at Sync rather than Copy.
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("sync file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		cleanupTmp()
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("close file: %w", err)
 	}
 	if err := os.Rename(tmpPath, full); err != nil {
 		cleanupTmp()
+		if IsNoSpace(err) {
+			return NoSpaceError(dir, err)
+		}
 		return fmt.Errorf("rename file: %w", err)
 	}
 	return nil
@@ -272,3 +305,19 @@ func (l *LocalAdapter) RemoveEmptyDir(dir string) error {
 }
 
 var _ Adapter = (*LocalAdapter)(nil)
+
+// writeFailTracker records whether an io.Copy failure came from the
+// destination rather than the source, so a disk-full error is only blamed on
+// the volume that actually filled.
+type writeFailTracker struct {
+	w      io.Writer
+	failed bool
+}
+
+func (t *writeFailTracker) Write(p []byte) (int, error) {
+	n, err := t.w.Write(p)
+	if err != nil {
+		t.failed = true
+	}
+	return n, err
+}

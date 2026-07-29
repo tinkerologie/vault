@@ -115,6 +115,16 @@ func Open(path string) (*DB, error) {
 		_, _ = sqlDB.Exec(m) //nolint:errcheck // duplicate column errors expected
 	}
 
+	// Row rewrites that must run after the columns exist. These are not
+	// expected to fail, so a failure is reported rather than ignored.
+	for _, m := range dataMigrations {
+		if res, err := sqlDB.Exec(m); err != nil {
+			log.Printf("Warning: data migration failed (%s): %v", m, err)
+		} else if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+			log.Printf("db: data migration updated %d row(s): %s", n, m)
+		}
+	}
+
 	d := &DB{path: path}
 	d.handle.Store(sqlDB)
 	if err := d.insertDefaultSettings(); err != nil {

@@ -582,6 +582,18 @@ func (m *mockDockerClient) ImageInspect(ctx context.Context, _ string, _ ...clie
 	return m.imageResp, nil
 }
 
+// Exec: the database-dump path. Unused unless a test opts a container into
+// dumping, so these return a sentinel error to make an unexpected call obvious.
+func (m *mockDockerClient) ExecCreate(context.Context, string, client.ExecCreateOptions) (client.ExecCreateResult, error) {
+	return client.ExecCreateResult{}, errors.New("mockDockerClient: exec not implemented")
+}
+func (m *mockDockerClient) ExecAttach(context.Context, string, client.ExecAttachOptions) (client.ExecAttachResult, error) {
+	return client.ExecAttachResult{}, errors.New("mockDockerClient: exec not implemented")
+}
+func (m *mockDockerClient) ExecInspect(context.Context, string, client.ExecInspectOptions) (client.ExecInspectResult, error) {
+	return client.ExecInspectResult{}, errors.New("mockDockerClient: exec not implemented")
+}
+
 // The remaining methods are unreachable for BackupChunked; they return
 // canned zero-value + sentinel errors so any unexpected call surfaces in
 // the test output.

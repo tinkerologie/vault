@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.35
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0
 	github.com/aws/smithy-go v1.27.4
-	github.com/cloudsoda/go-smb2 v0.0.0-20260408191215-349cbc5b0af3
+	github.com/cloudsoda/go-smb2 v0.0.0-20260609183447-7b96c35f5f4b
 	github.com/coder/websocket v1.8.15
 	github.com/digitalocean/go-libvirt v0.0.0-20260217163227-273eaa321819
 	github.com/go-chi/chi/v5 v5.3.1

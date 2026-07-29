@@ -374,14 +374,22 @@ func (h *ContainerHandler) ListItems() ([]BackupItem, error) {
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
+		settings := map[string]any{
+			"id":    c.ID,
+			"image": c.Image,
+			"state": string(c.State),
+		}
+		// Advisory hint so the job wizard can offer a logical dump only where
+		// one is plausible. Image-only: the container list carries no
+		// environment, and inspecting every container to get it would put N API
+		// calls behind this endpoint. The backup re-detects authoritatively.
+		if kind := DetectDatabaseByImage(c.Image); kind != DatabaseNone {
+			settings["database_kind"] = string(kind)
+		}
 		items = append(items, BackupItem{
-			Name: name,
-			Type: "container",
-			Settings: map[string]any{
-				"id":    c.ID,
-				"image": c.Image,
-				"state": string(c.State),
-			},
+			Name:     name,
+			Type:     "container",
+			Settings: settings,
 		})
 	}
 	return items, nil
@@ -439,17 +447,34 @@ type MountInfo struct {
 // verdict from shouldSkipVolume. Matches the engine's backup behaviour: tmpfs,
 // device nodes, and anonymous volumes (which can't be reattached on restore)
 // are excluded. Results are sorted by destination for stable UI ordering.
-func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]MountInfo, error) {
+// labelExclusions controls whether the container's own vault.exclude label is
+// evaluated. Passed in rather than read here because the engine holds no
+// database handle — and discovery must agree with what the backup will
+// actually do, or the wizard shows mounts as skipped that will in fact be
+// backed up.
+func (h *ContainerHandler) ListMounts(ctx context.Context, name string, labelExclusions bool) ([]MountInfo, error) {
 	inspectResult, err := h.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("inspecting container %q: %w", name, err)
 	}
+	// Surface label-declared exclusions the same way as automatic skips, so the
+	// wizard shows why a mount will not be backed up without the user having to
+	// go and read the container's labels.
+	var labelPatterns []string
+	if labelExclusions {
+		labelPatterns = parseLabelExclusions(containerLabels(inspectResult.Container))
+	}
+
 	mounts := make([]MountInfo, 0, len(inspectResult.Container.Mounts))
 	for _, m := range inspectResult.Container.Mounts {
 		if !backupableMount(string(m.Type)) || !restorableVolume(string(m.Type), m.Name) {
 			continue
 		}
 		skip, reason := shouldSkipVolume(m.Source)
+		if !skip && len(labelPatterns) > 0 && shouldExcludeMount(labelPatterns, filepath.Clean(m.Destination)) {
+			skip = true
+			reason = "excluded by the container's " + VaultExcludeLabel + " label"
+		}
 		mounts = append(mounts, MountInfo{
 			Source:      m.Source,
 			Destination: filepath.Clean(m.Destination),
@@ -485,6 +510,111 @@ func extractExcludedMounts(settings map[string]any) []string {
 		return out
 	}
 	return nil
+}
+
+// containerLabels returns a container's labels, tolerating a nil Config —
+// Docker omits it for some container states, and the rest of this file guards
+// it the same way.
+func containerLabels(inspect container.InspectResponse) map[string]string {
+	if inspect.Config == nil {
+		return nil
+	}
+	return inspect.Config.Labels
+}
+
+// VaultExcludeLabel is the Docker label a container uses to declare its own
+// backup exclusions, e.g.
+//
+//	vault.exclude=/config/cache,/tmp
+//
+// Comma-separated so it reads the same as the free-text field in the job
+// wizard, and the patterns are handed to the identical matcher — there is no
+// second matching implementation to keep in sync.
+//
+// Declaring exclusions on the container means they travel with it: a compose
+// file or template carries its own answer, and adding the container to a job
+// needs no further configuration.
+const VaultExcludeLabel = "vault.exclude"
+
+// countExcludedMounts reports how many backup-eligible mounts exist and how
+// many of them the exclusion list removes. Used to catch the case where a
+// backup would succeed while containing no volume data at all.
+func countExcludedMounts(mounts []container.MountPoint, exclusions []string) (eligible, excluded int) {
+	for _, m := range mounts {
+		if !backupableMount(string(m.Type)) || !restorableVolume(string(m.Type), m.Name) {
+			continue
+		}
+		eligible++
+		if shouldExcludeMount(exclusions, filepath.Clean(m.Destination)) {
+			excluded++
+		}
+	}
+	return eligible, excluded
+}
+
+// catchAllExclusions are patterns that would exclude every mount. Rejected
+// from labels — see parseLabelExclusions.
+var catchAllExclusions = map[string]struct{}{
+	"*": {}, "**": {}, "/": {}, "/*": {}, "/**": {}, ".": {},
+}
+
+// parseLabelExclusions extracts the exclusion patterns from a container's
+// labels. Entries are trimmed and blanks dropped, so a trailing comma or
+// padded list is tolerated rather than producing an empty pattern that would
+// match everything.
+//
+// Catch-all patterns are refused. Unlike the exclusions an operator types into
+// the job wizard, a label is authored by whoever wrote the image or template —
+// not by the person who owns the backup. A single `vault.exclude=*` would
+// otherwise exclude every mount (shouldExcludeMount globs against the mount's
+// base name), and the backup would still report success while containing
+// nothing. Narrow the blast radius: an image can opt paths out, it cannot opt
+// the whole container out.
+func parseLabelExclusions(labels map[string]string) []string {
+	raw, ok := labels[VaultExcludeLabel]
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		if _, catchAll := catchAllExclusions[p]; catchAll {
+			log.Printf("engine: ignoring catch-all %s pattern %q — a label may exclude paths, not the whole container",
+				VaultExcludeLabel, p)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// labelExclusionsEnabled reports whether the vault.exclude label should be
+// honoured. Absent means enabled, matching the catalog default, so a caller
+// that does not thread the setting still gets the documented behaviour.
+func labelExclusionsEnabled(settings map[string]any) bool {
+	v, ok := settings["label_exclusions_enabled"]
+	if !ok {
+		return true
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+// containerExclusionsWithLabels is containerExclusions plus any patterns the
+// container declares via its vault.exclude label.
+//
+// Merged into the same slice on purpose: everything downstream — whole-mount
+// skipping, volume-relative rewriting, the chunked walk — then treats a
+// label-declared path exactly like a typed one.
+func containerExclusionsWithLabels(settings map[string]any, labels map[string]string) []string {
+	exclusions := containerExclusions(settings)
+	if !labelExclusionsEnabled(settings) {
+		return exclusions
+	}
+	return append(exclusions, parseLabelExclusions(labels)...)
 }
 
 // containerExclusions merges free-text exclude_paths with the checkbox-driven
@@ -553,8 +683,38 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 
 	// Extract path exclusions from item settings: free-text exclude_paths plus
-	// the checkbox-driven excluded_mounts from the job wizard.
-	exclusions := containerExclusions(item.Settings)
+	// the checkbox-driven excluded_mounts from the job wizard, plus anything
+	// the container declares for itself via the vault.exclude label.
+	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
+
+	// Step 2a: logical database dump, BEFORE the container is stopped.
+	//
+	// A dump talks to the live server, so it has to happen while the container
+	// is still up. It is written in addition to the volume archives — a dump
+	// that turns out to be misconfigured must not cost the file-level backup
+	// that would otherwise have been taken, which is also why a running server
+	// is required rather than started for the purpose.
+	if databaseDumpEnabled(item.Settings) {
+		// State.Running is true for a container caught mid-restart, and exec
+		// against one fails with "is restarting, wait until the container is
+		// running" — seen on a live PostgreSQL container in a crash loop. Check
+		// the status string so a flapping container is skipped with a clear
+		// reason instead of failing the whole backup.
+		if !wasRunning || inspect.State.Restarting {
+			// The user explicitly asked for a dump, so omitting it silently
+			// would hand back a backup missing what they asked for. Note that
+			// the runner's stop_all mode stops every container before the
+			// handler runs, which lands here — hence naming it.
+			return nil, fmt.Errorf("database dump requested for %s but the container is %s; "+
+				"a dump needs the server running — use the one-by-one container mode, or start the container",
+				item.Name, containerStateDescription(string(inspect.State.Status), inspect.State.Restarting))
+		} else if dumpFile, err := h.dumpDatabase(ctx, containerID, item.Name,
+			inspect.Config.Image, inspect.Config.Env, destDir, item.Compression, progress); err != nil {
+			return nil, err
+		} else if dumpFile != nil {
+			result.Files = append(result.Files, *dumpFile)
+		}
+	}
 
 	// Differential runs: when no backupable volume changed since the parent
 	// restore point, skip the stop/restart cycle entirely. The in-loop
@@ -652,6 +812,17 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 
 		// Step 4: Tar bind mounts and named volumes, skipping large shared data paths.
 		progress(item.Name, 60, "backing up volumes")
+		// A container whose every eligible mount is excluded would otherwise
+		// produce a "successful" backup holding only config and image — the
+		// same silent data-loss trap the VM handler guards against when a
+		// domain has no file-backed disks. Reachable through a broad global
+		// rule or a container's own label, neither of which the person running
+		// the job necessarily wrote, so fail loudly instead.
+		if eligible, excluded := countExcludedMounts(inspect.Mounts, exclusions); eligible > 0 && excluded == eligible {
+			return fmt.Errorf("every backup-eligible mount of container %s is excluded (%d of %d); "+
+				"check the job's exclusions, the global exclusion list, and any %s label on the container",
+				item.Name, excluded, eligible, VaultExcludeLabel)
+		}
 		var manifest []volumeManifestEntry
 		for i, mount := range inspect.Mounts {
 			if !backupableMount(string(mount.Type)) {
@@ -1351,8 +1522,47 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		if _, err := h.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 			return fmt.Errorf("starting restored container: %w", err)
 		}
+
+		// Step 7: reload a logical database dump, if the backup carried one.
+		//
+		// A failure here is NOT swallowed. The reload replays into the server
+		// restored from its volume, and the dump's own DROP/replace statements
+		// mutate that state as soon as it starts — so once it has begun, the
+		// file-level result is no longer an intact fallback. Reporting success
+		// over a half-applied dump would hand back a database that looks
+		// restored and is not.
+		//
+		// Failing to become ready is different: nothing has been replayed, the
+		// volume restore stands on its own, so that is a warning.
+		if sourceDir != "" {
+			if dumpPath := findDatabaseDump(sourceDir); dumpPath != "" {
+				progress(item.Name, 95, "reloading database dump")
+				if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
+					log.Printf("engine: %s: WARNING database did not become ready, dump not reloaded (the file-level restore stands): %v", item.Name, err)
+				} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, dumpPath); err != nil {
+					// Warned, not fatal. The volume restore has already put the
+					// database files back and is the primary mechanism; the
+					// dump is a supplement. Failing the whole restore over it
+					// would discard a result that is usually complete, so the
+					// failure is surfaced loudly and the restore stands.
+					log.Printf("engine: %s: WARNING database dump not reloaded (the file-level restore stands): %v", item.Name, err)
+				}
+			}
+		}
 	}
 	return nil
+}
+
+// findDatabaseDump locates the dump file a backup may carry, whatever
+// compression it was written with.
+func findDatabaseDump(sourceDir string) string {
+	for _, ext := range []string{"", ".gz", ".zst"} {
+		candidate := filepath.Join(sourceDir, DatabaseDumpFile+ext)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // Special manifest-key prefixes used by the dedup-chunked container backup
@@ -1474,7 +1684,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// classic tar Backup path: whole excluded mounts are skipped
 	// (shouldExcludeMount) and surviving mounts get their patterns mapped to
 	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
-	exclusions := containerExclusions(item.Settings)
+	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	// Stop container for consistent backup (mirrors classic Backup path).
 	// Differential runs: when no backupable volume changed since the parent
@@ -1484,6 +1694,32 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// volume changes gate the stop.
 	wasRunning := inspect.State.Running
 	noStop, _ := item.Settings["no_stop"].(bool)
+
+	// Logical database dump BEFORE the stop, for the same reason as the classic
+	// path: the dump talks to the live server. Chunked into the repo rather
+	// than compressed to a file, so successive dumps deduplicate against each
+	// other instead of each one landing as an entirely new blob.
+	if databaseDumpEnabled(item.Settings) && inspect.Config != nil {
+		if !wasRunning || inspect.State.Restarting {
+			return dedup.ID{}, fmt.Errorf("database dump requested for %s but the container is %s; "+
+				"a dump needs the server running — use the one-by-one container mode, or start the container",
+				item.Name, containerStateDescription(string(inspect.State.Status), inspect.State.Restarting))
+		} else {
+			dumpPath, cleanupDump, dErr := h.dumpDatabaseToTemp(ctx, containerID, item.Name, inspect.Config.Image, inspect.Config.Env)
+			if dErr != nil {
+				return dedup.ID{}, dErr
+			}
+			if dumpPath != "" {
+				defer cleanupDump()
+				entry, cErr := chunkFileIntoRepo(repo, dumpPath)
+				if cErr != nil {
+					return dedup.ID{}, fmt.Errorf("chunking database dump for %s: %w", item.Name, cErr)
+				}
+				m.Files[ContainerDBDumpKey] = entry
+			}
+		}
+	}
+
 	needsStop := wasRunning && !noStop
 	var volChanges map[string]bool
 	if needsStop && hasChangedSince {
@@ -1734,13 +1970,68 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		}
 		restoreDest = normalized
 	}
-	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, "", progress); err != nil {
+	// Reassemble the logical dump, if this backup carried one, so the shared
+	// recreate path reloads it exactly as it does for a classic backup.
+	// Without this a dedup restore would silently ignore a dump the backup
+	// went to the trouble of taking.
+	dumpDir, cleanupDump, err := writeChunkedDatabaseDump(repo, m)
+	if err != nil {
+		return err
+	}
+	if cleanupDump != nil {
+		defer cleanupDump()
+	}
+
+	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, dumpDir, progress); err != nil {
 		return err
 	}
 	if progress != nil {
 		progress(item.Name, 100, "container restored")
 	}
 	return nil
+}
+
+// writeChunkedDatabaseDump materialises a manifest's database dump into a
+// temporary directory shaped like a classic backup's source directory, so the
+// shared restore path finds it with no special-casing. Returns an empty path
+// when the manifest carries no dump.
+func writeChunkedDatabaseDump(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
+	entry, ok := m.Files[ContainerDBDumpKey]
+	if !ok || len(entry.Chunks) == 0 {
+		return "", nil, nil
+	}
+	dir, err := os.MkdirTemp("", "vault-dbrestore-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("creating database dump directory: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+
+	// Stored uncompressed by the chunked backup, so it is written back under
+	// the bare name; findDatabaseDump accepts either form.
+	path := filepath.Join(dir, DatabaseDumpFile)
+	f, err := os.Create(path) // #nosec G304 — path is inside a vault-created temp directory
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("creating database dump file: %w", err)
+	}
+	for _, id := range entry.Chunks {
+		chunk, err := repo.Get(id)
+		if err != nil {
+			_ = f.Close()
+			cleanup()
+			return "", nil, fmt.Errorf("reading database dump chunk: %w", err)
+		}
+		if _, err := f.Write(chunk); err != nil {
+			_ = f.Close()
+			cleanup()
+			return "", nil, fmt.Errorf("writing database dump: %w", err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("closing database dump: %w", err)
+	}
+	return dir, cleanup, nil
 }
 
 // contextCopy copies from src to dst, checking for context cancellation

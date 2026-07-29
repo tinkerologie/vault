@@ -367,6 +367,10 @@ type DedupPack struct {
 	Path       string
 	SizeBytes  int64
 	ChunkCount int
+	// DeleteState tracks how far GC has got through retiring this pack:
+	// PackLive, PackMarked, or PackTombstoned. Anything other than PackLive
+	// excludes its chunks from HasDedupChunk.
+	DeleteState int
 }
 
 // DedupChunk is one row in the dedup_chunks table: a chunk's location within
@@ -390,9 +394,24 @@ func (d *DB) UpsertDedupPack(p DedupPack) error {
 
 // UpsertDedupChunk inserts a chunk-to-pack mapping; idempotent.
 func (d *DB) UpsertDedupChunk(c DedupChunk) error {
+	// Ignore-on-conflict for a live owner (crash-retry idempotency), but
+	// REPOINT when the existing row still names a pack GC has marked for
+	// deletion. HasDedupChunk hides such chunks, so the packer rewrites the
+	// content into a fresh pack — without this the mapping would stay on the
+	// doomed pack, and deleting it would cascade the row away and strand the
+	// backup that just wrote the replacement.
 	_, err := d.Exec(`
-        INSERT OR IGNORE INTO dedup_chunks (chunk_id, storage_id, pack_id, offset, length)
-        VALUES (?, ?, ?, ?, ?)`,
+        INSERT INTO dedup_chunks (chunk_id, storage_id, pack_id, offset, length)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(storage_id, chunk_id) DO UPDATE SET
+            pack_id = excluded.pack_id,
+            offset  = excluded.offset,
+            length  = excluded.length
+        WHERE EXISTS (
+            SELECT 1 FROM dedup_packs p
+             WHERE p.storage_id     = dedup_chunks.storage_id
+               AND p.id             = dedup_chunks.pack_id
+               AND p.pending_delete <> 0)`,
 		c.ChunkID, c.StorageID, c.PackID, c.Offset, c.Length)
 	return err
 }
@@ -431,7 +450,20 @@ func (d *DB) ReplaceDedupChunk(c DedupChunk) error {
 // HasDedupChunk returns true if the destination already stores this chunk.
 func (d *DB) HasDedupChunk(storageID int64, chunkID []byte) (bool, error) {
 	var one int
-	err := d.QueryRow(`SELECT 1 FROM dedup_chunks WHERE storage_id=? AND chunk_id=?`,
+	// Chunks belonging to a pack GC has tombstoned are NOT present, even while
+	// the row survives a failed delete. Advertising them would let a later
+	// backup reference a pack whose tombstone is already durable on storage,
+	// so a RebuildFromStorage would drop those chunks and leave that backup
+	// unrestorable. NOT EXISTS rather than a join so a chunk with no pack row
+	// still reports present, as before.
+	err := d.QueryRow(`
+		SELECT 1 FROM dedup_chunks c
+		 WHERE c.storage_id=? AND c.chunk_id=?
+		   AND NOT EXISTS (
+		         SELECT 1 FROM dedup_packs p
+		          WHERE p.storage_id = c.storage_id
+		            AND p.id = c.pack_id
+		            AND p.pending_delete <> 0)`,
 		storageID, chunkID).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
@@ -520,7 +552,7 @@ func (d *DB) DropDedupState(storageID int64) error {
 
 // ListDedupPacks returns every pack registered for a destination.
 func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
-	rows, err := d.Query(`SELECT id, storage_id, path, size_bytes, chunk_count FROM dedup_packs WHERE storage_id=?`, storageID)
+	rows, err := d.Query(`SELECT id, storage_id, path, size_bytes, chunk_count, COALESCE(pending_delete, 0) FROM dedup_packs WHERE storage_id=?`, storageID)
 	if err != nil {
 		return nil, err
 	}
@@ -528,7 +560,7 @@ func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
 	out := []DedupPack{}
 	for rows.Next() {
 		var p DedupPack
-		if err := rows.Scan(&p.ID, &p.StorageID, &p.Path, &p.SizeBytes, &p.ChunkCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.StorageID, &p.Path, &p.SizeBytes, &p.ChunkCount, &p.DeleteState); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -539,11 +571,46 @@ func (d *DB) ListDedupPacks(storageID int64) ([]DedupPack, error) {
 // DeleteDedupPack removes a pack row and (via FK ON DELETE CASCADE) all its
 // chunk rows. Live callers (GC, compaction) should append a tombstone via
 // Index.AppendTombstone and delete the on-storage blob BEFORE calling this,
-// so a crash mid-delete is recoverable via Index.RebuildFromStorage. The
-// rebuild path calls this directly to apply a tombstone — no blob delete
-// needed there because the blob is already gone by definition.
+// so a crash mid-delete is recoverable via Index.RebuildFromStorage.
+//
+// The rebuild path deliberately does NOT call this. Because chunk rows are
+// one-per-(storage_id, chunk_id), the cascade here would remove a chunk that a
+// surviving pack still holds if a dead pack's add line happened to be replayed
+// last. RebuildFromStorage collects tombstoned pack IDs up front and skips
+// their adds instead — see the comment there.
 func (d *DB) DeleteDedupPack(storageID int64, packID string) error {
 	_, err := d.Exec(`DELETE FROM dedup_packs WHERE storage_id=? AND id=?`, storageID, packID)
+	return err
+}
+
+// Pack retirement states, stored in dedup_packs.pending_delete. GC advances a
+// pack through them in order; anything past PackLive hides the pack's chunks
+// from HasDedupChunk so nothing new can dedupe against a pack on its way out.
+//
+// PackMarked is set BEFORE the tombstone is written, not after. The tombstone
+// is durable on storage the moment it lands, so if the process died between
+// writing it and marking the row, SQLite would still advertise the pack as
+// live and a backup could reuse chunks that a later RebuildFromStorage
+// suppresses. Marking first makes that window harmless.
+//
+// PackTombstoned records that the tombstone write succeeded, so a retry can
+// skip re-writing it — otherwise a pack whose delete keeps failing would
+// accumulate one index blob per GC run.
+const (
+	PackLive = iota
+	PackMarked
+	PackTombstoned
+)
+
+// SetDedupPackDeleteState advances a pack's retirement state. Monotonic: a
+// lower state is never written over a higher one, so GC re-applying PackMarked
+// on a retry cannot regress a row that already reached PackTombstoned and make
+// the next sweep write a second tombstone. Idempotent for the same state.
+func (d *DB) SetDedupPackDeleteState(storageID int64, packID string, state int) error {
+	_, err := d.Exec(
+		`UPDATE dedup_packs SET pending_delete=?
+		  WHERE storage_id=? AND id=? AND COALESCE(pending_delete, 0) < ?`,
+		state, storageID, packID, state)
 	return err
 }
 

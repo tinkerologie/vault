@@ -37,6 +37,9 @@ func (r *Runner) adaptiveBusyReason(ctx context.Context, items []db.JobItem) str
 		NetKbps:    float64(r.adaptiveSettingInt("adaptive_idle_net_kbps")),
 	}
 	folderWindow := time.Duration(r.adaptiveSettingInt("adaptive_folder_idle_minutes")) * time.Minute
+	// Read once, outside the loop: re-reading per item would let a concurrent
+	// settings change give different items different policies within one probe.
+	globalExcludes := r.globalExcludePaths()
 
 	for _, item := range items {
 		var sample engine.ActivitySample
@@ -63,7 +66,10 @@ func (r *Runner) adaptiveBusyReason(ctx context.Context, items []db.JobItem) str
 			if path == "" {
 				continue
 			}
-			sample = engine.ProbeFolderActivity(ctx, path, extractSettingsStrings(s, "exclude_paths"), folderWindow)
+			// Merged so a path excluded from the backup does not count as
+			// activity — a globally-ignored cache directory should not
+			// postpone the job that is not even backing it up.
+			sample = engine.ProbeFolderActivity(ctx, path, mergeExclusions(s["exclude_paths"], globalExcludes), folderWindow)
 		default:
 			continue
 		}
@@ -77,21 +83,6 @@ func (r *Runner) adaptiveBusyReason(ctx context.Context, items []db.JobItem) str
 		}
 	}
 	return ""
-}
-
-// extractSettingsStrings reads a []string-ish key from an item settings map.
-func extractSettingsStrings(s map[string]any, key string) []string {
-	raw, ok := s[key].([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, e := range raw {
-		if str, ok := e.(string); ok && str != "" {
-			out = append(out, str)
-		}
-	}
-	return out
 }
 
 // postponeState tracks one job's open adaptive postpone window.

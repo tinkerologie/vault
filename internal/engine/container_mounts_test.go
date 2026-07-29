@@ -33,7 +33,7 @@ func TestListMountsIncludesBackupableMountsAndFlagsAutoSkip(t *testing.T) {
 	}
 	h := &ContainerHandler{cli: mock}
 
-	got, err := h.ListMounts(context.Background(), "sonarr")
+	got, err := h.ListMounts(context.Background(), "sonarr", true)
 	if err != nil {
 		t.Fatalf("ListMounts() error = %v", err)
 	}
@@ -58,7 +58,7 @@ func TestListMountsInspectError(t *testing.T) {
 	mock := &mockDockerClient{inspectErr: errors.New("no such container")}
 	h := &ContainerHandler{cli: mock}
 
-	if _, err := h.ListMounts(context.Background(), "ghost"); err == nil {
+	if _, err := h.ListMounts(context.Background(), "ghost", true); err == nil {
 		t.Fatal("ListMounts() error = nil, want non-nil")
 	}
 }

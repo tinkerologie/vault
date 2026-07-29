@@ -44,7 +44,7 @@ SELECT
   CASE x % 3 WHEN 0 THEN 'zstd' WHEN 1 THEN 'gzip' ELSE 'none' END,
   CASE WHEN x % 3 = 2 THEN '' ELSE 'better' END,
   'none',
-  CASE WHEN x % 2 = 0 THEN 'one_by_one' ELSE 'all_at_once' END,
+  CASE WHEN x % 2 = 0 THEN 'one_by_one' ELSE 'stop_all' END,
   CASE WHEN x % 2 = 0 THEN 'snapshot' ELSE 'cold' END,
   CASE x % 3 WHEN 0 THEN 'always' WHEN 1 THEN 'failure' ELSE 'never' END,
   1, ((x - 1) % 11) + 1,

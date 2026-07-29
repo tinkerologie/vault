@@ -13,6 +13,34 @@ type Client struct {
 	hub  *Hub
 	conn *websocket.Conn
 	send chan []byte
+
+	// closeOnce ensures exactly one of the close paths wins: the hub evicting
+	// a slow client, or either pump unwinding. Without it the eviction's
+	// status-carrying Close would race the pumps' CloseNow.
+	closeOnce sync.Once
+}
+
+// closeSlow closes the connection with a policy-violation status so the client
+// can tell it was evicted for not keeping up, rather than seeing an abrupt
+// drop indistinguishable from a network fault. Mirrors the canonical
+// coder/websocket chat example. Call from its own goroutine — writing the
+// close frame must not block the hub loop.
+func (c *Client) closeSlow() {
+	c.closeOnce.Do(func() {
+		if c.conn != nil {
+			_ = c.conn.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
+		}
+	})
+}
+
+// closeNow tears the connection down without waiting for a close handshake.
+// Used by the pumps when they unwind for any other reason.
+func (c *Client) closeNow() {
+	c.closeOnce.Do(func() {
+		if c.conn != nil {
+			_ = c.conn.CloseNow()
+		}
+	})
 }
 
 type Hub struct {
@@ -58,6 +86,10 @@ func (h *Hub) Run() {
 				default:
 					close(client.send)
 					delete(h.clients, client)
+					// Tell the client why it was dropped. It reconnects and
+					// resyncs from /runner/status, so the message discarded
+					// here — possibly a terminal event — is recovered.
+					go client.closeSlow()
 				}
 			}
 			h.mu.Unlock()
@@ -73,8 +105,26 @@ func (h *Hub) Unregister(c *Client) {
 	h.unregister <- c
 }
 
+// Broadcast queues msg for fan-out to every connected client, waiting for
+// room if the buffer is full. Use this for events the UI cannot reconstruct
+// by waiting — run completion, item failures, queue changes — since dropping
+// one can leave the interface showing a job as running forever.
 func (h *Hub) Broadcast(msg []byte) {
 	h.broadcast <- msg
+}
+
+// BroadcastLossy queues msg only if there is room, discarding it otherwise.
+// Use this for high-frequency, self-superseding telemetry (backup/restore
+// progress): the next update carries the same information, so dropping one
+// costs nothing, while blocking would stall the caller — in practice the
+// single backup goroutine, which must never wait on WebSocket bookkeeping
+// (issue #256). This mirrors the per-client fan-out in Run, which already
+// drops clients that cannot keep up.
+func (h *Hub) BroadcastLossy(msg []byte) {
+	select {
+	case h.broadcast <- msg:
+	default:
+	}
 }
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
@@ -127,11 +177,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Client) writePump() {
-	defer func() {
-		if c.conn != nil {
-			_ = c.conn.CloseNow()
-		}
-	}()
+	defer c.closeNow()
 	for msg := range c.send {
 		if c.conn == nil {
 			return
@@ -145,9 +191,7 @@ func (c *Client) writePump() {
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.Unregister(c)
-		if c.conn != nil {
-			_ = c.conn.CloseNow()
-		}
+		c.closeNow()
 	}()
 	for {
 		if c.conn == nil {

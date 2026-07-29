@@ -10,7 +10,7 @@ import (
 // TestNewDiscoverHandler checks the constructor returns a non-nil handler.
 func TestNewDiscoverHandler(t *testing.T) {
 	t.Parallel()
-	h := NewDiscoverHandler()
+	h := NewDiscoverHandler(nil)
 	if h == nil {
 		t.Fatal("NewDiscoverHandler returned nil")
 	}
@@ -20,7 +20,7 @@ func TestNewDiscoverHandler(t *testing.T) {
 // 200 with an empty items list when Docker is not available (CI environment).
 func TestListContainers_GracefulWhenDockerAbsent(t *testing.T) {
 	t.Parallel()
-	h := NewDiscoverHandler()
+	h := NewDiscoverHandler(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/containers", nil)
 	w := httptest.NewRecorder()
@@ -48,7 +48,7 @@ func TestListContainers_GracefulWhenDockerAbsent(t *testing.T) {
 // 200 with an empty items list when libvirt is not available (CI / macOS).
 func TestListVMs_GracefulWhenLibvirtAbsent(t *testing.T) {
 	t.Parallel()
-	h := NewDiscoverHandler()
+	h := NewDiscoverHandler(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/vms", nil)
 	w := httptest.NewRecorder()
@@ -75,7 +75,7 @@ func TestListVMs_GracefulWhenLibvirtAbsent(t *testing.T) {
 // still yield a graceful 200 with an empty list.
 func TestListFolders_Returns200(t *testing.T) {
 	t.Parallel()
-	h := NewDiscoverHandler()
+	h := NewDiscoverHandler(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/folders", nil)
 	w := httptest.NewRecorder()
@@ -101,7 +101,7 @@ func TestListFolders_Returns200(t *testing.T) {
 // when running outside Unraid (no /boot/config/plugins).
 func TestListPlugins_GracefulWhenNotUnraid(t *testing.T) {
 	t.Parallel()
-	h := NewDiscoverHandler()
+	h := NewDiscoverHandler(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/plugins", nil)
 	w := httptest.NewRecorder()
@@ -127,7 +127,7 @@ func TestListPlugins_GracefulWhenNotUnraid(t *testing.T) {
 // 200 with an empty items list when ZFS is not available.
 func TestListZFSDatasets_GracefulWhenZFSAbsent(t *testing.T) {
 	t.Parallel()
-	h := NewDiscoverHandler()
+	h := NewDiscoverHandler(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/zfs", nil)
 	w := httptest.NewRecorder()
@@ -154,7 +154,7 @@ func TestListZFSDatasets_GracefulWhenZFSAbsent(t *testing.T) {
 // available (CI / macOS), mirroring the other discover handlers.
 func TestContainerMounts_GracefulWhenDockerAbsent(t *testing.T) {
 	t.Parallel()
-	h := NewDiscoverHandler()
+	h := NewDiscoverHandler(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/containers/sonarr/mounts", nil)
 	req = withURLParam(req, "name", "sonarr")
@@ -181,7 +181,7 @@ func TestContainerMounts_GracefulWhenDockerAbsent(t *testing.T) {
 // across all five discover endpoints.
 func TestDiscoverHandlers_ResponseShape(t *testing.T) {
 	t.Parallel()
-	h := NewDiscoverHandler()
+	h := NewDiscoverHandler(nil)
 
 	endpoints := []struct {
 		name    string

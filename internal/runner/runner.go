@@ -405,6 +405,29 @@ func (r *Runner) updateCurrentItemProgress(itemType string, percent int, message
 	r.statusMu.Unlock()
 }
 
+// newBroadcastThrottle returns a predicate that admits at most one outbound
+// progress broadcast per second. Terminal updates (percent >= 100) always
+// pass so a completion event is never swallowed.
+//
+// The chunked backup and restore walks invoke their progress callback once
+// per file — 46,000 times for the folder in issue #256 — and each admitted
+// call costs a JSON marshal plus a hub fan-out. Callers still run their
+// in-memory status update on every invocation, so the UI's polled state and
+// the stall watchdog stay fully informed; only the WebSocket chatter is cut.
+//
+// Not safe for concurrent use — matching the existing per-upload throttles
+// in this file, every call site drives it from a single walk goroutine.
+func newBroadcastThrottle() func(percent int) bool {
+	var last time.Time
+	return func(percent int) bool {
+		if percent >= 100 || time.Since(last) >= time.Second {
+			last = time.Now()
+			return true
+		}
+		return false
+	}
+}
+
 func (r *Runner) reportRestoreProgress(reporter restoreProgressReporter, percent int, message string) {
 	if reporter.JobID == 0 && reporter.RunID == 0 && reporter.ItemName == "" {
 		return
@@ -418,7 +441,7 @@ func (r *Runner) reportRestoreProgress(reporter restoreProgressReporter, percent
 	}
 
 	r.updateCurrentItemProgress(reporter.ItemType, percent, message)
-	r.broadcast(map[string]any{
+	r.broadcastProgress(map[string]any{
 		"type":         "restore_progress",
 		"job_id":       reporter.JobID,
 		"run_id":       reporter.RunID,
@@ -738,8 +761,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		var staleInfo []map[string]any
 		kept := items[:0]
 		for _, item := range items {
-			var settings map[string]any
-			if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
+			settings, err := item.ParsedSettings()
+			if err != nil {
 				log.Printf("runner: job %d: item %d malformed settings JSON: %v", jobID, item.ID, err)
 			}
 			status := inv.Status(item.ItemType, item.ItemName, settings)
@@ -932,8 +955,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	r.lastProgressMu.Unlock()
 
 	// Start a stall detector goroutine. It warns when no progress is received
-	// for stallWarnInterval, and cancels the job after stallCancelTimeout.
-	r.startStallWatchdog(ctx, cancel, jobID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
+	// for stallWarnInterval, and cancels the job after stallCancelTimeout. It
+	// lives until this run returns, not until ctx is cancelled, so a run that
+	// refuses to unwind keeps reporting instead of going silent (issue #265).
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	r.startStallWatchdog(ctx, watchdogDone, cancel, jobID, runID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	startedDetails := map[string]any{
 		"job_id": jobID, "run_id": runID, "items": len(items),
@@ -1086,6 +1113,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}
 	}()
 
+	// Read once per run rather than per item: both are global settings, and a
+	// mid-run change should not apply to only some of a job's items.
+	globalExcludes := r.globalExcludePaths()
+	labelExclusions, lblErr := r.db.GetSettingBool("label_exclusions_enabled", docsmeta.DefaultBool("label_exclusions_enabled"))
+	if lblErr != nil {
+		log.Printf("runner: reading label_exclusions_enabled: %v", lblErr)
+	}
+
 	for _, item := range items {
 		// Check for cancellation between items.
 		if ctx.Err() != nil {
@@ -1119,11 +1154,21 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			if job.ContainerMode == "stop_all" {
 				backupItem.Settings["no_stop"] = true
 			}
-			if ep, ok := settings["exclude_paths"]; ok {
-				backupItem.Settings["exclude_paths"] = ep
+			// Merge here rather than in the engine: this is the only layer with
+			// both the settings table and the per-item blob, and every engine
+			// consumer already reads exclude_paths, so they all pick the global
+			// list up without change.
+			if merged := mergeExclusions(settings["exclude_paths"], globalExcludes); len(merged) > 0 {
+				backupItem.Settings["exclude_paths"] = merged
 			}
 			if em, ok := settings["excluded_mounts"]; ok {
 				backupItem.Settings["excluded_mounts"] = em
+			}
+			backupItem.Settings["label_exclusions_enabled"] = labelExclusions
+			// Opt-in per item: a dump runs commands inside a live container and
+			// costs extra space, so it is never assumed.
+			if dd, ok := settings["database_dump"]; ok {
+				backupItem.Settings["database_dump"] = dd
 			}
 		}
 
@@ -1154,8 +1199,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		if item.ItemType == "folder" {
 			backupItem.Settings["path"] = settings["path"]
 			backupItem.Settings["preset"] = settings["preset"]
-			if ep, ok := settings["exclude_paths"]; ok {
-				backupItem.Settings["exclude_paths"] = ep
+			if merged := mergeExclusions(settings["exclude_paths"], globalExcludes); len(merged) > 0 {
+				backupItem.Settings["exclude_paths"] = merged
 			}
 		}
 
@@ -2214,13 +2259,17 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
 	}
 
+	admit := newBroadcastThrottle()
 	progress := func(name string, pct int, msg string) {
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
 		r.lastProgressMu.Unlock()
 
 		r.updateCurrentItemProgress(item.Type, pct, msg)
-		r.broadcast(map[string]any{
+		if !admit(pct) {
+			return
+		}
+		r.broadcastProgress(map[string]any{
 			"type":      "backup_progress",
 			"item":      name,
 			"item_type": item.Type,
@@ -2302,13 +2351,17 @@ func (r *Runner) stageItemLocally(ctx context.Context, item engine.BackupItem, d
 		return "", nil, func() {}, fmt.Errorf("creating %s handler: %w", item.Type, err)
 	}
 
+	admit := newBroadcastThrottle()
 	progress := func(name string, pct int, msg string) {
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
 		r.lastProgressMu.Unlock()
 
 		r.updateCurrentItemProgress(item.Type, pct, msg)
-		r.broadcast(map[string]any{
+		if !admit(pct) {
+			return
+		}
+		r.broadcastProgress(map[string]any{
 			"type":      "backup_progress",
 			"item":      name,
 			"item_type": item.Type,
@@ -2359,7 +2412,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, tmpDir string, dest db.
 		r.lastProgressMu.Unlock()
 
 		r.updateCurrentItemProgress(itemType, pct, msg)
-		r.broadcast(map[string]any{
+		r.broadcastProgress(map[string]any{
 			"type":      "backup_progress",
 			"item":      itemName,
 			"item_type": itemType,
@@ -2637,31 +2690,92 @@ type RestoreTarget struct {
 }
 
 // startStallWatchdog launches a goroutine that cancels ctx when no progress
-// (r.lastProgress) has advanced for cancelAfter, warning at warn. It returns
-// when ctx is done. Shared by backup and restore runs.
-func (r *Runner) startStallWatchdog(ctx context.Context, cancel context.CancelFunc, jobID int64, tick, warn, cancelAfter time.Duration) {
+// (r.lastProgress) has advanced for cancelAfter, warning at warn. Shared by
+// backup and restore runs.
+//
+// It runs until done is closed — the caller closes it when the run actually
+// finishes — rather than until ctx is done. Watching ctx meant the goroutine
+// returned the instant it called cancel(), so a run wedged in a handler that
+// cannot observe cancellation went completely silent at exactly the moment
+// the operator most needed to hear about it: no further log lines at all,
+// while the job row sat at "running" for hours (issue #265). Staying alive
+// costs one goroutine and keeps the stall visible in the log.
+func (r *Runner) startStallWatchdog(ctx context.Context, done <-chan struct{}, cancel context.CancelFunc, jobID, runID int64, tick, warn, cancelAfter time.Duration) {
 	go func() {
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
+		var cancelledAt time.Time
+		// nextStuckWarn backs off so a run wedged overnight leaves a handful
+		// of escalating lines rather than one every tick forever.
+		nextStuckWarn := tick
 		for {
 			select {
-			case <-ctx.Done():
+			case <-done:
 				return
 			case <-ticker.C:
-				r.lastProgressMu.Lock()
-				idle := time.Since(r.lastProgress)
-				r.lastProgressMu.Unlock()
-				if idle >= cancelAfter {
+				// An operator cancel (or any external one) counts as the
+				// moment the run was told to stop, so a run that then fails
+				// to unwind is reported against that, not against a stall
+				// threshold it may never reach.
+				if cancelledAt.IsZero() && ctx.Err() != nil {
+					cancelledAt = time.Now()
+					continue
+				}
+
+				if cancelledAt.IsZero() {
+					r.lastProgressMu.Lock()
+					idle := time.Since(r.lastProgress)
+					r.lastProgressMu.Unlock()
+
+					if idle < cancelAfter {
+						if idle >= warn {
+							log.Printf("runner: WARNING job %d no progress for %v", jobID, idle.Truncate(time.Minute))
+						}
+						continue
+					}
 					log.Printf("runner: job %d stalled for %v — cancelling", jobID, idle.Truncate(time.Minute))
+					r.markRunStalled(runID, jobID, fmt.Sprintf("no progress for %v; run cancelled by the stall watchdog", idle.Truncate(time.Minute)))
 					cancel()
-					return
+					cancelledAt = time.Now()
+					continue
 				}
-				if idle >= warn {
-					log.Printf("runner: WARNING job %d no progress for %v", jobID, idle.Truncate(time.Minute))
+
+				// Cancelled, and the run still has not unwound. Whatever it
+				// is blocked in is not observing ctx, so say so plainly
+				// instead of leaving the log dead.
+				stuck := time.Since(cancelledAt)
+				if stuck < nextStuckWarn {
+					continue
 				}
+				nextStuckWarn *= 2
+				log.Printf("runner: WARNING job %d has not unwound %v after being cancelled — the run is blocked in a handler that is not observing cancellation; restart the daemon if this persists",
+					jobID, stuck.Truncate(time.Second))
+				r.markRunStalled(runID, jobID, fmt.Sprintf(
+					"cancelled %v ago but still running: the run is blocked in a handler that is not observing cancellation",
+					stuck.Truncate(time.Second)))
 			}
 		}
 	}()
+}
+
+// markRunStalled records the stall on the run row and tells connected clients,
+// so a wedged run is distinguishable from a healthy one through the API rather
+// than only in the daemon log. Best-effort: a failure here must never take
+// down the watchdog, which is the only thing still reporting on a stuck run.
+func (r *Runner) markRunStalled(runID, jobID int64, reason string) {
+	if runID == 0 || r.db == nil {
+		return
+	}
+	if err := r.db.MarkJobRunStalled(runID, reason); err != nil {
+		log.Printf("runner: recording stall for run %d: %v", runID, err)
+		return
+	}
+	r.broadcast(map[string]any{
+		"type":   "job_stalled",
+		"job_id": jobID,
+		"run_id": runID,
+		"reason": reason,
+	})
 }
 
 // RunRestore executes a tracked restore operation. It creates a job_run
@@ -2722,7 +2836,9 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	r.lastProgressMu.Lock()
 	r.lastProgress = time.Now()
 	r.lastProgressMu.Unlock()
-	r.startStallWatchdog(ctx, cancel, restorePoint.JobID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	r.startStallWatchdog(ctx, watchdogDone, cancel, restorePoint.JobID, runID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	targetNames := make([]string, 0, len(targets))
 	for _, t := range targets {
@@ -3341,11 +3457,18 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 		item.Settings["restore_file_paths"] = filePaths
 	}
 
+	admit := newBroadcastThrottle()
 	progress := func(name string, pct int, msg string) {
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
 		r.lastProgressMu.Unlock()
 		reporter.ItemName = name
+		// RestoreChunked reports once per restored file. The stall watchdog is
+		// fed above on every call; the status update and broadcast (which
+		// reportRestoreProgress does together, clamping percent) run at ~1 Hz.
+		if !admit(pct) {
+			return
+		}
 		r.reportRestoreProgress(reporter, pct, msg)
 	}
 
@@ -3407,7 +3530,8 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 
 	var (
 		dlMu     sync.Mutex
-		dl       int64 // bytes downloaded across all files (for progress)
+		dl       int64     // bytes downloaded across all files (for progress)
+		dlLast   time.Time // last broadcast, guarded by dlMu (rate limit, issue #256)
 		sem      = make(chan struct{}, concurrency)
 		wg       sync.WaitGroup
 		firstErr error
@@ -3417,11 +3541,18 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		r.lastProgressMu.Lock()
 		r.lastProgress = time.Now()
 		r.lastProgressMu.Unlock()
+		// This fires per read across every concurrent download worker. Admit
+		// at most one broadcast per second — the watchdog above still sees
+		// every byte, so a slow remote cannot be mistaken for a stall.
 		dlMu.Lock()
 		dl += n
 		cur := dl
+		emit := time.Since(dlLast) >= time.Second
+		if emit {
+			dlLast = time.Now()
+		}
 		dlMu.Unlock()
-		if totalBytes > 0 {
+		if totalBytes > 0 && emit {
 			r.reportRestoreProgress(reporter, scaleRestorePhaseProgress(phaseStart, phaseEnd, cur, totalBytes), "Downloading")
 		}
 	}
@@ -3633,8 +3764,11 @@ func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, i
 		if itemsErr == nil {
 			for _, ji := range jobItems {
 				if ji.ItemName == itemName && ji.ItemType == "folder" {
-					var s map[string]any
-					if json.Unmarshal([]byte(ji.Settings), &s) == nil {
+					// ParsedSettings, not a raw unmarshal: a settings blob of
+					// literal "null" decodes successfully into a NIL map, and
+					// the destination/file-path overrides below write into it.
+					// Assigning to a nil map panics.
+					if s, err := ji.ParsedSettings(); err == nil {
 						backupItem.Settings = s
 					}
 					break
@@ -3669,6 +3803,23 @@ func (r *Runner) broadcast(data map[string]any) {
 		return
 	}
 	r.hub.Broadcast(msg)
+}
+
+// broadcastProgress sends a self-superseding progress event. Unlike
+// broadcast it is dropped rather than queued when the hub is saturated, so a
+// browser that has stopped reading can never hold up the backup goroutine.
+// Terminal and control events must keep using broadcast — losing one of
+// those would leave the UI showing a finished job as still running.
+func (r *Runner) broadcastProgress(data map[string]any) {
+	if r.hub == nil {
+		return
+	}
+	msg, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("runner: failed to marshal progress broadcast: %v", err)
+		return
+	}
+	r.hub.BroadcastLossy(msg)
 }
 
 // Broadcast sends a JSON event to every connected WebSocket client. It is

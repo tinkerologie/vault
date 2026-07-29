@@ -116,6 +116,13 @@ linters:
       - linters:
           - unused
         text: "(copyFile|copyFileWithProgress)"
+      # escalateToForceStop / errShutdownTimeout are deliberately untagged so
+      # they can be unit-tested on a non-linux dev host, but their only
+      # production caller is vm.go, which is //go:build linux. `run.tests` is
+      # false, so the linter sees no user at all when analysing on darwin.
+      - linters:
+          - unused
+        text: "(escalateToForceStop|errShutdownTimeout)"
 
 formatters:
   enable:

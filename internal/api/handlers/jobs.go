@@ -221,10 +221,14 @@ var jobEnums = map[string][]string{
 	"backup_type_chain": {"full", "incremental", "differential"},
 	"compression":       {"none", "gzip", "zstd"},
 	"encryption":        {"none", "age"},
-	"container_mode":    {"one_by_one", "all_at_once"},
-	"vm_mode":           {"snapshot", "cold"},
-	"verify_mode":       {"quick", "deep"},
-	"notify_on":         {"always", "failure", "never"},
+	// "stop_all" is the canonical value everywhere else — config.ContainerStopAll,
+	// the runner's batch path, and the value BackupModeSelector.svelte submits.
+	// This list said "all_at_once", so saving a job in Batch mode was rejected
+	// (issue #261).
+	"container_mode": {"one_by_one", "stop_all"},
+	"vm_mode":        {"snapshot", "cold"},
+	"verify_mode":    {"quick", "deep"},
+	"notify_on":      {"always", "failure", "never"},
 }
 
 // validateJobEnum reports whether value is allowed for field. An empty value is
@@ -1615,8 +1619,8 @@ func (h *JobHandler) scanStale(jobID int64) ([]db.JobItem, error) {
 	var stale []db.JobItem
 	var markIDs, clearIDs []int64
 	for _, item := range items {
-		var settings map[string]any
-		if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
+		settings, err := item.ParsedSettings()
+		if err != nil {
 			log.Printf("Warning: job item %d has malformed settings JSON: %v", item.ID, err)
 		}
 		status := inv.Status(item.ItemType, item.ItemName, settings)
