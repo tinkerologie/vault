@@ -135,6 +135,15 @@ type JobRun struct {
 	RetryOfRunID *int64     `json:"retry_of_run_id"`
 	RetryAttempt int        `json:"retry_attempt"`
 	RetryNextAt  *time.Time `json:"retry_next_at"`
+	// Stall visibility (#265). StalledAt is set once the runner's watchdog
+	// judges a run to have stopped making progress, with StallReason carrying
+	// the operator-facing explanation. Status deliberately stays "running":
+	// the run genuinely has not finished, and a handler wedged in an
+	// uncancellable call may never let it finish. These fields are what let
+	// the API and UI tell a working backup apart from a stuck one, which
+	// previously read identically.
+	StalledAt   *time.Time `json:"stalled_at"`
+	StallReason string     `json:"stall_reason"`
 }
 
 type RestorePoint struct {

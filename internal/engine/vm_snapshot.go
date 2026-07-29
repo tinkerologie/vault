@@ -371,8 +371,23 @@ func backupDriverType(path string) string {
 	}
 }
 
+// libvirtDomainIsShutOff reports whether a domain has actually stopped.
+//
+// DomainShutdown is deliberately NOT treated as stopped: in libvirt it means
+// "the domain is being shut down", a transient state on the way to
+// DomainShutoff, and the guest is still running. Counting it as stopped made
+// waitForLibvirtDomainShutOff return the instant the guest began shutting
+// down, so a cold backup would immediately try to start its paused session on
+// a domain that was still up and fail with "domain is already running" —
+// leaving the backup failed and the guest powered off moments later. That is
+// a race, so it struck only when the poll happened to land in the window
+// (issue #265).
+func libvirtDomainIsShutOff(state libvirt.DomainState) bool {
+	return state == libvirt.DomainShutoff
+}
+
 func selectBackupDiskXML(state libvirt.DomainState, liveXML, inactiveXML string) string {
-	if state == libvirt.DomainShutoff || state == libvirt.DomainShutdown {
+	if libvirtDomainIsShutOff(state) {
 		return inactiveXML
 	}
 

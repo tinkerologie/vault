@@ -455,7 +455,7 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
-		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, '')
 		FROM job_runs ORDER BY started_at DESC LIMIT ?`, limit,
 	)
 	if err != nil {
@@ -468,7 +468,8 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
-			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt); err != nil {
+			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
+			&run.StalledAt, &run.StallReason); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
@@ -486,12 +487,13 @@ func (d *DB) ListJobRuns(ctx context.Context, limitPerJob int) ([]JobRun, error)
 				started_at, completed_at, log, items_total, items_done, items_failed, size_bytes,
 				CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END AS duration_seconds,
 				retry_of_run_id, COALESCE(retry_attempt, 0) AS retry_attempt, retry_next_at,
+				stalled_at, COALESCE(stall_reason, '') AS stall_reason,
 				ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY started_at DESC, id DESC) AS row_num
 			FROM job_runs
 		)
 		SELECT id, job_id, status, backup_type, run_type, started_at, completed_at, log,
 			items_total, items_done, items_failed, size_bytes, duration_seconds,
-			retry_of_run_id, retry_attempt, retry_next_at
+			retry_of_run_id, retry_attempt, retry_next_at, stalled_at, stall_reason
 		FROM ranked WHERE row_num <= ? ORDER BY started_at DESC, id DESC`, limitPerJob,
 	)
 	if err != nil {
@@ -504,7 +506,8 @@ func (d *DB) ListJobRuns(ctx context.Context, limitPerJob int) ([]JobRun, error)
 		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
-			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt); err != nil {
+			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
+			&run.StalledAt, &run.StallReason); err != nil {
 			return nil, fmt.Errorf("scan job run: %w", err)
 		}
 		runs = append(runs, run)
@@ -523,12 +526,13 @@ func (d *DB) GetJobRun(id int64) (JobRun, error) {
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
-		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, '')
 		FROM job_runs WHERE id = ?`, id,
 	).Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 		&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 		&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
-		&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt)
+		&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
+		&run.StalledAt, &run.StallReason)
 	if err == sql.ErrNoRows {
 		return run, ErrNotFound
 	}
@@ -549,7 +553,7 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
-		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, '')
 		FROM job_runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?`, jobID, limit,
 	)
 	if err != nil {
@@ -562,7 +566,8 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
-			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt); err != nil {
+			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
+			&run.StalledAt, &run.StallReason); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
@@ -832,4 +837,24 @@ func (d *DB) ClaimDueRetries() ([]DueRetry, error) {
 		}
 	}
 	return claimed, nil
+}
+
+// MarkJobRunStalled records that a run has stopped making progress. It
+// deliberately does NOT change status: the run has not finished, and when the
+// handler is wedged in a call that ignores cancellation it may never finish.
+// Status alone therefore cannot distinguish a healthy long backup from a stuck
+// one — that is exactly the ambiguity reported in #265 — so the stall is
+// recorded alongside it instead. Only the first stall on a run is recorded, so
+// the timestamp marks when progress actually stopped rather than the latest
+// time anyone noticed.
+func (d *DB) MarkJobRunStalled(runID int64, reason string) error {
+	_, err := d.Exec(
+		`UPDATE job_runs SET stalled_at = ?, stall_reason = ?
+		  WHERE id = ? AND stalled_at IS NULL`,
+		time.Now().UTC(), reason, runID,
+	)
+	if err != nil {
+		return fmt.Errorf("marking run %d stalled: %w", runID, err)
+	}
+	return nil
 }

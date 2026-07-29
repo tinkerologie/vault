@@ -955,8 +955,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	r.lastProgressMu.Unlock()
 
 	// Start a stall detector goroutine. It warns when no progress is received
-	// for stallWarnInterval, and cancels the job after stallCancelTimeout.
-	r.startStallWatchdog(ctx, cancel, jobID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
+	// for stallWarnInterval, and cancels the job after stallCancelTimeout. It
+	// lives until this run returns, not until ctx is cancelled, so a run that
+	// refuses to unwind keeps reporting instead of going silent (issue #265).
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	r.startStallWatchdog(ctx, watchdogDone, cancel, jobID, runID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	startedDetails := map[string]any{
 		"job_id": jobID, "run_id": runID, "items": len(items),
@@ -2686,31 +2690,92 @@ type RestoreTarget struct {
 }
 
 // startStallWatchdog launches a goroutine that cancels ctx when no progress
-// (r.lastProgress) has advanced for cancelAfter, warning at warn. It returns
-// when ctx is done. Shared by backup and restore runs.
-func (r *Runner) startStallWatchdog(ctx context.Context, cancel context.CancelFunc, jobID int64, tick, warn, cancelAfter time.Duration) {
+// (r.lastProgress) has advanced for cancelAfter, warning at warn. Shared by
+// backup and restore runs.
+//
+// It runs until done is closed — the caller closes it when the run actually
+// finishes — rather than until ctx is done. Watching ctx meant the goroutine
+// returned the instant it called cancel(), so a run wedged in a handler that
+// cannot observe cancellation went completely silent at exactly the moment
+// the operator most needed to hear about it: no further log lines at all,
+// while the job row sat at "running" for hours (issue #265). Staying alive
+// costs one goroutine and keeps the stall visible in the log.
+func (r *Runner) startStallWatchdog(ctx context.Context, done <-chan struct{}, cancel context.CancelFunc, jobID, runID int64, tick, warn, cancelAfter time.Duration) {
 	go func() {
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
+		var cancelledAt time.Time
+		// nextStuckWarn backs off so a run wedged overnight leaves a handful
+		// of escalating lines rather than one every tick forever.
+		nextStuckWarn := tick
 		for {
 			select {
-			case <-ctx.Done():
+			case <-done:
 				return
 			case <-ticker.C:
-				r.lastProgressMu.Lock()
-				idle := time.Since(r.lastProgress)
-				r.lastProgressMu.Unlock()
-				if idle >= cancelAfter {
+				// An operator cancel (or any external one) counts as the
+				// moment the run was told to stop, so a run that then fails
+				// to unwind is reported against that, not against a stall
+				// threshold it may never reach.
+				if cancelledAt.IsZero() && ctx.Err() != nil {
+					cancelledAt = time.Now()
+					continue
+				}
+
+				if cancelledAt.IsZero() {
+					r.lastProgressMu.Lock()
+					idle := time.Since(r.lastProgress)
+					r.lastProgressMu.Unlock()
+
+					if idle < cancelAfter {
+						if idle >= warn {
+							log.Printf("runner: WARNING job %d no progress for %v", jobID, idle.Truncate(time.Minute))
+						}
+						continue
+					}
 					log.Printf("runner: job %d stalled for %v — cancelling", jobID, idle.Truncate(time.Minute))
+					r.markRunStalled(runID, jobID, fmt.Sprintf("no progress for %v; run cancelled by the stall watchdog", idle.Truncate(time.Minute)))
 					cancel()
-					return
+					cancelledAt = time.Now()
+					continue
 				}
-				if idle >= warn {
-					log.Printf("runner: WARNING job %d no progress for %v", jobID, idle.Truncate(time.Minute))
+
+				// Cancelled, and the run still has not unwound. Whatever it
+				// is blocked in is not observing ctx, so say so plainly
+				// instead of leaving the log dead.
+				stuck := time.Since(cancelledAt)
+				if stuck < nextStuckWarn {
+					continue
 				}
+				nextStuckWarn *= 2
+				log.Printf("runner: WARNING job %d has not unwound %v after being cancelled — the run is blocked in a handler that is not observing cancellation; restart the daemon if this persists",
+					jobID, stuck.Truncate(time.Second))
+				r.markRunStalled(runID, jobID, fmt.Sprintf(
+					"cancelled %v ago but still running: the run is blocked in a handler that is not observing cancellation",
+					stuck.Truncate(time.Second)))
 			}
 		}
 	}()
+}
+
+// markRunStalled records the stall on the run row and tells connected clients,
+// so a wedged run is distinguishable from a healthy one through the API rather
+// than only in the daemon log. Best-effort: a failure here must never take
+// down the watchdog, which is the only thing still reporting on a stuck run.
+func (r *Runner) markRunStalled(runID, jobID int64, reason string) {
+	if runID == 0 || r.db == nil {
+		return
+	}
+	if err := r.db.MarkJobRunStalled(runID, reason); err != nil {
+		log.Printf("runner: recording stall for run %d: %v", runID, err)
+		return
+	}
+	r.broadcast(map[string]any{
+		"type":   "job_stalled",
+		"job_id": jobID,
+		"run_id": runID,
+		"reason": reason,
+	})
 }
 
 // RunRestore executes a tracked restore operation. It creates a job_run
@@ -2771,7 +2836,9 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	r.lastProgressMu.Lock()
 	r.lastProgress = time.Now()
 	r.lastProgressMu.Unlock()
-	r.startStallWatchdog(ctx, cancel, restorePoint.JobID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	r.startStallWatchdog(ctx, watchdogDone, cancel, restorePoint.JobID, runID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	targetNames := make([]string, 0, len(targets))
 	for _, t := range targets {

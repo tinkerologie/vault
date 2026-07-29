@@ -221,10 +221,14 @@ var jobEnums = map[string][]string{
 	"backup_type_chain": {"full", "incremental", "differential"},
 	"compression":       {"none", "gzip", "zstd"},
 	"encryption":        {"none", "age"},
-	"container_mode":    {"one_by_one", "all_at_once"},
-	"vm_mode":           {"snapshot", "cold"},
-	"verify_mode":       {"quick", "deep"},
-	"notify_on":         {"always", "failure", "never"},
+	// "stop_all" is the canonical value everywhere else — config.ContainerStopAll,
+	// the runner's batch path, and the value BackupModeSelector.svelte submits.
+	// This list said "all_at_once", so saving a job in Batch mode was rejected
+	// (issue #261).
+	"container_mode": {"one_by_one", "stop_all"},
+	"vm_mode":        {"snapshot", "cold"},
+	"verify_mode":    {"quick", "deep"},
+	"notify_on":      {"always", "failure", "never"},
 }
 
 // validateJobEnum reports whether value is allowed for field. An empty value is

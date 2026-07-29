@@ -294,4 +294,27 @@ var alterMigrations = []string{
 	// present/healthy. Never auto-removed — the user clears it by removing
 	// the item via the remediation endpoint.
 	"ALTER TABLE job_items ADD COLUMN missing_since TEXT",
+	// Stall visibility (#265). stalled_at is set when the runner's watchdog
+	// decides a run has stopped making progress, and stall_reason carries the
+	// operator-facing explanation. Both stay NULL/'' for healthy runs. They
+	// are advisory: the row's status remains 'running' because the run has not
+	// actually finished, but the API can now tell a working backup apart from
+	// a wedged one instead of both reading as "running". TIMESTAMP, matching
+	// retry_next_at, so the driver hands back a time.Time.
+	"ALTER TABLE job_runs ADD COLUMN stalled_at TIMESTAMP DEFAULT NULL",
+	"ALTER TABLE job_runs ADD COLUMN stall_reason TEXT DEFAULT ''",
+}
+
+// dataMigrations are idempotent row rewrites, applied after alterMigrations.
+// Unlike the ALTER statements these are not expected to fail, so errors are
+// logged rather than swallowed.
+var dataMigrations = []string{
+	// container_mode canonicalisation (#261). The API's allow-list once named
+	// this mode "all_at_once", a value nothing else in the codebase used — the
+	// runner has only ever compared against "stop_all", so such a job silently
+	// ran sequentially. Converting every row here, once, at upgrade keeps the
+	// behaviour change visible and uniform; repairing rows lazily on save
+	// would instead make identical data behave differently depending on which
+	// jobs an operator happened to edit.
+	"UPDATE jobs SET container_mode = 'stop_all' WHERE container_mode = 'all_at_once'",
 }
