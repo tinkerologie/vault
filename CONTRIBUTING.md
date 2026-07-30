@@ -2,7 +2,10 @@
 
 Vault is a Go backup daemon for Unraid with a Svelte 5 web UI, shipped as an Unraid `.plg` plugin.
 
-> **[`AGENTS.md`](AGENTS.md) is the single source of truth** for architecture, conventions, and the layered design. Read it first. Role-specific guidance lives in [`.github/agents/`](.github/agents/) (API, DevOps, security review, QA, planning, etc.) — read the file matching your task.
+> **[`AGENTS.md`](AGENTS.md) is the single source of truth** for architecture,
+> conventions, safety boundaries, and validation. Path-specific rules live in
+> [`.github/instructions/`](.github/instructions/). Files in
+> [`.github/agents/`](.github/agents/) are optional GitHub Copilot profiles.
 
 ## Prerequisites
 
@@ -28,34 +31,34 @@ Run a single test:
 go test ./internal/db/... -run TestJobCreate -v
 ```
 
-Run the daemon locally:
-
-```bash
-./build/vault daemon --db=vault.db --addr=:24085
-```
-
 Web UI:
 
 ```bash
 cd web && npm run build    # Build the UI
 cd web && npm run lint     # Lint the UI (also: make lint-web)
+cd web && npm test         # Run Vitest
 ```
 
 ## Post-Change Workflow
 
-Before a change is ready for integration, follow the workflow in `AGENTS.md`:
+For ordinary contributions, run the local checks relevant to the change:
 
-1. **Build & test** — `make build` (Ansible: lint → test → web build → cross-compile).
-2. **Deploy** — `make deploy` (binary + assets to Unraid).
-3. **Verify API** — `make verify` (endpoint checks + folder/VM smoke tests).
-4. **Verify UI** — navigate affected pages and confirm they render.
-5. **Update `CHANGELOG.md`** — see below (non-negotiable for code changes).
+1. Targeted tests while iterating.
+2. `make test` and `make lint` for Go changes.
+3. `npm test`, `npm run lint`, and `npm run build` in `web/` for UI changes.
+4. `make pre-commit-run` before committing.
 
-`make deploy` and `make verify` target a **maintainer's Unraid host** and are not reproducible for outside contributors. As a contributor, run `make build-local` and `make test` (plus `make lint`), and describe UI changes in your PR — the maintainer runs deploy/verify.
+The maintainer runs the release-facing `make build` → approved `make deploy` →
+`make verify` → UI verification gate. `make deploy`, `make verify`, and
+`make redeploy` target a configured Unraid host and must not be run without
+explicit approval. `make redeploy` includes uninstall.
 
-## CHANGELOG (Required)
+## Changelog
 
-Every code change adds an entry under `## [Unreleased]` in `CHANGELOG.md` using [Keep a Changelog](https://keepachangelog.com/) sections: `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security` (any other `###` heading is silently dropped).
+User-visible and release-facing changes add an entry under `## [Unreleased]`
+in `CHANGELOG.md` using [Keep a Changelog](https://keepachangelog.com/)
+sections: `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security`
+(any other `###` heading is silently dropped).
 
 - Explain **what** changed **and why** — entries stand alone with no PR context.
 - Reference issue numbers where applicable (e.g. `closes #123`).

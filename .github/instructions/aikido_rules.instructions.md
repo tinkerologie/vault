@@ -1,14 +1,18 @@
 ---
-applyTo: "**"
-description: Aikido MCP Security Rules
+applyTo: "**/*.go,web/src/**/*.js,web/src/**/*.svelte,plugin/**/*.php,plugin/**/*.sh,ansible/ansible.yml,ansible/roles/**/*.yml,.github/workflows/**/*.yml"
+description: Scan modified first-party code with Aikido
 ---
 
-# Project security best practices
+# Aikido Security Scan
 
-- Always run **aikido_full_scan** on generated, added and modified first-party code, unless the prompt explicitly says not to.
-- Always provide the full file content to the scanner.
-- If the scan identifies any security issues in newly generated or modified code, fix the issues using the scan result and remediation provided by **Aikido**.
-- After applying fixes, run aikido_full_scan again to verify that the issues were successfully resolved, and no new issues were introduced.
-- Repeat the fix-and-rescan cycle until the code passes with zero remaining or newly introduced security issues.
-- If the **Aikido MCP server** required to run scans is not installed or not started successfully, inform the user with a message directing them to install it using the official Aikido MCP setup guide at:  
-  **<https://help.aikido.dev/ide-plugins/aikido-mcp>**.
+Run `aikido_full_scan` on added or modified first-party source code, including
+generated source intended for commit, unless the user explicitly opts out.
+
+- Send the complete content of each changed code file, using repository-relative
+  paths.
+- Do not send credentials, untracked configuration, build outputs, dependency
+  or vendor artifacts, or unrelated files.
+- Validate each finding against the source before changing code.
+- Fix confirmed issues, then rescan the affected files.
+- If Aikido is unavailable, report that limitation and continue with
+  source-grounded security checks; do not claim an Aikido pass.

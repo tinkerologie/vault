@@ -4,50 +4,23 @@ applyTo: "internal/storage/**/*.go"
 
 # Storage Instructions
 
-Reference: [`AGENTS.md`](../../AGENTS.md) for full project context.
+Read `internal/storage/adapter.go`, `internal/storage/factory.go`, and the
+affected provider before editing.
 
-## Adapter Interface
+- Implement every method in the current `Adapter` interface, including
+  retry-safe writes, ranged reads, capacity reporting, and usage reporting.
+- Construct adapters through `NewAdapter`/`NewAdapterWithOptions`; configuration
+  is stored as a JSON string.
+- Verify supported providers in the factory switch and implementation files.
+- Preserve the factory middleware order: provider, throttle, retry, metrics,
+  logging.
+- `WriteFrom` must reopen a fresh source stream for each retry.
+- `ReadRange` must release underlying handles and honor its EOF/range contract.
+- Return `ErrUsageNotSupported` when a provider cannot report free/total space.
+- Validate storage-relative paths and prevent traversal.
+- Close remote sessions, files, mounts, and response bodies on every path.
+- Never log passwords, tokens, private keys, or complete configuration blobs.
+- Test connection checks must clean up their own artifacts.
 
-All storage backends implement `storage.Adapter`:
-
-```go
-type Adapter interface {
-    Write(path string, reader io.Reader) error
-    Read(path string) (io.ReadCloser, error)
-    Delete(path string) error
-    List(prefix string) ([]FileInfo, error)
-    Stat(path string) (FileInfo, error)
-    TestConnection() error
-}
-```
-
-## Factory Pattern
-
-`factory.go` contains `NewAdapter(storageType, configJSON)` which dispatches to concrete adapters. Each adapter has its own config struct parsed from JSON.
-
-When adding a new adapter:
-
-1. Create `mybackend.go` with config struct and constructor
-2. Implement all `Adapter` interface methods
-3. Add case to `NewAdapter()` switch in `factory.go`
-4. Add compile-time interface check: `var _ Adapter = (*MyBackendAdapter)(nil)`
-
-## Config Storage
-
-Storage destination config is stored as a JSON blob in the `storage_destinations.config` DB column. Each adapter should define and parse its own adapter-specific config struct from this JSON (shared embedded/common fields are allowed where appropriate).
-
-If JSON parsing fails, return a descriptive error indicating invalid storage configuration for that adapter.
-
-## TestConnection
-
-Every adapter must implement `TestConnection()` that verifies:
-
-- Connectivity to the backend
-- Read/write permissions
-- Cleans up any test artifacts
-
-## Cleanup
-
-- Use `_ = file.Close()` in error paths
-- SMB: always `Umount` shares and `Logoff` sessions in defer
-- SFTP: close both the sftp client and ssh connection
+Do not duplicate the interface or provider configuration structs here; source
+files are authoritative.

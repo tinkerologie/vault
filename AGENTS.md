@@ -1,365 +1,230 @@
-# AGENTS.md — AI Agent Instructions
+# AGENTS.md — Vault Agent Instructions
 
-> Single source of truth for all AI coding assistants working on this project.
-> Individual tool files (CLAUDE.md, GEMINI.md, copilot-instructions.md, .cursorrules) point here.
+This is the repository-wide source of truth for AI coding assistants. Keep it
+short, durable, and aligned with the current source. Path-specific rules live
+in `.github/instructions/`; optional GitHub Copilot profiles live in
+`.github/agents/`.
 
-## Role-Specific Agent Instructions
+When documentation and source disagree, verify the source and update the
+documentation in the same change.
 
-Before starting work, read the relevant agent file(s) in `.github/agents/` that match your current task:
+## Project
 
-| File                                | When to read                         |
-| ----------------------------------- | ------------------------------------ |
-| `api-architect.agent.md`            | Designing or modifying API endpoints |
-| `debug.agent.md`                    | Debugging issues                     |
-| `devops-expert.agent.md`            | Build, deploy, CI/CD, infrastructure |
-| `gem-documentation-writer.agent.md` | Writing documentation                |
-| `github-actions-expert.agent.md`    | GitHub Actions workflows             |
-| `plan.agent.md`                     | Planning features or refactors       |
-| `playwright-tester.agent.md`        | Writing or running E2E tests         |
-| `qa-subagent.agent.md`              | Quality assurance and testing        |
-| `refine-issue.agent.md`             | Refining issues or requirements      |
-| `se-security-reviewer.agent.md`     | Security review of code changes      |
+- **Product:** Vault, a third-party Unraid backup and restore plugin
+- **Runtime:** Go daemon on Linux/amd64, built with `CGO_ENABLED=0`
+- **UI:** Svelte 5 single-page application embedded in the Go binary
+- **API:** Chi v5 REST API, WebSocket events, and MCP endpoint
+- **Database:** SQLite via `modernc.org/sqlite`
+- **Repository:** `github.com/ruaan-deysel/vault`
 
-## Project Identity
+Vault runs with privileged access to Docker, libvirt, filesystems, and storage
+credentials. Treat restore, deletion, deployment, database replacement, and
+path remapping as sensitive operations.
 
-| Key          | Value                                                           |
-| ------------ | --------------------------------------------------------------- |
-| **Name**     | Vault                                                           |
-| **Language** | Go 1.26                                                         |
-| **Target**   | Linux/amd64 (Unraid OS)                                         |
-| **Type**     | Third-party community plugin (backup/restore daemon)            |
-| **Purpose**  | REST API + WebSocket for Docker container and libvirt VM backup |
-| **Repo**     | `github.com/ruaan-deysel/vault`                                 |
+## Read Before Editing
 
-## Project Structure
+Read the source that owns the contract you are changing:
 
-```text
-/
-├── cmd/vault/                  # CLI entry point (main.go → cli.Execute())
-├── internal/
-│   ├── api/                    # HTTP server (Chi router), REST handlers, WebSocket
-│   │   ├── server.go           # Server struct, ListenAndServe, respondJSON
-│   │   ├── routes.go           # Route definitions (/api/v1/...)
-│   │   └── handlers/           # Job and Storage CRUD handlers
-│   ├── cli/                    # Cobra CLI commands (root, daemon)
-│   ├── config/                 # Enum constants (CompressionType, BackupType, StorageType)
-│   ├── db/                     # SQLite database (pure Go via modernc.org/sqlite)
-│   │   ├── db.go               # Open, ping, WAL mode, schema
-│   │   ├── migrations.go       # Inline schema (CREATE TABLE IF NOT EXISTS)
-│   │   ├── models.go           # Job, JobItem, JobRun, RestorePoint, StorageDestination
-│   │   ├── job_repo.go         # Job CRUD, items, runs, restore points
-│   │   └── storage_repo.go     # StorageDestination CRUD
-│   ├── engine/                 # Backup/restore logic
-│   │   ├── types.go            # BackupItem, BackupResult, Handler interface
-│   │   ├── container.go        # Docker SDK: stop→image→volumes→start
-│   │   ├── vm.go               # libvirt RPC backup/restore via backup jobs (linux only)
-│   │   ├── vm_stub.go          # Stub for non-Linux builds
-│   │   └── fileutil.go         # File copy utilities (linux only)
-│   ├── notify/                 # Unraid notification integration
-│   ├── scheduler/              # Cron-based job scheduler (robfig/cron)
-│   ├── storage/                # Pluggable storage backends
-│   │   ├── adapter.go          # Adapter interface definition
-│   │   ├── factory.go          # NewAdapter() factory dispatch
-│   │   ├── local.go            # LocalAdapter
-│   │   ├── sftp.go             # SFTPAdapter
-│   │   ├── nfs.go              # NFSAdapter (NFS mount-based)
-│   │   └── smb.go              # SMBAdapter
-│   └── ws/                     # WebSocket hub (pub/sub broadcast)
-├── plugin/                     # Unraid plugin (.plg installer, PHP pages, JS/CSS)
-├── ansible/                    # Deployment automation
-├── docs/plans/                 # Design docs and implementation plans
-├── .github/
-│   ├── agents/                 # Role-specific agent instructions (.agent.md)
-│   ├── instructions/           # Path-specific AI instructions (applyTo globs)
-│   ├── prompts/                # Reusable task prompts for common workflows
-│   └── workflows/              # CI/CD (build.yml, release.yml)
-├── Makefile                    # Build automation
-├── go.mod / go.sum             # Go dependencies
-└── VERSION                     # Current version (YYYY.M.D format)
-```
+| Area                      | Authoritative source                                         |
+| ------------------------- | ------------------------------------------------------------ |
+| API routes and middleware | `internal/api/routes.go`, `internal/api/middleware.go`       |
+| Handler response helpers  | `internal/api/handlers/respond.go`                           |
+| Database open/schema      | `internal/db/db.go`, `internal/db/migrations.go`             |
+| Engine contracts          | `internal/engine/types.go`                                   |
+| Storage contracts/factory | `internal/storage/adapter.go`, `internal/storage/factory.go` |
+| Backup execution          | `internal/runner/`                                           |
+| Scheduling                | `internal/scheduler/`                                        |
+| Web UI                    | `web/src/`, `web/package.json`                               |
+| Build and packaging       | `Makefile`, `ansible/`, `plugin/vault.plg`                   |
+| Release automation        | `.github/workflows/`, `VERSION`, `CHANGELOG.md`              |
+
+Do not copy interface signatures, endpoint lists, dependency versions, or
+schema inventories from this file without checking those sources.
 
 ## Architecture
 
-### Layered Design
+```text
+Cobra CLI
+  └─ API server (Chi + WebSocket + MCP)
+      ├─ handlers
+      ├─ scheduler
+      ├─ runner
+      │   ├─ engine handlers
+      │   └─ storage adapters
+      └─ SQLite repositories
+```
+
+Important supporting packages include `internal/anomaly`, `internal/crypto`,
+`internal/dedup`, `internal/diagnostics`, `internal/discovery`,
+`internal/replication`, `internal/release`, `internal/safepath`, and
+`internal/unraid`.
+
+Follow existing wiring. Do not introduce a second router, bypass the storage
+factory, duplicate runner behavior in handlers, or add speculative
+abstractions.
+
+## Core Constraints
+
+- Use idiomatic Go, `gofmt`, and `goimports`.
+- Wrap errors with useful context using `%w`.
+- Propagate `context.Context` through cancellable work.
+- Keep the binary pure Go; do not introduce CGO dependencies.
+- Put Linux-only implementations behind build tags and keep non-Linux builds
+  working with an appropriate stub.
+- Keep SQLite in WAL mode with DSN pragmas applied to every connection.
+- Validate input at API, filesystem, storage, and restore trust boundaries.
+- Never log credentials, API keys, passphrases, cookies, private keys, or
+  sensitive configuration blobs.
+- Reuse `internal/safepath` for untrusted or storage-relative paths.
+- Preserve unrelated working-tree changes.
+
+## Repository Layout
 
 ```text
-CLI (Cobra) → API Server (Chi + WebSocket Hub) → Handlers → DB / Storage / Engine
+cmd/vault/          CLI entry point
+internal/api/       HTTP server, middleware, routes, handlers
+internal/db/        SQLite handle, schema, repositories, snapshots
+internal/engine/    Container, VM, folder, plugin, and ZFS operations
+internal/runner/    Job execution, upload, restore, verification, dedup
+internal/storage/   Local, SFTP, SMB, NFS, WebDAV, and S3 adapters
+internal/scheduler/ Cron scheduling and maintenance jobs
+internal/ws/        WebSocket hub
+web/                Svelte 5 application and Vitest tests
+plugin/             Unraid plugin metadata, PHP pages, assets, service script
+ansible/            Build, deployment, and live verification
+docs/               User and maintainer documentation
 ```
 
-- **CLI layer** (`internal/cli/`): Cobra commands. `vault daemon` starts the server.
-- **API layer** (`internal/api/`): Chi router with middleware (Logger, Recoverer, Heartbeat). Routes at `/api/v1/`. WebSocket at `/api/v1/ws`.
-- **Handler layer** (`internal/api/handlers/`): CRUD for jobs and storage destinations. Each handler takes a `*db.DB`.
-- **Data layer** (`internal/db/`): SQLite with WAL mode and foreign keys. Repos handle all SQL.
-- **Storage layer** (`internal/storage/`): `Adapter` interface with factory pattern. Config stored as JSON blob in DB.
-- **Engine layer** (`internal/engine/`): `Handler` interface for backup/restore. Container backups use the Docker SDK. VM backups use the pure-Go libvirt RPC client and backup jobs on Linux. Platform-specific via build tags.
-- **Scheduler** (`internal/scheduler/`): Cron scheduler loads jobs from DB. Supports Start/Stop/Reload.
-- **WebSocket** (`internal/ws/`): Hub with register/unregister/broadcast channels for real-time progress.
+## Search
 
-### Key Interfaces
+Use `rg` for ordinary source and text searches. Use `ast-grep` only when the
+query genuinely depends on syntax. `ast-grep` does not parse Svelte files;
+use `rg` or Svelte-aware tooling there.
 
-**`storage.Adapter`** (`internal/storage/adapter.go`):
+Before changing a shared function or interface, find every caller. Fix a bug
+at the common root when possible and add the smallest regression check that
+would fail without the fix.
 
-```go
-type Adapter interface {
-    Write(path string, reader io.Reader) error
-    Read(path string) (io.ReadCloser, error)
-    Delete(path string) error
-    List(prefix string) ([]FileInfo, error)
-    Stat(path string) (FileInfo, error)
-    TestConnection() error
-}
-```
+## Build and Test
 
-**`engine.Handler`** (`internal/engine/types.go`):
-
-```go
-type Handler interface {
-    Backup(item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
-    Restore(item BackupItem, source string, progress ProgressFunc) error
-    ListItems() ([]BackupItem, error)
-}
-```
-
-### Build-Tag Platform Isolation
-
-- `vm.go` and `fileutil.go`: `//go:build linux` — real libvirt RPC and file operations
-- `vm_stub.go`: `//go:build !linux` — stubs for macOS/Windows development
-- Tests and local builds work on macOS without libvirt installed
-
-### Storage Factory Pattern
-
-`storage.NewAdapter(storageType, configJSON)` in `factory.go` dispatches to concrete adapters. Each adapter parses its own config struct from JSON. Storage config is stored as a JSON blob in the `storage_destinations.config` column.
-
-### SQLite Configuration
-
-```go
-sql.Open("sqlite", path+"?_txlock=immediate&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(67108864)")
-```
-
-WAL mode for concurrent reads. Foreign keys, busy timeout and WAL are set as DSN pragmas so every connection gets them (modernc.org/sqlite ignores the mattn-style \_journal_mode=/\_busy_timeout= keys). Schema applied inline at `Open()` time via `CREATE TABLE IF NOT EXISTS` (no migration versioning framework).
-
-## Build Commands
-
-### Plugin Lifecycle (Ansible-driven)
+### Local checks
 
 ```bash
-make build               # Ansible: lint → test → web build → cross-compile Linux/amd64
-make deploy              # Ansible: deploy binary + assets to Unraid, start daemon
-make verify              # Ansible: run endpoint checks plus folder/VM smoke tests against Unraid
-make redeploy            # Ansible: full lifecycle (uninstall → build → deploy → verify)
+make test
+make lint
+make security-check
+make pre-commit-run
+make build-local
 ```
 
-### Local Development
+Web-only checks:
 
 ```bash
-make deps                # Install and tidy dependencies
-make build-local         # Build for current platform
-make test                # Run unit tests (go test ./... -v)
-make test-short          # Run short tests only
-make test-coverage       # Generate coverage.html
-make lint                # Run golangci-lint with .golangci.yml
-make security-check      # Run gosec + govulncheck + go mod verify
-make clean               # Remove build artifacts
-make pre-commit-install  # Install pre-commit hooks
-make pre-commit-run      # Run all pre-commit checks
+npm --prefix web test
+npm --prefix web run lint
+npm --prefix web run build
 ```
 
-### Running the Daemon
+Use targeted tests while iterating, then run the checks proportional to the
+change. `make test` prepares the embedded changelog before running Go tests.
+
+### Ansible lifecycle
+
+Build without changing the Unraid host:
 
 ```bash
-./build/vault daemon --db=vault.db --addr=:24085
+make build
 ```
 
-Defaults: DB at `/boot/config/plugins/vault/vault.db`, API on port 24085.
-
-## Code Search
-
-Both `rg` (ripgrep) and `ast-grep` are available. **Default to `rg` for most queries** (~5–20 ms on this repo, handles every file type, no parser surprises). Reach for `ast-grep` (~30–130 ms) only when you need AST-aware matching — typically a structural refactor or a pattern whose meaning depends on syntactic context.
-
-**Use `rg` for:**
-
-- Literal strings (log messages, error strings, URLs, JSON keys)
-- Definitions by name: `rg -n '^func .*FolderHandler.* Backup\b' --type go`
-- **Package-qualified call sites**: `rg -n 'runner\.New\(' --type go` — ast-grep returns zero matches for this; see Gotchas
-- Comments and TODOs
-- Per-file counts and lists (`rg -c '%w' --type go`, `rg -l 'panic\(' --type go`)
-- Svelte files: `rg --type-add 'svelte:*.svelte' --type svelte 'pattern'` — **ast-grep does not support svelte** (0.42.3)
-
-**Use `ast-grep` for:**
-
-- Function definitions matching a structural shape: `ast-grep run -p 'func ($H *FolderHandler) Backup($$$ARGS) $$$RET { $$$BODY }' -l go`
-- All `fmt.Errorf(...)` calls without false-positive matches in strings/comments
-- Struct/interface declarations
-- Multi-clause queries via `ast-grep scan --rule rule.yml` (`has` / `inside` / `where`)
-
-**Verified gotchas:**
-
-- Package-qualified calls (`db.Open(...)`, `runner.New(...)`) return **zero** matches with the obvious pattern because the Go parser treats them as type conversions. Workaround: a YAML rule with `kind: call_expression`, or use `rg`.
-- Languages confirmed working: `go`, `ts`, `tsx`, `js`, `html`, `css`, `yaml`, `json`, `bash`, `python`, `rust`, `java`. **Not** `svelte` or `sh`.
-- Variadic metavariables must be **named** and usually preceded by a positional: `fmt.Errorf($FMT, $$$ARGS)`, not `fmt.Errorf($$$)`.
-- Full ast-grep skill: `.agents/skills/ast-grep/SKILL.md`.
-
-## Code Style and Conventions
-
-- **Standard Go**: `gofmt` and `goimports` enforced. Zero tolerance for linting errors.
-- **Error handling**: Wrap errors with context: `fmt.Errorf("context: %w", err)`
-- **Build**: CGO_ENABLED=0 — pure Go only. Uses `modernc.org/sqlite` (no C dependencies).
-- **Router**: Chi v5 (`go-chi/chi/v5`), not gorilla/mux.
-- **Naming**: Follow Go conventions — PascalCase exported, camelCase unexported.
-- **Commit messages**: Follow **Conventional Commits**: `feat(scope):`, `fix(scope):`, `docs(scope):`
-- **Pre-commit**: Run `make pre-commit-run` before every commit.
-
-## Core Patterns
-
-### Storage Adapter Pattern
-
-```go
-// factory.go dispatches by StorageType
-func NewAdapter(storageType string, configJSON []byte) (Adapter, error) {
-    switch storageType {
-    case "local":
-        var cfg LocalConfig
-        json.Unmarshal(configJSON, &cfg)
-        return NewLocalAdapter(cfg)
-    // ... sftp, smb, nfs
-    }
-}
-```
-
-### REST Handler Pattern
-
-```go
-func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
-    jobs, err := h.db.ListJobs()
-    if err != nil {
-        respondError(w, http.StatusInternalServerError, err.Error())
-        return
-    }
-    respondJSON(w, http.StatusOK, jobs)
-}
-```
-
-Use `respondJSON()` and `respondError()` helpers for all responses.
-
-### Route Registration
-
-Routes registered in `internal/api/routes.go` using Chi's `r.Route()` grouping:
-
-```go
-r.Route("/api/v1", func(r chi.Router) {
-    r.Route("/storage", func(r chi.Router) { /* CRUD */ })
-    r.Route("/jobs", func(r chi.Router) { /* CRUD */ })
-})
-```
-
-## Adding New Components
-
-### Adding a Storage Adapter
-
-1. Create `internal/storage/mybackend.go` implementing `Adapter` interface
-2. Add config struct and `NewMyBackendAdapter()` constructor
-3. Add case to `factory.go` `NewAdapter()` switch
-4. Add storage type constant to `internal/config/types.go`
-5. Write tests in `internal/storage/mybackend_test.go`
-
-### Adding an API Endpoint
-
-1. Add handler method in `internal/api/handlers/`
-2. Register route in `internal/api/routes.go`
-3. Write tests using `httptest`
-
-### Adding an Engine Handler
-
-1. Create handler implementing `engine.Handler` interface
-2. Use build tags if platform-specific (`//go:build linux` + stub file)
-3. Wire to backup/restore execution path
-4. Write tests
-
-## Testing Conventions
-
-- **Table-driven tests** with subtests (`t.Run`)
-- **httptest** for API handler testing
-- **t.TempDir()** for file/storage tests (auto-cleanup)
-- Tests located alongside source files (`*_test.go`)
+After explicit user approval and confirmation of the intended deployment
+configuration:
 
 ```bash
-make test                                    # All tests
-make test-coverage                           # Coverage report
-go test ./internal/db/... -run TestJobCreate -v  # Single test
+make deploy
+make verify
 ```
 
-## Recommended Post-Change Workflow
-
-> Agents and developers should follow this workflow for changes intended for integration or release. It does not apply to documentation-only changes or local WIP commits.
-
-### Steps (recommended order)
-
-1. **Build & Test:** Run `make build` (Ansible: lint → test → web build → cross-compile). Fix any failures before proceeding.
-2. **Deploy:** Ask the user for confirmation and verify deployment credentials before running `make deploy` (deploys binary + assets to Unraid, starts daemon).
-3. **Verify API:** Run `make verify` (endpoint checks + folder/VM smoke tests against Unraid). Fix any failures before proceeding.
-4. **Verify UI:** Use Playwright, browser MCP tools, or manual testing to navigate affected pages on `http://<unraid-server>:24085`. Take snapshots to confirm the UI renders correctly.
-5. **Update CHANGELOG.md (NON-NEGOTIABLE):** Add entries under `## [Unreleased]` using [Keep a Changelog](https://keepachangelog.com/) format. `CHANGELOG.md` is consumed by THREE systems: the in-app View Changelog modal (Settings → About Vault, parser at `internal/release/changelog.go`), the `release.yml` GitHub-release notes extractor, and operator-facing upgrade diffs — a missing or malformed entry breaks all three. Required format:
-   - Section headings (per version): `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security` — any other `###` heading is silently dropped.
-   - Bullets start with `-` (dash + space) at column 0 — the parser only recognizes that exact prefix. Inline markdown that renders in the modal: `**bold**`, `` `code` ``, `*italic*`. Nothing else is interpreted.
-   - Be concise but descriptive — entries stand alone with no PR context. Reference issue numbers (e.g. `closes #123`) where applicable.
-   - `[Unreleased]` is intentionally hidden from the modal. At release time, promote it to `## [vX.Y.Z] - YYYY-MM-DD` (heading must match the tag exactly) BEFORE pushing the `v*` tag.
-
-**Shortcut:** `make build deploy verify` (build → deploy → verify) replaces steps 1–3 in one command without uninstalling the plugin, so current Vault settings on the Unraid host are preserved. Steps 4 and 5 are still recommended. Avoid `make redeploy` for routine iteration — it includes an uninstall step that wipes the plugin's configured state.
-
-**Skip when:** Changes are limited to documentation files (`.md`), comments, or files that do not affect the built binary or web UI.
-
-## Anti-Patterns (DO NOT)
-
-- **DO NOT** use CGO — binary must be pure Go (CGO_ENABLED=0)
-- **DO NOT** bypass the factory pattern in `storage/factory.go`
-- **DO NOT** skip the `storage.Adapter` interface when adding storage backends
-- **DO NOT** change SQLite journal mode from WAL
-- **DO NOT** commit secrets, credentials, or `ansible/inventory.yml`
-- **DO NOT** use `gorilla/mux` — this project uses Chi v5
-- **DO NOT** add libvirt code without build tags (breaks macOS builds)
-- **DO NOT** consider changes ready for integration without running the verification workflow
-- **DO NOT** skip UI verification before marking changes as complete (use Playwright/browser tools or manual testing)
-
-## Key Dependencies
-
-| Package                              | Purpose                            |
-| ------------------------------------ | ---------------------------------- |
-| `github.com/go-chi/chi/v5`           | HTTP router                        |
-| `github.com/spf13/cobra`             | CLI framework                      |
-| `github.com/robfig/cron/v3`          | Cron scheduler                     |
-| `modernc.org/sqlite`                 | Pure Go SQLite driver              |
-| `github.com/docker/docker`           | Docker Engine SDK                  |
-| `github.com/digitalocean/go-libvirt` | Pure Go VM management (Linux only) |
-| `github.com/vmware/go-nfs-client`    | NFS storage adapter                |
-| `github.com/cloudsoda/go-smb2`       | SMB storage adapter                |
-| `github.com/pkg/sftp`                | SFTP storage adapter               |
-| `github.com/coder/websocket`         | WebSocket server                   |
-
-## API Structure
-
-Base URL: `http://localhost:24085/api/v1`
-
-- `GET /health` — Health check
-- `GET/POST /storage` — List/create storage destinations
-- `GET/PUT/DELETE /storage/{id}` — Storage CRUD
-- `POST /storage/{id}/test` — Test storage connection
-- `GET/POST /jobs` — List/create jobs
-- `GET/PUT/DELETE /jobs/{id}` — Job CRUD
-- `GET /jobs/{id}/history` — Job run history
-- `GET /jobs/{id}/restore-points` — Restore points
-- `GET /ws` — WebSocket real-time events
-
-## Deployment
-
-The daemon runs on Unraid at `/boot/config/plugins/vault/vault`. Plugin XML (`plugin/vault.plg`) defines install/remove lifecycle and the `rc.vault` service script.
-
-**Ansible (preferred):**
+Only for an explicitly requested clean reinstall:
 
 ```bash
-cp ansible/inventory.yml.example ansible/inventory.yml  # Add server details
-ansible-playbook -i ansible/inventory.yml ansible/ansible.yml --tags deploy
+make redeploy
 ```
 
-## Version
+- `make build` runs the Ansible build path, including lint, tests, web build,
+  and Linux/amd64 compilation.
+- `make deploy` changes the configured Unraid host and restarts Vault.
+- `make verify` runs read-only live health, API, WebSocket, and MCP checks.
+- `make redeploy` includes uninstall and can remove configured plugin state.
 
-Date-based versioning in `VERSION` file (e.g., `2026.3.0`). Injected via ldflags at build time.
+**Never run `make deploy`, `make verify`, or `make redeploy` without explicit
+user approval and confirmed local deployment configuration.** Prefer
+`make build deploy verify` for an approved routine release iteration.
+Use `make redeploy` only when the user explicitly wants a clean reinstall.
+
+## Validation and Release Gate
+
+For ordinary implementation work:
+
+1. Run targeted tests for the changed behavior.
+2. Run applicable Go and web lint/tests/builds.
+3. Run `make pre-commit-run` before committing.
+4. Run CodeRabbit CLI review when changes are intended for integration.
+
+For release-facing binary or UI changes, after user approval:
+
+1. `make build`
+2. `make deploy`
+3. `make verify`
+4. Verify affected UI flows with Playwright or browser tooling.
+5. Run CodeRabbit CLI review and resolve validated findings.
+6. Update `CHANGELOG.md` last.
+
+Do not claim deployment, live verification, UI verification, or CodeRabbit
+approval unless that step actually completed. Documentation-only changes do
+not require the live release gate.
+
+## Changelog
+
+`CHANGELOG.md` is consumed by the application and release workflow. Add a
+concise entry under `## [Unreleased]` for user-visible or release-facing
+changes.
+
+Supported section headings:
+
+- `### Added`
+- `### Changed`
+- `### Fixed`
+- `### Removed`
+- `### Security`
+
+Bullets must start with a dash followed by a space at column zero. At release
+time, promote the section to `## [v<contents-of-VERSION>] - YYYY-MM-DD` before
+pushing the matching `v<contents-of-VERSION>` tag. For example, `VERSION` value
+`2026.07.10` uses heading `## [v2026.07.10] - 2026-07-24` and tag
+`v2026.07.10`.
+
+## Deployment Paths
+
+- Binary: `/usr/local/sbin/vault`
+- Database: `/boot/config/plugins/vault/vault.db`
+- Configuration: `/boot/config/plugins/vault/vault.cfg`
+- Plugin UI/assets: `/usr/local/emhttp/plugins/vault`
+- Service script: `/etc/rc.d/rc.vault`
+- Default API port: `24085`
+
+Never commit `ansible/inventory.yml`, credentials, real hostnames, or private
+network addresses.
+
+## Versioning
+
+`VERSION` is the release version source and uses `YYYY.MM.PATCH`. Build
+metadata is injected with linker flags defined in the `Makefile`.
+
+## Git
+
+- Use Conventional Commits.
+- Stage only the files required by the task.
+- Do not discard, overwrite, or reformat unrelated user changes.
+- Inspect branch and remote divergence before merge or push operations.
+- Do not commit, push, merge, tag, release, or open a pull request unless the
+  user requests it.

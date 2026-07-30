@@ -1,66 +1,28 @@
 ---
-applyTo: "**/*_test.go"
+applyTo: "**/*_test.go,web/**/*.test.js,tests/**/*.spec.ts,playwright.config.ts"
 ---
 
-# Testing Instructions
+# Test Instructions
 
-Reference: [`AGENTS.md`](../../AGENTS.md) for full project context.
+- Test behavior and failure boundaries, not private implementation details.
+- Keep tests deterministic and isolated; avoid fixed sleeps and external
+  services when a local fake covers the contract.
+- Use table-driven Go tests when multiple cases share one behavior.
+- Use `httptest` for HTTP handlers and `t.TempDir()` for filesystem state.
+- Use `t.Parallel()` only after confirming the test has no shared globals,
+  environment, ports, database, or process state.
+- Use Vitest for `web/src/**/*.test.js`.
+- Use the root `playwright.config.ts` and `tests/` for browser tests.
+- Prefer accessible Playwright locators and state-based waits.
+- Do not create, run, restore, or delete live Vault data without explicit user
+  approval.
 
-## Pattern: Table-Driven Tests
-
-```go
-func TestMyFunction(t *testing.T) {
-    tests := []struct {
-        name    string
-        input   string
-        want    string
-        wantErr bool
-    }{
-        {"valid input", "abc", "result", false},
-        {"empty input", "", "", true},
-    }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            got, err := MyFunction(tt.input)
-            if (err != nil) != tt.wantErr {
-                t.Errorf("MyFunction() error = %v, wantErr %v", err, tt.wantErr)
-            }
-            if got != tt.want {
-                t.Errorf("MyFunction() = %v, want %v", got, tt.want)
-            }
-        })
-    }
-}
-```
-
-## API Handler Tests
-
-Use `httptest` for handler testing:
-
-```go
-req := httptest.NewRequest("GET", "/api/v1/jobs", nil)
-w := httptest.NewRecorder()
-handler.List(w, req)
-```
-
-## Storage Tests
-
-Use `t.TempDir()` for storage adapter tests — auto-cleaned up after test.
-
-## DB Tests
-
-Use in-memory SQLite for fast tests: `Open(":memory:")`
-
-## Conventions
-
-- Tests alongside source files (`*_test.go`)
-- Use `t.Helper()` in test helper functions
-- Use `t.Parallel()` where tests are independent
-
-## Commands
+Common checks:
 
 ```bash
-make test                                        # All tests
-make test-coverage                               # Coverage report
-go test ./internal/db/... -run TestJobCreate -v  # Specific test
+make test
+make test-short
+make test-coverage
+npm --prefix web test
+npx playwright test
 ```

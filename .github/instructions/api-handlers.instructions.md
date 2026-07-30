@@ -2,56 +2,26 @@
 applyTo: "internal/api/**/*.go"
 ---
 
-# API Server Instructions
+# API Instructions
 
-Reference: [`AGENTS.md`](../../AGENTS.md) for full project context.
+Read `internal/api/routes.go`, `internal/api/middleware.go`, and the affected
+handler before editing.
 
-## Router
+- Use Chi v5 and register routes in `internal/api/routes.go`.
+- Use `respondJSON`, `respondError`, and `respondInternalError` from
+  `internal/api/handlers/respond.go`.
+- Preserve API-key authentication, rate limiting, body limits, CORS/PNA, and
+  read-only replica guards.
+- Treat loopback/proxy exemptions and destructive-route guards as security
+  boundaries; do not broaden them casually.
+- Decode and validate request bodies and URL parameters before side effects.
+- Pass `r.Context()` through cancellable database, runner, storage, and network
+  work.
+- Inject existing collaborators through handler constructors. Do not create
+  parallel runner, scheduler, database, or WebSocket state in a handler.
+- Never expose secrets or raw sensitive configuration in responses or logs.
+- Add `httptest` coverage for success, validation, authorization/guard behavior,
+  and meaningful error paths.
 
-Uses Chi v5 (`go-chi/chi/v5`), not gorilla/mux. Routes defined in `routes.go`.
-
-## Handler Pattern
-
-```go
-func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
-    jobs, err := h.db.ListJobs()
-    if err != nil {
-        respondError(w, http.StatusInternalServerError, err.Error())
-        return
-    }
-    respondJSON(w, http.StatusOK, jobs)
-}
-```
-
-## Response Helpers
-
-- Use `respondJSON()` for all JSON responses
-- Use `respondError()` for error responses
-- Both defined in `handlers/storage.go` (shared across handlers)
-
-## Route Registration
-
-Register new routes in `routes.go` using Chi's `r.Route()` grouping:
-
-```go
-r.Route("/api/v1", func(r chi.Router) {
-    r.Route("/myresource", func(r chi.Router) {
-        r.Get("/", handler.List)
-        r.Post("/", handler.Create)
-        r.Get("/{id}", handler.Get)
-    })
-})
-```
-
-URL params via `chi.URLParam(r, "id")`.
-
-## WebSocket
-
-- Hub in `internal/ws/` manages client connections
-- Exposed at `GET /api/v1/ws`
-- Broadcasts progress events to all connected clients
-- On invalid/malformed WebSocket upgrade requests or frames, log the error and close the connection immediately
-
-## Middleware
-
-Chi middleware stack: Logger → Recoverer → Heartbeat (`/ping`).
+The current route catalog is the source. Do not maintain a second endpoint list
+in instruction files.

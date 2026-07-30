@@ -4,53 +4,22 @@ applyTo: "internal/engine/**/*.go"
 
 # Engine Instructions
 
-Reference: [`AGENTS.md`](../../AGENTS.md) for full project context.
+Read `internal/engine/types.go`, every caller in `internal/runner/`, and the
+affected handler before editing.
 
-## Handler Interface
+- Implement the current context-aware `Handler` contract exactly.
+- Implement `ChunkedHandler` only for engines that participate in deduplicated
+  backup and restore.
+- Verify current handlers in `internal/engine/` and reuse their shared helpers
+  before adding another abstraction.
+- Honor context cancellation in walks, SDK/RPC calls, archive work, and copy
+  loops.
+- Treat progress reporting as best-effort and keep reported progress monotonic
+  where a determinate total exists.
+- Preserve restart/recovery behavior when a backup temporarily stops a
+  container or VM.
+- Keep Linux-only code behind build tags and maintain a useful non-Linux stub.
+- Validate source and destination paths through existing safe-path helpers.
+- Add the smallest regression test that exercises the changed behavior.
 
-All backup/restore handlers implement `engine.Handler`:
-
-```go
-type Handler interface {
-    Backup(item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
-    Restore(item BackupItem, source string, progress ProgressFunc) error
-    ListItems() ([]BackupItem, error)
-}
-```
-
-## Build Tags
-
-- `vm.go` and `fileutil.go`: `//go:build linux` (real Linux implementation + file operations)
-- `vm_stub.go`: `//go:build !linux` (stubs for macOS/Windows)
-- Always add a stub when creating Linux-only code
-
-## Container Handler
-
-Uses Docker Engine SDK (`github.com/docker/docker`):
-
-1. Stop container
-2. Export image as tar
-3. Tar bind-mount volumes
-4. Restart container
-
-Progress reported via `ProgressFunc` callback.
-
-- Treat `ProgressFunc` as best-effort and non-fatal
-- If `ProgressFunc` returns an error or panics, recover/log context and continue backup/restore work
-- Do not abort core operations solely due to progress reporting failures
-- Keep progress updates monotonic and emit a final completion update when possible
-
-## VM Handler
-
-Uses the pure-Go libvirt RPC client (`github.com/digitalocean/go-libvirt`) on Linux only:
-
-- Connects to `qemu:///system`
-- Uses libvirt backup jobs to emit standalone disk artifacts
-- Uses a temporary paused boot session for cold backups when the guest is shut off because libvirt backup jobs require an active domain
-- Restores disk images and NVRAM with `copyFileWithProgress` from `fileutil.go`
-
-## Error Handling
-
-- Wrap all errors with operation context
-- Use `_ = file.Close()` for cleanup in error paths
-- Report meaningful progress percentages
+Do not copy the interface into this file; the source is authoritative.

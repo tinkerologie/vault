@@ -4,34 +4,24 @@ applyTo: "internal/db/**/*.go"
 
 # Database Instructions
 
-Reference: [`AGENTS.md`](../../AGENTS.md) for full project context.
+Read `internal/db/db.go`, `internal/db/migrations.go`, and the affected
+repository file before editing.
 
-## SQLite Configuration
+- Use `modernc.org/sqlite`; Vault must remain CGO-free.
+- Preserve the DSN pragmas in `Open`: immediate transactions, 30-second busy
+  timeout, WAL, foreign keys, and the WAL size limit.
+- `DB` owns an atomic `*sql.DB` handle so restore can reopen the database.
+  Route operations through `DB` methods rather than caching the underlying
+  handle.
+- Schema changes remain additive and idempotent. This repository does not use a
+  versioned migration framework.
+- Use bound parameters for values; never interpolate untrusted data into SQL.
+- Use context-aware query methods when the caller has a context.
+- Close rows and check iteration/scan errors.
+- Preserve foreign-key and restore/snapshot semantics when changing data
+  relationships.
+- Use `t.TempDir()` databases when filesystem, reopen, WAL, or multi-handle
+  behavior matters. `:memory:` is acceptable for isolated single-handle tests.
 
-- Pure Go driver: `modernc.org/sqlite` (no CGO)
-- WAL mode with 5s busy timeout
-- Foreign keys enabled via PRAGMA
-
-## Schema
-
-Inline in `migrations.go` using `CREATE TABLE IF NOT EXISTS`. No versioned migration framework. Five tables:
-
-- `storage_destinations` — storage backend configs (JSON blob in `config` column)
-- `jobs` — backup job definitions
-- `job_items` — items (containers/VMs) within a job
-- `job_runs` — execution history
-- `restore_points` — available restore points
-
-## Repository Pattern
-
-- `job_repo.go` — Job, JobItem, JobRun, RestorePoint CRUD
-- `storage_repo.go` — StorageDestination CRUD
-- All methods on `*DB` struct
-
-## Conventions
-
-- Always close `rows` with `defer rows.Close()`
-- Use `_ = sqlDB.Close()` in error paths
-- Scan nullable fields with `sql.NullString`, `sql.NullInt64`
-- For Create operations on all tables, return `(int64, error)` (returns last insert ID)
-- Return `error` for Update/Delete operations
+Do not duplicate the table inventory here; `internal/db/migrations.go` is the
+authoritative schema.
