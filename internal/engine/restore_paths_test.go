@@ -174,6 +174,78 @@ func TestResolveSymlinkTargetAcceptsValid(t *testing.T) {
 	}
 }
 
+func TestVolumeRestoreTarget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		restoreDest string
+		mountType   string
+		volumeName  string
+		source      string
+		want        string
+		wantErr     bool
+	}{
+		{
+			name:        "empty restore dest returns original source",
+			restoreDest: "",
+			mountType:   "bind",
+			source:      "/mnt/user/appdata/nginx",
+			want:        "/mnt/user/appdata/nginx",
+		},
+		{
+			name:        "custom dest with bind mount uses base of source",
+			restoreDest: "/tmp/restore",
+			mountType:   "bind",
+			source:      "/mnt/user/appdata/nginx",
+			want:        "/tmp/restore/nginx",
+		},
+		{
+			name:        "custom dest with named volume uses volume name",
+			restoreDest: "/tmp/restore",
+			mountType:   "volume",
+			volumeName:  "myvol",
+			source:      "/var/lib/docker/volumes/myvol/_data",
+			want:        "/tmp/restore/myvol",
+		},
+		{
+			name:        "custom dest with named volume but empty name falls back to base source",
+			restoreDest: "/tmp/restore",
+			mountType:   "volume",
+			volumeName:  "",
+			source:      "/var/lib/docker/volumes/abc123/_data",
+			want:        "/tmp/restore/_data",
+		},
+		{
+			name:        "traversal attempt in volume name rejected",
+			restoreDest: "/tmp/restore",
+			mountType:   "volume",
+			volumeName:  "../../etc",
+			source:      "/var/lib/docker/volumes/evil/_data",
+			wantErr:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := volumeRestoreTarget(tc.restoreDest, tc.mountType, tc.volumeName, tc.source)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("volumeRestoreTarget() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("volumeRestoreTarget() error = %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("volumeRestoreTarget() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeVMRestorePlanRejectsUnsafeTarget(t *testing.T) {
 	t.Parallel()
 

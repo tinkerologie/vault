@@ -1182,21 +1182,12 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			continue // skip if archive doesn't exist
 		}
 
-		targetPath := mount.Source
-		if restoreDest != "" {
-			// For named volumes the recreated container's bind is rewritten to
-			// restoreDest/<volume-name> (see recreateAndStartContainer), so the
-			// data must land there too — not restoreDest/_data (base of the
-			// /var/lib/docker/volumes/<name>/_data source).
-			component := filepath.Base(mount.Source)
-			if mount.Type == "volume" && mount.Name != "" {
-				component = mount.Name
-			}
-			volumeName, err := normalizeRestoreComponent(component)
-			if err != nil {
-				return err
-			}
-			targetPath = filepath.Join(restoreDest, volumeName)
+		// For named volumes the recreated container's bind is rewritten to
+		// restoreDest/<volume-name> (see recreateAndStartContainer), so the
+		// data must land there too — not restoreDest/_data.
+		targetPath, err := volumeRestoreTarget(restoreDest, mount.Type, mount.Name, mount.Source)
+		if err != nil {
+			return err
 		}
 		normalizedTargetPath, err := normalizeRestorePath(targetPath)
 		if err != nil {
@@ -1307,6 +1298,16 @@ type restoreInspect struct {
 		Source      string `json:"Source"`
 		Destination string `json:"Destination"`
 	} `json:"Mounts"`
+}
+
+// mountInfo carries the mount fields needed to route a chunked volume
+// restore to the correct target directory. It mirrors the anonymous struct
+// in restoreInspect.Mounts but as a named type so it can be passed in maps.
+type mountInfo struct {
+	Type        string
+	Name        string
+	Source      string
+	Destination string
 }
 
 // recreateAndStartContainer is the shared post-volume-restore pipeline:
@@ -1848,11 +1849,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 // recreates + starts the container via the shared
 // recreateAndStartContainer helper.
 //
-// The fifth argument is the legacy destPath used by other RestoreChunked
-// implementations; for containers it is ignored because each volume's
-// destination is the original bind source from inspect.Mounts (so volumes
-// land back where they were).
-func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, _ string, progress ProgressFunc) error {
+// The destPath argument is the custom restore destination (empty for
+// in-place restore). When set, volumes are extracted under
+// destPath/<volume-name> rather than their original bind sources, matching
+// the bind-mount rewrite recreateAndStartContainer applies.
+func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
 	if repo == nil {
 		return fmt.Errorf("container: dedup repo is nil")
 	}
@@ -1917,52 +1918,12 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		}
 	}
 
-	// 4. Restore volumes. Each __vol__<dest> entry's single chunk ID is a
-	//    sub-manifest ID — hand off to FolderHandler.RestoreChunked with
-	//    the original bind source from inspect.Mounts as the dest path.
-	//    Skipped entries (Size == volumeSkippedSize) are silently honoured.
-	if progress != nil {
-		progress(item.Name, 40, "restoring volumes")
+	// Resolve custom restore destination: explicit destPath parameter wins,
+	// fall back to item.Settings["restore_destination"].
+	restoreDest := destPath
+	if restoreDest == "" {
+		restoreDest, _ = item.Settings["restore_destination"].(string)
 	}
-	fh := &FolderHandler{}
-	mountByDest := map[string]string{} // destination → host source
-	for _, mnt := range inspect.Mounts {
-		if backupableMount(mnt.Type) && mnt.Destination != "" {
-			mountByDest[mnt.Destination] = mnt.Source
-		}
-	}
-	for k, v := range m.Files {
-		if !strings.HasPrefix(k, containerVolPrefix) {
-			continue
-		}
-		if v.Size == volumeSkippedSize {
-			log.Printf("engine: chunked restore: %s was skipped at backup time, nothing to restore", k)
-			continue
-		}
-		if len(v.Chunks) == 0 {
-			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
-			continue
-		}
-		dest := strings.TrimPrefix(k, containerVolPrefix)
-		src, ok := mountByDest[dest]
-		if !ok || src == "" {
-			log.Printf("engine: chunked restore: no matching bind mount for %s in inspect — skipping", dest)
-			continue
-		}
-		if err := os.MkdirAll(src, 0o750); err != nil {
-			return fmt.Errorf("mkdir volume %s: %w", src, err)
-		}
-		proxy := BackupItem{Name: dest, Type: "folder"}
-		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
-			return fmt.Errorf("restore volume %s: %w", dest, err)
-		}
-	}
-
-	// 5. Recreate + start container (shared helper with classic restore).
-	//    Pass sourceDir="" because the chunked format has no template.xml
-	//    or image_meta.json sidecars — image_meta seeding above already
-	//    handled the update-status seeding from the manifest entry.
-	restoreDest, _ := item.Settings["restore_destination"].(string)
 	if restoreDest != "" {
 		normalized, err := normalizeRestorePath(restoreDest)
 		if err != nil {
@@ -1970,6 +1931,21 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		}
 		restoreDest = normalized
 	}
+
+	// 4. Restore volumes. Each __vol__<dest> entry's single chunk ID is a
+	//    sub-manifest ID — restoreChunkedVolumes routes each to the correct
+	//    target (original source or custom dest).
+	if progress != nil {
+		progress(item.Name, 40, "restoring volumes")
+	}
+	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, progress); err != nil {
+		return err
+	}
+
+	// 5. Recreate + start container (shared helper with classic restore).
+	//    Pass sourceDir="" because the chunked format has no template.xml
+	//    or image_meta.json sidecars — image_meta seeding above already
+	//    handled the update-status seeding from the manifest entry.
 	// Reassemble the logical dump, if this backup carried one, so the shared
 	// recreate path reloads it exactly as it does for a classic backup.
 	// Without this a dedup restore would silently ignore a dump the backup
@@ -1987,6 +1963,58 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	}
 	if progress != nil {
 		progress(item.Name, 100, "container restored")
+	}
+	return nil
+}
+
+// restoreChunkedVolumes restores each __vol__<dest> sub-manifest entry in m
+// to its target directory: the original bind/volume source when restoreDest
+// is empty, or restoreDest/<volume-name> when a custom destination is set
+// (mirroring classic Restore and recreateAndStartContainer's bind rewrite).
+// The function needs no Docker client — it delegates file extraction to
+// FolderHandler.RestoreChunked — making it testable without a Docker mock.
+func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, progress ProgressFunc) error {
+	fh := &FolderHandler{}
+	mountByDest := map[string]mountInfo{}
+	for _, mnt := range inspect.Mounts {
+		if backupableMount(mnt.Type) && mnt.Destination != "" {
+			mountByDest[mnt.Destination] = mountInfo{
+				Type:        mnt.Type,
+				Name:        mnt.Name,
+				Source:      mnt.Source,
+				Destination: mnt.Destination,
+			}
+		}
+	}
+	for k, v := range m.Files {
+		if !strings.HasPrefix(k, containerVolPrefix) {
+			continue
+		}
+		if v.Size == volumeSkippedSize {
+			log.Printf("engine: chunked restore: %s was skipped at backup time, nothing to restore", k)
+			continue
+		}
+		if len(v.Chunks) == 0 {
+			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
+			continue
+		}
+		dest := strings.TrimPrefix(k, containerVolPrefix)
+		mnt, ok := mountByDest[dest]
+		if !ok || mnt.Source == "" {
+			log.Printf("engine: chunked restore: no matching bind mount for %s in inspect — skipping", dest)
+			continue
+		}
+		src, err := volumeRestoreTarget(restoreDest, mnt.Type, mnt.Name, mnt.Source)
+		if err != nil {
+			return fmt.Errorf("restore volume %s: %w", dest, err)
+		}
+		if err := os.MkdirAll(src, 0o750); err != nil {
+			return fmt.Errorf("mkdir volume %s: %w", src, err)
+		}
+		proxy := BackupItem{Name: dest, Type: "folder"}
+		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
+			return fmt.Errorf("restore volume %s: %w", dest, err)
+		}
 	}
 	return nil
 }

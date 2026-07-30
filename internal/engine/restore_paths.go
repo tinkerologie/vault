@@ -44,6 +44,26 @@ func normalizeRestoreComponent(name string) (string, error) {
 	return normalizedName, nil
 }
 
+// volumeRestoreTarget resolves where a restored volume's data must land.
+// With no custom destination the data goes back to the original source.
+// With one, it goes to restoreDest/<component> where component is the named
+// volume's name or the base of the bind source — matching the bind rewrite
+// recreateAndStartContainer applies, so data and recreated container agree.
+func volumeRestoreTarget(restoreDest, mountType, name, source string) (string, error) {
+	if restoreDest == "" {
+		return source, nil
+	}
+	component := filepath.Base(source)
+	if mountType == "volume" && name != "" {
+		component = name
+	}
+	volumeName, err := normalizeRestoreComponent(component)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(restoreDest, volumeName), nil
+}
+
 func joinArchiveTarget(destDir, entryName string) (string, error) {
 	targetPath, err := safepath.JoinUnderBase(destDir, filepath.FromSlash(entryName), false)
 	if err != nil {
