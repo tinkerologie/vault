@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
@@ -196,5 +197,54 @@ func TestRestoreChunkedVolumes_SkippedVolumeNotRestored(t *testing.T) {
 
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Errorf("skipped volume target %s should not exist", target)
+	}
+}
+
+// TestRestoreChunkedVolumes_InvalidMountSource is a regression test for the
+// path-traversal fix: a bind-mount Source outside restoreAllowedRoots must
+// cause restoreChunkedVolumes to return an "invalid restore path" error before
+// os.MkdirAll is ever attempted.
+func TestRestoreChunkedVolumes_InvalidMountSource(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "secret.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	subID := backupTestVolume(t, r, src)
+
+	// /dev/vault is outside restoreAllowedRoots — normalizeRestorePath must
+	// reject it before os.MkdirAll is called.
+	disallowedSource := "/dev/vault"
+	inspect := inspectFromJSON(t, fmt.Sprintf(`{
+		"Name": "/test-container",
+		"Config": {"Image": "nginx:latest"},
+		"Mounts": [{"Type":"bind","Source":%q,"Destination":"/data"}]
+	}`, disallowedSource))
+
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			containerVolPrefix + "/data": {
+				Size:   100,
+				Chunks: []dedup.ID{subID},
+			},
+		},
+	}
+
+	// restoreDest="" causes volumeRestoreTarget to return Source directly,
+	// so normalizeRestorePath must reject /dev/vault.
+	err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil)
+	if err == nil {
+		t.Fatal("restoreChunkedVolumes() expected error for path outside allowed roots, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid restore path") {
+		t.Errorf("restoreChunkedVolumes() error = %q, want it to contain \"invalid restore path\"", err.Error())
+	}
+
+	// The disallowed path must not have been created on disk.
+	if _, statErr := os.Stat(disallowedSource); !os.IsNotExist(statErr) {
+		t.Errorf("disallowed path %s should not have been created", disallowedSource)
 	}
 }

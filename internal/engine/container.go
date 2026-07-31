@@ -2008,6 +2008,11 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
+		normalizedSrc, err := normalizeRestorePath(src)
+		if err != nil {
+			return fmt.Errorf("restore volume %s: %w", dest, err)
+		}
+		src = normalizedSrc
 		if err := os.MkdirAll(src, 0o750); err != nil {
 			return fmt.Errorf("mkdir volume %s: %w", src, err)
 		}
