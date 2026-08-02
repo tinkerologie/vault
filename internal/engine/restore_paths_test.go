@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -255,5 +256,42 @@ func TestNormalizeVMRestorePlanRejectsUnsafeTarget(t *testing.T) {
 
 	if err := normalizeVMRestorePlan(plan); err == nil {
 		t.Fatal("normalizeVMRestorePlan() should reject unsafe targets")
+	}
+}
+
+// TestCheckVolumeTargetCollisions guards custom-destination restores against
+// silently merging two distinct volumes. volumeRestoreTarget keys on the base
+// of the bind source, so sources that differ only above their last component
+// collide on one directory — the restore would interleave both trees and point
+// both binds at it, reporting success.
+func TestCheckVolumeTargetCollisions(t *testing.T) {
+	colliding := []mountInfo{
+		{Type: "bind", Source: "/mnt/user/app/config", Destination: "/config"},
+		{Type: "bind", Source: "/mnt/cache/other/config", Destination: "/other"},
+	}
+
+	// No custom destination: every volume returns to its own source, so the
+	// shared basename is harmless and must not be rejected.
+	if err := checkVolumeTargetCollisions("", colliding); err != nil {
+		t.Fatalf("collision reported without a custom destination: %v", err)
+	}
+
+	err := checkVolumeTargetCollisions("/mnt/user/restore", colliding)
+	if err == nil {
+		t.Fatal("two mounts resolving to the same target were accepted — " +
+			"the restore would merge them and report success")
+	}
+	for _, want := range []string{"/mnt/user/app/config", "/mnt/cache/other/config"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name the colliding source %q, got: %v", want, err)
+		}
+	}
+
+	distinct := []mountInfo{
+		{Type: "bind", Source: "/mnt/user/app/config", Destination: "/config"},
+		{Type: "bind", Source: "/mnt/user/app/data", Destination: "/data"},
+	}
+	if err := checkVolumeTargetCollisions("/mnt/user/restore", distinct); err != nil {
+		t.Fatalf("distinct basenames rejected: %v", err)
 	}
 }

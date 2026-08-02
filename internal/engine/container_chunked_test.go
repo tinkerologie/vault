@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -321,5 +322,43 @@ func TestBackupChunked_DifferentialStopBehaviour(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBackupChunked_AllMountsExcluded guards the dedup path against the same
+// silent data-loss trap the classic path already refuses: every backup-eligible
+// mount excluded, producing a "successful" restore point that holds no volume
+// data and cannot reconstruct the container. Before the guard, BackupChunked
+// recorded each excluded mount as skipped and committed the manifest anyway.
+//
+// The container must NOT be stopped for a run that cannot produce anything.
+func TestBackupChunked_AllMountsExcluded(t *testing.T) {
+	mock := newRunningMock(t, true)
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &ContainerHandler{cli: mock}
+	item := BackupItem{
+		Name: "all-excluded",
+		Type: "container",
+		Settings: map[string]any{
+			"id": "abc123",
+			// newRunningMock's only eligible mount is /data.
+			"exclude_paths": []any{"/data"},
+		},
+	}
+
+	_, err := h.BackupChunked(context.Background(), item, r, noopProgress)
+	if err == nil {
+		t.Fatal("BackupChunked succeeded with every eligible mount excluded — " +
+			"that commits a restore point holding no volume data")
+	}
+	if !strings.Contains(err.Error(), "excluded") {
+		t.Errorf("error should name exclusion as the cause, got: %v", err)
+	}
+	if mock.stopCalled {
+		t.Error("container was stopped for a run that cannot produce a backup — " +
+			"the guard must run before the stop")
 	}
 }

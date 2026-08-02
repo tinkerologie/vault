@@ -31,6 +31,41 @@ const DatabaseDumpFile = "database.sql"
 // stores its logical dump under, alongside __vol__ volume entries.
 const ContainerDBDumpKey = "__dbdump__"
 
+// DatabaseReplayMarker marks a backup whose dump should be reloaded over the
+// restored volume, and ContainerDBReplayKey is its dedup-manifest equivalent.
+//
+// The dump is taken before the container is stopped, because it needs a live
+// server; the volume archives are taken after. When the container IS stopped
+// the volume is therefore both consistent (a clean shutdown flushes) and NEWER
+// than the dump, so replaying the dump over it would drop every transaction
+// committed while the dump ran — the dump's DROP/replace statements make that
+// silent. When the container is NOT stopped (no_stop), the volume is read from
+// a live server and may be torn, so there the dump is the trustworthy source
+// and is worth replaying.
+//
+// The marker records which of those two a given backup is, since restore cannot
+// otherwise tell. Absent — including on every backup written before this marker
+// existed — means do not replay: the dump is still restored into the backup
+// directory for manual reload.
+const (
+	DatabaseReplayMarker = "database.replay"
+	ContainerDBReplayKey = "__dbdump_replay__"
+)
+
+// writeDatabaseReplayMarker records that this backup's volumes were captured
+// live, so a restore should reload the dump over them.
+func writeDatabaseReplayMarker(destDir string) error {
+	return os.WriteFile(filepath.Join(destDir, DatabaseReplayMarker), nil, 0o600)
+}
+
+// databaseReplayRequested reports whether the backup in sourceDir carries the
+// marker. Any error reading it is treated as absent — the conservative answer,
+// since a spurious replay destroys data and a skipped one does not.
+func databaseReplayRequested(sourceDir string) bool {
+	_, err := os.Stat(filepath.Join(sourceDir, DatabaseReplayMarker))
+	return err == nil
+}
+
 // How long a restored database server is given to accept connections before
 // the dump reload gives up, and how often it is polled.
 const (

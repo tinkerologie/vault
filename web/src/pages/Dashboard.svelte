@@ -594,6 +594,12 @@
     if (s.recent_failed > 0) {
       return `${s.recent_failed} recent failure${s.recent_failed === 1 ? '' : 's'} – check History`
     }
+    // A fresh install scores 0 because nothing has completed yet, not because
+    // anything went wrong. Reporting "Attention needed" there is a false alarm
+    // on the very first screen a new user sees.
+    if (!s.recent_failed && !s.recent_success && !s.last_success_at) {
+      return 'No backups completed yet'
+    }
     if (score >= 80) return 'All backups healthy'
     if (score >= 50) return 'Backups mostly healthy'
     return 'Attention needed – recent backups have not completed'
@@ -832,8 +838,14 @@
     </div>
     {#if hasUnprotectedItems}
       <button onclick={() => navigate('/jobs')} class="text-[11px] text-vault-text hover:text-vault-dark font-medium mt-1.5 text-left">{unprotectedCount} unprotected →</button>
-    {:else}
+    {:else if fullyProtected}
       <p class="text-[11px] text-success mt-1.5 font-medium">All items covered</p>
+    {:else}
+      <!-- Every item is in a job but none has a restore point yet (fresh install,
+           first backup still running). unprotectedCount excludes pending items, so
+           without this branch the tile claimed "All items covered" in success-green
+           beside a red 0/N bar. Mirrors the Protection panel's fullyProtected gate. -->
+      <p class="text-[11px] text-text-dim mt-1.5 font-medium">{totalItems - totalProtected} pending first backup</p>
     {/if}
   </div>
 {/snippet}

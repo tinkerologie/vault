@@ -83,14 +83,37 @@ func NewVMHandler() (*VMHandler, error) {
 	return &VMHandler{conn: conn, sock: sock}, nil
 }
 
+// libvirtDisconnectTimeout bounds the graceful ConnectClose handshake before
+// Close falls back to breaking the socket. Short on purpose: this runs only on
+// teardown, where the connection is finished with either way.
+const libvirtDisconnectTimeout = 5 * time.Second
+
 // Close disconnects from libvirt. Safe to call on a nil receiver.
+//
+// Disconnect is graceful — it sends ConnectClose and waits on an unbounded
+// response channel — so calling it and *then* closing the socket means the
+// force-close this type holds the socket for (see the struct comment, issue
+// #265) is unreachable in exactly the case it exists for: libvirtd accepted the
+// connection and stopped replying. A deferred Close on the adaptive-probe path
+// holds the global run mutex, so an unbounded wait there wedges every later
+// backup. The handshake is therefore bounded, and the socket is closed either
+// way — which also unblocks the pending RPC, so the goroutine does not leak.
 func (h *VMHandler) Close() error {
 	if h == nil || h.conn == nil {
 		return nil
 	}
-	err := h.conn.Disconnect()
-	// Always drop the socket: Disconnect can fail or hang up early, and the
-	// fd must not be leaked either way.
+	done := make(chan error, 1)
+	go func() { done <- h.conn.Disconnect() }()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(libvirtDisconnectTimeout):
+		log.Printf("engine/vm: libvirt disconnect did not return within %s — forcing socket close", libvirtDisconnectTimeout)
+	}
+
+	// Always drop the socket: Disconnect can fail, hang up early, or (above)
+	// never return, and the fd must not be leaked either way.
 	if h.sock != nil {
 		if cerr := h.sock.Close(); err == nil && !errors.Is(cerr, net.ErrClosed) {
 			err = cerr

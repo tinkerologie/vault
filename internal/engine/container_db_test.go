@@ -319,3 +319,29 @@ func TestContainerStateDescription(t *testing.T) {
 		t.Errorf("got %q, want a fallback", got)
 	}
 }
+
+// TestDatabaseReplayMarker pins the rule that decides whether a restore reloads
+// the dump over the restored volume.
+//
+// The dump is taken before the stop; the volume after. A stopped container's
+// volume is therefore consistent AND newer, so replaying the dump would drop
+// everything committed while the dump ran. Only a live (no_stop) volume read,
+// which may be torn, justifies the replay.
+func TestDatabaseReplayMarker(t *testing.T) {
+	// Absent marker — the default, and what every backup written before the
+	// marker existed looks like — must NOT replay.
+	clean := t.TempDir()
+	if databaseReplayRequested(clean) {
+		t.Error("replay requested with no marker present; an older backup would be " +
+			"rolled back to its dump on restore")
+	}
+
+	live := t.TempDir()
+	if err := writeDatabaseReplayMarker(live); err != nil {
+		t.Fatalf("writeDatabaseReplayMarker: %v", err)
+	}
+	if !databaseReplayRequested(live) {
+		t.Error("marker written but not detected; a torn live volume would never " +
+			"get the dump that makes it loadable")
+	}
+}

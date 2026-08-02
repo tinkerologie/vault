@@ -552,6 +552,46 @@ func countExcludedMounts(mounts []container.MountPoint, exclusions []string) (el
 	return eligible, excluded
 }
 
+// checkVolumeTargetCollisions rejects a custom-destination restore whose mounts
+// would collide on a single directory.
+//
+// volumeRestoreTarget keys a custom target on the volume name or the BASE of the
+// bind source, so two mounts with distinct sources but the same basename — say
+// /mnt/user/app/config and /mnt/cache/other/config — both resolve to
+// <dest>/config. Their trees would be merged, matching paths silently
+// overwriting one another, and recreateAndStartContainer would then point both
+// binds at that one directory. Failing before anything is written is the only
+// safe answer: the alternative is a restore that reports success and hands back
+// interleaved data.
+//
+// Only custom destinations are affected — with restoreDest empty every volume
+// goes back to its own original source and collision is impossible.
+func checkVolumeTargetCollisions(restoreDest string, mounts []mountInfo) error {
+	if restoreDest == "" {
+		return nil
+	}
+	seen := make(map[string]string, len(mounts))
+	for _, m := range mounts {
+		if !backupableMount(m.Type) || !restorableVolume(m.Type, m.Name) {
+			continue
+		}
+		if m.Source == "" || m.Destination == "" {
+			continue
+		}
+		target, err := volumeRestoreTarget(restoreDest, m.Type, m.Name, m.Source)
+		if err != nil {
+			return err
+		}
+		if prev, dup := seen[target]; dup {
+			return fmt.Errorf("cannot restore to %s: mounts %q and %q both resolve to %q; "+
+				"restore to their original locations instead, or restore one at a time",
+				restoreDest, prev, m.Source, target)
+		}
+		seen[target] = m.Source
+	}
+	return nil
+}
+
 // catchAllExclusions are patterns that would exclude every mount. Rejected
 // from labels — see parseLabelExclusions.
 var catchAllExclusions = map[string]struct{}{
@@ -745,6 +785,18 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				item.Name, changedSince.Format(time.RFC3339))
 			needsStop = false
 		}
+	}
+
+	// needsStop is final here. A dump is only worth reloading over the restored
+	// volume when that volume was read from a still-running server and so may be
+	// torn — see DatabaseReplayMarker.
+	if databaseDumpEnabled(item.Settings) && wasRunning && !needsStop {
+		if err := writeDatabaseReplayMarker(destDir); err != nil {
+			return nil, fmt.Errorf("recording database replay marker for %s: %w", item.Name, err)
+		}
+		// Everything that reaches the destination is registered here — a file
+		// merely written into destDir is never uploaded.
+		result.Files = append(result.Files, backupFileInfo(filepath.Join(destDir, DatabaseReplayMarker)))
 	}
 
 	if needsStop {
@@ -1157,6 +1209,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		}
 		restoreDest = normalizedRestoreDest
 	}
+	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
+		return err
+	}
 
 	// Step 3: Restore volumes.
 	// Load the volumes manifest (if present) to know which were skipped.
@@ -1185,6 +1240,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		// For named volumes the recreated container's bind is rewritten to
 		// restoreDest/<volume-name> (see recreateAndStartContainer), so the
 		// data must land there too — not restoreDest/_data.
+		// Collisions are rejected up-front by checkVolumeTargetCollisions.
 		targetPath, err := volumeRestoreTarget(restoreDest, mount.Type, mount.Name, mount.Source)
 		if err != nil {
 			return err
@@ -1308,6 +1364,16 @@ type mountInfo struct {
 	Name        string
 	Source      string
 	Destination string
+}
+
+// mountInfos converts the anonymous mount structs into the named type, so both
+// restore paths can share helpers that take a mount list.
+func (ri restoreInspect) mountInfos() []mountInfo {
+	out := make([]mountInfo, 0, len(ri.Mounts))
+	for _, m := range ri.Mounts {
+		out = append(out, mountInfo{Type: m.Type, Name: m.Name, Source: m.Source, Destination: m.Destination})
+	}
+	return out
 }
 
 // recreateAndStartContainer is the shared post-volume-restore pipeline:
@@ -1536,17 +1602,27 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		// Failing to become ready is different: nothing has been replayed, the
 		// volume restore stands on its own, so that is a warning.
 		if sourceDir != "" {
-			if dumpPath := findDatabaseDump(sourceDir); dumpPath != "" {
+			if dumpPath := findDatabaseDump(sourceDir); dumpPath != "" && !databaseReplayRequested(sourceDir) {
+				// The volumes were captured with the server stopped, so they are
+				// consistent AND newer than the dump. Replaying it would roll the
+				// database back to where it stood when the dump began. The dump
+				// is left in place for a manual or cross-version reload.
+				log.Printf("engine: %s: database dump restored to %s but not reloaded — "+
+					"the restored volume is the newer, consistent copy", item.Name, dumpPath)
+			} else if dumpPath != "" {
 				progress(item.Name, 95, "reloading database dump")
 				if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
 					log.Printf("engine: %s: WARNING database did not become ready, dump not reloaded (the file-level restore stands): %v", item.Name, err)
 				} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, dumpPath); err != nil {
-					// Warned, not fatal. The volume restore has already put the
-					// database files back and is the primary mechanism; the
-					// dump is a supplement. Failing the whole restore over it
-					// would discard a result that is usually complete, so the
-					// failure is surfaced loudly and the restore stands.
-					log.Printf("engine: %s: WARNING database dump not reloaded (the file-level restore stands): %v", item.Name, err)
+					// Fatal, per the invariant above. The reload has already
+					// begun executing the dump's DROP/replace statements against
+					// the volume-restored server, so the file-level result is no
+					// longer an intact fallback to "stand on". A timeout, SQL
+					// error, or full disk part-way through leaves tables dropped
+					// and only partly recreated; returning nil here would report
+					// that as a completed restore.
+					return fmt.Errorf("reloading database dump for %s: %w (the database is partially reloaded — "+
+						"its contents are not the restored state and should not be relied on)", item.Name, err)
 				}
 			}
 		}
@@ -1686,6 +1762,17 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// (shouldExcludeMount) and surviving mounts get their patterns mapped to
 	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
 	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
+	// Same all-mounts-excluded guard the classic path applies (see the
+	// countExcludedMounts call in Backup). The chunked path records each excluded
+	// mount as skipped and would otherwise commit a manifest holding no volume
+	// data at all — a restore point that cannot reconstruct the container, which
+	// retention may later keep in place of a complete one. Checked before the
+	// stop so a doomed run never takes the container down.
+	if eligible, excluded := countExcludedMounts(inspect.Mounts, exclusions); eligible > 0 && excluded == eligible {
+		return dedup.ID{}, fmt.Errorf("every backup-eligible mount of container %s is excluded (%d of %d); "+
+			"check the job's exclusions, the global exclusion list, and any %s label on the container",
+			item.Name, excluded, eligible, VaultExcludeLabel)
+	}
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	// Stop container for consistent backup (mirrors classic Backup path).
 	// Differential runs: when no backupable volume changed since the parent
@@ -1739,6 +1826,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				item.Name, changedSince.Format(time.RFC3339))
 			needsStop = false
 		}
+	}
+
+	// needsStop is final here — see the matching comment on the classic path.
+	if _, hasDump := m.Files[ContainerDBDumpKey]; hasDump && wasRunning && !needsStop {
+		m.Files[ContainerDBReplayKey] = dedup.ManifestEntry{}
 	}
 	if needsStop {
 		if progress != nil {
@@ -1974,6 +2066,9 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 // The function needs no Docker client — it delegates file extraction to
 // FolderHandler.RestoreChunked — making it testable without a Docker mock.
 func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, progress ProgressFunc) error {
+	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
+		return err
+	}
 	fh := &FolderHandler{}
 	mountByDest := map[string]mountInfo{}
 	for _, mnt := range inspect.Mounts {
@@ -2038,6 +2133,15 @@ func writeChunkedDatabaseDump(repo *dedup.Repo, m dedup.Manifest) (string, func(
 		return "", nil, fmt.Errorf("creating database dump directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
+
+	// Carry the replay marker across into the classic-shaped directory so the
+	// shared restore path applies the same rule on both.
+	if _, replay := m.Files[ContainerDBReplayKey]; replay {
+		if err := writeDatabaseReplayMarker(dir); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("writing database replay marker: %w", err)
+		}
+	}
 
 	// Stored uncompressed by the chunked backup, so it is written back under
 	// the bare name; findDatabaseDump accepts either form.
