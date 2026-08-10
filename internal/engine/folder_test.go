@@ -287,6 +287,42 @@ func TestFolderChunkedRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFolderChunkedRestoresReservedName guards the plugin-installer refactor:
+// the installer lives in Manifest.Installer, not in Files, so a folder that
+// legitimately contains a file literally named "__plg" must still round-trip
+// through BackupChunked + RestoreChunked without being dropped.
+func TestFolderChunkedRestoresReservedName(t *testing.T) {
+	src := t.TempDir()
+	body := []byte("not an installer, just a user file")
+	if err := os.WriteFile(filepath.Join(src, "__plg"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	item := BackupItem{Name: "reserved", Type: "folder", Settings: map[string]any{"path": src}}
+	ctx := context.Background()
+	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := t.TempDir()
+	if err := h.RestoreChunked(ctx, item, r, manifestID, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "__plg")); err != nil { // #nosec G304 — test-controlled tempdir
+		t.Errorf("a real file named __plg must be restored, not dropped: %v", err)
+	} else if !bytes.Equal(got, body) {
+		t.Errorf("restored __plg content mismatch: got %q", got)
+	}
+}
+
 // TestFolderChunkedDedupSkipsRepeats verifies that running BackupChunked
 // twice against an unchanged source tree does not add any new chunks to the
 // repository (content-defined dedup is the whole point of the feature).

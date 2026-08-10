@@ -69,6 +69,13 @@ func RunGC(r *Repo, live []ID, opts GCOptions) (GCResult, error) {
 				reachable[c] = struct{}{}
 			}
 		}
+		// The installer payload lives outside Files but its chunks must stay
+		// reachable, or a sweep would drop them and break restore.
+		if m.Installer != nil {
+			for _, c := range m.Installer.Chunks {
+				reachable[c] = struct{}{}
+			}
+		}
 	}
 	res.Reachable = int64(len(reachable))
 

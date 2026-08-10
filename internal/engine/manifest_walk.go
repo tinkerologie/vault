@@ -70,6 +70,17 @@ func WalkManifestClosure(repo *dedup.Repo, tops []dedup.ID) (manifests, data []d
 				data = append(data, c)
 			}
 		}
+		// Installer payload chunks live outside Files but are real data a
+		// restore reads, so deep verify must re-hash them too.
+		if m.Installer != nil {
+			for _, c := range m.Installer.Chunks {
+				if _, ok := seen[c]; ok {
+					continue
+				}
+				seen[c] = struct{}{}
+				data = append(data, c)
+			}
+		}
 		return nil
 	}
 

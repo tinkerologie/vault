@@ -14,6 +14,13 @@ type Manifest struct {
 	Version int                      `json:"version"`
 	Item    string                   `json:"item"`
 	Files   map[string]ManifestEntry `json:"files"` // key = path relative to source root
+	// Installer, when set, carries an out-of-tree payload that belongs to the
+	// item but is NOT part of the restored file tree — currently the Unraid
+	// plugin .plg installer for chunked plugin backups. It lives outside Files
+	// so it can never collide with a real file path and so a folder restore
+	// never materialises it into the tree. Its chunks are still reachable for
+	// GC and deep verify (see RunGC and WalkManifestClosure).
+	Installer *ManifestEntry `json:"installer,omitempty"`
 }
 
 // ManifestEntry is one path's metadata + chunks. For directories, Chunks is

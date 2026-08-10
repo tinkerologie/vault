@@ -224,9 +224,33 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 // bits so Restore can recreate them with the same mode. Empty files produce
 // a manifest entry with zero chunks (not an error).
 func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+	m, totalBytes, skipped, err := h.buildChunkedManifest(ctx, item, repo, progress)
+	if err != nil {
+		return dedup.ID{}, err
+	}
+	manifestID, err := repo.PutManifest(item.Name, m)
+	if err != nil {
+		return dedup.ID{}, fmt.Errorf("folder: write manifest for %q: %w", item.Name, err)
+	}
+	if progress != nil {
+		msg := fmt.Sprintf("manifest written (%d entries, %s)", len(m.Files), humanizeBytes(float64(totalBytes)))
+		if skipped > 0 {
+			msg += fmt.Sprintf(", %d skipped", skipped)
+		}
+		progress(item.Name, 100, msg)
+	}
+	return manifestID, nil
+}
+
+// buildChunkedManifest performs the walk-and-chunk pass and returns the
+// in-memory manifest WITHOUT persisting it, so a caller can attach extra
+// out-of-tree data (e.g. PluginHandler's .plg installer) to the manifest
+// before the single PutManifest. Returns the manifest, total bytes chunked,
+// and the number of inaccessible paths that were skipped.
+func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.Manifest, int64, int, error) {
 	srcPath, _ := item.Settings["path"].(string)
 	if srcPath == "" {
-		return dedup.ID{}, fmt.Errorf("folder: missing path setting")
+		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: missing path setting")
 	}
 	srcPath = filepath.Clean(srcPath)
 	// Resolve symlinks so cache-only Unraid shares (symlinks under
@@ -243,7 +267,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	chunker, err := dedup.NewChunker(repo.SplitterSecret())
 	if err != nil {
-		return dedup.ID{}, err
+		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: init chunker: %w", err)
 	}
 
 	// Open srcPath as a rooted handle so file opens during the walk go
@@ -251,7 +275,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	// (gosec G122). Matches the pattern used by tarDirectory in container.go.
 	root, err := os.OpenRoot(srcPath)
 	if err != nil {
-		return dedup.ID{}, fmt.Errorf("folder: open source root: %w", err)
+		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: open source root: %w", err)
 	}
 	defer root.Close()
 
@@ -337,25 +361,13 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 		return nil
 	})
 	if err != nil {
-		return dedup.ID{}, err
+		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: walk %q: %w", item.Name, err)
 	}
 
 	if skipped > 0 {
 		log.Printf("engine: chunked: %s: %d inaccessible path(s) skipped", item.Name, skipped)
 	}
-
-	manifestID, err := repo.PutManifest(item.Name, m)
-	if err != nil {
-		return dedup.ID{}, err
-	}
-	if progress != nil {
-		msg := fmt.Sprintf("manifest written (%d entries, %s)", len(m.Files), humanizeBytes(float64(totalBytes)))
-		if skipped > 0 {
-			msg += fmt.Sprintf(", %d skipped", skipped)
-		}
-		progress(item.Name, 100, msg)
-	}
-	return manifestID, nil
+	return m, totalBytes, skipped, nil
 }
 
 // RestoreChunked reads the Manifest at manifestID and reconstructs the file
