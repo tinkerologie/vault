@@ -65,6 +65,26 @@ func (r *Runner) RunScheduledVerify(jobID int64, mode string) {
 		log.Printf("runner: scheduled verify: job %d (%s) has no restore points yet, skipping", jobID, job.Name)
 		return
 	}
+	// #290: a deep verify streams and re-hashes every chunk, saturating the
+	// destination's disk/network. If a backup is already running against the
+	// same destination, starting one now turns that backup into an apparent
+	// freeze from heavy contention. Defer the deep verify to its next
+	// scheduled tick and surface why, rather than piling onto the destination.
+	// Quick verify only issues HEADs, so it is cheap enough to let through.
+	if VerifyMode(mode) == VerifyModeDeep {
+		if active, cerr := r.db.CountRunningBackupsOnDestination(job.StorageDestID); cerr != nil {
+			log.Printf("runner: scheduled verify: job %d (%s): could not check for active backups, proceeding: %v", jobID, job.Name, cerr)
+		} else if active > 0 {
+			msg := fmt.Sprintf("Deep verify for %q deferred: a backup is running on the same storage destination", job.Name)
+			log.Printf("runner: scheduled verify: %s (active backups=%d); will retry at the next scheduled verify", msg, active)
+			r.logActivity("info", "verify", msg, structuredDetails(map[string]any{
+				"job_id":          jobID,
+				"storage_dest_id": job.StorageDestID,
+				"active_backups":  active,
+			}))
+			return
+		}
+	}
 	id, err := r.RunVerify(rp, VerifyMode(mode))
 	if err != nil {
 		log.Printf("runner: scheduled verify: dispatch failed for job %d: %v", jobID, err)

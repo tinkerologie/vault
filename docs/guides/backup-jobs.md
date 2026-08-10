@@ -263,6 +263,12 @@ Every backup item is hashed with SHA-256 during the upload, and Vault stores the
 
 Both paths use the same code, so per-run and on-demand results are directly comparable.
 
+### Scheduled verification and backup contention
+
+A job can also run verification on its own cron schedule (_Verify schedule_) in either **quick** mode (checks each item exists and is the right size) or **deep** mode (streams every item back and re-hashes it). Deep verification reads the entire backup, so it saturates the destination's disk and network.
+
+To keep that from turning a running backup into an apparent freeze, Vault **defers a scheduled deep verify while a backup is active on the same storage destination**. The deferral is recorded in the activity log (`Deep verify for "<job>" deferred: a backup is running on the same storage destination`) and the deep verify simply runs at its next scheduled tick. Quick verification is cheap enough that it still runs alongside a backup, and on-demand verification you trigger yourself is never deferred.
+
 ---
 
 ## Encryption

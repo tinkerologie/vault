@@ -271,6 +271,64 @@ func TestListJobsByStorageDestID(t *testing.T) {
 	}
 }
 
+func TestCountRunningBackupsOnDestination(t *testing.T) {
+	t.Parallel()
+	d := setupTestDB(t)
+	destA, err := d.CreateStorageDestination(StorageDestination{Name: "A", Type: "local", Config: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destB, err := d.CreateStorageDestination(StorageDestination{Name: "B", Type: "local", Config: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobA, err := d.CreateJob(Job{Name: "ja", StorageDestID: destA, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobB, err := d.CreateJob(Job{Name: "jb", StorageDestID: destB, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One running and one finished run on destA; one running on destB.
+	if _, err := d.CreateJobRun(JobRun{JobID: jobA, Status: "running", BackupType: "full"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateJobRun(JobRun{JobID: jobA, Status: "success", BackupType: "full"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateJobRun(JobRun{JobID: jobB, Status: "running", BackupType: "full"}); err != nil {
+		t.Fatal(err)
+	}
+	// A running *restore* on destA must not count as backup write load.
+	if _, err := d.CreateJobRun(JobRun{JobID: jobA, Status: "running", BackupType: "full", RunType: "restore"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		dest int64
+		want int
+	}{
+		{"only the running backup counts, not the finished run or the restore", destA, 1},
+		{"a different destination counts its own running backup", destB, 1},
+		{"a destination with no jobs counts zero", 99999, 0},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := d.CountRunningBackupsOnDestination(tc.dest)
+			if err != nil {
+				t.Fatalf("CountRunningBackupsOnDestination(%d): %v", tc.dest, err)
+			}
+			if n != tc.want {
+				t.Fatalf("CountRunningBackupsOnDestination(%d) = %d, want %d", tc.dest, n, tc.want)
+			}
+		})
+	}
+}
+
 // --- storage_repo: ReplaceDedupPack / ReplaceDedupChunk ---------------------
 
 func TestReplaceDedupPackUpsertsExisting(t *testing.T) {

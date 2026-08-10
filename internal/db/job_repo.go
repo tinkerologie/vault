@@ -413,6 +413,29 @@ func (d *DB) CleanupStaleRuns() (int64, error) {
 	return res.RowsAffected()
 }
 
+// CountRunningBackupsOnDestination returns how many backup runs are currently
+// active (status 'running', run_type 'backup') for jobs that target the given
+// storage destination. Restores and other non-backup run types are excluded so
+// the count reflects genuine backup write load. Used to avoid starting a heavy
+// deep verify against a destination a backup is already saturating (#290): the
+// two share the same disk/network and running them together turns a slow backup
+// into an apparent freeze.
+func (d *DB) CountRunningBackupsOnDestination(storageDestID int64) (int, error) {
+	var count int
+	err := d.QueryRow(
+		`SELECT COUNT(*) FROM job_runs r
+		 JOIN jobs j ON j.id = r.job_id
+		 WHERE r.status = 'running'
+		   AND COALESCE(r.run_type, 'backup') = 'backup'
+		   AND j.storage_dest_id = ?`,
+		storageDestID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting running backups on destination %d: %w", storageDestID, err)
+	}
+	return count, nil
+}
+
 // DeleteOldFailedRuns removes failed/error job runs older than keepDays.
 func (d *DB) DeleteOldFailedRuns(keepDays int) (int64, error) {
 	res, err := d.Exec(

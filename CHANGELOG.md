@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Updated Go and web dependencies to their latest compatible releases and resolved a high-severity advisory in the web `nanoid` dependency. gosec, govulncheck, and the Go linter pass clean, and the MCP integration remains on the go-sdk v1.7.0 API.
 
+### Changed
+
+- **A scheduled deep verify no longer piles onto a destination that a backup is still writing to.** Deep verification streams and re-hashes every stored item, so running it against the same storage destination as an in-progress backup saturated the shared disk and network — the backup slowed to a crawl and looked frozen, with nothing in the logs to explain it. Vault now defers a scheduled deep verify while a backup is running on the same destination and records why in the activity log, letting the deep verify run at its next scheduled tick instead. Quick verification (existence and size checks only) is light enough to keep running alongside a backup, and an on-demand verify you trigger yourself is never deferred. Closes #290.
+
 ### Fixed
 
 - **A container's database dump is no longer lost when the restore does not reload it.** When a restore left the SQL dump in place — because the restored volume was the newer, consistent copy, the container was not running, or the database never became ready — the dump only ever existed in a temporary staging directory that Vault cleaned up when the restore finished, so there was nothing left for an operator to find. Vault now copies the un-reloaded dump to a durable, discoverable location and reports the exact path in the restore progress and logs: the custom restore destination when one is set (`<destination>/<container>-database.sql`), otherwise beside the container's first restored volume (for example `/mnt/user/appdata/<container>-database.sql`). The file name is prefixed with the container name so restores that share a parent directory do not collide, and the container backup guide now documents where the dump lands for in-place and custom restores. Closes #289.

@@ -61,6 +61,102 @@ func TestRunScheduledVerifyInvalidMode(t *testing.T) {
 	r.RunScheduledVerify(jobID, "totally-bogus-mode")
 }
 
+// seedVerifiableJob creates a job on its own destination with a single restore
+// point so RunScheduledVerify reaches the dispatch decision. It returns the
+// job ID and its storage destination.
+func seedVerifiableJob(t *testing.T, database *db.DB, storageDir, name string) (int64, db.StorageDestination) {
+	t.Helper()
+	dest := createLocalDest(t, database, storageDir)
+	jobID, err := database.CreateJob(db.Job{
+		Name: name, Enabled: true, BackupTypeChain: "full", StorageDestID: dest.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateRestorePoint(db.RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "full",
+		StoragePath: name + "/1_run", Metadata: "{}", SizeBytes: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return jobID, dest
+}
+
+// TestRunScheduledVerifyBackupContention covers #290: a scheduled deep verify
+// must not start while a backup is running on the same storage destination (it
+// would saturate the destination and make the backup appear frozen), while a
+// quick verify and an idle deep verify still dispatch.
+func TestRunScheduledVerifyBackupContention(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		mode       string
+		busyBackup bool
+		wantRuns   int
+	}{
+		{"deep deferred while backup active", "deep", true, 0},
+		{"deep dispatched when destination idle", "deep", false, 1},
+		{"quick runs alongside an active backup", "quick", true, 1},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, database, storageDir := setupTestRunner(t)
+			jobID, dest := seedVerifiableJob(t, database, storageDir, "verify-job")
+
+			if tc.busyBackup {
+				busyJob, err := database.CreateJob(db.Job{
+					Name: "busy-job", Enabled: true, BackupTypeChain: "full", StorageDestID: dest.ID,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := database.CreateJobRun(db.JobRun{JobID: busyJob, Status: "running", BackupType: "full"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			r.RunScheduledVerify(jobID, tc.mode)
+
+			runs, err := database.ListRecentVerifyRuns(10)
+			if err != nil {
+				t.Fatalf("ListRecentVerifyRuns: %v", err)
+			}
+			if len(runs) != tc.wantRuns {
+				t.Fatalf("verify runs = %d, want %d (mode=%s, busyBackup=%v)", len(runs), tc.wantRuns, tc.mode, tc.busyBackup)
+			}
+
+			if tc.wantRuns == 0 {
+				// Deferral must be surfaced in the activity log so the user can
+				// see why the deep verify did not run.
+				entries, err := database.ListActivityLogs(10, "verify")
+				if err != nil {
+					t.Fatalf("ListActivityLogs: %v", err)
+				}
+				if len(entries) != 1 {
+					t.Fatalf("verify activity entries = %d, want 1", len(entries))
+				}
+				if !strings.Contains(entries[0].Message, "deferred") {
+					t.Errorf("activity message = %q, want it to mention the deferral", entries[0].Message)
+				}
+				if !strings.Contains(entries[0].Details, `"active_backups"`) {
+					t.Errorf("activity details = %q, want the active_backups count", entries[0].Details)
+				}
+			} else {
+				// A dispatched run must carry the requested mode.
+				if runs[0].Mode != tc.mode {
+					t.Errorf("dispatched verify mode = %q, want %q", runs[0].Mode, tc.mode)
+				}
+			}
+		})
+	}
+}
+
 // TestVerifyOneFileMissingFile exercises the Stat-failure error path.
 func TestVerifyOneFileMissingFile(t *testing.T) {
 	t.Parallel()
