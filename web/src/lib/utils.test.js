@@ -8,6 +8,7 @@ import {
   formatBytes,
   formatDuration,
   formatSpeed,
+  largestBackupsByJob,
   statusColor,
   statusBadge,
   parseConfig,
@@ -76,6 +77,58 @@ describe('formatSpeed', () => {
     expect(formatSpeed(1024 ** 4, 1)).toBe('1 TB/s')
     expect(formatSpeed(1024 ** 5, 1)).toBe('1 PB/s')
     expect(formatSpeed(1024 ** 3, 2)).toBe(formatBytes(1024 ** 3 / 2) + '/s')
+  })
+})
+
+describe('largestBackupsByJob', () => {
+  const names = new Map([[1, 'Nightly'], [2, 'Weekly']])
+
+  it('keeps the largest backup per job, not the most recent', () => {
+    // Regression for #286: a full (large) run followed by smaller
+    // incrementals must still report the full's size.
+    const runs = [
+      { job_id: 1, run_type: 'backup', size_bytes: 5, started_at: '2026-08-03' },
+      { job_id: 1, run_type: 'backup', size_bytes: 100, started_at: '2026-08-01' }, // the full
+      { job_id: 1, run_type: 'backup', size_bytes: 3, started_at: '2026-08-04' },
+    ]
+    expect(largestBackupsByJob(runs, names)).toEqual([{ name: 'Nightly', size: 100 }])
+  })
+
+  it('sorts jobs by size and maps names', () => {
+    const runs = [
+      { job_id: 1, run_type: 'backup', size_bytes: 10 },
+      { job_id: 2, run_type: 'backup', size_bytes: 50 },
+    ]
+    expect(largestBackupsByJob(runs, names)).toEqual([
+      { name: 'Weekly', size: 50 },
+      { name: 'Nightly', size: 10 },
+    ])
+  })
+
+  it('ignores non-backup runs and zero/missing sizes', () => {
+    const runs = [
+      { job_id: 1, run_type: 'restore', size_bytes: 999 },
+      { job_id: 1, run_type: 'backup', size_bytes: 0 },
+      { job_id: 1, size_bytes: 7 }, // run_type defaults to backup
+    ]
+    expect(largestBackupsByJob(runs, names)).toEqual([{ name: 'Nightly', size: 7 }])
+  })
+
+  it('falls back to Unknown and applies the limit', () => {
+    const runs = [
+      { job_id: 9, run_type: 'backup', size_bytes: 4 },
+      { job_id: 1, run_type: 'backup', size_bytes: 6 },
+    ]
+    expect(largestBackupsByJob(runs, names, 1)).toEqual([{ name: 'Nightly', size: 6 }])
+    expect(largestBackupsByJob(runs, null)).toEqual([
+      { name: 'Unknown', size: 6 },
+      { name: 'Unknown', size: 4 },
+    ])
+  })
+
+  it('handles empty/nullish input', () => {
+    expect(largestBackupsByJob(null, names)).toEqual([])
+    expect(largestBackupsByJob([], names)).toEqual([])
   })
 })
 

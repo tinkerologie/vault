@@ -4,7 +4,7 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { relTime, relTimeUntil, formatSpeed, formatBytes } from '../lib/utils.js'
+  import { relTime, relTimeUntil, formatSpeed, formatBytes, largestBackupsByJob } from '../lib/utils.js'
   import { getProgress, handleProgressMessage, restoreFromStatus, syncFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import Toast from '../components/Toast.svelte'
@@ -198,6 +198,10 @@
       })
       const allRuns = await Promise.all(runPromises)
       recentRuns = allRuns.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()).slice(0, 10)
+      // Refresh the Largest-backups tile from a broad history window so it
+      // reflects the true largest backup, not just the latest incremental.
+      // Fire-and-forget so it never delays the rest of the dashboard.
+      loadLargest()
       // Retention prune counts change whenever a backup runs or a policy edits,
       // both of which reload the dashboard — drop the cache so the $effect below
       // re-fetches instead of showing stale prunable counts until remount.
@@ -389,15 +393,24 @@
     return { used, total, pct: total > 0 ? Math.round((used / total) * 100) : 0, count: storageCaps.length }
   })
 
-  // Top recent backups by size (for the Largest-backups tile), one row per job.
-  const largestBackups = $derived.by(() => {
-    const byJob = {}
-    for (const r of recentRuns) {
-      if ((r.run_type || 'backup') !== 'backup' || !r.size_bytes) continue
-      if (byJob[r.jobName] == null || r.size_bytes > byJob[r.jobName]) byJob[r.jobName] = r.size_bytes
-    }
-    return Object.entries(byJob).map(([name, size]) => ({ name, size })).sort((a, b) => b.size - a.size).slice(0, 5)
-  })
+  // Largest backup per job. Sourced from a broad history window (not the
+  // short recentRuns slice) so an older full backup is not hidden once
+  // smaller incrementals become the most recent runs. Populated by
+  // loadLargest() during the dashboard load.
+  let largestBackups = $state([])
+  // Guards against a slow reload's response overwriting a newer one: each
+  // call claims a generation and only the latest applies its result.
+  let largestLoadGeneration = 0
+  async function loadLargest() {
+    const generation = ++largestLoadGeneration
+    try {
+      const history = await api.getHistory(200)
+      const nameByJob = new Map(jobs.map(j => [j.id, j.name]))
+      if (generation === largestLoadGeneration) {
+        largestBackups = largestBackupsByJob(history, nameByJob)
+      }
+    } catch { /* keep previous value on failure */ }
+  }
 
   // ── Lazily-loaded data for optional tiles (default-off, so fetched only when
   // the user adds the tile). Each guards against duplicate in-flight loads. ──

@@ -286,6 +286,31 @@ export function formatSpeed(bytes, seconds) {
   return formatBytes(bytes / seconds) + '/s';
 }
 
+/**
+ * Reduce backup runs to the single largest backup per job, sorted largest
+ * first. Only "backup" runs with a real size count. `nameByJob` maps a job
+ * id to its display name.
+ *
+ * The Largest-backups dashboard widget must reflect the true largest backup
+ * (typically the full), not whatever happens to be in the last handful of
+ * runs — an incremental run records only its delta, so once a full ages out
+ * of a short recent window the widget would otherwise shrink to a small
+ * incremental. Feeding this a broad history window keeps the full in view.
+ */
+export function largestBackupsByJob(runs, nameByJob, limit = 5) {
+  const maxByJob = new Map()
+  for (const r of runs || []) {
+    if ((r.run_type || 'backup') !== 'backup' || !r.size_bytes) continue
+    if (r.size_bytes > (maxByJob.get(r.job_id) || 0)) maxByJob.set(r.job_id, r.size_bytes)
+  }
+  return Array.from(maxByJob, ([jobId, size]) => ({
+    name: (nameByJob && nameByJob.get(jobId)) || 'Unknown',
+    size,
+  }))
+    .sort((a, b) => b.size - a.size)
+    .slice(0, Math.max(0, limit))
+}
+
 // Describes the outcome of a database location change for the Settings toast,
 // so the user is told whether the database actually moved rather than only
 // that the setting was saved. A `warning` means the move did not complete —
