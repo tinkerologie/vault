@@ -1,6 +1,7 @@
 <script>
   import { api } from '../lib/api.js'
   import { navigate } from '../lib/router.svelte.js'
+  import { formatBytes } from '../lib/utils.js'
   import StorageForm from '../components/StorageForm.svelte'
   import Toast from '../components/Toast.svelte'
   import InlineSpinner from '../components/InlineSpinner.svelte'
@@ -254,7 +255,7 @@
             <input type="radio" name="recover-snapshot" class="accent-vault mt-1" value={b} bind:group={selected} />
             <span class="min-w-0">
               <span class="block text-sm font-medium text-text">{b.is_latest ? 'Most recent backup' : fmtWhen(b.timestamp)}</span>
-              <span class="block text-xs text-text-muted mt-0.5 truncate">{b.name} · {(b.size / 1024).toFixed(0)} KB{b.encrypted ? ' · encrypted' : ''}</span>
+              <span class="block text-xs text-text-muted mt-0.5 truncate">{b.name} · {formatBytes(b.size)}{b.encrypted ? ' · encrypted' : ''}</span>
             </span>
           </label>
         {/each}

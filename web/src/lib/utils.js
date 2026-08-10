@@ -281,11 +281,9 @@ export function formatDurationFromDates(startedAt, completedAt) {
 /** Format bytes/seconds into human-readable speed (e.g. "31.2 MB/s") */
 export function formatSpeed(bytes, seconds) {
   if (!bytes || !seconds || seconds === 0) return null;
-  const bps = bytes / seconds;
-  const k = 1024;
-  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-  const i = Math.min(Math.floor(Math.log(bps) / Math.log(k)), units.length - 1);
-  return parseFloat((bps / Math.pow(k, i)).toFixed(1)) + ' ' + units[i];
+  // Derived from the shared byte contract so speed units and rounding match
+  // formatBytes (and the daemon) instead of diverging near unit boundaries.
+  return formatBytes(bytes / seconds) + '/s';
 }
 
 // Describes the outcome of a database location change for the Settings toast,

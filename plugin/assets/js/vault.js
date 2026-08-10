@@ -39,6 +39,16 @@ function formatBytes(bytes) {
     return parseFloat((Math.round(v * 10) / 10).toFixed(1)) + ' ' + sizes[i];
 }
 
+// Renders server-emitted raw byte counts through the shared formatBytes
+// contract, so packaged plugin pages read the same size as the app and
+// notifications instead of carrying their own divergent /1024 math.
+function hydrateByteCells(root) {
+    (root || document).querySelectorAll('[data-vault-bytes]').forEach(function (el) {
+        el.textContent = formatBytes(Number(el.getAttribute('data-vault-bytes')));
+    });
+}
+document.addEventListener('DOMContentLoaded', function () { hydrateByteCells(document); });
+
 // WebSocket for real-time progress
 let ws = null;
 

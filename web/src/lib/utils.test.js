@@ -70,6 +70,13 @@ describe('formatSpeed', () => {
   it('formats bytes/sec', () => {
     expect(formatSpeed(1048576, 1)).toBe('1 MB/s')
   })
+  it('inherits the shared contract above GB and at boundaries', () => {
+    // Old implementation capped units at GB/s (1 TB/s printed "1024 GB/s")
+    // and used Math.log indexing that diverged near unit boundaries.
+    expect(formatSpeed(1024 ** 4, 1)).toBe('1 TB/s')
+    expect(formatSpeed(1024 ** 5, 1)).toBe('1 PB/s')
+    expect(formatSpeed(1024 ** 3, 2)).toBe(formatBytes(1024 ** 3 / 2) + '/s')
+  })
 })
 
 // These two back the cross-cutting "partial status" cluster — lock current

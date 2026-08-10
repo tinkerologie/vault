@@ -345,15 +345,6 @@
     }
   }
 
-  function formatSize(bytes) {
-    if (!bytes || bytes === 0) return '–'
-    const units = ['B', 'KB', 'MB', 'GB', 'TB']
-    let i = 0
-    let size = bytes
-    while (size >= 1024 && i < units.length - 1) { size /= 1024; i++ }
-    return `${size.toFixed(i > 0 ? 1 : 0)} ${units[i]}`
-  }
-
   async function testConnection(id) {
     testing = id
     try {
@@ -834,7 +825,7 @@
             <div class="flex-1 min-w-0">
               <div class="flex items-center justify-between">
                 <p class="text-sm font-medium text-text truncate">{backup.job_name || 'Unknown Job'}</p>
-                <span class="text-xs text-text-dim shrink-0 ml-2">{formatSize(backup.size_bytes)}</span>
+                <span class="text-xs text-text-dim shrink-0 ml-2">{formatBytes(backup.size_bytes)}</span>
               </div>
               <div class="flex flex-wrap gap-x-3 mt-1 text-xs text-text-dim">
                 <span>{backup.backup_type || 'full'}</span>

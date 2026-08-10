@@ -44,7 +44,7 @@ $jobs = vault_get('/jobs') ?: [];
                 <td><span class="vault-badge badge-<?= $run['status'] ?>"><?= $run['status'] ?></span></td>
                 <td><?= $run['backup_type'] ?></td>
                 <td><?= $run['items_done'] ?>/<?= $run['items_total'] ?> (<?= $run['items_failed'] ?> failed)</td>
-                <td><?= number_format($run['size_bytes'] / 1024 / 1024, 1) ?> MB</td>
+                <td data-vault-bytes="<?= (int)$run['size_bytes'] ?>"><?= number_format((int)$run['size_bytes']) ?> B</td>
                 <td><?= $run['started_at'] ?></td>
                 <td><?= $run['completed_at'] ?></td>
             </tr>
