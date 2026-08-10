@@ -259,12 +259,21 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 
 // RestoreChunked reconstructs the plugin's config directory tree from the
 // manifest and, when the backup captured one, restores the .plg installer
-// file. destPath defaults to the plugin's well-known directory
-// (pluginPath(item.Name)) when empty — the runner passes "" so production
-// restore lands in /boot/config/plugins/<name>/. Tests pass a t.TempDir().
+// file. destPath selects the config restore directory: the runner passes it
+// explicitly, but when empty it falls back to the item's restore_destination
+// setting and then to the plugin's well-known directory
+// (pluginPath(item.Name)) so production restore lands in
+// /boot/config/plugins/<name>/. Tests pass a t.TempDir().
 func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
 	if destPath == "" {
-		destPath = pluginPath(item.Name)
+		// Mirror ContainerHandler.RestoreChunked: honour restore_destination as
+		// a fallback before the well-known directory, so the parameter and the
+		// setting cannot drift apart.
+		if rd, _ := item.Settings["restore_destination"].(string); rd != "" {
+			destPath = rd
+		} else {
+			destPath = pluginPath(item.Name)
+		}
 	}
 	if destPath == "" {
 		return fmt.Errorf("plugin: cannot resolve restore directory for %q", item.Name)

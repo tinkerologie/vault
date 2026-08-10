@@ -204,3 +204,58 @@ func TestPluginChunkedInstaller(t *testing.T) {
 		})
 	}
 }
+
+// TestPluginChunkedRestoreDestination is a regression test for #274:
+// PluginHandler.RestoreChunked ignored the restore_destination setting, so
+// when the destPath parameter was empty the config always landed in the
+// well-known plugin directory. It now falls back to restore_destination,
+// mirroring ContainerHandler.RestoreChunked, while an explicit destPath still
+// takes precedence.
+func TestPluginChunkedRestoreDestination(t *testing.T) {
+	base := t.TempDir()
+	orig := pluginsDir
+	pluginsDir = base
+	t.Cleanup(func() { pluginsDir = orig })
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "config.toml"), []byte("x=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+	h := &PluginHandler{}
+	ctx := context.Background()
+	manifestID, err := h.BackupChunked(ctx, BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"path": src}}, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("explicit destPath wins over setting", func(t *testing.T) {
+		dst := t.TempDir()
+		other := t.TempDir()
+		item := BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"restore_destination": other}}
+		if err := h.RestoreChunked(ctx, item, r, manifestID, dst, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dst, "config.toml")); err != nil {
+			t.Errorf("config should be restored to the explicit destPath: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(other, "config.toml")); !os.IsNotExist(err) {
+			t.Errorf("config must not use restore_destination when destPath is set (err=%v)", err)
+		}
+	})
+
+	t.Run("restore_destination used when destPath empty", func(t *testing.T) {
+		dst := t.TempDir()
+		item := BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"restore_destination": dst}}
+		if err := h.RestoreChunked(ctx, item, r, manifestID, "", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dst, "config.toml")); err != nil {
+			t.Errorf("config should be restored to restore_destination when destPath is empty: %v", err)
+		}
+	})
+}
