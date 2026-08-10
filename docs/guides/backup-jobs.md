@@ -29,6 +29,41 @@ Pick which items to include in this job. Vault discovers items automatically fro
 - Tailscale-enabled containers are fully supported.
 - Bind-mounts that point at the host root (`/` → `/rootfs`, used by Glances, Telegraf, Netdata, cAdvisor, node-exporter) are detected and skipped without walking the host filesystem.
 
+#### Container database dumps
+
+For containers Vault recognises as a database (PostgreSQL, MySQL, MariaDB), a
+job can capture a **logical SQL dump** alongside the volume archive. The dump is
+a sidecar of the backup (`database.sql`, optionally `.gz`/`.zst` when the job
+compresses) — it is not stored inside any restored volume.
+
+On restore Vault decides whether to replay it automatically:
+
+- **Reloaded automatically** when the backup recorded that the dump is the
+  authoritative copy (the volumes were captured while the server was running,
+  so the dump is the consistent snapshot). Vault waits for the database to
+  become ready and replays the dump into the restored container.
+- **Left for you, not reloaded** when the restored volume is the newer,
+  consistent copy (the volumes were captured with the server stopped), when the
+  container was not running, or when the database never became ready. Replaying
+  in these cases would roll the database back to where the dump began, so Vault
+  preserves the dump instead of applying it.
+
+When the dump is **not** reloaded, Vault copies it out of its temporary staging
+directory to a durable, discoverable location and reports the exact path in the
+restore progress and logs (`database dump saved to …`):
+
+- **Custom destination** — written to `<destination>/<container>-database.sql`
+  (with the job's `.gz`/`.zst` suffix when compressed).
+- **In place (no custom destination)** — written beside the container's first
+  restored volume, for example
+  `/mnt/user/appdata/<container>-database.sql`.
+
+The file name is prefixed with the container name so several containers
+restored under a shared parent (such as `/mnt/user/appdata`) do not collide.
+You can replay a preserved dump manually with your database's normal import
+tool (for example `mysql < database.sql` or `psql -f database.sql`). This
+behaviour is the same for classic and deduplicated backups.
+
 #### Excluding container sub-paths
 
 You can list paths to exclude from a container backup (e.g. `/config/Library/Application Support/Plex Media Server/Cache` or `/config/Sonarr/MediaCover`). The job wizard exposes a free-text list per container, and Vault ships a `GET /api/v1/presets/exclusions` catalogue of common rules for popular containers (Plex, Sonarr, Radarr, etc.) the UI offers as starting points. For some apps the response also carries advisory `notes`/`warnings` (e.g. the Immich database caveat below), which the wizard shows inline.
