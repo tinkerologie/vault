@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // CreateReplicationSource inserts a new replication source and returns its ID.
 func (d *DB) CreateReplicationSource(src ReplicationSource) (int64, error) {
@@ -34,11 +37,16 @@ func (d *DB) GetReplicationSource(id int64) (ReplicationSource, error) {
 	err := d.QueryRow(
 		`SELECT id, name, COALESCE(type, 'remote_vault'), url, COALESCE(config, '{}'),
 			COALESCE(storage_dest_id, 0), schedule, enabled,
-			last_sync_at, last_sync_status, last_sync_error, created_at, updated_at
+			last_sync_at, last_sync_status, last_sync_error,
+			COALESCE(last_sync_jobs_synced, 0), COALESCE(last_sync_jobs_failed, 0),
+			COALESCE(last_sync_restore_points, 0), COALESCE(last_sync_bytes, 0),
+			last_sync_success_at, created_at, updated_at
 		FROM replication_sources WHERE id = ?`, id,
 	).Scan(&src.ID, &src.Name, &src.Type, &src.URL, &src.Config, &src.StorageDestID,
 		&src.Schedule, &src.Enabled, &src.LastSyncAt, &src.LastSyncStatus,
-		&src.LastSyncError, &src.CreatedAt, &src.UpdatedAt)
+		&src.LastSyncError, &src.LastSyncJobsSynced, &src.LastSyncJobsFailed,
+		&src.LastSyncRestorePoints, &src.LastSyncBytes, &src.LastSyncSuccessAt,
+		&src.CreatedAt, &src.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return src, ErrNotFound
 	}
@@ -50,7 +58,10 @@ func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 	rows, err := d.Query(
 		`SELECT id, name, COALESCE(type, 'remote_vault'), url, COALESCE(config, '{}'),
 			COALESCE(storage_dest_id, 0), schedule, enabled,
-			last_sync_at, last_sync_status, last_sync_error, created_at, updated_at
+			last_sync_at, last_sync_status, last_sync_error,
+			COALESCE(last_sync_jobs_synced, 0), COALESCE(last_sync_jobs_failed, 0),
+			COALESCE(last_sync_restore_points, 0), COALESCE(last_sync_bytes, 0),
+			last_sync_success_at, created_at, updated_at
 		FROM replication_sources ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -61,7 +72,9 @@ func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 		var src ReplicationSource
 		if err := rows.Scan(&src.ID, &src.Name, &src.Type, &src.URL, &src.Config, &src.StorageDestID,
 			&src.Schedule, &src.Enabled, &src.LastSyncAt, &src.LastSyncStatus,
-			&src.LastSyncError, &src.CreatedAt, &src.UpdatedAt); err != nil {
+			&src.LastSyncError, &src.LastSyncJobsSynced, &src.LastSyncJobsFailed,
+			&src.LastSyncRestorePoints, &src.LastSyncBytes, &src.LastSyncSuccessAt,
+			&src.CreatedAt, &src.UpdatedAt); err != nil {
 			return nil, err
 		}
 		sources = append(sources, src)
@@ -84,14 +97,43 @@ func (d *DB) UpdateReplicationSource(src ReplicationSource) error {
 	return err
 }
 
-// UpdateReplicationSyncStatus stores the result of a sync attempt.
+// UpdateReplicationSyncStatus stores the status of a sync attempt without
+// per-item counters. Used when a sync starts ("running") or fails before it
+// produces a summary; the counters are reset so a stale summary from an
+// earlier successful sync is never shown against a running or failed state.
 func (d *DB) UpdateReplicationSyncStatus(id int64, status, syncError string) error {
 	_, err := d.Exec(
 		`UPDATE replication_sources SET last_sync_at=CURRENT_TIMESTAMP,
-		last_sync_status=?, last_sync_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		last_sync_status=?, last_sync_error=?,
+		last_sync_jobs_synced=0, last_sync_jobs_failed=0,
+		last_sync_restore_points=0, last_sync_bytes=0,
+		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		status, syncError, id,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("update replication sync status for source %d: %w", id, err)
+	}
+	return nil
+}
+
+// UpdateReplicationSyncResult stores the outcome of a completed sync along
+// with its per-item counters. last_sync_success_at only advances on a fully
+// successful sync, so the UI can show when replication was last known good
+// even after a later partial or failed run.
+func (d *DB) UpdateReplicationSyncResult(id int64, status, syncError string, jobsSynced, jobsFailed, restorePoints int, bytes int64) error {
+	_, err := d.Exec(
+		`UPDATE replication_sources SET last_sync_at=CURRENT_TIMESTAMP,
+		last_sync_status=?, last_sync_error=?,
+		last_sync_jobs_synced=?, last_sync_jobs_failed=?,
+		last_sync_restore_points=?, last_sync_bytes=?,
+		last_sync_success_at=CASE WHEN ?='success' THEN CURRENT_TIMESTAMP ELSE last_sync_success_at END,
+		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		status, syncError, jobsSynced, jobsFailed, restorePoints, bytes, status, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update replication sync result for source %d: %w", id, err)
+	}
+	return nil
 }
 
 // DeleteReplicationSource removes a replication source by ID.

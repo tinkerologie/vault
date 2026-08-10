@@ -282,6 +282,15 @@ type ReplicationSource struct {
 	LastSyncAt     *time.Time `json:"last_sync_at"`
 	LastSyncStatus string     `json:"last_sync_status"`
 	LastSyncError  string     `json:"last_sync_error"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	// Per-sync summary of the most recent run (#287), persisted so the UI can
+	// show an explicit up-to-date / synced / failed state on load, not only
+	// via the transient completion event. LastSyncSuccessAt is the last time a
+	// sync fully succeeded (nil until the first clean sync).
+	LastSyncJobsSynced    int        `json:"last_sync_jobs_synced"`
+	LastSyncJobsFailed    int        `json:"last_sync_jobs_failed"`
+	LastSyncRestorePoints int        `json:"last_sync_restore_points"`
+	LastSyncBytes         int64      `json:"last_sync_bytes"`
+	LastSyncSuccessAt     *time.Time `json:"last_sync_success_at"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }

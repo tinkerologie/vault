@@ -742,6 +742,38 @@ func TestCompleteSyncStatusDirect(t *testing.T) {
 	}
 }
 
+// TestCompleteSyncStatusPersistFailureStopsEarly verifies that when the result
+// write fails, completeSyncStatus bails out before announcing completion — it
+// must not present a completed sync (progress 1.0) that the database does not
+// reflect, or a client reload would read stale counters.
+func TestCompleteSyncStatusPersistFailureStopsEarly(t *testing.T) {
+	d := openTestDB(t)
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{
+		Name: "d", Type: "local", Config: `{"path":"/tmp"}`,
+	})
+	srcID, _ := d.CreateReplicationSource(db.ReplicationSource{
+		Name: "src", URL: "http://x", StorageDestID: destID,
+	})
+	hub := ws.NewHub()
+	go hub.Run()
+	s := NewSyncer(d, hub)
+
+	// Force the result persistence to fail.
+	if err := d.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	progress, seen := captureProgress()
+	res := &SyncResult{JobsSynced: 1, RestorePointsNew: 2, BytesTransferred: 100}
+	s.completeSyncStatus(srcID, "src", res, progress)
+
+	for _, p := range *seen {
+		if p == 1.0 {
+			t.Fatalf("completeSyncStatus reported completion despite a persistence failure: %v", *seen)
+		}
+	}
+}
+
 // --- completeSyncStatus honesty (#177) ---
 
 func TestCompleteSyncStatusHonest(t *testing.T) {

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Replication targets now show what the last sync actually did.** A target that connected but had nothing new to copy previously just read "Synced", which looked the same as a sync that transferred data — so replication could appear to "connect but not do much". Each target now shows an explicit **Up to date** state when a sync found nothing new, a per-sync summary (jobs synced, new restore points, bytes transferred, and any failures), and the time replication last fully succeeded. These counters are stored with each run, so they are visible on page load and after a refresh, not only in the moment a sync finishes. Closes #287.
+
 ### Security
 
 - Updated Go and web dependencies to their latest compatible releases and resolved a high-severity advisory in the web `nanoid` dependency. gosec, govulncheck, and the Go linter pass clean, and the MCP integration remains on the go-sdk v1.7.0 API.

@@ -3,7 +3,7 @@
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getLiveMode } from '../lib/runtime-config.js'
-  import { formatDate, describeSchedule } from '../lib/utils.js'
+  import { formatDate, describeSchedule, formatBytes } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
@@ -253,11 +253,36 @@
 
   function statusBadge(src) {
     if (!src.enabled) return { label: 'Disabled', cls: 'bg-surface-3 text-text-muted' }
-    if (src.last_sync_status === 'success') return { label: 'Synced', cls: 'bg-success/10 text-success' }
+    if (src.last_sync_status === 'success') {
+      // A successful sync that transferred nothing new means the replica is
+      // already current — say so explicitly rather than an ambiguous "Synced".
+      return (src.last_sync_restore_points || 0) > 0
+        ? { label: 'Synced', cls: 'bg-success/10 text-success' }
+        : { label: 'Up to date', cls: 'bg-success/10 text-success' }
+    }
     if (src.last_sync_status === 'error' || src.last_sync_status === 'failed') return { label: 'Failed', cls: 'bg-danger/10 text-danger' }
     if (src.last_sync_status === 'partial') return { label: 'Partial', cls: 'bg-warning/10 text-warning' }
     if (src.last_sync_status === 'running') return { label: 'Syncing', cls: 'bg-warning/10 text-warning' }
     return { label: 'Pending', cls: 'bg-surface-3 text-text-muted' }
+  }
+
+  // Human summary of the most recent sync, so a connected-but-idle target reads
+  // clearly instead of looking like it "doesn't do much" (#287).
+  function syncSummary(src) {
+    if (src.last_sync_status === 'running') return 'Sync in progress…'
+    if (!src.last_sync_at || !src.last_sync_status) return 'No sync has run yet.'
+    if (src.last_sync_status === 'success' && (src.last_sync_restore_points || 0) === 0) {
+      return 'Up to date — nothing new to replicate.'
+    }
+    const jobs = src.last_sync_jobs_synced || 0
+    const rps = src.last_sync_restore_points || 0
+    const parts = [
+      `${jobs} job${jobs === 1 ? '' : 's'} synced`,
+      `${rps} new restore point${rps === 1 ? '' : 's'}`,
+    ]
+    if (src.last_sync_bytes != null) parts.push(formatBytes(src.last_sync_bytes))
+    if ((src.last_sync_jobs_failed || 0) > 0) parts.push(`${src.last_sync_jobs_failed} job(s) failed`)
+    return parts.join(' · ')
   }
 </script>
 
@@ -331,6 +356,11 @@
                 <p class="text-text font-medium">{formatDate(src.created_at)}</p>
               </div>
             </div>
+
+            <p class="mt-3 text-xs text-text-muted">{syncSummary(src)}</p>
+            {#if src.last_sync_success_at}
+              <p class="text-xs text-text-dim mt-0.5">Last successful sync: {formatDate(src.last_sync_success_at)}</p>
+            {/if}
 
             {#if (src.last_sync_status === 'error' || src.last_sync_status === 'failed' || src.last_sync_status === 'partial') && src.last_sync_error}
               <div class="mt-3 p-2 bg-danger/5 border border-danger/20 rounded-lg text-xs text-danger">

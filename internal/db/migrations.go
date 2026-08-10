@@ -303,6 +303,17 @@ var alterMigrations = []string{
 	// retry_next_at, so the driver hands back a time.Time.
 	"ALTER TABLE job_runs ADD COLUMN stalled_at TIMESTAMP DEFAULT NULL",
 	"ALTER TABLE job_runs ADD COLUMN stall_reason TEXT DEFAULT ''",
+	// Replication sync summary (#287). The per-sync counters were only ever
+	// broadcast on the completion WebSocket event, so a page load (or the 10s
+	// poll) could not tell "connected but nothing new to replicate" apart from
+	// a sync that actually transferred data. Persist the last run's counters
+	// plus the last time a sync fully succeeded so the UI can show an explicit
+	// up-to-date / synced / failed state with per-item numbers.
+	"ALTER TABLE replication_sources ADD COLUMN last_sync_jobs_synced INTEGER DEFAULT 0",
+	"ALTER TABLE replication_sources ADD COLUMN last_sync_jobs_failed INTEGER DEFAULT 0",
+	"ALTER TABLE replication_sources ADD COLUMN last_sync_restore_points INTEGER DEFAULT 0",
+	"ALTER TABLE replication_sources ADD COLUMN last_sync_bytes INTEGER DEFAULT 0",
+	"ALTER TABLE replication_sources ADD COLUMN last_sync_success_at DATETIME",
 }
 
 // dataMigrations are idempotent row rewrites, applied after alterMigrations.
@@ -317,4 +328,10 @@ var dataMigrations = []string{
 	// would instead make identical data behave differently depending on which
 	// jobs an operator happened to edit.
 	"UPDATE jobs SET container_mode = 'stop_all' WHERE container_mode = 'all_at_once'",
+	// Replication last-successful-sync backfill (#287). last_sync_success_at is
+	// a new column, so existing sources that already completed a successful
+	// sync before the upgrade would report no successful sync until the next
+	// run. Seed it from last_sync_at for rows whose last recorded status was a
+	// success, so the UI shows the historical timestamp immediately.
+	"UPDATE replication_sources SET last_sync_success_at = last_sync_at WHERE last_sync_success_at IS NULL AND last_sync_status = 'success' AND last_sync_at IS NOT NULL",
 }
