@@ -5,6 +5,17 @@ if (!isset($var) || !is_array($var)) {
     $var = @parse_ini_file('state/var.ini') ?: [];
 }
 
+// Never cache the SPA shell. This document is the only one that names the
+// current content-hashed asset bundles, so a cached copy taken before a
+// plugin upgrade points at bundles that no longer exist — the browser then
+// 404s on the JavaScript and the app hangs on an endless "connecting" state
+// until site data is cleared. Set before any output so the error responses
+// below inherit it too and a transient failure never gets cached. Mirrors the
+// daemon's index.html policy in internal/api/routes.go (#288).
+header('Cache-Control: no-cache, no-store, must-revalidate');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 $uiRoot = '/usr/local/emhttp/plugins/vault/ui';
 $indexPath = $uiRoot . '/index.html';
 
