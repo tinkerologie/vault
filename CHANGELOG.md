@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Restoring selected files from a plugin backup on a deduplicated destination no longer restores the whole plugin.** When a plugin backup lived on a dedup destination and you picked specific files to restore, the file-picker selection was dropped on the way through the deduplicated restore path and the entire plugin config directory was written back instead. The selection now carries through to the folder restore that reconstructs the files, so only the chosen files are restored — matching how the same picker already worked for non-dedup plugin restores. Closes #271.
 - **Backup sizes now read the same everywhere they are shown.** Four operator-facing places still formatted sizes with their own math instead of the shared byte contract, so the same backup could read differently depending on where you looked: the Storage page's saved-backups list stopped at TB with no clamp (a petabyte showed as `1024.0 TB`), the Recover Vault wizard always printed raw kilobytes (`1048576 KB` for a gigabyte), the packaged plugin History page always printed megabytes (`1073741824.0 MB` for a petabyte), and the transfer-speed label capped at GB/s and disagreed with the app near unit boundaries. All four now go through the same `formatBytes` contract the app and notifications already use, so a size or speed reads identically across the console, the wizard, the plugin pages, and Discord/webhook messages. Closes #270.
 
 ## [v2026.08.00] - 2026-08-02

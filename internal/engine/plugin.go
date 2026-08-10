@@ -237,7 +237,15 @@ func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	if destPath == "" {
 		return fmt.Errorf("plugin: cannot resolve restore directory for %q", item.Name)
 	}
-	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: map[string]any{"path": destPath}}
+	// Propagate the partial-restore file picker through the proxy item so a
+	// selection made on a dedup plugin restore reaches FolderHandler.
+	// RestoreChunked, which honours restore_file_paths. Without this the
+	// setting is dropped and the whole config directory is restored.
+	proxySettings := map[string]any{"path": destPath}
+	if rfp := extractRestoreFilePaths(item.Settings); rfp != nil {
+		proxySettings["restore_file_paths"] = rfp
+	}
+	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: proxySettings}
 	fh := &FolderHandler{}
 	return fh.RestoreChunked(ctx, proxy, repo, manifestID, destPath, progress)
 }

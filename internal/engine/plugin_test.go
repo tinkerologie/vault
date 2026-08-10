@@ -75,3 +75,54 @@ func TestPluginChunkedRoundTrip(t *testing.T) {
 		t.Fatalf("%d mismatches", errs)
 	}
 }
+
+// TestPluginChunkedRestoreHonoursFilePicker is a regression test for #271:
+// PluginHandler.RestoreChunked dropped restore_file_paths when building the
+// proxy folder item, so a partial-restore selection on a dedup plugin backup
+// restored the entire config directory instead of only the chosen files.
+func TestPluginChunkedRestoreHonoursFilePicker(t *testing.T) {
+	src := t.TempDir()
+	must := func(p string, data []byte) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(filepath.Join(src, "config.toml"), []byte("setting=true"))
+	must(filepath.Join(src, "data/state.bin"), bytes.Repeat([]byte{0xee}, 8192))
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &PluginHandler{}
+	item := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"path": src}}
+	ctx := context.Background()
+	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := t.TempDir()
+	restoreItem := BackupItem{
+		Name:     "test-plugin",
+		Type:     "plugin",
+		Settings: map[string]any{"restore_file_paths": []string{"config.toml"}},
+	}
+	if err := h.RestoreChunked(ctx, restoreItem, r, manifestID, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := os.ReadFile(filepath.Join(dst, "config.toml")); err != nil { // #nosec G304 — test-controlled tempdir
+		t.Errorf("selected file config.toml should have been restored: %v", err)
+	} else if string(got) != "setting=true" {
+		t.Errorf("selected file config.toml has unexpected content: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "data/state.bin")); !os.IsNotExist(err) {
+		t.Errorf("unselected file data/state.bin should not have been restored (err=%v)", err)
+	}
+}
