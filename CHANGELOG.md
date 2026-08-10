@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Security
+
+- Updated Go and web dependencies to their latest compatible releases and resolved a high-severity advisory in the web `nanoid` dependency. gosec, govulncheck, and the Go linter pass clean, and the MCP integration remains on the go-sdk v1.7.0 API.
+
 ### Fixed
 
 - **The web console no longer gets stuck on an endless "connecting" screen after a plugin upgrade until you clear site data.** The page that the Unraid shortcut opens (`app.php`) served the app shell with no cache headers, so a browser — Brave especially — could keep a copy of it from before an upgrade. That stale shell still pointed at the previous JavaScript bundles, which the upgrade had replaced with new content-hashed filenames, so the browser fetched bundles that no longer existed and the app never finished loading. The shell is now sent with the same "never cache" policy the daemon already applies to its own `index.html`, so every visit loads the shell that matches the installed version. Closes #288.
