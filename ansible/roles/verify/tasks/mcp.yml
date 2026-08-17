@@ -7,7 +7,7 @@
     cmd: >
       go run {{ playbook_dir }}/../scripts/verify-mcp-streamable-http.go
       -endpoint http://127.0.0.1:{{ verify_local_port }}/api/v1/mcp
-      -api-key {{ api_key | quote }}
+      -api-key {{ api_key | default('') | quote }}
   register: mcp_result
   changed_when: false
 

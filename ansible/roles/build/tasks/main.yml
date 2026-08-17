@@ -16,6 +16,16 @@
         chdir: "{{ playbook_dir }}/.."
       changed_when: false
 
+    # Must run before lint/tests: internal/release //go:embeds CHANGELOG.md,
+    # and Go forbids parent-directory embed paths, so the file has to sit next
+    # to the directive before any command that typechecks the module. Fresh
+    # checkouts fail at the linter without this.
+    - name: Copy CHANGELOG.md into embed location
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../CHANGELOG.md"
+        dest: "{{ playbook_dir }}/../internal/release/CHANGELOG.md"
+        mode: '0644'
+
     - name: Run linter
       ansible.builtin.command:
         cmd: golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...
@@ -39,12 +49,6 @@
         cmd: npm run build
         chdir: "{{ playbook_dir }}/../web"
       changed_when: true
-
-    - name: Copy CHANGELOG.md into embed location
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../CHANGELOG.md"
-        dest: "{{ playbook_dir }}/../internal/release/CHANGELOG.md"
-        mode: '0644'
 
     - name: Cross-compile Linux/amd64 binary
       ansible.builtin.command:
