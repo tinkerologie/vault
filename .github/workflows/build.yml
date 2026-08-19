@@ -48,8 +48,25 @@ jobs:
           version: latest
           args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0
 
-      - name: Run tests
-        run: go test ./... -v
+      - name: Run Go tests with coverage
+        run: go test ./... -v -coverprofile=coverage.txt
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.txt
+          flags: unittests
+
+      - name: Run web tests with JUnit output
+        run: cd web && npm ci && npx vitest run --reporter=junit --outputFile=./test-report.junit.xml
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./web/test-report.junit.xml
 
       - name: Cross-compile Linux binary
         env:

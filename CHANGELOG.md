@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Contributor setup docs now include the local build, test, lint, and deploy workflow.** The repo-root contributor guide now documents the required toolchain, bootstrap steps, local development loop, daemon build/run path, frontend dev flow, and the safe boundaries around `make deploy`/`make verify` so new contributors can get working without digging through the README or the codebase. This keeps the contributor guidance in the canonical repo-root location while leaving the README focused on project overview and installation.
+
 - **A scheduled deep verify no longer piles onto a destination that a backup is still writing to.** Deep verification streams and re-hashes every stored item, so running it against the same storage destination as an in-progress backup saturated the shared disk and network — the backup slowed to a crawl and looked frozen, with nothing in the logs to explain it. Vault now defers a scheduled deep verify while a backup is running on the same destination and records why in the activity log, letting the deep verify run at its next scheduled tick instead. Quick verification (existence and size checks only) is light enough to keep running alongside a backup, and an on-demand verify you trigger yourself is never deferred. Closes #290.
 
 ### Fixed
