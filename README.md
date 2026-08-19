@@ -92,6 +92,7 @@ https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
 | [API Reference](docs/api.md)                                | Full REST API endpoint reference                      |
 | [MCP Integration](docs/mcp.md)                              | Model Context Protocol server for AI tools            |
 | [Architecture](docs/architecture.md)                        | Project structure, build commands, deployment         |
+| [Contributing](CONTRIBUTING.md)                             | Contribution guidelines and development setup         |
 | [Changelog](CHANGELOG.md)                                   | Release notes by version                              |
 
 Home Assistant users: use the ready-to-use custom integration at
