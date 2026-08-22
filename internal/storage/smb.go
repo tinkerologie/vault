@@ -165,7 +165,7 @@ func (r *smbReadCloser) Close() error {
 
 func (s *SMBAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
 	if offset < 0 || length < 0 {
-		return nil, fmt.Errorf("invalid range offset=%d length=%d", offset, length)
+		return nil, fmt.Errorf("invalid range offset=%d, length=%d", offset, length)
 	}
 	share, session, err := s.connect()
 	if err != nil {

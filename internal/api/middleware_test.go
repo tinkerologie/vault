@@ -47,7 +47,7 @@ func TestQuietRequestLogger(t *testing.T) {
 		handler.ServeHTTP(w, req)
 
 		got := buf.String()
-		if !strings.Contains(got, "api: GET /missing status=404") {
+		if !strings.Contains(got, "api: GET /missing, status=404") {
 			t.Fatalf("expected 404 request log, got %q", got)
 		}
 	})
@@ -66,7 +66,7 @@ func TestQuietRequestLogger(t *testing.T) {
 		handler.ServeHTTP(w, req)
 
 		got := buf.String()
-		if !strings.Contains(got, "api: GET /api/v1/storage status=200") {
+		if !strings.Contains(got, "api: GET /api/v1/storage, status=200") {
 			t.Fatalf("expected slow request log, got %q", got)
 		}
 		if !strings.Contains(got, "remote=::1") {

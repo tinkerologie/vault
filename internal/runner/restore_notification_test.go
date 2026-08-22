@@ -74,7 +74,7 @@ func TestChainRestoreNotifiesOnce(t *testing.T) {
 		t.Fatalf("restore item: %v", err)
 	}
 
-	logs, err := d.ListActivityLogs(100, "restore")
+	logs, err := d.ListActivityLogs(100, "restore", 0)
 	if err != nil {
 		t.Fatalf("list activity logs: %v", err)
 	}

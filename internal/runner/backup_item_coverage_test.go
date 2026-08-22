@@ -22,6 +22,7 @@ func TestBackupItem_UnknownType(t *testing.T) {
 
 	_, _, err := r.backupItem(
 		context.Background(),
+		0,
 		engine.BackupItem{Name: "x", Type: "garbage-type"},
 		dest,
 		"sp",
@@ -46,6 +47,7 @@ func TestBackupItem_VMHandlerError(t *testing.T) {
 
 	_, _, err := r.backupItem(
 		context.Background(),
+		0,
 		engine.BackupItem{Name: "x", Type: "vm"},
 		dest,
 		"sp",
@@ -86,7 +88,7 @@ func TestBackupItem_FolderHappyPath(t *testing.T) {
 		},
 	}
 
-	_, checksums, err := r.backupItem(context.Background(), item, dest, "rp-test", false, "", "none", 1)
+	_, checksums, err := r.backupItem(context.Background(), 0, item, dest, "rp-test", false, "", "none", 1)
 	if err != nil {
 		t.Fatalf("backupItem: %v", err)
 	}

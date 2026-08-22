@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
@@ -555,4 +556,49 @@ func TestFolderBackupFollowsSymlinkSource(t *testing.T) {
 			t.Errorf("manifest missing subdir/file2.txt")
 		}
 	})
+}
+
+// TestFolderBackup_ProgressMilestones: folder backups (incl. the Flash
+// Drive preset) narrate their phases so the run log has ample lines (#328 QA).
+func TestFolderBackup_ProgressMilestones(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "vault.cfg"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+
+	var msgs []string
+	progress := func(_ string, _ int, msg string) { msgs = append(msgs, msg) }
+
+	h, err := NewFolderHandler()
+	if err != nil {
+		t.Fatalf("NewFolderHandler: %v", err)
+	}
+	item := BackupItem{
+		Name:        "Flash Drive",
+		Type:        "folder",
+		Settings:    map[string]any{"path": src, "preset": "flash"},
+		Compression: "none",
+	}
+	if _, err := h.Backup(context.Background(), item, dest, progress); err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+
+	joined := strings.Join(msgs, "\n")
+	cases := []struct {
+		name string
+		want string
+	}{
+		{name: "source resolution milestone narrated", want: "resolved source path"},
+		{name: "archiving milestone narrated", want: "archiving"},
+		{name: "metadata milestone narrated", want: "writing folder metadata"},
+		{name: "completion milestone narrated", want: "backup complete"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(joined, tc.want) {
+				t.Errorf("progress milestones missing %q; got:\n%s", tc.want, joined)
+			}
+		})
+	}
 }

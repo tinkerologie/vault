@@ -118,6 +118,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | ------ | ------------------- | ------------------------------------------------------------------ |
 | GET    | `/activity?limit=N` | Activity log entries (`limit` is clamped to ≤ 1000 to prevent OOM) |
 | DELETE | `/activity`         | Purge all activity log entries (irreversible)                      |
+| GET    | `/runs/{runId}/logs?after=<id>&limit=N` | Streaming log entries for one backup/restore run, oldest-first. `?after=<id>` tails only newer lines; `?limit=N` clamped to [1, 1000]. Unknown run → 404; invalid run id or negative `after` / non-positive `limit` → 400 |
 
 ## History
 

@@ -211,7 +211,7 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 	}
 
 	// Activity logs (last 200).
-	if logs, err := c.db.ListActivityLogs(200, ""); err == nil {
+	if logs, err := c.db.ListActivityLogs(200, "", 0); err == nil {
 		for _, l := range logs {
 			bundle.Activity = append(bundle.Activity, ActivityInfo{
 				ID:        l.ID,

@@ -40,7 +40,7 @@
 
     - name: Install web dependencies
       ansible.builtin.command:
-        cmd: npm ci
+        cmd: npm ci --include=dev
         chdir: "{{ playbook_dir }}/../web"
       changed_when: false
 

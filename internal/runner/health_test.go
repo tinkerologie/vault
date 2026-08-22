@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -397,5 +398,57 @@ func TestBroadcastPayloadShape(t *testing.T) {
 	}
 	if out["storage_id"] != float64(7) {
 		t.Errorf("storage_id = %v, want 7", out["storage_id"])
+	}
+}
+
+func TestHealthCheckActivity(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   string
+		errMsg   string
+		wantLvl  string
+		wantSub  []string
+		wantJSON []string
+	}{
+		{
+			name:     "ok check is info without error text",
+			status:   "ok",
+			wantLvl:  "info",
+			wantSub:  []string{"Storage health check", "destination=nas-backup", "status=ok"},
+			wantJSON: []string{`"status":"ok"`, `"duration_ms"`},
+		},
+		{
+			name:     "failed check is warn and includes error",
+			status:   "failed",
+			errMsg:   "dial tcp: connection refused",
+			wantLvl:  "warn",
+			wantSub:  []string{"destination=nas-backup", "status=failed", "error=dial tcp: connection refused"},
+			wantJSON: []string{`"status":"failed"`, `"error":"dial tcp: connection refused"`},
+		},
+		{
+			name:    "failed check without error message still renders",
+			status:  "failed",
+			wantLvl: "warn",
+			wantSub: []string{"destination=nas-backup", "status=failed"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dest := db.StorageDestination{ID: 7, Name: "nas-backup"}
+			lvl, msg, details := healthCheckActivity(dest, tt.status, tt.errMsg, 1500*time.Millisecond)
+			if lvl != tt.wantLvl {
+				t.Fatalf("level = %q, want %q", lvl, tt.wantLvl)
+			}
+			for _, sub := range tt.wantSub {
+				if !strings.Contains(msg, sub) {
+					t.Fatalf("message %q missing substring %q", msg, sub)
+				}
+			}
+			for _, sub := range tt.wantJSON {
+				if !strings.Contains(details, sub) {
+					t.Fatalf("details %q missing substring %q", details, sub)
+				}
+			}
+		})
 	}
 }

@@ -573,6 +573,10 @@ type mockDockerClient struct {
 	stopCalled  bool
 	startCalled bool
 	stopErr     error
+	// imageSaveErr makes ImageSave fail; when nil ImageSave succeeds with a
+	// synthetic tar body so tests can drive the full classic Backup pipeline
+	// (the milestone-pinning test) without a real daemon.
+	imageSaveErr error
 }
 
 func (m *mockDockerClient) ContainerInspect(ctx context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
@@ -618,7 +622,10 @@ func (m *mockDockerClient) ContainerStats(ctx context.Context, _ string, _ clien
 	return client.ContainerStatsResult{}, errors.New("mockDockerClient: ContainerStats not implemented")
 }
 func (m *mockDockerClient) ImageSave(ctx context.Context, _ []string, _ ...client.ImageSaveOption) (client.ImageSaveResult, error) {
-	return nil, errors.New("mockDockerClient: ImageSave not implemented")
+	if m.imageSaveErr != nil {
+		return nil, m.imageSaveErr
+	}
+	return io.NopCloser(strings.NewReader("mock image tar\n")), nil
 }
 func (m *mockDockerClient) ImageLoad(ctx context.Context, _ io.Reader, _ ...client.ImageLoadOption) (client.ImageLoadResult, error) {
 	return nil, errors.New("mockDockerClient: ImageLoad not implemented")

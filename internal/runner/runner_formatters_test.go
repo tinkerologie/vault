@@ -214,7 +214,7 @@ func TestSendRestoreNotificationDisabled(t *testing.T) {
 	r.sendRestoreNotification("plex", "container", errExampleRestore{})
 
 	// No activity log entries should have been written.
-	logs, err := database.ListActivityLogs(10, "")
+	logs, err := database.ListActivityLogs(10, "", 0)
 	if err != nil {
 		t.Fatalf("ListActivityLogs: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestSendRestoreNotificationSuccess(t *testing.T) {
 	}
 	r.sendRestoreNotification("plex", "container", nil)
 
-	logs, err := database.ListActivityLogs(10, "")
+	logs, err := database.ListActivityLogs(10, "", 0)
 	if err != nil {
 		t.Fatalf("ListActivityLogs: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestSendRestoreNotificationFailure(t *testing.T) {
 	}
 	r.sendRestoreNotification("plex", "container", errExampleRestore{})
 
-	logs, err := database.ListActivityLogs(10, "")
+	logs, err := database.ListActivityLogs(10, "", 0)
 	if err != nil {
 		t.Fatalf("ListActivityLogs: %v", err)
 	}

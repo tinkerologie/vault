@@ -1291,7 +1291,7 @@ func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Dom
 			switch typeValue {
 			case libvirt.DomainJobCompleted, libvirt.DomainJobFailed, libvirt.DomainJobCancelled:
 				if jobErr := backupJobError(typeValue, params); jobErr != nil {
-					log.Printf("engine/vm: backup job for %s ended with type=%s params=%+v", name, typeValue, params)
+					log.Printf("engine/vm: backup job for %s ended, type=%s, params=%+v", name, typeValue, params)
 					return jobErr
 				}
 				return nil
@@ -1317,7 +1317,7 @@ func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Dom
 				}
 				if time.Since(lastMilestone) >= milestoneInterval {
 					lastMilestone = time.Now()
-					log.Printf("engine/vm: %s backup progress: %d%% (%s) elapsed=%s",
+					log.Printf("engine/vm: %s backup progress: %d%% (%s), elapsed=%s",
 						name, pct, msg, time.Since(started).Round(time.Second))
 				}
 				progress(name, pct, msg)

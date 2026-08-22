@@ -110,6 +110,7 @@ func (s *MCPServer) registerTools() {
 	s.addGetHealthSummaryTool()
 	s.addGetRunnerStatusTool()
 	s.addGetActivityLogTool()
+	s.addGetRunLogsTool()
 
 	// Restore tools
 	s.addListRestorePointsTool()
@@ -373,20 +374,65 @@ func (s *MCPServer) addGetRunnerStatusTool() {
 type getActivityLogInput struct {
 	Limit    int    `json:"limit,omitempty"`
 	Category string `json:"category,omitempty"`
+	BeforeID int64  `json:"before_id,omitempty"`
 }
 
 func (s *MCPServer) addGetActivityLogTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "get_activity_log",
-		Description: "Retrieve recent activity log entries from Vault",
+		Description: "Retrieve recent activity log entries from Vault. Pass before_id (the id of the last entry of the previous page) to page backwards through history.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input getActivityLogInput) (*mcp.CallToolResult, any, error) {
 		limit := input.Limit
 		if limit <= 0 {
 			limit = 50
 		}
-		entries, err := s.db.ListActivityLogs(limit, input.Category)
+		if input.BeforeID < 0 {
+			return nil, nil, fmt.Errorf("before_id must be a non-negative integer")
+		}
+		entries, err := s.db.ListActivityLogs(limit, input.Category, input.BeforeID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing activity log: %w", err)
+		}
+		r, _ := textResult(entries)
+		return r, nil, nil
+	})
+}
+
+// --- Run Log Tools ---
+
+type getRunLogsInput struct {
+	RunID int64 `json:"run_id"`
+	After int64 `json:"after,omitempty"`
+	Limit int   `json:"limit,omitempty"`
+}
+
+func (s *MCPServer) addGetRunLogsTool() {
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "get_run_logs",
+		Description: "Retrieve streaming log entries for a specific backup or restore run",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getRunLogsInput) (*mcp.CallToolResult, any, error) {
+		if input.RunID < 1 {
+			return nil, nil, fmt.Errorf("run_id is required and must be positive")
+		}
+		if input.After < 0 {
+			return nil, nil, fmt.Errorf("after must be a non-negative integer")
+		}
+		if input.Limit < 0 {
+			return nil, nil, fmt.Errorf("limit must be a non-negative integer")
+		}
+		if _, err := s.db.GetJobRun(input.RunID); err != nil {
+			return nil, nil, fmt.Errorf("run %d not found: %w", input.RunID, err)
+		}
+		limit := input.Limit
+		if limit == 0 {
+			limit = 500
+		}
+		entries, err := s.db.ListRunLogEntries(ctx, input.RunID, input.After, limit)
+		if err != nil {
+			return nil, nil, fmt.Errorf("listing run logs: %w", err)
+		}
+		if entries == nil {
+			entries = []db.RunLogEntry{}
 		}
 		r, _ := textResult(entries)
 		return r, nil, nil

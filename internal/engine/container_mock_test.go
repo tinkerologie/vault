@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -179,6 +180,7 @@ func TestContainerBackupSurfacesImageSaveError(t *testing.T) {
 				State: &containertypes.State{Running: false},
 			},
 		},
+		imageSaveErr: errors.New("mockDockerClient: ImageSave not implemented"),
 	}
 	h := &ContainerHandler{cli: mock}
 
@@ -219,6 +221,10 @@ func TestContainerBackupSurfacesStopError(t *testing.T) {
 				State: &containertypes.State{Running: true},
 			},
 		},
+		// The mock's ContainerStop returns an error, which Backup surfaces as
+		// "stopping container" — drives the stop-and-restart wrapper that only
+		// fires when wasRunning && !no_stop.
+		stopErr: errors.New("mockDockerClient: ContainerStop not implemented"),
 	}
 	h := &ContainerHandler{cli: mock}
 
@@ -250,6 +256,7 @@ func TestContainerBackupNoStopSkipsStop(t *testing.T) {
 				State: &containertypes.State{Running: true},
 			},
 		},
+		imageSaveErr: errors.New("mockDockerClient: ImageSave not implemented"),
 	}
 	h := &ContainerHandler{cli: mock}
 

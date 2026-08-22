@@ -548,7 +548,7 @@ func (r *cancelOnCloseReader) Close() error {
 // bounded header waits).
 func (a *S3Adapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
 	if offset < 0 || length < 0 {
-		return nil, fmt.Errorf("s3: invalid range offset=%d length=%d", offset, length)
+		return nil, fmt.Errorf("s3: invalid range offset=%d, length=%d", offset, length)
 	}
 	key, err := a.keyFor(p, false)
 	if err != nil {

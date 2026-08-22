@@ -127,7 +127,7 @@ func (r *Runner) DeleteStorageOrphans(dest db.StorageDestination, paths []string
 		}
 		deleted++
 	}
-	log.Printf("runner: orphan GC for %q: requested=%d deleted=%d errors=%d", dest.Name, len(paths), deleted, len(errors))
+	log.Printf("runner: orphan GC for %q: requested=%d, deleted=%d, errors=%d", dest.Name, len(paths), deleted, len(errors))
 	return deleted, errors
 }
 

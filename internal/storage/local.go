@@ -167,7 +167,7 @@ func (l *LocalAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser,
 		return nil, err
 	}
 	if offset < 0 || length < 0 {
-		return nil, fmt.Errorf("invalid range offset=%d length=%d", offset, length)
+		return nil, fmt.Errorf("invalid range offset=%d, length=%d", offset, length)
 	}
 	if offset >= info.Size() {
 		return nil, fmt.Errorf("offset %d at or past EOF (size=%d)", offset, info.Size())

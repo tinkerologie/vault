@@ -250,7 +250,7 @@ var daemonCmd = &cobra.Command{
 			snapshotMgr = db.NewSnapshotManager(database, snapshotPath, defaultSnapPath)
 			restorationInfo := restoreWithFallback(snapshotMgr, snapshotPath, defaultSnapPath, dbPath, usbBackupPath)
 			snapshotMgr.SetRestorationInfo(restorationInfo)
-			log.Printf("Database restoration: source=%s path=%s (%s)",
+			log.Printf("Database restoration: source=%s, path=%s (%s)",
 				restorationInfo.Source, restorationInfo.Path, restorationInfo.Reason)
 
 			_ = database.Close()
@@ -308,7 +308,7 @@ var daemonCmd = &cobra.Command{
 				log.Printf("Database configuration validated: %d jobs, %d storage destinations, %d settings",
 					summary.Jobs, summary.StorageDests, summary.Settings)
 			} else {
-				log.Printf("WARNING: database contains no jobs or storage destinations — this is normal for a fresh install, but unexpected after an upgrade/restart. Fallback paths attempted: snapshot=%q usb_backup=%s. If you expected your previous configuration, see https://github.com/ruaan-deysel/vault/issues/108",
+				log.Printf("WARNING: database contains no jobs or storage destinations — this is normal for a fresh install, but unexpected after an upgrade/restart. Fallback paths attempted: snapshot=%q, usb_backup=%s. If you expected your previous configuration, see https://github.com/ruaan-deysel/vault/issues/108",
 					snapshotPath, usbBackupPath)
 			}
 		}
@@ -330,7 +330,7 @@ var daemonCmd = &cobra.Command{
 		if snapshotMgr != nil {
 			startupDiag.RestorationInfo = snapshotMgr.RestorationSource()
 		}
-		log.Printf("Startup diagnostics: hybrid=%v pool=%q pool_mounted=%v wait=%v boot_kind=%s has_config=%v",
+		log.Printf("Startup diagnostics: hybrid=%v, pool=%q, pool_mounted=%v, wait=%v, boot_kind=%s, has_config=%v",
 			startupDiag.HybridMode, startupDiag.DetectedPool, startupDiag.PoolMounted,
 			poolRetryWait.Round(time.Millisecond), startupDiag.UnraidBootKind, startupDiag.HasConfiguration)
 
@@ -373,9 +373,15 @@ var daemonCmd = &cobra.Command{
 			log.Printf("Cleaned up %d stale job run(s) from previous session", cleaned)
 		}
 
-		// Cap activity log to 10,000 rows to prevent unbounded growth.
-		if err := database.CapActivityLogs(10000); err != nil {
+		// Startup recovery cap for activity rows written before the live
+		// cap in CreateActivityLog existed (or by older versions).
+		if err := database.CapActivityLogs(db.MaxActivityLogRows); err != nil {
 			log.Printf("Warning: failed to cap activity logs: %v", err)
+		}
+		// Startup recovery cap for run-log entries; AppendRunLog already
+		// enforces the bound live on every insert.
+		if err := database.CapRunLogEntriesPerRun(cmd.Context(), db.MaxRunLogEntriesPerRun); err != nil {
+			log.Printf("Warning: failed to cap run logs: %v", err)
 		}
 
 		// Reclaim disk space after all cleanup operations.

@@ -50,8 +50,13 @@ disaster recovery.`,
 		if err := database.DeleteOldActivityLogs(90); err != nil {
 			log.Printf("Warning: failed to prune old activity logs: %v", err)
 		}
-		if err := database.CapActivityLogs(10000); err != nil {
+		if err := database.CapActivityLogs(db.MaxActivityLogRows); err != nil {
 			log.Printf("Warning: failed to cap activity logs: %v", err)
+		}
+		// Startup recovery cap for run-log entries; AppendRunLog already
+		// enforces the bound live on every insert.
+		if err := database.CapRunLogEntriesPerRun(cmd.Context(), db.MaxRunLogEntriesPerRun); err != nil {
+			log.Printf("Warning: failed to cap run logs: %v", err)
 		}
 
 		// Load or generate the server key for sealing secrets at rest.

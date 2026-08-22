@@ -134,7 +134,7 @@ func TestRunScheduledVerifyBackupContention(t *testing.T) {
 			if tc.wantRuns == 0 {
 				// Deferral must be surfaced in the activity log so the user can
 				// see why the deep verify did not run.
-				entries, err := database.ListActivityLogs(10, "verify")
+				entries, err := database.ListActivityLogs(10, "verify", 0)
 				if err != nil {
 					t.Fatalf("ListActivityLogs: %v", err)
 				}

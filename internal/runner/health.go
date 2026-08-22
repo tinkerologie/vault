@@ -2,7 +2,9 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -15,6 +17,32 @@ import (
 // timeouts (5 min metadata, 4 h upload, etc.) so this is mostly a safety
 // net for storage backends that hang their own TCP dial.
 const healthCheckTimeout = 30 * time.Second
+
+// healthCheckActivity builds the activity-log fields for one destination
+// health check so the wording is unit-testable and shared between the daily
+// sweep and single-destination "Check now" path (issue #328).
+func healthCheckActivity(dest db.StorageDestination, status, errMsg string, duration time.Duration) (level, message, details string) {
+	level = "info"
+	message = fmt.Sprintf("Storage health check, destination=%s, status=%s", dest.Name, status)
+	if status != "ok" {
+		level = "warn"
+		if errMsg != "" {
+			message = fmt.Sprintf("Storage health check, destination=%s, status=%s, error=%s", dest.Name, status, errMsg)
+		} else {
+			message = fmt.Sprintf("Storage health check, destination=%s, status=%s", dest.Name, status)
+		}
+	}
+	raw, err := json.Marshal(map[string]any{
+		"storage_dest_id": dest.ID,
+		"status":          status,
+		"error":           errMsg,
+		"duration_ms":     duration.Milliseconds(),
+	})
+	if err != nil {
+		return level, message, "{}"
+	}
+	return level, message, string(raw)
+}
 
 // RunHealthChecks calls TestConnection on every configured storage
 // destination, records the outcome via UpdateStorageDestinationHealth, and
@@ -49,12 +77,15 @@ func (r *Runner) CheckStorageDestination(dest db.StorageDestination) (string, st
 }
 
 func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
+	started := time.Now()
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		msg := err.Error()
 		_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
 		r.recordBreakerOutcome(dest.ID, false)
 		r.broadcastStorageHealth(dest.ID, "failed", msg)
+		lv, ms, dt := healthCheckActivity(dest, "failed", msg, time.Since(started))
+		r.logActivity(lv, "health", ms, dt)
 		log.Printf("runner: health check FAILED for %q (id=%d): adapter construction: %v", dest.Name, dest.ID, err)
 		return "failed", msg
 	}
@@ -72,6 +103,8 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 			_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
 			r.recordBreakerOutcome(dest.ID, false)
 			r.broadcastStorageHealth(dest.ID, "failed", msg)
+			lv, ms, dt := healthCheckActivity(dest, "failed", msg, time.Since(started))
+			r.logActivity(lv, "health", ms, dt)
 			log.Printf("runner: health check FAILED for %q (id=%d): %v", dest.Name, dest.ID, checkErr)
 			return "failed", msg
 		}
@@ -80,6 +113,8 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 		_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
 		r.recordBreakerOutcome(dest.ID, false)
 		r.broadcastStorageHealth(dest.ID, "failed", msg)
+		lv, ms, dt := healthCheckActivity(dest, "failed", msg, time.Since(started))
+		r.logActivity(lv, "health", ms, dt)
 		log.Printf("runner: health check TIMEOUT for %q (id=%d)", dest.Name, dest.ID)
 		return "failed", msg
 	}
@@ -89,6 +124,8 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	}
 	r.recordBreakerOutcome(dest.ID, true)
 	r.broadcastStorageHealth(dest.ID, "ok", "")
+	lv, ms, dt := healthCheckActivity(dest, "ok", "", time.Since(started))
+	r.logActivity(lv, "health", ms, dt)
 
 	// Capacity probe runs ONLY when TestConnection succeeded. Failures
 	// here NEVER flip the health verdict — capacity is informational.

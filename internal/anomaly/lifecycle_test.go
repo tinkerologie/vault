@@ -291,7 +291,7 @@ func TestLifecycleAck(t *testing.T) {
 		t.Fatalf("GetOpenAnomalyByFingerprint (mark_expected): %v", err)
 	}
 
-	logsBefore, _ := d.ListActivityLogs(100, "anomaly")
+	logsBefore, _ := d.ListActivityLogs(100, "health", 0)
 	updatedBefore := countEvent(extractEventTypes(t, hub), "anomaly.updated")
 
 	expAcked, err := ev.Ack(bRow.ID, AckMarkExpected, "user@example.com", "this is normal")
@@ -314,7 +314,7 @@ func TestLifecycleAck(t *testing.T) {
 		t.Errorf("anomaly.updated count after mark_expected = %d, want %d", got, updatedBefore+1)
 	}
 
-	logsAfter, _ := d.ListActivityLogs(100, "anomaly")
+	logsAfter, _ := d.ListActivityLogs(100, "health", 0)
 	if len(logsAfter) <= len(logsBefore) {
 		t.Errorf("expected a new anomaly activity row after mark_expected; before=%d after=%d",
 			len(logsBefore), len(logsAfter))
@@ -370,7 +370,7 @@ func TestLifecycleBulkAck(t *testing.T) {
 	assertEventCount(t, extractEventTypes(t, hub), "anomaly.bulk_acked", 1)
 
 	// A single summary activity_log row must have been written.
-	logs, err := d.ListActivityLogs(100, "anomaly")
+	logs, err := d.ListActivityLogs(100, "health", 0)
 	if err != nil {
 		t.Fatalf("ListActivityLogs: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestLifecycleExpectedFloor(t *testing.T) {
 
 // ── TestLifecycleActivityLog ─────────────────────────────────────────────────
 
-// TestLifecycleActivityLog: after a raise and an ack, at least two anomaly-
+// TestLifecycleActivityLog: after a raise and an ack, at least two health-
 // category activity rows must exist.
 func TestLifecycleActivityLog(t *testing.T) {
 	d := openTestDB(t)
@@ -474,13 +474,13 @@ func TestLifecycleActivityLog(t *testing.T) {
 	// Ack.
 	_, _ = ev.Ack(row.ID, AckDismiss, "tester", "test reason")
 
-	// Query activity_log rows with category='anomaly'.
-	logs, err := d.ListActivityLogs(50, "anomaly")
+	// Query activity_log rows with category='health'.
+	logs, err := d.ListActivityLogs(50, "health", 0)
 	if err != nil {
 		t.Fatalf("ListActivityLogs: %v", err)
 	}
 	if len(logs) < 2 {
-		t.Errorf("expected at least 2 anomaly activity log entries, got %d", len(logs))
+		t.Errorf("expected at least 2 health activity log entries, got %d", len(logs))
 		for i, l := range logs {
 			t.Logf("  [%d] level=%s message=%s", i, l.Level, l.Message)
 		}
@@ -575,4 +575,60 @@ func buildContextForFloorTest(t *testing.T, d *db.DB, ev *Evaluator) (EvalContex
 			return v
 		},
 	}, nil
+}
+
+// TestLifecycleActivityLogCategoryAndLevel: every anomaly activity row is
+// written under the canonical "health" category at WARN, regardless of the
+// anomaly's severity (#328 r3 #11, #12).
+func TestLifecycleActivityLogCategoryAndLevel(t *testing.T) {
+	d := openTestDB(t)
+	clk := NewFakeClock(time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC))
+	ev := newEvaluatorWithBroadcaster(d, &recordingBroadcaster{}, &Registry{}, clk)
+
+	_, runID := seedJobAndRun(t, d)
+
+	// Raise anomalies at every severity via a table of cases, then ack one
+	// and bulk-ack the rest so every code path that writes a health-category
+	// row is exercised (#328 r3 #13: table-driven subtests).
+	cases := []struct {
+		name     string
+		severity Severity
+		suffix   string
+	}{
+		{name: "info", severity: SeverityInfo, suffix: "a"},
+		{name: "warning", severity: SeverityWarning, suffix: "b"},
+		{name: "critical", severity: SeverityCritical, suffix: "c"},
+	}
+	var ids []int64
+	for _, tc := range cases {
+		t.Run("raise-"+tc.name, func(t *testing.T) {
+			a := makeTestAnomaly(1, runID, "activity_metric")
+			a.Fingerprint = a.Fingerprint + "-" + tc.suffix
+			a.Severity = tc.severity
+			ev.persist(a)
+			row, err := d.GetOpenAnomalyByFingerprint(a.Fingerprint)
+			if err != nil {
+				t.Fatalf("GetOpenAnomalyByFingerprint: %v", err)
+			}
+			ids = append(ids, row.ID)
+		})
+	}
+	_, _ = ev.Ack(ids[0], AckDismiss, "tester", "single ack")
+	_, _, _ = ev.BulkAck(ids[1:], AckDismiss, "tester", "bulk ack")
+
+	logs, err := d.ListActivityLogs(50, "health", 0)
+	if err != nil {
+		t.Fatalf("ListActivityLogs: %v", err)
+	}
+	if len(logs) == 0 {
+		t.Fatal("expected health-category activity rows for anomaly transitions")
+	}
+	for _, l := range logs {
+		if l.Category != "health" {
+			t.Errorf("anomaly activity row category = %q, want %q (message %q)", l.Category, "health", l.Message)
+		}
+		if l.Level != "warn" {
+			t.Errorf("anomaly activity row level = %q, want %q (message %q)", l.Level, "warn", l.Message)
+		}
+	}
 }

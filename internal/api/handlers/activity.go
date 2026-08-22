@@ -19,10 +19,12 @@ func NewActivityHandler(database *db.DB) *ActivityHandler {
 
 // List returns recent activity log entries.
 //
-//	GET /api/v1/activity?limit=100&category=backup
+//	GET /api/v1/activity?limit=100&category=backup&before_id=1234
 //
 // `limit` is clamped to [1, maxActivityLimit] to prevent
 // memory-exhaustion DoS from authenticated callers passing absurd values.
+// `before_id` pages backwards: only entries with a smaller id are returned
+// (0/absent = start from the newest).
 func (h *ActivityHandler) List(w http.ResponseWriter, r *http.Request) {
 	const maxActivityLimit = 1000
 	limit := 100
@@ -39,7 +41,17 @@ func (h *ActivityHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	category := r.URL.Query().Get("category")
 
-	entries, err := h.db.ListActivityLogs(limit, category)
+	beforeID := int64(0)
+	if b := r.URL.Query().Get("before_id"); b != "" {
+		parsed, err := strconv.ParseInt(b, 10, 64)
+		if err != nil || parsed < 1 {
+			respondError(w, http.StatusBadRequest, "before_id must be a positive integer")
+			return
+		}
+		beforeID = parsed
+	}
+
+	entries, err := h.db.ListActivityLogs(limit, category, beforeID)
 	if err != nil {
 		respondInternalError(w, err)
 		return

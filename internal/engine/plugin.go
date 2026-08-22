@@ -49,7 +49,7 @@ func (h *PluginHandler) ListItems() ([]BackupItem, error) {
 		return nil, fmt.Errorf("reading plugins directory: %w", err)
 	}
 
-	var items []BackupItem
+	items := make([]BackupItem, 0)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".plg") {
 			continue

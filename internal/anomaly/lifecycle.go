@@ -153,22 +153,20 @@ func (e *Evaluator) BulkAck(ids []int64, action AckAction, by, reason string) (a
 			"skipped":      skipped,
 			"ids":          ids,
 		})
-		e.db.LogActivity("info", "anomaly",
+		e.db.LogActivity("warn", "health",
 			fmt.Sprintf("%d anomaly(s) acknowledged via bulk action by %s", acknowledged, by), "")
 	}
 	return acknowledged, skipped, nil
 }
 
 // logActivity writes a single activity_log row for an anomaly lifecycle
-// transition. The category is always "anomaly". Level is "warn" for critical
-// severity, "info" otherwise.
+// transition. Anomaly detection is the run/storage health-monitoring
+// subsystem, so rows are filed under the canonical "health" category (there
+// is no "anomaly" category — #328 r3) and always at WARN (an anomaly report
+// is never routine INFO noise — #328 r3).
 func (e *Evaluator) logActivity(a Anomaly, transition string) {
-	level := "info"
-	if a.Severity == SeverityCritical {
-		level = "warn"
-	}
 	msg := fmt.Sprintf("Anomaly %s: [%s/%s] %s (id=%d)", transition, a.Severity, a.ScopeKind, a.Summary, a.ID)
-	e.db.LogActivity(level, "anomaly", msg, a.Details)
+	e.db.LogActivity("warn", "health", msg, a.Details)
 }
 
 // maybeNotify is implemented in notify.go (Task 16).

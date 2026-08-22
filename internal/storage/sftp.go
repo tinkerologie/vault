@@ -332,7 +332,7 @@ func (r *sftpReadCloser) Close() error {
 // so the pool connection is returned only when the caller closes the reader.
 func (s *SFTPAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
 	if offset < 0 || length < 0 {
-		return nil, fmt.Errorf("invalid range offset=%d length=%d", offset, length)
+		return nil, fmt.Errorf("invalid range offset=%d, length=%d", offset, length)
 	}
 	conn, err := s.pool.get()
 	if err != nil {

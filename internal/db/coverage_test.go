@@ -28,7 +28,7 @@ func TestActivityLogLifecycle(t *testing.T) {
 	}
 
 	// ListActivityLogs (no filter)
-	all, err := d.ListActivityLogs(10, "")
+	all, err := d.ListActivityLogs(10, "", 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestActivityLogLifecycle(t *testing.T) {
 	}
 
 	// ListActivityLogs (with category filter)
-	filtered, err := d.ListActivityLogs(10, "system")
+	filtered, err := d.ListActivityLogs(10, "system", 0)
 	if err != nil {
 		t.Fatalf("list filtered: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestActivityLogLifecycle(t *testing.T) {
 	if err := d.CapActivityLogs(1); err != nil {
 		t.Errorf("cap: %v", err)
 	}
-	remaining, _ := d.ListActivityLogs(10, "")
+	remaining, _ := d.ListActivityLogs(10, "", 0)
 	if len(remaining) != 1 {
 		t.Errorf("expected 1 row after cap, got %d", len(remaining))
 	}

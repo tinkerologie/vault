@@ -764,7 +764,7 @@ var errWebDAVRangeNotFound = errors.New("object not found")
 // callers verify whole-file checksums, matching plain-object Range semantics.
 func (w *WebDAVAdapter) ReadRange(p string, offset, length int64) (io.ReadCloser, error) {
 	if offset < 0 || length < 0 {
-		return nil, fmt.Errorf("webdav: invalid range offset=%d length=%d", offset, length)
+		return nil, fmt.Errorf("webdav: invalid range offset=%d, length=%d", offset, length)
 	}
 	full, err := w.fullPath(p, false)
 	if err != nil {

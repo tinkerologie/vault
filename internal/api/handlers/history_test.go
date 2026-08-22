@@ -191,7 +191,7 @@ func TestHistoryPurge_LogsActivity(t *testing.T) {
 	}
 
 	// The Purge method calls LogActivity; at minimum one entry should appear.
-	entries, err := d.ListActivityLogs(10, "system")
+	entries, err := d.ListActivityLogs(10, "system", 0)
 	if err != nil {
 		t.Fatalf("list activity: %v", err)
 	}

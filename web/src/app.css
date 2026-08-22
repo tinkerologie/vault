@@ -540,6 +540,25 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--color-surface-3); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-surface-4); }
 
+/* Console scrollbar — the default square track paints over the console's
+   rounded right corners, so the top-right/bottom-right border arcs
+   disappear behind it. Round the track's right corners to match rounded-xl
+   (12px) so the corner outlines stay visible like the rest of the console. */
+.console-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.console-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 0 12px 12px 0;
+}
+.console-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 4px;
+}
+.console-scroll::-webkit-scrollbar-thumb:hover { background: var(--color-surface-4); }
+.console-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-3) transparent;
+}
+
 /* Focus ring */
 *:focus-visible {
   outline: 2px solid var(--color-vault);

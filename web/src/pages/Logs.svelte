@@ -1,59 +1,35 @@
 <script>
-  import { onMount } from 'svelte'
-  import { SvelteSet } from 'svelte/reactivity'
+  import { onMount, tick } from 'svelte'
   import { api, isReplicaMode } from '../lib/api.js'
-  import { formatDate, relTime, formatBytes, prettyAnomalySummary } from '../lib/utils.js'
+  import { formatDate } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
-  import { onWsMessage } from '../lib/ws.svelte.js'
+  import { createFollowMarker, countNewEntries } from '../lib/followmarker.js'
+  import { anchoredScrollTop } from '../lib/scrollanchor.js'
+  import { nearBottom, nearTop, atTop as isAtTop } from '../lib/scrollflags.js'
   import { getLiveMode } from '../lib/runtime-config.js'
+  import { lineTimestamp } from '../lib/tsformat.js'
+  import { formatLine, logLine } from '../lib/logline.js'
+  import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
 
-  let loading = $state(true)
-  let error = $state('')
-  let entries = $state([])
-  let category = $state('')
-  let levelFilter = $state('')
-  let limit = $state(100)
-  let expandedIds = $state(new SvelteSet())
-  // IDs we've auto-expanded for errors. Prevents auto-expand from undoing a
-  // user collapse on the next refresh, and prevents user-expanded non-error
-  // rows from getting wiped when the 5s poll re-renders the list (#83).
-  let autoExpandedIds = $state(new SvelteSet())
-  let autoScroll = $state(true)
-  let logContainer = $state(null)
+  const store = createUnifiedLogStore()
+  let follow = $state(true)
+  let atTop = $state(false) // scrolled to the top edge — controls the jump-to-top button (#328)
+  let suppressFollowPin = false // auto-follow must not fight an in-flight smooth scroll (#328)
+  let box = $state(null)
   let copiedId = $state(null)
   let confirmPurge = $state(false)
   let purging = $state(false)
-  const liveMode = getLiveMode()
+  let newCount = $state(0)
+  let followOffMarker = null
+  let wrap = $state(false) // console-wide line wrapping for message text (#328 round 2)
+  let focusedId = $state(null) // row highlighted to mark the user's focus (#328 r3 #7)
+  let copiedAll = $state(false) // transient confirmation for copy-all (#328 r3 #14)
+  let suppressNextScroll = false // one-shot: swallow the anchor write's own scroll event (#328 r8 #4)
 
-  // Real-time: prepend new activity entries via WebSocket instead of full reload
-  onMount(() => {
-    const unsub = onWsMessage((msg) => {
-      if (msg.type === 'activity' && msg.entry) {
-        if (category && msg.entry.category !== category) return
-        if (!entries.some(e => e.id === msg.entry.id)) {
-          entries = [msg.entry, ...entries].slice(0, limit)
-          // Auto-expand errors once; user can collapse and it stays collapsed.
-          if (msg.entry.level === 'error' && msg.entry.details && !autoExpandedIds.has(msg.entry.id)) {
-            expandedIds.add(msg.entry.id)
-            autoExpandedIds.add(msg.entry.id)
-          }
-          if (autoScroll && logContainer) {
-            requestAnimationFrame(() => logContainer.scrollTop = 0)
-          }
-        }
-      } else if (msg.type === 'activity') {
-        loadLogs(true)
-      }
-    })
-    const pollTimer = liveMode === 'poll' ? setInterval(() => { loadLogs(true) }, 5000) : null
-    return () => {
-      unsub()
-      if (pollTimer) clearInterval(pollTimer)
-    }
-  })
+  const liveMode = getLiveMode()
 
   const categories = [
     { value: '', label: 'All' },
@@ -64,152 +40,392 @@
   ]
 
   const levels = [
-    { value: '', label: 'All Levels' },
+    { value: '', label: 'All' },
     { value: 'error', label: 'Error' },
-    { value: 'warning', label: 'Warning' },
+    { value: 'warn', label: 'Warn' },
     { value: 'info', label: 'Info' },
   ]
 
-  // background=true refreshes the list in place (5s poll, WS fallback)
-  // without swapping it out for the spinner – the swap caused a visible
-  // flicker every poll tick (#135). Only the initial load and explicit
-  // user actions (filter change, Refresh) show the spinner.
-  async function loadLogs(background = false) {
-    if (!background) loading = true
-    try {
-      entries = (await api.getActivity(limit, category)) || []
-      error = ''
-      // Preserve user expand/collapse choices across the 5s auto-refresh.
-      // Only auto-expand errors we haven't seen before, and drop tracking
-      // state for entries that have aged out of the list.
-      const presentIds = new Set(entries.map(e => e.id))
-      for (const id of [...expandedIds]) {
-        if (!presentIds.has(id)) expandedIds.delete(id)
-      }
-      for (const id of [...autoExpandedIds]) {
-        if (!presentIds.has(id)) autoExpandedIds.delete(id)
-      }
-      for (const e of entries) {
-        if (e.level === 'error' && e.details && !autoExpandedIds.has(e.id)) {
-          expandedIds.add(e.id)
-          autoExpandedIds.add(e.id)
-        }
-      }
-    } catch (e) {
-      // A failed background poll keeps the current list on screen instead of
-      // flashing an error panel; the next tick retries anyway.
-      if (!background) {
-        error = e.message || 'Failed to load activity log'
-        entries = []
-      }
-    } finally {
-      loading = false
-    }
-  }
-
-  $effect(() => {
-    category
-    loadLogs()
+  onMount(async () => {
+    await store.load()
+    await fillViewport()
+    // Background full-history load: the console spans ALL logs (uniform with
+    // the search view), so scrolling reaches the true end and the
+    // "— End of logs —" marker shows there (#328).
+    store.loadAll()
+    const unsub = store.setupWs()
+    // Poll safety net: in poll mode the timer is the primary path (10s); in
+    // live/WS mode it runs as a slower catch-up (30s) so a missed WS event
+    // (e.g. a terminal summary lost across a reconnect) is still surfaced
+    // instead of waiting for a reload (#328 r9 #5).
+    const pollTimer = setInterval(() => store.loadNewer(), liveMode === 'poll' ? 10000 : 30000)
+    return () => { unsub(); if (pollTimer) clearInterval(pollTimer) }
   })
 
-  let filteredEntries = $derived(
-    levelFilter ? entries.filter(e => e.level === levelFilter) : entries
-  )
+  // Track new entries arriving while follow is off. The marker snapshots the
+  // buffer (newest ts + full id set) the moment follow turns off; newCount
+  // counts only entries that arrived strictly AFTER that snapshot, so
+  // pruning/batch merges can't skew it and same-second entries already on
+  // screen are never recounted (#328 round 2).
+  $effect(() => {
+    if (follow) {
+      followOffMarker = null
+      newCount = 0
+    } else if (store.entries.length) {
+      if (!followOffMarker) followOffMarker = createFollowMarker(store.entries)
+      newCount = countNewEntries(store.entries, followOffMarker)
+    } else {
+      newCount = 0
+    }
+  })
 
-  function levelColor(level) {
+  // Auto-follow: pin to bottom when follow is on. Suppressed while a
+  // load-older prepend is in flight — the prepend + scroll-anchor dance
+  // adjusts scrollTop itself, and a mid-prepend pin-to-bottom here would
+  // fight it (scrollbar jumps down then back up) (#328 r4 #3).
+  $effect(() => {
+    store.entries
+    if (follow && box && !store.loadingOlder && !suppressFollowPin) {
+      box.scrollTop = box.scrollHeight
+    }
+  })
+
+  // Scroll detection: auto-load older, toggle follow, reset new count.
+  // While a load is in flight (store.loadingOlder), ignore scroll events
+  // entirely — loadOlderAnchored is about to adjust scrollTop by the prepend
+  // delta, and a scroll event fired mid-adjustment would otherwise re-trigger
+  // loadOlder or toggle follow, fighting the adjustment (scroll teleport).
+  function handleScroll() {
+    if (!box) return
+    // Swallow the programmatic anchor write's own scroll event so it can't
+    // re-trigger loadOlder or toggle follow (#328 r8 #4).
+    if (suppressNextScroll) {
+      suppressNextScroll = false
+      return
+    }
+    atTop = isAtTop(box.scrollTop)
+    if (store.loadingOlder) return
+    const isNearBottom = nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
+
+    if (isNearBottom && !follow) {
+      follow = true
+      newCount = 0
+      followOffMarker = null
+    } else if (!isNearBottom && follow) {
+      follow = false
+    }
+
+    // Auto-load older entries as the user approaches the top (not only at the
+    // exact top), so the next batch is already streaming in by the time they
+    // reach it. Loading older during a search is allowed: the client-side
+    // filter re-applies to newly prepended entries, so deeper matches surface
+    // as older batches load (#328 r9 #4).
+    if (nearTop(box.scrollTop) && store.hasMore && !store.loadingOlder) {
+      loadOlderAnchored()
+    }
+  }
+
+  // Dozzle-style older-batch load: keep the viewport pinned to the same log
+  // line (content-identity anchoring) while a cursor-keyed page of older
+  // entries is prepended. Anchoring on a visible row's offset — not the total
+  // scrollHeight delta — is what prevents the teleport-to-top that the old
+  // delta approach caused (#328 r3 #6). The prepend shifts the anchored row
+  // down by the height of the newly loaded entries, so scrollTop grows and
+  // leaves headroom above to scroll up and trigger the NEXT batch — one batch
+  // per gesture, never a continuous drain (#328 r4 #1 / QA round 6 #2).
+  async function loadOlderAnchored() {
+    if (!box || store.loadingOlder || !store.hasMore || !nearTop(box.scrollTop)) return
+    // Was the "— End of logs —" marker already on screen? When the FINAL
+    // batch loads it appears above the anchor row, shifting every row down
+    // by its height. The anchor must not compensate for that shift: the
+    // marker is the destination the user scrolled to, not content that
+    // should stay hidden above the viewport. Compensating for it pinned the
+    // reading position and pushed the marker out of view, so it only
+    // surfaced after a manual scroll-away-and-back (#328 issue 1).
+    const hadEndMarker = !store.hasMore && !store.pruned
+    // Content-identity anchor: pin the first visible row by id+offset before
+    // the prepend and restore it after, so the user's reading position stays
+    // put and the newly loaded entries appear above it. Anchoring (rather than
+    // pinning to scrollTop 0) also leaves headroom to keep scrolling up, so
+    // the NEXT batch loads on a normal upward gesture instead of requiring a
+    // down-then-up re-arm (#328 r9 #1).
+    const anchorId = topmostEntryId()
+    const anchorTopBefore = anchorId ? entryTopOffset(anchorId) : null
+    // No `smooth` floor here: it prepends the batch then delays the anchor by
+    // MIN_LOAD_OLDER_MS, which paints the shifted viewport for that window
+    // (the "temporary jump" users saw). Loading without the floor lets the
+    // anchor apply in the same frame as the prepend, so the viewport never
+    // detaches (#328 r9).
+    await store.loadOlder()
+    await tick()
+    if (anchorId != null && anchorTopBefore != null) {
+      let anchorTopAfter = entryTopOffset(anchorId)
+      if (anchorTopAfter != null) {
+        // The marker only rendered during THIS load: exclude its height from
+        // the shift so it lands in view at the top instead of above it.
+        if (!hadEndMarker && !store.hasMore && !store.pruned) {
+          const marker = box?.querySelector('[data-end-marker]')
+          if (marker) anchorTopAfter -= marker.offsetHeight
+        }
+        // Anchor against the CURRENT scrollTop — the user keeps scrolling while
+        // the batch loads — not a value captured before the await.
+        const next = anchoredScrollTop(box.scrollTop, anchorTopBefore, anchorTopAfter)
+        if (next !== box.scrollTop) {
+          suppressNextScroll = true
+          box.scrollTop = next
+        }
+      }
+    }
+  }
+
+  function jumpToPresent() {
+    follow = true
+    newCount = 0
+    followOffMarker = null
+    if (!box) return
+    // The auto-follow effect pins scrollTop instantly on every entries
+    // change — it would snap the viewport to the bottom and cancel the
+    // smooth animation the moment `follow` flips true above. Suppress the
+    // pin until the scroll settles (scrollend), then re-arm it (#328).
+    suppressFollowPin = true
+    box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
+    const rearm = () => { suppressFollowPin = false }
+    if ('onscrollend' in window) {
+      box.addEventListener('scrollend', rearm, { once: true })
+    } else {
+      setTimeout(rearm, 700)
+    }
+  }
+
+  // With the full history loaded, jump straight to the oldest log (the top
+  // edge, where the "— End of logs —" marker sits) (#328).
+  function jumpToOldest() {
+    if (box) box.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // Filter switches reset the view to live-tail: follow back on, new-entry
+  // marker cleared, viewport pinned to the newest line.
+  async function snapToBottom() {
+    follow = true
+    newCount = 0
+    followOffMarker = null
+    await tick()
+    if (box) box.scrollTop = box.scrollHeight
+  }
+
+  // Return the data-entry-id of the topmost visible row, or null if none.
+  function topmostEntryId() {
+    if (!box) return null
+    const boxTop = box.getBoundingClientRect().top
+    for (const row of box.querySelectorAll('[data-entry-id]')) {
+      if (row.getBoundingClientRect().top >= boxTop - 1) return row.dataset.entryId
+    }
+    return null
+  }
+
+  // Offset (px) of a row's top from the scroll container's top edge.
+  function entryTopOffset(id) {
+    const el = box?.querySelector(`[data-entry-id="${id}"]`)
+    if (!el || !box) return null
+    return el.getBoundingClientRect().top - box.getBoundingClientRect().top
+  }
+
+  // Line-wrap toggle: reflows every message span, so re-anchor the viewport
+  // the same way loadOlderAnchored does — capture the scroll
+  // geometry before the reflow, restore it after the DOM settles.
+  async function toggleWrap() {
+    // Anchor on the HIGHLIGHTED row (the user's explicit focus) so wrapping
+    // keeps that exact log line at the same screen position; fall back to the
+    // topmost visible row when nothing is highlighted (#328 r4 #10). Wrapping
+    // reflows content above AND below the viewport, so anchoring on content
+    // identity avoids over-correcting on the total-height delta (#328 r3 #8).
+    const anchorId = (focusedId && entryTopOffset(focusedId) != null) ? focusedId : topmostEntryId()
+    const prevScrollTop = box ? box.scrollTop : 0
+    const elTopBefore = anchorId ? entryTopOffset(anchorId) : null
+    wrap = !wrap
+    if (!box) return
+    await tick()
+    if (anchorId && elTopBefore != null) {
+      const elTopAfter = entryTopOffset(anchorId)
+      if (elTopAfter != null) box.scrollTop = anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter)
+    }
+  }
+
+  async function fillViewport() {
+    await tick()
+    let guard = 0
+    while (box && box.scrollHeight <= box.clientHeight && store.hasMore && !store.loadingOlder && guard < 20) {
+      guard++
+      await store.loadOlder()
+      await tick()
+    }
+  }
+
+  async function handleCategory(v) {
+    await store.setCategory(v)
+    await snapToBottom()
+  }
+
+  function handleLevel(v) {
+    store.setLevelFilter(v)
+    snapToBottom()
+  }
+
+  function handleJob(v) {
+    store.setJobFilter(v)
+    snapToBottom()
+  }
+
+  // Reset every filter back to its "All" default. Category is server-side,
+  // so only reload when it was actually non-default (#328 r5 #7).
+  async function resetFilters() {
+    store.setLevelFilter('')
+    store.setJobFilter('')
+    store.setSearchFilter('')
+    if (store.category !== '') {
+      await store.setCategory('')
+    }
+    await snapToBottom()
+  }
+
+  // ---- formatting ----
+
+  function fullTs(ts) {
+    const d = new Date(ts)
+    return Number.isNaN(d.getTime()) ? '' : formatDate(ts)
+  }
+
+  // One color per row for the left side (timestamp, level, category,
+  // message): the default text color, or the level color when the level
+  // changes.
+  function rowColor(level) {
     switch (level) {
-      case 'error': return 'bg-danger/15 text-danger'
-      case 'warning': return 'bg-warning/15 text-warning'
-      case 'info': return 'bg-info/15 text-info'
-      default: return 'bg-surface-4 text-text-dim'
+      case 'error': return 'text-danger'
+      case 'warn': case 'warning': return 'text-warning'
+      case 'debug': return 'text-text-dim/50'
+      default: return 'text-text'
     }
   }
 
-  function levelIcon(level) {
+  // Metadata renders as the muted color — a lighter, subordinate tone than
+  // the message. "Muted" describes the metadata text; the default row text
+  // keeps the plain default color. Exception: when the level changes
+  // (error/warn/debug) the ENTIRE line syncs to one color and the metadata
+  // matches it, so a red row reads as a red row end to end.
+  function metaColor(level) {
     switch (level) {
-      case 'error': return 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'
-      case 'warning': return 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z'
-      case 'info': return 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'
-      default: return 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'
+      case 'error': return 'text-danger'
+      case 'warn': case 'warning': return 'text-warning'
+      case 'debug': return 'text-text-dim/50'
+      default: return 'text-text-muted'
     }
   }
 
-  function categoryBadge(cat) {
-    switch (cat) {
-      case 'backup': return 'bg-vault/15 text-vault'
-      case 'restore': return 'bg-blue-500/15 text-blue-400'
-      case 'health': return 'bg-green-500/15 text-green-400'
-      case 'system': return 'bg-purple-500/15 text-purple-400'
-      default: return 'bg-surface-4 text-text-dim'
+  function levelBg(level) {
+    switch (level) {
+      case 'error': return 'border-l-danger'
+      case 'warn': case 'warning': return 'border-l-warning'
+      case 'debug': return 'border-l-text-dim/30'
+      default: return 'border-l-text-dim/20'
     }
   }
 
-  function tryParseJSON(str) {
-    if (!str) return null
-    try { return JSON.parse(str) } catch { return null }
+  function levelDisplay(level) {
+    if (level === 'warning') return 'warn'
+    return level || 'info'
   }
 
-  function toggleExpand(id) {
-    if (expandedIds.has(id)) expandedIds.delete(id)
-    else expandedIds.add(id)
-  }
+  // ---- actions ----
 
-  function formatDuration(seconds) {
-    if (!Number.isFinite(seconds) || seconds < 0) return String(seconds)
-    if (seconds < 1) return `${(seconds * 1000).toFixed(0)} ms`
-    if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`
-    const m = Math.floor(seconds / 60)
-    const s = Math.round(seconds - m * 60)
-    if (m < 60) return s === 0 ? `${m} min` : `${m} min ${s} s`
-    const h = Math.floor(m / 60)
-    const mm = m - h * 60
-    return mm === 0 ? `${h} h` : `${h} h ${mm} min`
-  }
-
-  function formatDetailValue(key, value) {
-    if (key === 'size_bytes') return formatBytes(value)
-    if (key === 'duration_seconds') return formatDuration(Number(value))
-    if (key === 'duration_ms') return formatDuration(Number(value) / 1000)
-    // Anomaly detail floats: new entries are rounded at the source (issue
-    // #134), but entries stored before that fix carry full float64 precision.
-    if (key === 'z_score' || key === 'growth_factor') return Number(value).toFixed(2)
-    if (key === 'eta_days') return `${Number(value).toFixed(1)} days`
-    if (key === 'pct_free') return `${Number(value).toFixed(1)}%`
-    if (key === 'free_bytes' || key === 'total_bytes') return formatBytes(value)
-    if (key === 'slope_bytes_per_day') {
-      const n = Number(value)
-      return `${n < 0 ? '-' : ''}${formatBytes(Math.abs(n))}/day`
-    }
-    if (key === 'backup_type') return String(value).charAt(0).toUpperCase() + String(value).slice(1)
-    if (key === 'containers_checked') return `${value} checked`
-    if (key === 'containers_healthy') return `${value} healthy`
-    if (key === 'containers_unhealthy') return `${value} unhealthy`
-    if (Array.isArray(value)) return value.length ? value.join(', ') : '–'
-    return String(value)
-  }
-
-  function detailLabel(key) {
-    return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-  }
+  // Single-line log text lives in the shared logline module (message and
+  // metadata split at the first `, key=` boundary and joined with ` | `),
+  // so the console rows, copy button, copy-all, and export all render
+  // every log line identically (#328).
 
   async function copyEntry(entry) {
-    const text = `[${entry.level?.toUpperCase()}] [${entry.category}] ${prettyAnomalySummary(entry.message)}${entry.details ? '\n' + entry.details : ''}`
-    if (await copyText(text)) {
+    if (await copyText(logLine(entry))) {
       copiedId = entry.id
       setTimeout(() => { copiedId = null }, 2000)
     }
   }
 
+  // Highlight the row immediately on pointer-down (not on click, which waits
+  // for mouse-up) so the focus marker appears without delay (#328 r5 #2).
+  function handleRowPointerDown(entry) {
+    focusedId = entry.id
+  }
+
+  // Triple-click selects the whole line. Single-click highlighting is handled
+  // by onpointerdown (above).
+  function handleRowClick(e) {
+    if (e.detail === 3) {
+      // Capture the row synchronously: `e.currentTarget` is nulled once the
+      // event finishes dispatching, so reading it inside the rAF callback was
+      // always null and triple-click never selected anything (#328 r4 #8).
+      const row = e.currentTarget
+      if (!row) return
+      // Defer the selection so it overrides the browser's native triple-click
+      // fragment selection after it settles.
+      requestAnimationFrame(() => selectRowText(row))
+    }
+  }
+
+  function selectRowText(el) {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+
+  // A flex row of many <span>s serializes to clipboard with a newline between
+  // each span, so a manual selection copies multi-line. Intercept the copy
+  // event and write a single clean line instead (#328 #3). Only override when
+  // the whole selection lives inside one row; multi-row selections fall
+  // through to the browser's native copy.
+  function handleCopy(e) {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
+    const row = closestRow(sel.anchorNode)
+    if (!row || row !== closestRow(sel.focusNode)) return
+    // dataset.entryId is always a string; activity ids are numbers and
+    // run-log ids are the "rl-<n>" strings — compare on the string form so
+    // the single-line copy interception works for both row kinds (#328).
+    const entry = store.filtered.find(en => String(en.id) === row.dataset.entryId)
+    if (!entry) return
+    e.preventDefault()
+    e.clipboardData.setData('text/plain', logLine(entry))
+  }
+
+  function closestRow(node) {
+    let el = node && node.nodeType === 3 ? node.parentElement : node
+    while (el) {
+      if (el.dataset && el.dataset.entryId) return el
+      el = el.parentElement
+    }
+    return null
+  }
+
+  // Shared line format for Export and Copy-all — keep the two in lockstep
+  // with the single-row copy (logLine from the shared logline module).
+  function formatLogLines() {
+    return store.filtered.map(e => logLine(e))
+  }
+
+  async function copyAllLogs() {
+    if (await copyText(formatLogLines().join('\n'))) {
+      copiedAll = true
+      setTimeout(() => { copiedAll = false }, 2000)
+    }
+  }
+
   function exportLogs() {
-    const lines = filteredEntries.map(e => {
-      const ts = formatDate(e.created_at)
-      return `[${ts}] [${e.level?.toUpperCase()}] [${e.category}] ${prettyAnomalySummary(e.message)}${e.details ? ' – ' + e.details : ''}`
-    })
+    const lines = formatLogLines()
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `vault-logs-${new Date().toISOString().slice(0, 10)}.txt`
+    a.download = `vault-logs-${new Date().toISOString().slice(0, 10)}.log`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -219,10 +435,10 @@
     try {
       await api.purgeActivity()
       confirmPurge = false
-      await loadLogs()
+      await store.load()
     } catch (e) {
       confirmPurge = false
-      error = e.message || 'Failed to purge logs'
+      store.setError(e.message || 'Failed to purge logs')
     } finally {
       purging = false
     }
@@ -230,178 +446,213 @@
 </script>
 
 <div>
-  <div class="flex items-center justify-between mb-6">
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1 class="text-2xl font-bold text-text">Activity Log</h1>
-      <p class="text-sm text-text-muted mt-1">System activity and backup operation history</p>
+      <h1 class="text-2xl font-bold text-text">Logs</h1>
+      <p class="text-sm text-text-muted mt-1">Unified activity and run-log output</p>
     </div>
     <div class="flex items-center gap-2">
-      <!-- Auto-scroll toggle -->
-      <button
-        role="switch"
-        aria-checked={autoScroll}
-        onclick={() => autoScroll = !autoScroll}
-        class="flex items-center gap-2 text-xs text-text-muted hover:text-text transition-colors"
-        title="Auto-scroll to new entries"
-      >
-        <span class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors {autoScroll ? 'bg-vault' : 'bg-surface-4'}">
-          <span class="inline-block h-3 w-3 rounded-full bg-white shadow transition-transform {autoScroll ? 'translate-x-3.5' : 'translate-x-0.5'}"></span>
-        </span>
-        Auto-scroll
+      <button onclick={toggleWrap} aria-pressed={wrap}
+        class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm transition-colors flex items-center gap-1.5 {wrap ? 'text-text border-vault/50' : 'text-text-muted hover:text-text'}" title="Toggle line wrapping">
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10m-10 6h10M17 15l3-3-3-3"/></svg>
+        Wrap: {wrap ? 'on' : 'off'}
       </button>
-      <!-- Export button -->
-      <button onclick={exportLogs} disabled={filteredEntries.length === 0}
+      <button onclick={copyAllLogs} disabled={store.filtered.length === 0}
+        class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Copy all filtered logs">
+        {#if copiedAll}
+          <svg aria-hidden="true" class="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          Copied
+        {:else}
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          Copy
+        {/if}
+      </button>
+      <button onclick={exportLogs} disabled={store.filtered.length === 0}
         class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Export logs">
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         Export
       </button>
-      <!-- Purge button — clears ALL logs regardless of active filters, so gate on
-           whether any logs exist rather than the filtered subset. -->
       {#if !isReplicaMode()}
-        <button onclick={() => confirmPurge = true} disabled={entries.length === 0}
+        <button onclick={() => confirmPurge = true} disabled={store.entries.length === 0}
           class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-danger hover:bg-danger/10 transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Purge all logs">
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          Purge All
+          Purge
         </button>
       {/if}
-      <button onclick={() => loadLogs()} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5" aria-label="Refresh">
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-        Refresh
-      </button>
     </div>
   </div>
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
       <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-      <span>Read-only replica — write actions are disabled on this instance.</span>
+      <span>Read-only replica — write actions are disabled.</span>
     </div>
   {/if}
 
-  <!-- Filters -->
-  <div class="flex flex-wrap items-center gap-2 mb-4">
-    <div role="group" aria-label="Filter by category" class="flex items-center gap-2 flex-wrap">
-      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Category</span>
-      {#each categories as cat (cat.value)}
-        <button
-          type="button"
-          onclick={() => (category = cat.value)}
-          aria-pressed={category === cat.value}
-          class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {category === cat.value
-            ? 'bg-vault text-white'
-            : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}"
-        >
-          {cat.label}
-        </button>
-      {/each}
-    </div>
-    <div class="w-px h-5 bg-border" aria-hidden="true"></div>
-    <div role="group" aria-label="Filter by level" class="flex items-center gap-2 flex-wrap">
-      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Level</span>
-      {#each levels as lev (lev.value)}
-        <button
-          type="button"
-          onclick={() => (levelFilter = lev.value)}
-          aria-pressed={levelFilter === lev.value}
-          class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {levelFilter === lev.value
-            ? (lev.value === 'error' ? 'bg-danger text-white' : lev.value === 'warning' ? 'bg-warning text-white' : 'bg-vault text-white')
-            : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}"
-        >
-          {lev.label}
-        </button>
-      {/each}
-    </div>
+  <!-- Filter bar -->
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
+    <label class="flex items-center gap-1.5">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Level</span>
+      <select
+        value={store.levelFilter}
+        onchange={(e) => handleLevel(e.target.value)}
+        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.levelFilter ? 'border-vault text-text' : ''}"
+      >
+        {#each levels as lev (lev.value)}
+          <option value={lev.value}>{lev.label}</option>
+        {/each}
+      </select>
+    </label>
+    <div class="w-px h-4 bg-border" aria-hidden="true"></div>
+    <label class="flex items-center gap-1.5">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Category</span>
+      <select
+        value={store.category}
+        onchange={(e) => handleCategory(e.target.value)}
+        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.category ? 'border-vault text-text' : ''}"
+      >
+        {#each categories as cat (cat.value)}
+          <option value={cat.value}>{cat.label}</option>
+        {/each}
+      </select>
+    </label>
+    <div class="w-px h-4 bg-border" aria-hidden="true"></div>
+    <label class="flex items-center gap-1.5">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Job</span>
+      <select
+        value={store.jobFilter}
+        onchange={(e) => handleJob(e.target.value)}
+        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.jobFilter ? 'border-vault text-text' : ''}"
+      >
+        <option value="">All</option>
+        {#each store.jobs as jobName (jobName)}
+          <option value={jobName}>{jobName}</option>
+        {/each}
+      </select>
+    </label>
+    <div class="w-px h-4 bg-border" aria-hidden="true"></div>
+    <label class="flex items-center gap-1.5">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Search</span>
+      <div class="relative">
+        <input
+          type="text"
+          value={store.search}
+          oninput={(e) => { store.setSearchFilter(e.target.value); if (!e.target.value) snapToBottom() }}
+          placeholder="Filter logs…"
+          class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-dim/50 {store.search ? 'border-vault text-text' : ''}"
+        />
+        {#if store.search}
+          <button type="button" onclick={() => { store.setSearchFilter(''); snapToBottom() }}
+            class="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-dim hover:text-text text-xs leading-none" title="Clear search" aria-label="Clear search">×</button>
+        {/if}
+      </div>
+    </label>
+    {#if store.category || store.levelFilter || store.jobFilter || store.search}
+      <div class="w-px h-4 bg-border" aria-hidden="true"></div>
+      <button type="button" onclick={resetFilters}
+        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted hover:text-text transition-colors" title="Reset all filters">
+        Reset filters
+      </button>
+    {/if}
   </div>
 
-  {#if loading}
-    <Spinner text="Loading activity log..." />
-  {:else if error}
+  <!-- Console -->
+  {#if store.loading && !store.loaded}
+    <Spinner text="Loading logs..." />
+  {:else if store.error}
     <div class="bg-danger/10 border border-danger/30 text-danger rounded-xl p-4 flex items-center gap-3">
       <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-      <span class="text-sm">{error}</span>
+      <span class="text-sm">{store.error}</span>
     </div>
-  {:else if filteredEntries.length === 0}
-    <EmptyState title="No activity yet" subtitle="Events are logged automatically" description="Activity from backup and restore operations will appear here.">
+  {:else if store.search && store.filtered.length === 0 && (store.searching || store.loadingOlder || store.loading)}
+    <div class="py-4 text-center text-sm text-text-dim flex items-center justify-center gap-2" aria-live="polite">
+      <span aria-hidden="true" class="inline-block w-4 h-4 border border-vault/30 border-t-vault rounded-full animate-spin"></span>
+      <span>searching older logs…</span>
+    </div>
+  {:else if store.filtered.length === 0}
+    <EmptyState title="No logs" subtitle="Events appear here as they happen" description="Backup and restore operations will stream their output into this console.">
       {#snippet iconSlot()}
-        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl overflow-y-auto max-h-[70vh]" bind:this={logContainer}>
-      <div class="divide-y divide-border">
-        {#each filteredEntries as entry (entry.id)}
-          <div class="px-5 py-3.5 hover:bg-surface-3/30 transition-colors {entry.level === 'error' ? 'border-l-2 border-l-danger' : ''} group">
-            <div class="flex items-start gap-3">
-              <div class="mt-0.5 shrink-0">
-                <svg aria-hidden="true" class="w-4 h-4 {entry.level === 'error' ? 'text-danger' : entry.level === 'warning' ? 'text-warning' : 'text-info'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={levelIcon(entry.level)} />
-                </svg>
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-0.5">
-                  <span class="text-xs px-1.5 py-0.5 rounded font-medium {levelColor(entry.level)}">{entry.level}</span>
-                  <span class="text-xs px-1.5 py-0.5 rounded font-medium {categoryBadge(entry.category)}">{entry.category}</span>
-                  <span class="text-xs text-text-dim ml-auto shrink-0" title={relTime(entry.created_at)}>{formatDate(entry.created_at)}</span>
-                  <!-- Copy button -->
-                  <button type="button" onclick={(e) => { e.stopPropagation(); copyEntry(entry) }}
-                    class="opacity-0 group-hover:opacity-100 p-1 text-text-dim hover:text-text rounded transition-all" title="Copy entry">
-                    {#if copiedId === entry.id}
-                      <svg aria-hidden="true" class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                    {:else}
-                      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                    {/if}
-                  </button>
-                </div>
-                <p class="text-sm text-text {entry.level === 'error' ? 'font-medium' : ''}">{prettyAnomalySummary(entry.message)}</p>
-                {#if entry.details}
-                  {@const parsed = tryParseJSON(entry.details)}
-                  {#if parsed}
-                    <button
-                      type="button"
-                      class="text-xs text-text-dim mt-1 flex items-center gap-1 hover:text-text transition-colors"
-                      onclick={() => toggleExpand(entry.id)}
-                    >
-                      <svg aria-hidden="true" class="w-3 h-3 transition-transform {expandedIds.has(entry.id) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                      </svg>
-                      Details
-                    </button>
-                    {#if expandedIds.has(entry.id)}
-                      <div class="mt-2 flex flex-wrap gap-1.5">
-                        {#each Object.entries(parsed) as [key, value] (key)}
-                          {#if key === 'summary' && value && typeof value === 'object' && !Array.isArray(value)}
-                            {#each Object.entries(value) as [sk, sv] (sk)}
-                              <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-surface-4 text-text-dim">
-                                <span class="text-text-dim/70">{detailLabel(sk)}:</span> {formatDetailValue(sk, sv)}
-                              </span>
-                            {/each}
-                          {:else if key === 'results' && Array.isArray(value)}
-                            <!-- Skip results array in badge view – summary covers it -->
-                          {:else if value === null || value === undefined}
-                            <!-- Skip null values -->
-                          {:else if Array.isArray(value) && value.length > 0}
-                            <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-danger/10 text-danger font-medium">
-                              {detailLabel(key)}: {value.join(', ')}
-                            </span>
-                          {:else if !Array.isArray(value) && (typeof value !== 'object' || value === null)}
-                            <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-surface-4 text-text-dim">
-                              <span class="text-text-dim/70">{detailLabel(key)}:</span> {formatDetailValue(key, value)}
-                            </span>
-                          {/if}
-                        {/each}
-                      </div>
-                    {/if}
-                  {:else}
-                    <p class="text-xs text-text-dim mt-1 font-mono truncate">{entry.details}</p>
-                  {/if}
-                {/if}
-              </div>
-            </div>
+    <!-- Status bar -->
+    <div class="flex items-center justify-between mb-2">
+    </div>
+
+    <!-- Console wrapper: scroll container + fixed overlay buttons -->
+    <div class="relative" style="max-height: 72vh">
+      <!-- Jump to present / new-entries indicator (fixed, bottom-right whenever follow is off) -->
+      {#if !follow}
+        <button onclick={jumpToPresent}
+          class="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-vault/90 hover:bg-vault text-white text-xs font-medium rounded-lg shadow-lg transition-all flex items-center gap-1.5"
+          title="Jump to present">
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+          {#if newCount > 0}{newCount} new {newCount === 1 ? 'entry' : 'entries'}{:else}Jump to present{/if}
+        </button>
+      {/if}
+
+      {#if !atTop}
+        <button onclick={jumpToOldest}
+          class="absolute top-3 right-3 z-10 p-2 bg-surface-3 border border-border rounded-lg text-text-muted hover:text-text shadow-lg transition-colors"
+          title="Jump to oldest log" aria-label="Jump to top">
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 10l-7-7m0 0l-7 7m7-7v18"/></svg>
+        </button>
+      {/if}
+
+      <!-- Older-batch loading spinner removed: the console now loads the
+           ENTIRE history in the background (loadAll), so there is no
+           user-facing "reaching further back" phase to signal — the fill is
+           fast and silent, and scroll-triggered loads no longer happen once
+           the buffer spans the true end (#328). -->
+
+      <!-- Scroll container -->
+      <div bind:this={box} onscroll={handleScroll} oncopy={handleCopy}
+        class="console-scroll bg-surface-1 border border-border rounded-xl overflow-y-auto font-mono text-xs leading-tight h-[72vh]"
+        style="overflow-anchor: none;"
+        role="log"
+      >
+        {#if !store.hasMore && !store.pruned}
+          <div data-end-marker class="h-8 flex items-center justify-center text-center text-[11px] text-text-dim select-none" aria-live="polite">
+            — End of logs —
+          </div>
+        {/if}
+        {#each store.filtered as entry (entry.id)}
+          {@const line = formatLine(entry)}
+          <div class="flex items-baseline gap-1 px-2 border-l-2 {levelBg(entry.level)} group {focusedId === entry.id ? 'bg-vault/15 hover:bg-vault/15' : 'hover:bg-surface-2/50'}" data-entry-id={entry.id} onclick={(e) => handleRowClick(e)} onpointerdown={() => handleRowPointerDown(entry)}>
+            <!-- Timestamp (date + 24h time) -->
+            <span class="{rowColor(entry.level)} shrink-0 w-[10rem] text-right tabular-nums" title={fullTs(entry.ts)}>{lineTimestamp(entry.ts)}</span>
+            <span class="text-text-dim/30 select-none px-1">│</span>
+            <!-- Level -->
+            <span class="shrink-0 w-[2.8rem] {rowColor(entry.level)}" title={entry.level}>{levelDisplay(entry.level)}</span>
+            <span class="text-text-dim/30 select-none px-1">│</span>
+            <!-- Category -->
+            <span class="shrink-0 w-[7ch] truncate {rowColor(entry.level)}" title={entry.category}>{entry.category}</span>
+            <span class="text-text-dim/30 select-none px-1">│</span>
+            <!-- Message. Priority order for truncation: the metadata (next
+                 span) is the only shrinking item, so it truncates first;
+                 the message is shrink-0 and max-w-full, so it only
+                 ellipsizes when the message alone overflows the row. -->
+            <span class="min-w-0 flex-1 flex items-baseline gap-1">
+              <span class="{wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap overflow-hidden text-ellipsis'} shrink-0 max-w-full {rowColor(entry.level)} {entry.type === 'summary' ? 'font-medium' : ''}" title={line.message}>
+                {line.message}
+              </span>
+              {#if line.meta}<span class="{metaColor(entry.level)} px-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={line.meta}> | {line.meta}</span>{/if}
+            </span>
+            <!-- Copy -->
+            <button type="button" onclick={() => copyEntry(entry)}
+              class="{copiedId === entry.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} p-0.5 text-text-dim/40 hover:text-text shrink-0 transition-all self-center cursor-pointer" title="Copy">
+              {#if copiedId === entry.id}
+                <svg aria-hidden="true" class="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              {:else}
+                <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              {/if}
+            </button>
           </div>
         {/each}
       </div>
     </div>
-    <p class="text-xs text-text-dim mt-3 text-center">{filteredEntries.length} log entr{filteredEntries.length !== 1 ? 'ies' : 'y'}</p>
   {/if}
 </div>
 

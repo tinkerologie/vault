@@ -83,6 +83,8 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 		return nil, fmt.Errorf("source path not accessible: %w", err)
 	}
 
+	progress(item.Name, 5, "resolved source path "+srcPath)
+
 	if err := os.MkdirAll(destDir, 0750); err != nil {
 		return nil, fmt.Errorf("creating dest dir: %w", err)
 	}
@@ -142,6 +144,8 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// Store source path metadata so restore knows the original location.
 	// Use the pre-resolution path so restores target the user-configured
 	// share path, not the internal symlink target.
+	progress(item.Name, 90, "writing folder metadata")
+
 	metaPath := filepath.Join(destDir, "folder_meta.json")
 	metaJSON := fmt.Sprintf(`{"path":%q,"name":%q}`, originalPath, item.Name)
 	if err := os.WriteFile(metaPath, []byte(metaJSON), 0600); err != nil {
@@ -282,6 +286,9 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 	m := dedup.Manifest{Version: dedup.ManifestVersion, Item: item.Name, Files: map[string]dedup.ManifestEntry{}}
 	var totalBytes int64
 	var skipped int
+	if progress != nil {
+		progress(item.Name, 10, "walking source tree "+srcPath)
+	}
 	err = filepath.Walk(srcPath, func(p string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			// An inaccessible SOURCE ROOT is a broken backup, not a skip —
@@ -362,6 +369,10 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 	})
 	if err != nil {
 		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: walk %q: %w", item.Name, err)
+	}
+
+	if progress != nil {
+		progress(item.Name, 90, fmt.Sprintf("chunking complete (%d entries, %s)", len(m.Files), humanizeBytes(float64(totalBytes))))
 	}
 
 	if skipped > 0 {

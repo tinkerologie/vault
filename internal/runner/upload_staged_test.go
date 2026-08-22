@@ -34,7 +34,7 @@ func TestUploadStagedFiles_UpdatesLastProgress(t *testing.T) {
 	r.lastProgress = stale
 	r.lastProgressMu.Unlock()
 
-	if _, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp", false, "", "none", "folder", "Test", 1); err != nil {
+	if _, err := r.uploadStagedFilesN(context.Background(), 0, tmpDir, dest, "rp", false, "", "none", "folder", "Test", 1); err != nil {
 		t.Fatalf("uploadStagedFiles: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestUploadStagedFiles_BadAdapterConfig(t *testing.T) {
 		Type:   "local",
 		Config: `{not valid json`,
 	}
-	_, err := r.uploadStagedFilesN(context.Background(), t.TempDir(), dest, "rp", false, "", "none", "folder", "Test Folder", 1)
+	_, err := r.uploadStagedFilesN(context.Background(), 0, t.TempDir(), dest, "rp", false, "", "none", "folder", "Test Folder", 1)
 	if err == nil {
 		t.Fatal("expected NewAdapter error for corrupt config")
 	}
@@ -73,7 +73,7 @@ func TestUploadStagedFiles_MissingTmpDir(t *testing.T) {
 		Type:   "local",
 		Config: string(cfg),
 	}
-	_, err := r.uploadStagedFilesN(context.Background(), filepath.Join(t.TempDir(), "no-such-dir"), dest, "rp", false, "", "none", "folder", "Test", 1)
+	_, err := r.uploadStagedFilesN(context.Background(), 0, filepath.Join(t.TempDir(), "no-such-dir"), dest, "rp", false, "", "none", "folder", "Test", 1)
 	if err == nil {
 		t.Fatal("expected ReadDir error for missing tmpDir")
 	}
@@ -92,7 +92,7 @@ func TestUploadStagedFiles_EmptyTmpDirReturnsEmptyChecksums(t *testing.T) {
 		Type:   "local",
 		Config: string(cfg),
 	}
-	checksums, err := r.uploadStagedFilesN(context.Background(), t.TempDir(), dest, "rp", false, "", "none", "folder", "Test", 1)
+	checksums, err := r.uploadStagedFilesN(context.Background(), 0, t.TempDir(), dest, "rp", false, "", "none", "folder", "Test", 1)
 	if err != nil {
 		t.Fatalf("uploadStagedFiles(empty tmpDir): %v", err)
 	}
@@ -120,7 +120,7 @@ func TestUploadStagedFiles_HappyPath_NoEncryption(t *testing.T) {
 		Type:   "local",
 		Config: string(cfg),
 	}
-	checksums, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp-x", false, "", "none", "folder", "Test", 1)
+	checksums, err := r.uploadStagedFilesN(context.Background(), 0, tmpDir, dest, "rp-x", false, "", "none", "folder", "Test", 1)
 	if err != nil {
 		t.Fatalf("uploadStagedFiles: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestUploadStagedFiles_HappyPath_WithEncryption(t *testing.T) {
 		Type:   "local",
 		Config: string(cfg),
 	}
-	checksums, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp-y", false, "secret", "none", "container", "MyContainer", 1)
+	checksums, err := r.uploadStagedFilesN(context.Background(), 0, tmpDir, dest, "rp-y", false, "secret", "none", "container", "MyContainer", 1)
 	if err != nil {
 		t.Fatalf("uploadStagedFiles: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestUploadStagedFiles_ParallelAllChecksums(t *testing.T) {
 	cfg, _ := json.Marshal(map[string]string{"path": filepath.Join(t.TempDir(), "store")})
 	dest := db.StorageDestination{Type: "local", Config: string(cfg)}
 
-	sums, err := r.uploadStagedFilesN(context.Background(), tmp, dest, "rp", false, "", "none", "folder", "Test", 3)
+	sums, err := r.uploadStagedFilesN(context.Background(), 0, tmp, dest, "rp", false, "", "none", "folder", "Test", 3)
 	if err != nil {
 		t.Fatalf("uploadStagedFilesN: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestUploadStagedFiles_TransportCompression(t *testing.T) {
 			cfg, _ := json.Marshal(map[string]string{"path": storeDir})
 			dest := db.StorageDestination{Type: "local", Config: string(cfg)}
 
-			checksums, err := r.uploadStagedFilesN(context.Background(), tmpDir, dest, "rp", false, "", "zstd", tt.itemType, "item", 1)
+			checksums, err := r.uploadStagedFilesN(context.Background(), 0, tmpDir, dest, "rp", false, "", "zstd", tt.itemType, "item", 1)
 			if err != nil {
 				t.Fatalf("uploadStagedFiles: %v", err)
 			}

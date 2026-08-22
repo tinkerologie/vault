@@ -201,6 +201,17 @@ type ActivityLogEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// RunLogEntry is one line in a run's streaming log (issue #328).
+// Entries cascade-delete with their job_runs row.
+type RunLogEntry struct {
+	ID      int64     `json:"id"`
+	RunID   int64     `json:"run_id"`
+	Ts      time.Time `json:"ts"`
+	Level   string    `json:"level"`
+	Message string    `json:"message"`
+	Data    string    `json:"data"`
+}
+
 // VerifyRun records one execution of restore-point verification. Mode is
 // "quick" (storage HEAD + size compare) or "deep" (full read + SHA-256
 // re-compute). Status transitions running -> passed | failed | cancelled.

@@ -217,9 +217,16 @@ export const api = {
   },
 
   // Activity Log
-  getActivity: (limit = 100, category = '') =>
-    request('GET', `/activity?limit=${limit}${category ? '&category=' + encodeURIComponent(category) : ''}`),
+  getActivity: (limit = 100, category = '', beforeId = 0) =>
+    request('GET', `/activity?limit=${limit}${category ? '&category=' + encodeURIComponent(category) : ''}${beforeId ? '&before_id=' + beforeId : ''}`),
   purgeActivity: () => request('DELETE', '/activity'),
+
+  // Run Log (per-run streaming log, issue #328)
+  // tail=true fetches the run's NEWEST `limit` lines (oldest-first within
+  // that window) instead of the oldest, so the console always receives the
+  // end-of-run summary line even for runs longer than the limit.
+  getRunLogs: (runId, { after = 0, limit = 500, tail = false } = {}) =>
+    request('GET', `/runs/${runId}/logs?after=${after}&limit=${limit}${tail ? '&tail=true' : ''}`),
 
   // History
   purgeHistory: () => request('DELETE', '/history'),

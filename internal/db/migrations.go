@@ -81,6 +81,19 @@ CREATE TABLE IF NOT EXISTS activity_log (
 	details TEXT DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_activity_log_ts ON activity_log(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_log_cat ON activity_log(category);
+
+CREATE TABLE IF NOT EXISTS run_log_entries (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	run_id INTEGER NOT NULL REFERENCES job_runs(id) ON DELETE CASCADE,
+	ts DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	level TEXT NOT NULL DEFAULT 'info',
+	message TEXT NOT NULL,
+	data TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_log_entries_run ON run_log_entries(run_id, id);
 
 CREATE TABLE IF NOT EXISTS verify_runs (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -334,4 +347,18 @@ var dataMigrations = []string{
 	// run. Seed it from last_sync_at for rows whose last recorded status was a
 	// success, so the UI shows the historical timestamp immediately.
 	"UPDATE replication_sources SET last_sync_success_at = last_sync_at WHERE last_sync_success_at IS NULL AND last_sync_status = 'success' AND last_sync_at IS NOT NULL",
+	// Anomaly activity category + level normalization (#328 r3 #11, #12).
+	// Round 1 (7e62338) fixed the code to write anomaly activity rows at WARN,
+	// but rows written before that still sit in activity_log with the
+	// non-canonical category 'anomaly' (the console's categories are backup,
+	// restore, health, system) and/or level 'info'. Move every anomaly row
+	// under the canonical "health" category — anomaly detection is the
+	// run/storage health-monitoring subsystem — and promote its remaining
+	// INFO rows to WARN so anomaly reports never surface as INFO. The level
+	// UPDATE is scoped to anomaly messages so legitimate INFO rows from the
+	// health subsystem ("Storage health check ... status=ok", "Health check
+	// job=...") are left untouched. Both statements are idempotent: re-running
+	// them is a no-op.
+	"UPDATE activity_log SET category = 'health' WHERE category = 'anomaly'",
+	"UPDATE activity_log SET level = 'warn' WHERE category = 'health' AND level = 'info' AND (message LIKE 'Anomaly %' OR message LIKE '%anomaly(s) acknowledged%')",
 }

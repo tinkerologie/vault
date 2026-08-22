@@ -138,6 +138,7 @@ func TestStageItemLocally_UnknownType(t *testing.T) {
 	r, _ := newTestRunner(t)
 	_, _, cleanup, err := r.stageItemLocally(
 		context.Background(),
+		0,
 		engine.BackupItem{Name: "unknown-x", Type: "definitely-not-a-real-type"},
 		db.StorageDestination{Type: "local"},
 	)
@@ -156,6 +157,7 @@ func TestStageItemLocally_VMHandlerError(t *testing.T) {
 	r, _ := newTestRunner(t)
 	_, _, cleanup, err := r.stageItemLocally(
 		context.Background(),
+		0,
 		engine.BackupItem{Name: "any-vm", Type: "vm"},
 		db.StorageDestination{Type: "local"},
 	)

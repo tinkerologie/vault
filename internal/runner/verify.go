@@ -386,7 +386,7 @@ func (r *Runner) verifyOneFile(adapter storage.Adapter, storagePath string, want
 		return VerifyResult{Path: storagePath, Err: fmt.Errorf("stat: %w", err)}
 	}
 	if want.Size > 0 && info.Size != want.Size {
-		return VerifyResult{Path: storagePath, Size: 0, Err: fmt.Errorf("size mismatch: storage=%d recorded=%d", info.Size, want.Size)}
+		return VerifyResult{Path: storagePath, Size: 0, Err: fmt.Errorf("size mismatch: storage=%d, recorded=%d", info.Size, want.Size)}
 	}
 	if mode == VerifyModeQuick {
 		// Quick mode performs no data transfer — Size: 0 ensures

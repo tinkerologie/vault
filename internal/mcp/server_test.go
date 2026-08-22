@@ -65,7 +65,7 @@ func TestListTools(t *testing.T) {
 		"list_jobs", "get_job", "create_job", "update_job", "delete_job", "run_job", "get_job_history",
 		"list_storage", "get_storage", "create_storage", "update_storage", "delete_storage", "test_storage", "list_storage_files",
 		"list_containers", "list_vms", "list_folders", "list_plugins",
-		"get_health", "get_health_summary", "get_runner_status", "get_activity_log",
+		"get_health", "get_health_summary", "get_runner_status", "get_activity_log", "get_run_logs",
 		"list_restore_points", "restore_item",
 		"list_replication", "get_replication", "delete_replication",
 		"list_anomalies", "get_anomaly", "acknowledge_anomaly",
@@ -439,6 +439,61 @@ func TestActivityLog(t *testing.T) {
 	if len(entries) != 0 {
 		t.Errorf("get_activity_log count = %d, want 0", len(entries))
 	}
+
+	// Negative before_id is rejected like the REST endpoint.
+	if result := callToolExpectError(t, session, ctx, "get_activity_log", map[string]any{"before_id": float64(-1)}); result == "" {
+		t.Fatal("negative before_id: expected an error result")
+	}
+}
+
+func TestGetRunLogs(t *testing.T) {
+	session, database := setupTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	jobID, err := database.CreateJob(db.Job{Name: "runlog-mcp"})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "running", BackupType: "full"})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	for _, m := range []string{"Backup started", "Backed up web (container)"} {
+		if _, err := database.AppendRunLog(ctx, db.RunLogEntry{RunID: runID, Level: "info", Message: m}); err != nil {
+			t.Fatalf("seed entry: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr bool
+		wantN   int
+	}{
+		{name: "full log returns all entries", args: map[string]any{"run_id": runID}, wantN: 2},
+		{name: "after tails only newer entries", args: map[string]any{"run_id": runID, "after": 1}, wantN: 1},
+		{name: "zero limit falls back to default", args: map[string]any{"run_id": runID, "limit": 0}, wantN: 2},
+		{name: "negative after is rejected", args: map[string]any{"run_id": runID, "after": -1}, wantErr: true},
+		{name: "negative limit is rejected", args: map[string]any{"run_id": runID, "limit": -5}, wantErr: true},
+		{name: "non-positive run id is rejected", args: map[string]any{"run_id": 0}, wantErr: true},
+		{name: "unknown run is rejected", args: map[string]any{"run_id": 999999}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantErr {
+				result := callToolExpectError(t, session, ctx, "get_run_logs", tt.args)
+				if result == "" {
+					t.Fatalf("expected an error result for %v", tt.args)
+				}
+				return
+			}
+			entries := jsonArray(t, callTool(t, session, ctx, "get_run_logs", tt.args))
+			if len(entries) != tt.wantN {
+				t.Fatalf("entries = %d, want %d", len(entries), tt.wantN)
+			}
+		})
+	}
 }
 
 // --- Helpers ---
@@ -466,6 +521,30 @@ func callTool(t *testing.T, session *mcp.ClientSession, ctx context.Context, nam
 		t.Fatalf("CallTool(%s) content is not TextContent, got %T", name, result.Content[0])
 	}
 	return tc.Text
+}
+
+// callToolExpectError calls an MCP tool that is expected to return an
+// error result, and returns the text content (the error message).
+func callToolExpectError(t *testing.T, session *mcp.ClientSession, ctx context.Context, name string, args map[string]any) string {
+	t.Helper()
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+	if err != nil {
+		t.Fatalf("CallTool(%s): %v", name, err)
+	}
+	if !result.IsError {
+		t.Fatalf("CallTool(%s) expected error result, got success", name)
+	}
+	if len(result.Content) == 0 {
+		return ""
+	}
+	if tc, ok := result.Content[0].(*mcp.TextContent); ok {
+		return tc.Text
+	}
+	return ""
 }
 
 // jsonField extracts a top-level field from a JSON string.
