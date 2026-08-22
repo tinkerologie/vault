@@ -61,3 +61,33 @@ describe('jobs', () => {
     expect(fetch.mock.calls[0][0]).toBe('/api/v1/jobs?details=true')
   })
 })
+
+describe('history trend', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('requests the size trend by default', async () => {
+    const fetch = vi.fn(async () => new Response('{}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.getHistoryTrend('30d')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/history/trend?period=30d&metric=size')
+  })
+
+  it('requests the duration trend when metric is duration', async () => {
+    const fetch = vi.fn(async () => new Response('{}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.getHistoryTrend('7d', 'duration')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/history/trend?period=7d&metric=duration')
+  })
+})

@@ -1,5 +1,5 @@
 <script>
-  import { formatBytes } from '../lib/utils.js'
+  import { formatBytes, formatInt } from '../lib/utils.js'
 
   let { buckets = [], bucket = 'day' } = $props()
 
@@ -39,7 +39,7 @@
 
   const width = 600
   const height = 140
-  const padding = { top: 10, right: 10, bottom: 22, left: 10 }
+  const padding = { top: 10, right: 10, bottom: 22, left: 54 }
   let chartWidth = width - padding.left - padding.right
   let chartHeight = height - padding.top - padding.bottom
 
@@ -57,10 +57,44 @@
     return slotWidth * (i + 0.5)
   }
 
+  // Index of the bucket nearest the middle of the range — used for the
+  // centre x-axis date label.
+  let midIndex = $derived(Math.floor((dataPoints.length - 1) / 2))
+
+  // "Nice" byte steps across the 1024-based units (B → PB): 1/2/5/10/20/50/100/200/500 × unit,
+  // ascending. The first step that splits the range into at most ~5 intervals
+  // wins, so y-axis tick labels stay round ("200 GB", "10 GB") and the top of
+  // the axis hugs the data instead of jumping to the next whole unit (e.g.
+  // never showing "1 TB" for a dataset that peaks around 600 GB).
+  const SIZE_STEPS = (() => {
+    const steps = []
+    for (let exp = 0; exp <= 5; exp++) {
+      const unit = 1024 ** exp
+      for (const n of [1, 2, 5, 10, 20, 50, 100, 200, 500]) {
+        steps.push(n * unit)
+      }
+    }
+    return steps
+  })()
+
   let yMax = $derived(Math.max(...dataPoints.map(p => p.size), 1))
 
+  // Round the top of the axis up to a whole number of steps and generate the
+  // tick values — grid lines and labels are then staggered at those round
+  // values derived from the data range instead of fixed 25% fractions.
+  let yScale = $derived.by(() => {
+    let step = SIZE_STEPS[SIZE_STEPS.length - 1]
+    for (const s of SIZE_STEPS) {
+      if (yMax / s <= 5) { step = s; break }
+    }
+    const ceil = Math.ceil(yMax / step) * step
+    const ticks = []
+    for (let v = 0; v <= ceil + 1e-9; v += step) ticks.push(v)
+    return { step, ceil, ticks }
+  })
+
   function y(size) {
-    return chartHeight - (size / yMax) * chartHeight
+    return chartHeight - (size / yScale.ceil) * chartHeight
   }
 
   let trend = $derived.by(() => {
@@ -96,7 +130,7 @@
     for (const cat of activeCategories) {
       const value = p.categories[cat.key] || 0
       if (value <= 0) continue
-      const bandHeight = (value / yMax) * chartHeight
+      const bandHeight = (value / yScale.ceil) * chartHeight
       bands.push({
         key: cat.key,
         color: cat.color,
@@ -126,10 +160,10 @@
           <div class="flex items-center gap-1.5 text-xs pl-3 border-l border-border">
             {#if trend.direction === 'up'}
               <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
-              <span class="text-warning">{trend.showPct ? `+${trend.pct}%` : 'Growing'}</span>
+              <span class="text-warning">{trend.showPct ? `+${formatInt(trend.pct)}%` : 'Growing'}</span>
             {:else if trend.direction === 'down'}
               <svg aria-hidden="true" class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-              <span class="text-success">{trend.showPct ? `-${trend.pct}%` : 'Shrinking'}</span>
+              <span class="text-success">{trend.showPct ? `-${formatInt(trend.pct)}%` : 'Shrinking'}</span>
             {:else}
               <svg aria-hidden="true" class="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14"/></svg>
               <span class="text-text-muted">Stable</span>
@@ -144,10 +178,14 @@
       role="img" aria-label="Backup size trend chart">
       <svg aria-hidden="true" viewBox="0 0 {width} {height}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">
         <g transform="translate({padding.left},{padding.top})">
-          <!-- Horizontal grid lines -->
-          {#each [0, 0.25, 0.5, 0.75, 1] as frac (frac)}
-            <line x1="0" y1={chartHeight * (1 - frac)} x2={chartWidth} y2={chartHeight * (1 - frac)}
+          <!-- Horizontal grid lines + y-axis value labels, staggered at round
+               intervals derived from the data range. -->
+          {#each yScale.ticks as tick (tick)}
+            <line x1="0" y1={y(tick)} x2={chartWidth} y2={y(tick)}
               stroke="var(--color-border)" stroke-width="0.5" stroke-dasharray="4 4" />
+            <text x="-6" y={y(tick) + 2} fill="var(--color-text-dim)" font-size="6" text-anchor="end">
+              {formatBytes(tick)}
+            </text>
           {/each}
 
           <!-- One stacked bar per bucket: each band's height is proportional
@@ -178,11 +216,16 @@
             </g>
           {/each}
 
-          <!-- X axis labels (first and last) -->
-          <text x="0" y={chartHeight + 14} fill="var(--color-text-dim)" font-size="10" text-anchor="start">
+          <!-- X axis labels (beginning, middle, end), centered on their bars -->
+          <text x={xCenter(0)} y={chartHeight + 14} fill="var(--color-text-dim)" font-size="5" text-anchor="middle">
             {formatDateShort(dataPoints[0].date)}
           </text>
-          <text x={chartWidth} y={chartHeight + 14} fill="var(--color-text-dim)" font-size="10" text-anchor="end">
+          {#if dataPoints.length > 2}
+            <text x={xCenter(midIndex)} y={chartHeight + 14} fill="var(--color-text-dim)" font-size="5" text-anchor="middle">
+              {formatDateShort(dataPoints[midIndex].date)}
+            </text>
+          {/if}
+          <text x={xCenter(dataPoints.length - 1)} y={chartHeight + 14} fill="var(--color-text-dim)" font-size="5" text-anchor="middle">
             {formatDateShort(dataPoints[dataPoints.length - 1].date)}
           </text>
         </g>

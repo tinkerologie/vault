@@ -4,7 +4,7 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { relTime, relTimeUntil, formatSpeed, formatBytes, largestBackupsByJob } from '../lib/utils.js'
+  import { relTime, relTimeUntil, formatSpeed, formatBytes, largestBackupsByJob, formatInt } from '../lib/utils.js'
   import { getProgress, handleProgressMessage, restoreFromStatus, syncFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import Toast from '../components/Toast.svelte'
@@ -1183,7 +1183,7 @@
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.sizeTrend.icon}/></svg></span>
       <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted truncate">Backup size trend</span>
       {#if trendChange}
-        <span class="ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full tabular-nums {trendChange.pctChange > 0 ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}">{trendChange.pctChange >= 0 ? '+' : ''}{trendChange.pctChange}% · 30d</span>
+        <span class="ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full tabular-nums {trendChange.pctChange > 0 ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}">{trendChange.pctChange >= 0 ? '+' : ''}{formatInt(trendChange.pctChange)}% · 30d</span>
       {/if}
     </div>
     {#if trendPolyline}

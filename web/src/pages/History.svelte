@@ -7,10 +7,11 @@
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import SizeChart from '../components/SizeChart.svelte'
+  import DurationChart from '../components/DurationChart.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
-  import { getAnomalies } from '../lib/anomalies.svelte.js'
+  import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
 
   const anomalyState = getAnomalies()
 
@@ -47,10 +48,19 @@
 
   let trendPeriod = $state('30d')
   let trendData = $state({ period: '30d', bucket: 'day', points: [] })
+  let trendMetric = $state('size')
   const TREND_PERIODS = [['7d', '7d'], ['30d', '30d'], ['90d', '90d'], ['6m', '6m'], ['1y', '1y']]
 
+  let trendRequestGeneration = $state(0)
+
   async function loadTrend() {
-    try { trendData = await api.getHistoryTrend(trendPeriod) } catch { /* keep last */ }
+    const generation = ++trendRequestGeneration
+    const period = trendPeriod
+    const metric = trendMetric
+    try {
+      const result = await api.getHistoryTrend(period, metric)
+      if (generation === trendRequestGeneration) trendData = result
+    } catch { /* keep last */ }
   }
 
   function selectTrendPeriod(val) {
@@ -58,9 +68,22 @@
     loadTrend()
   }
 
+  function selectTrendMetric(val) {
+    trendMetric = val
+    loadTrend()
+  }
+
+  async function loadAnomalies() {
+    try {
+      const res = await api.listAnomalies({ state: 'open', limit: 200 })
+      setOpenList(res?.anomalies ?? [])
+    } catch { /* keep whatever is already loaded */ }
+  }
+
   onMount(() => {
     loadData()
     loadTrend()
+    loadAnomalies()
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed') {
         loadData(true)
@@ -321,8 +344,20 @@
         {/snippet}
       </EmptyState>
     {:else}
-      <!-- Size trend chart -->
-      <div class="flex items-center justify-end mb-2">
+      <!-- Trend chart -->
+      <div class="flex items-center justify-between mb-2 gap-3 flex-wrap">
+        <div class="relative">
+          <select value={trendMetric} onchange={(e) => selectTrendMetric(e.currentTarget.value)}
+            aria-label="Trend metric"
+            class="appearance-none pl-3 pr-9 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text cursor-pointer">
+            <option value="size">Backup size</option>
+            <option value="duration">Job duration</option>
+          </select>
+          <svg aria-hidden="true" class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim"
+            fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
         <div class="flex items-center rounded-lg border border-border bg-surface-3 p-0.5 text-xs">
           {#each TREND_PERIODS as [val, label] (val)}
             <button type="button" onclick={() => selectTrendPeriod(val)}
@@ -331,7 +366,11 @@
           {/each}
         </div>
       </div>
-      <SizeChart buckets={trendData.points} bucket={trendData.bucket} />
+      {#if trendMetric === 'duration'}
+        <DurationChart buckets={trendData.points} bucket={trendData.bucket} />
+      {:else}
+        <SizeChart buckets={trendData.points} bucket={trendData.bucket} />
+      {/if}
 
       <!-- Date-grouped timeline -->
       <div class="space-y-8">

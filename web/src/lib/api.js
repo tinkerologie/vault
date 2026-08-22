@@ -108,9 +108,11 @@ export const api = {
   removeStaleItems: (id) => request('POST', `/jobs/${id}/stale-items/remove`),
   getJobHistory: (id, limit = 50) => request('GET', `/jobs/${id}/history?limit=${limit}`),
   getHistory: (limitPerJob = 200) => request('GET', `/history?limit_per_job=${limitPerJob}`),
-  // getHistoryTrend returns server-bucketed backup-size totals (run/day/week
-  // buckets depending on period) for the History page's SizeChart.
-  getHistoryTrend: (period = '30d') => request('GET', `/history/trend?period=${encodeURIComponent(period)}`),
+  // getHistoryTrend returns server-bucketed backup-size or job-duration totals
+  // (run/day/week buckets depending on period) for the History page's trend
+  // charts. `metric` is "size" (default) or "duration".
+  getHistoryTrend: (period = '30d', metric = 'size') =>
+    request('GET', `/history/trend?period=${encodeURIComponent(period)}&metric=${encodeURIComponent(metric)}`),
   // Manually trigger a storage destination health check; returns
   // {status: "ok"|"failed", error: string}.
   healthCheckStorage: (id) => request('POST', `/storage/${id}/health-check`),

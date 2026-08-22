@@ -64,16 +64,19 @@ func (h *HistoryHandler) Purge(w http.ResponseWriter, _ *http.Request) {
 
 // trendRun is one completed run reduced to what the trend needs.
 type trendRun struct {
-	Start    time.Time
-	Size     int64
-	Category string
+	Start           time.Time
+	Size            int64
+	Category        string
+	DurationSeconds float64
 }
 
 // trendBucket is one chart bar.
 type trendBucket struct {
-	Start      time.Time        `json:"start"`
-	TotalBytes int64            `json:"total_bytes"`
-	Categories map[string]int64 `json:"categories"`
+	Start              time.Time        `json:"start"`
+	TotalBytes         int64            `json:"total_bytes,omitempty"`
+	Categories         map[string]int64 `json:"categories,omitempty"`
+	AvgDurationSeconds float64          `json:"avg_duration_seconds,omitempty"`
+	RunCount           int              `json:"run_count,omitempty"`
 }
 
 // periodToWindow maps a period to (lookback duration, bucket granularity).
@@ -136,11 +139,57 @@ func bucketTrend(runs []trendRun, bucket string) []trendBucket {
 	return out
 }
 
-// Trend serves GET /api/v1/history/trend?period=7d|30d|90d|6m|1y
+// bucketDurationTrend groups runs into ordered buckets and records the average
+// run duration (seconds) and run count for each bucket. Runs with zero or
+// negative duration (e.g. imported runs that carry no wall-clock duration)
+// are skipped so they do not drag the average down.
+func bucketDurationTrend(runs []trendRun, bucket string) []trendBucket {
+	type acc struct {
+		start time.Time
+		sum   float64
+		count int
+	}
+	index := map[int64]int{}
+	accs := []acc{}
+	for _, r := range runs {
+		if r.DurationSeconds <= 0 {
+			continue
+		}
+		key := bucketKey(r.Start, bucket)
+		k := key.Unix()
+		pos, ok := index[k]
+		if !ok {
+			pos = len(accs)
+			index[k] = pos
+			accs = append(accs, acc{start: key})
+		}
+		accs[pos].sum += r.DurationSeconds
+		accs[pos].count++
+	}
+	sort.Slice(accs, func(i, j int) bool { return accs[i].start.Before(accs[j].start) })
+	out := make([]trendBucket, len(accs))
+	for i, a := range accs {
+		out[i] = trendBucket{Start: a.start, AvgDurationSeconds: a.sum / float64(a.count), RunCount: a.count}
+	}
+	return out
+}
+
+// Trend serves GET /api/v1/history/trend?period=7d|30d|90d|6m|1y&metric=size|duration
+//
+// metric=size (default) buckets total backup bytes per category; metric=duration
+// buckets the average run duration in seconds.
 func (h *HistoryHandler) Trend(w http.ResponseWriter, r *http.Request) {
 	period := r.URL.Query().Get("period")
 	if period == "" {
 		period = "30d"
+	}
+	metric := r.URL.Query().Get("metric")
+	if metric == "" {
+		metric = "size"
+	}
+	if metric != "size" && metric != "duration" {
+		respondError(w, http.StatusBadRequest, "invalid metric (use size|duration)")
+		return
 	}
 	window, bucket, ok := periodToWindow(period)
 	if !ok {
@@ -173,20 +222,36 @@ func (h *HistoryHandler) Trend(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, run := range jrs {
-			if run.SizeBytes <= 0 {
-				continue
-			}
 			if run.Status != "success" && run.Status != "completed" {
 				continue
 			}
-			runs = append(runs, trendRun{Start: run.StartedAt, Size: run.SizeBytes, Category: cat[j.ID]})
+			tr := trendRun{Start: run.StartedAt, Size: run.SizeBytes, Category: cat[j.ID]}
+			if run.CompletedAt != nil {
+				tr.DurationSeconds = run.CompletedAt.Sub(run.StartedAt).Seconds()
+			}
+			if metric == "size" {
+				if run.SizeBytes <= 0 {
+					continue
+				}
+			} else if tr.DurationSeconds <= 0 {
+				continue
+			}
+			runs = append(runs, tr)
 		}
+	}
+
+	var points []trendBucket
+	if metric == "duration" {
+		points = bucketDurationTrend(runs, bucket)
+	} else {
+		points = bucketTrend(runs, bucket)
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"period": period,
 		"bucket": bucket,
-		"points": bucketTrend(runs, bucket),
+		"metric": metric,
+		"points": points,
 	})
 }
 

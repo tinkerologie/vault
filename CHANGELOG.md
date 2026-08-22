@@ -40,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Exclude the same paths everywhere, without editing every job.** Settings → Backup Exclusions takes a list of paths that every folder and container backup skips. They are added to whatever a job already excludes rather than replacing it, so a job can still exclude more of its own. Useful for the paths that are never worth backing up anywhere — caches, sockets, scratch directories. Closes #257.
 - **Containers can declare their own exclusions with a Docker label.** Setting `vault.exclude=/config/cache,/tmp` on a container tells Vault to skip those paths when backing it up. The exclusions travel with the container, so a template or compose file carries its own answer and adding the container to a job needs no further setup. The paths are matched exactly like ones typed into the job wizard, and the job editor shows which mounts a label is skipping. A label can exclude paths but not the whole container — a catch-all pattern is refused, since the label is written by whoever built the image rather than by the person who owns the backup. On by default; it can be turned off in Settings → Backup Exclusions. Closes #258.
+- **Duration trend chart on the History page.** The trend chart now has a metric selector — **Backup size** or **Job duration** — so duration drift can be watched over time the same way size drift already can. Duration is averaged per bucket and drawn with a slower/faster trend indicator. Closes #331.
 
 ### Fixed
 

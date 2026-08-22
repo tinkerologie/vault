@@ -42,6 +42,11 @@ export function formatBytes(bytes) {
   return parseFloat((Math.round(v * 10) / 10).toFixed(1)) + ' ' + units[i]
 }
 
+/** Format an integer with thousands separators (e.g. 1234 -> "1,234"). */
+export function formatInt(n) {
+  return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
 export function formatDate(str) {
   if (!str) return '–'
   const d = new Date(str)
