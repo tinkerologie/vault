@@ -58,7 +58,7 @@ func TestFolderBackupChunked_PhaseMilestones(t *testing.T) {
 
 	h := &FolderHandler{}
 	item := BackupItem{Name: "Flash Drive", Type: "folder", Settings: map[string]any{"path": src}}
-	if _, err := h.BackupChunked(context.Background(), item, repo, progress); err != nil {
+	if _, err := h.BackupChunked(context.Background(), item, repo, nil, progress); err != nil {
 		t.Fatalf("BackupChunked: %v", err)
 	}
 	if err := repo.Flush(); err != nil {

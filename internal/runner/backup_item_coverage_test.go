@@ -30,6 +30,7 @@ func TestBackupItem_UnknownType(t *testing.T) {
 		"",
 		"none",
 		1,
+		nil,
 	)
 	if err == nil {
 		t.Fatal("expected unknown-type error")
@@ -55,6 +56,7 @@ func TestBackupItem_VMHandlerError(t *testing.T) {
 		"",
 		"none",
 		1,
+		nil,
 	)
 	if err == nil {
 		t.Fatal("expected VMHandler init error on non-Linux")
@@ -88,7 +90,7 @@ func TestBackupItem_FolderHappyPath(t *testing.T) {
 		},
 	}
 
-	_, checksums, err := r.backupItem(context.Background(), 0, item, dest, "rp-test", false, "", "none", 1)
+	_, checksums, err := r.backupItem(context.Background(), 0, item, dest, "rp-test", false, "", "none", 1, nil)
 	if err != nil {
 		t.Fatalf("backupItem: %v", err)
 	}

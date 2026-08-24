@@ -35,7 +35,7 @@ func (h *PluginHandler) Restore(_ context.Context, item BackupItem, sourceDir st
 }
 
 // BackupChunked is not supported on this platform.
-func (h *PluginHandler) BackupChunked(_ context.Context, _ BackupItem, _ *dedup.Repo, _ ProgressFunc) (dedup.ID, error) {
+func (h *PluginHandler) BackupChunked(_ context.Context, _ BackupItem, _ *dedup.Repo, _ *dedup.Manifest, _ ProgressFunc) (dedup.ID, error) {
 	return dedup.ID{}, errors.New("plugin: unsupported on this platform")
 }
 

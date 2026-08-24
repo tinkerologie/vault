@@ -39,7 +39,7 @@ func TestPluginChunkedRoundTrip(t *testing.T) {
 	// Override source via the "path" Settings key (matches what folder uses).
 	item := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestPluginChunkedRestoreHonoursFilePicker(t *testing.T) {
 	h := &PluginHandler{}
 	item := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestPluginChunkedInstaller(t *testing.T) {
 			h := &PluginHandler{}
 			item := BackupItem{Name: pluginName, Type: "plugin", Settings: map[string]any{"path": src}}
 			ctx := context.Background()
-			manifestID, err := h.BackupChunked(ctx, item, r, nil)
+			manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +225,7 @@ func TestPluginChunkedRestoreDestination(t *testing.T) {
 	defer cleanup()
 	h := &PluginHandler{}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"path": src}}, r, nil)
+	manifestID, err := h.BackupChunked(ctx, BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"path": src}}, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

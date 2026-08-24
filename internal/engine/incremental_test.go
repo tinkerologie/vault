@@ -171,3 +171,76 @@ func TestPathChangedSinceHonoursCancellation(t *testing.T) {
 		})
 	}
 }
+
+// TestPathChangedSinceWithPrevDetectsNewStaleMtimeFile verifies the listing-aware
+// change gate: a file whose mtime predates changedSince but is ABSENT from the
+// parent listing is reported changed (a NEW file with a stale timestamp —
+// issue #320). nil prevPaths preserves the mtime-only behaviour.
+func TestPathChangedSinceWithPrevDetectsNewStaleMtimeFile(t *testing.T) {
+	t.Parallel()
+
+	reference := time.Now().Add(-1 * time.Hour)
+	stale := time.Now().Add(-3 * time.Hour)
+
+	// newTree builds a dir with two stale-mtime files (old.txt, sub/nested.txt)
+	// and pins every dir mtime to `stale` too, so pathChangedSince sees a
+	// stable unchanged answer for the mtime-only case.
+	newTree := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		sub := filepath.Join(dir, "sub")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{filepath.Join(dir, "old.txt"), filepath.Join(sub, "nested.txt")} {
+			if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(p, stale, stale); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, d := range []string{dir, sub} {
+			if err := os.Chtimes(d, stale, stale); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+
+	cases := []struct {
+		name      string
+		prevPaths map[string]struct{}
+		want      bool
+	}{
+		{
+			name:      "nil prevPaths keeps mtime-only behaviour",
+			prevPaths: nil,
+			want:      false,
+		},
+		{
+			name:      "file present in prevPaths stays unchanged",
+			prevPaths: map[string]struct{}{"old.txt": {}, "sub/nested.txt": {}},
+			want:      false,
+		},
+		{
+			name:      "new file absent from prevPaths is changed",
+			prevPaths: map[string]struct{}{"old.txt": {}},
+			want:      true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newTree(t)
+			got, err := pathChangedSinceWithPrev(context.Background(), dir, reference, tc.prevPaths)
+			if err != nil {
+				t.Fatalf("pathChangedSinceWithPrev: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("pathChangedSinceWithPrev(...) = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

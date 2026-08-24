@@ -65,7 +65,7 @@ func TestFolderBackupChunked_WalkErrBranches(t *testing.T) {
 
 		repo := newChunkTestRepo(t)
 		item := BackupItem{Name: "t", Type: "folder", Settings: map[string]any{"path": src}}
-		manifestID, err := h.BackupChunked(context.Background(), item, repo, nil)
+		manifestID, err := h.BackupChunked(context.Background(), item, repo, nil, nil)
 		if err != nil {
 			t.Fatalf("unlistable subdir must be skipped, got: %v", err)
 		}
@@ -90,7 +90,7 @@ func TestFolderBackupChunked_WalkErrBranches(t *testing.T) {
 
 		repo := newChunkTestRepo(t)
 		item := BackupItem{Name: "t", Type: "folder", Settings: map[string]any{"path": src}}
-		if _, err := h.BackupChunked(context.Background(), item, repo, nil); err == nil {
+		if _, err := h.BackupChunked(context.Background(), item, repo, nil, nil); err == nil {
 			t.Fatal("an unlistable source root must fail the item, not succeed empty")
 		}
 	})

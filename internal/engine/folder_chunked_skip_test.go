@@ -53,7 +53,7 @@ func TestFolderBackupChunked_SkipsInaccessible(t *testing.T) {
 
 	h := &FolderHandler{}
 	item := BackupItem{Name: "t", Type: "folder", Settings: map[string]any{"path": src}}
-	manifestID, err := h.BackupChunked(context.Background(), item, repo, nil)
+	manifestID, err := h.BackupChunked(context.Background(), item, repo, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked must skip unreadable files, got: %v", err)
 	}

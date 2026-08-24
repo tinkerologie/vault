@@ -196,7 +196,7 @@ func TestUntarDirectoryFiltered_TypeReg_DeepParent(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	archive := filepath.Join(t.TempDir(), "deep.tar")
-	if err := tarDirectoryFiltered(context.Background(), src, archive, time.Time{}, nil, CompressionNone); err != nil {
+	if err := tarDirectoryFilteredWithPrev(context.Background(), src, archive, time.Time{}, nil, CompressionNone, nil); err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
 

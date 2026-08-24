@@ -102,7 +102,7 @@ func TestTarDirectoryFilteredIncludesAllWhenChangedSinceZero(t *testing.T) {
 	}
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	err := tarDirectoryFiltered(context.Background(), src, dst, time.Time{}, nil, CompressionNone)
+	err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, time.Time{}, nil, CompressionNone, nil)
 	if err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestTarDirectoryFilteredSkipsOlderFiles(t *testing.T) {
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
 	// changedSince = 1h ago — old file should be skipped, new file kept.
-	err := tarDirectoryFiltered(context.Background(), src, dst, time.Now().Add(-1*time.Hour), nil, CompressionNone)
+	err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, time.Now().Add(-1*time.Hour), nil, CompressionNone, nil)
 	if err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestTarDirectoryFilteredHonoursExclusions(t *testing.T) {
 	}
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	err := tarDirectoryFiltered(context.Background(), src, dst, time.Time{}, []string{"*.log", "logs"}, CompressionNone)
+	err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, time.Time{}, []string{"*.log", "logs"}, CompressionNone, nil)
 	if err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestTarDirectoryFilteredCancelledContext(t *testing.T) {
 	cancel()
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	err := tarDirectoryFiltered(ctx, src, dst, time.Time{}, nil, CompressionNone)
+	err := tarDirectoryFilteredWithPrev(ctx, src, dst, time.Time{}, nil, CompressionNone, nil)
 	if err == nil {
 		t.Fatal("expected ctx.Err() to surface when context is cancelled")
 	}
@@ -210,7 +210,7 @@ func TestTarDirectoryFilteredMissingSrc(t *testing.T) {
 	t.Parallel()
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	err := tarDirectoryFiltered(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"), dst, time.Time{}, nil, CompressionNone)
+	err := tarDirectoryFilteredWithPrev(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"), dst, time.Time{}, nil, CompressionNone, nil)
 	if err == nil {
 		t.Fatal("expected error opening missing source root")
 	}
@@ -353,7 +353,7 @@ func TestTarDirectoryFilteredPreservesSymlinks(t *testing.T) {
 	}
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	if err := tarDirectoryFiltered(context.Background(), src, dst, time.Time{}, nil, CompressionNone); err != nil {
+	if err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, time.Time{}, nil, CompressionNone, nil); err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
 
@@ -473,7 +473,7 @@ func TestUntarDirectoryFilteredCancelledContext(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	archive := filepath.Join(t.TempDir(), "ctx.tar")
-	if err := tarDirectoryFiltered(context.Background(), src, archive, time.Time{}, nil, CompressionNone); err != nil {
+	if err := tarDirectoryFilteredWithPrev(context.Background(), src, archive, time.Time{}, nil, CompressionNone, nil); err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
 
@@ -498,7 +498,7 @@ func TestUntarDirectoryFilteredAppliesIncludeFilter(t *testing.T) {
 	}
 
 	archive := filepath.Join(t.TempDir(), "with-filter.tar")
-	if err := tarDirectoryFiltered(context.Background(), src, archive, time.Time{}, nil, CompressionNone); err != nil {
+	if err := tarDirectoryFilteredWithPrev(context.Background(), src, archive, time.Time{}, nil, CompressionNone, nil); err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
 
@@ -547,4 +547,76 @@ func containsName(names []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestTarDirectoryFilteredWithPrevNewFiles covers the classic-path half of
+// issue #320: a NEW file whose mtime predates changed_since (absent from the
+// previous backup's listing) must be archived, while unchanged files present in
+// the listing are still skipped. A nil prev set preserves the mtime-only
+// behaviour.
+func TestTarDirectoryFilteredWithPrevNewFiles(t *testing.T) {
+	t.Parallel()
+
+	changedSince := time.Now().Add(-1 * time.Hour)
+	stale := time.Now().Add(-3 * time.Hour)
+
+	tests := []struct {
+		name      string
+		prevPaths map[string]struct{}
+		wantSkip  []string
+		wantKeep  []string
+	}{
+		{
+			name:      "new file with stale mtime is archived when absent from prev set",
+			prevPaths: map[string]struct{}{"old.txt": {}},
+			wantSkip:  []string{"old.txt"},
+			wantKeep:  []string{"added.txt", "fresh.txt"},
+		},
+		{
+			name:      "nil prev set preserves mtime-only behaviour",
+			prevPaths: nil,
+			wantSkip:  []string{"old.txt", "added.txt"},
+			wantKeep:  []string{"fresh.txt"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			src := t.TempDir()
+			writeStale := func(name, content string) {
+				p := filepath.Join(src, name)
+				if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(p, stale, stale); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeStale("old.txt", "old")
+			writeStale("added.txt", "added")
+			fresh := filepath.Join(src, "fresh.txt")
+			if err := os.WriteFile(fresh, []byte("fresh"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			dst := filepath.Join(t.TempDir(), "out.tar")
+			if err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, changedSince, nil, CompressionNone, tt.prevPaths); err != nil {
+				t.Fatalf("tarDirectoryFilteredWithPrev: %v", err)
+			}
+
+			names := listTarEntries(t, dst)
+			for _, skip := range tt.wantSkip {
+				if containsName(names, skip) {
+					t.Errorf("expected %q to be skipped, got %v", skip, names)
+				}
+			}
+			for _, keep := range tt.wantKeep {
+				if !containsName(names, keep) {
+					t.Errorf("expected %q to be kept, got %v", keep, names)
+				}
+			}
+		})
+	}
 }

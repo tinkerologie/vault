@@ -77,3 +77,75 @@ func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) err
 	}
 	return nil
 }
+
+// prevListingSet parses the "prev_listing_paths" setting (injected by the
+// runner for differential/incremental classic folder backups) into a lookup
+// set of item-relative paths. Returns nil when the setting is absent or empty,
+// so tarDirectoryFilteredWithPrev degrades to its mtime-only behaviour.
+func prevListingSet(settings map[string]any) map[string]struct{} {
+	raw, ok := settings["prev_listing_paths"]
+	if !ok || raw == nil {
+		return nil
+	}
+	paths := stringSlice(raw)
+	if paths == nil {
+		return nil
+	}
+	return pathsToSet(paths)
+}
+
+// stringSlice normalises a settings value that may be a Go []string or a
+// JSON-decoded []any into []string. Returns nil when the value is not a
+// slice of strings.
+func stringSlice(raw any) []string {
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		paths := make([]string, 0, len(v))
+		for _, p := range v {
+			if s, ok := p.(string); ok {
+				paths = append(paths, s)
+			}
+		}
+		return paths
+	}
+	return nil
+}
+
+func pathsToSet(paths []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		set[p] = struct{}{}
+	}
+	return set
+}
+
+// prevVolumeListingSet parses the "prev_volume_listing_paths" setting (injected
+// by the runner for differential/incremental classic container backups) into a
+// per-volume lookup keyed by mount source host path -> volume-relative path
+// set recorded in the parent restore point's per-volume effective listing.
+// Returns nil when the setting is absent, so pathChangedSinceWithPrev and
+// tarDirectoryFilteredWithPrev degrade to their mtime-only behaviour. Both the
+// typed map[string][]string (direct runner->engine calls) and the JSON-decoded
+// map[string]any forms are accepted.
+func prevVolumeListingSet(settings map[string]any) map[string]map[string]struct{} {
+	raw, ok := settings["prev_volume_listing_paths"]
+	if !ok || raw == nil {
+		return nil
+	}
+	out := map[string]map[string]struct{}{}
+	switch v := raw.(type) {
+	case map[string][]string:
+		for src, paths := range v {
+			out[src] = pathsToSet(paths)
+		}
+	case map[string]any:
+		for src, val := range v {
+			if paths := stringSlice(val); paths != nil {
+				out[src] = pathsToSet(paths)
+			}
+		}
+	}
+	return out
+}

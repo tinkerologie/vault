@@ -45,6 +45,6 @@ type Handler interface {
 // don't satisfy this interface continue to use the classic tar path on
 // dedup destinations.
 type ChunkedHandler interface {
-	BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error)
+	BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error)
 	RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error
 }

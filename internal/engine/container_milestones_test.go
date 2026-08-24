@@ -37,7 +37,7 @@ func TestContainerBackup_ProgressMilestones(t *testing.T) {
 				r, _, cleanup := dedup.NewTestRepoForEngine(t)
 				defer cleanup()
 				item := BackupItem{Name: "test", Type: "container", Settings: map[string]any{"id": "abc123"}}
-				if _, err := h.BackupChunked(context.Background(), item, r, progress); err != nil {
+				if _, err := h.BackupChunked(context.Background(), item, r, nil, progress); err != nil {
 					return err
 				}
 				return r.Flush()

@@ -722,6 +722,11 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	noStop, _ := item.Settings["no_stop"].(bool)
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 
+	// Previous backup's per-volume effective listings (mount source host path ->
+	// volume-relative path set), used to detect NEW files with stale mtimes in
+	// differential/incremental runs (issue #320).
+	prevBySource := prevVolumeListingSet(item.Settings)
+
 	// Extract path exclusions from item settings: free-text exclude_paths plus
 	// the checkbox-driven excluded_mounts from the job wizard, plus anything
 	// the container declares for itself via the vault.exclude label.
@@ -776,7 +781,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// via pathChangedSince.
 		var anyChanged bool
 		var err error
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince)
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource)
 		if err != nil {
 			return nil, err
 		}
@@ -935,7 +940,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				changed, cached := volChanges[mount.Source]
 				if !cached {
 					var err error
-					changed, err = pathChangedSince(ctx, mount.Source, changedSince)
+					changed, err = pathChangedSinceWithPrev(ctx, mount.Source, changedSince, prevBySource[mount.Source])
 					if err != nil {
 						return fmt.Errorf("checking volume %s changes: %w", mount.Source, err)
 					}
@@ -965,7 +970,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
 
 				if hasChangedSince {
-					if err := tarDirectoryFiltered(ctx, mount.Source, volDest, changedSince, volExclusions, effectiveCompression); err != nil {
+					if err := tarDirectoryFilteredWithPrev(ctx, mount.Source, volDest, changedSince, volExclusions, effectiveCompression, prevBySource[mount.Source]); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				} else {
@@ -976,6 +981,16 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 
 				if len(volExclusions) > 0 {
 					entry.ExcludedPaths = volExclusions
+				}
+
+				// Authoritative point-in-time per-volume listing (full effective
+				// file set after exclusions) — lets the NEXT differential detect
+				// NEW files with stale mtimes (issue #320). Best-effort, mirroring
+				// folder.go's WriteEffectiveListing usage.
+				if err := WriteEffectiveListing(mount.Source, volDest, volExclusions); err != nil {
+					log.Printf("engine: warning: failed to write volume listing for %s: %v", mount.Source, err)
+				} else {
+					result.Files = append(result.Files, backupFileInfo(volDest+ListingSuffix))
 				}
 			} else {
 				// Auto-skip non-regular inodes (sockets, named pipes, devices,
@@ -1109,11 +1124,16 @@ func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, 
 // pathChangedSince so an excluded host-root bind mount (/ → /rootfs —
 // Telegraf, Netdata, Glances) is never walked (issues #70, #251).
 //
+// prevBySource maps a mount source host path to the paths recorded in the
+// parent restore point's per-volume effective listing; a file absent from that
+// listing is treated as NEW (and therefore changed) even when its mtime
+// predates changedSince (issue #320). A nil map degrades to mtime-only.
+//
 // Callers use this to decide whether a differential run needs to stop the
 // container at all: when no volume changed, the in-loop per-volume
 // pathChangedSince checks skip every volume anyway, so the stop/restart
 // cycle would be pure downtime with no consistency benefit.
-func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, changedSince time.Time) (map[string]bool, bool, error) {
+func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, changedSince time.Time, prevBySource map[string]map[string]struct{}) (map[string]bool, bool, error) {
 	changes := make(map[string]bool)
 	anyChanged := false
 	for _, mnt := range mounts {
@@ -1132,7 +1152,7 @@ func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, e
 		if shouldExcludeMount(exclusions, mnt.Destination) {
 			continue
 		}
-		changed, err := pathChangedSince(ctx, mnt.Source, changedSince)
+		changed, err := pathChangedSinceWithPrev(ctx, mnt.Source, changedSince, prevBySource[mnt.Source])
 		if err != nil {
 			return nil, false, fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
 		}
@@ -1142,6 +1162,50 @@ func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, e
 		}
 	}
 	return changes, anyChanged, nil
+}
+
+// chunkedPrevBySource derives the per-volume previous listing (mount source
+// host path -> volume-relative path set) from the parent manifest's volume
+// sub-manifests, mirroring the classic path's prev_volume_listing_paths. Used
+// by the chunked (dedup) stop decision so a NEW stale-mtime file flips an
+// otherwise-unchanged volume to changed (issue #320) — the same semantics the
+// classic Backup path's prev-aware stop check already has. A nil parent or a
+// nil repo omits every volume. A volume whose parent entry is missing, holds
+// the skip sentinel, or whose sub-manifest is unreadable gets an EMPTY set:
+// every pre-existing file then reports as absent-from-parent (changed), which
+// forces the stop decision to keep needsStop set. Omitting the volume instead
+// would let the pre-check report the volume unchanged (mtime-only) and skip
+// the stop, while the archiving loop below later takes the full-chunk
+// fallback on a still-running container — an inconsistent live backup.
+func chunkedPrevBySource(parent *dedup.Manifest, mounts []container.MountPoint, repo *dedup.Repo) map[string]map[string]struct{} {
+	if parent == nil || repo == nil {
+		return nil
+	}
+	out := make(map[string]map[string]struct{})
+	for _, mnt := range mounts {
+		if !backupableMount(string(mnt.Type)) || mnt.Source == "" || mnt.Destination == "" {
+			continue
+		}
+		pe, ok := parent.Files[containerVolPrefix+mnt.Destination]
+		if !ok || len(pe.Chunks) == 0 {
+			out[mnt.Source] = map[string]struct{}{}
+			continue
+		}
+		sub, err := repo.GetManifest(pe.Chunks[0])
+		if err != nil {
+			out[mnt.Source] = map[string]struct{}{}
+			continue
+		}
+		set := make(map[string]struct{}, len(sub.Files))
+		for p := range sub.Files {
+			set[p] = struct{}{}
+		}
+		out[mnt.Source] = set
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Restore restores a Docker container from a backup directory:
@@ -1771,7 +1835,7 @@ const (
 //
 // Like FolderHandler.BackupChunked, repo.Flush is NOT called here — the
 // runner flushes once per backup run after all items complete.
-func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
 	if repo == nil {
 		return dedup.ID{}, fmt.Errorf("container: dedup repo is nil")
 	}
@@ -1907,7 +1971,14 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		// Per-volume results are cached so the archiving loop reuses them.
 		var anyChanged bool
 		var err error
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince)
+		// Derive the per-volume previous listing from the parent manifest's
+		// volume sub-manifests (the same resolution the archiving loop uses
+		// for carry-forward) so a NEW stale-mtime file flips the volume to
+		// changed (issue #320) — matching the classic Backup path's
+		// prev-aware stop check. Without it, a running container whose only
+		// change is such a file is not stopped and is backed up live.
+		prevBySource := chunkedPrevBySource(parent, inspect.Mounts, repo)
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource)
 		if err != nil {
 			return dedup.ID{}, err
 		}
@@ -1964,7 +2035,28 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			}
 			// For differential backups, skip volumes whose entire tree is
 			// unchanged since the reference time. Mirrors the classic Backup
-			// path. Reuses cached pre-check results when available.
+			// path. Reuses cached pre-check results when available. With a
+			// parent manifest, the unchanged volume's sub-manifest reference is
+			// carried forward so the resulting manifest stays complete for
+			// single-point restore (issue #320).
+			// Resolve the parent's matching sub-manifest up front so the
+			// unchanged-volume short-circuit below can route through it
+			// (per-file carry-forward with the stale-mtime fall-through)
+			// instead of copying the parent entry verbatim — the latter
+			// silently drops a NEW file whose mtime predates changed_since
+			// (e.g. cp -a), the literal issue #320 data-loss class. The
+			// len(pe.Chunks) > 0 guard also rejects a pre-PR parent entry
+			// that recorded the volume as the -1 skip sentinel, which must
+			// be re-chunked rather than carried forward.
+			var volParent *dedup.Manifest
+			if hasChangedSince && parent != nil {
+				if pe, ok := parent.Files[key]; ok && len(pe.Chunks) > 0 {
+					if sub, gErr := repo.GetManifest(pe.Chunks[0]); gErr == nil {
+						volParent = &sub
+					}
+				}
+			}
+
 			if hasChangedSince {
 				changed, cached := volChanges[mnt.Source]
 				if !cached {
@@ -1974,11 +2066,39 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 						return fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
 					}
 				}
-				if !changed {
-					log.Printf("engine: chunked: skipping volume %s for %s: unchanged since reference", mnt.Source, item.Name)
-					m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+				if !changed && volParent == nil {
+					// The volume looks unchanged AND there is no parent
+					// sub-manifest to carry forward from (a full backup with a
+					// changed_since set, a parent whose manifest is missing
+					// this volume, or a pre-PR parent that recorded it as the
+					// -1 skip sentinel). Chunk FULLY so the manifest stays
+					// complete. changed_since is deliberately NOT propagated
+					// here — with no parent entry there is nothing to carry
+					// forward from, and the per-file filter would otherwise
+					// drop every file (issue #320).
+					log.Printf("engine: chunked: volume %s for %s unchanged since reference — no parent entry to carry forward, chunking fully", mnt.Source, item.Name)
+					volItem := BackupItem{
+						Name: mnt.Destination,
+						Type: "folder",
+						Settings: map[string]any{
+							"path":          mnt.Source,
+							"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
+						},
+					}
+					volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, nil, progress)
+					if vErr != nil {
+						return fmt.Errorf("backup unchanged volume %s: %w", mnt.Destination, vErr)
+					}
+					m.Files[key] = dedup.ManifestEntry{
+						Size:   0,
+						Chunks: []dedup.ID{volManifestID},
+					}
 					continue
 				}
+				// A volume that is unchanged by mtime but still has a parent
+				// sub-manifest falls through: it is re-chunked with volParent
+				// below, which carries forward unchanged files AND chunks any
+				// new stale-mtime file (issue #320).
 			}
 			volItem := BackupItem{
 				Name: mnt.Destination,
@@ -1988,12 +2108,10 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 				},
 			}
-			// Propagate changed_since for per-file filtering inside
-			// FolderHandler.BackupChunked.
-			if hasChangedSince {
+			if volParent != nil {
 				volItem.Settings["changed_since"] = item.Settings["changed_since"]
 			}
-			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
+			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, volParent, progress)
 			if vErr != nil {
 				return fmt.Errorf("backup volume %s: %w", mnt.Destination, vErr)
 			}
@@ -2549,12 +2667,15 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 	return err
 }
 
-// tarDirectoryFiltered creates a tar archive of srcDir at destPath, including
-// only files whose modification time is after changedSince. Directory entries
-// are always included to preserve structure. This is used for incremental and
-// differential backups. The compression argument selects the archive
-// compression layer ("none", "gzip", or "zstd").
-func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string, compression string) (err error) {
+// tarDirectoryFilteredWithPrev creates a tar archive of srcDir at destPath
+// including only files whose modification time is after changedSince (directory
+// entries are always included to preserve structure), plus a prevPaths set of
+// item-relative paths recorded in the previous backup's effective listing. A
+// regular file whose mtime predates changedSince is normally skipped as
+// unchanged; when prevPaths is non-nil, a file ABSENT from the set (a NEW file
+// copied in with a stale timestamp) is archived instead of dropped (issue #320).
+// A nil prevPaths preserves the mtime-only behaviour.
+func tarDirectoryFilteredWithPrev(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string, compression string, prevPaths map[string]struct{}) (err error) {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return fmt.Errorf("opening source root: %w", err)
@@ -2638,9 +2759,18 @@ func tarDirectoryFiltered(ctx context.Context, srcDir, destPath string, changedS
 			return nil
 		}
 
-		// Always include directories; filter regular files by mod time.
+		// Always include directories; filter regular files by mod time. A file
+		// whose mtime predates changedSince is unchanged — unless it is absent
+		// from the previous backup's listing, in which case it is a NEW file
+		// with a stale timestamp and must be archived (issue #320).
 		if !info.IsDir() && !info.ModTime().After(changedSince) {
-			return nil
+			if prevPaths == nil {
+				return nil
+			}
+			if _, exists := prevPaths[rel]; exists {
+				return nil
+			}
+			// Fall through and archive the new file.
 		}
 
 		header, err := tar.FileInfoHeader(info, "")

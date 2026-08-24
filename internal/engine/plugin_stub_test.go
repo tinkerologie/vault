@@ -65,7 +65,7 @@ func TestPluginHandlerBackupChunkedStubReturnsError(t *testing.T) {
 	t.Parallel()
 
 	h := &PluginHandler{}
-	id, err := h.BackupChunked(context.Background(), BackupItem{Name: "ignored"}, nil, nil)
+	id, err := h.BackupChunked(context.Background(), BackupItem{Name: "ignored"}, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected platform-not-supported error from PluginHandler.BackupChunked on non-Linux")
 	}

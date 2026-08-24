@@ -693,7 +693,7 @@ func TestContainerChunkedBackupCapturesVolumesAndMeta(t *testing.T) {
 		Settings: map[string]any{"id": "deadbeef"},
 	}
 
-	manifestID, err := h.BackupChunked(context.Background(), item, r, nil)
+	manifestID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}
@@ -796,7 +796,7 @@ func TestContainerChunkedBackupIncludesVolumesSkipsTmpfs(t *testing.T) {
 	defer cleanup()
 	h := &ContainerHandler{cli: mock}
 	item := BackupItem{Name: "svc", Type: "container", Settings: map[string]any{"id": "deadbeef"}}
-	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	mID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}
@@ -872,7 +872,7 @@ func TestContainerChunkedHonoursExclusions(t *testing.T) {
 		},
 	}
 
-	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	mID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}
@@ -961,7 +961,7 @@ func TestContainerChunkedGCKeepsNestedVolumeData(t *testing.T) {
 	defer cleanup()
 	h := &ContainerHandler{cli: mock}
 	item := BackupItem{Name: "svc", Type: "container", Settings: map[string]any{"id": "deadbeef"}}
-	topID, err := h.BackupChunked(context.Background(), item, r, nil)
+	topID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}
@@ -1041,14 +1041,17 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 		return containertypes.MountPoint{Type: mounttypes.TypeBind, Source: src, Destination: dest}
 	}
 
-	cases := []struct {
-		name        string
-		mounts      []containertypes.MountPoint
-		exclusions  []string
-		ctx         context.Context // defaults to context.Background() when nil
-		wantChanged bool
-		wantErr     bool
-	}{
+	type volCase struct {
+		name         string
+		mounts       []containertypes.MountPoint
+		exclusions   []string
+		prevBySource map[string]map[string]struct{}
+		ctx          context.Context // defaults to context.Background() when nil
+		wantChanged  bool
+		wantErr      bool
+	}
+
+	cases := []volCase{
 		{
 			name:        "no mounts returns false",
 			mounts:      nil,
@@ -1106,13 +1109,42 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 		},
 	}
 
+	// A NEW file with a stale mtime that is absent from the parent listing
+	// (parent listed only data.txt) must flip an otherwise-unchanged volume
+	// to changed. prevBySource must be keyed by the volume's actual Source,
+	// so the fixture is built here rather than inside the table literal.
+	staleSrc := mkVolume(t, old)
+	if err := os.WriteFile(filepath.Join(staleSrc, "new.txt"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(staleSrc, "new.txt"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	// Writing new.txt bumped the volume dir's mtime to now; re-pin it so the
+	// dir-mtime check in pathChangedSinceWithPrev does not fire and the
+	// prev-listing check is the ONLY change signal (mirrors
+	// TestBackupChunkedStopDecisionPrevAware).
+	if err := os.Chtimes(staleSrc, old, old); err != nil {
+		t.Fatal(err)
+	}
+	cases = append(cases, volCase{
+		name: "new file with stale mtime flips unchanged volume to changed",
+		mounts: []containertypes.MountPoint{
+			bind(staleSrc, "/data"),
+		},
+		prevBySource: map[string]map[string]struct{}{
+			staleSrc: {"data.txt": {}},
+		},
+		wantChanged: true,
+	})
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := tc.ctx
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, reference)
+			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, reference, tc.prevBySource)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -1231,6 +1263,115 @@ func TestBackupDifferentialStopBehaviour(t *testing.T) {
 			}
 			if mock.startCalled != tc.wantStartCall {
 				t.Errorf("startCalled = %v, want %v", mock.startCalled, tc.wantStartCall)
+			}
+		})
+	}
+}
+
+// TestContainerBackupDifferentialIncludesNewFileWithStaleMtime is the classic
+// container regression test for issue #320. After a full backup, a NEW file
+// added with a stale mtime must be present in the differential archive. It
+// exercises BOTH stacked bugs: the volume gate (running=true pre-scan would
+// otherwise skip the whole volume) and the file filter (tarDirectoryFiltered
+// would otherwise drop the file). running=false also covers the no-stop path
+// where the loop gate runs directly.
+func TestContainerBackupDifferentialIncludesNewFileWithStaleMtime(t *testing.T) {
+	t.Parallel()
+
+	changedSince := time.Now().Add(-1 * time.Hour)
+	stale := time.Now().Add(-3 * time.Hour)
+
+	cases := []struct {
+		name          string
+		running       bool
+		wantStopCall  bool
+		wantStartCall bool
+	}{
+		{name: "not running (loop gate + filter)", running: false, wantStopCall: false, wantStartCall: false},
+		{name: "running (pre-scan gate + filter)", running: true, wantStopCall: true, wantStartCall: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			volSrc := t.TempDir()
+			writeStale := func(rel string) {
+				p := filepath.Join(volSrc, rel)
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(rel), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(p, stale, stale); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeStale("old.txt")
+
+			// Full backup: only old.txt present (no changed_since).
+			fullMock := newClassicMock(t, false, volSrc, time.Now().Add(-48*time.Hour).UTC().Format(time.RFC3339Nano))
+			fullItem := BackupItem{
+				Name: "test", Type: "container",
+				Settings:    map[string]any{"id": "abc123"},
+				Compression: CompressionNone,
+			}
+			fullDest := t.TempDir()
+			if _, err := (&ContainerHandler{cli: fullMock}).Backup(context.Background(), fullItem, fullDest, noopProgress); err != nil {
+				t.Fatalf("full Backup: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(fullDest, "volume_0.tar")); err != nil {
+				t.Fatalf("full backup missing volume archive: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(fullDest, "volume_0.tar.listing.json")); err != nil {
+				t.Fatalf("full backup missing volume listing sidecar: %v", err)
+			}
+
+			// Add a NEW file with a stale mtime after the full backup.
+			writeStale("added.txt")
+
+			// Differential backup: changed_since + per-volume parent listing.
+			mock := newClassicMock(t, tc.running, volSrc, time.Now().Add(-48*time.Hour).UTC().Format(time.RFC3339Nano))
+			diffItem := BackupItem{
+				Name: "test", Type: "container",
+				Settings: map[string]any{
+					"id":            "abc123",
+					"changed_since": changedSince.UTC().Format(time.RFC3339),
+					"prev_volume_listing_paths": map[string][]string{
+						volSrc: {"old.txt"},
+					},
+				},
+				Compression: CompressionNone,
+			}
+			diffDest := t.TempDir()
+			result, err := (&ContainerHandler{cli: mock}).Backup(context.Background(), diffItem, diffDest, noopProgress)
+			if err != nil {
+				t.Fatalf("differential Backup: %v", err)
+			}
+			if !result.Success {
+				t.Error("expected result.Success")
+			}
+			if mock.stopCalled != tc.wantStopCall {
+				t.Errorf("stopCalled = %v, want %v", mock.stopCalled, tc.wantStopCall)
+			}
+			if mock.startCalled != tc.wantStartCall {
+				t.Errorf("startCalled = %v, want %v", mock.startCalled, tc.wantStartCall)
+			}
+
+			// The volume must NOT have been skipped: archive + listing exist.
+			archive := filepath.Join(diffDest, "volume_0.tar")
+			if _, err := os.Stat(archive); err != nil {
+				t.Fatalf("differential volume was skipped (archive missing): %v", err)
+			}
+			if _, err := os.Stat(archive + ListingSuffix); err != nil {
+				t.Fatalf("differential listing sidecar missing: %v", err)
+			}
+
+			names := listTarEntries(t, archive)
+			if !containsName(names, "added.txt") {
+				t.Errorf("differential archive missing added.txt (new file with stale mtime): %v", names)
+			}
+			if containsName(names, "old.txt") {
+				t.Errorf("differential archive should skip unchanged old.txt: %v", names)
 			}
 		})
 	}

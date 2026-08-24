@@ -21,7 +21,7 @@ func backupTestVolume(t *testing.T, repo *dedup.Repo, src string) dedup.ID {
 		Name:     "vol",
 		Type:     "folder",
 		Settings: map[string]any{"path": src},
-	}, repo, nil)
+	}, repo, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}

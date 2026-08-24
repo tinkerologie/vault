@@ -109,9 +109,13 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// folder), matching the dedup BackupChunked path (issue #204).
 	exclusions := extractExcludePaths(item.Settings)
 
+	// Previous backup's effective listing (item-relative paths), used to detect
+	// NEW files with stale mtimes in differential/incremental runs (issue #320).
+	prevPaths := prevListingSet(item.Settings)
+
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
-		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, exclusions, effectiveCompression); err != nil {
+		if err := tarDirectoryFilteredWithPrev(ctx, srcPath, archivePath, changedSince, exclusions, effectiveCompression, prevPaths); err != nil {
 			return nil, fmt.Errorf("archiving changed files in %s: %w", srcPath, err)
 		}
 	} else {
@@ -227,8 +231,8 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 // log line; the run continues. Directories are recorded with their permission
 // bits so Restore can recreate them with the same mode. Empty files produce
 // a manifest entry with zero chunks (not an error).
-func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
-	m, totalBytes, skipped, err := h.buildChunkedManifest(ctx, item, repo, progress)
+func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
+	m, totalBytes, skipped, err := h.buildChunkedManifest(ctx, item, repo, parent, progress)
 	if err != nil {
 		return dedup.ID{}, err
 	}
@@ -251,7 +255,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 // out-of-tree data (e.g. PluginHandler's .plg installer) to the manifest
 // before the single PutManifest. Returns the manifest, total bytes chunked,
 // and the number of inaccessible paths that were skipped.
-func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.Manifest, int64, int, error) {
+func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.Manifest, int64, int, error) {
 	srcPath, _ := item.Settings["path"].(string)
 	if srcPath == "" {
 		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: missing path setting")
@@ -334,11 +338,29 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 			log.Printf("engine: skipping non-regular file %s (mode %v)", rel, info.Mode())
 			return nil
 		}
-		// Skip files whose mtime is not after the changed_since reference.
-		// Consistent with pathChangedSince and tarDirectoryFiltered.
-		// Directory entries are still recorded above for restore structure.
-		if hasChangedSince && !info.ModTime().After(changedSince) {
-			return nil
+		// changed_since filtering is ONLY applied when a parent manifest is
+		// supplied (differential/incremental) so an unchanged file can be
+		// carried forward from the parent instead of being omitted — keeping
+		// the resulting manifest COMPLETE for single-point restore. Deleted
+		// files are never walked, so they are not carried forward and
+		// deletions still take effect (issue #320).
+		//
+		// Without a parent (a full backup, a newly-added item, or a missing
+		// parent manifest), there is nothing to carry forward from, so
+		// changed_since is ignored and the tree is chunked FULLY. Applying the
+		// filter with a nil parent would silently drop every file whose mtime
+		// predates the reference — the literal "new items missing" data loss
+		// class from issue #320.
+		if parent != nil && hasChangedSince && !info.ModTime().After(changedSince) {
+			if pe, ok := parent.Files[rel]; ok {
+				m.Files[rel] = pe
+				return nil
+			}
+			// Not in the parent manifest: a NEW file whose mtime predates the
+			// reference (e.g. copied in with timestamps preserved). Fall
+			// through and chunk it so it is not silently dropped — carrying
+			// forward is only valid when the parent already has the entry
+			// (issue #320).
 		}
 		warnIfSparse(rel, info)
 		f, err := root.Open(rel)

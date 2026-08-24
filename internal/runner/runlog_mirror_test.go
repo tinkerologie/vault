@@ -172,7 +172,7 @@ func TestBackupItem_FolderDedupPhaseAndStatsLog(t *testing.T) {
 		Settings:    map[string]any{"path": src, "preset": "flash"},
 		Compression: "none",
 	}
-	if _, _, err := r.backupItem(context.Background(), runID, item, dest, "rp", false, "", "none", 1); err != nil {
+	if _, _, err := r.backupItem(context.Background(), runID, item, dest, "rp", false, "", "none", 1, nil); err != nil {
 		t.Fatalf("backupItem (dedup): %v", err)
 	}
 

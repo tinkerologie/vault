@@ -225,7 +225,7 @@ func pluginPlgFilePath(name string) string {
 // When no .plg file is present (a plugin without an installer, or tests) the
 // manifest holds only the config files, exactly as the folder backup produced
 // before this change, so existing restore points are unaffected.
-func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
 	src, _ := item.Settings["path"].(string)
 	if src == "" {
 		src = pluginPath(item.Name)
@@ -235,7 +235,7 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	}
 	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: map[string]any{"path": src}}
 	fh := &FolderHandler{}
-	m, _, _, err := fh.buildChunkedManifest(ctx, proxy, repo, progress)
+	m, _, _, err := fh.buildChunkedManifest(ctx, proxy, repo, parent, progress)
 	if err != nil {
 		return dedup.ID{}, fmt.Errorf("plugin: chunking config for %q: %w", item.Name, err)
 	}

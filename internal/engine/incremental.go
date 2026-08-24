@@ -36,6 +36,18 @@ func parseChangedSince(settings map[string]any) (time.Time, bool) {
 }
 
 func pathChangedSince(ctx context.Context, path string, changedSince time.Time) (bool, error) {
+	return pathChangedSinceWithPrev(ctx, path, changedSince, nil)
+}
+
+// pathChangedSinceWithPrev is pathChangedSince plus a prevPaths set of paths
+// recorded in the parent restore point's effective listing for this tree. A
+// regular file whose mtime predates changedSince but is ABSENT from prevPaths
+// is a NEW file copied in with a stale timestamp, so the path is reported
+// changed instead of skipped (issue #320). A nil prevPaths preserves the
+// mtime-only behaviour of pathChangedSince. Non-directory roots and symlinks
+// keep their existing mtime-only handling; prevPaths only affects the
+// directory walk.
+func pathChangedSinceWithPrev(ctx context.Context, path string, changedSince time.Time, prevPaths map[string]struct{}) (bool, error) {
 	if changedSince.IsZero() {
 		return true, nil
 	}
@@ -67,6 +79,17 @@ func pathChangedSince(ctx context.Context, path string, changedSince time.Time) 
 		}
 		if walkInfo.ModTime().After(changedSince) {
 			return errPathChanged
+		}
+		// A file that predates changedSince is normally unchanged — unless it
+		// is absent from the parent's listing, in which case it is NEW with a
+		// stale timestamp (issue #320). Directories keep their mtime as the
+		// signal, matching pathChangedSince.
+		if !walkInfo.IsDir() && prevPaths != nil {
+			if rel, relErr := filepath.Rel(path, current); relErr == nil && rel != "." {
+				if _, exists := prevPaths[rel]; !exists {
+					return errPathChanged
+				}
+			}
 		}
 		return nil
 	})

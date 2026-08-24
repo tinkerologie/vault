@@ -1204,6 +1204,28 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 		if btResult.ParentRP != nil && (item.ItemType == "container" || item.ItemType == "folder") {
 			backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
+			// Classic (non-dedup) differentials/incrementals load the parent's
+			// effective listing (folder: item-relative paths; container:
+			// per-volume paths keyed by mount source) so the engine can detect
+			// NEW files with stale mtimes (issue #320). When the listing is
+			// unavailable the engine degrades to a FULL archive instead of
+			// silently mtime-only filtering — which would drop a NEW stale-mtime
+			// file (e.g. cp -a), the literal issue #320 data-loss class. The
+			// dedup path carries forward via the parent manifest in the engine,
+			// so it never takes this branch.
+			if !dest.DedupEnabled {
+				var listingPaths []string
+				var volumeListingPaths map[string][]string
+				if item.ItemType == "folder" {
+					listingPaths = r.loadParentListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
+				} else {
+					volumeListingPaths = r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
+				}
+				applyClassicDiffListing(backupItem.Settings, item.ItemType, listingPaths, volumeListingPaths)
+				if _, hasChangedSince := backupItem.Settings["changed_since"]; !hasChangedSince {
+					log.Printf("runner: parent listing unavailable for %s — degrading %s backup to a full archive (mtime-only filtering would drop stale-mtime new files)", item.ItemName, btResult.BackupType)
+				}
+			}
 		}
 
 		// Folder items need the path from settings.
@@ -1316,7 +1338,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			continue
 		}
 
-		result, checksums, backupErr := r.backupItem(ctx, runID, backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression, job.EffectiveUploadConcurrency())
+		result, checksums, backupErr := r.backupItem(ctx, runID, backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression, job.EffectiveUploadConcurrency(), btResult.ParentRP)
 		if backupErr != nil {
 			// If the context was cancelled, stop processing remaining items.
 			if ctx.Err() != nil {
@@ -2292,14 +2314,14 @@ func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup
 // engine.ChunkedHandler, the call is routed to backupItemChunked instead of
 // the classic tar pipeline. Handlers that don't support chunking (vm, zfs)
 // transparently fall through to the classic path even on dedup destinations.
-func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, concurrency int) (*engine.BackupResult, map[string]string, error) {
+func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, concurrency int, parentRP *db.RestorePoint) (*engine.BackupResult, map[string]string, error) {
 	if dest.DedupEnabled {
 		handler, err := newHandler(item.Type)
 		if err != nil {
 			return nil, nil, err
 		}
 		if chunked, ok := handler.(engine.ChunkedHandler); ok {
-			return r.backupItemChunked(ctx, runID, item, dest, chunked)
+			return r.backupItemChunked(ctx, runID, item, dest, parentRP, chunked)
 		}
 		// Fall through to classic tar for non-chunked handlers (VM, ZFS).
 	}
@@ -2322,7 +2344,7 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 // handler's BackupChunked, flushes any pending pack, and returns a
 // BackupResult whose Meta carries the manifest ID for the runner to
 // persist on the resulting restore_points row.
-func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, handler engine.ChunkedHandler) (*engine.BackupResult, map[string]string, error) {
+func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler) (*engine.BackupResult, map[string]string, error) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("adapter: %w", err)
@@ -2341,6 +2363,23 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 	repo, err := r.openDedupRepo(heartbeat, dest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
+	}
+
+	// For differential/incremental backups, load the parent item's manifest
+	// so the handler can carry forward unchanged entries and keep the new
+	// manifest complete for single-point restore (issue #320). A missing or
+	// unreadable parent manifest degrades to a nil parent, in which case the
+	// handler ignores changed_since and chunks the item FULLY, so a corrupted
+	// parent costs extra work but never drops files or fails the backup.
+	var parent *dedup.Manifest
+	if parentRP != nil {
+		if pid, ok := resolveManifestID(*parentRP, item.Name); ok {
+			if pm, gErr := repo.GetManifest(pid); gErr == nil {
+				parent = &pm
+			} else {
+				log.Printf("runner: dedup item %q: loading parent manifest: %v (continuing without carry-forward)", item.Name, gErr)
+			}
+		}
 	}
 
 	admit := newBroadcastThrottle()
@@ -2368,7 +2407,7 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 		})
 	}
 
-	manifestID, err := handler.BackupChunked(ctx, item, repo, progress)
+	manifestID, err := handler.BackupChunked(ctx, item, repo, parent, progress)
 	if err != nil {
 		return nil, nil, fmt.Errorf("backup chunked: %w", err)
 	}
@@ -3200,13 +3239,14 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 			return fmt.Errorf("building restore chain: %w", err)
 		}
 		// Dedup restore points (folder, container, plugin) carry a COMPLETE
-		// manifest — BackupChunked walks the whole item every run, so
-		// increments reuse chunks, not manifest entries. Restoring the
-		// selected point alone reproduces the exact point-in-time state and
-		// cannot resurrect files deleted or excluded after the base full
-		// backup (issue #231). This must run BEFORE the merged-chain dispatch
-		// because containers use merged chains but dedup containers must
-		// take the single-point chunked restore path.
+		// manifest — BackupChunked walks the item and, for differential/
+		// incremental runs, carries unchanged entries forward from the parent
+		// manifest (issue #320). Restoring the selected point alone
+		// reproduces the exact point-in-time state and cannot resurrect files
+		// deleted or excluded after the base full backup (issue #231). This
+		// must run BEFORE the merged-chain dispatch because containers use
+		// merged chains but dedup containers must take the single-point
+		// chunked restore path.
 		if _, ok := resolveManifestID(restorePoint, itemName); ok {
 			log.Printf("runner: dedup restore point %d has a complete manifest — restoring it directly (no chain replay)", restorePoint.ID)
 			r.runLog(reporter.RunID, runLogLevelInfo,
@@ -3380,6 +3420,24 @@ func (r *Runner) ReadItemSidecar(dest db.StorageDestination, rp db.RestorePoint,
 	return r.readItemSidecar(adapter, rp, itemName, suffix, "")
 }
 
+// isSidecarBase reports whether base is a valid per-item sidecar name for the
+// given suffix: it must end in suffix (or suffix+".age") AND the part before
+// the suffix must itself be an archive base name — every engine archive
+// (data.tar[.gz|.zst], volume_N.tar[.gz|.zst], image.tar, config.tar) carries
+// ".tar". This rejects unrelated files that merely end in the suffix, which
+// the previous bare HasSuffix match would have accepted (issue #320 review
+// feedback).
+func isSidecarBase(base, suffix string) bool {
+	rest, ok := strings.CutSuffix(base, suffix+".age")
+	if !ok {
+		rest, ok = strings.CutSuffix(base, suffix)
+		if !ok {
+			return false
+		}
+	}
+	return strings.Contains(rest, ".tar")
+}
+
 // readItemSidecar reads a per-item JSON sidecar (tar index or effective
 // listing) for a restore point, decrypting .age variants with the supplied
 // passphrase (falling back to the configured one when empty).
@@ -3394,8 +3452,7 @@ func (r *Runner) readItemSidecar(adapter storage.Adapter, rp db.RestorePoint, it
 		if e.IsDir {
 			continue
 		}
-		base := path.Base(e.Path)
-		if strings.HasSuffix(base, suffix) || strings.HasSuffix(base, suffix+".age") {
+		if isSidecarBase(path.Base(e.Path), suffix) {
 			candidate = e.Path
 			break
 		}
@@ -3431,6 +3488,172 @@ func (r *Runner) readItemSidecar(adapter storage.Adapter, rp db.RestorePoint, it
 	return idx, true
 }
 
+// loadParentListingPaths returns the item-relative path set recorded in the
+// parent restore point's effective listing, so a differential/incremental
+// classic folder backup can detect NEW files whose mtime predates changed_since
+// (issue #320). Returns nil when no listing is available (pre-listing backups,
+// or a read failure); the caller then clears changed_since to degrade to a
+// full archive (see applyClassicDiffListing).
+func (r *Runner) loadParentListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) []string {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return nil
+	}
+	defer storage.CloseAdapter(adapter)
+
+	listing, ok := r.readItemSidecar(adapter, *parentRP, itemName, engine.ListingSuffix, passphrase)
+	if !ok {
+		return nil
+	}
+	paths := make([]string, 0, len(listing.Files))
+	for _, f := range listing.Files {
+		paths = append(paths, f.Path)
+	}
+	return paths
+}
+
+// loadParentVolumeListingPaths reads the parent restore point's volumes.json
+// manifest and each backed-up volume's effective-listing sidecar, returning a
+// map keyed by mount source host path -> volume-relative paths. Used by classic
+// container differentials/incrementals to detect NEW files whose mtime predates
+// changed_since (issue #320). Resolution is all-or-nothing: nil is returned
+// when ANY backed-up volume's listing is missing or unreadable (pre-listing
+// backups, a partial write, or a read failure); the caller then clears
+// changed_since to degrade to a full archive (see applyClassicDiffListing) —
+// never a partial map that would leave the unresolved volume on mtime-only
+// filtering.
+func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) map[string][]string {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return nil
+	}
+	defer storage.CloseAdapter(adapter)
+
+	itemPrefix := path.Join(parentRP.StoragePath, itemName)
+	entries, err := adapter.List(itemPrefix)
+	if err != nil {
+		return nil
+	}
+
+	// Index files by base name so the manifest's archive names resolve to
+	// their listing sidecars (encrypted variants included).
+	byName := make(map[string]storage.FileInfo, len(entries))
+	for _, e := range entries {
+		if !e.IsDir {
+			byName[path.Base(e.Path)] = e
+		}
+	}
+
+	resolvePass := func() string {
+		if passphrase != "" {
+			return passphrase
+		}
+		return r.ResolvePassphrase()
+	}
+
+	// openSidecar locates a file by base name (or its .age variant), opens it,
+	// and decrypts it when needed. ok=false on any failure.
+	openSidecar := func(name string) (io.ReadCloser, bool) {
+		info, ok := byName[name]
+		if !ok {
+			info, ok = byName[name+".age"]
+			if !ok {
+				return nil, false
+			}
+		}
+		rc, err := adapter.Read(info.Path)
+		if err != nil {
+			return nil, false
+		}
+		if !strings.HasSuffix(info.Path, ".age") {
+			return rc, true
+		}
+		pass := resolvePass()
+		if pass == "" {
+			_ = rc.Close()
+			return nil, false
+		}
+		dec, decErr := crypto.DecryptReader(pass, rc)
+		if decErr != nil {
+			_ = rc.Close()
+			return nil, false
+		}
+		return dec, true
+	}
+
+	// volumes.json maps each backed-up volume's source host path to its
+	// archive base name (e.g. volume_0.tar.gz). The mount source is the stable
+	// correlation key — the volume_N index can shift when mounts are reordered.
+	manifestRC, ok := openSidecar("volumes.json")
+	if !ok {
+		return nil
+	}
+	var vols []struct {
+		Source  string `json:"source"`
+		Archive string `json:"archive,omitempty"`
+	}
+	decodeErr := json.NewDecoder(manifestRC).Decode(&vols)
+	_ = manifestRC.Close()
+	if decodeErr != nil {
+		return nil
+	}
+
+	out := make(map[string][]string)
+	for _, v := range vols {
+		if v.Archive == "" {
+			continue
+		}
+		listingRC, ok := openSidecar(v.Archive + engine.ListingSuffix)
+		if !ok {
+			// All-or-nothing (issue #320 review follow-up): a single
+			// missing listing would leave that volume on mtime-only
+			// filtering in the engine — silently dropping a NEW
+			// stale-mtime file. Returning nil makes the caller clear
+			// changed_since and degrade to a full archive instead.
+			return nil
+		}
+		idx, err := engine.ReadTarIndex(listingRC)
+		_ = listingRC.Close()
+		if err != nil {
+			return nil
+		}
+		paths := make([]string, 0, len(idx.Files))
+		for _, f := range idx.Files {
+			paths = append(paths, f.Path)
+		}
+		out[v.Source] = paths
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// applyClassicDiffListing resolves the changed_since / prev-listing settings
+// for a classic (non-dedup) differential/incremental folder or container item.
+// When the parent's effective listing is available it is attached so the engine
+// detects NEW files with stale mtimes (issue #320); when it is unavailable the
+// changed_since gate is CLEARED so the engine degrades to a FULL archive —
+// never silent mtime-only filtering, which would drop a NEW stale-mtime file
+// (e.g. cp -a), the literal issue #320 data-loss class. Dedup items carry
+// forward via the parent manifest in the engine and never reach this helper.
+func applyClassicDiffListing(settings map[string]any, itemType string, listingPaths []string, volumeListingPaths map[string][]string) {
+	switch itemType {
+	case "folder":
+		if listingPaths != nil {
+			settings["prev_listing_paths"] = listingPaths
+		} else {
+			delete(settings, "changed_since")
+		}
+	case "container":
+		if volumeListingPaths != nil {
+			settings["prev_volume_listing_paths"] = volumeListingPaths
+		} else {
+			delete(settings, "changed_since")
+		}
+	}
+}
+
 // guardPanic recovers and logs a panic in a fire-and-forget worker goroutine
 // so a single failing background task can never crash the daemon (issue
 // #239). Use only where there is no error channel to propagate into.
@@ -3460,8 +3683,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 	// VM qcow2 chains must be assembled per-step then flattened with
 	// qemu-img so each chain step keeps its own dirty-block deltas. For
 	// non-VM items we keep the simple flat staging where each chain step
-	// can safely overlay files in the same directory (folder rsync,
-	// container layered tar, etc.).
+	// can safely overlay files in the same directory (folder rsync, etc.).
 	if itemType == "vm" && len(chain) > 1 {
 		stepDirs := make([]string, 0, len(chain))
 		for i, rp := range chain {
@@ -3489,6 +3711,18 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100)
 	}
 
+	if itemType == "container" {
+		// Classic container chains must be merged, not flattened: a
+		// differential/incremental step's partial volume_N.tar would
+		// otherwise overwrite the full step's complete archive in the shared
+		// staging dir, dropping base files (issue #320).
+		mergedDir, err := r.stageContainerChainMerged(ctx, chain, itemName, passphrase, reporter, tmpDir)
+		if err != nil {
+			return err
+		}
+		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100)
+	}
+
 	for i, rp := range chain {
 		r.runLog(reporter.RunID, runLogLevelInfo,
 			fmt.Sprintf("Staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
@@ -3502,6 +3736,43 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 	}
 
 	return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+}
+
+// stageContainerChainMerged stages each restore point in a classic container
+// chain into its own step directory and merges the per-step volume archives
+// oldest-first into a single directory that ContainerHandler.Restore can
+// consume. A differential/incremental step's partial volume_N.tar must not
+// overwrite the full step's complete archive, or base files would be dropped
+// (issue #320).
+//
+// NOTE: the merge is a pure union — a file deleted after the base full is
+// merged back in. The folder classic path compensates via pruneChainResurrected
+// (issue #231, folder-scoped and closed); the container path has no equivalent
+// prune yet, so deleted files can reappear on restore. Out of scope for #320.
+func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.RestorePoint, itemName, passphrase string, reporter restoreProgressReporter, tmpDir string) (string, error) {
+	stepDirs := make([]string, 0, len(chain))
+	for i, rp := range chain {
+		r.runLog(reporter.RunID, runLogLevelInfo,
+			fmt.Sprintf("Staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
+			map[string]any{"step": i + 1, "steps": len(chain), "backup_type": rp.BackupType, "restore_point_id": rp.ID})
+		log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
+		stepDir := filepath.Join(tmpDir, fmt.Sprintf("step_%d", i))
+		if err := os.MkdirAll(stepDir, 0o755); err != nil {
+			return "", fmt.Errorf("creating chain step dir: %w", err)
+		}
+		phaseStart := (i * 40) / len(chain)
+		phaseEnd := ((i + 1) * 40) / len(chain)
+		if err := r.stageRestorePointItem(ctx, rp, itemName, stepDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
+			return "", fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
+		}
+		stepDirs = append(stepDirs, stepDir)
+	}
+
+	mergedDir := filepath.Join(tmpDir, "merged")
+	if err := engine.MergeContainerChainStaging(ctx, stepDirs, mergedDir); err != nil {
+		return "", fmt.Errorf("merging container chain: %w", err)
+	}
+	return mergedDir, nil
 }
 
 // restoreSinglePoint restores a single restore point (without chain logic).
