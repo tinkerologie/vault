@@ -536,38 +536,6 @@ func sftpStatVFSToCapacity(st *sftp.StatVFS, probedAt time.Time) (Capacity, erro
 	}, nil
 }
 
-// Usage attempts the SFTP statvfs@openssh.com extension. When the server
-// supports it, free and total are computed from the Bavail and Blocks
-// fields using Frsize as the block size. When the server doesn't advertise
-// the extension, or if dialling fails, ErrUsageNotSupported is returned so
-// callers can degrade gracefully.
-func (s *SFTPAdapter) Usage() (free, total int64, retErr error) {
-	conn, err := s.pool.get()
-	if err != nil {
-		return 0, 0, ErrUsageNotSupported
-	}
-	// statvfs errors are not connection-level faults; always return the conn
-	// healthy so it can be reused for the next probe.
-	defer func() { s.pool.put(conn, nil) }()
-	client := conn.(*sftpConnection).sftp
-
-	st, err := client.StatVFS(s.basePathOrRoot())
-	if err != nil {
-		// Server does not support the statvfs@openssh.com extension.
-		return 0, 0, ErrUsageNotSupported
-	}
-	if st.Frsize == 0 {
-		return 0, 0, ErrUsageNotSupported
-	}
-	bsize := int64(st.Frsize)        //nolint:gosec,unconvert
-	total = int64(st.Blocks) * bsize //nolint:gosec,unconvert
-	free = int64(st.Bavail) * bsize  //nolint:gosec,unconvert
-	if free > total {
-		free = total
-	}
-	return free, total, nil
-}
-
 // RemoveEmptyDir removes dir if it is empty. sftp.Client.RemoveDirectory wraps
 // the SSH_FXP_RMDIR request, which the SFTP server rejects when the directory
 // is not empty — that rejection is the desired guard for the cleanup sweep.

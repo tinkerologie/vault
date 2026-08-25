@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -130,19 +129,18 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	// Capacity probe runs ONLY when TestConnection succeeded. Failures
 	// here NEVER flip the health verdict — capacity is informational.
 	// Uses its own 60s ceiling so a slow probe doesn't extend the sweep.
-	_, _ = r.probeCapacity(context.Background(), dest, adapter)
+	capacity, capErr := r.probeCapacity(context.Background(), dest, adapter)
 
-	// Sample free/total for capacity trajectory detection. Silent skip on
-	// adapters that don't expose usage (e.g. S3).
-	if free, total, usageErr := adapter.Usage(); usageErr == nil {
+	// Sample free/total for capacity trajectory detection, reusing the
+	// capacity the probe above already fetched rather than re-probing the
+	// backend a second time.
+	if free, total, ok := capacitySampleFor(capacity, capErr); ok {
 		_ = r.db.InsertCapacitySample(db.CapacitySample{
 			DestID:     dest.ID,
 			SampledAt:  time.Now().UTC(),
 			FreeBytes:  free,
 			TotalBytes: total,
 		})
-	} else if !errors.Is(usageErr, storage.ErrUsageNotSupported) {
-		log.Printf("WARN capacity sampler: dest %q: %v", dest.Name, usageErr)
 	}
 
 	return "ok", ""
@@ -177,4 +175,29 @@ func (r *Runner) broadcastStorageHealth(id int64, status, errorMsg string) {
 		"error":             errorMsg,
 		"last_health_check": time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// capacitySampleFor derives a capacity-trajectory sample from the result of
+// a GetCapacity probe. ok is false when no sample should be recorded.
+//
+// A zero TotalBytes is the adapters' shared "no quota reported" signal: S3
+// has no per-bucket quota API, and SFTP/SMB/WebDAV report it when the server
+// lacks the statvfs/quota extension. That is a silent skip, not an error —
+// the trajectory detector needs a real total to extrapolate against. Probe
+// failures are likewise skipped; probeCapacity has already logged them.
+//
+// free is clamped to total so the free <= total invariant the sample table
+// relies on holds even if a backend reports inconsistent block counts.
+func capacitySampleFor(capacity storage.Capacity, err error) (free, total int64, ok bool) {
+	if err != nil || capacity.TotalBytes <= 0 {
+		return 0, 0, false
+	}
+	free = capacity.FreeBytes
+	if free < 0 {
+		free = 0
+	}
+	if free > capacity.TotalBytes {
+		free = capacity.TotalBytes
+	}
+	return free, capacity.TotalBytes, true
 }

@@ -12,9 +12,10 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 
 | Layer       | Package                 | Description                                                                 |
 | ----------- | ----------------------- | --------------------------------------------------------------------------- |
-| CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault mcp`, `vault dedup` |
+| CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault dedup` |
 | API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                            |
-| MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP and stdio                 |
+| MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP                           |
+| Job Intake  | `internal/jobs/`        | Validates, persists and activates every Job write; REST and MCP adapt to it |
 | Database    | `internal/db/`          | SQLite (WAL, pure-Go driver) with hybrid snapshot + USB shadow              |
 | Storage     | `internal/storage/`     | Local, SFTP, SMB, NFS, WebDAV, and S3 adapters (factory-dispatched)         |
 | Engine      | `internal/engine/`      | Per-type backup/restore handlers (container, VM, ZFS, folder, plugin)       |
@@ -106,7 +107,7 @@ On startup the daemon restores from the **freshest integrity-passing source** am
 │   │   ├── server.go      # Server struct, StartWithContext
 │   │   ├── routes.go      # Route registration
 │   │   └── handlers/      # Job, Storage, Replication, Settings, Browse, …
-│   ├── cli/               # Cobra subcommands (daemon, replica, mcp, dedup)
+│   ├── cli/               # Cobra subcommands (daemon, replica, dedup)
 │   ├── config/            # Enum constants and shared types
 │   ├── crypto/            # Server key, AES-256-GCM, passphrase derivation
 │   ├── db/                # SQLite, repos, hybrid snapshot manager
@@ -118,7 +119,7 @@ On startup the daemon restores from the **freshest integrity-passing source** am
 │   │   ├── vm_stub.go     # Non-Linux stub
 │   │   └── zfs.go         # zfs send/receive
 │   ├── logbuf/            # In-memory ring buffer for daemon-log capture
-│   ├── mcp/               # MCP tools + streamable HTTP / stdio transport
+│   ├── mcp/               # MCP tools over streamable HTTP
 │   ├── notify/            # Unraid notifications + Discord webhook
 │   ├── replication/       # Pull-mode client + syncer
 │   ├── runner/            # Job orchestration, compression, retention, verify

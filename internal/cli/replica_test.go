@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -80,14 +79,6 @@ func TestDaemonCmd_FlagsRegistered(t *testing.T) {
 	}
 }
 
-// TestMcpCmd_FlagsRegistered confirms mcpCmd has its expected flag.
-func TestMcpCmd_FlagsRegistered(t *testing.T) {
-	t.Parallel()
-	if f := mcpCmd.Flags().Lookup("db"); f == nil {
-		t.Error("flag 'db' missing from mcpCmd")
-	}
-}
-
 // TestReplicaCmd_HelpRuns drives the cobra dispatcher all the way down
 // to replicaCmd, but with --help so the RunE never executes. This still
 // touches the command-registration init() paths and ensures the command
@@ -99,50 +90,6 @@ func TestReplicaCmd_HelpRuns(t *testing.T) {
 	}
 	if !strings.Contains(replicaCmd.Short, "replica") {
 		t.Errorf("replica Short doesn't mention replica: %q", replicaCmd.Short)
-	}
-}
-
-// TestMcpCmd_RunBailsOnBadDB invokes mcp.RunE with a bad db path so the
-// open-DB error branch is taken before any server starts. (This exercises
-// ~5 statements in mcp.go.)
-func TestMcpCmd_RunBailsOnBadDB(t *testing.T) {
-	t.Parallel()
-	cmd := &cobra.Command{Use: "mcp-test"}
-	// Create a bogus dir-as-db-path to make db.Open fail.
-	cmd.Flags().String("db", filepath.Join(t.TempDir(), "missing", "vault.db"), "")
-
-	err := mcpCmd.RunE(cmd, nil)
-	if err == nil {
-		t.Error("expected error when db.Open fails")
-	}
-}
-
-// TestMcpCmd_RunWithCancelledStdin drives mcpCmd.RunE with a real DB path
-// and relies on the stdio transport returning quickly when stdin is closed
-// or unavailable. Most CI test runners have no stdin attached (or it's
-// closed quickly), so srv.Run returns within milliseconds.
-func TestMcpCmd_RunWithClosedStdin(t *testing.T) {
-	t.Parallel()
-	dbPath := filepath.Join(t.TempDir(), "vault.db")
-	cmd := &cobra.Command{Use: "mcp-test"}
-	cmd.Flags().String("db", dbPath, "")
-
-	// Run in goroutine with a 1s timeout. The MCP server reads stdin;
-	// when it returns EOF (closed pipe in non-interactive test run), the
-	// server exits cleanly.
-	done := make(chan error, 1)
-	go func() {
-		done <- mcpCmd.RunE(cmd, nil)
-	}()
-
-	select {
-	case <-done:
-		// any result is acceptable — we drove the open-DB + register
-		// branches before EOF / error.
-	case <-time.After(2 * time.Second):
-		// stdin may be blocking; in that case the goroutine leaks but
-		// we've already covered the setup paths.
-		t.Log("mcp RunE did not exit; setup branches still covered")
 	}
 }
 

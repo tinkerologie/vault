@@ -282,17 +282,6 @@ func (l *LocalAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	}, nil
 }
 
-// Usage returns the free and total bytes on the filesystem containing
-// basePath by delegating to GetCapacity. The context used internally
-// is background with no deadline — Usage is a fast syscall.
-func (l *LocalAdapter) Usage() (free, total int64, err error) {
-	info, err := l.GetCapacity(context.Background())
-	if err != nil {
-		return 0, 0, err
-	}
-	return info.FreeBytes, info.TotalBytes, nil
-}
-
 // RemoveEmptyDir removes dir if it is empty. os.Remove fails on a non-empty
 // directory, which is the desired guard — callers use this to sweep parent
 // directories left vacant after the last object under them is deleted.

@@ -8,8 +8,6 @@ import (
 	"log"
 	"net/http"
 	"path"
-	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,8 +17,8 @@ import (
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/engine"
+	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 	"github.com/ruaan-deysel/vault/internal/runner"
-	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -55,67 +53,36 @@ type ScheduleReloader = func() error
 type NextRunResolver = func(jobID int64) (string, bool)
 
 type JobHandler struct {
-	db             *db.DB
-	runner         *runner.Runner
+	db     *db.DB
+	runner *runner.Runner
+	// intake owns every Job write. It is shared with the MCP adapter so both
+	// enforce the same policy by construction rather than by convention.
+	intake         *jobintake.Intake
 	schedReload    ScheduleReloader
 	nextRun        NextRunResolver
 	onConfigChange ConfigChangeHook
-	validatePath   func(string) error
 }
 
-// SetPathValidator applies the browse handler's allowed-root policy to custom
-// folder items submitted through job create/update requests.
-func (h *JobHandler) SetPathValidator(fn func(string) error) {
-	h.validatePath = fn
+func NewJobHandler(database *db.DB, r *runner.Runner, reload ScheduleReloader, intake *jobintake.Intake) *JobHandler {
+	return &JobHandler{db: database, runner: r, schedReload: reload, intake: intake}
 }
 
-func folderSourcePath(item db.JobItem) (string, error) {
-	var settings struct {
-		Path string `json:"path"`
-	}
-	if item.Settings != "" {
-		if err := json.Unmarshal([]byte(item.Settings), &settings); err != nil {
-			return "", err
+// respondIntakeError maps a Job Intake error onto an HTTP status. Only
+// jobintake.ValidationError is the caller's fault; everything else is a server
+// fault and must not be reported as bad input.
+func respondIntakeError(w http.ResponseWriter, err error, entity string) {
+	switch {
+	case errors.Is(err, jobintake.ErrJobNotFound):
+		respondError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, jobintake.ErrRestoreInProgress):
+		respondError(w, http.StatusConflict, err.Error())
+	default:
+		if ve, ok := jobintake.IsValidation(err); ok {
+			respondError(w, http.StatusBadRequest, ve.Message)
+			return
 		}
+		respondWriteError(w, err, entity)
 	}
-	if path := strings.TrimSpace(settings.Path); path != "" {
-		return path, nil
-	}
-	if path := strings.TrimSpace(item.ItemID); strings.HasPrefix(path, "/") {
-		return path, nil
-	}
-	if path := strings.TrimSpace(item.ItemName); strings.HasPrefix(path, "/") {
-		return path, nil
-	}
-	return "", nil
-}
-
-func (h *JobHandler) validateFolderPaths(w http.ResponseWriter, items []db.JobItem) bool {
-	if h.validatePath == nil {
-		return true
-	}
-	for _, item := range items {
-		if item.ItemType != "folder" {
-			continue
-		}
-		path, err := folderSourcePath(item)
-		if err != nil {
-			respondError(w, http.StatusBadRequest, "folder item settings must be valid JSON")
-			return false
-		}
-		if path == "" {
-			continue
-		}
-		if err = h.validatePath(path); err != nil {
-			respondError(w, http.StatusBadRequest, "folder path must be under /mnt, /boot, or a discovered ZFS mountpoint")
-			return false
-		}
-	}
-	return true
-}
-
-func NewJobHandler(database *db.DB, r *runner.Runner, reload ScheduleReloader) *JobHandler {
-	return &JobHandler{db: database, runner: r, schedReload: reload}
 }
 
 // SetNextRunResolver sets the function used to look up the next scheduled run.
@@ -205,235 +172,6 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, result)
 }
 
-// validateJobInput validates and normalizes a job's name and schedule in place
-// before it is persisted. The name is trimmed and must be non-empty; the
-// schedule is trimmed (whitespace becomes "" = manual-only) and must be one the
-// scheduler can actually run — otherwise the job would be saved but silently
-// never fire. On failure it writes a 400 response and returns false.
-// maxJobNameLen bounds the job name so a pathological value cannot bloat the
-// row or break list rendering.
-const maxJobNameLen = 255
-
-// jobEnums lists the accepted values for each free-string job field. Anything
-// outside these sets used to persist verbatim and only fail later inside the
-// engine, where the error is far from the user's action.
-var jobEnums = map[string][]string{
-	"backup_type_chain": {"full", "incremental", "differential"},
-	"compression":       {"none", "gzip", "zstd"},
-	"encryption":        {"none", "age"},
-	// "stop_all" is the canonical value everywhere else — config.ContainerStopAll,
-	// the runner's batch path, and the value BackupModeSelector.svelte submits.
-	// This list said "all_at_once", so saving a job in Batch mode was rejected
-	// (issue #261).
-	"container_mode": {"one_by_one", "stop_all"},
-	"vm_mode":        {"snapshot", "cold"},
-	"verify_mode":    {"quick", "deep"},
-	"notify_on":      {"always", "failure", "never"},
-}
-
-// validateJobEnum reports whether value is allowed for field. An empty value is
-// accepted: the DB layer applies the column default, and the wizard omits
-// fields that do not apply to the selected item types.
-func validateJobEnum(field, value string) error {
-	if value == "" {
-		return nil
-	}
-	allowed, ok := jobEnums[field]
-	if !ok {
-		return nil
-	}
-	if slices.Contains(allowed, value) {
-		return nil
-	}
-	return fmt.Errorf("invalid %s %q (expected one of: %s)", field, value, strings.Join(allowed, ", "))
-}
-
-func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
-	job.Name = strings.TrimSpace(job.Name)
-	if job.Name == "" {
-		respondError(w, http.StatusBadRequest, "name is required")
-		return false
-	}
-	if len(job.Name) > maxJobNameLen {
-		respondError(w, http.StatusBadRequest, fmt.Sprintf("name must be %d characters or fewer", maxJobNameLen))
-		return false
-	}
-	// Normalize the schedule in place so a whitespace-only value is stored as
-	// "" (manual-only). Otherwise it would pass validation (ValidateSchedule
-	// trims internally) yet persist as non-empty, and the scheduler's
-	// `Schedule != ""` check would then try to cron-parse "   ", fail, and
-	// leave the job marked scheduled but never actually running.
-	job.Schedule = strings.TrimSpace(job.Schedule)
-	if err := scheduler.ValidateSchedule(job.Schedule); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid schedule: "+err.Error())
-		return false
-	}
-	for field, value := range map[string]string{
-		"backup_type_chain": job.BackupTypeChain,
-		"compression":       job.Compression,
-		"encryption":        job.Encryption,
-		"container_mode":    job.ContainerMode,
-		"vm_mode":           job.VMMode,
-		"verify_mode":       job.VerifyMode,
-		"notify_on":         job.NotifyOn,
-	} {
-		if err := validateJobEnum(field, value); err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
-			return false
-		}
-	}
-
-	if job.RetentionCount < 0 {
-		respondError(w, http.StatusBadRequest, "retention_count must not be negative")
-		return false
-	}
-	if job.RetentionDays < 0 {
-		respondError(w, http.StatusBadRequest, "retention_days must not be negative")
-		return false
-	}
-	// max_parallel_uploads is deliberately CLAMPED rather than rejected — the
-	// create/update handlers already normalise it and Job.EffectiveUploadConcurrency
-	// bounds it to [1,16] at use time. Rejecting here would break that contract.
-	if job.RetryMaxOverride != nil && (*job.RetryMaxOverride < 0 || *job.RetryMaxOverride > retryMaxLimit) {
-		respondError(w, http.StatusBadRequest,
-			fmt.Sprintf("retry_max_override must be between 0 and %d", retryMaxLimit))
-		return false
-	}
-
-	job.CompressionLevel = normalizeCompressionLevel(job.Compression, job.CompressionLevel)
-	return true
-}
-
-// retryMaxLimit mirrors the bound the UI enforces on the same input, so an API
-// client cannot persist a value the UI would reject.
-const retryMaxLimit = 10
-
-// validateJobStorageDest rejects a storage_dest_id that does not exist. Without
-// this the bad foreign key reached SQLite and surfaced as an opaque 500; the
-// caller could not tell a typo from a server fault. A job may legitimately have
-// no destination yet (0), which the runner treats as unconfigured.
-func (h *JobHandler) validateJobStorageDest(w http.ResponseWriter, job *db.Job) bool {
-	if job.StorageDestID == 0 {
-		return true
-	}
-	if _, err := h.db.GetStorageDestination(job.StorageDestID); err != nil {
-		// Only a genuinely absent row is the caller's fault. Any other error
-		// (DB closed, I/O failure) must stay a 500 — reporting it as
-		// "destination not found" would send the operator hunting for a
-		// config mistake during an outage.
-		if errors.Is(err, db.ErrNotFound) {
-			respondError(w, http.StatusBadRequest,
-				fmt.Sprintf("storage destination %d not found", job.StorageDestID))
-		} else {
-			respondInternalError(w, err)
-		}
-		return false
-	}
-	return true
-}
-
-// normalizeCompressionLevel constrains the level to the known set so junk values
-// never persist. The level only applies to gzip/zstd, so it is cleared for any
-// other algorithm (none/unknown) and for an empty/"default"/unknown level (the
-// engine's default); otherwise the recognised fastest/better/best is kept.
-func normalizeCompressionLevel(compression, level string) string {
-	if compression != "gzip" && compression != "zstd" {
-		return ""
-	}
-	switch level {
-	case "fastest", "better", "best":
-		return level
-	default:
-		return ""
-	}
-}
-
-// pathsOverlap reports whether two paths are equal or one is nested inside the
-// other (after cleaning).
-func pathsOverlap(a, b string) bool {
-	a, b = filepath.Clean(a), filepath.Clean(b)
-	return a == b || isSubPath(a, b) || isSubPath(b, a)
-}
-
-// isSubPath reports whether child is strictly inside parent.
-func isSubPath(child, parent string) bool {
-	rel, err := filepath.Rel(parent, child)
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// resolvePath resolves symlinks best-effort so a symlinked destination inside a
-// source tree can't slip past the overlap check. When the leaf doesn't exist
-// yet (e.g. a not-yet-created backup destination) it resolves the longest
-// existing ancestor — catching a symlinked parent — and rejoins the remaining
-// tail, falling back to a lexical clean only if nothing in the chain exists.
-func resolvePath(p string) string {
-	p = filepath.Clean(p)
-	cur, tail := p, ""
-	for {
-		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
-			return filepath.Join(resolved, tail)
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return p // reached the root without finding an existing path
-		}
-		tail = filepath.Join(filepath.Base(cur), tail)
-		cur = parent
-	}
-}
-
-// folderSourceOverlap returns a reason and true when destPath is the same as,
-// inside, or a parent of any folder/flash item's source path — the classic
-// "backing itself up" footgun where each run archives the previous run's output
-// and the source grows without bound. Flash items are folder-typed, so the
-// "folder" guard covers them. An empty destPath (a remote destination with no
-// on-array path) never overlaps. Symlinks are resolved so a symlinked
-// destination inside a source can't evade the check.
-func folderSourceOverlap(destPath string, items []db.JobItem) (string, bool) {
-	if strings.TrimSpace(destPath) == "" {
-		return "", false
-	}
-	dest := resolvePath(destPath)
-	for _, it := range items {
-		if it.ItemType != "folder" {
-			continue
-		}
-		sourcePath, err := folderSourcePath(it)
-		if err != nil || sourcePath == "" {
-			continue
-		}
-		if pathsOverlap(resolvePath(sourcePath), dest) {
-			return fmt.Sprintf(
-				"backup destination %q overlaps the backup source %q — the job would back up into its own source; choose a destination outside the source tree",
-				filepath.Clean(destPath), filepath.Clean(sourcePath)), true
-		}
-	}
-	return "", false
-}
-
-// localDestPath returns the on-array path of a local storage destination, or ""
-// for remote destinations (sftp/smb/nfs/s3/webdav) which have no local path
-// that could collide with a source tree.
-func (h *JobHandler) localDestPath(storageDestID int64) string {
-	if storageDestID == 0 {
-		return ""
-	}
-	dest, err := h.db.GetStorageDestination(storageDestID)
-	if err != nil || dest.Type != "local" {
-		return ""
-	}
-	var cfg struct {
-		Path string `json:"path"`
-	}
-	if json.Unmarshal([]byte(dest.Config), &cfg) != nil {
-		return ""
-	}
-	return cfg.Path
-}
-
 func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		db.Job
@@ -443,50 +181,21 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if !validateJobInput(w, &req.Job) {
-		return
-	}
-	if !h.validateJobStorageDest(w, &req.Job) {
-		return
-	}
-	if !h.validateFolderPaths(w, req.Items) {
-		return
-	}
-	if reason, bad := folderSourceOverlap(h.localDestPath(req.StorageDestID), req.Items); bad {
-		respondError(w, http.StatusBadRequest, reason)
-		return
-	}
-	if req.MaxParallelUploads > 16 {
-		req.MaxParallelUploads = 16
-	}
-	if req.MaxParallelUploads < 0 {
-		req.MaxParallelUploads = 0
-	}
-	id, err := h.db.CreateJob(req.Job)
+	// Everything past decoding — validation, normalisation, persistence, the
+	// scheduler reload, the USB flush and the WebSocket broadcast — belongs to
+	// Job Intake. This handler's job is HTTP: decode, call, encode.
+	job, items, err := h.intake.Create(req.Job, req.Items)
 	if err != nil {
-		respondWriteError(w, err, "job")
+		respondIntakeError(w, err, "job")
 		return
 	}
-	for _, item := range req.Items {
-		item.JobID = id
-		if _, err := h.db.AddJobItem(item); err != nil {
-			respondInternalError(w, err)
-			return
-		}
-	}
-	req.Job.ID = id
-	// Re-fetch persisted items so the response includes their server-assigned
-	// IDs. Previously the response echoed only the Job and dropped the items
-	// silently. Keep the Job fields at the top level for backwards
-	// compatibility (front-end reads result.id) and add items alongside.
-	savedItems, _ := h.db.GetJobItems(id)
+	// Keep the Job fields at the top level for backwards compatibility
+	// (front-end reads result.id) and add the persisted items, with their
+	// server-assigned IDs, alongside.
 	respondJSON(w, http.StatusCreated, struct {
 		db.Job
 		Items []db.JobItem `json:"items"`
-	}{req.Job, savedItems})
-	h.reloadScheduler()
-	h.notifyConfigChange()
-	h.broadcastConfigChange("job")
+	}{job, items})
 }
 
 func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -508,17 +217,6 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// UpdateJob is an UPDATE … WHERE id=? that does not error on zero rows, so
-	// without this check updating a non-existent id returned 200 with an echoed
-	// body (silent no-op). 404 here matches Get and the storage Update handler.
-	if _, err := h.db.GetJob(id); err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			respondError(w, http.StatusNotFound, "not found")
-			return
-		}
-		respondInternalError(w, err)
-		return
-	}
 	var req struct {
 		db.Job
 		Items []db.JobItem `json:"items"`
@@ -527,58 +225,18 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if !validateJobInput(w, &req.Job) {
+	// A PUT that omits items leaves the persisted items in place; Job Intake
+	// applies that rule (and checks source/destination overlap against the
+	// persisted items in that case).
+	job, items, err := h.intake.Update(id, req.Job, req.Items)
+	if err != nil {
+		respondIntakeError(w, err, "job")
 		return
 	}
-	if !h.validateJobStorageDest(w, &req.Job) {
-		return
-	}
-	if req.Items != nil && !h.validateFolderPaths(w, req.Items) {
-		return
-	}
-	// A PUT that omits items leaves the persisted items in place, so check the
-	// overlap against those rather than the (nil) request items — otherwise a
-	// destination change alone could sneak the job into its own source.
-	overlapItems := req.Items
-	if overlapItems == nil {
-		overlapItems, _ = h.db.GetJobItems(id)
-	}
-	if reason, bad := folderSourceOverlap(h.localDestPath(req.StorageDestID), overlapItems); bad {
-		respondError(w, http.StatusBadRequest, reason)
-		return
-	}
-	if req.MaxParallelUploads > 16 {
-		req.MaxParallelUploads = 16
-	}
-	if req.MaxParallelUploads < 0 {
-		req.MaxParallelUploads = 0
-	}
-	req.Job.ID = id
-	if err := h.db.UpdateJob(req.Job); err != nil {
-		respondWriteError(w, err, "job")
-		return
-	}
-	if req.Items != nil {
-		if err := h.db.DeleteJobItems(id); err != nil {
-			respondInternalError(w, err)
-			return
-		}
-		for _, item := range req.Items {
-			item.JobID = id
-			if _, err := h.db.AddJobItem(item); err != nil {
-				respondInternalError(w, err)
-				return
-			}
-		}
-	}
-	savedItems, _ := h.db.GetJobItems(id)
 	respondJSON(w, http.StatusOK, struct {
 		db.Job
 		Items []db.JobItem `json:"items"`
-	}{req.Job, savedItems})
-	h.reloadScheduler()
-	h.notifyConfigChange()
-	h.broadcastConfigChange("job")
+	}{job, items})
 }
 
 func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -586,84 +244,23 @@ func (h *JobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	// When deleting backup files too, capture everything the cleanup needs
-	// BEFORE removing the job row — the job and its restore points cascade-
-	// delete, so they're gone once DeleteJob runs. The actual remote cleanup
-	// then happens asynchronously (issue #111): a large backup on a slow
-	// remote can take far longer than an HTTP client will wait, which used to
-	// surface as a spurious "daemon unavailable" even though the server kept
-	// working and eventually returned 204. We now delete the DB row, respond
-	// immediately (202 Accepted), and sweep storage in the background.
-	// Deleting a job that is currently running (or queued) cancels the run
-	// first, best-effort — previously delete removed the rows while the
-	// backup goroutine kept going, which is what made "delete" look like the
-	// only way to stop a job (issue #235). Restores are the exception:
-	// interrupting one mid-write leaves half-restored data, and deleting the
-	// job would also cascade-delete the restore's records — refuse instead.
-	if st := h.runner.Status(); st.Active && st.JobID == id && st.RunType == "restore" {
-		respondError(w, http.StatusConflict, "a restore for this job is in progress — wait for it to finish before deleting the job")
+	// The asynchronous storage sweep (issue #111) is why this is 202 rather
+	// than 204: a large backup on a slow remote takes far longer than an HTTP
+	// client will wait, which used to surface as a spurious "daemon
+	// unavailable" even though the server kept working. Job Intake decides
+	// whether a sweep started; this handler only picks the status code.
+	outcome, err := h.intake.Delete(id, jobintake.DeleteOptions{
+		DeleteFiles: r.URL.Query().Get("deleteFiles") == "true",
+	})
+	if err != nil {
+		respondIntakeError(w, err, "job")
 		return
 	}
-	_ = h.runner.CancelJob(id)
-
-	deleteFiles := r.URL.Query().Get("deleteFiles") == "true"
-	var (
-		cleanupJobName string
-		cleanupDest    db.StorageDestination
-		cleanupPaths   []string
-		doCleanup      bool
-	)
-	if deleteFiles {
-		job, jErr := h.db.GetJob(id)
-		switch {
-		case jErr == nil:
-			dest, dErr := h.db.GetStorageDestination(job.StorageDestID)
-			switch {
-			case dErr == nil:
-				rps, rErr := h.db.ListRestorePoints(id)
-				if rErr != nil {
-					// A real DB error here means we can't enumerate what to
-					// clean; fail loudly rather than silently leaking files.
-					respondInternalError(w, rErr)
-					return
-				}
-				for _, rp := range rps {
-					if rp.StoragePath != "" {
-						cleanupPaths = append(cleanupPaths, rp.StoragePath)
-					}
-				}
-				cleanupJobName, cleanupDest, doCleanup = job.Name, dest, true
-			case errors.Is(dErr, db.ErrNotFound):
-				// Orphaned job (issue #113): no destination to clean. Proceed
-				// with a record-only delete.
-				log.Printf("job %d has no storage destination; deleting record only", id) // #nosec G706 //nolint:gosec // id is int64 from URL param
-			default:
-				respondInternalError(w, dErr)
-				return
-			}
-		case errors.Is(jErr, db.ErrNotFound):
-			// Job already gone; DeleteJob below is idempotent.
-		default:
-			respondInternalError(w, jErr)
-			return
-		}
-	}
-
-	if err := h.db.DeleteJob(id); err != nil {
-		respondInternalError(w, err)
+	if outcome.CleanupStarted {
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-
-	status := http.StatusNoContent
-	if doCleanup {
-		h.runner.CleanupJobStorageAsync(id, cleanupJobName, cleanupDest, cleanupPaths)
-		status = http.StatusAccepted
-	}
-	w.WriteHeader(status)
-	h.reloadScheduler()
-	h.notifyConfigChange()
-	h.broadcastConfigChange("job")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *JobHandler) GetHistory(w http.ResponseWriter, r *http.Request) {

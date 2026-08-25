@@ -5,9 +5,11 @@
   import { copyText } from '../lib/clipboard.js'
   import { createFollowMarker, countNewEntries } from '../lib/followmarker.js'
   import { anchoredScrollTop } from '../lib/scrollanchor.js'
-  import { nearBottom, nearTop, atTop as isAtTop } from '../lib/scrollflags.js'
+  import { nearBottom, nearOldestEdge, atTop as isAtTop } from '../lib/scrollflags.js'
   import { getLiveMode } from '../lib/runtime-config.js'
-  import { lineTimestamp } from '../lib/tsformat.js'
+  import { rowTime } from '../lib/tsformat.js'
+  import { buildRows, rowEntries } from '../lib/logrows.js'
+  import { levelStyle, levelLabel } from '../lib/loglevel.js'
   import { formatLine, logLine } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
   import Spinner from '../components/Spinner.svelte'
@@ -15,8 +17,13 @@
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
 
   const store = createUnifiedLogStore()
+  // The console renders NEWEST FIRST, so the scroll axis is inverted relative
+  // to a classic tail: the live edge is the TOP, and scrolling DOWN reaches
+  // further back in history. `follow` therefore pins to scrollTop 0.
   let follow = $state(true)
-  let atTop = $state(false) // scrolled to the top edge — controls the jump-to-top button (#328)
+  let atOldest = $state(false) // scrolled to the bottom edge, where the oldest logs are
+  let collapse = $state(true) // fold consecutive identical lines into one row with a count
+  let showMeta = $state(false) // render the `key=value` tail; off by default to cut noise
   let suppressFollowPin = false // auto-follow must not fight an in-flight smooth scroll (#328)
   let box = $state(null)
   let copiedId = $state(null)
@@ -28,6 +35,16 @@
   let focusedId = $state(null) // row highlighted to mark the user's focus (#328 r3 #7)
   let copiedAll = $state(false) // transient confirmation for copy-all (#328 r3 #14)
   let suppressNextScroll = false // one-shot: swallow the anchor write's own scroll event (#328 r8 #4)
+  let appendingOlder = false // an older batch is landing BELOW the viewport; leave scrollTop alone
+
+  // Display rows: newest-first, with date separators and consecutive
+  // duplicates folded. Pure, so the ordering and collapsing rules are tested
+  // in logrows.test.js rather than through the DOM.
+  // Collapsing folds over the `key=value` tail, so it is suppressed while
+  // Details is on: that tail is precisely what distinguishes the folded lines,
+  // and hiding it behind a count while the user has asked to see it would be
+  // the wrong trade.
+  const rows = $derived(buildRows(store.filtered, { collapse: collapse && !showMeta }))
 
   const liveMode = getLiveMode()
 
@@ -49,6 +66,11 @@
   onMount(async () => {
     await store.load()
     await fillViewport()
+    // Seed the scroll flags from the real geometry. Without this, a history
+    // short enough to fit the viewport (no scrollbar at all) leaves atOldest
+    // false, so the "jump to oldest" overlay hovers over a console that is
+    // already showing its oldest line.
+    handleScroll()
     // Background full-history load: the console spans ALL logs (uniform with
     // the search view), so scrolling reaches the true end and the
     // "— End of logs —" marker shows there (#328).
@@ -79,14 +101,44 @@
     }
   })
 
-  // Auto-follow: pin to bottom when follow is on. Suppressed while a
-  // load-older prepend is in flight — the prepend + scroll-anchor dance
-  // adjusts scrollTop itself, and a mid-prepend pin-to-bottom here would
-  // fight it (scrollbar jumps down then back up) (#328 r4 #3).
+  // Geometry captured BEFORE the DOM updates, so the effect below can tell how
+  // much content was inserted above the viewport.
+  let preScrollHeight = 0
+  let preScrollTop = 0
+  $effect.pre(() => {
+    store.filtered
+    collapse
+    if (box) {
+      preScrollHeight = box.scrollHeight
+      preScrollTop = box.scrollTop
+    }
+  })
+
+  // Auto-follow, inverted: the newest line is at the TOP, so following the
+  // live tail means holding scrollTop at 0.
+  //
+  // When follow is OFF, newer entries still arrive and are inserted ABOVE the
+  // user's reading position, which would push it down the screen. Nothing in
+  // the browser compensates for that — `overflow-anchor` is disabled on this
+  // container — so the growth above the viewport is added back to scrollTop by
+  // hand, keeping the line the user is reading exactly where it was.
+  //
+  // Appending OLDER entries at the bottom needs no compensation at all:
+  // content added below the viewport does not move anything above it. That is
+  // the one real simplification the inversion buys, and it is why
+  // `loadOlder` no longer needs the content-identity anchoring dance.
   $effect(() => {
-    store.entries
-    if (follow && box && !store.loadingOlder && !suppressFollowPin) {
-      box.scrollTop = box.scrollHeight
+    store.filtered
+    if (!box) return
+    if (follow && !store.loadingOlder && !suppressFollowPin) {
+      box.scrollTop = 0
+      return
+    }
+    if (appendingOlder) return
+    const grew = box.scrollHeight - preScrollHeight
+    if (grew > 0 && preScrollTop > 0) {
+      suppressNextScroll = true
+      box.scrollTop = preScrollTop + grew
     }
   })
 
@@ -103,78 +155,44 @@
       suppressNextScroll = false
       return
     }
-    atTop = isAtTop(box.scrollTop)
+    atOldest = nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
     if (store.loadingOlder) return
-    const isNearBottom = nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
+    // Live edge is the top now: being there means following.
+    const atLiveEdge = isAtTop(box.scrollTop)
 
-    if (isNearBottom && !follow) {
+    if (atLiveEdge && !follow) {
       follow = true
       newCount = 0
       followOffMarker = null
-    } else if (!isNearBottom && follow) {
+    } else if (!atLiveEdge && follow) {
       follow = false
     }
 
-    // Auto-load older entries as the user approaches the top (not only at the
-    // exact top), so the next batch is already streaming in by the time they
-    // reach it. Loading older during a search is allowed: the client-side
-    // filter re-applies to newly prepended entries, so deeper matches surface
-    // as older batches load (#328 r9 #4).
-    if (nearTop(box.scrollTop) && store.hasMore && !store.loadingOlder) {
-      loadOlderAnchored()
+    // Auto-load older entries as the user approaches the BOTTOM (not only at
+    // the exact edge), so the next batch is already streaming in by the time
+    // they reach it. Loading older during a search is allowed: the
+    // client-side filter re-applies to newly loaded entries, so deeper
+    // matches surface as older batches arrive (#328 r9 #4).
+    if (nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight) && store.hasMore && !store.loadingOlder) {
+      loadOlderRows()
     }
   }
 
-  // Dozzle-style older-batch load: keep the viewport pinned to the same log
-  // line (content-identity anchoring) while a cursor-keyed page of older
-  // entries is prepended. Anchoring on a visible row's offset — not the total
-  // scrollHeight delta — is what prevents the teleport-to-top that the old
-  // delta approach caused (#328 r3 #6). The prepend shifts the anchored row
-  // down by the height of the newly loaded entries, so scrollTop grows and
-  // leaves headroom above to scroll up and trigger the NEXT batch — one batch
-  // per gesture, never a continuous drain (#328 r4 #1 / QA round 6 #2).
-  async function loadOlderAnchored() {
-    if (!box || store.loadingOlder || !store.hasMore || !nearTop(box.scrollTop)) return
-    // Was the "— End of logs —" marker already on screen? When the FINAL
-    // batch loads it appears above the anchor row, shifting every row down
-    // by its height. The anchor must not compensate for that shift: the
-    // marker is the destination the user scrolled to, not content that
-    // should stay hidden above the viewport. Compensating for it pinned the
-    // reading position and pushed the marker out of view, so it only
-    // surfaced after a manual scroll-away-and-back (#328 issue 1).
-    const hadEndMarker = !store.hasMore && !store.pruned
-    // Content-identity anchor: pin the first visible row by id+offset before
-    // the prepend and restore it after, so the user's reading position stays
-    // put and the newly loaded entries appear above it. Anchoring (rather than
-    // pinning to scrollTop 0) also leaves headroom to keep scrolling up, so
-    // the NEXT batch loads on a normal upward gesture instead of requiring a
-    // down-then-up re-arm (#328 r9 #1).
-    const anchorId = topmostEntryId()
-    const anchorTopBefore = anchorId ? entryTopOffset(anchorId) : null
-    // No `smooth` floor here: it prepends the batch then delays the anchor by
-    // MIN_LOAD_OLDER_MS, which paints the shifted viewport for that window
-    // (the "temporary jump" users saw). Loading without the floor lets the
-    // anchor apply in the same frame as the prepend, so the viewport never
-    // detaches (#328 r9).
-    await store.loadOlder()
-    await tick()
-    if (anchorId != null && anchorTopBefore != null) {
-      let anchorTopAfter = entryTopOffset(anchorId)
-      if (anchorTopAfter != null) {
-        // The marker only rendered during THIS load: exclude its height from
-        // the shift so it lands in view at the top instead of above it.
-        if (!hadEndMarker && !store.hasMore && !store.pruned) {
-          const marker = box?.querySelector('[data-end-marker]')
-          if (marker) anchorTopAfter -= marker.offsetHeight
-        }
-        // Anchor against the CURRENT scrollTop — the user keeps scrolling while
-        // the batch loads — not a value captured before the await.
-        const next = anchoredScrollTop(box.scrollTop, anchorTopBefore, anchorTopAfter)
-        if (next !== box.scrollTop) {
-          suppressNextScroll = true
-          box.scrollTop = next
-        }
-      }
+  // Older-batch load. With the console inverted, older entries append BELOW
+  // the viewport, so there is nothing to compensate for: the browser keeps
+  // scrollTop as content grows underneath. The previous oldest-first console
+  // needed content-identity anchoring here because every older batch was
+  // *prepended*, shifting the user's reading position down by the height of
+  // the batch. That whole dance is gone — `appendingOlder` only tells the
+  // follow effect to leave scrollTop alone while the append lands.
+  async function loadOlderRows() {
+    if (!box || store.loadingOlder || !store.hasMore) return
+    appendingOlder = true
+    try {
+      await store.loadOlder()
+      await tick()
+    } finally {
+      appendingOlder = false
     }
   }
 
@@ -188,7 +206,7 @@
     // smooth animation the moment `follow` flips true above. Suppress the
     // pin until the scroll settles (scrollend), then re-arm it (#328).
     suppressFollowPin = true
-    box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
+    box.scrollTo({ top: 0, behavior: 'smooth' })
     const rearm = () => { suppressFollowPin = false }
     if ('onscrollend' in window) {
       box.addEventListener('scrollend', rearm, { once: true })
@@ -197,20 +215,20 @@
     }
   }
 
-  // With the full history loaded, jump straight to the oldest log (the top
-  // edge, where the "— End of logs —" marker sits) (#328).
+  // With the full history loaded, jump straight to the oldest log — now the
+  // BOTTOM edge, where the "— End of logs —" marker sits.
   function jumpToOldest() {
-    if (box) box.scrollTo({ top: 0, behavior: 'smooth' })
+    if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
   }
 
   // Filter switches reset the view to live-tail: follow back on, new-entry
-  // marker cleared, viewport pinned to the newest line.
-  async function snapToBottom() {
+  // marker cleared, viewport pinned to the newest line — the top.
+  async function snapToPresent() {
     follow = true
     newCount = 0
     followOffMarker = null
     await tick()
-    if (box) box.scrollTop = box.scrollHeight
+    if (box) box.scrollTop = 0
   }
 
   // Return the data-entry-id of the topmost visible row, or null if none.
@@ -230,26 +248,40 @@
     return el.getBoundingClientRect().top - box.getBoundingClientRect().top
   }
 
-  // Line-wrap toggle: reflows every message span, so re-anchor the viewport
-  // the same way loadOlderAnchored does — capture the scroll
-  // geometry before the reflow, restore it after the DOM settles.
-  async function toggleWrap() {
-    // Anchor on the HIGHLIGHTED row (the user's explicit focus) so wrapping
-    // keeps that exact log line at the same screen position; fall back to the
-    // topmost visible row when nothing is highlighted (#328 r4 #10). Wrapping
-    // reflows content above AND below the viewport, so anchoring on content
-    // identity avoids over-correcting on the total-height delta (#328 r3 #8).
+  // Every display toggle — wrap, collapse, details — reflows the rows and so
+  // moves whatever the user was reading. They all re-anchor the same way:
+  // remember which log line was where, apply the change, then put that line
+  // back at the same screen position.
+  //
+  // Anchor on the HIGHLIGHTED row (the user's explicit focus) so the reflow
+  // keeps that exact line pinned; fall back to the topmost visible row when
+  // nothing is highlighted (#328 r4 #10). Anchoring on content identity rather
+  // than on the total-height delta matters because these toggles reflow
+  // content above AND below the viewport (#328 r3 #8).
+  //
+  // Collapsing can remove the anchor row outright — a folded-away duplicate
+  // has no element left to measure — in which case the scroll position is
+  // simply left alone rather than corrected against a row that no longer
+  // exists.
+  async function anchoredReflow(apply) {
     const anchorId = (focusedId && entryTopOffset(focusedId) != null) ? focusedId : topmostEntryId()
     const prevScrollTop = box ? box.scrollTop : 0
     const elTopBefore = anchorId ? entryTopOffset(anchorId) : null
-    wrap = !wrap
+    apply()
     if (!box) return
     await tick()
     if (anchorId && elTopBefore != null) {
       const elTopAfter = entryTopOffset(anchorId)
-      if (elTopAfter != null) box.scrollTop = anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter)
+      if (elTopAfter != null) {
+        suppressNextScroll = true
+        box.scrollTop = anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter)
+      }
     }
   }
+
+  const toggleWrap = () => anchoredReflow(() => { wrap = !wrap })
+  const toggleCollapse = () => anchoredReflow(() => { collapse = !collapse })
+  const toggleMeta = () => anchoredReflow(() => { showMeta = !showMeta })
 
   async function fillViewport() {
     await tick()
@@ -263,17 +295,17 @@
 
   async function handleCategory(v) {
     await store.setCategory(v)
-    await snapToBottom()
+    await snapToPresent()
   }
 
   function handleLevel(v) {
     store.setLevelFilter(v)
-    snapToBottom()
+    snapToPresent()
   }
 
   function handleJob(v) {
     store.setJobFilter(v)
-    snapToBottom()
+    snapToPresent()
   }
 
   // Reset every filter back to its "All" default. Category is server-side,
@@ -285,7 +317,7 @@
     if (store.category !== '') {
       await store.setCategory('')
     }
-    await snapToBottom()
+    await snapToPresent()
   }
 
   // ---- formatting ----
@@ -295,46 +327,6 @@
     return Number.isNaN(d.getTime()) ? '' : formatDate(ts)
   }
 
-  // One color per row for the left side (timestamp, level, category,
-  // message): the default text color, or the level color when the level
-  // changes.
-  function rowColor(level) {
-    switch (level) {
-      case 'error': return 'text-danger'
-      case 'warn': case 'warning': return 'text-warning'
-      case 'debug': return 'text-text-dim/50'
-      default: return 'text-text'
-    }
-  }
-
-  // Metadata renders as the muted color — a lighter, subordinate tone than
-  // the message. "Muted" describes the metadata text; the default row text
-  // keeps the plain default color. Exception: when the level changes
-  // (error/warn/debug) the ENTIRE line syncs to one color and the metadata
-  // matches it, so a red row reads as a red row end to end.
-  function metaColor(level) {
-    switch (level) {
-      case 'error': return 'text-danger'
-      case 'warn': case 'warning': return 'text-warning'
-      case 'debug': return 'text-text-dim/50'
-      default: return 'text-text-muted'
-    }
-  }
-
-  function levelBg(level) {
-    switch (level) {
-      case 'error': return 'border-l-danger'
-      case 'warn': case 'warning': return 'border-l-warning'
-      case 'debug': return 'border-l-text-dim/30'
-      default: return 'border-l-text-dim/20'
-    }
-  }
-
-  function levelDisplay(level) {
-    if (level === 'warning') return 'warn'
-    return level || 'info'
-  }
-
   // ---- actions ----
 
   // Single-line log text lives in the shared logline module (message and
@@ -342,9 +334,27 @@
   // so the console rows, copy button, copy-all, and export all render
   // every log line identically (#328).
 
-  async function copyEntry(entry) {
-    if (await copyText(logLine(entry))) {
-      copiedId = entry.id
+  // What a folded row hides. Lines fold on their human-readable part, so the
+  // `key=value` tails of the folded entries are the part that varied — a row
+  // reading "Health check ×2" answers "which two?" on hover instead of forcing
+  // the Details toggle. Capped, so a forty-deep fold does not produce a
+  // tooltip taller than the screen.
+  function repeatTitle(row) {
+    const tails = rowEntries(row).map(e => formatLine(e).meta).filter(Boolean)
+    const head = `${row.repeat} consecutive repeats — copy the row to get all of them`
+    if (tails.length === 0) return head
+    const shown = tails.slice(0, 10)
+    const more = tails.length - shown.length
+    return [head, '', ...shown, ...(more > 0 ? [`…and ${more} more`] : [])].join('\n')
+  }
+
+  // Copy a display row. A collapsed row stands for several entries, so copying
+  // it yields every line it folded — the count badge is a display convenience,
+  // never a way to lose log text.
+  async function copyRow(row) {
+    const lines = rowEntries(row).map(e => logLine(e))
+    if (await copyText(lines.join('\n'))) {
+      copiedId = row.entry.id
       setTimeout(() => { copiedId = null }, 2000)
     }
   }
@@ -458,6 +468,16 @@
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10m-10 6h10M17 15l3-3-3-3"/></svg>
         Wrap: {wrap ? 'on' : 'off'}
       </button>
+      <button onclick={toggleCollapse} aria-pressed={collapse}
+        class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm transition-colors flex items-center gap-1.5 {collapse ? 'text-text border-vault/50' : 'text-text-muted hover:text-text'}" title="Fold consecutive repeats of the same line into one row (off while Details is on)">
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        Collapse: {collapse ? 'on' : 'off'}
+      </button>
+      <button onclick={toggleMeta} aria-pressed={showMeta}
+        class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm transition-colors flex items-center gap-1.5 {showMeta ? 'text-text border-vault/50' : 'text-text-muted hover:text-text'}" title="Show the key=value metadata tail on each line">
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Details: {showMeta ? 'on' : 'off'}
+      </button>
       <button onclick={copyAllLogs} disabled={store.filtered.length === 0}
         class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Copy all filtered logs">
         {#if copiedAll}
@@ -538,12 +558,12 @@
         <input
           type="text"
           value={store.search}
-          oninput={(e) => { store.setSearchFilter(e.target.value); if (!e.target.value) snapToBottom() }}
+          oninput={(e) => { store.setSearchFilter(e.target.value); if (!e.target.value) snapToPresent() }}
           placeholder="Filter logs…"
           class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-dim/50 {store.search ? 'border-vault text-text' : ''}"
         />
         {#if store.search}
-          <button type="button" onclick={() => { store.setSearchFilter(''); snapToBottom() }}
+          <button type="button" onclick={() => { store.setSearchFilter(''); snapToPresent() }}
             class="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-dim hover:text-text text-xs leading-none" title="Clear search" aria-label="Clear search">×</button>
         {/if}
       </div>
@@ -577,10 +597,6 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <!-- Status bar -->
-    <div class="flex items-center justify-between mb-2">
-    </div>
-
     <!-- Console wrapper: scroll container + fixed overlay buttons -->
     <div class="relative" style="max-height: 72vh">
       <!-- Jump to present / new-entries indicator (fixed, bottom-right whenever follow is off) -->
@@ -588,16 +604,16 @@
         <button onclick={jumpToPresent}
           class="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-vault/90 hover:bg-vault text-white text-xs font-medium rounded-lg shadow-lg transition-all flex items-center gap-1.5"
           title="Jump to present">
-          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
           {#if newCount > 0}{newCount} new {newCount === 1 ? 'entry' : 'entries'}{:else}Jump to present{/if}
         </button>
       {/if}
 
-      {#if !atTop}
+      {#if !atOldest}
         <button onclick={jumpToOldest}
           class="absolute top-3 right-3 z-10 p-2 bg-surface-3 border border-border rounded-lg text-text-muted hover:text-text shadow-lg transition-colors"
-          title="Jump to oldest log" aria-label="Jump to top">
-          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 10l-7-7m0 0l-7 7m7-7v18"/></svg>
+          title="Jump to oldest log" aria-label="Jump to oldest log">
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 14l7 7m0 0l7-7m-7 7V3"/></svg>
         </button>
       {/if}
 
@@ -613,44 +629,55 @@
         style="overflow-anchor: none;"
         role="log"
       >
+        {#each rows as row (row.key)}
+          {#if row.kind === 'date'}
+            <!-- Day separator. Sticky, so the day you are reading stays named
+                 while you scroll through it; every row below can then drop the
+                 date and show a bare time. -->
+            <div class="sticky top-0 z-[1] flex items-center gap-2 pl-3 pr-12 py-1 bg-surface-2/95 backdrop-blur-sm border-y border-border select-none">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{row.label}</span>
+              <span class="h-px flex-1 bg-border" aria-hidden="true"></span>
+              <span class="text-[10px] text-text-dim tabular-nums">{row.count}</span>
+            </div>
+          {:else}
+            {@const entry = row.entry}
+            {@const st = levelStyle(entry.level)}
+            {@const line = formatLine(entry)}
+            <div class="flex items-baseline gap-2 px-2 py-px border-l-2 {st.border} {focusedId === entry.id ? 'bg-vault/15' : st.row} group hover:bg-surface-2/50" data-entry-id={entry.id} onclick={(e) => handleRowClick(e)} onpointerdown={() => handleRowPointerDown(entry)}>
+              <!-- Time only; the full date is on the day separator above and in
+                   the tooltip, which is most of the width this row used to spend. -->
+              <span class="shrink-0 text-text-dim tabular-nums" title={fullTs(entry.ts)}>{rowTime(entry.ts)}</span>
+              <!-- Level pill. Colour AND text, so the console still reads in
+                   the monochrome themes where every hue collapses to one ink. -->
+              <span class="shrink-0 w-[3.5rem] text-center rounded px-1 text-[10px] uppercase tracking-wide {st.pill}" title={entry.level}>{levelLabel(entry.level)}</span>
+              <span class="shrink-0 w-[7ch] truncate text-text-dim" title={entry.category}>{entry.category}</span>
+              <span class="min-w-0 flex-1 flex items-baseline gap-1.5">
+                <span class="{wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap overflow-hidden text-ellipsis'} shrink-0 max-w-full {st.text} {entry.type === 'summary' ? 'font-medium' : ''}" title={line.message}>
+                  {line.message}
+                </span>
+                {#if row.repeat > 1}
+                  <span class="shrink-0 rounded px-1 text-[10px] tabular-nums bg-surface-3 text-text-muted" title={repeatTitle(row)}>×{row.repeat}</span>
+                {/if}
+                {#if showMeta && line.meta}<span class="{st.meta} min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={line.meta}>{line.meta}</span>{/if}
+              </span>
+              <button type="button" onclick={() => copyRow(row)}
+                class="{copiedId === entry.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} p-0.5 text-text-dim/40 hover:text-text shrink-0 transition-all self-center cursor-pointer" title="Copy">
+                {#if copiedId === entry.id}
+                  <svg aria-hidden="true" class="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                {:else}
+                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                {/if}
+              </button>
+            </div>
+          {/if}
+        {/each}
+        <!-- End-of-history marker now sits at the BOTTOM: with newest first,
+             the oldest log is the last row on the page. -->
         {#if !store.hasMore && !store.pruned}
           <div data-end-marker class="h-8 flex items-center justify-center text-center text-[11px] text-text-dim select-none" aria-live="polite">
             — End of logs —
           </div>
         {/if}
-        {#each store.filtered as entry (entry.id)}
-          {@const line = formatLine(entry)}
-          <div class="flex items-baseline gap-1 px-2 border-l-2 {levelBg(entry.level)} group {focusedId === entry.id ? 'bg-vault/15 hover:bg-vault/15' : 'hover:bg-surface-2/50'}" data-entry-id={entry.id} onclick={(e) => handleRowClick(e)} onpointerdown={() => handleRowPointerDown(entry)}>
-            <!-- Timestamp (date + 24h time) -->
-            <span class="{rowColor(entry.level)} shrink-0 w-[10rem] text-right tabular-nums" title={fullTs(entry.ts)}>{lineTimestamp(entry.ts)}</span>
-            <span class="text-text-dim/30 select-none px-1">│</span>
-            <!-- Level -->
-            <span class="shrink-0 w-[2.8rem] {rowColor(entry.level)}" title={entry.level}>{levelDisplay(entry.level)}</span>
-            <span class="text-text-dim/30 select-none px-1">│</span>
-            <!-- Category -->
-            <span class="shrink-0 w-[7ch] truncate {rowColor(entry.level)}" title={entry.category}>{entry.category}</span>
-            <span class="text-text-dim/30 select-none px-1">│</span>
-            <!-- Message. Priority order for truncation: the metadata (next
-                 span) is the only shrinking item, so it truncates first;
-                 the message is shrink-0 and max-w-full, so it only
-                 ellipsizes when the message alone overflows the row. -->
-            <span class="min-w-0 flex-1 flex items-baseline gap-1">
-              <span class="{wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap overflow-hidden text-ellipsis'} shrink-0 max-w-full {rowColor(entry.level)} {entry.type === 'summary' ? 'font-medium' : ''}" title={line.message}>
-                {line.message}
-              </span>
-              {#if line.meta}<span class="{metaColor(entry.level)} px-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={line.meta}> | {line.meta}</span>{/if}
-            </span>
-            <!-- Copy -->
-            <button type="button" onclick={() => copyEntry(entry)}
-              class="{copiedId === entry.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} p-0.5 text-text-dim/40 hover:text-text shrink-0 transition-all self-center cursor-pointer" title="Copy">
-              {#if copiedId === entry.id}
-                <svg aria-hidden="true" class="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-              {:else}
-                <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-              {/if}
-            </button>
-          </div>
-        {/each}
       </div>
     </div>
   {/if}

@@ -11,6 +11,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/anomaly"
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
 	"github.com/ruaan-deysel/vault/internal/db"
+	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/ws"
@@ -38,9 +39,12 @@ type Server struct {
 	// nextRunResolver looks up the next scheduled run time for a job.
 	nextRunResolver func(jobID int64) (string, bool)
 
-	settingsHandler    *handlers.SettingsHandler
-	browseHandler      *handlers.BrowseHandler
-	jobHandler         *handlers.JobHandler
+	settingsHandler *handlers.SettingsHandler
+	browseHandler   *handlers.BrowseHandler
+	jobHandler      *handlers.JobHandler
+	// jobIntake is the Job Intake module shared by the REST and MCP
+	// adapters; held here so late-bound hooks reach it too.
+	jobIntake          *jobintake.Intake
 	storageHandler     *handlers.StorageHandler
 	replicationHandler *handlers.ReplicationHandler
 	anomalyHandler     *handlers.AnomalyHandler
@@ -118,6 +122,9 @@ func (s *Server) SetConfigChangeHook(fn handlers.ConfigChangeHook) {
 	s.configChangeHook = fn
 	if s.jobHandler != nil {
 		s.jobHandler.SetConfigChangeHook(fn)
+	}
+	if s.jobIntake != nil {
+		s.jobIntake.SetConfigChangeHook(fn)
 	}
 	if s.settingsHandler != nil {
 		s.settingsHandler.SetConfigChangeHook(fn)

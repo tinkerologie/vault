@@ -57,7 +57,7 @@ vi.mock('./api.js', () => {
   }
 
   const api = {
-    getActivity: vi.fn(async (limit = 30, category = '', beforeId = 0) => {
+    getActivity: vi.fn(async (limit = 30, _category = '', beforeId = 0) => {
       let rows = entries
       if (beforeId) rows = rows.filter(r => r.id < beforeId)
       return rows.slice(0, limit)

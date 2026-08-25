@@ -26,10 +26,19 @@
         dest: "{{ playbook_dir }}/../internal/release/CHANGELOG.md"
         mode: '0644'
 
+    # Lint the platform Vault actually ships. Without GOOS/GOARCH the linter
+    # typechecks the build host instead, so on a macOS workstation it analyses
+    # the !linux stubs (libvirt/ZFS unavailable) and reports SA4023 on every
+    # `err == nil` guard against them — findings that do not exist in the
+    # linux/amd64 binary being built two tasks below.
     - name: Run linter
       ansible.builtin.command:
         cmd: golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...
         chdir: "{{ playbook_dir }}/.."
+      environment:
+        CGO_ENABLED: "0"
+        GOOS: linux
+        GOARCH: amd64
       changed_when: false
 
     - name: Run unit tests

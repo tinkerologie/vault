@@ -94,11 +94,6 @@ func (f *FakeAdapter) GetCapacity(ctx context.Context) (storage.Capacity, error)
 	return storage.Capacity{Source: "fake"}, nil
 }
 
-// Usage is unsupported for the in-memory adapter (returns ErrUsageNotSupported).
-func (f *FakeAdapter) Usage() (int64, int64, error) {
-	return 0, 0, storage.ErrUsageNotSupported
-}
-
 // WriteFrom opens the source via open() once and delegates to Write.
 func (f *FakeAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
 	rc, err := open()

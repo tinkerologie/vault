@@ -12,6 +12,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
@@ -30,7 +31,8 @@ func newJobHandler(t *testing.T) *JobHandler {
 	go hub.Run()
 	serverKey := bytes.Repeat([]byte{0xab}, 32)
 	r := runner.New(d, hub, serverKey)
-	h := NewJobHandler(d, r, func() error { return nil })
+	intake := jobintake.New(d, r, func() error { return nil }, nil, nil)
+	h := NewJobHandler(d, r, func() error { return nil }, intake)
 	return h
 }
 
@@ -43,7 +45,8 @@ func newJobHandlerDB(t *testing.T) (*JobHandler, *db.DB) {
 	go hub.Run()
 	serverKey := bytes.Repeat([]byte{0xab}, 32)
 	r := runner.New(d, hub, serverKey)
-	h := NewJobHandler(d, r, func() error { return nil })
+	intake := jobintake.New(d, r, func() error { return nil }, nil, nil)
+	h := NewJobHandler(d, r, func() error { return nil }, intake)
 	return h, d
 }
 

@@ -1,4 +1,4 @@
-package handlers
+package jobs
 
 import (
 	"testing"
@@ -25,12 +25,12 @@ func TestValidateJobEnumContainerMode(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.value, func(t *testing.T) {
-			err := validateJobEnum("container_mode", tc.value)
+			err := validateEnum("container_mode", tc.value)
 			if tc.wantErr && err == nil {
-				t.Fatalf("validateJobEnum(container_mode, %q) = nil, want error", tc.value)
+				t.Fatalf("validateEnum(container_mode, %q) = nil, want error", tc.value)
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("validateJobEnum(container_mode, %q) = %v, want nil", tc.value, err)
+				t.Fatalf("validateEnum(container_mode, %q) = %v, want nil", tc.value, err)
 			}
 		})
 	}
@@ -44,7 +44,7 @@ func TestJobEnumsMatchConfigConstants(t *testing.T) {
 		"container_mode": {string(config.ContainerOneByOne), string(config.ContainerStopAll)},
 	} {
 		for _, v := range want {
-			if err := validateJobEnum(field, v); err != nil {
+			if err := validateEnum(field, v); err != nil {
 				t.Errorf("%s: config declares %q but the API validator rejects it: %v", field, v, err)
 			}
 		}

@@ -189,17 +189,6 @@ func (n *NFSAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	return n.local.GetCapacity(ctx)
 }
 
-// Usage returns the free and total bytes on the NFS mount point by delegating
-// to the wrapped LocalAdapter (which calls Statfs on the mount directory).
-// The share is mounted on demand if not already mounted.
-func (n *NFSAdapter) Usage() (free, total int64, err error) {
-	if err := n.mount(); err != nil {
-		log.Printf("WARN nfs: Usage: mount failed: %v", err)
-		return 0, 0, ErrUsageNotSupported
-	}
-	return n.local.Usage()
-}
-
 // RemoveEmptyDir removes dir if it is empty by delegating to the underlying
 // LocalAdapter. The NFS share is mounted on demand if not already mounted.
 // os.Remove fails on a non-empty directory, which is the desired guard.

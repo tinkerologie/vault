@@ -134,9 +134,6 @@ func (r *retryAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	return r.inner.GetCapacity(ctx)
 }
 
-// Usage passes through without retry; it is a lightweight probe.
-func (r *retryAdapter) Usage() (int64, int64, error) { return r.inner.Usage() }
-
 // Close forwards to the wrapped adapter so CloseAdapter on the chain reaches a
 // provider that holds resources (e.g. the SFTP connection pool).
 func (r *retryAdapter) Close() error {

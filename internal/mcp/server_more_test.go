@@ -47,19 +47,19 @@ func TestNewDefaultVersion(t *testing.T) {
 	defer database.Close()
 
 	// Empty Version → default "dev"
-	s := New(database, nil, Config{Version: ""})
+	s := New(database, nil, nil, Config{Version: ""})
 	if s.config.Version != "dev" {
 		t.Errorf("default Version = %q, want dev", s.config.Version)
 	}
 
 	// No configs at all
-	s2 := New(database, nil)
+	s2 := New(database, nil, nil)
 	if s2.config.Version != "dev" {
 		t.Errorf("no-config Version = %q, want dev", s2.config.Version)
 	}
 
 	// ReadOnly mode propagates to get_health "mode" field.
-	s3 := New(database, nil, Config{Version: "v1", ReadOnly: true})
+	s3 := New(database, nil, nil, Config{Version: "v1", ReadOnly: true})
 	if !s3.config.ReadOnly {
 		t.Errorf("ReadOnly was lost")
 	}
@@ -79,7 +79,7 @@ func TestHTTPHandler(t *testing.T) {
 	}
 	defer database.Close()
 
-	srv := New(database, nil, Config{Version: "http-test"})
+	srv := New(database, nil, nil, Config{Version: "http-test"})
 	handler := srv.HTTPHandler()
 	if handler == nil {
 		t.Fatal("HTTPHandler returned nil")
@@ -104,35 +104,6 @@ func TestHTTPHandler(t *testing.T) {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode == 0 {
 		t.Errorf("response status code is 0")
-	}
-}
-
-// TestRunWithCanceledContext verifies the Run() entry point returns when the
-// context is canceled before it begins blocking on stdio reads. We can't
-// actually feed stdio in a test, but cancelling the context first should
-// drive the early-return path.
-func TestRunWithCanceledContext(t *testing.T) {
-	t.Parallel()
-	database, err := db.Open(":memory:")
-	if err != nil {
-		t.Fatalf("opening db: %v", err)
-	}
-	defer database.Close()
-
-	srv := New(database, nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancel
-
-	done := make(chan error, 1)
-	go func() {
-		done <- srv.Run(ctx)
-	}()
-
-	select {
-	case <-done:
-		// Run returned. Either nil or err — both acceptable.
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not return after context cancel")
 	}
 }
 
@@ -272,11 +243,11 @@ func TestUpdateJobAllFields(t *testing.T) {
 		"retention_count":   retCount,
 		"retention_days":    retDays,
 		"compression":       "gzip",
-		"encryption":        "aes",
+		"encryption":        "age",
 		"storage_dest_id":   storageID2,
 		"backup_type_chain": "incremental",
-		"container_mode":    "parallel",
-		"vm_mode":           "all_at_once",
+		"container_mode":    "stop_all",
+		"vm_mode":           "snapshot",
 		"notify_on":         "always",
 		"verify_backup":     verify,
 	})
@@ -288,6 +259,48 @@ func TestUpdateJobAllFields(t *testing.T) {
 	name := jsonNestedField[string](t, getResult, "job", "name")
 	if name != "J-new" {
 		t.Errorf("name = %q, want J-new", name)
+	}
+}
+
+// TestUpdateJobRejectsInvalidEnum pins the guarantee that the MCP adapter and
+// the REST adapter agree on what a valid Job is. update_job used to persist
+// any free-string value verbatim — "aes" encryption, "parallel" container
+// mode — which only failed later inside the engine, far from the caller's
+// action. Both adapters now share the Job Intake module, so both refuse.
+func TestUpdateJobRejectsInvalidEnum(t *testing.T) {
+	t.Parallel()
+	session, _ := setupTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	storageResult := callTool(t, session, ctx, "create_storage", map[string]any{
+		"name":   "S-enum",
+		"type":   "local",
+		"config": `{"path":"/tmp/upj-enum"}`,
+	})
+	storageID := jsonField[float64](t, storageResult, "id")
+	createResult := callTool(t, session, ctx, "create_job", map[string]any{
+		"name":            "J-enum",
+		"schedule":        "0 1 * * *",
+		"storage_dest_id": storageID,
+		"items": []map[string]any{
+			{"item_type": "container", "item_name": "x", "item_id": "1"},
+		},
+	})
+	jobID := jsonField[float64](t, createResult, "id")
+
+	for field, value := range map[string]string{
+		"encryption":     "aes",
+		"container_mode": "parallel",
+		"vm_mode":        "all_at_once",
+		"compression":    "lzma",
+	} {
+		r := callToolRaw(t, session, ctx, "update_job", map[string]any{
+			"id": jobID, field: value,
+		})
+		if !r.IsError {
+			t.Errorf("update_job with %s=%q succeeded, want rejection", field, value)
+		}
 	}
 }
 
@@ -709,7 +722,7 @@ func TestGetHealthReadOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { database.Close() })
 
-	srv := New(database, nil, Config{Version: "ro-test", ReadOnly: true})
+	srv := New(database, nil, nil, Config{Version: "ro-test", ReadOnly: true})
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

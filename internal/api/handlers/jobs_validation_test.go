@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 )
 
 // postJob issues POST /api/v1/jobs with the given raw JSON body and returns the
@@ -77,7 +78,7 @@ func TestCreateJob_StorageDestZeroAllowed(t *testing.T) {
 
 func TestCreateJob_RejectsFolderOutsideBrowseRoots(t *testing.T) {
 	h, d := newJobHandlerDB(t)
-	h.SetPathValidator(NewBrowseHandler().ValidatePath)
+	h.intake.SetPathValidator(NewBrowseHandler().ValidatePath)
 	destID := seedStorageDest(t, d)
 	body := `{"name":"outside-root","storage_dest_id":` + strconv.FormatInt(destID, 10) +
 		`,"items":[{"item_type":"folder","item_name":"private","item_id":"/tmp/private","settings":"{\"path\":\"/tmp/private\"}"}]}`
@@ -214,7 +215,7 @@ func TestCreateJob_RejectsOverlongName(t *testing.T) {
 	h, d := newJobHandlerDB(t)
 	destID := seedStorageDest(t, d)
 
-	body := `{"name":"` + strings.Repeat("a", maxJobNameLen+1) +
+	body := `{"name":"` + strings.Repeat("a", jobintake.MaxJobNameLen+1) +
 		`","schedule":"0 3 * * *","storage_dest_id":` + strconv.FormatInt(destID, 10) + `}`
 	w := postJob(t, h, body)
 
@@ -223,7 +224,7 @@ func TestCreateJob_RejectsOverlongName(t *testing.T) {
 	}
 
 	// Exactly at the limit must still be accepted.
-	body = `{"name":"` + strings.Repeat("b", maxJobNameLen) +
+	body = `{"name":"` + strings.Repeat("b", jobintake.MaxJobNameLen) +
 		`","schedule":"0 3 * * *","storage_dest_id":` + strconv.FormatInt(destID, 10) + `}`
 	if w := postJob(t, h, body); w.Code != http.StatusCreated {
 		t.Fatalf("name at limit: status = %d, want 201; body: %s", w.Code, w.Body.String())

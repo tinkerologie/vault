@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/ruaan-deysel/vault/internal/db"
+	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
@@ -28,7 +29,7 @@ func setupReadOnlyTest(t *testing.T) (*mcp.ClientSession, *db.DB) {
 	go hub.Run()
 
 	r := runner.New(database, hub, nil)
-	srv := New(database, r, Config{Version: "test-readonly", ReadOnly: true})
+	srv := New(database, r, jobintake.New(database, r, nil, nil, nil), Config{Version: "test-readonly", ReadOnly: true})
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 

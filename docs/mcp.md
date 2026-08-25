@@ -6,8 +6,14 @@ Vault exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
 
 | Transport       | Endpoint                         | Use Case                                       |
 | --------------- | -------------------------------- | ---------------------------------------------- |
-| Streamable HTTP | `http://<host>:24085/api/v1/mcp` | Remote clients, via a stdio bridge or a tunnel |
-| Stdio           | `vault mcp --db <path>`          | Local clients (Claude Code, CLI tools)         |
+| Streamable HTTP | `http://<host>:24085/api/v1/mcp` | All clients, via a stdio bridge or a tunnel    |
+
+> The former `vault mcp --db <path>` stdio transport has been removed. It ran as
+> a second process writing directly to the daemon's database from outside it, so
+> jobs it created were never handed to the scheduler and silently never ran, and
+> its changes bypassed the flash-storage flush and the live UI updates. Local
+> clients should reach the HTTP endpoint through the `mcp-remote` stdio bridge
+> described below, which exposes the same tools with those protections intact.
 
 > **You can't paste the `http://…` endpoint straight into Claude Desktop.** Its
 > "Add custom connector" flow only accepts **HTTPS** URLs, and connectors are
@@ -88,13 +94,18 @@ Add to your project's `.mcp.json`:
 {
   "mcpServers": {
     "vault": {
-      "type": "stdio",
-      "command": "vault",
-      "args": ["mcp", "--db", "/path/to/vault.db"]
+      "type": "http",
+      "url": "http://<unraid-host>:24085/mcp"
     }
   }
 }
 ```
+
+The daemon binds to loopback by default, so reach it over an SSH tunnel
+(`ssh -L 24085:127.0.0.1:24085 root@<unraid-host>`) and point the URL at
+`http://127.0.0.1:24085/mcp`. For a client that only speaks stdio, bridge it
+with `npx mcp-remote http://127.0.0.1:24085/mcp` rather than running a second
+process against the database directly.
 
 ## Available Tools
 

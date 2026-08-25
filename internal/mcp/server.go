@@ -14,6 +14,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/engine"
+	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
@@ -22,6 +23,11 @@ import (
 type MCPServer struct {
 	db     *db.DB
 	runner *runner.Runner
+	// intake is the Job Intake module, shared with the REST adapter. Every
+	// Job write below goes through it; none of them may touch s.db directly.
+	// Before it existed, jobs created here were never handed to the scheduler
+	// and so silently never ran.
+	intake *jobintake.Intake
 	server *mcp.Server
 	config Config
 }
@@ -33,7 +39,7 @@ type Config struct {
 }
 
 // New creates a new MCP server with all Vault tools registered.
-func New(database *db.DB, r *runner.Runner, configs ...Config) *MCPServer {
+func New(database *db.DB, r *runner.Runner, intake *jobintake.Intake, configs ...Config) *MCPServer {
 	cfg := Config{Version: "dev"}
 	if len(configs) > 0 {
 		cfg = configs[0]
@@ -45,6 +51,7 @@ func New(database *db.DB, r *runner.Runner, configs ...Config) *MCPServer {
 	s := &MCPServer{
 		db:     database,
 		runner: r,
+		intake: intake,
 		config: cfg,
 	}
 
@@ -64,11 +71,6 @@ func New(database *db.DB, r *runner.Runner, configs ...Config) *MCPServer {
 // Server returns the underlying MCP server.
 func (s *MCPServer) Server() *mcp.Server {
 	return s.server
-}
-
-// Run starts the MCP server with stdio transport (for CLI use).
-func (s *MCPServer) Run(ctx context.Context) error {
-	return s.server.Run(ctx, &mcp.StdioTransport{})
 }
 
 // HTTPHandler returns an http.Handler for the Streamable HTTP transport.
@@ -208,68 +210,82 @@ func (s *MCPServer) addCreateJobTool() {
 		Name:        "create_job",
 		Description: "Create a new backup job with items",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input createJobInput) (*mcp.CallToolResult, any, error) {
-		comp := input.Compression
-		if comp == "" {
-			comp = "zstd"
+		// Start from the shared defaults rather than hand-rolling them here.
+		// This tool used to carry its own copy, which disagreed with the REST
+		// handler's — an identical job created over MCP got a different
+		// retention policy, invisible until the retention sweep deleted the
+		// wrong restore points.
+		job := db.DefaultJob()
+		job.Name = input.Name
+		job.Description = input.Description
+		job.Schedule = input.Schedule
+		job.StorageDestID = input.StorageDestID
+		if input.Compression != "" {
+			job.Compression = input.Compression
 		}
-		enc := input.Encryption
-		if enc == "" {
-			enc = "none"
+		if input.Encryption != "" {
+			job.Encryption = input.Encryption
 		}
-		job := db.Job{
-			Name:            input.Name,
-			Description:     input.Description,
-			Enabled:         true,
-			Schedule:        input.Schedule,
-			BackupTypeChain: "full",
-			RetentionCount:  5,
-			RetentionDays:   30,
-			Compression:     comp,
-			Encryption:      enc,
-			ContainerMode:   "one_by_one",
-			NotifyOn:        "failure",
-			VerifyBackup:    true,
-			StorageDestID:   input.StorageDestID,
-		}
-		id, err := s.db.CreateJob(job)
-		if err != nil {
-			return nil, nil, fmt.Errorf("creating job: %w", err)
-		}
+
+		items := make([]db.JobItem, 0, len(input.Items))
 		for i, spec := range input.Items {
 			settings := spec.Settings
 			if settings == "" {
 				settings = "{}"
 			}
-			item := db.JobItem{
-				JobID:     id,
+			items = append(items, db.JobItem{
 				ItemType:  spec.ItemType,
 				ItemName:  spec.ItemName,
 				ItemID:    spec.ItemID,
 				Settings:  settings,
 				SortOrder: i,
-			}
-			if _, err := s.db.AddJobItem(item); err != nil {
-				return nil, nil, fmt.Errorf("adding job item %s: %w", spec.ItemName, err)
-			}
+			})
 		}
-		r, _ := textResult(map[string]any{"id": id, "message": "job created"})
+
+		saved, _, err := s.intake.Create(job, items)
+		if err != nil {
+			return nil, nil, intakeError("creating job", err)
+		}
+		r, _ := textResult(map[string]any{"id": saved.ID, "message": "job created"})
 		return r, nil, nil
 	})
 }
 
+// intakeError wraps a Job Intake failure for return to an MCP client. A
+// validation failure is the caller's fault and its message is safe and useful
+// to surface verbatim; anything else is a server fault reported as-is.
+func intakeError(action string, err error) error {
+	if ve, ok := jobintake.IsValidation(err); ok {
+		return fmt.Errorf("%s: %s", action, ve.Message)
+	}
+	return fmt.Errorf("%s: %w", action, err)
+}
+
 type deleteJobInput struct {
 	ID int64 `json:"id"`
+	// DeleteFiles also removes the job's backup data from its destination.
+	// Defaults to false: deletion is a sensitive operation, so an MCP client
+	// must ask for the destructive variant explicitly.
+	DeleteFiles bool `json:"delete_files,omitempty"`
 }
 
 func (s *MCPServer) addDeleteJobTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "delete_job",
-		Description: "Delete a backup job and all its items",
+		Description: "Delete a backup job and all its items. Set delete_files to also erase its backup data.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input deleteJobInput) (*mcp.CallToolResult, any, error) {
-		if err := s.db.DeleteJob(input.ID); err != nil {
-			return nil, nil, fmt.Errorf("deleting job %d: %w", input.ID, err)
+		// Job Intake supplies the guards this tool used to skip entirely: it
+		// refuses while a restore for the job is mid-write, cancels a running
+		// backup first, and reloads the scheduler afterwards.
+		outcome, err := s.intake.Delete(input.ID, jobintake.DeleteOptions{DeleteFiles: input.DeleteFiles})
+		if err != nil {
+			return nil, nil, intakeError(fmt.Sprintf("deleting job %d", input.ID), err)
 		}
-		r, _ := textResult(map[string]any{"message": "job deleted"})
+		msg := "job deleted"
+		if outcome.CleanupStarted {
+			msg = "job deleted; backup data cleanup running in the background"
+		}
+		r, _ := textResult(map[string]any{"message": msg})
 		return r, nil, nil
 	})
 }
@@ -572,8 +588,13 @@ func (s *MCPServer) addUpdateJobTool() {
 		if input.VerifyBackup != nil {
 			job.VerifyBackup = *input.VerifyBackup
 		}
-		if err := s.db.UpdateJob(job); err != nil {
-			return nil, nil, fmt.Errorf("updating job %d: %w", input.ID, err)
+		// The merge above is this tool's own concern — it is how an
+		// optional-field MCP schema turns into a whole Job. The write itself
+		// goes through Job Intake, so the merged job is validated and the
+		// scheduler picks up a changed schedule. Passing nil items leaves the
+		// job's items untouched; this tool does not edit them.
+		if _, _, err := s.intake.Update(input.ID, job, nil); err != nil {
+			return nil, nil, intakeError(fmt.Sprintf("updating job %d", input.ID), err)
 		}
 		r, _ := textResult(map[string]any{"message": "job updated", "id": input.ID})
 		return r, nil, nil

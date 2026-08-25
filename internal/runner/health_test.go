@@ -39,9 +39,6 @@ func (s *stubCapacityAdapter) TestConnection() error { return s.testConnErr }
 func (s *stubCapacityAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
 	return s.cap, nil
 }
-func (s *stubCapacityAdapter) Usage() (int64, int64, error) {
-	return 0, 0, storage.ErrUsageNotSupported
-}
 func (s *stubCapacityAdapter) WriteFrom(_ string, _ func() (io.ReadCloser, error)) error {
 	return nil
 }
@@ -65,7 +62,6 @@ func (e *errCapacityAdapter) TestConnection() error                     { return
 func (e *errCapacityAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
 	return storage.Capacity{}, errors.New(e.msg)
 }
-func (e *errCapacityAdapter) Usage() (int64, int64, error) { return 0, 0, storage.ErrUsageNotSupported }
 func (e *errCapacityAdapter) WriteFrom(_ string, _ func() (io.ReadCloser, error)) error {
 	return nil
 }
@@ -237,35 +233,8 @@ func TestBroadcastStorageCapacityPayload(t *testing.T) {
 	r.BroadcastStorageCapacity(42, cap)
 }
 
-// usageAdapter is a stub adapter that returns pre-configured Usage() values.
-// All other methods are no-ops (identical to stubCapacityAdapter).
-type usageAdapter struct {
-	free  int64
-	total int64
-	err   error
-}
-
-func (u *usageAdapter) Write(_ string, _ io.Reader) error { return nil }
-func (u *usageAdapter) Read(_ string) (io.ReadCloser, error) {
-	return io.NopCloser(nil), nil
-}
-func (u *usageAdapter) ReadRange(_ string, _, _ int64) (io.ReadCloser, error) {
-	return io.NopCloser(nil), nil
-}
-func (u *usageAdapter) Delete(_ string) error                     { return nil }
-func (u *usageAdapter) List(_ string) ([]storage.FileInfo, error) { return nil, nil }
-func (u *usageAdapter) Stat(_ string) (storage.FileInfo, error)   { return storage.FileInfo{}, nil }
-func (u *usageAdapter) TestConnection() error                     { return nil }
-func (u *usageAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
-	return storage.Capacity{}, nil
-}
-func (u *usageAdapter) Usage() (int64, int64, error) {
-	return u.free, u.total, u.err
-}
-func (u *usageAdapter) WriteFrom(_ string, _ func() (io.ReadCloser, error)) error { return nil }
-
-// TestCapacitySampler_InsertsOnSuccess verifies that when Usage() returns
-// real values, the sampler branch inserts a CapacitySample row.
+// TestCapacitySampler_InsertsOnSuccess verifies that a capacity probe
+// reporting a real quota produces a CapacitySample row.
 func TestCapacitySampler_InsertsOnSuccess(t *testing.T) {
 	t.Parallel()
 	_, database := newTestRunner(t)
@@ -285,23 +254,26 @@ func TestCapacitySampler_InsertsOnSuccess(t *testing.T) {
 
 	wantFree := int64(10 << 30)   // 10 GiB
 	wantTotal := int64(100 << 30) // 100 GiB
-	adapter := &usageAdapter{free: wantFree, total: wantTotal}
 
-	// Replay the sampler branch from checkOneStorage directly via the adapter
-	// we control. checkOneStorage builds its own adapter from dest.Config, so
-	// it can't be injected there; this test validates the sampler's DB
-	// round-trip logic (Usage -> InsertCapacitySample -> ListCapacitySamples).
+	// checkOneStorage builds its own adapter from dest.Config, so the probe
+	// itself cannot be injected here. The sampler's decision logic is shared
+	// with production through capacitySampleFor, so this exercises the real
+	// predicate plus the DB round-trip.
 	before := time.Now().Add(-time.Second)
-	if free, total, usageErr := adapter.Usage(); usageErr == nil {
-		insertErr := database.InsertCapacitySample(db.CapacitySample{
-			DestID:     dest.ID,
-			SampledAt:  time.Now().UTC(),
-			FreeBytes:  free,
-			TotalBytes: total,
-		})
-		if insertErr != nil {
-			t.Fatalf("InsertCapacitySample: %v", insertErr)
-		}
+	free, total, ok := capacitySampleFor(storage.Capacity{
+		TotalBytes: wantTotal,
+		FreeBytes:  wantFree,
+	}, nil)
+	if !ok {
+		t.Fatal("capacitySampleFor returned ok=false for a quota-reporting probe")
+	}
+	if insertErr := database.InsertCapacitySample(db.CapacitySample{
+		DestID:     dest.ID,
+		SampledAt:  time.Now().UTC(),
+		FreeBytes:  free,
+		TotalBytes: total,
+	}); insertErr != nil {
+		t.Fatalf("InsertCapacitySample: %v", insertErr)
 	}
 	after := time.Now().Add(time.Second)
 
@@ -324,47 +296,44 @@ func TestCapacitySampler_InsertsOnSuccess(t *testing.T) {
 	}
 }
 
-// TestCapacitySampler_SkipsErrUsageNotSupported verifies that when Usage()
-// returns ErrUsageNotSupported, no CapacitySample row is inserted and no
-// error is logged as WARN (the silent-skip branch).
-func TestCapacitySampler_SkipsErrUsageNotSupported(t *testing.T) {
+// TestCapacitySampleFor_SkipsWhenNoQuotaReported covers the silent-skip
+// branch: adapters with no quota concept report TotalBytes == 0 (S3 always;
+// SFTP/SMB/WebDAV when the server lacks the statvfs/quota extension), and a
+// failed probe must not produce a sample either.
+func TestCapacitySampleFor_SkipsWhenNoQuotaReported(t *testing.T) {
 	t.Parallel()
-	_, database := newTestRunner(t)
-
-	id, err := database.CreateStorageDestination(db.StorageDestination{
-		Name:   "sampler-no-usage",
-		Type:   "local",
-		Config: `{"path":"/tmp"}`,
-	})
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		cap  storage.Capacity
+		err  error
+	}{
+		{"no quota reported", storage.Capacity{TotalBytes: 0, UsedBytes: 5 << 30}, nil},
+		{"probe failed", storage.Capacity{TotalBytes: 100 << 30, FreeBytes: 10 << 30}, errors.New("propfind status 500")},
+		{"negative total", storage.Capacity{TotalBytes: -1}, nil},
 	}
-	dest, err := database.GetStorageDestination(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	adapter := &usageAdapter{err: storage.ErrUsageNotSupported}
-
-	// Replicate the sampler branch.
-	before := time.Now().Add(-time.Second)
-	if free, total, usageErr := adapter.Usage(); usageErr == nil {
-		_ = database.InsertCapacitySample(db.CapacitySample{
-			DestID:     dest.ID,
-			SampledAt:  time.Now().UTC(),
-			FreeBytes:  free,
-			TotalBytes: total,
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, _, ok := capacitySampleFor(tc.cap, tc.err); ok {
+				t.Errorf("capacitySampleFor(%+v, %v) = ok, want skip", tc.cap, tc.err)
+			}
 		})
-	} else if !errors.Is(usageErr, storage.ErrUsageNotSupported) {
-		t.Errorf("unexpected non-suppressed error: %v", usageErr)
 	}
+}
 
-	samples, err := database.ListCapacitySamples(dest.ID, before)
-	if err != nil {
-		t.Fatalf("ListCapacitySamples: %v", err)
+// TestCapacitySampleFor_ClampsFreeToTotal guards the free <= total invariant
+// the sample table relies on, for backends reporting inconsistent block counts.
+func TestCapacitySampleFor_ClampsFreeToTotal(t *testing.T) {
+	t.Parallel()
+	free, total, ok := capacitySampleFor(storage.Capacity{
+		TotalBytes: 100,
+		FreeBytes:  150,
+	}, nil)
+	if !ok {
+		t.Fatal("ok = false, want true")
 	}
-	if len(samples) != 0 {
-		t.Errorf("expected 0 samples when Usage returns ErrUsageNotSupported, got %d", len(samples))
+	if free != 100 || total != 100 {
+		t.Errorf("free, total = %d, %d; want 100, 100 (free clamped)", free, total)
 	}
 }
 

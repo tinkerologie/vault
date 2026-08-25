@@ -25,4 +25,3 @@ func (mockAdapter) TestConnection() error           { return errors.New("not imp
 func (mockAdapter) GetCapacity(context.Context) (Capacity, error) {
 	return Capacity{}, errors.New("not impl")
 }
-func (mockAdapter) Usage() (int64, int64, error) { return 0, 0, errors.New("not impl") }

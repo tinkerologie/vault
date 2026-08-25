@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/httprate"
 
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
+	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 	mcpserver "github.com/ruaan-deysel/vault/internal/mcp"
 	"github.com/ruaan-deysel/vault/internal/release"
 	"github.com/ruaan-deysel/vault/web"
@@ -135,13 +136,21 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/browse", browseH.List)
 		r.Get("/path-exists", browseH.Exists)
 
-		jobH := handlers.NewJobHandler(s.db, s.runner, func() error {
+		// One Job Intake module, shared by the REST handlers below and the
+		// MCP adapter further down. Sharing the instance is what makes "REST
+		// and MCP enforce the same policy" structural rather than a
+		// convention a later caller can quietly break. The reloader is
+		// late-bound because routes are built before the scheduler exists.
+		reloadScheduler := func() error {
 			if s.schedReload != nil {
 				return s.schedReload()
 			}
 			return nil
-		})
-		jobH.SetPathValidator(browseH.ValidatePath)
+		}
+		intake := jobintake.New(s.db, s.runner, reloadScheduler, s.configChangeHook, browseH.ValidatePath)
+		s.jobIntake = intake
+
+		jobH := handlers.NewJobHandler(s.db, s.runner, reloadScheduler, intake)
 		s.jobHandler = jobH
 		if s.nextRunResolver != nil {
 			jobH.SetNextRunResolver(s.nextRunResolver)
@@ -271,7 +280,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		// MCP is only available in daemon mode.
 		if !s.config.ReadOnly {
-			mcpSrv := mcpserver.New(s.db, s.runner, mcpserver.Config{
+			mcpSrv := mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
 				Version:  s.config.Version,
 				ReadOnly: s.config.ReadOnly,
 			})

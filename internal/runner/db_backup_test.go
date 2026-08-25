@@ -45,7 +45,6 @@ func (a *recordingAdapter) TestConnection() error                   { return nil
 func (a *recordingAdapter) GetCapacity(_ context.Context) (storage.Capacity, error) {
 	return storage.Capacity{}, nil
 }
-func (a *recordingAdapter) Usage() (int64, int64, error) { return 0, 0, storage.ErrUsageNotSupported }
 func (a *recordingAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {
 	rc, err := open()
 	if err != nil {

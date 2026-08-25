@@ -92,7 +92,7 @@ package: release
 	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"
 
 lint:
-	golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...
+	GOOS=$(GOOS) GOARCH=$(GOARCH) golangci-lint run --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./...
 
 lint-web:
 	cd web && npm run lint

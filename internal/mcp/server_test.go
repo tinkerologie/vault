@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/ruaan-deysel/vault/internal/db"
+	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
@@ -26,7 +27,7 @@ func setupTest(t *testing.T) (*mcp.ClientSession, *db.DB) {
 	go hub.Run()
 
 	r := runner.New(database, hub, nil)
-	srv := New(database, r, Config{Version: "test-version"})
+	srv := New(database, r, jobintake.New(database, r, nil, nil, nil), Config{Version: "test-version"})
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 

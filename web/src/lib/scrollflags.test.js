@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { atTop, nearTop, nearBottom } from './scrollflags.js'
+import { atTop, nearOldestEdge, nearBottom } from './scrollflags.js'
 
 describe('atTop', () => {
   it('is at top within the edge band', () => {
@@ -13,15 +13,15 @@ describe('atTop', () => {
   })
 })
 
-describe('nearTop', () => {
-  it('is near top within the load-older band', () => {
-    expect(nearTop(0)).toBe(true)
-    expect(nearTop(199)).toBe(true)
+describe('nearOldestEdge', () => {
+  it('is near the oldest edge within the load-older band', () => {
+    expect(nearOldestEdge(400, 500, 100)).toBe(true)   // 0 px to go
+    expect(nearOldestEdge(201, 500, 100)).toBe(true)   // 199 px to go
   })
 
-  it('is not near top past the load-older band', () => {
-    expect(nearTop(200)).toBe(false)
-    expect(nearTop(500)).toBe(false)
+  it('is not near the oldest edge past the load-older band', () => {
+    expect(nearOldestEdge(200, 500, 100)).toBe(false)  // 200 px to go
+    expect(nearOldestEdge(0, 500, 100)).toBe(false)    // 400 px to go
   })
 })
 
