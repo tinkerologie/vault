@@ -1,9 +1,17 @@
 /** Shared backup/restore progress state that persists across page navigations. */
 
 import { formatBytes } from './utils.js'
+import { buildApiRequest } from './runtime-config.js'
 
 // Global progress state – survives component mount/unmount cycles.
 let activeRun = $state(null) // { job_id, run_id, job_name, started_at, run_type }
+// true only while a run is actually executing. Cleared immediately on
+// job_run_completed (unlike activeRun, which lingers for the overlay's grace).
+//
+// Lifecycle: set true in restoreFromStatus, syncFromStatus, and
+// handleProgressMessage (item-message synthesis + job_run_started); cleared
+// only in job_run_completed.
+let running = $state(false)
 let itemProgress = $state({}) // { item_name: { percent, message, item_type, status } }
 let overallDone = $state(0)
 let overallFailed = $state(0)
@@ -22,6 +30,7 @@ function defaultProgressMessage(runType) {
 export function getProgress() {
   return {
     get activeRun() { return activeRun },
+    get running() { return running },
     get itemProgress() { return itemProgress },
     get overallDone() { return overallDone },
     get overallFailed() { return overallFailed },
@@ -39,8 +48,10 @@ export function getProgress() {
  */
 export function restoreFromStatus(status) {
   if (!status?.active) return
-  // Don't overwrite an already-active run (WebSocket already initialised it).
-  if (activeRun) return
+  // Only overwrite a placeholder that never learned its run_id. A real,
+  // already-tracked run (run_id set) is left untouched so a reconnect resync
+  // or a late snapshot can never roll a live run backwards.
+  if (activeRun && activeRun.run_id != null) return
   activeRun = {
     job_id: status.job_id,
     run_id: status.run_id,
@@ -48,6 +59,7 @@ export function restoreFromStatus(status) {
     started_at: status.started_at ? Date.parse(status.started_at) : Date.now(),
     run_type: status.run_type || 'backup',
   }
+  running = true
   overallDone = status.items_done || 0
   overallFailed = status.items_failed || 0
   overallTotal = status.items_total || 0
@@ -69,6 +81,7 @@ export function restoreFromStatus(status) {
   elapsedSec = Math.max(0, Math.round((Date.now() - startMs) / 1000))
   clearInterval(_elapsedInterval)
   _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
+  startWatchdog()
 }
 
 /** Keep progress state aligned with the latest runner-status snapshot.
@@ -78,10 +91,14 @@ export function syncFromStatus(status) {
   if (!status?.active) return
 
   if (!activeRun || activeRun.run_id !== status.run_id) {
+    // restoreFromStatus sets `running` itself when it actually restores. Setting
+    // it here would leave running=true while activeRun still points at the old
+    // finished run this branch early-returns on.
     restoreFromStatus(status)
     return
   }
 
+  running = true
   activeRun = {
     ...activeRun,
     job_name: status.job_name || activeRun.job_name,
@@ -124,6 +141,127 @@ export function syncFromStatus(status) {
   elapsedSec = Math.max(0, Math.round((Date.now() - startMs) / 1000))
 }
 
+/** Optimistically mark a job as active the moment its Run Now click
+ *  succeeds, so the row flips to Cancel immediately instead of waiting for
+ *  the job_run_started WebSocket event. Mirrors the job_run_started state
+ *  writes, but never clobbers a run that is already live: if another run is
+ *  active the guard short-circuits and leaves state untouched — the row keeps
+ *  showing Run Now until the server's queue_update event reflects the click.
+ */
+export function markJobActiveOptimistically(jobId, jobName) {
+  if (running && activeRun?.job_id != null) return
+  cancelling = false
+  running = true
+  clearTimeout(_completionTimer)
+  _completionTimer = null
+  activeRun = {
+    job_id: jobId,
+    run_id: null, // unknown until job_run_started arrives
+    job_name: jobName || `Job #${jobId}`,
+    started_at: Date.now(),
+    run_type: 'backup',
+  }
+  itemProgress = {}
+  overallDone = 0
+  overallFailed = 0
+  overallTotal = 0
+  elapsedSec = 0
+  clearInterval(_elapsedInterval)
+  _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
+  startWatchdog()
+}
+
+/** Reset all run state to idle. Used by the completion path, the watchdog,
+ *  and as the exported reset for tests/consumers. */
+export function clearActiveRun() {
+  running = false
+  activeRun = null
+  itemProgress = {}
+  overallDone = 0
+  overallFailed = 0
+  overallTotal = 0
+  elapsedSec = 0
+  phaseMessage = null
+  cancelling = false
+  clearInterval(_elapsedInterval)
+  clearTimeout(_completionTimer)
+  _completionTimer = null
+  stopWatchdog()
+}
+
+// ---- Run watchdog ----------------------------------------------------------
+// While the UI believes a run is active, periodically verify against
+// /runner/status and clear the state if the server reports nothing is running.
+// The hub is lossy and can drop BOTH job_run_started and job_run_completed for
+// a slow client without ever dropping the socket — in which case no reconnect
+// resync fires and the optimistic placeholder would otherwise strand the
+// Cancel button forever. This backstop is deliberately conservative: it only
+// ever clears stale state, never sets running=true (events do that).
+let _watchdogTimer = null
+
+function stopWatchdog() {
+  if (_watchdogTimer) {
+    clearTimeout(_watchdogTimer)
+    _watchdogTimer = null
+  }
+}
+
+function scheduleWatchdog(delayMs) {
+  stopWatchdog()
+  _watchdogTimer = setTimeout(() => { void verifyRun() }, delayMs)
+}
+
+export function startWatchdog() {
+  if (_watchdogTimer) return
+  scheduleWatchdog(1500)
+}
+
+export async function verifyRun() {
+  if (!running) {
+    stopWatchdog()
+    return
+  }
+  try {
+    const { url, options } = buildApiRequest('GET', '/runner/status')
+    const res = await fetch(url, options)
+    if (!res.ok) {
+      scheduleWatchdog(4000)
+      return
+    }
+    const status = await res.json()
+    if (!running) return // a live event cleared state while we were fetching
+    if (status?.active) {
+      // A run is genuinely active. If we still hold a placeholder (run_id
+      // unknown because job_run_started was dropped), adopt the real run —
+      // but only when it is the same job. A different active job means our
+      // placeholder is stale (its run already finished and another started
+      // while both events were lost): clear it and let that job's own events
+      // (or the next reconnect resync) repopulate the correct state.
+      if (activeRun?.run_id == null) {
+        if (status.job_id === activeRun?.job_id) {
+          restoreFromStatus(status)
+          scheduleWatchdog(4000)
+          return
+        }
+        clearActiveRun()
+        return
+      }
+      // run_id is known but the server is active: leave the live state alone.
+      // If this is a *stale* run whose completion was dropped while a newer
+      // run is already live, we cannot tell it apart from the live run here —
+      // clearing would risk killing the correct active state, so we keep
+      // polling and rely on the newer run's own completion event to reconcile.
+      scheduleWatchdog(4000)
+      return
+    }
+    // Server reports nothing active — the run we were tracking has ended.
+    clearActiveRun()
+    stopWatchdog()
+  } catch {
+    scheduleWatchdog(4000) // transient failure: verify again shortly
+  }
+}
+
 /** Handle an incoming WebSocket message – update progress state.
  *  Returns true if this message was a progress event (handled).
  */
@@ -143,14 +281,17 @@ export function handleProgressMessage(msg, jobNameResolver) {
       started_at: Date.now(),
       run_type: msg.run_type || (msg.type.startsWith('restore') || msg.type.includes('_restore_') ? 'restore' : 'backup'),
     }
+    running = true
     overallTotal = msg.items_total || 0
     clearInterval(_elapsedInterval)
     _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
+    startWatchdog()
   }
 
   switch (msg.type) {
     case 'job_run_started': {
       cancelling = false
+      running = true
       // A previous run's delayed cleanup must not wipe this new run's state.
       clearTimeout(_completionTimer)
       _completionTimer = null
@@ -169,6 +310,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       elapsedSec = 0
       clearInterval(_elapsedInterval)
       _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
+      startWatchdog()
       return true
     }
     case 'containers_stopping_all': {
@@ -299,6 +441,19 @@ export function handleProgressMessage(msg, jobNameResolver) {
     case 'job_run_completed': {
       phaseMessage = null
       cancelling = false
+      // Clear immediately: the Jobs page's Cancel button keys off this flag and
+      // must disappear the instant the run ends, not after the overlay's 5s grace.
+      // Guard against a stale/out-of-order completion for an older run clearing
+      // the flag while a newer run is already active. A completion matches the
+      // active run when the run ids agree, or — while the active run is still an
+      // optimistic placeholder whose run_id is unknown (its job_run_started was
+      // dropped by the lossy hub) — when it is for the same job.
+      const completionMatches =
+        msg.run_id == null ||
+        (activeRun?.run_id == null && msg.job_id === activeRun?.job_id) ||
+        msg.run_id === activeRun?.run_id
+      if (!activeRun || completionMatches) running = false
+      if (!running) stopWatchdog()
       clearInterval(_elapsedInterval)
       if (activeRun) {
         const completedRunId = activeRun.run_id

@@ -5,7 +5,8 @@
   import { api } from '../lib/api.js'
   import { buildApiRequest } from '../lib/runtime-config.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
+  import { getProgress, handleProgressMessage, restoreFromStatus, markJobActiveOptimistically } from '../lib/progress.svelte.js'
+  import { isJobRunningOrQueued } from '../lib/job-active.js'
   import { describeSchedule, relTimeUntil } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
@@ -506,9 +507,13 @@
     return () => { unsubWs(); unsubBaseline() }
   })
 
+  // Silent refresh: keep the existing table on screen while data reloads in
+  // the background. Only the very first load (empty table) shows skeletons —
+  // every later refresh updates the keyed rows in place, so a Run Now click
+  // never blanks the page into a skeleton flash.
   async function loadData() {
 	const loadId = ++dataLoadId
-    loading = true
+    loading = jobs.length === 0
     try {
       const [details, s, nr] = await Promise.all([api.listJobs(true), api.listStorage(), api.getNextRuns()])
 	  if (loadId !== dataLoadId) return
@@ -527,7 +532,7 @@
 	  if (loadId === dataLoadId) showToast(e.message, 'error')
     } finally {
 	  if (loadId === dataLoadId) loading = false
-    }
+	}
   }
 
   function openRemediate(job) {
@@ -785,6 +790,11 @@
     runningJob = job.id
     try {
       await api.runJob(job.id)
+      // Flip the row to Cancel immediately — don't wait for the
+      // job_run_started WebSocket event to make the round trip. The run
+      // watchdog (started inside) reconciles against /runner/status if that
+      // event is ever dropped.
+      markJobActiveOptimistically(job.id, job.name)
       showToast(`"${job.name}" queued for execution`, 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -794,11 +804,6 @@
   }
 
   const progress = getProgress()
-  // A job shows Cancel instead of Run Now while it is the active run or is
-  // waiting in the queue (issues #235/#238).
-  function isRunningOrQueued(jobId) {
-    return progress.activeRun?.job_id === jobId || progress.queue.some(q => q.job_id === jobId)
-  }
 
   async function cancelRun(job) {
     try {
@@ -1241,7 +1246,7 @@
               </div>
             </div>
             <div class="flex items-center gap-1 shrink-0 ml-4">
-              {#if isRunningOrQueued(job.id)}
+              {#if isJobRunningOrQueued(progress, job.id)}
                 <button
                   onclick={() => cancelRun(job)}
                   disabled={progress.cancelling && progress.activeRun?.job_id === job.id}
