@@ -228,3 +228,20 @@ metadata is injected with linker flags defined in the `Makefile`.
 - Inspect branch and remote divergence before merge or push operations.
 - Do not commit, push, merge, tag, release, or open a pull request unless the
   user requests it.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues on `ruaan-deysel/vault` via the `gh` CLI.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `CONTEXT.md` at the repo root plus ADRs in
+`docs/adr/`. See `docs/agents/domain.md`.
