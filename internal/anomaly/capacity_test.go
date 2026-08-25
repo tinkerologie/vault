@@ -560,3 +560,59 @@ func TestCapacityTraj_DetailsJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestCapacity_SummaryNamesDestination verifies the post-#315 concise
+// summaries: exact per-day rate and byte figures stay in Details.
+func TestCapacity_SummaryNamesDestination(t *testing.T) {
+	tests := []struct {
+		name         string
+		totalBytes   int64
+		freeFunc     func(i int) int64
+		wantMetric   string
+		wantContains []string
+	}{
+		{
+			name:       "eta summary names destination and runway",
+			totalBytes: 100e9,
+			freeFunc:   func(i int) int64 { return 10e9 - int64(i)*500e6 }, // -0.5 GB/day
+			wantMetric: "free_bytes_eta_days",
+			wantContains: []string{
+				`"test-dest" is on track to run out of free space in about 1 day.`,
+			},
+		},
+		{
+			name:       "low-free summary names destination and percent",
+			totalBytes: 100e9,
+			freeFunc:   func(i int) int64 { return 400e6 }, // flat 0.4% of total
+			wantMetric: "free_bytes_low",
+			wantContains: []string{
+				`"test-dest" is critically low on free space — only <1% left`,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := makeDest(1)
+			samples := buildSamples(time.Now().Add(-time.Duration(20*24)*time.Hour), 20, tc.totalBytes, tc.freeFunc)
+			got, err := NewCapacityTrajectoryDetector(nil).Evaluate(makeEC(dest, samples, "balanced"))
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			var match *Anomaly
+			for i := range got {
+				if got[i].Metric == tc.wantMetric {
+					match = &got[i]
+					break
+				}
+			}
+			if match == nil {
+				t.Fatalf("expected %s anomaly, got %+v", tc.wantMetric, got)
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(match.Summary, want) {
+					t.Errorf("summary %q should contain %q", match.Summary, want)
+				}
+			}
+		})
+	}
+}

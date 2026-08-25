@@ -2,6 +2,7 @@ package anomaly
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -320,5 +321,69 @@ func TestDurationDrift_NilDurationSeconds(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("want nil for nil DurationSeconds, got %+v", got)
+	}
+}
+
+// TestDurationDrift_SummaryNamesJob verifies the post-#315 concise summary
+// style: the summary names the job and states the change as a percentage.
+func TestDurationDrift_SummaryNamesJob(t *testing.T) {
+	tests := []struct {
+		name         string
+		observed     int
+		bMedian      float64
+		bMAD         float64
+		status       string // "" → "completed"
+		wantContains []string
+	}{
+		{
+			name:         "standard high-side names job and percent",
+			observed:     1000, // factor 3.33 → increased by 233%
+			bMedian:      300,
+			bMAD:         20, // z = 0.6745*700/20 ≈ 23.6 → critical
+			status:       "",
+			wantContains: []string{`"media-backup" backup duration increased by 233%.`},
+		},
+		{
+			name:         "cancelled stall names job",
+			observed:     1000, // > median + k*mad = 300 + 3.5*20 = 370 → stall branch
+			bMedian:      300,
+			bMAD:         20,
+			status:       "cancelled",
+			wantContains: []string{`"media-backup" backup stalled or timed out`},
+		},
+		{
+			// Rule A fires on |z|, so a high-side rule CAN fire on a
+			// below-median run — the summary verb must follow the factor
+			// (decreased), not a hardcoded "increased".
+			name:         "rule A low-side names job with decreased",
+			observed:     100, // factor 0.5; |z| = 0.6745*100/5 ≈ 13.5 → critical
+			bMedian:      200,
+			bMAD:         5,
+			status:       "",
+			wantContains: []string{`"media-backup" backup duration decreased by 50%.`},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ec := buildDurationEC(tc.observed, tc.bMedian, tc.bMAD, 10, "balanced", tc.status, -1)
+			ec.Job.Name = "media-backup"
+			got, err := NewDurationDriftDetector().Evaluate(ec)
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("expected 1 anomaly, got %d: %+v", len(got), got)
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(got[0].Summary, want) {
+					t.Errorf("summary %q should contain %q", got[0].Summary, want)
+				}
+			}
+			// Details must keep the raw growth factor for the UI (issue #315:
+			// fine details belong in the investigation view, not the alert).
+			if !strings.Contains(got[0].Details, `"growth_factor"`) {
+				t.Errorf("Details must retain growth_factor, got %s", got[0].Details)
+			}
+		})
 	}
 }

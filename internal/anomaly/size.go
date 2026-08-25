@@ -96,8 +96,9 @@ func (d *SizeDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 				Expected:    &median,
 				Deviation:   &dev,
 				JobRunID:    &runID,
-				Summary:     fmt.Sprintf("This backup shrank to %s, only %s of its usual %s — this can signal missing or corrupted data.", humanizeBytes(observed), humanizePercent(growthFactor), humanizeBytes(median)),
-				Details:     details,
+				Summary: fmt.Sprintf("%q backup size %s — this can signal missing or corrupted data.",
+					ec.Job.Name, humanizePercentChange(growthFactor)),
+				Details: details,
 			},
 		}, nil
 	}
@@ -139,25 +140,19 @@ func (d *SizeDriftDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 			Expected:    &median,
 			Deviation:   &dev,
 			JobRunID:    &runID,
-			Summary:     sizeDriftSummary(observed, median, growthFactor),
+			Summary:     sizeDriftSummary(ec.Job.Name, growthFactor),
 			Details:     details,
 		},
 	}, nil
 }
 
 // sizeDriftSummary phrases the high-side size anomaly using the direction the
-// numbers actually show. The verb used to be hardcoded to "grew", which
-// produced self-contradictory text whenever the rule fired on a run that was
-// marginally BELOW the median — e.g. "This backup grew to 2.7 GB, about <1×
-// its usual 2.8 GB." Users are asked to act on these signals, so the sentence
-// must not disagree with its own figures.
-func sizeDriftSummary(observed, median, growthFactor float64) string {
-	verb := "grew"
-	if observed < median {
-		verb = "shrank"
-	}
-	return fmt.Sprintf("This backup %s to %s, about %s its usual %s.",
-		verb, humanizeBytes(observed), humanizeMultiplier(growthFactor), humanizeBytes(median))
+// numbers actually show. The percent phrase comes from humanizePercentChange,
+// which derives "increased"/"decreased" from the factor itself, so the
+// sentence can never disagree with its own figures (the original QA bug: a
+// high-side rule firing marginally BELOW the median once rendered as "grew").
+func sizeDriftSummary(jobName string, growthFactor float64) string {
+	return fmt.Sprintf("%q backup size %s.", jobName, humanizePercentChange(growthFactor))
 }
 
 // higherSeverity returns the more severe of two Severity values.

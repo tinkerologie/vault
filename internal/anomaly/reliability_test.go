@@ -3,6 +3,7 @@ package anomaly
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -450,5 +451,73 @@ func TestReliability_EmptyRecentRuns(t *testing.T) {
 		if a.Metric == "failure_streak" {
 			t.Errorf("expected no failure_streak with empty RecentRuns, got %+v", a)
 		}
+	}
+}
+
+// TestReliability_SummaryNamesJob verifies the post-#315 concise summaries:
+// both signals name the job instead of "This backup".
+func TestReliability_SummaryNamesJob(t *testing.T) {
+	tests := []struct {
+		name         string
+		setupRuns    bool // seed failure streak in RecentRuns
+		setupVerify  bool // seed a pass→fail verify regression
+		wantMetric   string
+		wantContains []string
+	}{
+		{
+			name:         "failure streak names job",
+			setupRuns:    true,
+			wantMetric:   "failure_streak",
+			wantContains: []string{`"rel-job" backup has failed 2 runs in a row.`},
+		},
+		{
+			name:         "verify regression names job",
+			setupVerify:  true,
+			wantMetric:   "verify_outcome",
+			wantContains: []string{`"rel-job" backup verification failed after previously passing`, "restorable"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := openReliabilityDB(t)
+			det := NewReliabilityDetector(d)
+			jobID := seedReliabilityJob(t, d) // job is named "rel-job"
+
+			var runs []db.JobRun
+			if tc.setupRuns {
+				threshold := SensBalanced.Streak() // 2
+				runs = make([]db.JobRun, threshold)
+				for i := 0; i < threshold; i++ {
+					runs[i] = makeRun(int64(100+i), "failed", 0)
+				}
+			}
+			if tc.setupVerify {
+				rpID := seedJobRunAndRestorePoint(t, d, jobID)
+				seedVerifyRun(t, d, rpID, "passed", -2*time.Hour)
+				seedVerifyRun(t, d, rpID, "failed", -1*time.Hour)
+			}
+
+			ec := buildReliabilityEC(jobID, runs, "balanced")
+			ec.Job.Name = "rel-job"
+			got, err := det.Evaluate(ec)
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			var match *Anomaly
+			for i := range got {
+				if got[i].Metric == tc.wantMetric {
+					match = &got[i]
+					break
+				}
+			}
+			if match == nil {
+				t.Fatalf("expected %s anomaly, got %+v", tc.wantMetric, got)
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(match.Summary, want) {
+					t.Errorf("summary %q should contain %q", match.Summary, want)
+				}
+			}
+		})
 	}
 }

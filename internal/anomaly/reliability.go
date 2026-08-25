@@ -63,7 +63,7 @@ func (r *ReliabilityDetector) Evaluate(ec EvalContext) ([]Anomaly, error) {
 	}
 
 	// --- Signal 2: verify regression ---
-	a, err := r.evalVerifyRegression(jobID)
+	a, err := r.evalVerifyRegression(ec)
 	if err != nil {
 		// Non-fatal: log and continue so the streak result is still returned.
 		log.Printf("WARN anomaly: reliability verify regression query (job %d): %v", jobID, err)
@@ -123,7 +123,7 @@ func (r *ReliabilityDetector) evalStreak(ec EvalContext, jobID int64) *Anomaly {
 		Metric:      "failure_streak",
 		Observed:    float64(streak),
 		JobRunID:    &runID,
-		Summary:     fmt.Sprintf("This backup has failed %s in a row and needs attention.", pluralizeRuns(streak)),
+		Summary:     fmt.Sprintf("%q backup has failed %s in a row.", ec.Job.Name, pluralizeRuns(streak)),
 		Details:     details,
 	}
 }
@@ -139,7 +139,9 @@ func (r *ReliabilityDetector) evalStreak(ec EvalContext, jobID int64) *Anomaly {
 //
 // When fewer than 2 completed verify runs exist, the signal is suppressed
 // (insufficient data).
-func (r *ReliabilityDetector) evalVerifyRegression(jobID int64) (*Anomaly, error) {
+func (r *ReliabilityDetector) evalVerifyRegression(ec EvalContext) (*Anomaly, error) {
+	jobID := ec.Job.ID
+	jobName := ec.Job.Name
 	// Fetch newest 2 verify runs (all statuses, newest first).
 	vruns, err := r.d.ListVerifyRunsForJob(jobID, 2)
 	if err != nil {
@@ -171,7 +173,7 @@ func (r *ReliabilityDetector) evalVerifyRegression(jobID int64) (*Anomaly, error
 		ScopeID:     jobID,
 		Metric:      "verify_outcome",
 		Observed:    0, // no numeric metric; presence is the signal
-		Summary:     "This backup's latest verification failed after the previous one passed — the backed-up data may no longer be restorable.",
+		Summary:     fmt.Sprintf("%q backup verification failed after previously passing — backed-up data may no longer be restorable.", jobName),
 		Details:     details,
 	}, nil
 }

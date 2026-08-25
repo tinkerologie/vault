@@ -269,41 +269,85 @@ func TestSizeDrift_FloorSuppression(t *testing.T) {
 }
 
 // TestSizeDriftSummary_DirectionMatchesNumbers is the regression test for the
-// QA finding that the high-side size anomaly always said "grew" — producing
-// "This backup grew to 2.7 GB, about <1× its usual 2.8 GB", which contradicts
-// its own figures.
+// QA finding that the high-side size anomaly's direction wording must match
+// its own figures — a summary must never contradict the numbers it reports.
 func TestSizeDriftSummary_DirectionMatchesNumbers(t *testing.T) {
 	tests := []struct {
 		name       string
-		observed   float64
-		median     float64
 		factor     float64
 		wantVerb   string
 		unwantVerb string
 	}{
 		{
-			name:     "observed below median says shrank",
-			observed: 2.7 * 1000 * 1000 * 1000,
-			median:   2.8 * 1000 * 1000 * 1000,
+			name:     "factor below one says decreased",
 			factor:   0.964,
-			wantVerb: "shrank", unwantVerb: "grew",
+			wantVerb: "decreased", unwantVerb: "increased",
 		},
 		{
-			name:     "observed above median says grew",
-			observed: 20 * 1000 * 1000 * 1000,
-			median:   4 * 1000 * 1000 * 1000,
+			name:     "factor above one says increased",
 			factor:   5,
-			wantVerb: "grew", unwantVerb: "shrank",
+			wantVerb: "increased", unwantVerb: "decreased",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sizeDriftSummary(tc.observed, tc.median, tc.factor)
+			got := sizeDriftSummary("media-backup", tc.factor)
 			if !strings.Contains(got, tc.wantVerb) {
 				t.Errorf("summary %q should contain %q", got, tc.wantVerb)
 			}
 			if strings.Contains(got, tc.unwantVerb) {
 				t.Errorf("summary %q must not contain %q — it contradicts the figures", got, tc.unwantVerb)
+			}
+		})
+	}
+}
+
+// TestSizeDrift_SummaryNamesJob verifies the post-#315 concise summary
+// style for both the high-side rule and the Rule C critical shrink.
+func TestSizeDrift_SummaryNamesJob(t *testing.T) {
+	tests := []struct {
+		name         string
+		observed     float64
+		bMedian      float64
+		bMAD         float64
+		wantMetric   string
+		wantContains []string
+	}{
+		{
+			name:         "rule B growth names job and percent",
+			observed:     6e9, // > 5 × 1e9 → Rule B
+			bMedian:      1e9,
+			bMAD:         0, // Rule A disabled
+			wantMetric:   "total_bytes",
+			wantContains: []string{`"media-backup" backup size increased by 500%.`},
+		},
+		{
+			name:         "rule C shrink names job and warns",
+			observed:     0.4e9, // < 0.5 × 1e9 → Rule C critical
+			bMedian:      1e9,
+			bMAD:         0,
+			wantMetric:   "total_bytes_low",
+			wantContains: []string{`"media-backup" backup size decreased by 60%`, "missing or corrupted data"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ec := buildSizeEC(tc.observed, tc.bMedian, tc.bMAD, 10, "balanced")
+			ec.Job.Name = "media-backup"
+			got, err := NewSizeDriftDetector().Evaluate(ec)
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if len(got) != 1 || got[0].Metric != tc.wantMetric {
+				t.Fatalf("expected 1 %s anomaly, got %+v", tc.wantMetric, got)
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(got[0].Summary, want) {
+					t.Errorf("summary %q should contain %q", got[0].Summary, want)
+				}
+			}
+			if !strings.Contains(got[0].Details, `"growth_factor"`) {
+				t.Errorf("Details must retain growth_factor, got %s", got[0].Details)
 			}
 		})
 	}

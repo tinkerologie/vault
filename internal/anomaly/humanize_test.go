@@ -5,35 +5,6 @@ import (
 	"testing"
 )
 
-func TestHumanizeBytes(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		in   float64
-		want string
-	}{
-		{"zero", 0, "0 B"},
-		{"whole bytes", 512, "512 B"},
-		{"1 KB", 1024, "1 KB"},
-		{"1.5 KB", 1536, "1.5 KB"},
-		{"1 MB", 1048576, "1 MB"},
-		{"4 GB observed", 4259532913, "4 GB"}, // observed in issue screenshot
-		{"5 GB expected", 5397551730, "5 GB"}, // expected in issue screenshot
-		{"1 TB", 1024 * 1024 * 1024 * 1024, "1 TB"},
-		{"negative", -2048, "-2 KB"},
-		{"infinity", math.Inf(1), "—"},
-		{"NaN", math.NaN(), "—"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			if got := humanizeBytes(c.in); got != c.want {
-				t.Errorf("humanizeBytes(%v) = %q, want %q", c.in, got, c.want)
-			}
-		})
-	}
-}
-
 func TestHumanizeDuration(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -63,32 +34,6 @@ func TestHumanizeDuration(t *testing.T) {
 	}
 }
 
-func TestHumanizeMultiplier(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		in   float64
-		want string
-	}{
-		{"whole", 5, "5×"},
-		{"fractional", 1.18, "1.2×"},
-		{"exactly one", 1, "1×"},
-		{"just over one stays a deviation", 1.04, ">1×"},
-		{"just under one stays a deviation", 0.97, "<1×"},
-		{"large fractional", 12.35, "12.4×"},
-		{"infinity", math.Inf(1), "—"},
-		{"NaN", math.NaN(), "—"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			if got := humanizeMultiplier(c.in); got != c.want {
-				t.Errorf("humanizeMultiplier(%v) = %q, want %q", c.in, got, c.want)
-			}
-		})
-	}
-}
-
 func TestHumanizePercent(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -99,6 +44,8 @@ func TestHumanizePercent(t *testing.T) {
 		{"half", 0.5, "50%"},
 		{"rounds", 0.456, "46%"},
 		{"tiny", 0.02, "2%"},
+		{"exactly zero", 0, "0%"},
+		{"non-zero sub-percent never reads zero", 0.004, "<1%"},
 		{"infinity", math.Inf(1), "—"},
 	}
 	for _, c := range cases {
@@ -166,5 +113,65 @@ func TestRoundTo(t *testing.T) {
 	}
 	if got := roundTo(math.Inf(1), 2); !math.IsInf(got, 1) {
 		t.Errorf("roundTo(+Inf, 2) = %v, want +Inf", got)
+	}
+}
+
+func TestCommaGroup(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   int64
+		want string
+	}{
+		{"zero", 0, "0"},
+		{"under a thousand", 233, "233"},
+		{"max no-comma", 999, "999"},
+		{"exactly a thousand", 1000, "1,000"},
+		{"four digits", 4000, "4,000"},
+		{"five digits", 49900, "49,900"},
+		{"six digits", 499900, "499,900"},
+		{"seven digits", 1234567, "1,234,567"},
+		{"negative", -4000, "-4,000"},
+		{"max int64", math.MaxInt64, "9,223,372,036,854,775,807"},
+		{"min int64", math.MinInt64, "-9,223,372,036,854,775,808"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := commaGroup(c.in); got != c.want {
+				t.Errorf("commaGroup(%d) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestHumanizePercentChange(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   float64
+		want string
+	}{
+		{"growth 1.3x", 1.3, "increased by 30%"},
+		{"shrink 0.35x", 0.35, "decreased by 65%"},
+		{"whole 5x", 5, "increased by 400%"},
+		{"comma at thousands boundary", 11, "increased by 1,000%"},
+		{"comma in large growth", 1000, "increased by 99,900%"},
+		{"marginal shrink 0.964x", 0.964, "decreased by 4%"},
+		{"tiny growth clamps to 1", 1.004, "increased by 1%"},
+		{"tiny shrink clamps to 1", 0.999, "decreased by 1%"},
+		{"infinity", math.Inf(1), "—"},
+		{"NaN", math.NaN(), "—"},
+		{"huge growth saturates", 1e18, "increased by 9,223,372,036,854,775,807%"},
+		{"overflow to inf saturates", 1e308, "increased by 9,223,372,036,854,775,807%"},
+		{"huge shrink saturates", -1e308, "decreased by 9,223,372,036,854,775,807%"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := humanizePercentChange(c.in); got != c.want {
+				t.Errorf("humanizePercentChange(%v) = %q, want %q", c.in, got, c.want)
+			}
+		})
 	}
 }
