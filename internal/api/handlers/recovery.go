@@ -89,11 +89,18 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 
 	var warnings []string
 	var steps []step
-	var totalProtected int
 
 	containerItems := []stepItem{}
 	vmItems := []stepItem{}
 	folderItems := []stepItem{}
+
+	// Merge items across jobs by type:name — the same real-world resource is
+	// often covered by more than one job, and listing it once per job renders
+	// duplicate entries in the recovery UI (#314). The key format matches the
+	// dedup the RestoreWizard already applies on the frontend.
+	merged := make(map[string]*stepItem)
+	var order []string // first-seen order keeps step output deterministic
+	settingsWarned := make(map[string]bool)
 
 	for _, job := range jobs {
 		// Include all jobs regardless of schedule-enabled state: a disabled
@@ -115,7 +122,7 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 		}
 
 		for _, item := range items {
-			totalProtected++
+			key := item.ItemType + ":" + item.ItemName
 			si := stepItem{
 				Name:            item.ItemName,
 				Type:            item.ItemType,
@@ -128,7 +135,8 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 				}
 				if err := json.Unmarshal([]byte(item.Settings), &settings); err == nil {
 					si.Preset = settings.Preset
-				} else if item.Settings != "" {
+				} else if item.Settings != "" && !settingsWarned[key] {
+					settingsWarned[key] = true
 					warnings = append(warnings, item.ItemName+" has invalid folder settings")
 				}
 			}
@@ -139,21 +147,45 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Warn if last backup is older than 7 days.
-			if latestRP == nil {
-				warnings = append(warnings, item.ItemName+" has no restore points")
-			} else if time.Since(latestRP.CreatedAt) > 7*24*time.Hour {
-				warnings = append(warnings, item.ItemName+" last backed up "+latestRP.CreatedAt.Format("Jan 2")+" (>7 days ago)")
+			existing, seen := merged[key]
+			if !seen {
+				cp := si
+				merged[key] = &cp
+				order = append(order, key)
+				continue
 			}
+			// Merge policy: protected wins; the newest restore point wins for
+			// the displayed date/size/storage; a preset survives from either side.
+			existing.HasRestorePoint = existing.HasRestorePoint || si.HasRestorePoint
+			if si.LastBackup != nil && (existing.LastBackup == nil || si.LastBackup.After(*existing.LastBackup)) {
+				existing.LastBackup = si.LastBackup
+				existing.SizeBytes = si.SizeBytes
+				existing.StorageName = si.StorageName
+			}
+			if existing.Preset == "" {
+				existing.Preset = si.Preset
+			}
+		}
+	}
 
-			switch item.ItemType {
-			case "container":
-				containerItems = append(containerItems, si)
-			case "vm":
-				vmItems = append(vmItems, si)
-			case "folder":
-				folderItems = append(folderItems, si)
-			}
+	// Split merged items into the per-type step slices and emit per-item
+	// warnings once per unique item (not once per job covering it).
+	totalProtected := 0
+	for _, key := range order {
+		si := merged[key]
+		totalProtected++
+		if si.LastBackup == nil {
+			warnings = append(warnings, si.Name+" has no restore points")
+		} else if time.Since(*si.LastBackup) > 7*24*time.Hour {
+			warnings = append(warnings, si.Name+" last backed up "+si.LastBackup.Format("Jan 2")+" (>7 days ago)")
+		}
+		switch si.Type {
+		case "container":
+			containerItems = append(containerItems, *si)
+		case "vm":
+			vmItems = append(vmItems, *si)
+		case "folder":
+			folderItems = append(folderItems, *si)
 		}
 	}
 

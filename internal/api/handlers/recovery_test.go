@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -641,5 +642,222 @@ func TestPathRemapFiresConfigChangeHook(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("hook calls after failed remap = %d, want still 1", calls)
+	}
+}
+func TestRecoveryGetPlan_DeduplicatesItemsAcrossJobs(t *testing.T) {
+	mkDest := func(t *testing.T, d *db.DB, name string) int64 {
+		t.Helper()
+		id, err := d.CreateStorageDestination(db.StorageDestination{
+			Name: name, Type: "local", Config: `{"path":"/tmp"}`,
+		})
+		if err != nil {
+			t.Fatalf("create dest %s: %v", name, err)
+		}
+		return id
+	}
+	mkJob := func(t *testing.T, d *db.DB, destID int64, name string) int64 {
+		t.Helper()
+		id, err := d.CreateJob(db.Job{
+			Name: name, Enabled: true, StorageDestID: destID,
+			BackupTypeChain: "full", Schedule: "@daily",
+		})
+		if err != nil {
+			t.Fatalf("create job %s: %v", name, err)
+		}
+		return id
+	}
+	addItem := func(t *testing.T, d *db.DB, jobID int64, itemType, itemName, settings string) {
+		t.Helper()
+		if _, err := d.AddJobItem(db.JobItem{
+			JobID: jobID, ItemType: itemType, ItemName: itemName, Settings: settings,
+		}); err != nil {
+			t.Fatalf("add item %s/%s: %v", itemType, itemName, err)
+		}
+	}
+	addRestorePoint := func(t *testing.T, d *db.DB, jobID int64, size int64, age time.Duration) {
+		t.Helper()
+		runID, err := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+		if err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		rpID, err := d.CreateRestorePoint(db.RestorePoint{
+			JobRunID: runID, JobID: jobID, BackupType: "full",
+			StoragePath: "/backups/x", SizeBytes: size,
+		})
+		if err != nil {
+			t.Fatalf("create rp: %v", err)
+		}
+		// CreateRestorePoint defaults created_at to CURRENT_TIMESTAMP (SQLite text,
+		// second resolution) and ListRestorePoints orders by that text column, so
+		// backdate with SQLite's own datetime() to keep the stored format identical —
+		// a Go time.Time param can serialize with a timezone suffix and misorder.
+		if age > 0 {
+			modifier := fmt.Sprintf("-%d hours", int(age.Hours()))
+			if _, err := d.Exec(`UPDATE restore_points SET created_at = datetime('now', ?) WHERE id = ?`,
+				modifier, rpID); err != nil {
+				t.Fatalf("backdate rp: %v", err)
+			}
+		}
+	}
+
+	stepItems := func(t *testing.T, resp map[string]any, titlePrefix string) []any {
+		t.Helper()
+		for _, s := range resp["steps"].([]any) {
+			sm := s.(map[string]any)
+			title, _ := sm["title"].(string)
+			if strings.HasPrefix(title, titlePrefix) {
+				items, _ := sm["items"].([]any)
+				return items
+			}
+		}
+		t.Fatalf("no step with title prefix %q in %v", titlePrefix, resp["steps"])
+		return nil
+	}
+	countWarning := func(resp map[string]any, want string) int {
+		n := 0
+		warnings, _ := resp["warnings"].([]any) // nil when no warnings — count 0
+		for _, w := range warnings {
+			if s, _ := w.(string); s == want {
+				n++
+			}
+		}
+		return n
+	}
+	totalProtected := func(t *testing.T, resp map[string]any) float64 {
+		t.Helper()
+		si, ok := resp["server_info"].(map[string]any)
+		if !ok {
+			t.Fatalf("server_info type %T", resp["server_info"])
+		}
+		total, ok := si["total_protected_items"].(float64)
+		if !ok {
+			t.Fatalf("total_protected_items type %T", si["total_protected_items"])
+		}
+		return total
+	}
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, d *db.DB)
+		check func(t *testing.T, resp map[string]any)
+	}{
+		{
+			name: "same container in two jobs merges to one entry, newest restore point wins",
+			setup: func(t *testing.T, d *db.DB) {
+				jobA := mkJob(t, d, mkDest(t, d, "dest-a"), "job-a")
+				jobB := mkJob(t, d, mkDest(t, d, "dest-b"), "job-b")
+				addItem(t, d, jobA, "container", "plex", "")
+				addItem(t, d, jobB, "container", "plex", "")
+				addRestorePoint(t, d, jobA, 2048, 48*time.Hour) // older
+				addRestorePoint(t, d, jobB, 4096, 0)            // newer
+			},
+			check: func(t *testing.T, resp map[string]any) {
+				items := stepItems(t, resp, "Restore Containers")
+				if len(items) != 1 {
+					t.Fatalf("container items = %d, want 1 (merged)", len(items))
+				}
+				item := items[0].(map[string]any)
+				if item["storage_name"] != "dest-b" {
+					t.Errorf("storage_name = %v, want dest-b (newest restore point wins)", item["storage_name"])
+				}
+				if item["size_bytes"] != float64(4096) {
+					t.Errorf("size_bytes = %v, want 4096 (from newest restore point)", item["size_bytes"])
+				}
+				lb, _ := item["last_backup"].(string)
+				parsed, err := time.Parse(time.RFC3339, lb)
+				if err != nil {
+					t.Fatalf("last_backup %q unparsable: %v", lb, err)
+				}
+				if time.Since(parsed) > time.Hour {
+					t.Errorf("last_backup = %v, want the newer (job-b) restore point", parsed)
+				}
+				if got := totalProtected(t, resp); got != 1 {
+					t.Errorf("total_protected_items = %v, want 1 (unique items)", got)
+				}
+			},
+		},
+		{
+			name: "item protected in one job and unprotected in another stays protected",
+			setup: func(t *testing.T, d *db.DB) {
+				jobA := mkJob(t, d, mkDest(t, d, "dest-a"), "job-a")
+				jobB := mkJob(t, d, mkDest(t, d, "dest-b"), "job-b")
+				addItem(t, d, jobA, "container", "plex", "")
+				addItem(t, d, jobB, "container", "plex", "")
+				addRestorePoint(t, d, jobA, 1024, 0) // only job-a has a restore point
+			},
+			check: func(t *testing.T, resp map[string]any) {
+				items := stepItems(t, resp, "Restore Containers")
+				if len(items) != 1 {
+					t.Fatalf("container items = %d, want 1 (merged)", len(items))
+				}
+				if items[0].(map[string]any)["has_restore_point"] != true {
+					t.Error("has_restore_point = false, want true (protected by job-a)")
+				}
+				if n := countWarning(resp, "plex has no restore points"); n != 0 {
+					t.Errorf("got %d 'plex has no restore points' warnings, want 0", n)
+				}
+			},
+		},
+		{
+			name: "item unprotected in both jobs warns once",
+			setup: func(t *testing.T, d *db.DB) {
+				jobA := mkJob(t, d, mkDest(t, d, "dest-a"), "job-a")
+				jobB := mkJob(t, d, mkDest(t, d, "dest-b"), "job-b")
+				addItem(t, d, jobA, "container", "plex", "")
+				addItem(t, d, jobB, "container", "plex", "")
+			},
+			check: func(t *testing.T, resp map[string]any) {
+				items := stepItems(t, resp, "Restore Containers")
+				if len(items) != 1 {
+					t.Fatalf("container items = %d, want 1 (merged)", len(items))
+				}
+				if items[0].(map[string]any)["has_restore_point"] != false {
+					t.Error("has_restore_point = true, want false")
+				}
+				if n := countWarning(resp, "plex has no restore points"); n != 1 {
+					t.Errorf("got %d 'plex has no restore points' warnings, want exactly 1 (deduped)", n)
+				}
+				if got := totalProtected(t, resp); got != 1 {
+					t.Errorf("total_protected_items = %v, want 1 (unique items)", got)
+				}
+			},
+		},
+		{
+			name: "folder preset survives the merge",
+			setup: func(t *testing.T, d *db.DB) {
+				jobA := mkJob(t, d, mkDest(t, d, "dest-a"), "job-a")
+				jobB := mkJob(t, d, mkDest(t, d, "dest-b"), "job-b")
+				addItem(t, d, jobA, "folder", "/boot", `{"preset":"flash"}`)
+				addItem(t, d, jobB, "folder", "/boot", "")
+			},
+			check: func(t *testing.T, resp map[string]any) {
+				items := stepItems(t, resp, "Restore Folders")
+				if len(items) != 1 {
+					t.Fatalf("folder items = %d, want 1 (merged)", len(items))
+				}
+				if items[0].(map[string]any)["preset"] != "flash" {
+					t.Errorf("preset = %v, want flash (preserved from contributing item)", items[0].(map[string]any)["preset"])
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newTestDB(t)
+			tt.setup(t, d)
+			h := NewRecoveryHandler(d, "v1.0.0")
+
+			w := httptest.NewRecorder()
+			h.GetPlan(w, newReq(http.MethodGet, "/api/v1/recovery/plan", nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+			}
+			var resp map[string]any
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			tt.check(t, resp)
+		})
 	}
 }
