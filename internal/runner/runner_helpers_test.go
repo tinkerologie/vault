@@ -231,6 +231,160 @@ func TestVMCheckpointFromRPMetaPresent(t *testing.T) {
 	}
 }
 
+// TestRPContainsItem tests restore point membership checking and fail-open paths.
+func TestRPContainsItem(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		rp   db.RestorePoint
+		item string
+		want bool
+	}{
+		{
+			name: "item present in item_sizes",
+			rp: db.RestorePoint{
+				Metadata: `{"item_sizes":{"plex":1024,"sonarr":2048}}`,
+			},
+			item: "plex",
+			want: true,
+		},
+		{
+			name: "item absent from item_sizes",
+			rp: db.RestorePoint{
+				Metadata: `{"item_sizes":{"plex":1024,"sonarr":2048}}`,
+			},
+			item: "radarr",
+			want: false,
+		},
+		{
+			name: "legacy metadata without item maps fails open",
+			rp: db.RestorePoint{
+				Metadata: `{"size_bytes":1234}`,
+			},
+			item: "new-item",
+			want: true,
+		},
+		{
+			name: "empty metadata fails open",
+			rp:   db.RestorePoint{Metadata: ""},
+			item: "new-item",
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := rpContainsItem(tc.rp, tc.item)
+			if got != tc.want {
+				t.Errorf("rpContainsItem(..., %q) = %v, want %v", tc.item, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestItemCapturedInParentRP tests membership checking and the fail-open path.
+func TestItemCapturedInParentRP(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		parentRP *db.RestorePoint
+		item     string
+		want     bool
+	}{
+		{
+			name:     "nil parent restore point",
+			parentRP: nil,
+			item:     "plex",
+			want:     false,
+		},
+		{
+			name: "item present in item_sizes",
+			parentRP: &db.RestorePoint{
+				Metadata: `{"item_sizes":{"plex":1024,"sonarr":2048}}`,
+			},
+			item: "plex",
+			want: true,
+		},
+		{
+			name: "item absent from item_sizes",
+			parentRP: &db.RestorePoint{
+				Metadata: `{"item_sizes":{"plex":1024,"sonarr":2048}}`,
+			},
+			item: "radarr",
+			want: false,
+		},
+		{
+			name: "item present in item_manifests",
+			parentRP: &db.RestorePoint{
+				Metadata: `{"item_manifests":{"radarr":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`,
+			},
+			item: "radarr",
+			want: true,
+		},
+		{
+			name: "item absent from item_manifests",
+			parentRP: &db.RestorePoint{
+				Metadata: `{"item_manifests":{"radarr":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`,
+			},
+			item: "plex",
+			want: false,
+		},
+		{
+			name: "item in union of item_sizes and item_manifests",
+			parentRP: &db.RestorePoint{
+				Metadata: `{"item_sizes":{"plex":100},"item_manifests":{"radarr":"ab"}}`,
+			},
+			item: "radarr",
+			want: true,
+		},
+		{
+			name: "item absent from union",
+			parentRP: &db.RestorePoint{
+				Metadata: `{"item_sizes":{"plex":100},"item_manifests":{"radarr":"ab"}}`,
+			},
+			item: "sonarr",
+			want: false,
+		},
+		{
+			name: "legacy metadata fails open",
+			parentRP: &db.RestorePoint{
+				Metadata: `{"size_bytes":1234}`,
+			},
+			item: "new-item",
+			want: true,
+		},
+		{
+			name: "empty metadata fails open",
+			parentRP: &db.RestorePoint{
+				Metadata: ``,
+			},
+			item: "new-item",
+			want: true,
+		},
+		{
+			name: "malformed metadata fails open",
+			parentRP: &db.RestorePoint{
+				Metadata: `{not json`,
+			},
+			item: "new-item",
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := itemCapturedInParentRP(tc.parentRP, tc.item)
+			if got != tc.want {
+				t.Errorf("itemCapturedInParentRP(..., %q) = %v, want %v", tc.item, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestCleanupStorageDestinationEmpty covers the no-op branch on an empty
 // storage dest.
 func TestCleanupStorageDestinationEmpty(t *testing.T) {

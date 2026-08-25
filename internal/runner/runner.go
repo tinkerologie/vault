@@ -1203,28 +1203,32 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}
 
 		if btResult.ParentRP != nil && (item.ItemType == "container" || item.ItemType == "folder") {
-			backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
-			// Classic (non-dedup) differentials/incrementals load the parent's
-			// effective listing (folder: item-relative paths; container:
-			// per-volume paths keyed by mount source) so the engine can detect
-			// NEW files with stale mtimes (issue #320). When the listing is
-			// unavailable the engine degrades to a FULL archive instead of
-			// silently mtime-only filtering — which would drop a NEW stale-mtime
-			// file (e.g. cp -a), the literal issue #320 data-loss class. The
-			// dedup path carries forward via the parent manifest in the engine,
-			// so it never takes this branch.
-			if !dest.DedupEnabled {
-				var listingPaths []string
-				var volumeListingPaths map[string][]string
-				if item.ItemType == "folder" {
-					listingPaths = r.loadParentListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
-				} else {
-					volumeListingPaths = r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
+			if itemCapturedInParentRP(btResult.ParentRP, item.ItemName) {
+				backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
+				// Classic (non-dedup) differentials/incrementals load the parent's
+				// effective listing (folder: item-relative paths; container:
+				// per-volume paths keyed by mount source) so the engine can detect
+				// NEW files with stale mtimes (issue #320). When the listing is
+				// unavailable the engine degrades to a FULL archive instead of
+				// silently mtime-only filtering — which would drop a NEW stale-mtime
+				// file (e.g. cp -a), the literal issue #320 data-loss class. The
+				// dedup path carries forward via the parent manifest in the engine,
+				// so it never takes this branch.
+				if !dest.DedupEnabled {
+					var listingPaths []string
+					var volumeListingPaths map[string][]string
+					if item.ItemType == "folder" {
+						listingPaths = r.loadParentListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
+					} else {
+						volumeListingPaths = r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
+					}
+					applyClassicDiffListing(backupItem.Settings, item.ItemType, listingPaths, volumeListingPaths)
+					if _, hasChangedSince := backupItem.Settings["changed_since"]; !hasChangedSince {
+						log.Printf("runner: parent listing unavailable for %s — degrading %s backup to a full archive (mtime-only filtering would drop stale-mtime new files)", item.ItemName, btResult.BackupType)
+					}
 				}
-				applyClassicDiffListing(backupItem.Settings, item.ItemType, listingPaths, volumeListingPaths)
-				if _, hasChangedSince := backupItem.Settings["changed_since"]; !hasChangedSince {
-					log.Printf("runner: parent listing unavailable for %s — degrading %s backup to a full archive (mtime-only filtering would drop stale-mtime new files)", item.ItemName, btResult.BackupType)
-				}
+			} else {
+				log.Printf("runner: %s item %s not present in parent restore point #%d — taking full capture", item.ItemType, item.ItemName, btResult.ParentRP.ID)
 			}
 		}
 
@@ -3258,7 +3262,13 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, reporter)
 		}
 		replayStart := time.Now()
+		replayedSteps := 0
 		for i, rp := range chain {
+			// Skip steps that conclusively did not capture this item (e.g. the
+			// item was added to the job after this step's backup ran).
+			if !rpContainsItem(rp, itemName) {
+				continue
+			}
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Restore chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
 				map[string]any{"step": i + 1, "steps": len(chain), "backup_type": rp.BackupType, "restore_point_id": rp.ID})
@@ -3267,10 +3277,14 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 			if err := r.restoreSinglePoint(ctx, rp, itemName, itemType, destination, passphrase, filePaths, reporter); err != nil {
 				return fmt.Errorf("restoring chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
+			replayedSteps++
+		}
+		if replayedSteps == 0 {
+			return fmt.Errorf("item %q is not present in the restore chain", itemName)
 		}
 		r.runLog(reporter.RunID, runLogLevelInfo,
-			fmt.Sprintf("Restore chain replayed for %s: %d step(s)", itemName, len(chain)),
-			map[string]any{"item_name": itemName, "steps": len(chain)})
+			fmt.Sprintf("Restore chain replayed for %s: %d step(s)", itemName, replayedSteps),
+			map[string]any{"item_name": itemName, "steps": replayedSteps})
 		// Classic folder chains overlay without deletion tracking; prune
 		// files the overlay wrote that are absent from the newest point's
 		// authoritative listing (issue #231). Whole-item restores only — a
@@ -3325,6 +3339,9 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 	}
 	written := make(map[string]writtenEntry)
 	for _, step := range chain[:len(chain)-1] {
+		if !rpContainsItem(step, itemName) {
+			continue
+		}
 		idx, ok := r.readItemSidecar(adapter, step, itemName, engine.IndexSuffix, passphrase)
 		if !ok {
 			log.Printf("runner: chain step %d has no readable tar index — skipping chain prune", step.ID)
@@ -3687,6 +3704,9 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 	if itemType == "vm" && len(chain) > 1 {
 		stepDirs := make([]string, 0, len(chain))
 		for i, rp := range chain {
+			if !rpContainsItem(rp, itemName) {
+				continue
+			}
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
 				map[string]any{"step": i + 1, "steps": len(chain), "backup_type": rp.BackupType, "restore_point_id": rp.ID})
@@ -3701,6 +3721,10 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 				return fmt.Errorf("staging VM chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
 			stepDirs = append(stepDirs, stepDir)
+		}
+
+		if len(stepDirs) == 0 {
+			return fmt.Errorf("item %q is not present in the restore chain", itemName)
 		}
 
 		r.reportRestoreProgress(reporter, 30, "Flattening VM chain")
@@ -3723,7 +3747,11 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100)
 	}
 
+	stagedSteps := 0
 	for i, rp := range chain {
+		if !rpContainsItem(rp, itemName) {
+			continue
+		}
 		r.runLog(reporter.RunID, runLogLevelInfo,
 			fmt.Sprintf("Staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
 			map[string]any{"step": i + 1, "steps": len(chain), "backup_type": rp.BackupType, "restore_point_id": rp.ID})
@@ -3733,6 +3761,10 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		if err := r.stageRestorePointItem(ctx, rp, itemName, tmpDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
 			return fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
 		}
+		stagedSteps++
+	}
+	if stagedSteps == 0 {
+		return fmt.Errorf("item %q is not present in the restore chain", itemName)
 	}
 
 	return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
@@ -3752,6 +3784,9 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.RestorePoint, itemName, passphrase string, reporter restoreProgressReporter, tmpDir string) (string, error) {
 	stepDirs := make([]string, 0, len(chain))
 	for i, rp := range chain {
+		if !rpContainsItem(rp, itemName) {
+			continue
+		}
 		r.runLog(reporter.RunID, runLogLevelInfo,
 			fmt.Sprintf("Staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
 			map[string]any{"step": i + 1, "steps": len(chain), "backup_type": rp.BackupType, "restore_point_id": rp.ID})
@@ -3766,6 +3801,9 @@ func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.Resto
 			return "", fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
 		}
 		stepDirs = append(stepDirs, stepDir)
+	}
+	if len(stepDirs) == 0 {
+		return "", fmt.Errorf("item %q is not present in the restore chain", itemName)
 	}
 
 	mergedDir := filepath.Join(tmpDir, "merged")
@@ -5611,6 +5649,27 @@ func vmCheckpointFromRPMeta(metadata, itemName string) string {
 	}
 	cp, _ := raw[itemName].(string)
 	return cp
+}
+
+// rpContainsItem reports whether rp captured itemName. If membership cannot be
+// determined (e.g. legacy restore points without per-item metadata), it fails
+// open (returns true) so existing restore chains continue without disruption.
+func rpContainsItem(rp db.RestorePoint, itemName string) bool {
+	members, known := rp.BackedUpItems()
+	if !known {
+		return true
+	}
+	_, ok := members[itemName]
+	return ok
+}
+
+// itemCapturedInParentRP reports whether the item was captured in the parent
+// restore point.
+func itemCapturedInParentRP(parentRP *db.RestorePoint, itemName string) bool {
+	if parentRP == nil {
+		return false
+	}
+	return rpContainsItem(*parentRP, itemName)
 }
 
 // parseItemChecksums extracts the SHA-256 checksums for a specific item from
