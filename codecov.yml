@@ -1,0 +1,95 @@
+codecov:
+  require_ci_to_pass: true
+
+github_checks:
+  annotations: true
+
+coverage:
+  status:
+    default_rules:
+      flag_coverage_not_uploaded_behavior: exclude
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        if_not_found: success
+      backend:
+        target: auto
+        threshold: 1%
+        flags:
+          - backend
+        informational: false
+      frontend:
+        target: auto
+        threshold: 5%
+        flags:
+          - frontend
+        informational: true
+    patch:
+      default:
+        target: 80%
+        threshold: 1%
+        informational: false
+    changes: false
+
+flags:
+  backend:
+    paths:
+      - cmd/**
+      - internal/**
+  frontend:
+    paths:
+      - web/src/**
+
+component_management:
+  individual_components:
+    - component_id: engine
+      name: "Engine (containers, VMs, storage ops)"
+      paths:
+        - internal/engine/**
+    - component_id: runner
+      name: "Backup runner"
+      paths:
+        - internal/runner/**
+    - component_id: storage
+      name: "Storage adapters"
+      paths:
+        - internal/storage/**
+    - component_id: api
+      name: "API server & handlers"
+      paths:
+        - internal/api/**
+    - component_id: db
+      name: "Database layer"
+      paths:
+        - internal/db/**
+    - component_id: scheduler
+      name: "Scheduler & jobs"
+      paths:
+        - internal/scheduler/**
+        - internal/jobs/**
+    - component_id: replication
+      name: "Replication"
+      paths:
+        - internal/replication/**
+    - component_id: web_ui
+      name: "Web UI (Svelte)"
+      paths:
+        - web/src/**
+
+ignore:
+  - "**/*_test.go"
+  - "**/*.test.js"
+  - "**/testdata/**"
+  - "web/dist/**"
+  - "web/node_modules/**"
+  - "web/coverage/**"
+  - "plugin/**"
+  - "ansible/**"
+  - "docs/**"
+  - "build/**"
+
+comment:
+  layout: "condensed_header, flags, condensed_files, condensed_footer"
+  behavior: default
+  after_n_builds: 2

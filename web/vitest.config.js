@@ -10,5 +10,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.js'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      reportsDirectory: './coverage',
+      include: ['src/lib/**/*.{js,svelte}'],
+      exclude: ['src/lib/**/*.test.js'],
+    },
   },
 })

@@ -9,12 +9,14 @@
     "preview": "vite preview",
     "lint": "eslint src/",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:ci": "vitest run --reporter=junit --outputFile=./test-report.junit.xml"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^10.9.0",
     "eslint-plugin-svelte": "^3.23.0",
     "globals": "^17.11.0",

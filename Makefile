@@ -52,19 +52,20 @@ build-local: internal/release/CHANGELOG.md build-web
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64 ./cmd/vault/
 
 test: internal/release/CHANGELOG.md
-	go test ./... -v
+	go test ./internal/... ./cmd/... -v
 
 test-short: internal/release/CHANGELOG.md
-	go test ./... -short
+	go test ./internal/... ./cmd/... -short
 
 test-coverage: internal/release/CHANGELOG.md
-	go test ./... -coverprofile=coverage.out -covermode=atomic
+	go test ./internal/... ./cmd/... -coverprofile=coverage.out -covermode=atomic -coverpkg=./internal/...,./cmd/...
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf web/dist
+	rm -rf web/coverage
 	rm -f coverage.out coverage.html
 
 # ── Release packaging ──────────────────────────────────────────────────────────

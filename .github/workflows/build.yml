@@ -49,21 +49,32 @@ jobs:
           args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0
 
       - name: Run Go tests with coverage
-        run: go test ./... -v -coverprofile=coverage.txt
+        run: go test ./internal/... ./cmd/... -v -coverprofile=coverage.txt -covermode=atomic -coverpkg=./internal/...,./cmd/...
 
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v7.0.0
+      - name: Upload Go coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.txt
-          flags: unittests
+          flags: backend
+          disable_search: true
+          fail_ci_if_error: true
 
-      - name: Run web tests with JUnit output
-        run: cd web && npm ci && npx vitest run --reporter=junit --outputFile=./test-report.junit.xml
+      - name: Run web tests with coverage and JUnit output
+        run: cd web && npm ci && npx vitest run --coverage --reporter=default --reporter=junit --outputFile=./test-report.junit.xml
+
+      - name: Upload web coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./web/coverage/lcov.info
+          flags: frontend
+          disable_search: true
+          fail_ci_if_error: true
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v7.0.0
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./web/test-report.junit.xml
