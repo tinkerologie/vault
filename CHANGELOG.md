@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
+- **Cleared vulnerability advisory in build-time dependency.** Bumped `golang.org/x/mod` to `v0.40.0` (and `golang.org/x/tools` to `v0.49.0`) to clear CVE-2026-56864 in `sumdb`. The package is a build-time dependency, is not reachable from Vault's own code, and there is no runtime behaviour change. Verification via `make security-check` (gosec, govulncheck, and `go mod verify`) is clean with 0 vulnerabilities and all modules verified. Closes #367.
 - Updated Go and web dependencies to their latest compatible releases and resolved a high-severity advisory in the web `nanoid` dependency. gosec, govulncheck, and the Go linter pass clean, and the MCP integration remains on the go-sdk v1.7.0 API.
 
 ### Changed
