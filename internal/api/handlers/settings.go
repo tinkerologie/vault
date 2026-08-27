@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/config"
@@ -34,6 +36,8 @@ type SettingsHandler struct {
 	diagnosticsCollector *diagnostics.Collector
 	onConfigChange       ConfigChangeHook
 	onScheduleReload     ScheduleReloader
+	onLogLevelChange     func(string)
+	logLevelMu           sync.Mutex
 }
 
 // NewSettingsHandler creates a new SettingsHandler.
@@ -62,6 +66,11 @@ func (h *SettingsHandler) SetConfigChangeHook(fn ConfigChangeHook) {
 // when a setting that affects scheduling (e.g. replication_enabled) changes.
 func (h *SettingsHandler) SetScheduleReloadHook(fn ScheduleReloader) {
 	h.onScheduleReload = fn
+}
+
+// SetLogLevelChangeHook registers a function called when the log_level setting changes.
+func (h *SettingsHandler) SetLogLevelChangeHook(fn func(string)) {
+	h.onLogLevelChange = fn
 }
 
 // notifyConfigChange calls the config change hook if set.
@@ -301,8 +310,23 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if lvl, ok := incoming["log_level"]; ok {
+		normalized := strings.ToLower(strings.TrimSpace(lvl))
+		switch normalized {
+		case "warning":
+			incoming["log_level"] = "warn"
+		case "debug", "info", "warn", "error":
+			incoming["log_level"] = normalized
+		default:
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid log_level %q: allowed values are debug, info, warn, error", lvl))
+			return
+		}
+	}
+
+	h.logLevelMu.Lock()
 	for k, v := range incoming {
 		if err := h.db.SetSetting(k, v); err != nil {
+			h.logLevelMu.Unlock()
 			respondInternalError(w, err)
 			return
 		}
@@ -313,6 +337,11 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			log.Printf("settings: scheduler reload after replication_enabled change failed: %v", err)
 		}
 	}
+
+	if v, ok := incoming["log_level"]; ok && h.onLogLevelChange != nil {
+		h.onLogLevelChange(v)
+	}
+	h.logLevelMu.Unlock()
 
 	// Return the full settings object.
 	h.notifyConfigChange()

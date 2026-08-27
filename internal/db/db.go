@@ -189,6 +189,7 @@ func (d *DB) IntegrityCheck() error {
 // migrations. INSERT OR IGNORE makes this safe to call on every Open.
 func (d *DB) insertDefaultSettings() error {
 	defaults := []struct{ key, value string }{
+		{"log_level", "info"},
 		{"retry_max_default", "2"},
 		{"retry_delays_default", "[900,3600,14400]"},
 		{"breaker_fail_threshold", "3"},

@@ -15,6 +15,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/discovery"
+	"github.com/ruaan-deysel/vault/internal/logx"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/spf13/cobra"
@@ -30,6 +31,8 @@ and stores replicated data. All backup write endpoints are disabled.
 Designed to run as a Docker container on any Linux host for off-site
 disaster recovery.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		logx.Setup(os.Stderr)
+
 		dbPath, _ := cmd.Flags().GetString("db")
 		addr, _ := cmd.Flags().GetString("addr")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
@@ -45,6 +48,9 @@ disaster recovery.`,
 			return err
 		}
 		defer database.Close()
+
+		// Apply configured log level from database settings.
+		applyLogLevel(database)
 
 		// Prune old activity logs.
 		if err := database.DeleteOldActivityLogs(90); err != nil {

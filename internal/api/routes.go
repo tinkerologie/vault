@@ -18,6 +18,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
 	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
+	"github.com/ruaan-deysel/vault/internal/logx"
 	mcpserver "github.com/ruaan-deysel/vault/internal/mcp"
 	"github.com/ruaan-deysel/vault/internal/release"
 	"github.com/ruaan-deysel/vault/web"
@@ -71,6 +72,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 				return s.schedReload()
 			}
 			return nil
+		})
+		settingsH.SetLogLevelChangeHook(func(level string) {
+			logx.SetLevelString(level)
 		})
 
 		// Public endpoints.
@@ -189,6 +193,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/runs/{runId}/logs", runlogH.List)
 
 		r.Route("/settings", func(r chi.Router) {
+			if s.config.ReadOnly {
+				r.Use(ReadOnlyGuard)
+			}
 			r.Get("/", settingsH.List)
 			r.Put("/", settingsH.Update)
 			r.Get("/encryption", settingsH.GetEncryptionStatus)

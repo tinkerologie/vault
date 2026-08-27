@@ -9,6 +9,8 @@
     trap 'playwright-cli -s="$SESSION_NAME" close 2>/dev/null || true' EXIT
     playwright-cli -s="$SESSION_NAME" open http://127.0.0.1:{{ verify_local_port }}/
     playwright-cli -s="$SESSION_NAME" snapshot
+    playwright-cli -s="$SESSION_NAME" goto http://127.0.0.1:{{ verify_local_port }}/#/settings
+    playwright-cli -s="$SESSION_NAME" snapshot
   register: playwright_result
   changed_when: false
   failed_when: false

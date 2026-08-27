@@ -10,6 +10,9 @@ import (
 	"github.com/ruaan-deysel/vault/internal/anomaly"
 	"github.com/ruaan-deysel/vault/internal/api"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/logx"
+	"github.com/ruaan-deysel/vault/internal/unraid"
+	"github.com/spf13/cobra"
 )
 
 // openTestDB opens a fresh SQLite database in a temp directory.
@@ -262,4 +265,83 @@ func TestRunAnomalyTrendTicker_ContextCancel(t *testing.T) {
 	drainCtx, drainCancel := context.WithCancel(context.Background())
 	drainCancel()
 	_ = ev.Drain(drainCtx)
+}
+
+func TestApplyLogLevel(t *testing.T) {
+	d := openTestDB(t)
+
+	// Default setting or missing
+	applyLogLevel(d)
+	if logx.LevelString() != "info" {
+		t.Errorf("applyLogLevel default = %q, want info", logx.LevelString())
+	}
+
+	// Nil database safe
+	applyLogLevel(nil)
+
+	// Set to warn
+	if err := d.SetSetting("log_level", "warn"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	applyLogLevel(d)
+	if logx.LevelString() != "warn" {
+		t.Errorf("applyLogLevel = %q, want warn", logx.LevelString())
+	}
+	logx.SetLevelString("info")
+}
+
+func TestDaemonCmd_RunE_LogLevelApplied(t *testing.T) {
+	dir := t.TempDir()
+
+	prevWorkingDir := hybridWorkingDir
+	hybridWorkingDir = filepath.Join(dir, "hybrid")
+	defer func() { hybridWorkingDir = prevWorkingDir }()
+
+	// Mock mounted pool to bypass array startup wait loop.
+	mntDir := filepath.Join(dir, "mnt")
+	cacheDir := filepath.Join(mntDir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mountInfo := filepath.Join(dir, "mountinfo")
+	mountContent := "1 0 0:0 / " + cacheDir + " rw - btrfs /dev/sda1 rw\n"
+	if err := os.WriteFile(mountInfo, []byte(mountContent), 0o600); err != nil {
+		t.Fatalf("write mountinfo: %v", err)
+	}
+	cleanup := unraid.SetMntBaseForTest(mntDir, mountInfo)
+	defer cleanup()
+
+	dbPath := filepath.Join(dir, "vault.db")
+	snapshotDBPath := filepath.Join(cacheDir, ".vault", "vault.db")
+	if err := os.MkdirAll(filepath.Dir(snapshotDBPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	seedDBPath := filepath.Join(dir, "seed.db")
+	seedDB, err := db.Open(seedDBPath)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	if err := seedDB.SetSetting("log_level", "warn"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	sm := db.NewSnapshotManager(seedDB, snapshotDBPath, snapshotDBPath)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatalf("SaveSnapshot: %v", err)
+	}
+	_ = seedDB.Close()
+
+	cmd := &cobra.Command{Use: "daemon"}
+	cmd.SetContext(context.Background())
+	cmd.Flags().String("db", dbPath, "Database path")
+	cmd.Flags().String("addr", "127.0.0.1:0", "Listen address")
+	cmd.Flags().String("tls-cert", filepath.Join(dir, "nonexistent.crt"), "TLS cert")
+	cmd.Flags().String("tls-key", filepath.Join(dir, "nonexistent.key"), "TLS key")
+
+	logx.SetLevelString("info")
+	_ = daemonCmd.RunE(cmd, nil)
+
+	if logx.LevelString() != "warn" {
+		t.Errorf("expected logx level to be warn, got %q", logx.LevelString())
+	}
+	logx.SetLevelString("info")
 }

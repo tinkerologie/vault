@@ -26,6 +26,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/logbuf"
+	"github.com/ruaan-deysel/vault/internal/logx"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
@@ -40,6 +41,8 @@ import (
 // well under the daemon's RSS budget. Sized once at package level so
 // tests can override via the unexported var if needed.
 const daemonLogBufferBytes = 1 << 20
+
+var hybridWorkingDir = "/var/local/vault"
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
@@ -58,7 +61,7 @@ var daemonCmd = &cobra.Command{
 		// reports. The ring buffer write path is always-nil-safe and
 		// the original stderr destination is preserved.
 		logRing := logbuf.New(daemonLogBufferBytes)
-		log.SetOutput(io.MultiWriter(os.Stderr, logRing))
+		logx.Setup(io.MultiWriter(os.Stderr, logRing))
 
 		// Hybrid mode detection: if a pool drive is mounted, use a RAM-backed
 		// working database with periodic snapshots to the pool drive. This
@@ -141,7 +144,7 @@ var daemonCmd = &cobra.Command{
 		}
 
 		if hybridMode {
-			workingDir := "/var/local/vault"
+			workingDir := hybridWorkingDir
 			if err := os.MkdirAll(workingDir, 0o750); err != nil {
 				return fmt.Errorf("creating hybrid working directory: %w", err)
 			}
@@ -294,6 +297,9 @@ var daemonCmd = &cobra.Command{
 				}
 			}
 		}
+
+		// Apply configured log level from database settings.
+		applyLogLevel(database)
 
 		// Validate that the database contains operator configuration
 		// (≥1 job or ≥1 storage destination). If not, log a prominent
@@ -934,4 +940,15 @@ func (a *zfsBrowseAdapter) ListZFSMountpoints() ([]handlers.ZFSMountInfo, error)
 		result[i] = handlers.ZFSMountInfo{Name: p.Name, Mountpoint: p.Mountpoint}
 	}
 	return result, nil
+}
+
+// applyLogLevel loads the configured log level from database settings and
+// applies it to logx. Extracted for unit testing without spinning up the full daemon.
+func applyLogLevel(database *db.DB) {
+	if database == nil {
+		return
+	}
+	if lvl, err := database.GetSetting("log_level", docsmeta.DefaultFor("log_level")); err == nil {
+		logx.SetLevelString(lvl)
+	}
 }

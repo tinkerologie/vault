@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/ruaan-deysel/vault/internal/logx"
 )
 
 func TestDetectUnraidTimeFormat(t *testing.T) {
@@ -250,4 +252,37 @@ func TestSPACacheHeaders(t *testing.T) {
 			t.Errorf("Cache-Control = %q, want a no-cache/no-store directive", cc)
 		}
 	})
+}
+
+func TestReadOnlySettingsUpdateRejected(t *testing.T) {
+	database := testDB(t)
+	srv := NewServer(database, ServerConfig{Addr: ":0", ReadOnly: true})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"log_level":"debug"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("PUT /api/v1/settings in ReadOnly mode: status = %d, want %d (Forbidden); body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestRoutes_SettingsUpdate_LogLevelHook(t *testing.T) {
+	database := testDB(t)
+	srv := NewServer(database, ServerConfig{Addr: ":0", ReadOnly: false})
+
+	logx.SetLevelString("info")
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"log_level":"debug"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/settings: status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if logx.LevelString() != "debug" {
+		t.Errorf("expected logx level to update to debug, got %q", logx.LevelString())
+	}
+	logx.SetLevelString("info")
 }

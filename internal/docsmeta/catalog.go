@@ -47,6 +47,7 @@ type SettingDoc struct {
 var AppSettings = []SettingDoc{
 	// General
 	{"history_retention_days", "int", "365", "Number of days of job-run history retained before pruning.", GroupGeneral},
+	{"log_level", "string", "info", "Minimum log level emitted by the daemon (\"debug\", \"info\", \"warn\", \"error\").", GroupGeneral},
 	{"snapshot_path_override", "string", "", "Override for the directory used to stage filesystem snapshots. Empty uses the built-in default.", GroupGeneral},
 	{"staging_dir_override", "string", "", "Override for the working directory used to stage archives before upload. Empty uses the built-in default.", GroupGeneral},
 	{"storage_verbose_logging", "bool", "false", "When enabled, storage adapters log every operation for troubleshooting.", GroupGeneral},

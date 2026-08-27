@@ -239,3 +239,13 @@ func unsuitableMountPoints(infoPath string) map[string]bool {
 	}
 	return out
 }
+
+// SetMntBaseForTest overrides mntBase and mountInfoPath for tests and returns
+// a cleanup function that restores the previous values.
+func SetMntBaseForTest(base, info string) func() {
+	prevBase, prevInfo := mntBase, mountInfoPath
+	mntBase, mountInfoPath = base, info
+	return func() {
+		mntBase, mountInfoPath = prevBase, prevInfo
+	}
+}

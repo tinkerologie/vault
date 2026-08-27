@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Configurable log level (#346):** Added a global log level setting (`debug`, `info`, `warn`, `error`) configurable via the web Settings page and the settings API (`log_level`). Daemon logging routes through a centralized `slog` handler with dynamic level adjustments applied at runtime without restarting the daemon. Closes #346.
+
 - **Codecov configuration and dual-stack test coverage:** Added repository-root `codecov.yml` defining dual-stack coverage flags (`backend` and `frontend`), subsystem component dashboards, and an 80% coverage target on PR patches. Added `@vitest/coverage-v8` frontend coverage reporting with LCOV output, unified CI web test runs, and updated Go coverage targets with cross-package atomic instrumentation.
 
 - **Replication targets now show what the last sync actually did.** A target that connected but had nothing new to copy previously just read "Synced", which looked the same as a sync that transferred data — so replication could appear to "connect but not do much". Each target now shows an explicit **Up to date** state when a sync found nothing new, a per-sync summary (jobs synced, new restore points, bytes transferred, and any failures), and the time replication last fully succeeded. These counters are stored with each run, so they are visible on page load and after a refresh, not only in the moment a sync finishes. Closes #287.

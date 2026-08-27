@@ -44,7 +44,7 @@
     { id: 'set-throttle', label: 'Upload Throttling' },
     { id: 'set-dedup', label: 'Dedup' },
     { id: 'set-anomaly', label: 'Anomaly Detection' },
-    { id: 'set-logging', label: 'Storage Logging' },
+    { id: 'set-logging', label: 'Logging' },
     { id: 'set-history', label: 'History Retention' },
     { id: 'set-server', label: 'Server Info' },
     { id: 'set-database', label: 'Database' },
@@ -262,6 +262,8 @@
         const replSources = await api.listReplicationSources().catch(() => [])
         replicationEnabledSetting = Array.isArray(replSources) && replSources.length > 0
       }
+      // Logging settings (Issue #346)
+      logLevel = s?.log_level || 'info'
       // Storage verbose logging (Task 12 – storage resilience)
       storageVerboseLogging = s?.storage_verbose_logging === 'true'
       // Stored as a fraction "0.0".."1.0"; UI shows it as an integer percentage 0..100.
@@ -814,6 +816,31 @@
   // Storage verbose logging (Task 12 – storage resilience)
   let storageVerboseLogging = $state(false)
   let storageVerboseSaving = $state(false)
+
+  // Log level (Issue #346)
+  let logLevel = $state('info')
+  let logLevelSaving = $state(false)
+
+  async function saveLogLevel() {
+    if (readOnly || logLevelSaving) return
+    logLevelSaving = true
+    try {
+      settings = await api.updateSettings({
+        log_level: logLevel,
+      })
+      showToast('Log level updated', 'success')
+    } catch (e) {
+      try {
+        settings = await api.getSettings()
+        logLevel = settings?.log_level || 'info'
+      } catch {
+        // preserve current value
+      }
+      showToast(e.message, 'error')
+    } finally {
+      logLevelSaving = false
+    }
+  }
 
   async function saveAnomalySettings() {
     if (readOnly) return
@@ -1394,13 +1421,37 @@
       </div>
       {/if}
 
-      <!-- Storage Verbose Logging (Task 12 – storage resilience) -->
+      <!-- Storage & Daemon Logging -->
       <div id="set-logging" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">Storage Logging <Tooltip text="When enabled, every file-level storage operation (upload, download, delete) is traced to the daemon log. Useful for diagnosing intermittent transfer failures; off by default to avoid log noise." /></h2>
-          <p class="text-xs text-text-muted mt-0.5">Per-operation trace logging for storage adapters.</p>
+          <h2 class="text-base font-semibold text-text">Logging <Tooltip text="Configure log output verbosity for the Vault daemon and storage adapters." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">Control daemon log levels and verbose storage tracing.</p>
         </div>
         <div class="divide-y divide-border">
+          <!-- Log level (Issue #346) -->
+          <div class="px-5 py-4">
+            <label for="log-level" class="block text-sm font-medium text-text mb-1.5">
+              Log level
+              <Tooltip text="Minimum log level emitted by the daemon. Debug includes fine-grained diagnostics; Info is the standard operational level; Warn and Error restrict output to unexpected conditions and failures." />
+            </label>
+            <div class="flex items-center gap-2">
+              <select
+                id="log-level"
+                bind:value={logLevel}
+                onchange={saveLogLevel}
+                disabled={readOnly || logLevelSaving}
+                class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault disabled:opacity-60 cursor-pointer"
+              >
+                <option value="debug">Debug</option>
+                <option value="info">Informational</option>
+                <option value="warn">Warning</option>
+                <option value="error">Errors</option>
+              </select>
+              {#if logLevelSaving}
+                <InlineSpinner />
+              {/if}
+            </div>
+          </div>
           <div class="px-5 py-4 flex items-center justify-between">
             <div>
               <p class="text-sm font-medium text-text">Verbose storage logging</p>

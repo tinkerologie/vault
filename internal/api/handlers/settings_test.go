@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1113,5 +1114,123 @@ func TestGetDatabaseInfo_WithSnapshotManager(t *testing.T) {
 	}
 	if resp["snapshot_path"] == nil {
 		t.Error("expected snapshot_path in response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// log_level setting tests
+// ---------------------------------------------------------------------------
+
+func TestUpdate_LogLevel_Valid(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	var hookCalledValue string
+	h.SetLogLevelChangeHook(func(v string) {
+		hookCalledValue = v
+	})
+
+	levels := []string{"debug", "info", "warn", "error", "warning"}
+	for _, lvl := range levels {
+		body := `{"log_level": "` + lvl + `"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.Update(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Update with log_level=%q: status = %d, want 200; body: %s", lvl, w.Code, w.Body.String())
+		}
+
+		expectedHook := strings.ToLower(lvl)
+		if expectedHook == "warning" {
+			expectedHook = "warn"
+		}
+		if hookCalledValue != expectedHook {
+			t.Errorf("hook received %q, want %q", hookCalledValue, expectedHook)
+		}
+
+		// Verify returned settings contains updated log_level
+		var resp map[string]string
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp["log_level"] != expectedHook {
+			t.Errorf("response log_level = %q, want %q", resp["log_level"], expectedHook)
+		}
+	}
+}
+
+func TestUpdate_LogLevel_Invalid(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	var hookCalled bool
+	h.SetLogLevelChangeHook(func(_ string) {
+		hookCalled = true
+	})
+
+	invalidLevels := []string{"invalid", "trace", "verbose", "123", "none"}
+	for _, lvl := range invalidLevels {
+		body := `{"log_level": "` + lvl + `"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.Update(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("Update with invalid log_level=%q: status = %d, want 400; body: %s", lvl, w.Code, w.Body.String())
+		}
+		if hookCalled {
+			t.Errorf("hook should not have been called for invalid log_level %q", lvl)
+		}
+	}
+}
+
+func TestUpdate_LogLevel_ConcurrentInterleaving(t *testing.T) {
+	h := newTestSettingsHandler(t)
+
+	var (
+		hookMu        sync.Mutex
+		lastHookLevel string
+	)
+	h.SetLogLevelChangeHook(func(lvl string) {
+		hookMu.Lock()
+		lastHookLevel = lvl
+		hookMu.Unlock()
+	})
+
+	const iterations = 20
+	var wg sync.WaitGroup
+	barrier := make(chan struct{})
+
+	for i := 0; i < iterations; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-barrier
+			level := "debug"
+			if idx%2 == 0 {
+				level = "warn"
+			}
+			body := `{"log_level":"` + level + `"}`
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			h.Update(w, req)
+		}(i)
+	}
+
+	close(barrier)
+	wg.Wait()
+
+	stored, err := h.db.GetSetting("log_level", "info")
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+
+	hookMu.Lock()
+	finalHook := lastHookLevel
+	hookMu.Unlock()
+
+	if stored != finalHook {
+		t.Errorf("stored setting %q does not match final applied hook level %q", stored, finalHook)
 	}
 }
