@@ -3979,6 +3979,12 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 
 	files, err := adapter.List(itemStoragePath)
 	if err != nil {
+		if storage.IsNotExist(err) {
+			r.reportRestoreProgress(reporter, phaseEnd, "Restore data ready")
+			r.runLog(reporter.RunID, runLogLevelWarn,
+				fmt.Sprintf("No restore data found for %s (restore point %d)", itemName, restorePoint.ID), nil)
+			return nil
+		}
 		return fmt.Errorf("listing restore files: %w", err)
 	}
 

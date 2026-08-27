@@ -101,6 +101,137 @@ func TestStageRestorePointItemOverlaysChainFiles(t *testing.T) {
 	assertFileContents(t, tmpDir, "volume_0.tar.gz", "child-volume")
 }
 
+// TestStageRestorePointItemMissingItemDirectory verifies that restoring an
+// item whose chain includes a restore point created before the item existed
+// (no item directory on storage) skips that step gracefully with a warning
+// rather than failing the restore with ENOENT (issue #355).
+func TestStageRestorePointItemMissingItemDirectory(t *testing.T) {
+	t.Parallel()
+	r, d := newTestRunner(t)
+
+	storageRoot := t.TempDir()
+	dest := createLocalDest(t, d, storageRoot)
+
+	jobID, err := d.CreateJob(db.Job{
+		Name:            "chain-test-missing-dir",
+		Enabled:         true,
+		BackupTypeChain: "incremental",
+		Compression:     "none",
+		StorageDestID:   dest.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	runID, err := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "running", BackupType: "incremental"})
+	if err != nil {
+		t.Fatalf("CreateJobRun: %v", err)
+	}
+
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatalf("NewAdapter: %v", err)
+	}
+	t.Cleanup(func() { storage.CloseAdapter(adapter) })
+
+	// Step 1 (full): predates "new-item"; contains "other-item" only.
+	// The directory "chain-test-missing-dir/1_full/new-item" does NOT exist.
+	_ = writeStorageFiles(t, adapter, map[string]string{
+		"chain-test-missing-dir/1_full/other-item/config.json": "other-config",
+	})
+	// Step 2 (inc): "new-item" was added to the job.
+	step2Checksums := writeStorageFiles(t, adapter, map[string]string{
+		"chain-test-missing-dir/2_inc/new-item/config.json":     "step2-config",
+		"chain-test-missing-dir/2_inc/new-item/volume_0.tar.gz": "step2-volume",
+	})
+	// Step 3 (inc): updated "new-item".
+	step3Checksums := writeStorageFiles(t, adapter, map[string]string{
+		"chain-test-missing-dir/3_inc/new-item/volume_0.tar.gz": "step3-volume",
+	})
+
+	baseRP := db.RestorePoint{
+		ID:          1,
+		JobID:       jobID,
+		BackupType:  "full",
+		StoragePath: "chain-test-missing-dir/1_full",
+		Metadata:    restorePointMetadata("other-item", map[string]string{"config.json": checksumString("other-config")}),
+		CreatedAt:   time.Now().Add(-2 * time.Hour),
+	}
+	step2RP := db.RestorePoint{
+		ID:                   2,
+		JobID:                jobID,
+		BackupType:           "incremental",
+		StoragePath:          "chain-test-missing-dir/2_inc",
+		Metadata:             restorePointMetadata("new-item", step2Checksums),
+		ParentRestorePointID: 1,
+		CreatedAt:            time.Now().Add(-time.Hour),
+	}
+	step3RP := db.RestorePoint{
+		ID:                   3,
+		JobID:                jobID,
+		BackupType:           "incremental",
+		StoragePath:          "chain-test-missing-dir/3_inc",
+		Metadata:             restorePointMetadata("new-item", step3Checksums),
+		ParentRestorePointID: 2,
+		CreatedAt:            time.Now(),
+	}
+
+	tmpDir := t.TempDir()
+	reporter := restoreProgressReporter{RunID: runID, ItemName: "new-item", ItemType: "container", ItemsTotal: 1}
+
+	// 1. Staging the missing step should return nil (no hard error).
+	if err := r.stageRestorePointItem(context.Background(), baseRP, "new-item", tmpDir, "", 0, 33, reporter); err != nil {
+		t.Fatalf("stageRestorePointItem(base missing) unexpected error = %v", err)
+	}
+
+	// 2. A "No restore data found" warning must be logged in run log.
+	entries, err := d.ListRunLogEntries(context.Background(), runID, 0, 100)
+	if err != nil {
+		t.Fatalf("ListRunLogEntries: %v", err)
+	}
+	wantWarning := fmt.Sprintf("No restore data found for new-item (restore point %d)", baseRP.ID)
+	var foundWarning bool
+	for _, e := range entries {
+		if e.Level == "warn" && strings.Contains(e.Message, wantWarning) {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected warning run-log entry containing %q; got:\n%+v", wantWarning, entries)
+	}
+
+	// 3. Staging subsequent steps that do have the item succeeds and stages correctly.
+	if err := r.stageRestorePointItem(context.Background(), step2RP, "new-item", tmpDir, "", 33, 66, reporter); err != nil {
+		t.Fatalf("stageRestorePointItem(step2) unexpected error = %v", err)
+	}
+	if err := r.stageRestorePointItem(context.Background(), step3RP, "new-item", tmpDir, "", 66, 100, reporter); err != nil {
+		t.Fatalf("stageRestorePointItem(step3) unexpected error = %v", err)
+	}
+
+	assertFileContents(t, tmpDir, "config.json", "step2-config")
+	assertFileContents(t, tmpDir, "volume_0.tar.gz", "step3-volume")
+
+	// 4. Confirm full container chain staging (which loops over baseRP, step2RP, step3RP)
+	// does not abort with ENOENT.
+	fullChainDir := t.TempDir()
+	fullFullTar := tarArchive(t, map[string]string{"config.json": "step2-config"})
+	fullDiffTar := tarArchive(t, map[string]string{"data.txt": "data"})
+	writeStorageFiles(t, adapter, map[string]string{
+		"chain-test-missing-dir/2_inc/chain-container/volume_0.tar": string(fullFullTar),
+		"chain-test-missing-dir/3_inc/chain-container/volume_0.tar": string(fullDiffTar),
+	})
+	chainReporter := restoreProgressReporter{RunID: runID, ItemName: "chain-container", ItemType: "container", ItemsTotal: 1}
+	mergedDir, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, step2RP, step3RP}, "chain-container", "", chainReporter, fullChainDir)
+	if err != nil {
+		t.Fatalf("stageContainerChainMerged with missing intermediate directory failed: %v", err)
+	}
+	names := tarEntryNames(t, filepath.Join(mergedDir, "volume_0.tar"))
+	if !names["config.json"] || !names["data.txt"] {
+		t.Errorf("merged volume missing entries, got: %+v", names)
+	}
+}
+
 // TestStageContainerChainMerged exercises the container branch of
 // restoreMergedChain's per-step staging + merge (the new code path for
 // issue #320) without requiring a Docker daemon. The full step's volume_0.tar

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -219,6 +221,34 @@ func (s *SMBAdapter) Delete(path string) error {
 	return share.Remove(fullPath)
 }
 
+func isSMBNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
+		return true
+	}
+	var respErr *smb2.ResponseError
+	if errors.As(err, &respErr) {
+		switch respErr.Code {
+		case 0xC0000034, 0xC000003A, 0xC000000F:
+			// STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND, STATUS_NO_SUCH_FILE
+			return true
+		}
+	}
+	return false
+}
+
+func wrapSMBListError(err error, fullPath string) error {
+	if err == nil {
+		return nil
+	}
+	if isSMBNotFound(err) {
+		return fmt.Errorf("smb: list %s: %w: %w", fullPath, fs.ErrNotExist, err)
+	}
+	return fmt.Errorf("smb: list %s: %w", fullPath, err)
+}
+
 func (s *SMBAdapter) List(prefix string) ([]FileInfo, error) {
 	share, session, err := s.connect()
 	if err != nil {
@@ -233,7 +263,7 @@ func (s *SMBAdapter) List(prefix string) ([]FileInfo, error) {
 	}
 	entries, err := share.ReadDir(fullPath)
 	if err != nil {
-		return nil, err
+		return nil, wrapSMBListError(err, fullPath)
 	}
 
 	var files []FileInfo

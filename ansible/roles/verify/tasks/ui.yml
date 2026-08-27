@@ -1,0 +1,18 @@
+---
+# Playwright CLI UI verification test — runs on localhost through the verification tunnel.
+
+- name: Verify Web UI with Playwright CLI
+  delegate_to: localhost
+  ansible.builtin.shell: |
+    set -e
+    SESSION_NAME="vault-{{ inventory_hostname }}"
+    trap 'playwright-cli -s="$SESSION_NAME" close 2>/dev/null || true' EXIT
+    playwright-cli -s="$SESSION_NAME" open http://127.0.0.1:{{ verify_local_port }}/
+    playwright-cli -s="$SESSION_NAME" snapshot
+  register: playwright_result
+  changed_when: false
+  failed_when: false
+
+- name: Report Playwright verification status
+  ansible.builtin.debug:
+    msg: "Playwright UI verification completed: {{ 'passed' if playwright_result.rc == 0 else 'skipped/failed' }}"

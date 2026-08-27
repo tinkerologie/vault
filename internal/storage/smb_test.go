@@ -3,6 +3,9 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"testing"
 	"time"
 
@@ -84,5 +87,59 @@ func TestSMBGetCapacityContextCancelled(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestIsSMBNotFound(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"fs.ErrNotExist", fs.ErrNotExist, true},
+		{"os.ErrNotExist", os.ErrNotExist, true},
+		{"wrapped fs.ErrNotExist", fmt.Errorf("read: %w", fs.ErrNotExist), true},
+		{"wrapped os.ErrNotExist", &os.PathError{Op: "open", Path: "/missing", Err: os.ErrNotExist}, true},
+		{"smb STATUS_OBJECT_NAME_NOT_FOUND", &smb2.ResponseError{Code: 0xC0000034}, true},
+		{"smb STATUS_OBJECT_PATH_NOT_FOUND", &smb2.ResponseError{Code: 0xC000003A}, true},
+		{"smb STATUS_NO_SUCH_FILE", &smb2.ResponseError{Code: 0xC000000F}, true},
+		{"other smb ResponseError", &smb2.ResponseError{Code: 0xC0000022}, false}, // STATUS_ACCESS_DENIED
+		{"other generic error", errors.New("connection failed"), false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isSMBNotFound(tt.err); got != tt.want {
+				t.Errorf("isSMBNotFound(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWrapSMBListError(t *testing.T) {
+	t.Parallel()
+
+	if err := wrapSMBListError(nil, "/test"); err != nil {
+		t.Errorf("wrapSMBListError(nil) = %v, want nil", err)
+	}
+
+	notFoundErr := wrapSMBListError(fs.ErrNotExist, "/missing")
+	if notFoundErr == nil || !IsNotExist(notFoundErr) {
+		t.Errorf("wrapSMBListError(fs.ErrNotExist) = %v, want ErrNotExist", notFoundErr)
+	}
+
+	smbNotFoundErr := wrapSMBListError(&smb2.ResponseError{Code: 0xC0000034}, "/missing")
+	if smbNotFoundErr == nil || !IsNotExist(smbNotFoundErr) {
+		t.Errorf("wrapSMBListError(STATUS_OBJECT_NAME_NOT_FOUND) = %v, want ErrNotExist", smbNotFoundErr)
+	}
+
+	genericErr := wrapSMBListError(errors.New("smb network drop"), "/path")
+	if genericErr == nil || IsNotExist(genericErr) {
+		t.Errorf("wrapSMBListError(generic) = %v, want non-ErrNotExist", genericErr)
 	}
 }

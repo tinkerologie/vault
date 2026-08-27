@@ -48,6 +48,9 @@
 
     - name: Test MCP streamable HTTP endpoint
       ansible.builtin.include_tasks: mcp.yml
+
+    - name: Test Web UI with Playwright CLI
+      ansible.builtin.include_tasks: ui.yml
   always:
     - name: Stop SSH tunnel to local-only Vault daemon
       delegate_to: localhost
