@@ -3,6 +3,7 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
+  import { isRestoreActive } from '../lib/restore-sync.js'
   import { formatDate, formatBytes } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
   import Spinner from './Spinner.svelte'
@@ -27,6 +28,20 @@
 
   // Restore progress
   let restoring = $state(false)
+  let restoringJobId = $state(null)
+
+  async function reconcileRestoring() {
+    if (!restoring) return
+    try {
+      const status = await api.getRunnerStatus()
+      if (!isRestoreActive(status, restoringJobId)) {
+        restoring = false
+      }
+    } catch {
+      // Leaves state unchanged on any API error, so a transient failure does not
+      // incorrectly re-enable the button.
+    }
+  }
 
   // Pre-flight: cheap go/no-go checks run before a restore. The result is only
   // trusted while the inputs that produced it are unchanged (preflightFresh):
@@ -146,9 +161,16 @@
   }
 
   onMount(() => {
+    reconcileRestoring()
     const unsub = onWsMessage((msg) => {
-      if (msg.type === 'job_run_completed' && msg.run_type === 'restore') {
-        restoring = false
+      if (msg.type === 'job_run_completed') {
+        if (msg.run_type === 'restore' && (!restoringJobId || msg.job_id === restoringJobId)) {
+          restoring = false
+        }
+      } else if (msg.type === 'runner_status_snapshot') {
+        if (!isRestoreActive(msg.status, restoringJobId)) {
+          restoring = false
+        }
       }
     })
     return unsub
@@ -415,6 +437,7 @@
   function doRestore() {
     if (selectedItems.size === 0 || !selectedPoint) return
     restoring = true
+    restoringJobId = selectedPoint.jobId
 
     const items = selectedItemsArray.map(item => item.name)
 
