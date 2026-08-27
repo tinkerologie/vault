@@ -2818,6 +2818,14 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 	return untarDirectoryFiltered(ctx, srcPath, destDir, nil)
 }
 
+// dirModTime records a directory target path and its archive modification time
+// so mtimes can be applied in reverse insertion order after all child entries
+// are written.
+type dirModTime struct {
+	path    string
+	modTime time.Time
+}
+
 // untarDirectoryFiltered behaves like untarDirectory but only extracts the
 // tar entries whose Name is present in the include set. Any entry whose path
 // is the descendant of an included directory is also extracted. The empty
@@ -2842,6 +2850,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 	}
 	defer func() { _ = closeDecompress() }()
 
+	var dirModTimes []dirModTime
 	tr := tar.NewReader(dr)
 	for {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -2875,6 +2884,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := os.MkdirAll(target, safeFileMode(header.Mode)); err != nil {
 				return fmt.Errorf("creating directory %s: %w", target, err)
 			}
+			dirModTimes = append(dirModTimes, dirModTime{path: target, modTime: header.ModTime})
 		case tar.TypeReg:
 			if header.Size < 0 {
 				return fmt.Errorf("invalid file size %d for %s", header.Size, header.Name)
@@ -2901,6 +2911,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := f.Close(); err != nil {
 				return fmt.Errorf("closing file %s: %w", target, err)
 			}
+			_ = os.Chtimes(target, header.ModTime, header.ModTime)
 		case tar.TypeSymlink:
 			// Validate symlink target resolves within destDir after following existing symlinks.
 			if err := resolveSymlinkTarget(destDir, target, header.Linkname); err != nil {
@@ -2928,9 +2939,13 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := os.Link(linkTarget, target); err != nil {
 				return fmt.Errorf("creating hard link %s -> %s: %w", target, linkTarget, err)
 			}
+			_ = os.Chtimes(target, header.ModTime, header.ModTime)
 		default:
 			continue
 		}
+	}
+	for i := len(dirModTimes) - 1; i >= 0; i-- {
+		_ = os.Chtimes(dirModTimes[i].path, dirModTimes[i].modTime, dirModTimes[i].modTime)
 	}
 	return nil
 }
