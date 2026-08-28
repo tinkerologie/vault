@@ -4,7 +4,7 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { relTime, relTimeUntil, formatSpeed, formatBytes, largestBackupsByJob, formatInt } from '../lib/utils.js'
+  import { relTime, relTimeUntil, formatSpeed, formatBytes, largestBackupsByJob, formatInt, itemDisplayLabel } from '../lib/utils.js'
   import { getProgress, handleProgressMessage, restoreFromStatus, syncFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import Toast from '../components/Toast.svelte'
@@ -992,16 +992,19 @@
   </div>
 {/snippet}
 
-{#snippet protItemRow(type, key, name, restoreType)}
+{#snippet protItemRow(type, key, itemOrName, restoreType)}
   {@const isProtected = protectedItems.has(key)}
   {@const pending = isPending(key)}
+  {@const itemName = typeof itemOrName === 'object' && itemOrName !== null ? (itemOrName.item_name || itemOrName.name || '') : String(itemOrName || '')}
+  {@const itemObj = typeof itemOrName === 'object' && itemOrName !== null ? { item_type: type, item_name: itemName, ...itemOrName } : { item_type: type, item_name: itemName }}
+  {@const displayLabel = itemDisplayLabel(itemObj)}
   <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : pending ? 'bg-amber-500/5' : 'bg-surface-3'} group">
     <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : pending ? 'bg-amber-500' : 'bg-surface-5'}"></div>
-    <span class="text-sm text-text truncate">{name}</span>
+    <span class="text-sm text-text truncate" title={displayLabel}>{displayLabel}</span>
     {#if type === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium shrink-0">USB boot drive</span>{/if}
     {#if isProtected}
       {#if !isReplicaMode()}
-        <button onclick={() => navigate(`/restore?type=${restoreType}&name=${encodeURIComponent(name)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {name}">
+        <button onclick={() => navigate(`/restore?type=${restoreType}&name=${encodeURIComponent(itemName)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {itemName}">
           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         </button>
       {/if}
@@ -1047,7 +1050,7 @@
                   <h3 class="text-sm font-medium text-text">Containers</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedContainers.length}/{trackedContainers.length}</span>
                 </div>
-                <div class="space-y-1.5">{#each trackedContainers as c (c.name)}{@render protItemRow('container', `container:${c.name}`, c.name, 'container')}{/each}</div>
+                <div class="space-y-1.5">{#each trackedContainers as c (c.name)}{@render protItemRow('container', `container:${c.name}`, c, 'container')}{/each}</div>
               </div>
             {/if}
             {#if trackedVMs.length > 0}
@@ -1057,7 +1060,7 @@
                   <h3 class="text-sm font-medium text-text">Virtual Machines</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedVMs.length}/{trackedVMs.length}</span>
                 </div>
-                <div class="space-y-1.5">{#each trackedVMs as v (v.name)}{@render protItemRow('vm', `vm:${v.name}`, v.name, 'vm')}{/each}</div>
+                <div class="space-y-1.5">{#each trackedVMs as v (v.name)}{@render protItemRow('vm', `vm:${v.name}`, v, 'vm')}{/each}</div>
               </div>
             {/if}
             {#if trackedFolders.length > 0}
@@ -1067,7 +1070,7 @@
                   <h3 class="text-sm font-medium text-text">Folders</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedFolders.length}/{trackedFolders.length}</span>
                 </div>
-                <div class="space-y-1.5">{#each trackedFolders as f (f.name)}{@render protItemRow('folder', `folder:${f.name}`, f.name, 'folder')}{/each}</div>
+                <div class="space-y-1.5">{#each trackedFolders as f (f.name)}{@render protItemRow('folder', `folder:${f.name}`, f, 'folder')}{/each}</div>
               </div>
             {/if}
             {#if trackedFlash.length > 0}
@@ -1077,7 +1080,7 @@
                   <h3 class="text-sm font-medium text-text">Flash Drive</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedFlash.length}/{trackedFlash.length}</span>
                 </div>
-                <div class="space-y-1.5">{#each trackedFlash as f (f.name)}{@render protItemRow('flash', `folder:${f.name}`, f.name, 'folder')}{/each}</div>
+                <div class="space-y-1.5">{#each trackedFlash as f (f.name)}{@render protItemRow('flash', `folder:${f.name}`, f, 'folder')}{/each}</div>
               </div>
             {/if}
           </div>

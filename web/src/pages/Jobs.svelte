@@ -7,7 +7,7 @@
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getProgress, handleProgressMessage, restoreFromStatus, markJobActiveOptimistically } from '../lib/progress.svelte.js'
   import { isJobRunningOrQueued } from '../lib/job-active.js'
-  import { describeSchedule, relTimeUntil } from '../lib/utils.js'
+  import { describeSchedule, relTimeUntil, itemDisplayLabel } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
@@ -2062,7 +2062,7 @@
                                 <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-dim border border-border">named volume</span>
                               {/if}
                             </span>
-                            <span class="block text-xs text-text-dim font-mono truncate">{mount.source}{#if mount.auto_skip && mount.skip_reason} · {mount.skip_reason}{/if}</span>
+                            <span class="block text-xs text-text-dim font-mono truncate" title={mount.source}>{mount.source}{#if mount.auto_skip && mount.skip_reason} · {mount.skip_reason}{/if}</span>
                           </span>
                         </label>
                       {/each}
@@ -2131,7 +2131,7 @@
               <p class="text-xs text-text-dim">Exclude subpaths or glob patterns from folder/flash backups. One per line, e.g. .Recycle.Bin or *.log.</p>
               {#each selectedFolderItems as fItem (fItem.item_name)}
                 <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3">
-                  <p class="text-sm font-medium text-text">{fItem.item_name}</p>
+                  <p class="text-sm font-medium text-text" title={itemDisplayLabel(fItem)}>{itemDisplayLabel(fItem)}</p>
                   {#if getRecommendedExclusions(fItem).length > 0}
                     <p class="text-xs text-vault">Recycle Bin plugin detected "{getRecommendedExclusions(fItem).join(', ')}" excluded automatically. Edit below to change.</p>
                   {/if}
@@ -2350,7 +2350,7 @@
         {#each items as item (item.id)}
           <li class="flex items-center justify-between gap-3 p-3 rounded-lg border border-border bg-surface-3">
             <div class="min-w-0">
-              <p class="text-sm font-medium text-text truncate">{item.item_name}</p>
+              <p class="text-sm font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</p>
               <p class="text-xs text-text-dim mt-0.5 capitalize">{item.item_type}</p>
             </div>
             <button

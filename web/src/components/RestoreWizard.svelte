@@ -4,7 +4,7 @@
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { isRestoreActive } from '../lib/restore-sync.js'
-  import { formatDate, formatBytes } from '../lib/utils.js'
+  import { formatDate, formatBytes, itemDisplayLabel } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
@@ -78,13 +78,14 @@
   }
 
   // Partial-restore file picker (Feature B).
-  // Per-item map: itemName -> { contents: TarIndex|null, selected: SvelteSet<string>,
-  //                              loading: boolean, error: string, search: string, open: boolean }
+  // Per-item map: itemKey -> { contents: TarIndex|null, selected: SvelteSet<string>,
+  //                             loading: boolean, error: string, search: string, open: boolean }
   let picker = $state(new SvelteMap())
 
-  function ensurePickerEntry(itemName) {
-    if (!picker.has(itemName)) {
-      picker.set(itemName, {
+  function ensurePickerEntry(item) {
+    const key = itemKey(item)
+    if (!picker.has(key)) {
+      picker.set(key, {
         contents: null,
         selected: new SvelteSet(),
         loading: false,
@@ -93,7 +94,7 @@
         open: false,
       })
     }
-    return picker.get(itemName)
+    return picker.get(key)
   }
 
   // updateEntry replaces the picker entry with a shallow clone + patch.
@@ -102,9 +103,10 @@
   // mutation). We always go through this helper to keep that contract.
   // The `selected` SvelteSet is preserved across clones so toggleFilePicked
   // / clearPickerSelection don't lose their reactive backing.
-  function updateEntry(itemName, patch) {
-    const cur = ensurePickerEntry(itemName)
-    picker.set(itemName, { ...cur, ...patch })
+  function updateEntry(item, patch) {
+    const key = itemKey(item)
+    const cur = ensurePickerEntry(item)
+    picker.set(key, { ...cur, ...patch })
   }
 
   // Partial (per-file) restore only exists for item types whose backups are
@@ -115,42 +117,45 @@
   }
 
   async function togglePickerOpen(item) {
-    const cur = ensurePickerEntry(item.name)
+    const cur = ensurePickerEntry(item)
     const willOpen = !cur.open
-    updateEntry(item.name, { open: willOpen })
+    updateEntry(item, { open: willOpen })
     if (willOpen && !cur.contents && !cur.loading) {
-      updateEntry(item.name, { loading: true, error: '' })
+      updateEntry(item, { loading: true, error: '' })
       try {
         const contents = await api.getRestorePointContents(selectedPoint.jobId, selectedPoint.id, item.name)
-        updateEntry(item.name, { contents, loading: false })
+        updateEntry(item, { contents, loading: false })
       } catch (e) {
-        updateEntry(item.name, { error: e?.message || 'failed to load file list', loading: false })
+        updateEntry(item, { error: e?.message || 'failed to load file list', loading: false })
       }
     }
   }
 
-  function toggleFilePicked(itemName, filePath) {
-    const entry = picker.get(itemName)
+  function toggleFilePicked(item, filePath) {
+    const key = itemKey(item)
+    const entry = picker.get(key)
     if (!entry) return
     if (entry.selected.has(filePath)) entry.selected.delete(filePath)
     else entry.selected.add(filePath)
     // SvelteSet is reactive on add/delete; touch the entry too so the
     // summary "X of Y selected" counter rerenders.
-    updateEntry(itemName, {})
+    updateEntry(item, {})
   }
 
-  function selectAllFiltered(itemName) {
-    const entry = picker.get(itemName)
+  function selectAllFiltered(item) {
+    const key = itemKey(item)
+    const entry = picker.get(key)
     if (!entry?.contents) return
     for (const f of filteredFiles(entry)) entry.selected.add(f.path)
-    updateEntry(itemName, {})
+    updateEntry(item, {})
   }
 
-  function clearPickerSelection(itemName) {
-    const entry = picker.get(itemName)
+  function clearPickerSelection(item) {
+    const key = itemKey(item)
+    const entry = picker.get(key)
     if (!entry) return
     entry.selected.clear()
-    updateEntry(itemName, {})
+    updateEntry(item, {})
   }
 
   function filteredFiles(entry) {
@@ -176,6 +181,10 @@
     return unsub
   })
 
+  function itemKey(item) {
+    return `${item.item_type || item.type}:${itemDisplayLabel(item)}`
+  }
+
   // Gather all backed-up items across all jobs
   $effect(() => {
     gatherItems()
@@ -188,11 +197,15 @@
 	  for (const detail of jobs) {
 		if (!detail?.items) continue
         for (const item of detail.items) {
-          const key = `${item.item_type}:${item.item_name}`
+          const key = itemKey(item)
           if (!itemMap.has(key)) {
             itemMap.set(key, {
               name: item.item_name,
               type: item.item_type,
+              item_name: item.item_name,
+              item_type: item.item_type,
+              item_id: item.item_id,
+              settings: item.settings,
               jobs: [],
             })
           }
@@ -209,8 +222,7 @@
           const jid = Number(initialJobId)
           for (const item of allItems) {
             if (item.jobs.some(j => j.id === jid)) {
-              const key = `${item.type}:${item.name}`
-              selectedItems.set(key, item)
+              selectedItems.set(itemKey(item), item)
             }
           }
         }
@@ -218,9 +230,8 @@
         // buttons and the command palette). Only matches items that are actually in
         // a backup job, so unknown/never-backed-up names just land on the picker.
         if (initialType && initialName && selectedItems.size === 0) {
-          const key = `${initialType}:${initialName}`
-          const item = allItems.find(i => `${i.type}:${i.name}` === key)
-          if (item) selectedItems.set(key, item)
+          const item = allItems.find(i => `${i.type}:${i.name}` === `${initialType}:${initialName}` || itemKey(i) === `${initialType}:${initialName}`)
+          if (item) selectedItems.set(itemKey(item), item)
         }
       }
     } catch { /* ignore */ } finally {
@@ -275,7 +286,7 @@
   }
 
   function toggleItem(item) {
-    const key = `${item.type}:${item.name}`
+    const key = itemKey(item)
     if (selectedItems.has(key)) {
       selectedItems.delete(key)
     } else {
@@ -284,13 +295,12 @@
   }
 
   function isSelected(item) {
-    return selectedItems.has(`${item.type}:${item.name}`)
+    return selectedItems.has(itemKey(item))
   }
 
   function selectAll() {
     for (const item of filteredItems) {
-      const key = `${item.type}:${item.name}`
-      selectedItems.set(key, item)
+      selectedItems.set(itemKey(item), item)
     }
   }
 
@@ -341,6 +351,9 @@
       // (unknown → fall back to whole-archive behaviour).
       const selectedNames = Array.from(selectedItems.values()).map(i => i.name)
       const containsSelected = (rp) => {
+        if (!selectedArr.every(item => item.jobs.some(j => j.id === rp.jobId))) {
+          return false
+        }
         const meta = parseMetadata(rp.metadata)
         const names = new Set([
           ...Object.keys(meta.item_sizes || {}),
@@ -388,6 +401,13 @@
 
   let selectedItemsArray = $derived(Array.from(selectedItems.values()))
 
+  let step3ItemsArray = $derived(
+    selectedPoint
+      ? selectedItemsArray.filter(item => item.jobs.some(j => j.id === selectedPoint.jobId))
+      : selectedItemsArray
+  )
+  let step3Count = $derived(step3ItemsArray.length)
+
   // Overwrite-banner target (issue #205 / E5). Only ever show a concrete path
   // when it's actually known — otherwise say "original location" honestly.
   //   { path }     → show this exact path
@@ -403,10 +423,11 @@
       // Blank custom destination → backend falls back to original location.
       return dest ? { path: dest } : { original: true }
     }
-    if (selectedCount !== 1) return null
-    const item = selectedItemsArray[0]
+    const currentCount = selectedPoint ? step3Count : selectedCount
+    if (currentCount !== 1) return null
+    const item = selectedPoint ? step3ItemsArray[0] : selectedItemsArray[0]
     if (!item) return null
-    if (item.type === 'folder' || item.type === 'flash') return { path: item.name }
+    if (item.type === 'folder' || item.type === 'flash') return { path: itemDisplayLabel(item) }
     return { original: true }
   })
   // The newest restore point is the recommended one to restore from.
@@ -439,7 +460,7 @@
     restoring = true
     restoringJobId = selectedPoint.jobId
 
-    const items = selectedItemsArray.map(item => item.name)
+    const items = Array.from(new Set(step3ItemsArray.map(item => item.name)))
 
     const payload = {
       restore_point_id: selectedPoint.id,
@@ -456,9 +477,12 @@
     // picker entries that have a non-empty selection. Items without an
     // active selection are restored in full (legacy behaviour).
     const filePaths = {}
-    for (const [itemName, entry] of picker.entries()) {
-      if (entry?.selected && entry.selected.size > 0) {
-        filePaths[itemName] = Array.from(entry.selected)
+    for (const [key, entry] of picker.entries()) {
+      const item = selectedItems.get(key)
+      if (item && entry?.selected && entry.selected.size > 0) {
+        if (item.jobs.some(j => j.id === selectedPoint.jobId)) {
+          filePaths[item.name] = Array.from(entry.selected)
+        }
       }
     }
     if (Object.keys(filePaths).length > 0) {
@@ -547,7 +571,7 @@
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {#each filteredItems as item (`${item.type}:${item.name}`)}
+        {#each filteredItems as item (itemKey(item))}
           {@const selected = isSelected(item)}
           <button type="button" onclick={() => toggleItem(item)}
             class="bg-surface-2 border rounded-xl p-4 text-left hover:shadow-sm transition-all group
@@ -564,7 +588,7 @@
                 <svg aria-hidden="true" class="w-5 h-5 {typeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={typeIcon(item.type)}/></svg>
               </div>
               <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-text truncate">{item.name}</p>
+                <p class="text-sm font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</p>
                 <p class="text-xs text-text-dim capitalize">{item.type}</p>
               </div>
             </div>
@@ -599,11 +623,11 @@
         Back to items
       </button>
       <div class="flex items-center gap-3 mt-2 flex-wrap">
-        {#each selectedItemsArray as item (`${item.type}:${item.name}`)}
-          <div class="flex items-center gap-1.5 px-2.5 py-1 bg-surface-3 rounded-lg">
-            <svg aria-hidden="true" class="w-4 h-4 {typeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={typeIcon(item.type)}/></svg>
-            <span class="text-xs font-medium text-text">{item.name}</span>
-            <span class="text-xs text-text-dim capitalize">({item.type})</span>
+        {#each selectedItemsArray as item (itemKey(item))}
+          <div class="flex items-center gap-1.5 px-2.5 py-1 bg-surface-3 rounded-lg min-w-0">
+            <svg aria-hidden="true" class="w-4 h-4 shrink-0 {typeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={typeIcon(item.type)}/></svg>
+            <span class="text-xs font-medium text-text truncate max-w-[200px]" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
+            <span class="text-xs text-text-dim capitalize shrink-0">({item.type})</span>
           </div>
         {/each}
       </div>
@@ -647,17 +671,17 @@
         <div class="flex justify-between">
           <span class="text-text-muted">Items</span>
           <span class="text-text font-medium">
-            {#if selectedCount === 1}
-              {selectedItemsArray[0].name} ({selectedItemsArray[0].type})
+            {#if step3Count === 1}
+              {itemDisplayLabel(step3ItemsArray[0])} ({step3ItemsArray[0].type})
             {:else}
-              {selectedCount} items
+              {step3Count} items
             {/if}
           </span>
         </div>
-        {#if selectedCount > 1}
+        {#if step3Count > 1}
           <div class="flex flex-wrap gap-1.5 justify-end">
-            {#each selectedItemsArray as item (`${item.type}:${item.name}`)}
-              <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-dim">{item.name}</span>
+            {#each step3ItemsArray as item (itemKey(item))}
+              <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-dim truncate max-w-[150px]" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
             {/each}
           </div>
         {/if}
@@ -756,17 +780,17 @@
          loads the tar index sidecar and lets the user pick which entries
          to extract. Items with an empty selection restore in full. -->
     <div class="mb-6 space-y-3">
-      {#each selectedItemsArray as item (`${item.type}:${item.name}`)}
-        {@const entry = picker.get(item.name)}
+      {#each step3ItemsArray as item (itemKey(item))}
+        {@const entry = picker.get(itemKey(item))}
         {@const sel = entry?.selected?.size || 0}
         {@const total = entry?.contents?.files?.length || 0}
         {#if !supportsFilePicker(item.type)}
           <div class="bg-surface-2 border border-border rounded-xl p-3 text-sm flex items-center justify-between gap-3">
-            <span class="flex items-center gap-2">
-              <span class="font-medium text-text">{item.name}</span>
-              <span class="text-xs text-text-dim">({item.type})</span>
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
+              <span class="text-xs text-text-dim shrink-0">({item.type})</span>
             </span>
-            <span class="text-xs text-text-muted">
+            <span class="text-xs text-text-muted shrink-0">
               {item.type === 'vm' ? 'Restored in full (disk images, domain XML, NVRAM)' : 'Restored in full'}
             </span>
           </div>
@@ -775,10 +799,10 @@
           open={entry?.open || false}>
           <summary class="flex items-center justify-between gap-3 cursor-pointer select-none p-3 text-sm"
             onclick={(e) => { e.preventDefault(); togglePickerOpen(item) }}>
-            <span class="flex items-center gap-2">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              <span class="font-medium text-text">{item.name}</span>
-              <span class="text-xs text-text-dim">({item.type})</span>
+            <span class="flex items-center gap-2 min-w-0">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <span class="font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
+              <span class="text-xs text-text-dim shrink-0">({item.type})</span>
             </span>
             <span class="text-xs text-text-muted">
               {#if sel > 0}
@@ -807,16 +831,16 @@
                 <div class="flex items-center gap-2">
                   <input type="text" placeholder="Filter by path…" bind:value={entry.search}
                     class="flex-1 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-dim" />
-                  <button type="button" onclick={() => selectAllFiltered(item.name)}
+                  <button type="button" onclick={() => selectAllFiltered(item)}
                     class="text-xs px-2 py-1 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text">Select all</button>
-                  <button type="button" onclick={() => clearPickerSelection(item.name)}
+                  <button type="button" onclick={() => clearPickerSelection(item)}
                     class="text-xs px-2 py-1 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text">Clear</button>
                 </div>
                 <div class="max-h-64 overflow-y-auto border border-border rounded-lg bg-surface-3/30">
                   {#each filteredFiles(entry) as f (f.path)}
                     <label class="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-surface-3 cursor-pointer">
                       <input type="checkbox" checked={entry.selected.has(f.path)}
-                        onchange={() => toggleFilePicked(item.name, f.path)} class="accent-vault" />
+                        onchange={() => toggleFilePicked(item, f.path)} class="accent-vault" />
                       <span class="font-mono text-text flex-1 truncate" title={f.path}>{f.path}</span>
                       {#if f.is_dir}
                         <span class="text-text-dim">dir</span>
@@ -849,7 +873,7 @@
         <p class="text-sm font-medium text-warning">This will overwrite existing data</p>
         <p class="text-xs text-text-muted mt-0.5">Restoring will replace current files for
           {#if selectedCount === 1}
-            <strong class="text-text">{selectedItemsArray[0].name}</strong>
+            <strong class="text-text" title={itemDisplayLabel(selectedItemsArray[0])}>{itemDisplayLabel(selectedItemsArray[0])}</strong>
           {:else}
             <strong class="text-text">{selectedCount} selected items</strong>
           {/if}

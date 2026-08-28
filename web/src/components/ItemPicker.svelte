@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
+  import { itemDisplayLabel } from '../lib/utils.js'
   import Spinner from './Spinner.svelte'
   import PathBrowser from './PathBrowser.svelte'
 
@@ -680,7 +681,7 @@
               </div>
               <div class="flex-1 min-w-0">
                 <div class="text-sm font-medium text-text truncate">{folder.name}</div>
-                <div class="text-xs text-text-muted truncate">{folder.settings?.path || ''}</div>
+                <div class="text-xs text-text-muted truncate" title={folder.settings?.path || ''}>{folder.settings?.path || ''}</div>
               </div>
               {#if folder.settings?.preset}
                 <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-amber-400">{folder.settings.preset}</span>
@@ -866,7 +867,7 @@
             >
               <svg aria-hidden="true" class="w-4 h-4 text-text-dim cursor-grab shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg>
               <span class="text-xs px-1.5 py-0.5 rounded bg-surface-4 text-text-dim shrink-0">{item.item_type}</span>
-              <span class="text-text truncate">{item.item_name}</span>
+              <span class="text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
               {#if stale}
                 <span class="flex items-center gap-1 text-xs text-yellow-400 shrink-0" title="This item no longer exists on the system">
                   <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
@@ -898,7 +899,7 @@
                   type="button"
                   onclick={() => removeItem(key)}
                   class="p-0.5 text-text-dim hover:text-red-400 transition-colors"
-                  aria-label="Remove {item.item_name}"
+                  aria-label="Remove {itemDisplayLabel(item)}"
                   title="Remove from backup job"
                 >
                   <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>

@@ -16,7 +16,9 @@ import {
   relTimeUntil,
   prettyAnomalySummary,
   snapshotMigrationMessage,
+  itemDisplayLabel,
 } from './utils.js'
+
 
 describe('formatBytes', () => {
   it('handles zero / falsy', () => {
@@ -250,3 +252,104 @@ describe('snapshotMigrationMessage', () => {
     expect(text).toBe('Database not migrated — the new copy could not be verified')
   })
 })
+
+describe('itemDisplayLabel', () => {
+  it('returns full path when settings.path is present in JSON string', () => {
+    const item = {
+      item_type: 'folder',
+      item_name: 'appdata',
+      item_id: '/mnt/user/appdata',
+      settings: '{"path":"/mnt/user/appdata","preset":""}',
+    }
+    expect(itemDisplayLabel(item)).toBe('/mnt/user/appdata')
+  })
+
+  it('returns full path when settings.path is present in an object', () => {
+    const item = {
+      item_type: 'folder',
+      item_name: 'media',
+      item_id: '/mnt/user/media',
+      settings: { path: '/mnt/user/media', preset: '' },
+    }
+    expect(itemDisplayLabel(item)).toBe('/mnt/user/media')
+  })
+
+  it('falls back to item_id when settings.path is missing but item_id is an absolute path', () => {
+    const item = {
+      item_type: 'folder',
+      item_name: 'documents',
+      item_id: '/mnt/user/documents',
+      settings: '{}',
+    }
+    expect(itemDisplayLabel(item)).toBe('/mnt/user/documents')
+  })
+
+  it('falls back to item_name when settings.path is missing and item_id is not an absolute path', () => {
+    const item = {
+      item_type: 'folder',
+      item_name: 'custom_folder',
+      item_id: 'custom_folder',
+      settings: '',
+    }
+    expect(itemDisplayLabel(item)).toBe('custom_folder')
+  })
+
+  it('keeps friendly item_name for preset folder items', () => {
+    const flashItem = {
+      item_type: 'folder',
+      item_name: 'Flash Drive',
+      item_id: '/boot',
+      settings: '{"path":"/boot","preset":"flash"}',
+    }
+    expect(itemDisplayLabel(flashItem)).toBe('Flash Drive')
+
+    const flashObjItem = {
+      item_type: 'folder',
+      item_name: 'Flash Drive',
+      item_id: '/boot',
+      settings: { path: '/boot', preset: 'flash' },
+    }
+    expect(itemDisplayLabel(flashObjItem)).toBe('Flash Drive')
+  })
+
+  it('returns item_name unchanged for non-folder items', () => {
+    expect(itemDisplayLabel({ item_type: 'container', item_name: 'plex', item_id: '12345' })).toBe('plex')
+    expect(itemDisplayLabel({ item_type: 'vm', item_name: 'homeassistant', item_id: 'vmid1' })).toBe('homeassistant')
+    expect(itemDisplayLabel({ item_type: 'plugin', item_name: 'community.applications', item_id: 'ca' })).toBe('community.applications')
+    expect(itemDisplayLabel({ item_type: 'zfs', item_name: 'tank/data', item_id: 'tank/data' })).toBe('tank/data')
+  })
+
+  it('handles name/type/id aliases on item object', () => {
+    const folderItem = {
+      type: 'folder',
+      name: 'appdata',
+      id: '/mnt/user/appdata',
+      settings: { path: '/mnt/user/appdata' },
+    }
+    expect(itemDisplayLabel(folderItem)).toBe('/mnt/user/appdata')
+
+    const vmItem = {
+      type: 'vm',
+      name: 'windows11',
+      id: 'win11',
+    }
+    expect(itemDisplayLabel(vmItem)).toBe('windows11')
+  })
+
+  it('handles malformed or empty settings gracefully without throwing', () => {
+    expect(itemDisplayLabel({ item_type: 'folder', item_name: 'test', settings: '{bad json' })).toBe('test')
+    expect(itemDisplayLabel({ item_type: 'folder', item_name: 'test', settings: null })).toBe('test')
+    expect(itemDisplayLabel({ item_type: 'folder', item_name: 'test', settings: 'null' })).toBe('test')
+    expect(itemDisplayLabel({ item_type: 'folder', item_name: 'test', settings: undefined })).toBe('test')
+    expect(itemDisplayLabel({ item_type: 'folder', item_name: 'test', settings: 123 })).toBe('test')
+    expect(itemDisplayLabel({ item_type: 'folder', item_name: 'test', settings: 'true' })).toBe('test')
+  })
+
+  it('handles nullish, empty, or string inputs', () => {
+    expect(itemDisplayLabel(null)).toBe('')
+    expect(itemDisplayLabel(undefined)).toBe('')
+    expect(itemDisplayLabel('')).toBe('')
+    expect(itemDisplayLabel('simple-string')).toBe('simple-string')
+  })
+})
+

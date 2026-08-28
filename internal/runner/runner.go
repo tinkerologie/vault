@@ -1298,9 +1298,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				itemsFailed++
 				failedNames = append(failedNames, item.ItemName)
 				itemResults = append(itemResults, map[string]any{
-					"name":   item.ItemName,
-					"status": "failed",
-					"error":  stageErr.Error(),
+					"name":     item.ItemName,
+					"type":     item.ItemType,
+					"item_id":  item.ItemID,
+					"settings": item.Settings,
+					"status":   "failed",
+					"error":    stageErr.Error(),
 				})
 				log.Printf("runner: stage item %s failed: %v", item.ItemName, stageErr)
 				r.broadcast(map[string]any{
@@ -1353,9 +1356,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			itemsFailed++
 			failedNames = append(failedNames, item.ItemName)
 			itemResults = append(itemResults, map[string]any{
-				"name":   item.ItemName,
-				"status": "failed",
-				"error":  backupErr.Error(),
+				"name":     item.ItemName,
+				"type":     item.ItemType,
+				"item_id":  item.ItemID,
+				"settings": item.Settings,
+				"status":   "failed",
+				"error":    backupErr.Error(),
 			})
 			log.Printf("runner: backup item %s failed: %v", item.ItemName, backupErr)
 
@@ -1385,6 +1391,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 			resEntry := map[string]any{
 				"name":       item.ItemName,
+				"type":       item.ItemType,
+				"item_id":    item.ItemID,
+				"settings":   item.Settings,
 				"status":     "ok",
 				"size_bytes": itemSize,
 			}
@@ -1619,9 +1628,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				itemsFailed++
 				failedNames = append(failedNames, s.dbItem.ItemName)
 				itemResults = append(itemResults, map[string]any{
-					"name":   s.dbItem.ItemName,
-					"status": "failed",
-					"error":  uploadErr.Error(),
+					"name":     s.dbItem.ItemName,
+					"type":     s.dbItem.ItemType,
+					"item_id":  s.dbItem.ItemID,
+					"settings": s.dbItem.Settings,
+					"status":   "failed",
+					"error":    uploadErr.Error(),
 				})
 				log.Printf("runner: upload item %s failed: %v", s.dbItem.ItemName, uploadErr)
 				r.broadcast(map[string]any{
@@ -1650,6 +1662,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 				resEntry := map[string]any{
 					"name":       s.dbItem.ItemName,
+					"type":       s.dbItem.ItemType,
+					"item_id":    s.dbItem.ItemID,
+					"settings":   s.dbItem.Settings,
 					"status":     "ok",
 					"size_bytes": itemSize,
 				}

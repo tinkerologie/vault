@@ -329,3 +329,29 @@ export function snapshotMigrationMessage(info, fallback) {
     count > 0 ? ` — ${count === 1 ? '1 file' : `${count} files`} removed from ${m.from}` : ''
   return { text: `Database migrated to ${m.to}${detail}`, tone: 'success' }
 }
+
+/**
+ * Derive the human-readable display label for a backup or restore job item.
+ *
+ * Folder items display their full path (from parsed settings.path or an absolute
+ * item_id) rather than just the folder's trailing basename, while discovered presets
+ * (e.g. Flash Drive) and non-folder items (containers, VMs, plugins, ZFS) keep
+ * their friendly item name.
+ *
+ * @param {{ item_type?: string, type?: string, item_name?: string, name?: string, item_id?: string, id?: string, settings?: any } | string | null | undefined} item
+ * @returns {string}
+ */
+export function itemDisplayLabel(item) {
+  if (!item) return ''
+  if (typeof item === 'string') return item
+  const itemType = item.item_type || item.type || ''
+  const itemName = item.item_name || item.name || ''
+  if (itemType !== 'folder') return itemName
+  const parsedSettings = parseConfig(item.settings)
+  const settings = parsedSettings && typeof parsedSettings === 'object' ? parsedSettings : {}
+  if (settings.preset) return itemName
+  if (typeof settings.path === 'string' && settings.path.trim()) return settings.path.trim()
+  const itemId = typeof item.item_id === 'string' ? item.item_id : typeof item.id === 'string' ? item.id : ''
+  if (itemId.startsWith('/')) return itemId
+  return itemName
+}

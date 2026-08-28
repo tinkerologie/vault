@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet, SvelteMap } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
-  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate } from '../lib/utils.js'
+  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -472,15 +472,15 @@
                               {:else}
                                 <svg aria-hidden="true" class="w-4 h-4 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                               {/if}
-                              <span class="font-medium text-text">{item.name}</span>
+                              <span class="font-medium text-text truncate min-w-0" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
                               {#if item.size_bytes}
-                                <span class="text-xs text-text-dim">{formatBytes(item.size_bytes)}</span>
+                                <span class="text-xs text-text-dim shrink-0">{formatBytes(item.size_bytes)}</span>
                               {/if}
                               {#if item.verified}
-                                <span class="text-xs px-1.5 py-0.5 rounded bg-success/15 text-success">verified</span>
+                                <span class="text-xs px-1.5 py-0.5 rounded bg-success/15 text-success shrink-0">verified</span>
                               {/if}
                               {#if item.error}
-                                <span class="text-xs text-danger ml-auto">{item.error}</span>
+                                <span class="text-xs text-danger ml-auto min-w-0 break-words">{item.error}</span>
                               {/if}
                             </div>
                           {/each}
