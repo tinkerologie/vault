@@ -346,9 +346,12 @@ export function itemDisplayLabel(item) {
   if (typeof item === 'string') return item
   const itemType = item.item_type || item.type || ''
   const itemName = item.item_name || item.name || ''
-  if (itemType !== 'folder') return itemName
   const parsedSettings = parseConfig(item.settings)
   const settings = parsedSettings && typeof parsedSettings === 'object' ? parsedSettings : {}
+  if (itemType !== 'folder') {
+    if (typeof settings.display_name === 'string' && settings.display_name.trim()) return settings.display_name.trim()
+    return itemName
+  }
   if (settings.preset) return itemName
   if (typeof settings.path === 'string' && settings.path.trim()) return settings.path.trim()
   const itemId = typeof item.item_id === 'string' ? item.item_id : typeof item.id === 'string' ? item.id : ''

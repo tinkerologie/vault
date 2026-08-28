@@ -208,7 +208,9 @@
   function filteredPlugins() {
     if (!search) return plugins
     const q = search.toLowerCase()
-    return plugins.filter((p) => p.name.toLowerCase().includes(q))
+    return plugins.filter(
+      (p) => p.name.toLowerCase().includes(q) || (p.settings?.display_name || '').toLowerCase().includes(q),
+    )
   }
 
   function filteredZFS() {
@@ -776,7 +778,7 @@
                 {/if}
               </div>
               <div class="flex-1 min-w-0">
-                <div class="text-sm font-medium text-text truncate">{plugin.name}</div>
+                <div class="text-sm font-medium text-text truncate">{plugin.settings?.display_name || plugin.name}</div>
                 <div class="text-xs text-text-muted">Unraid Plugin</div>
               </div>
               {#if plugin.settings?.has_config}

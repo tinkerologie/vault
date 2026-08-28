@@ -259,3 +259,217 @@ func TestPluginChunkedRestoreDestination(t *testing.T) {
 		}
 	})
 }
+
+// TestPluginListItems tests PluginHandler.ListItems() directly using a temporary directory,
+// verifying filtering of hidden and AppleDouble ._* files, and parsing of display names.
+func TestPluginListItems(t *testing.T) {
+	base := t.TempDir()
+	orig := pluginsDir
+	pluginsDir = base
+	t.Cleanup(func() { pluginsDir = orig })
+
+	// 1. Literal name attribute
+	caPLG := `<?xml version="1.0" standalone="yes"?>
+<PLUGIN name="Community Applications" version="2026.01.01">
+</PLUGIN>`
+	if err := os.WriteFile(filepath.Join(base, "community.applications.plg"), []byte(caPLG), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. DTD entity-based name attribute (double quotes) + config directory
+	vaultPLG := `<?xml version="1.0" standalone="yes"?>
+<!DOCTYPE PLUGIN [
+    <!ENTITY name "Vault Backup Manager">
+]>
+<PLUGIN name="&name;" author="Ruaan Deysel">
+</PLUGIN>`
+	if err := os.WriteFile(filepath.Join(base, "vault.plg"), []byte(vaultPLG), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "vault"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. DTD entity-based name attribute (single quotes)
+	udPLG := `<?xml version="1.0" standalone="yes"?>
+<!DOCTYPE PLUGIN [
+    <!ENTITY name 'Unassigned Devices'>
+]>
+<PLUGIN name="&name;">
+</PLUGIN>`
+	if err := os.WriteFile(filepath.Join(base, "unassigned.devices.plg"), []byte(udPLG), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4. AppleDouble ._* artifact file (must be excluded)
+	if err := os.WriteFile(filepath.Join(base, "._vault.plg"), []byte{0x00, 0x05, 0x16, 0x07}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 5. Hidden dot file (must be excluded)
+	if err := os.WriteFile(filepath.Join(base, ".hidden.plg"), []byte("<PLUGIN name=\"Hidden\"></PLUGIN>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 6. Malformed XML (falls back to filename stem)
+	if err := os.WriteFile(filepath.Join(base, "broken.plg"), []byte("this is not xml <><"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 7. Missing name attribute (falls back to filename stem)
+	if err := os.WriteFile(filepath.Join(base, "noname.plg"), []byte("<PLUGIN author=\"Unknown\"></PLUGIN>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := NewPluginHandler()
+	if err != nil {
+		t.Fatalf("NewPluginHandler: %v", err)
+	}
+
+	items, err := h.ListItems()
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+
+	itemsByName := make(map[string]BackupItem)
+	for _, item := range items {
+		itemsByName[item.Name] = item
+	}
+
+	// Assert ._ and hidden entries are excluded
+	if _, found := itemsByName["._vault"]; found {
+		t.Errorf("expected ._vault.plg to be excluded from ListItems()")
+	}
+	if _, found := itemsByName[".hidden"]; found {
+		t.Errorf("expected .hidden.plg to be excluded from ListItems()")
+	}
+
+	// Assert valid fixtures
+	wantItems := map[string]struct {
+		displayName string
+		hasConfig   bool
+	}{
+		"community.applications": {displayName: "Community Applications", hasConfig: false},
+		"vault":                  {displayName: "Vault Backup Manager", hasConfig: true},
+		"unassigned.devices":     {displayName: "Unassigned Devices", hasConfig: false},
+		"broken":                 {displayName: "broken", hasConfig: false},
+		"noname":                 {displayName: "noname", hasConfig: false},
+	}
+
+	if len(items) != len(wantItems) {
+		t.Errorf("got %d items, want %d", len(items), len(wantItems))
+	}
+
+	for name, want := range wantItems {
+		item, ok := itemsByName[name]
+		if !ok {
+			t.Errorf("missing expected plugin %q in results", name)
+			continue
+		}
+		if item.Type != "plugin" {
+			t.Errorf("item %q Type = %q, want plugin", name, item.Type)
+		}
+		disp, _ := item.Settings["display_name"].(string)
+		if disp != want.displayName {
+			t.Errorf("item %q display_name = %q, want %q", name, disp, want.displayName)
+		}
+		id, _ := item.Settings["id"].(string)
+		if id != name {
+			t.Errorf("item %q id = %q, want %q", name, id, name)
+		}
+		hasConfig, _ := item.Settings["has_config"].(bool)
+		if hasConfig != want.hasConfig {
+			t.Errorf("item %q has_config = %v, want %v", name, hasConfig, want.hasConfig)
+		}
+	}
+}
+
+func TestParsePluginDisplayName(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "literal name",
+			input:    `<PLUGIN name="My Plugin"></PLUGIN>`,
+			expected: "My Plugin",
+		},
+		{
+			name: "entity double quotes",
+			input: `<?xml version="1.0"?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name "Dyn Name">
+]>
+<PLUGIN name="&name;">
+</PLUGIN>`,
+			expected: "Dyn Name",
+		},
+		{
+			name: "entity single quotes",
+			input: `<!DOCTYPE PLUGIN [
+<!ENTITY name 'Single Quote'>
+]>
+<PLUGIN name="&name;">`,
+			expected: "Single Quote",
+		},
+		{
+			name:     "lowercase plugin tag",
+			input:    `<plugin name="Lower Tag">`,
+			expected: "Lower Tag",
+		},
+		{
+			name:     "empty attribute",
+			input:    `<PLUGIN name="">`,
+			expected: "",
+		},
+		{
+			name:     "missing name attribute",
+			input:    `<PLUGIN author="Someone">`,
+			expected: "",
+		},
+		{
+			name:     "empty input",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "non-plugin root element",
+			input:    `<OTHER name="Not a plugin">`,
+			expected: "",
+		},
+		{
+			name:     "invalid XML",
+			input:    `random garbage bytes not xml`,
+			expected: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parsePluginDisplayName([]byte(tc.input))
+			if got != tc.expected {
+				t.Errorf("parsePluginDisplayName() = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestPluginDisplayName(t *testing.T) {
+	// Missing file should gracefully return empty string
+	if got := pluginDisplayName("/nonexistent/path/plugin.plg"); got != "" {
+		t.Errorf("pluginDisplayName() = %q, want empty string", got)
+	}
+
+	// Valid file
+	dir := t.TempDir()
+	p := filepath.Join(dir, "test.plg")
+	if err := os.WriteFile(p, []byte(`<PLUGIN name="Direct Test"></PLUGIN>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := pluginDisplayName(p); got != "Direct Test" {
+		t.Errorf("pluginDisplayName() = %q, want %q", got, "Direct Test")
+	}
+}
+
+

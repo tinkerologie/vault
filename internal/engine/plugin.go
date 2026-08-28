@@ -3,15 +3,65 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
+
+// entityDeclPattern matches DOCTYPE <!ENTITY name "value"> declarations in .plg files.
+var entityDeclPattern = regexp.MustCompile(`(?i)<!ENTITY\s+([a-zA-Z0-9._-]+)\s+["']([^"']*)["']\s*>`)
+
+// pluginDisplayName extracts the human-readable plugin name from a .plg file.
+// It parses DOCTYPE entity declarations and decodes the root <PLUGIN> element.
+// Returns an empty string on any error or if the name attribute is absent.
+func pluginDisplayName(plgPath string) string {
+	data, err := os.ReadFile(plgPath) // #nosec G304 — plgPath constructed from pluginsDir and entry.Name from ReadDir
+	if err != nil {
+		return ""
+	}
+	return parsePluginDisplayName(data)
+}
+
+// parsePluginDisplayName extracts the name attribute of the root <PLUGIN> element
+// from .plg XML bytes, resolving any DOCTYPE <!ENTITY ...> references.
+func parsePluginDisplayName(data []byte) string {
+	entities := make(map[string]string)
+	matches := entityDeclPattern.FindAllSubmatch(data, -1)
+	for _, m := range matches {
+		if len(m) == 3 {
+			entities[string(m[1])] = string(m[2])
+		}
+	}
+
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder.Strict = false
+	decoder.Entity = entities
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			return ""
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			if strings.EqualFold(se.Name.Local, "plugin") {
+				for _, attr := range se.Attr {
+					if strings.EqualFold(attr.Name.Local, "name") {
+						return strings.TrimSpace(attr.Value)
+					}
+				}
+			}
+			return ""
+		}
+	}
+}
 
 // pluginsDir is the base directory where Unraid plugins are installed. It is a
 // var (not a const) only so tests can redirect plugin reads/writes to a
@@ -51,7 +101,7 @@ func (h *PluginHandler) ListItems() ([]BackupItem, error) {
 
 	items := make([]BackupItem, 0)
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".plg") {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || !strings.HasSuffix(entry.Name(), ".plg") {
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".plg")
@@ -64,14 +114,20 @@ func (h *PluginHandler) ListItems() ([]BackupItem, error) {
 			hasConfig = true
 		}
 
+		displayName := pluginDisplayName(plgPath)
+		if displayName == "" {
+			displayName = name
+		}
+
 		items = append(items, BackupItem{
 			Name: name,
 			Type: "plugin",
 			Settings: map[string]any{
-				"id":         name,
-				"plg_path":   plgPath,
-				"config_dir": configDir,
-				"has_config": hasConfig,
+				"id":           name,
+				"display_name": displayName,
+				"plg_path":     plgPath,
+				"config_dir":   configDir,
+				"has_config":   hasConfig,
 			},
 		})
 	}

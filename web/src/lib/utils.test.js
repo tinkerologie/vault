@@ -312,11 +312,30 @@ describe('itemDisplayLabel', () => {
     expect(itemDisplayLabel(flashObjItem)).toBe('Flash Drive')
   })
 
-  it('returns item_name unchanged for non-folder items', () => {
+  it('returns item_name unchanged for non-folder items without display_name', () => {
     expect(itemDisplayLabel({ item_type: 'container', item_name: 'plex', item_id: '12345' })).toBe('plex')
     expect(itemDisplayLabel({ item_type: 'vm', item_name: 'homeassistant', item_id: 'vmid1' })).toBe('homeassistant')
     expect(itemDisplayLabel({ item_type: 'plugin', item_name: 'community.applications', item_id: 'ca' })).toBe('community.applications')
     expect(itemDisplayLabel({ item_type: 'zfs', item_name: 'tank/data', item_id: 'tank/data' })).toBe('tank/data')
+  })
+
+  it('prefers settings.display_name for plugin and other non-folder items when present', () => {
+    expect(
+      itemDisplayLabel({
+        item_type: 'plugin',
+        item_name: 'community.applications',
+        item_id: 'community.applications',
+        settings: '{"display_name":"Community Applications"}',
+      }),
+    ).toBe('Community Applications')
+
+    expect(
+      itemDisplayLabel({
+        type: 'plugin',
+        name: 'vault',
+        settings: { display_name: 'Vault Backup Manager' },
+      }),
+    ).toBe('Vault Backup Manager')
   })
 
   it('handles name/type/id aliases on item object', () => {
