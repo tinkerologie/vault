@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Restore points now show the base full backup for chained restores (#318):** Differential and incremental restore points in the restore timeline and wizard now display the date and size of the root full backup they depend on, and the `Chain ×N` badge includes an explanatory tooltip describing chain length and replay behavior. Closes #318.
+
 - **Configurable log level (#346):** Added a global log level setting (`debug`, `info`, `warn`, `error`) configurable via the web Settings page and the settings API (`log_level`). Daemon logging routes through a centralized `slog` handler with dynamic level adjustments applied at runtime without restarting the daemon. Closes #346.
 
 - **Codecov configuration and dual-stack test coverage:** Added repository-root `codecov.yml` defining dual-stack coverage flags (`backend` and `frontend`), subsystem component dashboards, and an 80% coverage target on PR patches. Added `@vitest/coverage-v8` frontend coverage reporting with LCOV output, unified CI web test runs, and updated Go coverage targets with cross-package atomic instrumentation.

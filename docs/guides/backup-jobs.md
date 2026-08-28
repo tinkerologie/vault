@@ -275,7 +275,7 @@ To keep that from turning a running backup into an apparent freeze, Vault **defe
 
 If you set a passphrase under **Settings → Security → Encryption**, all backup archives are encrypted with your backup password (age encryption — a modern, audited standard) before they leave the host. Without the passphrase, restoring is not possible. Encryption is transparent to storage destinations — it applies equally to local, SFTP, SMB, NFS, WebDAV, and S3.
 
-The encryption status is shown on the Dashboard's 3-2-1 compliance widget, and on each restore point's chain-health badge.
+The encryption status is shown on the Dashboard's 3-2-1 compliance widget, and on each restore point's chain-health badge (along with details on the referenced full backup for chained restores).
 
 ---
 

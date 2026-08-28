@@ -1,5 +1,6 @@
 <script>
-  import { formatBytes, relTime } from '../lib/utils.js'
+  import { formatBytes, formatDate, relTime } from '../lib/utils.js'
+  import Tooltip from './Tooltip.svelte'
 
   let {
     points = [],
@@ -146,7 +147,10 @@
                 {#if rp.chain_status === 'broken'}
                   <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium bg-danger/15 text-danger">Broken chain</span>
                 {:else if chainDeps(rp) > 0}
-                  <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium bg-info/15 text-info">Chain ×{rp.chain_depth}</span>
+                  <span class="inline-flex items-center gap-0.5">
+                    <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium bg-info/15 text-info">Chain ×{rp.chain_depth}</span>
+                    <Tooltip text="Chain length is {rp.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
+                  </span>
                 {/if}
                 {#if rp.retention_preserved}
                   <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning">Retained for chain</span>
@@ -184,7 +188,12 @@
             {#if rp.chain_status === 'broken'}
               <p class="mt-2 text-xs text-danger">{rp.chain_warning}</p>
             {:else if chainDeps(rp) > 0}
-              <p class="mt-2 text-xs text-info">Restore replays {chainDeps(rp)} earlier backup{chainDeps(rp) === 1 ? '' : 's'} in this chain.</p>
+              <div class="mt-2 space-y-0.5 text-xs">
+                <p class="text-info">Restore replays {chainDeps(rp)} earlier backup{chainDeps(rp) === 1 ? '' : 's'} in this chain.</p>
+                {#if rp.base_full_created_at}
+                  <p class="text-text-muted">Based on the full backup from {formatDate(rp.base_full_created_at)}{rp.base_full_size_bytes ? ` (${formatBytes(rp.base_full_size_bytes)})` : ''}.</p>
+                {/if}
+              </div>
             {/if}
           </div>
         {/each}

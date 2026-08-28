@@ -120,3 +120,96 @@ func TestAnnotateRestorePointsUsesNewestOrderForRetention(t *testing.T) {
 		t.Fatalf("latest ChainDepth = %d, want 3", byID[22].ChainDepth)
 	}
 }
+
+func TestAnnotateRestorePointsSurfacesBaseFullBackup(t *testing.T) {
+	t.Parallel()
+
+	baseTime := time.Date(2026, 3, 8, 8, 0, 0, 0, time.UTC)
+	inc1Time := time.Date(2026, 3, 8, 9, 0, 0, 0, time.UTC)
+	diffTime := time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC)
+
+	job := db.Job{Name: "base-full-chain", RetentionCount: 5}
+	points := []db.RestorePoint{
+		{
+			ID:         100,
+			BackupType: "full",
+			SizeBytes:  1024 * 1024,
+			CreatedAt:  baseTime,
+		},
+		{
+			ID:                   101,
+			BackupType:           "incremental",
+			ParentRestorePointID: 100,
+			SizeBytes:            512 * 1024,
+			CreatedAt:            inc1Time,
+		},
+		{
+			ID:                   102,
+			BackupType:           "differential",
+			ParentRestorePointID: 100,
+			SizeBytes:            768 * 1024,
+			CreatedAt:            diffTime,
+		},
+		{
+			ID:                   103,
+			BackupType:           "incremental",
+			ParentRestorePointID: 999,
+			SizeBytes:            256 * 1024,
+			CreatedAt:            diffTime.Add(time.Hour),
+		},
+	}
+
+	annotated := annotateRestorePoints(job, points, diffTime.Add(2*time.Hour))
+	byID := make(map[int64]AnnotatedRestorePoint, len(annotated))
+	for _, rp := range annotated {
+		byID[rp.ID] = rp
+	}
+
+	// Standalone full point reports itself as base full backup
+	fullPt := byID[100]
+	if fullPt.BaseFullRestorePointID != 100 {
+		t.Errorf("full BaseFullRestorePointID = %d, want 100", fullPt.BaseFullRestorePointID)
+	}
+	if fullPt.BaseFullCreatedAt == nil || !fullPt.BaseFullCreatedAt.Equal(baseTime) {
+		t.Errorf("full BaseFullCreatedAt = %v, want %v", fullPt.BaseFullCreatedAt, baseTime)
+	}
+	if fullPt.BaseFullSizeBytes != 1024*1024 {
+		t.Errorf("full BaseFullSizeBytes = %d, want %d", fullPt.BaseFullSizeBytes, 1024*1024)
+	}
+
+	// Incremental child point reports base full backup
+	incPt := byID[101]
+	if incPt.BaseFullRestorePointID != 100 {
+		t.Errorf("inc BaseFullRestorePointID = %d, want 100", incPt.BaseFullRestorePointID)
+	}
+	if incPt.BaseFullCreatedAt == nil || !incPt.BaseFullCreatedAt.Equal(baseTime) {
+		t.Errorf("inc BaseFullCreatedAt = %v, want %v", incPt.BaseFullCreatedAt, baseTime)
+	}
+	if incPt.BaseFullSizeBytes != 1024*1024 {
+		t.Errorf("inc BaseFullSizeBytes = %d, want %d", incPt.BaseFullSizeBytes, 1024*1024)
+	}
+
+	// Differential child point reports base full backup
+	diffPt := byID[102]
+	if diffPt.BaseFullRestorePointID != 100 {
+		t.Errorf("diff BaseFullRestorePointID = %d, want 100", diffPt.BaseFullRestorePointID)
+	}
+	if diffPt.BaseFullCreatedAt == nil || !diffPt.BaseFullCreatedAt.Equal(baseTime) {
+		t.Errorf("diff BaseFullCreatedAt = %v, want %v", diffPt.BaseFullCreatedAt, baseTime)
+	}
+	if diffPt.BaseFullSizeBytes != 1024*1024 {
+		t.Errorf("diff BaseFullSizeBytes = %d, want %d", diffPt.BaseFullSizeBytes, 1024*1024)
+	}
+
+	// Broken chain does not report base full backup
+	brokenPt := byID[103]
+	if brokenPt.BaseFullRestorePointID != 0 {
+		t.Errorf("broken BaseFullRestorePointID = %d, want 0", brokenPt.BaseFullRestorePointID)
+	}
+	if brokenPt.BaseFullCreatedAt != nil {
+		t.Errorf("broken BaseFullCreatedAt = %v, want nil", brokenPt.BaseFullCreatedAt)
+	}
+	if brokenPt.BaseFullSizeBytes != 0 {
+		t.Errorf("broken BaseFullSizeBytes = %d, want 0", brokenPt.BaseFullSizeBytes)
+	}
+}

@@ -121,7 +121,7 @@ After at least one successful backup:
 3. Click a restore point to open the guided wizard
 4. Choose which items to restore and confirm
 
-Each restore point also shows chain health annotations so you can see if a full parent is available for an incremental or differential point.
+Each restore point also shows chain health annotations so you can see the referenced full backup that anchors the chain for an incremental or differential point, along with chain depth tooltips.
 
 ![Restore page](screenshots/06-restore.png)
 

@@ -12,12 +12,15 @@ import (
 // retention-preservation information for the restore UI.
 type AnnotatedRestorePoint struct {
 	db.RestorePoint
-	ChainStatus                 string `json:"chain_status"`
-	ChainDepth                  int    `json:"chain_depth"`
-	ChainWarning                string `json:"chain_warning,omitempty"`
-	MissingParentRestorePointID int64  `json:"missing_parent_restore_point_id,omitempty"`
-	RetentionPreserved          bool   `json:"retention_preserved,omitempty"`
-	RetentionPreservedFor       int    `json:"retention_preserved_for,omitempty"`
+	ChainStatus                 string     `json:"chain_status"`
+	ChainDepth                  int        `json:"chain_depth"`
+	ChainWarning                string     `json:"chain_warning,omitempty"`
+	MissingParentRestorePointID int64      `json:"missing_parent_restore_point_id,omitempty"`
+	RetentionPreserved          bool       `json:"retention_preserved,omitempty"`
+	RetentionPreservedFor       int        `json:"retention_preserved_for,omitempty"`
+	BaseFullRestorePointID      int64      `json:"base_full_restore_point_id,omitempty"`
+	BaseFullCreatedAt           *time.Time `json:"base_full_created_at,omitempty"`
+	BaseFullSizeBytes           int64      `json:"base_full_size_bytes,omitempty"`
 }
 
 // AnnotateRestorePoints enriches restore points with chain-health information
@@ -47,13 +50,18 @@ func annotateRestorePoints(job db.Job, points []db.RestorePoint, now time.Time) 
 
 	annotated := make([]AnnotatedRestorePoint, 0, len(points))
 	for _, rp := range points {
-		status, depth, missingParentID, warning := restorePointChainState(rp, byID)
+		status, depth, missingParentID, warning, base := restorePointChainState(rp, byID)
 		entry := AnnotatedRestorePoint{
 			RestorePoint:                rp,
 			ChainStatus:                 status,
 			ChainDepth:                  depth,
 			ChainWarning:                warning,
 			MissingParentRestorePointID: missingParentID,
+		}
+		if (status == "healthy" || status == "standalone") && base != nil && base.BackupType == "full" {
+			entry.BaseFullRestorePointID = base.ID
+			entry.BaseFullCreatedAt = &base.CreatedAt
+			entry.BaseFullSizeBytes = base.SizeBytes
 		}
 		if _, isProtected := protected[rp.ID]; isProtected {
 			if _, isDirectKeep := directKeep[rp.ID]; !isDirectKeep && dependencyCounts[rp.ID] > 0 {
@@ -133,9 +141,9 @@ func retainedDependencyCounts(points []db.RestorePoint, directKeep map[int64]str
 	return counts
 }
 
-func restorePointChainState(rp db.RestorePoint, byID map[int64]db.RestorePoint) (string, int, int64, string) {
+func restorePointChainState(rp db.RestorePoint, byID map[int64]db.RestorePoint) (string, int, int64, string, *db.RestorePoint) {
 	if rp.ParentRestorePointID <= 0 {
-		return "standalone", 1, 0, ""
+		return "standalone", 1, 0, "", &rp
 	}
 
 	depth := 1
@@ -145,15 +153,15 @@ func restorePointChainState(rp db.RestorePoint, byID map[int64]db.RestorePoint) 
 		depth++
 		parentID := current.ParentRestorePointID
 		if _, ok := seen[parentID]; ok {
-			return "broken", depth, parentID, fmt.Sprintf("Restore chain loops back to restore point #%d.", parentID)
+			return "broken", depth, parentID, fmt.Sprintf("Restore chain loops back to restore point #%d.", parentID), nil
 		}
 		parent, ok := byID[parentID]
 		if !ok {
-			return "broken", depth, parentID, fmt.Sprintf("Parent restore point #%d is missing. Restore from this point will fail until the chain is repaired.", parentID)
+			return "broken", depth, parentID, fmt.Sprintf("Parent restore point #%d is missing. Restore from this point will fail until the chain is repaired.", parentID), nil
 		}
 		seen[parentID] = struct{}{}
 		current = parent
 	}
 
-	return "healthy", depth, 0, ""
+	return "healthy", depth, 0, "", &current
 }

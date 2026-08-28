@@ -8,6 +8,7 @@
   import PathBrowser from './PathBrowser.svelte'
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
+  import Tooltip from './Tooltip.svelte'
 
   let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null } = $props()
 
@@ -699,7 +700,12 @@
         </div>
         <div class="flex justify-between">
           <span class="text-text-muted">Chain Health</span>
-          <span class="text-xs font-medium {chainHealthTone(selectedPoint)}">{chainHealthLabel(selectedPoint)}</span>
+          <span class="inline-flex items-center gap-1">
+            <span class="text-xs font-medium {chainHealthTone(selectedPoint)}">{chainHealthLabel(selectedPoint)}</span>
+            {#if selectedPoint?.chain_status !== 'broken' && chainDependencies(selectedPoint) > 0}
+              <Tooltip text="Chain length is {selectedPoint.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
+            {/if}
+          </span>
         </div>
       </div>
     </div>
@@ -722,6 +728,9 @@
         <div>
           <p class="text-sm font-medium text-info">Restore will replay the full chain</p>
           <p class="text-xs text-text-muted mt-0.5">This point depends on {chainDependencies(selectedPoint)} earlier backup{chainDependencies(selectedPoint) === 1 ? '' : 's'} and Vault will stage them before restoring.</p>
+          {#if selectedPoint?.base_full_created_at}
+            <p class="text-xs text-text-muted mt-0.5">Based on the full backup from {formatDate(selectedPoint.base_full_created_at)}{selectedPoint.base_full_size_bytes ? ` (${formatBytes(selectedPoint.base_full_size_bytes)})` : ''}.</p>
+          {/if}
         </div>
       </div>
     {/if}

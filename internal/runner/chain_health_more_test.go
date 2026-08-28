@@ -44,7 +44,10 @@ func TestRestorePointChainStateLoop(t *testing.T) {
 	rp11 := db.RestorePoint{ID: 11, ParentRestorePointID: 10}
 	byID := map[int64]db.RestorePoint{10: rp10, 11: rp11}
 
-	status, _, missingParent, warning := restorePointChainState(rp10, byID)
+	status, _, missingParent, warning, base := restorePointChainState(rp10, byID)
+	if base != nil {
+		t.Errorf("base = %+v, want nil on loop", base)
+	}
 	if status != "broken" {
 		t.Errorf("status = %q, want broken on loop", status)
 	}
