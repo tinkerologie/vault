@@ -73,3 +73,61 @@ export function onBaselineUpdated(fn) {
 export function notifyBaselineUpdated(data) {
   baselineListeners.forEach(fn => fn(data))
 }
+
+/**
+ * Compute open anomaly counts per severity level for items matching a filter.
+ *
+ * @param {((a: any) => boolean) | { scope_kind?: string, scope_id?: number, job_run_id?: number, kind?: string, id?: number, runId?: number } | null} [filter]
+ * @param {any[]} [customList] Optional list to evaluate against; defaults to shared openList.
+ * @returns {{ critical: number, warning: number, info: number }}
+ */
+export function getAnomalyCounts(filter, customList) {
+  const list = customList ?? openList
+  const counts = { critical: 0, warning: 0, info: 0 }
+  if (!Array.isArray(list)) return counts
+
+  let predicate = () => true
+  if (typeof filter === 'function') {
+    predicate = filter
+  } else if (filter && typeof filter === 'object') {
+    const scopeKind = filter.scope_kind ?? filter.kind
+    const scopeId = filter.scope_id ?? filter.id
+    const runId = filter.job_run_id ?? filter.runId
+
+    predicate = (a) => {
+      if (!a) return false
+      if (scopeKind !== undefined && a.scope_kind !== scopeKind) return false
+      if (scopeId !== undefined && a.scope_id !== scopeId) return false
+      if (runId !== undefined && a.job_run_id !== runId) return false
+      return true
+    }
+  }
+
+  for (const item of list) {
+    if (!item) continue
+    if (predicate(item)) {
+      const sev = item.severity
+      if (sev === 'critical' || sev === 'warning' || sev === 'info') {
+        counts[sev]++
+      }
+    }
+  }
+
+  return counts
+}
+
+/**
+ * Format a human-readable tooltip text explaining what the anomaly badges represent
+ * and how to act on them.
+ *
+ * @param {{ critical?: number, warning?: number, info?: number }} counts
+ * @returns {string}
+ */
+export function formatAnomalyTooltip(counts) {
+  const parts = []
+  if (counts?.critical) parts.push(`${counts.critical} critical`)
+  if (counts?.warning) parts.push(`${counts.warning} warning`)
+  if (counts?.info) parts.push(`${counts.info} info`)
+  const countSummary = parts.join(', ') || '0 anomalies'
+  return `Open anomalies (${countSummary}). Review on the Anomalies page to inspect details, mark as expected to update the baseline, or resolve.`
+}

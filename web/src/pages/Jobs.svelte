@@ -13,7 +13,7 @@
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
-  import { getAnomalies, onBaselineUpdated } from '../lib/anomalies.svelte.js'
+  import { onBaselineUpdated, getAnomalyCounts, formatAnomalyTooltip } from '../lib/anomalies.svelte.js'
   import { getAnomalyEnabled } from '../lib/settings.svelte.js'
   import ItemPicker from '../components/ItemPicker.svelte'
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
@@ -38,7 +38,6 @@
   let dataLoadId = 0
 
   // Anomaly / baseline per-job data
-  const anomalyState = getAnomalies()
   /** @type {Record<number, {sample_count: number}|null>} */
   let baselines = $state({})
 
@@ -49,18 +48,9 @@
   let remediateBusy = $state(false)
 
   // Count open anomalies per job from shared state
-  /** @type {(jobId: number) => number} */
-  function jobAnomalyCount(jobId) {
-    return anomalyState.openList.filter(a => a.scope_kind === 'job' && a.scope_id === jobId).length
-  }
-
-  /** @type {(jobId: number) => string} */
-  function jobWorstSeverity(jobId) {
-    const anomalies = anomalyState.openList.filter(a => a.scope_kind === 'job' && a.scope_id === jobId)
-    for (const sev of ['critical', 'warning', 'info']) {
-      if (anomalies.some(a => a.severity === sev)) return sev
-    }
-    return 'info'
+  /** @type {(jobId: number) => { critical: number, warning: number, info: number }} */
+  function jobAnomalyCounts(jobId) {
+    return getAnomalyCounts({ scope_kind: 'job', scope_id: jobId })
   }
 
   function baselineSamples(jobId) {
@@ -1199,8 +1189,19 @@
                   </h2>
                 {/if}
                 <!-- Anomaly badge for this job (hidden when anomaly detection is off) -->
-                {#if getAnomalyEnabled() && jobAnomalyCount(job.id) > 0}
-                  <AnomalyBadge count={jobAnomalyCount(job.id)} severity={jobWorstSeverity(job.id)} />
+                {#if getAnomalyEnabled()}
+                  {@const counts = jobAnomalyCounts(job.id)}
+                  {#if counts.critical > 0 || counts.warning > 0 || counts.info > 0}
+                    <Tooltip text={formatAnomalyTooltip(counts)}>
+                      <span class="inline-flex items-center gap-1">
+                        {#each ['critical', 'warning', 'info'] as sev (sev)}
+                          {#if counts[sev] > 0}
+                            <AnomalyBadge count={counts[sev]} severity={sev} />
+                          {/if}
+                        {/each}
+                      </span>
+                    </Tooltip>
+                  {/if}
                 {/if}
                 <!-- Missing-item remediation pill (#119) -->
                 {#if jobStaleCount(job.id) > 0}

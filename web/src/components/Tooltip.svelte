@@ -7,8 +7,9 @@
    * Props:
    * - text: string – tooltip content
    * - id: string (optional) – unique ID for aria-describedby linking
+   * - children: Snippet (optional) – custom trigger content
    */
-  let { text = '', id = undefined } = $props()
+  let { text = '', id = undefined, children } = $props()
 
   let visible = $state(false)
   let position = $state('above')
@@ -142,7 +143,7 @@
   <button
     bind:this={triggerEl}
     type="button"
-    class="tooltip-trigger"
+    class={children ? 'tooltip-trigger-custom' : 'tooltip-trigger'}
     aria-describedby={visible ? tooltipId : undefined}
     onmouseenter={show}
     onmouseleave={hide}
@@ -150,11 +151,15 @@
     onblur={hide}
     onclick={toggle}
   >
-    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 16v-4M12 8h.01" />
-    </svg>
-    <span class="sr-only">More info</span>
+    {#if children}
+      {@render children()}
+    {:else}
+      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4M12 8h.01" />
+      </svg>
+      <span class="sr-only">More info</span>
+    {/if}
   </button>
 
   {#if visible}
@@ -193,6 +198,25 @@
   }
   .tooltip-trigger:focus-visible {
     box-shadow: 0 0 0 2px var(--color-vault);
+  }
+
+  .tooltip-trigger-custom {
+    display: inline-flex;
+    align-items: center;
+    cursor: help;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    outline: none;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+  }
+  .tooltip-trigger-custom:focus-visible {
+    outline: 2px solid var(--color-vault);
+    outline-offset: 2px;
+    border-radius: 9999px;
   }
 
   .tooltip-popup {

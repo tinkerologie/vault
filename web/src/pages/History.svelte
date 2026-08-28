@@ -10,22 +10,13 @@
   import DurationChart from '../components/DurationChart.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import Tooltip from '../components/Tooltip.svelte'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
-  import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
-
-  const anomalyState = getAnomalies()
+  import { setOpenList, getAnomalyCounts, formatAnomalyTooltip } from '../lib/anomalies.svelte.js'
 
   /** Count open anomalies associated with a specific job run. */
-  function runAnomalyCount(runId) {
-    return anomalyState.openList.filter(a => a.job_run_id === runId).length
-  }
-
-  function runWorstSeverity(runId) {
-    const anomalies = anomalyState.openList.filter(a => a.job_run_id === runId)
-    for (const sev of ['critical', 'warning', 'info']) {
-      if (anomalies.some(a => a.severity === sev)) return sev
-    }
-    return 'info'
+  function runAnomalyCounts(runId) {
+    return getAnomalyCounts({ job_run_id: runId })
   }
 
   let loading = $state(true)
@@ -388,7 +379,7 @@
             <div class="ml-1 border-l-2 border-border pl-5 space-y-3">
               {#each runs as run (run.id)}
                 {@const icon = statusIcon(run.status)}
-                {@const anomalyCount = runAnomalyCount(run.id)}
+                {@const anomalyCounts = runAnomalyCounts(run.id)}
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                 <div
                   class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all {hasLogDetails(run) ? 'cursor-pointer' : ''}"
@@ -424,8 +415,16 @@
                             <span class="text-xs text-text-dim capitalize">{run.backup_type}</span>
                           {/if}
                           <!-- Anomaly badge for this run -->
-                          {#if anomalyCount > 0}
-                            <AnomalyBadge count={anomalyCount} severity={runWorstSeverity(run.id)} />
+                          {#if anomalyCounts.critical > 0 || anomalyCounts.warning > 0 || anomalyCounts.info > 0}
+                            <Tooltip text={formatAnomalyTooltip(anomalyCounts)}>
+                              <span class="inline-flex items-center gap-1">
+                                {#each ['critical', 'warning', 'info'] as sev (sev)}
+                                  {#if anomalyCounts[sev] > 0}
+                                    <AnomalyBadge count={anomalyCounts[sev]} severity={sev} />
+                                  {/if}
+                                {/each}
+                              </span>
+                            </Tooltip>
                           {/if}
                         </div>
                         <div class="flex items-center gap-4 mt-1.5 text-xs text-text-dim">
