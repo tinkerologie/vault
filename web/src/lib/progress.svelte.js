@@ -12,6 +12,7 @@ let activeRun = $state(null) // { job_id, run_id, job_name, started_at, run_type
 // handleProgressMessage (item-message synthesis + job_run_started); cleared
 // only in job_run_completed.
 let running = $state(false)
+let currentItem = $state(null) // { name, item_type, percent, message }
 let itemProgress = $state({}) // { item_name: { percent, message, item_type, status } }
 let overallDone = $state(0)
 let overallFailed = $state(0)
@@ -31,6 +32,7 @@ export function getProgress() {
   return {
     get activeRun() { return activeRun },
     get running() { return running },
+    get currentItem() { return currentItem },
     get itemProgress() { return itemProgress },
     get overallDone() { return overallDone },
     get overallFailed() { return overallFailed },
@@ -67,6 +69,12 @@ export function restoreFromStatus(status) {
   cancelling = !!status.cancelling
   itemProgress = {}
   if (status.current_item) {
+    currentItem = {
+      name: status.current_item,
+      item_type: status.current_item_type || '',
+      percent: status.current_item_percent || 0,
+      message: status.current_item_message || defaultProgressMessage(status.run_type),
+    }
     itemProgress = {
       [status.current_item]: {
         percent: status.current_item_percent || 0,
@@ -75,6 +83,8 @@ export function restoreFromStatus(status) {
         status: 'running',
       },
     }
+  } else {
+    currentItem = null
   }
   // Resume elapsed timer from the real start time.
   const startMs = status.started_at ? Date.parse(status.started_at) : Date.now()
@@ -113,6 +123,13 @@ export function syncFromStatus(status) {
 
   if (status.current_item) {
     const existing = itemProgress[status.current_item] || {}
+    const isSameItem = currentItem?.name === status.current_item
+    currentItem = {
+      name: status.current_item,
+      item_type: status.current_item_type || existing.item_type || (isSameItem ? currentItem?.item_type : '') || '',
+      percent: status.current_item_percent ?? existing.percent ?? (isSameItem ? currentItem?.percent : 0) ?? 0,
+      message: status.current_item_message || existing.message || (isSameItem ? currentItem?.message : '') || defaultProgressMessage(status.run_type),
+    }
     itemProgress = {
       ...itemProgress,
       [status.current_item]: {
@@ -123,6 +140,8 @@ export function syncFromStatus(status) {
         message: status.current_item_message || existing.message || defaultProgressMessage(status.run_type),
       },
     }
+  } else {
+    currentItem = null
   }
 
   // Mark non-current items that reached 100% as done (proxy polling doesn't
@@ -161,6 +180,7 @@ export function markJobActiveOptimistically(jobId, jobName) {
     started_at: Date.now(),
     run_type: 'backup',
   }
+  currentItem = null
   itemProgress = {}
   overallDone = 0
   overallFailed = 0
@@ -176,6 +196,7 @@ export function markJobActiveOptimistically(jobId, jobName) {
 export function clearActiveRun() {
   running = false
   activeRun = null
+  currentItem = null
   itemProgress = {}
   overallDone = 0
   overallFailed = 0
@@ -272,7 +293,8 @@ export function handleProgressMessage(msg, jobNameResolver) {
       (msg.type === 'item_backup_start' || msg.type === 'backup_progress' ||
        msg.type === 'item_backup_done' || msg.type === 'item_backup_failed' ||
        msg.type === 'restore_progress' || msg.type === 'item_restore_done' ||
-       msg.type === 'item_restore_failed')) {
+       msg.type === 'item_restore_failed' ||
+       msg.type === 'item_staged' || msg.type === 'item_upload_start')) {
     const jName = msg.job_name || activeRun?.job_name || jobNameResolver?.(msg.job_id) || `Job #${msg.job_id}`
     activeRun = {
       job_id: msg.job_id,
@@ -303,6 +325,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
         started_at: Date.now(),
         run_type: msg.run_type || 'backup',
       }
+      currentItem = null
       itemProgress = {}
       overallDone = 0
       overallFailed = 0
@@ -341,6 +364,13 @@ export function handleProgressMessage(msg, jobNameResolver) {
     }
     case 'item_staged': {
       const prev = itemProgress[msg.item_name] || {}
+      const isSameItem = currentItem?.name === msg.item_name
+      currentItem = {
+        name: msg.item_name,
+        item_type: msg.item_type || prev.item_type || (isSameItem ? currentItem?.item_type : '') || '',
+        percent: 50,
+        message: 'Staged – awaiting upload',
+      }
       itemProgress = {
         ...itemProgress,
         [msg.item_name]: { ...prev, percent: 50, message: 'Staged – awaiting upload', status: 'running', item_type: msg.item_type || prev.item_type },
@@ -349,6 +379,13 @@ export function handleProgressMessage(msg, jobNameResolver) {
     }
     case 'item_upload_start': {
       const prev = itemProgress[msg.item_name] || {}
+      const isSameItem = currentItem?.name === msg.item_name
+      currentItem = {
+        name: msg.item_name,
+        item_type: msg.item_type || prev.item_type || (isSameItem ? currentItem?.item_type : '') || '',
+        percent: 60,
+        message: 'Uploading...',
+      }
       itemProgress = {
         ...itemProgress,
         [msg.item_name]: { ...prev, percent: 60, message: 'Uploading...', status: 'running', item_type: msg.item_type || prev.item_type },
@@ -358,6 +395,12 @@ export function handleProgressMessage(msg, jobNameResolver) {
     case 'item_backup_start': {
       phaseMessage = null
       if (msg.items_total) overallTotal = msg.items_total
+      currentItem = {
+        name: msg.item_name,
+        item_type: msg.item_type || '',
+        percent: 0,
+        message: 'Starting...',
+      }
       itemProgress = {
         ...itemProgress,
         [msg.item_name]: { percent: 0, message: 'Starting...', item_type: msg.item_type, status: 'running' },
@@ -367,6 +410,12 @@ export function handleProgressMessage(msg, jobNameResolver) {
     case 'item_restore_start': {
       phaseMessage = null
       if (msg.items_total) overallTotal = msg.items_total
+      currentItem = {
+        name: msg.item_name,
+        item_type: msg.item_type || '',
+        percent: 0,
+        message: 'Starting...',
+      }
       itemProgress = {
         ...itemProgress,
         [msg.item_name]: { percent: 0, message: 'Starting...', item_type: msg.item_type, status: 'running' },
@@ -381,6 +430,21 @@ export function handleProgressMessage(msg, jobNameResolver) {
       itemProgress = {
         ...itemProgress,
         [msg.item]: { ...existing, percent: msg.percent, message: msg.message, item_type: msg.item_type || existing.item_type, status: keepStatus ? existing.status : 'running' },
+      }
+      if (currentItem && currentItem.name === msg.item) {
+        currentItem = {
+          ...currentItem,
+          percent: msg.percent,
+          message: msg.message,
+          item_type: msg.item_type || currentItem.item_type,
+        }
+      } else if (!currentItem && msg.item) {
+        currentItem = {
+          name: msg.item,
+          item_type: msg.item_type || '',
+          percent: msg.percent,
+          message: msg.message,
+        }
       }
       return true
     }
@@ -440,6 +504,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
     }
     case 'job_run_completed': {
       phaseMessage = null
+      currentItem = null
       cancelling = false
       // Clear immediately: the Jobs page's Cancel button keys off this flag and
       // must disappear the instant the run ends, not after the overlay's 5s grace.
@@ -462,6 +527,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
           // Only clear if a newer run hasn't taken over in the meantime.
           if (activeRun?.run_id !== completedRunId) return
           activeRun = null
+          currentItem = null
           itemProgress = {}
           overallDone = 0
           overallFailed = 0

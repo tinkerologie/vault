@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Backup and restore progress overlay now shows the active item being processed (#368):** The "Backup in progress" and "Restore in progress" overlay on the Dashboard previously showed only the completed/total item count and elapsed duration. It now displays the name and type of the container, VM, folder, or plugin currently being processed (for example `Backing up: nextcloud (container)`), updating in real time across backup phases, deferred uploads, and reconnect resyncs. Closes #368.
+
 - **Display real plugin names and filter hidden files (#329):** Plugin discovery now extracts readable plugin names from `.plg` DOCTYPE entity declarations and root XML attributes, rendering human-friendly display names across the item picker and job configuration while keeping internal identifiers intact. AppleDouble files (`._*`) and other hidden files are now automatically filtered out from discovered plugin items. Closes #329.
 
 - **Restore points now show the base full backup for chained restores (#318):** Differential and incremental restore points in the restore timeline and wizard now display the date and size of the root full backup they depend on, and the `Chain ×N` badge includes an explanatory tooltip describing chain length and replay behavior. Closes #318.

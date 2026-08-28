@@ -934,6 +934,11 @@
       <p class="text-[11px] text-text-dim mt-2 tabular-nums">
         {progress.overallDone}/{progress.overallTotal} items · {elapsedStr}{#if progress.overallFailed > 0} · <span class="text-danger">{progress.overallFailed} failed</span>{/if}{#if liveSpeed} · <span class="text-info">{liveSpeed}</span>{/if}
       </p>
+      {#if progress.currentItem}
+        <p class="text-[11px] text-text-dim mt-1 truncate">
+          {progress.activeRun.run_type === 'restore' ? 'Restoring' : 'Backing up'}: <span class="text-text font-medium">{progress.currentItem.name}</span>{#if progress.currentItem.item_type} <span class="text-text-muted">({progress.currentItem.item_type})</span>{/if}
+        </p>
+      {/if}
       {#if progress.phaseMessage}<p class="text-[11px] text-warning animate-pulse mt-1">{progress.phaseMessage}</p>{/if}
     </div>
   {:else}
