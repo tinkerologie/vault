@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.09.00] - 2026-09-01
+
 ### Added
 
 - **Backup and restore progress overlay now shows the active item being processed (#368):** The "Backup in progress" and "Restore in progress" overlay on the Dashboard previously showed only the completed/total item count and elapsed duration. It now displays the name and type of the container, VM, folder, or plugin currently being processed (for example `Backing up: nextcloud (container)`), updating in real time across backup phases, deferred uploads, and reconnect resyncs. Closes #368.
