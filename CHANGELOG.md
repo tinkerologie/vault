@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
+- **Dependency refresh across the Go and web stacks.** Updated all Go modules to their latest compatible releases (AWS SDK v2 S3/config/credentials/STS, `go-libvirt`, `gzfs`, OpenTelemetry 1.46.0, `miekg/dns`, `modernc` SQLite support libraries) and the web dependencies (`svelte` 5.57.0, `eslint` 10.9.1). `go mod tidy` also dropped four modules that were no longer required. `gosec` reports 0 issues, `govulncheck` finds 0 called vulnerabilities, `npm audit` finds 0, and the full backend and frontend suites, linters, and production build pass unchanged.
+
 - **Cleared vulnerability advisory in build-time dependency.** Bumped `golang.org/x/mod` to `v0.40.0` (and `golang.org/x/tools` to `v0.49.0`) to clear CVE-2026-56864 in `sumdb`. The package is a build-time dependency, is not reachable from Vault's own code, and there is no runtime behaviour change. Verification via `make security-check` (gosec, govulncheck, and `go mod verify`) is clean with 0 vulnerabilities and all modules verified. Closes #367.
 - Updated Go and web dependencies to their latest compatible releases and resolved a high-severity advisory in the web `nanoid` dependency. gosec, govulncheck, and the Go linter pass clean, and the MCP integration remains on the go-sdk v1.7.0 API.
 
