@@ -446,3 +446,20 @@ export function commonItemType(items) {
   }
   return found
 }
+
+/**
+ * How many of a run's per-item results the engine captured no changed content
+ * for.
+ *
+ * A differential or incremental run over idle containers legitimately backs up
+ * nothing, and the run log flags those items with `unchanged`. Counting them
+ * lets the history show "3/3 containers (2 unchanged)" instead of implying
+ * three fresh copies (issue #326).
+ *
+ * @param {Array<{ unchanged?: boolean } | null | undefined> | null | undefined} items
+ * @returns {number}
+ */
+export function unchangedItemCount(items) {
+  if (!Array.isArray(items)) return 0
+  return items.filter(item => item?.unchanged === true).length
+}

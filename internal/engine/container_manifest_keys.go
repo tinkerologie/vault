@@ -50,3 +50,74 @@ func ContainerVolumeDest(key string) (string, bool) {
 func IsSkippedVolumeEntry(e dedup.ManifestEntry) bool {
 	return e.Size == volumeSkippedSize || len(e.Chunks) == 0
 }
+
+// ChunkedManifestUnchanged reports whether a freshly written chunked manifest
+// captured no content that differs from its parent.
+//
+// Chunk and sub-manifest IDs are content addresses, so two runs that read the
+// same bytes produce the same IDs — including for a container's __vol__ keys,
+// whose single "chunk" is the ID of the volume's sub-manifest. Equal key sets
+// with equal chunk lists therefore mean nothing changed.
+//
+// __inspect is deliberately excluded: it is re-encoded from a live `docker
+// inspect` on every run and carries volatile state (start time, health, IDs),
+// so it always differs even for a container nobody touched. It is engine
+// metadata rather than backed-up content, and counting it would make every
+// incremental run look like a fresh backup — the whole of issue #326.
+//
+// Manifest.Installer is compared too: a plugin's .plg payload lives outside
+// Files (see PluginHandler.BackupChunked), so comparing Files alone would call
+// a plugin unchanged when only its installer had been replaced.
+//
+// A nil parent means there is nothing to compare against (a full backup, or
+// the first run of a chain), which is never "unchanged".
+func ChunkedManifestUnchanged(current, parent *dedup.Manifest) bool {
+	if current == nil || parent == nil {
+		return false
+	}
+	if !sameManifestEntry(current.Installer, parent.Installer) {
+		return false
+	}
+	comparable := func(m *dedup.Manifest) map[string][]dedup.ID {
+		out := make(map[string][]dedup.ID, len(m.Files))
+		for key, entry := range m.Files {
+			if key == containerInspectKey {
+				continue
+			}
+			out[key] = entry.Chunks
+		}
+		return out
+	}
+	cur, prev := comparable(current), comparable(parent)
+	if len(cur) != len(prev) {
+		return false
+	}
+	for key, chunks := range cur {
+		other, ok := prev[key]
+		if !ok || !sameChunks(chunks, other) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameManifestEntry compares two out-of-tree payload entries by content
+// address. Both absent counts as equal; one absent does not.
+func sameManifestEntry(a, b *dedup.ManifestEntry) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return sameChunks(a.Chunks, b.Chunks)
+}
+
+func sameChunks(a, b []dedup.ID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

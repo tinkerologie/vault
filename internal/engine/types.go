@@ -25,6 +25,13 @@ type BackupResult struct {
 	Meta     map[string]any `json:"meta,omitempty"` // engine-specific metadata (e.g. vm_checkpoint)
 }
 
+// MetaUnchanged is the BackupResult.Meta key an engine sets when a
+// differential or incremental run captured no changed content for the item.
+// The backup still succeeded and the item stays restorable through the chain;
+// the flag exists so the run history can distinguish "backed up again" from
+// "nothing had changed" (issue #326).
+const MetaUnchanged = "unchanged"
+
 type BackupFile struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`

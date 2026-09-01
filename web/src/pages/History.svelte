@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet, SvelteMap } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
-  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel, itemTypeNoun, commonItemType } from '../lib/utils.js'
+  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel, itemTypeNoun, commonItemType, unchangedItemCount } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -157,6 +157,12 @@
   // the ambiguous "3/3 items" (issue #334). Mixed-type runs keep "items".
   function runItemNoun(run, count) {
     return itemTypeNoun(commonItemType(tryParseJSON(run.log)), count)
+  }
+
+  // How many of a run's items the engine captured no changed content for
+  // (issue #326).
+  function runUnchangedCount(run) {
+    return unchangedItemCount(tryParseJSON(run.log))
   }
 
   // Auto-expand the most recent failed/partial runs (once each) so operators
@@ -443,6 +449,9 @@
                               {#if run.items_failed > 0}
                                 <span class="text-danger">({run.items_failed} failed)</span>
                               {/if}
+                              {#if runUnchangedCount(run) > 0}
+                                <span class="text-text-dim">({runUnchangedCount(run)} unchanged)</span>
+                              {/if}
                             </span>
                           {/if}
                           {#if run.size_bytes}
@@ -473,7 +482,9 @@
                         <div class="space-y-1.5">
                           {#each items as item, i (i)}
                             <div class="flex items-center gap-2 text-sm">
-                              {#if item.status === 'ok'}
+                              {#if item.status === 'ok' && item.unchanged}
+                                <svg aria-hidden="true" class="w-4 h-4 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14"/></svg>
+                              {:else if item.status === 'ok'}
                                 <svg aria-hidden="true" class="w-4 h-4 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                               {:else}
                                 <svg aria-hidden="true" class="w-4 h-4 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -481,6 +492,9 @@
                               <span class="font-medium text-text truncate min-w-0" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
                               {#if item.size_bytes}
                                 <span class="text-xs text-text-dim shrink-0">{formatBytes(item.size_bytes)}</span>
+                              {/if}
+                              {#if item.unchanged}
+                                <span class="text-xs px-1.5 py-0.5 rounded bg-text-dim/15 text-text-dim shrink-0" title="Nothing had changed since the reference backup — no new data was captured for this item">unchanged</span>
                               {/if}
                               {#if item.verified}
                                 <span class="text-xs px-1.5 py-0.5 rounded bg-success/15 text-success shrink-0">verified</span>

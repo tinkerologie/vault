@@ -98,13 +98,22 @@
                 {#if items.length > 0}
                   <div class="flex flex-wrap gap-1.5 mt-1.5">
                     {#each items as item, i (i)}
-                      <span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">
-                        {#if item.status === 'ok'}
+                      <span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-surface-3 text-text-muted"
+                            title={item.status === 'ok' && item.unchanged ? `${item.name}: unchanged since the reference backup` : item.name}>
+                        {#if item.status === 'ok' && item.unchanged}
+                          <!-- Neutral dash: the backup succeeded but captured no
+                               changed content, so neither a tick nor a cross is
+                               honest (issue #326). -->
+                          <svg aria-hidden="true" class="w-3 h-3 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 12h14"/></svg>
+                        {:else if item.status === 'ok'}
                           <svg aria-hidden="true" class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
                         {:else}
                           <svg aria-hidden="true" class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
                         {/if}
                         {item.name}
+                        {#if item.status === 'ok' && item.unchanged}
+                          <span class="text-text-dim">· unchanged</span>
+                        {/if}
                       </span>
                     {/each}
                   </div>

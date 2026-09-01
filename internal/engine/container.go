@@ -681,6 +681,13 @@ func containerExclusions(settings map[string]any) []string {
 func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	result := &BackupResult{ItemName: item.Name}
 
+	// Tracks whether this run captured anything that could actually differ
+	// from the parent restore point. config.json (the inspect dump) is written
+	// on every run and so is deliberately not counted — it is what made an
+	// incremental run of an idle container look like a real backup in the
+	// history (issue #326).
+	var wroteChangedContent bool
+
 	containerID, _ := item.Settings["id"].(string)
 	if containerID == "" {
 		return nil, fmt.Errorf("container id not found in settings")
@@ -758,6 +765,9 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			return nil, err
 		} else if dumpFile != nil {
 			result.Files = append(result.Files, *dumpFile)
+			// A dump is taken fresh on every run, so an item that dumps a
+			// database always captured new content.
+			wroteChangedContent = true
 		}
 	}
 
@@ -852,6 +862,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			_ = imgFile.Close()
 			_ = imgReader.Close()
 			result.Files = append(result.Files, backupFileInfo(imagePath))
+			wroteChangedContent = true
 
 			// Capture image RepoDigests so restore can repopulate Unraid's
 			// docker update-status.json. `docker load` (used on restore) does
@@ -1021,6 +1032,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 
 			result.Files = append(result.Files, backupFileInfo(volDest))
 			entry.BackedUp = true
+			wroteChangedContent = true
 			entry.Archive = archiveName
 			manifest = append(manifest, entry)
 
@@ -1065,6 +1077,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 					return fmt.Errorf("writing template xml: %w", writeErr)
 				}
 				result.Files = append(result.Files, backupFileInfo(destTemplate))
+				wroteChangedContent = true
 			}
 		}
 
@@ -1079,6 +1092,16 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	}
 
 	progress(item.Name, 100, "backup complete")
+	// A differential/incremental run that captured no changed content is a
+	// successful backup of nothing: the container stays restorable through the
+	// chain, but the history must not present it as freshly backed up
+	// (issue #326).
+	if hasChangedSince && !wroteChangedContent {
+		if result.Meta == nil {
+			result.Meta = map[string]any{}
+		}
+		result.Meta[MetaUnchanged] = true
+	}
 	result.Success = true
 	return result, nil
 }

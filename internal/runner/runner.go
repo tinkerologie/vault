@@ -1400,6 +1400,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			if job.VerifyBackup {
 				resEntry["verified"] = true
 			}
+			markUnchanged(resEntry, result)
 			// For ZFS items, capture the snapshot the engine created so future
 			// incremental/differential backups can reference it as their -i
 			// parent (issue #180).
@@ -1671,6 +1672,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				if job.VerifyBackup {
 					resEntry["verified"] = true
 				}
+				markUnchanged(resEntry, s.result)
 				if s.dbItem.ItemType == "zfs" {
 					captureZFSResult(s.engineItem.Settings, s.result, s.dbItem.ItemName, zfsSnapshots, resEntry)
 				}
@@ -2113,7 +2115,6 @@ func (r *Runner) OpenDedupManifests(dest db.StorageDestination) (func(dedup.ID) 
 	return repo.GetManifest, func() { storage.CloseAdapter(adapter) }, nil
 }
 
-// ResolveItemManifestID is the public counterpart of the private
 // collectItemSizes extracts the per-item byte sizes from a run's item results,
 // for the item_sizes metadata a restore later sums (issue #334).
 //
@@ -2135,6 +2136,47 @@ func collectItemSizes(itemResults []map[string]any) map[string]int64 {
 	return sizes
 }
 
+// chunkedItemUnchanged reports whether a dedup item's freshly written manifest
+// captured anything the parent did not already hold (issue #326).
+//
+// Re-reading the manifest just written is cheap — it is one chunk, and it is
+// still in the repo's cache — and it keeps the decision out of the
+// ChunkedHandler interface, which returns only an ID. A read failure is not
+// worth failing an otherwise successful backup over, so it is logged and the
+// item reports as changed: over-reporting a backup is the safe direction.
+//
+// With no parent there is nothing to compare against — a full backup, or the
+// first run of a chain — which is never unchanged.
+func chunkedItemUnchanged(repo *dedup.Repo, manifestID dedup.ID, parent *dedup.Manifest, itemName string) bool {
+	if repo == nil || parent == nil {
+		return false
+	}
+	written, err := repo.GetManifest(manifestID)
+	if err != nil {
+		log.Printf("runner: dedup item %q: re-reading written manifest: %v (reporting as changed)", itemName, err)
+		return false
+	}
+	return engine.ChunkedManifestUnchanged(&written, parent)
+}
+
+// markUnchanged records on a per-item run-log entry that the engine captured
+// no changed content for the item (engine.MetaUnchanged).
+//
+// The item's status stays "ok" — the backup succeeded, and the item remains
+// restorable from this restore point through its chain. The flag is additive
+// so every consumer that reads status keeps its existing meaning, while the
+// history and dashboard can tell "backed up again" apart from "nothing had
+// changed" (issue #326).
+func markUnchanged(resEntry map[string]any, result *engine.BackupResult) {
+	if result == nil {
+		return
+	}
+	if unchanged, ok := result.Meta[engine.MetaUnchanged].(bool); ok && unchanged {
+		resEntry["unchanged"] = true
+	}
+}
+
+// ResolveItemManifestID is the public counterpart of the private
 // resolveManifestID helper. Used by API handlers that need to detect
 // whether a (rp, item) pair is a dedup restore point and, if so, fetch its
 // manifest ID without duplicating the metadata-parsing logic.
@@ -2492,6 +2534,8 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 			"dedup_ratio":    dedupRatio,
 		})
 
+	unchanged := chunkedItemUnchanged(repo, manifestID, parent, item.Name)
+
 	midCopy := append([]byte(nil), manifestID[:]...)
 	// The existing per-item byte accounting in RunJob sums result.Files[].Size
 	// to populate restore_points.size_bytes. For dedup runs we don't write
@@ -2515,6 +2559,9 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 			"dedup_chunks":   stats.TotalChunks,
 			"dedup_packs":    stats.TotalPacks,
 		},
+	}
+	if unchanged {
+		result.Meta[engine.MetaUnchanged] = true
 	}
 	return result, nil, nil
 }

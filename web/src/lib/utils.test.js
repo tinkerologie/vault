@@ -21,6 +21,7 @@ import {
   itemTypeNoun,
   itemTypeCountLabel,
   commonItemType,
+  unchangedItemCount,
 } from './utils.js'
 
 
@@ -471,5 +472,25 @@ describe('commonItemType', () => {
   it('returns empty string for empty or non-array input', () => {
     expect(commonItemType([])).toBe('')
     expect(commonItemType(null)).toBe('')
+  })
+})
+
+describe('unchangedItemCount', () => {
+  it('counts only the items flagged unchanged', () => {
+    expect(unchangedItemCount([{ unchanged: true }, {}, { unchanged: true }])).toBe(2)
+  })
+
+  it('returns zero when a run captured content for every item', () => {
+    expect(unchangedItemCount([{ status: 'ok' }, { status: 'ok' }])).toBe(0)
+  })
+
+  it('ignores truthy non-boolean flags and null entries', () => {
+    expect(unchangedItemCount([{ unchanged: 'yes' }, null, { unchanged: 1 }])).toBe(0)
+  })
+
+  it('returns zero for empty or non-array input', () => {
+    expect(unchangedItemCount([])).toBe(0)
+    expect(unchangedItemCount(null)).toBe(0)
+    expect(unchangedItemCount('not a run log')).toBe(0)
   })
 })
