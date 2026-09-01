@@ -109,6 +109,19 @@ func resolveWithinBase(destDir, target string) error {
 
 // resolveSymlinkTarget validates that a symlink's effective destination stays
 // within destDir after resolving any previously-extracted symlinks.
+//
+// Absolute link targets are recreated verbatim rather than rejected. A volume
+// archive is a snapshot of a container's filesystem, so an absolute target is
+// resolved against the CONTAINER's root, not the host's — /var/lib/mysql/x
+// inside a volume mounted at /var/lib/mysql points back into that same volume
+// once the container runs again. Rewriting or dropping such a link corrupts
+// the restore, and rejecting it aborts the whole extraction: that is why a
+// full classic restore of images like mysql used to fail outright.
+//
+// Creating the link is safe because nothing is ever written THROUGH it: every
+// archive entry is passed to resolveWithinBase first, which resolves the real
+// parent chain on disk, so a later entry addressed via an absolute link lands
+// outside destDir and is rejected there. The link itself is inert on the host.
 func resolveSymlinkTarget(destDir, symlinkPath, linkTarget string) error {
 	resolvedDest, err := evalExistingPrefix(destDir)
 	if err != nil {
@@ -117,7 +130,7 @@ func resolveSymlinkTarget(destDir, symlinkPath, linkTarget string) error {
 	cleanDest := filepath.Clean(resolvedDest)
 
 	if filepath.IsAbs(linkTarget) {
-		return fmt.Errorf("symlink %s has absolute target %q: rejecting", symlinkPath, linkTarget)
+		return nil
 	}
 
 	// Resolve the symlink's parent directory (which must exist on disk)

@@ -125,13 +125,35 @@ func TestResolveWithinBaseRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
-func TestResolveSymlinkTargetRejectsAbsolute(t *testing.T) {
+// An absolute link target is resolved against the container's root, not the
+// host's, so it must be recreated verbatim instead of aborting the restore
+// (a full classic restore of mysql used to fail on exactly this).
+func TestResolveSymlinkTargetAcceptsAbsolute(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
 	symlinkPath := filepath.Join(base, "link")
-	if err := resolveSymlinkTarget(base, symlinkPath, "/etc/passwd"); err == nil {
-		t.Fatal("resolveSymlinkTarget() should reject absolute link targets")
+	for _, target := range []string{"/etc/passwd", "/var/lib/mysql/data", "/"} {
+		if err := resolveSymlinkTarget(base, symlinkPath, target); err != nil {
+			t.Fatalf("resolveSymlinkTarget(%q) should accept absolute target: %v", target, err)
+		}
+	}
+}
+
+// The guard that replaces the blanket rejection: creating the link is fine,
+// but a later archive entry addressed through it must still be refused.
+func TestResolveWithinBaseRejectsPathThroughAbsoluteSymlink(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	outside := t.TempDir()
+
+	link := filepath.Join(base, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := resolveWithinBase(base, filepath.Join(link, "evil.txt")); err == nil {
+		t.Fatal("resolveWithinBase() should reject a path leading through an absolute symlink")
 	}
 }
 

@@ -2696,11 +2696,19 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 				log.Printf("engine: skipping unreadable symlink %s: %v", rel, err)
 				return nil
 			}
+			// Uid/Gid are set explicitly: this header used to leave them at
+			// zero, which makes restore Lchown every link to root:root.
+			// (tar.FileInfoHeader would fill them in too, but only fails on a
+			// nil FileInfo, leaving an unreachable error branch behind.)
 			header := &tar.Header{
 				Typeflag: tar.TypeSymlink,
 				Name:     rel,
 				Linkname: link,
+				Mode:     int64(info.Mode().Perm()),
 				ModTime:  info.ModTime(),
+			}
+			if uid, gid := fileOwner(info); uid >= 0 && gid >= 0 {
+				header.Uid, header.Gid = uid, gid
 			}
 			return tw.WriteHeader(header)
 		}
@@ -2828,11 +2836,19 @@ func tarDirectoryFilteredWithPrev(ctx context.Context, srcDir, destPath string, 
 				log.Printf("engine: skipping unreadable symlink %s: %v", rel, err)
 				return nil
 			}
+			// Uid/Gid are set explicitly: this header used to leave them at
+			// zero, which makes restore Lchown every link to root:root.
+			// (tar.FileInfoHeader would fill them in too, but only fails on a
+			// nil FileInfo, leaving an unreachable error branch behind.)
 			header := &tar.Header{
 				Typeflag: tar.TypeSymlink,
 				Name:     rel,
 				Linkname: link,
+				Mode:     int64(info.Mode().Perm()),
 				ModTime:  info.ModTime(),
+			}
+			if uid, gid := fileOwner(info); uid >= 0 && gid >= 0 {
+				header.Uid, header.Gid = uid, gid
 			}
 			return tw.WriteHeader(header)
 		}
@@ -3017,15 +3033,26 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			applyOwner(target, header.Uid, header.Gid)
 			_ = os.Chtimes(target, header.ModTime, header.ModTime)
 		case tar.TypeSymlink:
-			// Validate symlink target resolves within destDir after following existing symlinks.
+			// Relative targets must resolve within destDir after following
+			// existing symlinks; absolute targets are container-internal and
+			// are recreated as-is (see resolveSymlinkTarget).
+			//
+			// A link that fails the check is skipped, not fatal. Refusing to
+			// create it is the whole of the safety property — nothing is
+			// written outside destDir either way — whereas aborting throws
+			// away the entire restore over one entry, which is the failure
+			// this changed: a relative link that resolves through a
+			// (legitimate) absolute one lands outside and would otherwise
+			// kill the run.
 			if err := resolveSymlinkTarget(destDir, target, header.Linkname); err != nil {
-				return fmt.Errorf("unsafe symlink in archive: %w", err)
+				log.Printf("engine: restore: skipping unsafe symlink %s -> %s: %v", header.Name, header.Linkname, err)
+				continue
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
 			removeExistingNonDir(target)                                // overwrite semantics for links (#175)
-			if err := os.Symlink(header.Linkname, target); err != nil { // #nosec G305 — target validated by joinArchiveTarget, linkname validated by resolveSymlinkTarget
+			if err := os.Symlink(header.Linkname, target); err != nil { // #nosec G305 — target validated by joinArchiveTarget + resolveWithinBase; linkname validated by resolveSymlinkTarget, and nothing is written through the link (every entry re-checks its real parent chain)
 				return fmt.Errorf("creating symlink %s -> %s: %w", target, header.Linkname, err)
 			}
 			// Lchown, so the link itself is chowned and not whatever it
