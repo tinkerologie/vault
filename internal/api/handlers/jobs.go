@@ -22,19 +22,54 @@ import (
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
+// subManifestFunc resolves a nested sub-manifest by chunk ID. Container
+// manifests reference volume file data only indirectly, so browsing one
+// requires a second fetch per volume.
+type subManifestFunc func(dedup.ID) (dedup.Manifest, error)
+
 // dedupManifestToTarIndex synthesizes a TarIndex-shaped response from a
 // dedup manifest so the restore wizard's file picker can render dedup
 // restore points using the same UI as classic tar-backed restore points.
 // The "archive" field is set to the item name (there is no single archive
 // in dedup mode — content lives in /_vault/packs/) so the picker still has
 // a label to show.
-func dedupManifestToTarIndex(itemName string, m dedup.Manifest) engine.TarIndex {
+//
+// Folder and plugin manifests map one key to one file, so they pass through
+// unchanged. Container manifests do not: their Files map holds only synthetic
+// keys (see the contract above engine.BackupChunked), and the real per-file
+// entries live one level down in a FolderHandler sub-manifest per volume.
+// Emitting the top-level keys verbatim surfaced engine metadata as files,
+// listed excluded volumes as restorable, and rendered the skipped-volume
+// sentinel as "-1 B" (issue #333). So container entries are resolved:
+// synthetic metadata is dropped, skipped volumes are dropped, and each
+// backed-up volume is expanded from its sub-manifest with paths prefixed by
+// the volume's container-internal destination.
+//
+// The synthetic-key rules apply ONLY to container items. A folder or plugin
+// manifest maps one key to one real path, so a user file legitimately named
+// "__inspect" or living under a "__vol__…" directory must pass through
+// untouched rather than be dropped or mis-expanded as a volume.
+//
+// getSub may be nil, in which case volumes cannot be expanded and are omitted
+// rather than reported with pointer-entry sizes.
+func dedupManifestToTarIndex(itemName, itemType string, m dedup.Manifest, getSub subManifestFunc) engine.TarIndex {
+	isContainer := itemType == "container"
 	idx := engine.TarIndex{
 		Version: 1,
 		Archive: itemName,
 		Files:   make([]engine.TarIndexEntry, 0, len(m.Files)),
 	}
 	for p, e := range m.Files {
+		if isContainer && engine.IsSyntheticContainerKey(p) {
+			continue
+		}
+		if dest, isVol := engine.ContainerVolumeDest(p); isVol && isContainer {
+			if engine.IsSkippedVolumeEntry(e) || getSub == nil {
+				continue
+			}
+			idx.Files = append(idx.Files, expandVolumeEntry(dest, e, getSub)...)
+			continue
+		}
 		idx.Files = append(idx.Files, engine.TarIndexEntry{
 			Path:    p,
 			Size:    e.Size,
@@ -43,7 +78,34 @@ func dedupManifestToTarIndex(itemName string, m dedup.Manifest) engine.TarIndex 
 			IsDir:   e.IsDir,
 		})
 	}
+	sort.Slice(idx.Files, func(i, j int) bool { return idx.Files[i].Path < idx.Files[j].Path })
 	return idx
+}
+
+// expandVolumeEntry resolves one __vol__<dest> entry into the real file list
+// held by its sub-manifest, with every path rewritten to the container-internal
+// absolute path the user recognises (e.g. "/config/settings.yml").
+//
+// A volume whose sub-manifest cannot be read yields no entries: showing nothing
+// is better than showing a pointer entry whose size describes the manifest
+// rather than the volume.
+func expandVolumeEntry(dest string, e dedup.ManifestEntry, getSub subManifestFunc) []engine.TarIndexEntry {
+	sub, err := getSub(e.Chunks[0])
+	if err != nil {
+		log.Printf("api: restore contents: volume %s sub-manifest unreadable, omitting from picker: %v", dest, err)
+		return nil
+	}
+	out := make([]engine.TarIndexEntry, 0, len(sub.Files))
+	for p, se := range sub.Files {
+		out = append(out, engine.TarIndexEntry{
+			Path:    path.Join(dest, p),
+			Size:    se.Size,
+			Mode:    fmt.Sprintf("%04o", se.Mode&0o7777),
+			ModTime: se.ModTime,
+			IsDir:   se.IsDir,
+		})
+	}
+	return out
 }
 
 // ScheduleReloader is called after job CRUD to reload the cron scheduler.
@@ -385,6 +447,9 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		}
 	}
 	archiveName := strings.TrimSpace(r.URL.Query().Get("file"))
+	// Container manifests need synthetic-key resolution; folder and plugin
+	// manifests must pass through untouched (see dedupManifestToTarIndex).
+	itemType := h.itemType(jobID, itemName)
 
 	job, err := h.db.GetJob(jobID)
 	if err != nil {
@@ -401,12 +466,20 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 	// no chain merge (and no resurrection, issue #231). Check before the
 	// chain branch so dedup increments browse as exactly their manifest.
 	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
-		manifest, err := h.runner.GetDedupManifest(dest, mID)
+		// One repo open serves the item manifest and every volume
+		// sub-manifest it points at.
+		getManifest, closeSession, err := h.runner.OpenDedupManifests(dest)
 		if err != nil {
 			respondInternalError(w, err)
 			return
 		}
-		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, manifest))
+		defer closeSession()
+		manifest, err := getManifest(mID)
+		if err != nil {
+			respondInternalError(w, err)
+			return
+		}
+		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, itemType, manifest, subManifestFunc(getManifest)))
 		return
 	}
 
@@ -423,7 +496,7 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 			respondError(w, http.StatusNotFound, "restore chain is incomplete; file browsing is unavailable for this restore point")
 			return
 		}
-		h.respondMergedChainContents(w, chain, dest, itemName, archiveName)
+		h.respondMergedChainContents(w, chain, dest, itemName, itemType, archiveName)
 		return
 	}
 
@@ -503,7 +576,7 @@ var errIndexEncryptedNoPassphrase = errors.New("index is encrypted but no passph
 // conclusively shows the item was not captured by that step; a missing or
 // unreadable index otherwise fails the request (fail closed) so the wizard
 // falls back to whole-item restore instead of presenting a partial file list.
-func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []db.RestorePoint, dest db.StorageDestination, itemName, archiveName string) {
+func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []db.RestorePoint, dest db.StorageDestination, itemName, itemType, archiveName string) {
 	var adapter storage.Adapter
 	getAdapter := func() (storage.Adapter, error) {
 		if adapter == nil {
@@ -536,7 +609,7 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 		if i == len(chain)-1 {
 			stepArchive = archiveName
 		}
-		idx, err := h.itemIndexForPoint(getAdapter, step, dest, itemName, stepArchive)
+		idx, err := h.itemIndexForPoint(getAdapter, step, dest, itemName, itemType, stepArchive)
 		if err != nil {
 			if errors.Is(err, errIndexEncryptedNoPassphrase) {
 				respondError(w, http.StatusFailedDependency, errIndexEncryptedNoPassphrase.Error())
@@ -577,16 +650,43 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 	respondJSON(w, http.StatusOK, engine.TarIndex{Version: 1, Archive: itemName, Files: files})
 }
 
+// itemType resolves a job item's type ("container", "folder", "plugin", …).
+//
+// Returns "" when the item is no longer configured on the job — a restore
+// point can outlive its item. Callers treat that as "not a container", which
+// is the safe default: it leaves manifest keys untouched rather than dropping
+// paths that only look synthetic.
+func (h *JobHandler) itemType(jobID int64, itemName string) string {
+	items, err := h.db.GetJobItems(jobID)
+	if err != nil {
+		// The item name is caller-supplied, so it is deliberately left out of the
+		// log line; the job ID identifies the failure well enough.
+		log.Printf("api: restore contents: cannot resolve item types for job %d: %v", jobID, err) // #nosec G706 //nolint:gosec // jobID is a validated int64, err is from the internal DB layer
+		return ""
+	}
+	for _, it := range items {
+		if it.ItemName == itemName {
+			return it.ItemType
+		}
+	}
+	return ""
+}
+
 // itemIndexForPoint fetches one restore point's index for an item: the dedup
 // manifest for chunked points, otherwise the tar-index sidecar (decrypting
 // .age sidecars with the configured passphrase).
-func (h *JobHandler) itemIndexForPoint(getAdapter func() (storage.Adapter, error), rp db.RestorePoint, dest db.StorageDestination, itemName, archiveName string) (engine.TarIndex, error) {
+func (h *JobHandler) itemIndexForPoint(getAdapter func() (storage.Adapter, error), rp db.RestorePoint, dest db.StorageDestination, itemName, itemType, archiveName string) (engine.TarIndex, error) {
 	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
-		manifest, err := h.runner.GetDedupManifest(dest, mID)
+		getManifest, closeSession, err := h.runner.OpenDedupManifests(dest)
 		if err != nil {
 			return engine.TarIndex{}, err
 		}
-		return dedupManifestToTarIndex(itemName, manifest), nil
+		defer closeSession()
+		manifest, err := getManifest(mID)
+		if err != nil {
+			return engine.TarIndex{}, err
+		}
+		return dedupManifestToTarIndex(itemName, itemType, manifest, subManifestFunc(getManifest)), nil
 	}
 
 	adapter, err := getAdapter()

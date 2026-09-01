@@ -242,11 +242,11 @@ func TestStageContainerChainMerged(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
+		name         string
 		wantInMerged []string
 	}{
 		{
-			name:        "differential step's partial volume overlays the full step's",
+			name:         "differential step's partial volume overlays the full step's",
 			wantInMerged: []string{"old.txt", "new.txt"},
 		},
 	}

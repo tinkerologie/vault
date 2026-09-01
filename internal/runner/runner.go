@@ -1806,14 +1806,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			"job_name":     job.Name,
 		}
 		// Store per-item sizes so the restore wizard can show individual item sizes.
-		itemSizes := make(map[string]int64, len(itemResults))
-		for _, res := range itemResults {
-			name, _ := res["name"].(string)
-			size, _ := res["size_bytes"].(int64)
-			if name != "" && size > 0 {
-				itemSizes[name] = size
-			}
-		}
+		itemSizes := collectItemSizes(itemResults)
 		if len(itemSizes) > 0 {
 			rpMeta["item_sizes"] = itemSizes
 		}
@@ -2087,22 +2080,61 @@ func (r *Runner) GetDedupStats(dest db.StorageDestination) (dedup.Stats, error) 
 // restore points (which don't have a tar index sidecar — chunks live in
 // /_vault/packs/ instead of per-item tar archives).
 func (r *Runner) GetDedupManifest(dest db.StorageDestination, manifestID dedup.ID) (dedup.Manifest, error) {
+	get, closeSession, err := r.OpenDedupManifests(dest)
+	if err != nil {
+		return dedup.Manifest{}, err
+	}
+	defer closeSession()
+	return get(manifestID)
+}
+
+// OpenDedupManifests opens the dedup repo at dest once and returns a fetcher
+// for manifests on it, plus a closer the caller must invoke.
+//
+// Callers that resolve several manifests for one destination — browsing a
+// container restore point walks the item manifest and then one sub-manifest
+// per backed-up volume — should use this rather than calling GetDedupManifest
+// repeatedly, which re-opens the adapter and re-reads repo.json (unsealing the
+// master key) every time. That is cheap on local storage but costs a round
+// trip per manifest on SFTP, SMB, and S3.
+func (r *Runner) OpenDedupManifests(dest db.StorageDestination) (func(dedup.ID) (dedup.Manifest, error), func(), error) {
 	if !dest.DedupEnabled {
-		return dedup.Manifest{}, fmt.Errorf("destination %q is not dedup-enabled", dest.Name)
+		return nil, nil, fmt.Errorf("destination %q is not dedup-enabled", dest.Name)
 	}
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		return dedup.Manifest{}, fmt.Errorf("adapter: %w", err)
+		return nil, nil, fmt.Errorf("adapter: %w", err)
 	}
-	defer storage.CloseAdapter(adapter)
 	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
 	if err != nil {
-		return dedup.Manifest{}, fmt.Errorf("open dedup repo: %w", err)
+		storage.CloseAdapter(adapter)
+		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
 	}
-	return repo.GetManifest(manifestID)
+	return repo.GetManifest, func() { storage.CloseAdapter(adapter) }, nil
 }
 
 // ResolveItemManifestID is the public counterpart of the private
+// collectItemSizes extracts the per-item byte sizes from a run's item results,
+// for the item_sizes metadata a restore later sums (issue #334).
+//
+// A zero is kept: an item that legitimately backed up nothing must stay
+// distinguishable from one whose size was never reported, or restoring only
+// that item falls back to the whole restore point's size. Only a missing,
+// non-numeric, or negative size_bytes counts as unknown and is dropped.
+func collectItemSizes(itemResults []map[string]any) map[string]int64 {
+	sizes := make(map[string]int64, len(itemResults))
+	for _, res := range itemResults {
+		name, _ := res["name"].(string)
+		raw, reported := res["size_bytes"]
+		size, numeric := raw.(int64)
+		if name == "" || !reported || !numeric || size < 0 {
+			continue
+		}
+		sizes[name] = size
+	}
+	return sizes
+}
+
 // resolveManifestID helper. Used by API handlers that need to detect
 // whether a (rp, item) pair is a dedup restore point and, if so, fetch its
 // manifest ID without duplicating the metadata-parsing logic.
@@ -3099,10 +3131,19 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		}
 	}()
 
+	// Per-item sizes recorded at backup time, used to report what this restore
+	// actually wrote rather than the whole restore point's size (issue #334).
+	itemSizes, _ := restorePoint.ItemSizes()
+
 	var (
 		itemsDone   int
 		itemsFailed int
 		itemResults []map[string]any
+		// restoredBytes sums only the items whose size is known;
+		// restoredSizesKnown counts them, so "nothing known" stays
+		// distinguishable from "known to be zero bytes".
+		restoredBytes      int64
+		restoredSizesKnown int
 	)
 
 	for _, t := range targets {
@@ -3174,9 +3215,16 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 				"items_failed": itemsFailed,
 				"items_total":  len(targets),
 			})
+			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds())}
+			if size, known := itemSizes[t.Name]; known {
+				restoredBytes += size
+				restoredSizesKnown++
+				result["size_bytes"] = size
+				okDetails["size_bytes"] = size
+			}
 			r.runLog(runID, runLogLevelInfo,
 				fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, elapsed.Truncate(time.Second)),
-				map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds())})
+				okDetails)
 		}
 
 		itemResults = append(itemResults, result)
@@ -3192,12 +3240,30 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		status = "failed"
 	}
 
+	// Report what this restore actually wrote, not the size of the whole
+	// restore point (issue #334): restoring one container out of twenty read
+	// as the full backup size on the history and dashboard pages.
+	//
+	// When no per-item size is known, fall back to the restore point's total.
+	// That is the old, inflated number, but for a whole-item restore it is
+	// correct, and it beats reporting 0 bytes for a restore that demonstrably
+	// moved data. Restore points predating item_sizes metadata take this path,
+	// as do items whose recorded size was 0.
+	//
+	// A run in which nothing succeeded reports 0 regardless: the fallback
+	// exists to describe restored content, and there is none.
+	restoredSize := restoredBytes
+	if restoredSizesKnown == 0 && itemsDone > 0 {
+		restoredSize = restorePoint.SizeBytes
+		log.Printf("runner: restore point %d records no per-item sizes — reporting the restore point total (%d bytes) for run %d", restorePoint.ID, restoredSize, runID)
+	}
+
 	logJSON, _ := json.Marshal(itemResults)
 	run.Status = status
 	run.Log = string(logJSON)
 	run.ItemsDone = itemsDone
 	run.ItemsFailed = itemsFailed
-	run.SizeBytes = restorePoint.SizeBytes
+	run.SizeBytes = restoredSize
 	_ = r.db.UpdateJobRun(run)
 
 	r.broadcast(map[string]any{
@@ -3209,7 +3275,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		"items_done":   itemsDone,
 		"items_failed": itemsFailed,
 		"items_total":  len(targets),
-		"size_bytes":   restorePoint.SizeBytes,
+		"size_bytes":   restoredSize,
 	})
 
 	// Terminal activity entry gates run-log expansion in the UI (same
@@ -3222,10 +3288,10 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			"restore_point_id": restorePoint.ID,
 			"items_done":       itemsDone,
 			"items_failed":     itemsFailed,
-			"size_bytes":       restorePoint.SizeBytes,
+			"size_bytes":       restoredSize,
 		}))
 
-	sumLevel, sumMsg, sumData := runSummaryMessage("Restore", "", status, itemsDone, itemsFailed, len(targets), restorePoint.SizeBytes, time.Since(restoreStart))
+	sumLevel, sumMsg, sumData := runSummaryMessage("Restore", "", status, itemsDone, itemsFailed, len(targets), restoredSize, time.Since(restoreStart))
 	sumData["restore_point_id"] = restorePoint.ID
 	r.runLog(runID, sumLevel, sumMsg, sumData)
 }

@@ -51,8 +51,8 @@ repos:
 
       - id: go-vet
         name: Go Vet
-        description: Run go vet for static analysis
-        entry: go vet ./...
+        description: Run go vet for static analysis (Unraid target platform)
+        entry: env GOOS=linux GOARCH=amd64 go vet ./...
         language: system
         pass_filenames: false
         files: '\.go$'
@@ -85,7 +85,7 @@ repos:
         entry: >-
           bash -c 'export PATH="$HOME/go/bin:$PATH";
           if command -v golangci-lint >/dev/null 2>&1;
-          then golangci-lint run --timeout=5m --config=.golangci.yml
+          then GOOS=linux GOARCH=amd64 golangci-lint run --timeout=5m --config=.golangci.yml
           --max-issues-per-linter=0 --max-same-issues=0 --issues-exit-code=1 ./...;
           else echo "golangci-lint not installed. Run go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest";
           exit 1; fi'
@@ -163,7 +163,7 @@ repos:
       - id: codespell
         name: Code Spell Checker
         args:
-          - --ignore-words-list=crate,nd,sav,fo,ue,numer,unexpect,aNULL,hax,hass,BLoC,MapPin,LOD,hda,ans
+          - --ignore-words-list=crate,nd,sav,fo,ue,numer,unexpect,aNULL,hax,hass,BLoC,MapPin,LOD,hda,ans,unparseable,pasttime
           - "--skip=*.sum,*.lock,*.json,*.mod,coverage.html,docs/plans/*"
           - --quiet-level=2
 

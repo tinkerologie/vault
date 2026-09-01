@@ -61,6 +61,28 @@
   when: create_backup
   changed_when: true
 
+# The uninstall wipes {{ config_dir }}, which holds vault.key — the key that
+# seals the dedup repo master key, storage credentials, and the encryption
+# passphrase. On a redeploy the database survives on the pool (hybrid mode)
+# and is re-adopted on start, so losing the key leaves a live database full of
+# secrets that can never be unsealed: dedup restore points fail to open with
+# "unseal master (wrong serverKey?)". Stash the key when a deploy follows, so
+# a redeploy replaces the code without orphaning the data. A plain
+# `--tags uninstall` run is a real uninstall and must still take the key with
+# it, so nothing is stashed there.
+- name: Preserve the server key across a redeploy
+  ansible.builtin.raw: >
+    if [ -f {{ config_dir }}/vault.key ]; then
+      cp {{ config_dir }}/vault.key {{ server_key_stash }} &&
+      chmod 0600 {{ server_key_stash }} &&
+      echo PRESERVED;
+    else
+      echo NO_KEY;
+    fi
+  register: server_key_stash_result
+  when: preserve_server_key
+  changed_when: "'PRESERVED' in server_key_stash_result.stdout | default('')"
+
 - name: Run centralized Vault uninstall cleanup
   ansible.builtin.raw: >
     {{ binary_path }} cleanup-uninstall

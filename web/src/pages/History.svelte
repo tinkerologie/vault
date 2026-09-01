@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet, SvelteMap } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
-  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel } from '../lib/utils.js'
+  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel, itemTypeNoun, commonItemType } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -150,6 +150,13 @@
   function tryParseJSON(str) {
     if (!str) return null
     try { return JSON.parse(str) } catch { return null }
+  }
+
+  // The noun for a run's item counter. run.log already carries a per-item
+  // `type`, so a run touching one item type reads "3/3 containers" instead of
+  // the ambiguous "3/3 items" (issue #334). Mixed-type runs keep "items".
+  function runItemNoun(run, count) {
+    return itemTypeNoun(commonItemType(tryParseJSON(run.log)), count)
   }
 
   // Auto-expand the most recent failed/partial runs (once each) so operators
@@ -432,7 +439,7 @@
                           <span>{duration(run)}</span>
                           {#if run.items_total}
                             <span>
-                              <span class="text-success">{run.items_done}</span>/{run.items_total} items
+                              <span class="text-success">{run.items_done}</span>/{run.items_total} {runItemNoun(run, run.items_total)}
                               {#if run.items_failed > 0}
                                 <span class="text-danger">({run.items_failed} failed)</span>
                               {/if}

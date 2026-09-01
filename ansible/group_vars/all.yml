@@ -14,6 +14,19 @@ log_path: "/var/log/vault.log"
 pid_file: "/var/run/vault.pid"
 create_backup: false
 
+# vault.key seals the dedup repo master key and other secrets, and lives in
+# config_dir — which the uninstall role wipes. Carry it across an
+# uninstall→deploy cycle so a redeploy does not orphan the surviving database.
+# False for a standalone `--tags uninstall`, which really should remove it.
+server_key_stash: /var/local/vault.key.redeploy
+# True only when this run will actually reach the deploy role, which is what
+# puts the key back. With no --tags, ansible_run_tags is ["all"], so a run like
+# `--skip-tags deploy` would otherwise stash the key and never restore it,
+# leaving the surviving database sealed with a key the daemon no longer has.
+preserve_server_key: >-
+  {{ (['deploy', 'redeploy', 'all'] | select('in', ansible_run_tags) | list | length > 0)
+     and (['deploy', 'redeploy'] | select('in', ansible_skip_tags) | list | length == 0) }}
+
 # Vault Replica container
 replica_port: "{{ hostvars[inventory_hostname].replica_port | default(24086) }}"
 replica_data_dir: /mnt/cache/appdata/vault-replica

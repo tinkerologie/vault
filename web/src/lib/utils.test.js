@@ -17,6 +17,10 @@ import {
   prettyAnomalySummary,
   snapshotMigrationMessage,
   itemDisplayLabel,
+  normaliseItemType,
+  itemTypeNoun,
+  itemTypeCountLabel,
+  commonItemType,
 } from './utils.js'
 
 
@@ -372,3 +376,100 @@ describe('itemDisplayLabel', () => {
   })
 })
 
+describe('normaliseItemType', () => {
+  it('accepts the engine singular spelling', () => {
+    expect(normaliseItemType('container')).toBe('container')
+    expect(normaliseItemType('zfs')).toBe('zfs')
+  })
+
+  it('accepts TypePicker plural discovery ids', () => {
+    expect(normaliseItemType('containers')).toBe('container')
+    expect(normaliseItemType('vms')).toBe('vm')
+    expect(normaliseItemType('plugins')).toBe('plugin')
+  })
+
+  it('is case and whitespace insensitive', () => {
+    expect(normaliseItemType('  Container ')).toBe('container')
+    expect(normaliseItemType('VMs')).toBe('vm')
+  })
+
+  it('returns empty string for unknown or absent types', () => {
+    expect(normaliseItemType('widget')).toBe('')
+    expect(normaliseItemType('')).toBe('')
+    expect(normaliseItemType(null)).toBe('')
+    expect(normaliseItemType(undefined)).toBe('')
+    expect(normaliseItemType(7)).toBe('')
+  })
+
+  it('does not strip the trailing s from zfs', () => {
+    expect(normaliseItemType('zfs')).toBe('zfs')
+  })
+})
+
+describe('itemTypeNoun', () => {
+  it('pluralises on count', () => {
+    expect(itemTypeNoun('container', 1)).toBe('container')
+    expect(itemTypeNoun('container', 2)).toBe('containers')
+    expect(itemTypeNoun('container', 0)).toBe('containers')
+  })
+
+  it('keeps VM capitalisation', () => {
+    expect(itemTypeNoun('vm', 1)).toBe('VM')
+    expect(itemTypeNoun('vms', 3)).toBe('VMs')
+  })
+
+  it('uses multi-word nouns for flash drives', () => {
+    expect(itemTypeNoun('flash', 1)).toBe('flash drive')
+    expect(itemTypeNoun('flash', 2)).toBe('flash drives')
+  })
+
+  it('falls back to a generic noun for unknown types', () => {
+    expect(itemTypeNoun('widget', 1)).toBe('item')
+    expect(itemTypeNoun(null, 4)).toBe('items')
+  })
+
+  it('defaults to the singular when no count is given', () => {
+    expect(itemTypeNoun('plugin')).toBe('plugin')
+  })
+})
+
+describe('itemTypeCountLabel', () => {
+  it('pairs the count with the right noun', () => {
+    expect(itemTypeCountLabel(1, 'container')).toBe('1 container')
+    expect(itemTypeCountLabel(3, 'containers')).toBe('3 containers')
+    expect(itemTypeCountLabel(0, 'plugin')).toBe('0 plugins')
+  })
+
+  it('falls back to items for unknown types', () => {
+    expect(itemTypeCountLabel(2, '')).toBe('2 items')
+  })
+
+  it('treats non-finite counts as zero', () => {
+    expect(itemTypeCountLabel(NaN, 'container')).toBe('0 containers')
+    expect(itemTypeCountLabel(undefined, 'vm')).toBe('0 VMs')
+  })
+})
+
+describe('commonItemType', () => {
+  it('returns the shared type of a homogeneous collection', () => {
+    expect(commonItemType([{ item_type: 'container' }, { item_type: 'container' }])).toBe('container')
+  })
+
+  it('accepts the type alias field', () => {
+    expect(commonItemType([{ type: 'plugins' }, { type: 'plugin' }])).toBe('plugin')
+  })
+
+  it('returns empty string for mixed collections', () => {
+    expect(commonItemType([{ item_type: 'container' }, { item_type: 'folder' }])).toBe('')
+  })
+
+  it('returns empty string when any entry has an unknown type', () => {
+    expect(commonItemType([{ item_type: 'container' }, { item_type: 'widget' }])).toBe('')
+    expect(commonItemType([{ item_type: 'container' }, null])).toBe('')
+  })
+
+  it('returns empty string for empty or non-array input', () => {
+    expect(commonItemType([])).toBe('')
+    expect(commonItemType(null)).toBe('')
+  })
+})

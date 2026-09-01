@@ -1,7 +1,10 @@
 package runner
 
 import (
+	"bytes"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 
@@ -134,6 +137,99 @@ func TestGetDedupManifestNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("GetDedupManifest for unknown ID should error")
 	}
+}
+
+// OpenDedupManifests is the session GetDedupManifest is built on: browsing a
+// container point resolves the item manifest and every volume sub-manifest
+// through one repo open instead of one per lookup. Cover the refusal, the
+// closer, and that a session serves repeated lookups.
+func TestOpenDedupManifestsSession(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	r.serverKey = testServerKey()
+
+	t.Run("refuses a non-dedup destination", func(t *testing.T) {
+		plain := createLocalDest(t, database, storageDir)
+		get, closeSession, err := r.OpenDedupManifests(plain)
+		if err == nil {
+			t.Fatal("OpenDedupManifests on a non-dedup destination should error")
+		}
+		if get != nil || closeSession != nil {
+			t.Error("a failed open must not hand back a fetcher or closer")
+		}
+	})
+
+	t.Run("reports an unbuildable adapter", func(t *testing.T) {
+		// Corrupt config: the adapter cannot be constructed at all, so the
+		// error must surface before any repo work is attempted.
+		broken := db.StorageDestination{
+			Name: "dedup-broken-config", Type: "local",
+			Config: `{"path":`, DedupEnabled: true,
+		}
+		get, closeSession, err := r.OpenDedupManifests(broken)
+		if err == nil {
+			t.Fatal("OpenDedupManifests with an unparsable config should error")
+		}
+		if get != nil || closeSession != nil {
+			t.Error("a failed open must not hand back a fetcher or closer")
+		}
+	})
+
+	// One initialised dedup repo, shared by the subtests below — destination
+	// names are unique per database.
+	dest := makeDedupDest(t, database, storageDir)
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatalf("NewAdapter: %v", err)
+	}
+	if _, err := dedup.InitRepo(database, adapter, dest.ID, r.serverKey); err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+	storage.CloseAdapter(adapter)
+
+	t.Run("reports an unsealable repo without leaking the adapter", func(t *testing.T) {
+		// The failure a lost vault.key produces: the repo exists but its
+		// master key was sealed with a different server key, so OpenRepo
+		// fails after the adapter is already open. The adapter must be
+		// closed on that path, and no fetcher handed back.
+		// Rotate the key in place and put it back afterwards: Runner carries a
+		// mutex, so it must not be copied, and the subtests here run in order.
+		original := r.serverKey
+		r.serverKey = bytes.Repeat([]byte{0x5c}, crypto.ServerKeySize)
+		defer func() { r.serverKey = original }()
+
+		get, closeSession, err := r.OpenDedupManifests(dest)
+		if err == nil {
+			closeSession()
+			t.Fatal("opening a repo sealed with a different server key should error")
+		}
+		if get != nil || closeSession != nil {
+			t.Error("a failed open must not hand back a fetcher or closer")
+		}
+	})
+
+	t.Run("serves repeated lookups from one open", func(t *testing.T) {
+		get, closeSession, err := r.OpenDedupManifests(dest)
+		if err != nil {
+			t.Fatalf("OpenDedupManifests: %v", err)
+		}
+		defer closeSession()
+
+		var bogusID dedup.ID
+		for i := range bogusID {
+			bogusID[i] = 0xAB
+		}
+		// Two lookups on one session: both must reach the repo and report the
+		// missing manifest rather than the session going stale after the first.
+		// Asserting the specific chunk-lookup miss is what distinguishes a live
+		// session from one that failed for some other reason on the second call.
+		for i := 0; i < 2; i++ {
+			_, err := get(bogusID)
+			if !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("lookup %d: err = %v, want a missing-chunk lookup failure", i+1, err)
+			}
+		}
+	})
 }
 
 // TestResolveItemManifestIDFromMetadata covers the multi-item dedup path

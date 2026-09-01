@@ -32,6 +32,21 @@
         {{ plugin_dir }}/ui
       changed_when: true
 
+    # Counterpart to the uninstall role's stash: put the pre-existing key back
+    # before the daemon starts, so it does not generate a fresh one and orphan
+    # every sealed secret in the surviving database.
+    - name: Restore the preserved server key
+      ansible.builtin.raw: >
+        if [ -f {{ server_key_stash }} ]; then
+          mv {{ server_key_stash }} {{ config_dir }}/vault.key &&
+          chmod 0600 {{ config_dir }}/vault.key &&
+          echo RESTORED;
+        else
+          echo NO_STASH;
+        fi
+      register: server_key_restore
+      changed_when: "'RESTORED' in server_key_restore.stdout | default('')"
+
     - name: Upload binary via SCP
       delegate_to: localhost
       ansible.builtin.command:

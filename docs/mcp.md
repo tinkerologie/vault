@@ -4,9 +4,9 @@ Vault exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
 
 ## Transports
 
-| Transport       | Endpoint                         | Use Case                                       |
-| --------------- | -------------------------------- | ---------------------------------------------- |
-| Streamable HTTP | `http://<host>:24085/api/v1/mcp` | All clients, via a stdio bridge or a tunnel    |
+| Transport       | Endpoint                         | Use Case                                    |
+| --------------- | -------------------------------- | ------------------------------------------- |
+| Streamable HTTP | `http://<host>:24085/api/v1/mcp` | All clients, via a stdio bridge or a tunnel |
 
 > The former `vault mcp --db <path>` stdio transport has been removed. It ran as
 > a second process writing directly to the daemon's database from outside it, so
@@ -14,6 +14,8 @@ Vault exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
 > its changes bypassed the flash-storage flush and the live UI updates. Local
 > clients should reach the HTTP endpoint through the `mcp-remote` stdio bridge
 > described below, which exposes the same tools with those protections intact.
+
+<!-- Separator: keeps these two callouts as distinct blockquotes (MD028). -->
 
 > **You can't paste the `http://…` endpoint straight into Claude Desktop.** Its
 > "Add custom connector" flow only accepts **HTTPS** URLs, and connectors are
@@ -146,12 +148,12 @@ The MCP surface is intentionally curated rather than a 1:1 mirror of every REST 
 
 ### Status
 
-| Tool                 | Description                  |
-| -------------------- | ---------------------------- |
-| `get_health`         | Basic health check           |
-| `get_health_summary` | Dashboard health metrics     |
-| `get_runner_status`  | Current backup/restore state |
-| `get_activity_log`   | Recent activity log          |
+| Tool                 | Description                   |
+| -------------------- | ----------------------------- |
+| `get_health`         | Basic health check            |
+| `get_health_summary` | Dashboard health metrics      |
+| `get_runner_status`  | Current backup/restore state  |
+| `get_activity_log`   | Recent activity log           |
 | `get_run_logs`       | Per-run streaming log entries |
 
 ### Restore

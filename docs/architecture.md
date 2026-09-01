@@ -12,7 +12,7 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 
 | Layer       | Package                 | Description                                                                 |
 | ----------- | ----------------------- | --------------------------------------------------------------------------- |
-| CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault dedup` |
+| CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault dedup`              |
 | API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                            |
 | MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP                           |
 | Job Intake  | `internal/jobs/`        | Validates, persists and activates every Job write; REST and MCP adapt to it |

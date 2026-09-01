@@ -318,8 +318,8 @@ func TestStageContainerChainMergedSkipsHistoricalSteps(t *testing.T) {
 	// Step 1 only had "other-container".
 	// Step 2 has "new-container" with its files.
 	childChecksums := writeStorageFiles(t, adapter, map[string]string{
-		"container-chain-test/2_inc/new-container/config.json":   `{"Name":"new-container"}`,
-		"container-chain-test/2_inc/new-container/image.tar":     "dummy image",
+		"container-chain-test/2_inc/new-container/config.json":  `{"Name":"new-container"}`,
+		"container-chain-test/2_inc/new-container/image.tar":    "dummy image",
 		"container-chain-test/2_inc/new-container/volume_0.tar": string(childTar),
 	})
 
@@ -503,4 +503,3 @@ func TestRestoreMergedChainGenericSkipsHistoricalSteps(t *testing.T) {
 		t.Errorf("step 2 should have been found, got %v", err)
 	}
 }
-

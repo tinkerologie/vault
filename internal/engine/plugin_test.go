@@ -471,5 +471,3 @@ func TestPluginDisplayName(t *testing.T) {
 		t.Errorf("pluginDisplayName() = %q, want %q", got, "Direct Test")
 	}
 }
-
-

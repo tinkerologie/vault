@@ -358,3 +358,91 @@ export function itemDisplayLabel(item) {
   if (itemId.startsWith('/')) return itemId
   return itemName
 }
+
+/**
+ * Canonical singular/plural nouns for the backup item types, keyed by the
+ * engine's `item_type` values.
+ *
+ * TypePicker addresses the same concepts by their plural discovery ids
+ * ('containers', 'vms', …), so normaliseItemType() accepts both spellings and
+ * every caller lands on one vocabulary.
+ */
+/** @type {Record<string, [string, string]>} */
+const ITEM_TYPE_NOUNS = {
+  container: ['container', 'containers'],
+  vm: ['VM', 'VMs'],
+  folder: ['folder', 'folders'],
+  flash: ['flash drive', 'flash drives'],
+  plugin: ['plugin', 'plugins'],
+  zfs: ['dataset', 'datasets'],
+}
+
+/**
+ * Normalise an item type to its engine `item_type` spelling.
+ *
+ * Accepts the engine's singular form ('container'), TypePicker's plural
+ * discovery id ('containers'), and any casing. Returns '' when the type is
+ * absent or unrecognised, so callers can fall back to a generic noun.
+ *
+ * @param {string | null | undefined} type
+ * @returns {string}
+ */
+export function normaliseItemType(type) {
+  if (typeof type !== 'string') return ''
+  const t = type.trim().toLowerCase()
+  if (!t) return ''
+  if (ITEM_TYPE_NOUNS[t]) return t
+  // TypePicker plural ids: 'containers' → 'container', 'vms' → 'vm'.
+  const singular = t.endsWith('s') ? t.slice(0, -1) : ''
+  return ITEM_TYPE_NOUNS[singular] ? singular : ''
+}
+
+/**
+ * The human-readable noun for an item type, pluralised for `count`.
+ *
+ * Unknown or absent types degrade to 'item'/'items' rather than echoing a raw
+ * type string into the UI.
+ *
+ * @param {string | null | undefined} type item_type or TypePicker id
+ * @param {number} [count] 1 selects the singular; anything else the plural
+ * @returns {string}
+ */
+export function itemTypeNoun(type, count = 1) {
+  const nouns = ITEM_TYPE_NOUNS[normaliseItemType(type)] || ['item', 'items']
+  return count === 1 ? nouns[0] : nouns[1]
+}
+
+/**
+ * A count paired with its correctly pluralised item-type noun, e.g.
+ * "1 container", "3 VMs", "0 items".
+ *
+ * @param {number} count
+ * @param {string | null | undefined} type item_type or TypePicker id
+ * @returns {string}
+ */
+export function itemTypeCountLabel(count, type) {
+  const n = Number.isFinite(count) ? count : 0
+  return `${formatInt(n)} ${itemTypeNoun(type, n)}`
+}
+
+/**
+ * The single item type shared by every entry in a collection, or '' when the
+ * collection is empty or mixes types.
+ *
+ * Lets a caller render "3 containers" for a homogeneous restore and fall back
+ * to "3 items" for a mixed one, without each call site re-deriving it.
+ *
+ * @param {Array<{ item_type?: string, type?: string } | null | undefined> | null | undefined} items
+ * @returns {string}
+ */
+export function commonItemType(items) {
+  if (!Array.isArray(items) || items.length === 0) return ''
+  let found = ''
+  for (const item of items) {
+    const t = normaliseItemType(item?.item_type || item?.type)
+    if (!t) return ''
+    if (!found) found = t
+    else if (found !== t) return ''
+  }
+  return found
+}

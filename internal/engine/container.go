@@ -1811,6 +1811,10 @@ func findDatabaseDump(sourceDir string) string {
 //	                       represented with Size: -1 and an empty Chunks slice,
 //	                       so the volume manifest is preserved for diagnostics
 //	                       even when we didn't back it up.
+//	__dbdump__           → chunked logical database dump, written only when the
+//	                       item enables database_dump (see container_db.go)
+//	__dbdump_replay__    → zero-value marker entry: present when the dump should
+//	                       be replayed into the live server on restore
 const (
 	containerInspectKey   = "__inspect"
 	containerImageMetaKey = "__image_meta"

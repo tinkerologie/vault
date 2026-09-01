@@ -793,6 +793,7 @@
         {@const entry = picker.get(itemKey(item))}
         {@const sel = entry?.selected?.size || 0}
         {@const total = entry?.contents?.files?.length || 0}
+        {@const emptyContents = !!entry?.contents && total === 0}
         {#if !supportsFilePicker(item.type)}
           <div class="bg-surface-2 border border-border rounded-xl p-3 text-sm flex items-center justify-between gap-3">
             <span class="flex items-center gap-2 min-w-0">
@@ -822,6 +823,8 @@
                 <span class="text-danger">{entry.error}</span>
               {:else if entry?.loading}
                 Loading…
+              {:else if emptyContents}
+                No restorable files
               {:else}
                 Click to browse contents
               {/if}
@@ -836,6 +839,15 @@
                 <p class="text-xs text-text-muted">This restore point may have been produced before partial restore was added; whole-archive extract will run instead.</p>
               {:else if !entry.contents}
                 <p class="text-xs text-text-muted">No contents loaded.</p>
+              {:else if emptyContents}
+                <!-- Distinct from an empty filter result: this backup captured
+                     no restorable file for the item at all, so there is
+                     nothing to filter. Most often a container whose volumes
+                     were all excluded, anonymous, or virtual. -->
+                <p class="text-xs text-text-muted">This backup captured no restorable files for this item.</p>
+                {#if item.type === 'container'}
+                  <p class="text-xs text-text-dim">Every volume was excluded by the job, anonymous, or a virtual path. Restoring still recreates the container from its saved configuration and image.</p>
+                {/if}
               {:else}
                 <div class="flex items-center gap-2">
                   <input type="text" placeholder="Filter by path…" bind:value={entry.search}
