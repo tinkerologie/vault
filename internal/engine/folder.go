@@ -330,6 +330,7 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 			Size:    info.Size(),
 			IsDir:   info.IsDir(),
 		}
+		setManifestOwner(&entry, info)
 		if info.IsDir() {
 			m.Files[rel] = entry
 			return nil
@@ -438,6 +439,16 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		}
 	}
 	sort.Strings(dirs)
+	// Directory metadata is applied after every file is written: a directory
+	// restored read-only, or owned by an account the daemon is not, would
+	// otherwise block the writes that still have to happen inside it.
+	type dirMeta struct {
+		full string
+		mode os.FileMode
+		uid  int
+		gid  int
+	}
+	dirMetas := make([]dirMeta, 0, len(dirs))
 	for _, d := range dirs {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -450,9 +461,14 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if mode == 0 {
 			mode = 0o755
 		}
-		if err := os.MkdirAll(full, mode); err != nil {
+		// Writable by the daemon while the restore runs whatever the recorded
+		// mode is — the files inside still have to be written. The real mode
+		// is applied in the deferred pass at the end.
+		if err := mkdirRestored(full, mode); err != nil {
 			return fmt.Errorf("restore mkdir %s: %w", d, err)
 		}
+		uid, gid := m.Files[d].Owner()
+		dirMetas = append(dirMetas, dirMeta{full: full, mode: mode, uid: uid, gid: gid})
 	}
 
 	sort.Strings(files)
@@ -490,12 +506,25 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if err := out.Close(); err != nil {
 			return err
 		}
+		// O_CREATE only applies the mode when it creates the file, so a
+		// restore over an existing tree needs the mode set explicitly.
+		applyMode(full, mode)
+		uid, gid := e.Owner()
+		applyOwner(full, uid, gid)
 		if t, err := time.Parse(time.RFC3339, e.ModTime); err == nil {
 			_ = os.Chtimes(full, t, t)
 		}
 		if progress != nil {
 			progress(item.Name, -1, fmt.Sprintf("restored %s", fp))
 		}
+	}
+	// Deepest first, so a parent is only finalised once its children are done.
+	for i := len(dirMetas) - 1; i >= 0; i-- {
+		d := dirMetas[i]
+		// MkdirAll leaves an existing directory's mode untouched, which an
+		// in-place restore over a previous one relies on this to correct.
+		applyMode(d.full, d.mode)
+		applyOwner(d.full, d.uid, d.gid)
 	}
 	return nil
 }

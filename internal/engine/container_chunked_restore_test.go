@@ -408,3 +408,90 @@ func TestRestoreChunkedVolumes_NestedMounts(t *testing.T) {
 		}
 	})
 }
+
+// The mount's own root directory belongs to the backup as much as its
+// contents do. Restoring into a destination that does not exist yet has to
+// reproduce it rather than invent a fresh root-owned 0750 directory — a
+// container that starts as its own unprivileged user cannot read the latter,
+// which is what stopped a container restored into a new folder from starting.
+func TestRestoreChunkedVolumes_RestoresVolumeRootMode(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "config.yml"), []byte("foo: bar\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(src, 0o775); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+	subID := backupTestVolume(t, r, src)
+
+	phantomSource := filepath.Join(t.TempDir(), "appdata", "myapp")
+	inspect := inspectFromJSON(t, fmt.Sprintf(`{
+		"Name": "/test-container",
+		"Config": {"Image": "nginx:latest"},
+		"Mounts": [{"Type":"bind","Source":%q,"Destination":"/etc/myapp"}]
+	}`, phantomSource))
+
+	restoreDest := t.TempDir()
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			containerVolPrefix + "/etc/myapp": volumePointerEntry(src, subID),
+		},
+	}
+
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, nil); err != nil {
+		t.Fatalf("restoreChunkedVolumes() error = %v", err)
+	}
+
+	root := filepath.Join(restoreDest, filepath.Base(phantomSource))
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatalf("volume root not created: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o775 {
+		t.Errorf("volume root mode = %04o, want 0775", got)
+	}
+}
+
+// A manifest written before root metadata existed records no mode, and the
+// restore must leave the directory as it created it rather than chmod to 0.
+func TestRestoreChunkedVolumes_LegacyEntryLeavesRootAlone(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "config.yml"), []byte("foo: bar\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+	subID := backupTestVolume(t, r, src)
+
+	phantomSource := filepath.Join(t.TempDir(), "appdata", "myapp")
+	inspect := inspectFromJSON(t, fmt.Sprintf(`{
+		"Name": "/test-container",
+		"Config": {"Image": "nginx:latest"},
+		"Mounts": [{"Type":"bind","Source":%q,"Destination":"/etc/myapp"}]
+	}`, phantomSource))
+
+	restoreDest := t.TempDir()
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			// No Mode, no owner: exactly what a pre-existing backup holds.
+			containerVolPrefix + "/etc/myapp": {Size: 100, Chunks: []dedup.ID{subID}},
+		},
+	}
+
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, nil); err != nil {
+		t.Fatalf("restoreChunkedVolumes() error = %v", err)
+	}
+
+	root := filepath.Join(restoreDest, filepath.Base(phantomSource))
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatalf("volume root not created: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o750 {
+		t.Errorf("volume root mode = %04o, want the unchanged 0750 the restore creates", got)
+	}
+}

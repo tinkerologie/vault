@@ -67,6 +67,16 @@ type volumeManifestEntry struct {
 	Archive       string   `json:"archive,omitempty"`
 	IsFile        bool     `json:"is_file,omitempty"`
 	ExcludedPaths []string `json:"excluded_paths,omitempty"`
+
+	// Metadata of the mount's own root directory. A tar archive records
+	// nothing about the directory it was made from — the walk starts at its
+	// children — so restoring a volume into a directory that does not exist
+	// yet would otherwise invent one, root-owned and 0750, and the container
+	// could not read its own data. Zero means "not recorded" (a backup taken
+	// before this existed), which leaves the pre-existing behaviour intact.
+	RootMode uint32 `json:"root_mode,omitempty"`
+	RootUID  int    `json:"root_uid,omitempty"`
+	RootGID  int    `json:"root_gid,omitempty"`
 }
 
 // devicePrefixes are virtual / system filesystem paths that must never be
@@ -978,6 +988,8 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			volDest := filepath.Join(destDir, archiveName)
 
 			if srcInfo.IsDir() {
+				entry.RootMode = uint32(srcInfo.Mode().Perm())
+				entry.RootUID, entry.RootGID = fileOwner(srcInfo)
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
 
 				if hasChangedSince {
@@ -1355,14 +1367,17 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		}
 		targetPath = normalizedTargetPath
 
-		// Check manifest to determine if this was a file-based mount.
-		isFileMount := false
+		// Check the manifest for what this mount was: a file-based bind mount
+		// extracts differently, and a directory mount carries the metadata of
+		// its own root, which no tar archive records.
+		var savedEntry volumeManifestEntry
 		for _, me := range savedManifest {
-			if me.Index == i && me.IsFile {
-				isFileMount = true
+			if me.Index == i {
+				savedEntry = me
 				break
 			}
 		}
+		isFileMount := savedEntry.IsFile
 
 		if isFileMount {
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
@@ -1378,6 +1393,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			if err := untarDirectoryFiltered(ctx, volArchive, targetPath, volIncludes); err != nil {
 				return fmt.Errorf("restoring volume %s: %w", targetPath, err)
 			}
+			applyVolumeRootMeta(targetPath, savedEntry.RootMode, savedEntry.RootUID, savedEntry.RootGID)
 		}
 	}
 
@@ -2133,10 +2149,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					if vErr != nil {
 						return fmt.Errorf("backup unchanged volume %s: %w", mnt.Destination, vErr)
 					}
-					m.Files[key] = dedup.ManifestEntry{
-						Size:   0,
-						Chunks: []dedup.ID{volManifestID},
-					}
+					m.Files[key] = volumePointerEntry(mnt.Source, volManifestID)
 					continue
 				}
 				// A volume that is unchanged by mtime but still has a parent
@@ -2159,10 +2172,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			if vErr != nil {
 				return fmt.Errorf("backup volume %s: %w", mnt.Destination, vErr)
 			}
-			m.Files[key] = dedup.ManifestEntry{
-				Size:   0,
-				Chunks: []dedup.ID{volManifestID},
-			}
+			m.Files[key] = volumePointerEntry(mnt.Source, volManifestID)
 		}
 		return nil
 	}, func() error {
@@ -2389,6 +2399,8 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
+		rootUID, rootGID := v.Owner()
+		applyVolumeRootMeta(src, v.Mode, rootUID, rootGID)
 	}
 	return nil
 }
@@ -2598,6 +2610,12 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 		if err := f.Close(); err != nil {
 			return fmt.Errorf("closing file %s: %w", destPath, err)
 		}
+		// A file bind mount restored over an existing file keeps that file's
+		// mode and owner unless they are set explicitly — and a container
+		// whose hook script comes back root-owned cannot run it.
+		applyMode(destPath, safeFileMode(header.Mode))
+		applyOwner(destPath, header.Uid, header.Gid)
+		_ = os.Chtimes(destPath, header.ModTime, header.ModTime)
 		return nil
 	}
 }
@@ -2884,11 +2902,16 @@ func untarDirectory(ctx context.Context, srcPath, destDir string) error {
 	return untarDirectoryFiltered(ctx, srcPath, destDir, nil)
 }
 
-// dirModTime records a directory target path and its archive modification time
-// so mtimes can be applied in reverse insertion order after all child entries
-// are written.
-type dirModTime struct {
+// dirRestoreMeta records a directory target path and the metadata its archive
+// entry carried, so mode, ownership, and mtime can be applied in reverse
+// insertion order once every child entry has been written. Deferring is what
+// makes a read-only or root-only directory restorable: applying its mode up
+// front would lock the extractor out of its own children.
+type dirRestoreMeta struct {
 	path    string
+	mode    os.FileMode
+	uid     int
+	gid     int
 	modTime time.Time
 }
 
@@ -2916,7 +2939,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 	}
 	defer func() { _ = closeDecompress() }()
 
-	var dirModTimes []dirModTime
+	var dirs []dirRestoreMeta
 	tr := tar.NewReader(dr)
 	for {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -2947,10 +2970,20 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, safeFileMode(header.Mode)); err != nil {
+			// Created writable-and-traversable by the daemon whatever the
+			// archive says, because the entries beneath it still have to be
+			// written; the recorded mode is applied in the deferred pass
+			// below, once nothing more will be written inside.
+			if err := mkdirRestored(target, safeFileMode(header.Mode)); err != nil {
 				return fmt.Errorf("creating directory %s: %w", target, err)
 			}
-			dirModTimes = append(dirModTimes, dirModTime{path: target, modTime: header.ModTime})
+			dirs = append(dirs, dirRestoreMeta{
+				path:    target,
+				mode:    safeFileMode(header.Mode),
+				uid:     header.Uid,
+				gid:     header.Gid,
+				modTime: header.ModTime,
+			})
 		case tar.TypeReg:
 			if header.Size < 0 {
 				return fmt.Errorf("invalid file size %d for %s", header.Size, header.Name)
@@ -2977,6 +3010,11 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := f.Close(); err != nil {
 				return fmt.Errorf("closing file %s: %w", target, err)
 			}
+			// OpenFile only applies its mode when it creates the file, and
+			// even then the daemon's umask masks it, so a restore over an
+			// existing tree would otherwise keep the old permissions.
+			applyMode(target, safeFileMode(header.Mode))
+			applyOwner(target, header.Uid, header.Gid)
 			_ = os.Chtimes(target, header.ModTime, header.ModTime)
 		case tar.TypeSymlink:
 			// Validate symlink target resolves within destDir after following existing symlinks.
@@ -2990,6 +3028,9 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := os.Symlink(header.Linkname, target); err != nil { // #nosec G305 — target validated by joinArchiveTarget, linkname validated by resolveSymlinkTarget
 				return fmt.Errorf("creating symlink %s -> %s: %w", target, header.Linkname, err)
 			}
+			// Lchown, so the link itself is chowned and not whatever it
+			// points at — which may be outside the restore entirely.
+			applyOwner(target, header.Uid, header.Gid)
 		case tar.TypeLink:
 			linkTarget, err := joinArchiveTarget(destDir, header.Linkname)
 			if err != nil {
@@ -3010,8 +3051,15 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			continue
 		}
 	}
-	for i := len(dirModTimes) - 1; i >= 0; i-- {
-		_ = os.Chtimes(dirModTimes[i].path, dirModTimes[i].modTime, dirModTimes[i].modTime)
+	// Deepest first: a parent's mode is only safe to restore once nothing
+	// more will be written beneath it.
+	for i := len(dirs) - 1; i >= 0; i-- {
+		d := dirs[i]
+		// MkdirAll leaves an existing directory's mode alone, so an in-place
+		// restore needs the explicit chmod as much as a fresh one does.
+		applyMode(d.path, d.mode)
+		applyOwner(d.path, d.uid, d.gid)
+		_ = os.Chtimes(d.path, d.modTime, d.modTime)
 	}
 	return nil
 }

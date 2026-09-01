@@ -32,6 +32,28 @@ type ManifestEntry struct {
 	Size    int64  `json:"size"`
 	IsDir   bool   `json:"is_dir,omitempty"`
 	Chunks  []ID   `json:"chunks,omitempty"`
+
+	// Numeric owner of the path, as recorded at backup time. Restoring these
+	// matters on Unraid, where appdata belongs to an unprivileged account but
+	// the daemon writing the restore is root. Both are pointers so that a
+	// manifest written before ownership was captured stays distinguishable
+	// from one that genuinely recorded root:root — the former must leave
+	// ownership alone, the latter must set it.
+	UID *int `json:"uid,omitempty"`
+	GID *int `json:"gid,omitempty"`
+}
+
+// Owner returns the recorded numeric owner, or (-1, -1) when the manifest
+// carries none — the same "leave unchanged" convention as chown(2).
+func (e ManifestEntry) Owner() (uid, gid int) {
+	uid, gid = -1, -1
+	if e.UID != nil {
+		uid = *e.UID
+	}
+	if e.GID != nil {
+		gid = *e.GID
+	}
+	return uid, gid
 }
 
 // EncodeJSON returns the canonical JSON form. Stored as a chunk via
