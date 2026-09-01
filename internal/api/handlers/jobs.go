@@ -507,58 +507,15 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 	}
 	defer storage.CloseAdapter(adapter)
 
-	itemPrefix := path.Join(rp.StoragePath, itemName)
-
-	// Resolve which sidecar to read. When `file` is supplied, build both
-	// candidates explicitly (with and without .age). When `file` is
-	// omitted, list the per-item directory and pick the first index file.
-	candidates, err := resolveIndexCandidates(adapter, itemPrefix, archiveName)
-	if err != nil {
-		respondInternalError(w, err)
+	idx, err := h.classicItemIndex(adapter, rp.StoragePath, itemName, itemType, archiveName)
+	switch {
+	case errors.Is(err, errNoIndexSidecar):
+		respondError(w, http.StatusNotFound, errNoIndexSidecar.Error())
 		return
-	}
-	if len(candidates) == 0 {
-		respondError(w, http.StatusNotFound, "no tar index sidecar found for this item")
+	case errors.Is(err, errIndexEncryptedNoPassphrase):
+		respondError(w, http.StatusFailedDependency, errIndexEncryptedNoPassphrase.Error())
 		return
-	}
-
-	var (
-		indexReader io.ReadCloser
-		sidecarPath string
-	)
-	for _, candidate := range candidates {
-		rc, err := adapter.Read(candidate)
-		if err != nil {
-			continue
-		}
-		indexReader = rc
-		sidecarPath = candidate
-		break
-	}
-	if indexReader == nil {
-		respondError(w, http.StatusNotFound, "tar index sidecar not readable at any candidate path")
-		return
-	}
-	defer indexReader.Close()
-
-	var src io.Reader = indexReader
-	if strings.HasSuffix(sidecarPath, ".age") {
-		pass := h.runner.ResolvePassphrase()
-		if pass == "" {
-			respondError(w, http.StatusFailedDependency, "index is encrypted but no passphrase is configured")
-			return
-		}
-		dec, err := crypto.DecryptReader(pass, indexReader)
-		if err != nil {
-			respondInternalError(w, err)
-			return
-		}
-		defer dec.Close()
-		src = dec
-	}
-
-	idx, err := engine.ReadTarIndex(src)
-	if err != nil {
+	case err != nil:
 		respondInternalError(w, err)
 		return
 	}
@@ -630,7 +587,7 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 	// files, so the picker must not offer them (issue #231). Without a
 	// listing (pre-listing backups) the union stays, matching the restore.
 	newest := chain[len(chain)-1]
-	if listing, ok := h.runner.ReadItemSidecar(dest, newest, itemName, engine.ListingSuffix); ok {
+	if listing, ok := h.effectiveListing(getAdapter, dest, newest, itemName, itemType); ok {
 		keep := make(map[string]struct{}, len(listing.Files))
 		for _, f := range listing.Files {
 			keep[f.Path] = struct{}{}
@@ -693,43 +650,229 @@ func (h *JobHandler) itemIndexForPoint(getAdapter func() (storage.Adapter, error
 	if err != nil {
 		return engine.TarIndex{}, err
 	}
-	itemPrefix := path.Join(rp.StoragePath, itemName)
+	return h.classicItemIndex(adapter, rp.StoragePath, itemName, itemType, archiveName)
+}
+
+// effectiveListing reads the newest chain step's authoritative listing, in the
+// same path vocabulary as the merged chain contents it prunes.
+//
+// That last part is the whole point. A container's listing sidecars are
+// per-volume and volume-relative (`settings.yml`), while the merged listing is
+// container-absolute (`/config/settings.yml`) — comparing the two directly
+// keeps nothing and empties the picker. Containers therefore go through the
+// same volume merge the index listing uses, and everything else keeps reading
+// its single sidecar.
+func (h *JobHandler) effectiveListing(getAdapter func() (storage.Adapter, error), dest db.StorageDestination, rp db.RestorePoint, itemName, itemType string) (engine.TarIndex, bool) {
+	if itemType == "container" {
+		adapter, err := getAdapter()
+		if err == nil {
+			idx, ok, complete, err := h.containerVolumeIndex(adapter, path.Join(rp.StoragePath, itemName), itemName, engine.ListingSuffix)
+			if err == nil && ok {
+				if !complete {
+					// A volume's listing is missing or unreadable, so this
+					// listing under-reports. Pruning against it would delete
+					// every inherited path for that volume; keeping the union
+					// shows a file the restore may no longer write, which is
+					// the safer of the two.
+					log.Printf("api: restore contents: incomplete volume listing for restore point %d — skipping the chain prune", rp.ID) // #nosec G706 //nolint:gosec // rp.ID is a validated int64
+					return engine.TarIndex{}, false
+				}
+				return idx, true
+			}
+		}
+		// No volumes manifest (or the adapter is unavailable): fall through to
+		// the single-sidecar read, whose paths match the single-archive
+		// listing this point would then have produced.
+	}
+	return h.runner.ReadItemSidecar(dest, rp, itemName, engine.ListingSuffix)
+}
+
+// errNoIndexSidecar marks an item whose tar index sidecar is absent or
+// unreadable at every candidate path.
+var errNoIndexSidecar = errors.New("no readable tar index sidecar found for this item")
+
+// classicItemIndex reads one non-dedup restore point's file listing for an item.
+//
+// A container is listed across ALL of its volumes at once, in container-internal
+// absolute paths — the same vocabulary the dedup listing uses. Before this, the
+// item directory was listed and the FIRST readable *.index.json won, so a
+// multi-volume container showed one arbitrary volume's files under bare
+// volume-relative names, with no way to tell which mount they belonged to and
+// nothing to map a selection back onto at restore time (issue #275).
+//
+// An explicit archiveName still addresses one archive directly and is returned
+// verbatim; so is a container backed up before volumes.json existed, since
+// without it there is nothing to attribute paths to.
+func (h *JobHandler) classicItemIndex(adapter storage.Adapter, storagePath, itemName, itemType, archiveName string) (engine.TarIndex, error) {
+	itemPrefix := path.Join(storagePath, itemName)
+	if itemType == "container" && archiveName == "" {
+		idx, ok, _, err := h.containerVolumeIndex(adapter, itemPrefix, itemName, engine.IndexSuffix)
+		if err != nil {
+			return engine.TarIndex{}, err
+		}
+		if ok {
+			return idx, nil
+		}
+		log.Printf("api: restore contents: no volumes manifest under %q — falling back to the single-archive listing", itemPrefix) // #nosec G706 //nolint:gosec // itemPrefix is built from vault-controlled storage paths
+	}
+	return h.singleArchiveIndex(adapter, itemPrefix, archiveName)
+}
+
+// containerVolumeIndex merges every backed-up volume's sidecar into one
+// listing, each entry prefixed with the volume's container-internal mount
+// destination. suffix selects which sidecar to merge: engine.IndexSuffix for
+// the browsable contents, engine.ListingSuffix for the effective listing the
+// chain prune compares against.
+//
+// ok=false means this restore point has no volumes.json to attribute paths
+// with, so the caller must fall back. complete=false means at least one
+// backed-up volume's sidecar was missing or unreadable and its entries are
+// absent: fine for a listing, which degrades by a volume rather than failing,
+// but never safe to prune a chain against — an omitted volume would take every
+// inherited path with it.
+func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, itemName, suffix string) (engine.TarIndex, bool, bool, error) {
+	entries, err := adapter.List(itemPrefix)
+	if err != nil {
+		return engine.TarIndex{}, false, false, err
+	}
+	byName := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if !e.IsDir {
+			byName[path.Base(e.Path)] = e.Path
+		}
+	}
+	open := func(name string) (io.ReadCloser, error) {
+		p, ok := byName[name]
+		if !ok {
+			if p, ok = byName[name+".age"]; !ok {
+				return nil, errNoIndexSidecar
+			}
+		}
+		return h.openMaybeEncrypted(adapter, p)
+	}
+
+	manifestRC, err := open("volumes.json")
+	if err != nil {
+		// No manifest (or it cannot be decrypted): nothing to attribute
+		// volume paths with.
+		return engine.TarIndex{}, false, false, nil
+	}
+	var volumes []struct {
+		Destination string `json:"destination"`
+		BackedUp    bool   `json:"backed_up"`
+		Archive     string `json:"archive,omitempty"`
+		IsFile      bool   `json:"is_file,omitempty"`
+	}
+	decodeErr := json.NewDecoder(manifestRC).Decode(&volumes)
+	_ = manifestRC.Close()
+	if decodeErr != nil {
+		return engine.TarIndex{}, false, false, nil
+	}
+
+	complete := true
+	files := make([]engine.TarIndexEntry, 0, len(volumes))
+	for _, v := range volumes {
+		if !v.BackedUp || v.Archive == "" || v.Destination == "" {
+			continue
+		}
+		rc, openErr := open(v.Archive + suffix)
+		if openErr != nil {
+			// A volume archived in an earlier step of a chain has no index
+			// here; the chain merge picks it up from that step. Degrading the
+			// listing beats failing the whole request over one volume.
+			complete = false
+			log.Printf("api: restore contents: no %s sidecar for a volume archive under %q — omitting it", suffix, itemPrefix) // #nosec G706 //nolint:gosec // itemPrefix is built from vault-controlled storage paths
+			continue
+		}
+		volIdx, readErr := engine.ReadTarIndex(rc)
+		_ = rc.Close()
+		if readErr != nil {
+			complete = false
+			log.Printf("api: restore contents: unreadable volume %s under %q: %v — omitting it", suffix, itemPrefix, readErr) // #nosec G706 //nolint:gosec // itemPrefix is vault-controlled, err is from the index decoder
+			continue
+		}
+		if v.IsFile {
+			// A single-file bind mount: the destination IS the file, and the
+			// archive holds it under its base name.
+			for _, f := range volIdx.Files {
+				f.Path = engine.ContainerVolumePath(v.Destination, "")
+				files = append(files, f)
+			}
+			continue
+		}
+		for _, f := range volIdx.Files {
+			f.Path = engine.ContainerVolumePath(v.Destination, f.Path)
+			files = append(files, f)
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return engine.TarIndex{Version: 1, Archive: itemName, Files: files}, true, complete, nil
+}
+
+// openMaybeEncrypted opens a stored sidecar, transparently decrypting an .age
+// path with the configured passphrase.
+func (h *JobHandler) openMaybeEncrypted(adapter storage.Adapter, storedPath string) (io.ReadCloser, error) {
+	rc, err := adapter.Read(storedPath)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(storedPath, ".age") {
+		return rc, nil
+	}
+	pass := h.runner.ResolvePassphrase()
+	if pass == "" {
+		_ = rc.Close()
+		return nil, errIndexEncryptedNoPassphrase
+	}
+	dec, err := crypto.DecryptReader(pass, rc)
+	if err != nil {
+		_ = rc.Close()
+		return nil, err
+	}
+	return multiCloseReader{Reader: dec, closes: []io.Closer{dec, rc}}, nil
+}
+
+// multiCloseReader closes a decrypting reader and the underlying storage reader
+// together, so a caller only has to close what it was handed.
+type multiCloseReader struct {
+	io.Reader
+	closes []io.Closer
+}
+
+func (r multiCloseReader) Close() error {
+	var firstErr error
+	for _, c := range r.closes {
+		if err := c.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// singleArchiveIndex reads one archive's tar index sidecar — the pre-existing
+// behaviour, still used for non-container items and for an explicitly
+// addressed archive.
+func (h *JobHandler) singleArchiveIndex(adapter storage.Adapter, itemPrefix, archiveName string) (engine.TarIndex, error) {
 	candidates, err := resolveIndexCandidates(adapter, itemPrefix, archiveName)
 	if err != nil {
 		return engine.TarIndex{}, err
 	}
-	var (
-		indexReader io.ReadCloser
-		sidecarPath string
-	)
 	for _, candidate := range candidates {
-		rc, readErr := adapter.Read(candidate)
-		if readErr != nil {
+		rc, openErr := h.openMaybeEncrypted(adapter, candidate)
+		if errors.Is(openErr, errIndexEncryptedNoPassphrase) {
+			return engine.TarIndex{}, openErr
+		}
+		if openErr != nil {
 			continue
 		}
-		indexReader = rc
-		sidecarPath = candidate
-		break
-	}
-	if indexReader == nil {
-		return engine.TarIndex{}, fmt.Errorf("no readable tar index sidecar under %s", itemPrefix)
-	}
-	defer indexReader.Close()
-
-	var src io.Reader = indexReader
-	if strings.HasSuffix(sidecarPath, ".age") {
-		pass := h.runner.ResolvePassphrase()
-		if pass == "" {
-			return engine.TarIndex{}, errIndexEncryptedNoPassphrase
+		idx, readErr := engine.ReadTarIndex(rc)
+		_ = rc.Close()
+		if readErr != nil {
+			return engine.TarIndex{}, readErr
 		}
-		dec, decErr := crypto.DecryptReader(pass, indexReader)
-		if decErr != nil {
-			return engine.TarIndex{}, decErr
-		}
-		defer dec.Close()
-		src = dec
+		return idx, nil
 	}
-	return engine.ReadTarIndex(src)
+	return engine.TarIndex{}, errNoIndexSidecar
 }
 
 // resolveIndexCandidates returns the list of storage paths to probe for the

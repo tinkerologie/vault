@@ -73,7 +73,7 @@ func TestRestoreChunkedVolumes_CustomDestBindMount(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestRestoreChunkedVolumes_DefaultDestRestoresToSource(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestRestoreChunkedVolumes_CustomDestNamedVolume(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestRestoreChunkedVolumes_SkippedVolumeNotRestored(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, t.TempDir(), nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, t.TempDir(), nil, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -235,7 +235,7 @@ func TestRestoreChunkedVolumes_InvalidMountSource(t *testing.T) {
 
 	// restoreDest="" causes volumeRestoreTarget to return Source directly,
 	// so normalizeRestorePath must reject /dev/vault.
-	err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil)
+	err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, nil)
 	if err == nil {
 		t.Fatal("restoreChunkedVolumes() expected error for path outside allowed roots, got nil")
 	}
@@ -247,4 +247,164 @@ func TestRestoreChunkedVolumes_InvalidMountSource(t *testing.T) {
 	if _, statErr := os.Stat(disallowedSource); !os.IsNotExist(statErr) {
 		t.Errorf("disallowed path %s should not have been created", disallowedSource)
 	}
+}
+
+// TestRestoreChunkedVolumes_FilePickerSelection covers issue #275: a restore
+// driven by the file picker must extract only the selected paths, and must
+// leave volumes the selection never names completely untouched.
+func TestRestoreChunkedVolumes_FilePickerSelection(t *testing.T) {
+	configSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configSrc, "wanted.yml"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configSrc, "unwanted.yml"), []byte("drop\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	transcodeSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(transcodeSrc, "tmp.bin"), []byte("scratch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	configID := backupTestVolume(t, r, configSrc)
+	transcodeID := backupTestVolume(t, r, transcodeSrc)
+
+	inspect := inspectFromJSON(t, `{
+		"Name": "/test-container",
+		"Config": {"Image": "nginx:latest"},
+		"Mounts": [
+			{"Type":"bind","Source":"/mnt/user/appdata/config","Destination":"/config"},
+			{"Type":"bind","Source":"/mnt/user/appdata/transcode","Destination":"/transcode"}
+		]
+	}`)
+
+	restoreDest := t.TempDir()
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			containerVolPrefix + "/config":    {Size: 100, Chunks: []dedup.ID{configID}},
+			containerVolPrefix + "/transcode": {Size: 100, Chunks: []dedup.ID{transcodeID}},
+		},
+	}
+
+	selection := []string{"/config/wanted.yml"}
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, selection, nil); err != nil {
+		t.Fatalf("restoreChunkedVolumes() error = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(restoreDest, "config", "wanted.yml")); err != nil {
+		t.Errorf("selected file should have been restored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreDest, "config", "unwanted.yml")); !os.IsNotExist(err) {
+		t.Errorf("unselected file in the selected volume should not exist, stat err = %v", err)
+	}
+	// The whole /transcode volume is outside the selection, so it must not be
+	// touched at all — not even an empty directory.
+	if _, err := os.Stat(filepath.Join(restoreDest, "transcode")); !os.IsNotExist(err) {
+		t.Errorf("unselected volume should not have been restored, stat err = %v", err)
+	}
+}
+
+// TestRestoreChunkedVolumes_MountPointSelection picks the mount point itself,
+// which means "restore this whole volume".
+func TestRestoreChunkedVolumes_MountPointSelection(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "a.yml"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "b.yml"), []byte("b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	subID := backupTestVolume(t, r, src)
+	inspect := inspectFromJSON(t, `{
+		"Name": "/test-container",
+		"Config": {"Image": "nginx:latest"},
+		"Mounts": [{"Type":"bind","Source":"/mnt/user/appdata/config","Destination":"/config"}]
+	}`)
+
+	restoreDest := t.TempDir()
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			containerVolPrefix + "/config": {Size: 100, Chunks: []dedup.ID{subID}},
+		},
+	}
+
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, []string{"/config"}, nil); err != nil {
+		t.Fatalf("restoreChunkedVolumes() error = %v", err)
+	}
+
+	for _, name := range []string{"a.yml", "b.yml"} {
+		if _, err := os.Stat(filepath.Join(restoreDest, "config", name)); err != nil {
+			t.Errorf("expected %s to be restored: %v", name, err)
+		}
+	}
+}
+
+// TestRestoreChunkedVolumes_NestedMounts covers mounts that nest inside one
+// another: a file selected inside the deeper mount must be extracted from that
+// mount only, never routed into the parent whose archive never held it, and
+// picking the parent's mount point must bring the nested mount with it.
+func TestRestoreChunkedVolumes_NestedMounts(t *testing.T) {
+	configSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configSrc, "settings.yml"), []byte("cfg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cacheSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cacheSrc, "f.yml"), []byte("cache\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	configID := backupTestVolume(t, r, configSrc)
+	cacheID := backupTestVolume(t, r, cacheSrc)
+
+	inspect := inspectFromJSON(t, `{
+		"Name": "/test-container",
+		"Config": {"Image": "nginx:latest"},
+		"Mounts": [
+			{"Type":"bind","Source":"/mnt/user/appdata/config","Destination":"/config"},
+			{"Type":"bind","Source":"/mnt/user/appdata/cache","Destination":"/config/cache"}
+		]
+	}`)
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			containerVolPrefix + "/config":       {Size: 100, Chunks: []dedup.ID{configID}},
+			containerVolPrefix + "/config/cache": {Size: 100, Chunks: []dedup.ID{cacheID}},
+		},
+	}
+
+	t.Run("a file in the nested mount comes only from that mount", func(t *testing.T) {
+		restoreDest := t.TempDir()
+		selection := []string{"/config/cache/f.yml"}
+		if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, selection, nil); err != nil {
+			t.Fatalf("restoreChunkedVolumes() error = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(restoreDest, "cache", "f.yml")); err != nil {
+			t.Errorf("selected file should have been restored from the nested mount: %v", err)
+		}
+		// The parent volume never held cache/f.yml, so it must not be touched.
+		if _, err := os.Stat(filepath.Join(restoreDest, "config")); !os.IsNotExist(err) {
+			t.Errorf("parent mount should not have been restored, stat err = %v", err)
+		}
+	})
+
+	t.Run("picking the parent mount point covers the nested mount", func(t *testing.T) {
+		restoreDest := t.TempDir()
+		if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, []string{"/config"}, nil); err != nil {
+			t.Fatalf("restoreChunkedVolumes() error = %v", err)
+		}
+		for _, rel := range []string{filepath.Join("config", "settings.yml"), filepath.Join("cache", "f.yml")} {
+			if _, err := os.Stat(filepath.Join(restoreDest, rel)); err != nil {
+				t.Errorf("expected %s to be restored: %v", rel, err)
+			}
+		}
+	})
 }
