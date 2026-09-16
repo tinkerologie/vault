@@ -29,6 +29,8 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Jobs
 
+The job payload's `schedule` and `verify_schedule` fields are standard 5-field cron expressions (`minute hour day-of-month month day-of-week`). An empty string means manual-only — the scheduler skips the job entirely. Arbitrary expressions are accepted, including steps, ranges and lists, along with the `@daily`-style descriptors and Vault's `L` day-of-month token (last day of the month). An expression the scheduler cannot parse is rejected at create/update time rather than stored and silently never run.
+
 The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `differential`. Incremental and differential jobs automatically run as a **full** backup on their first run (when the job has no previous restore point to attach to); later runs capture only changes.
 
 | Method | Endpoint                                           | Description                                                                    |
@@ -129,6 +131,8 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 > Per-job history is available at `GET /jobs/{id}/history`. There is no global `GET /history` endpoint; query individual jobs and merge client-side.
 
 ## Replication
+
+A replication source's `schedule` field takes the same cron expressions as a job's (see [Jobs](#jobs)); an empty string means the source is only synced on demand.
 
 | Method | Endpoint                 | Description                     |
 | ------ | ------------------------ | ------------------------------- |

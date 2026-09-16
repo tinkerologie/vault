@@ -494,3 +494,27 @@ describe('unchangedItemCount', () => {
     expect(unchangedItemCount('not a run log')).toBe(0)
   })
 })
+
+describe('describeSchedule with custom cron', () => {
+  it('shows an expression the presets cannot represent verbatim', () => {
+    // Before #309 these ran through the preset branches: "0 2 */2 * *" came
+    // back as "Monthly on 2nd", naming a day the job never runs on.
+    expect(describeSchedule('0 */3 */2 * *')).toBe('0 */3 */2 * *')
+    expect(describeSchedule('0 2 */2 * *')).toBe('0 2 */2 * *')
+    expect(describeSchedule('*/15 * * * *')).toBe('*/15 * * * *')
+    expect(describeSchedule('0 2 * * 1-5')).toBe('0 2 * * 1-5')
+    expect(describeSchedule('@daily')).toBe('@daily')
+  })
+
+  it('trims the expression it echoes', () => {
+    expect(describeSchedule('  */15 * * * *  ')).toBe('*/15 * * * *')
+  })
+
+  it('leaves the preset descriptions alone', () => {
+    expect(describeSchedule('')).toBe('Manual only')
+    expect(describeSchedule('0 2 * * *')).toMatch(/^Daily at /)
+    expect(describeSchedule('0 2 * * 0')).toMatch(/^Weekly on Sun at /)
+    expect(describeSchedule('0 2 L * *')).toMatch(/^Monthly on last day at /)
+    expect(describeSchedule('0 2 15 6 *')).toMatch(/^Yearly on June 15th at /)
+  })
+})

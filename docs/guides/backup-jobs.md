@@ -116,6 +116,11 @@ Select which storage destination this job will write to. If you have not added o
 **"First day" and "Last day" of month:**
 Instead of a fixed day number, you can choose _First day of month_ or _Last day of month_. Last-day jobs fire correctly on months of any length (28, 29, 30, or 31 days).
 
+**Custom (cron):**
+Choose **Custom** to type a cron expression directly, for schedules the presets cannot express — "every three hours on every second day" is `0 */3 */2 * *`. The five fields are `minute hour day-of-month month day-of-week`, and the usual `*`, `*/step`, `from-to` and `a,b,c` syntax all work. Vault also accepts `L` in the day-of-month field, meaning the last day of the month, and the `@daily`/`@hourly`-style descriptors.
+
+The form checks the expression as you type, and the server validates it again on save and rejects anything it cannot schedule — a job is never stored with a schedule that would silently never fire. A custom expression is available everywhere a schedule is: the job schedule, the separate verify schedule, and replication sync.
+
 **Time format:**
 The schedule UI uses your Unraid time format setting (12-hour or 24-hour) automatically.
 

@@ -1,5 +1,6 @@
 <script>
   import { formatClockTime } from '../lib/utils.js'
+  import { isCustomCron, cronError } from '../lib/cron.js'
 
   let { value = $bindable('0 2 * * *'), onchange = () => {} } = $props()
 
@@ -12,12 +13,16 @@
   let monthday = $state(1) // numeric day or 'L' for last day
   let month = $state(1) // 1=Jan for yearly
   let weekdays = $state([1, 2, 3, 4, 5]) // Mon-Fri default for daily
+  // The raw expression in custom mode. Kept exactly as typed: reformatting a
+  // hand-written cron is a good way to change what it means.
+  let customCron = $state('')
 
   const frequencyOptions = [
     { value: 'daily', label: 'Daily' },
     { value: 'weekly', label: 'Weekly' },
     { value: 'monthly', label: 'Monthly' },
     { value: 'yearly', label: 'Yearly' },
+    { value: 'custom', label: 'Custom' },
   ]
 
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -59,6 +64,8 @@
     } else if (frequency === 'yearly') {
       const dom = monthday === 'L' ? 'L' : monthday
       cron = `${min} ${h} ${dom} ${month} *`
+    } else if (frequency === 'custom') {
+      cron = customCron
     } else {
       cron = `${min} ${h} * * *`
     }
@@ -69,6 +76,17 @@
   // Parse initial cron value into UI state
   function parseCron(cron) {
     if (!cron) return
+    // In custom mode the user may type an expression that happens to match
+    // a preset shape; keep frequency as 'custom' so the input doesn't vanish.
+    if (frequency === 'custom') return
+    // Anything the presets cannot express is edited as raw text. Without this
+    // the picker mislabelled such a schedule and then overwrote it with a
+    // preset the moment anything was touched (issue #309).
+    if (isCustomCron(cron)) {
+      frequency = 'custom'
+      customCron = cron.trim()
+      return
+    }
     const parts = cron.trim().split(/\s+/)
     if (parts.length !== 5) return
 
@@ -129,6 +147,8 @@
     buildCron()
   }
 
+  let customError = $derived(frequency === 'custom' ? cronError(customCron) : null)
+
   // Human-readable description
   let description = $derived.by(() => {
     const time = formatClockTime(hour, minute)
@@ -147,8 +167,28 @@
       if (monthday === 'L') return `Yearly on the last day of ${monthNames[month - 1]} at ${time}`
       return `Yearly on ${monthNames[month - 1]} ${ordinal(monthday)} at ${time}`
     }
+    if (frequency === 'custom') {
+      if (customError) return customError
+      return `Runs on the schedule ${customCron.trim()}`
+    }
     return ''
   })
+
+  // Switching to Custom seeds the box with the schedule the job already has,
+  // so the mode starts from what is in force rather than clearing it — an
+  // empty expression means "manual only" to the server.
+  function selectFrequency(next) {
+    if (next === 'custom' && !customCron.trim()) {
+      customCron = (value || '').trim() || `${minute} ${hour} * * *`
+    }
+    frequency = next
+    buildCron()
+  }
+
+  function onCustomInput(e) {
+    customCron = e.currentTarget.value
+    buildCron()
+  }
 
   function ordinal(n) {
     const s = ['th', 'st', 'nd', 'rd']
@@ -167,11 +207,11 @@
   <!-- Frequency selector -->
   <div>
     <span class="block text-sm font-medium text-text-muted mb-1.5">Frequency</span>
-    <div class="grid grid-cols-4 gap-1 bg-surface-3 rounded-lg p-1">
+    <div class="grid grid-cols-5 gap-1 bg-surface-3 rounded-lg p-1">
       {#each frequencyOptions as opt (opt.value)}
         <button
           type="button"
-          onclick={() => { frequency = opt.value; buildCron() }}
+          onclick={() => selectFrequency(opt.value)}
           class="px-3 py-2 text-sm rounded-md transition-all {frequency === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
         >
           {opt.label}
@@ -277,6 +317,28 @@
           {/each}
         </select>
       </div>
+    </div>
+
+  {:else if frequency === 'custom'}
+    <div>
+      <label class="block text-xs font-medium text-text-muted mb-1" for="sched-custom-cron">Cron expression</label>
+      <input
+        id="sched-custom-cron"
+        type="text"
+        spellcheck="false"
+        autocapitalize="off"
+        autocomplete="off"
+        value={customCron}
+        oninput={onCustomInput}
+        placeholder="0 */3 */2 * *"
+        aria-invalid={customError ? 'true' : undefined}
+        aria-describedby="sched-custom-cron-help"
+        class="w-full bg-surface-3 border rounded-lg px-3 py-2 text-sm text-text font-mono {customError ? 'border-danger' : 'border-border'}"
+      />
+      <p id="sched-custom-cron-help" class="mt-1 text-xs {customError ? 'text-danger' : 'text-text-dim'}">
+        {customError ??
+          'Five fields: minute, hour, day of month, month, day of week. Use L in the day-of-month field for the last day.'}
+      </p>
     </div>
   {/if}
 

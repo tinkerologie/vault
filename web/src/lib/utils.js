@@ -1,6 +1,7 @@
 /** Shared utility functions */
 
 import { getHour12 } from './runtime-config.js'
+import { isCustomCron } from './cron.js'
 
 export function formatBytes(bytes) {
   // Mirrors Bytes() in internal/format exactly, including these guards: a
@@ -155,6 +156,11 @@ export function parseConfig(cfg) {
 /** Convert a cron expression to human-readable text */
 export function describeSchedule(cron) {
   if (!cron) return 'Manual only'
+  // An expression outside the picker's presets is shown verbatim. The
+  // branches below only understand preset shapes, and run on anything —
+  // "0 2 */2 * *" used to come back as "Monthly on 2nd", which is wrong in
+  // both the day and the frequency (issue #309).
+  if (isCustomCron(cron)) return cron.trim()
   const parts = cron.trim().split(/\s+/)
   if (parts.length !== 5) return cron
   const [min, hr, dom, mon, dow] = parts
