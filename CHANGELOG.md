@@ -6,7 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Appdata path prompt and default exclusion of non-appdata volumes (#317):** When configuring container backup jobs, Vault now prompts for the host's appdata root paths (defaulting to `/mnt/user/appdata` and `/mnt/cache/appdata`). Container bind mounts outside the configured appdata directories (such as bulk `/mnt/user/media` storage) are automatically excluded by default to avoid unintended multi-terabyte archives, while Docker named volumes and appdata mounts remain protected. Users can inspect excluded mounts and toggle them back in at any time. Closes #317.
+
+- **User override for auto-skipped shared-data mounts (#307):** Added an explicit toggle in the container job editor allowing users to include bind mounts that Vault automatically skips as shared or media data, accompanied by clear warnings regarding backup duration and storage consumption. Closes #307.
+
+- **Periodic full backups alongside differential and incremental chains (#322):** Jobs using differential or incremental backup strategies can now configure an independent periodic full backup schedule (e.g. `@weekly` or custom cron). When due, the runner forces a full base archive and establishes a fresh chain root, preventing unbounded chain lengths and bounding restore replay depth. Closes #322.
+
+- **Custom cron expression schedule picker (#309):** Added a "Custom" schedule mode to the Schedule Picker across job creation, job editing, and periodic full backup configuration. The field validates standard 5-part cron syntax with real-time cadence descriptions and prevents invalid schedules from being saved. Closes #309.
+
+- **Post-backup chunk verification for deduplicated jobs (#382):** Deduplicated backup jobs with `verify_backup` enabled now immediately read back and hash all written chunks upon session completion. Verification status is recorded in restore point metadata and surfaced in the job run results, guarding against silent backend write corruption before staging files are cleared. Closes #382.
+
+### Changed
+
+- **Stage classic folder backups beside the selected local destination (#366):** Classic folder backups targeting local storage now stage temporary archives directly in a `.vault-stage` directory on the target destination rather than defaulting to the first available cache pool. This eliminates out-of-space (`ENOSPC`) failures when backing up shares larger than cache pool free capacity. The staging folder is automatically excluded from recursive source walks. Closes #366.
+
+- **Dropped job-run-ID prefix from backup run folders (#319):** Backup run directories in classic storage destinations no longer include the internal auto-incrementing job run ID in their folder names, standardizing on `<timestamp>_<type>` (e.g. `2026-09-15_143000_full`). Historical restore points formatted with the previous `<run_id>_<timestamp>_<type>` convention remain fully discoverable and restorable without manual migration. Closes #319.
+
 ### Fixed
+
+- **Container volume archives correlate by mount source host path (#352):** Classic container volume archives are now named `volume_<sha256(source)>.tar` keyed stably to the mount source host path rather than the fragile position index in `inspect.Mounts`. This prevents silent data corruption and cross-volume file unioning during differential restores when Docker alters the inspection mount order following container recreation or Unraid template updates. Existing archives named under the legacy positional convention remain restorable. Closes #352.
+
+- **Container chain restores no longer resurrect deleted files (#345):** Classic container differential and incremental chain restores now perform a post-restore prune pass against each volume's destination, matching the folder restore behavior from #231. Using the newest restore point's authoritative effective listing and earlier tar index sidecars, files deleted from a container volume after the base full backup are pruned from disk rather than resurrected by the chain overlay. Closes #345.
+
+- **Symlinked container volume sources follow symlinks before stale-mtime detection (#353):** Container mount sources that resolve through symlinks (such as `/mnt/user/appdata` links pointing to `/mnt/cache/appdata`) now evaluate their target before checking timestamps against parent effective listings, ensuring new files with older mtimes are reliably detected and archived in differential runs. Closes #353.
+
+- **Plugin backups now honor incremental and differential backup types (#351):** Plugin items in classic and deduplicated jobs now respect the job's backup type. Differential and incremental runs evaluate `changed_since` cutoffs and parent effective listings instead of always taking full uncompressed archives, reducing backup sizes and elapsed time for systems with large plugin configurations. Closes #351.
+
+- **Unreadable files during archiving are skipped with a warning instead of failing the job (#393):** Bad blocks or unreadable files (such as flash drive corruption or permission errors) encountered during tar archiving are recorded as skipped files and reported in the job run log as non-fatal warnings, allowing the remainder of the backup to complete. Skipped paths are excluded from effective listing sidecars so subsequent runs retry them. Closes #393.
+
+- **Restore clean destination replaces target tree instead of merging (#321):** When "Clean destination directory" is enabled, restores delete existing files in the target directory prior to archive extraction, matching the user-facing contract. The option is safely disabled for partial restores where only a subset of files is selected, preventing accidental deletion of unselected files. Closes #321.
+
+- **Container template synchronization on volume remapping (#336):** Restoring a container to an alternate destination path now synchronizes the container's Unraid `template.xml` in addition to the live Docker container, preventing Unraid's Docker GUI from reverting the container's path mappings back to the original location during template edits. The restore wizard now requires explicit confirmation before executing a volume remapping. Closes #336.
+
+- **Deduplicated container backups capture and restore Unraid template.xml (#379):** The deduplicated container backup path now saves the Unraid container template under the synthetic key `__template` and restores it alongside container recreation, achieving parity with the classic container engine. Closes #379.
+
+- **Deduplicated backups capture single-file container bind mounts (#380):** Single-file bind mounts in container configurations are now correctly chunked and restored under `__volfile__` manifest keys, preserving file permissions, modes, and timestamps. Socket and named pipe bind mounts (such as `/var/run/docker.sock`) are cleanly skipped with descriptive skip reasons in the restore point metadata. Closes #380.
+
+- **Classic plugin restores honor custom restore destination (#381):** The classic plugin restore path now extracts files to the user-specified restore destination override rather than overwriting live plugin configurations under `/boot/config/plugins/`. Closes #381.
+
+- **Containers with zero bind mounts back up cleanly (#305):** Containers configured without bind mounts now produce valid configuration and template restore points without failing or displaying confusing "no mounts detected" warnings in the job editor. Closes #305.
+
+- **Ansible deployment SSH connection multiplexing (#410):** The Ansible deploy role now multiplexes delegated `scp` uploads over a single authenticated SSH control master connection, preventing Unraid `sshd` rate limiting and connection drops during plugin deployment. Closes #410.
 
 - **One absolute symlink aborted the whole restore, so a full restore of images like MySQL always failed:** The classic extractor rejected any archived symlink whose target was absolute, and did so with a hard error that stopped the entire extraction — a restore of a container whose volume held even one such link failed outright with `unsafe symlink in archive`. The rejection treated an absolute target as an escape attempt, but a volume archive is a snapshot of the _container's_ filesystem: `/var/lib/mysql/x` inside a volume mounted at `/var/lib/mysql` points back into that same volume once the container runs again, and MySQL's data directory ships exactly these links. Absolute targets are now recreated verbatim, preserving what the container expects. Writing _through_ such a link is still refused: every archive entry already resolves its real parent chain on disk before extraction, so an entry addressed via a symlink that leaves the destination is rejected there, and nothing is ever created outside the restore directory. Relative targets are validated exactly as before, including chained `..` escapes through previously-extracted links — but a link that fails validation is now skipped with a log line rather than aborting the run, since refusing to create it is the entire safety property and killing the restore over one entry only adds data loss. Symlinks are also archived with their owner now — they were written with a hand-built tar header that carried no uid or gid, which would have restored every link as root-owned.
 
