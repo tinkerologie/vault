@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1026,5 +1027,117 @@ func TestChunkedPrevBySource(t *testing.T) {
 				t.Fatalf("chunkedPrevBySource() = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBackupChunked_SingleFileAndSocketMounts is the backup half of issue
+// #380. The chunked path used to hand every mount to FolderHandler no matter
+// what the inode was, so a file mount was silently lost (a walk of a file
+// yields nothing) and a docker.sock bind produced an empty volume entry. Both
+// must now be classified by the inode: a file gets its own manifest key with
+// its chunks attached, a socket gets the skip sentinel.
+func TestBackupChunked_SingleFileAndSocketMounts(t *testing.T) {
+	t.Parallel()
+
+	const hookBody = "#!/bin/sh\nexit 0\n"
+	base := t.TempDir()
+
+	hook := filepath.Join(base, "hook.sh")
+	if err := os.WriteFile(hook, []byte(hookBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A named pipe stands in for the docker.sock case: both are non-regular
+	// inodes the classification must refuse, and a FIFO can be created
+	// anywhere a socket's path-length limit might not allow.
+	sock := filepath.Join(base, "docker.sock")
+	if err := syscall.Mkfifo(sock, 0o600); err != nil {
+		t.Skipf("cannot create a named pipe here: %v", err)
+	}
+
+	// A real directory mount alongside them, so the test also proves the
+	// classification does not disturb the ordinary case.
+	volDir := filepath.Join(base, "config")
+	if err := os.MkdirAll(volDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(volDir, "settings.yml"), []byte("a: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "abc123",
+				Name:   "/ts",
+				Config: &containertypes.Config{Image: "tailscale:latest"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: hook, Destination: "/hook.sh"},
+					{Type: mounttypes.TypeBind, Source: sock, Destination: "/var/run/docker.sock"},
+					{Type: mounttypes.TypeBind, Source: volDir, Destination: "/config"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"tailscale@sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+			},
+		},
+	}
+
+	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &ContainerHandler{cli: mock}
+	manifestID, err := h.BackupChunked(context.Background(), BackupItem{
+		Name:     "ts",
+		Type:     "container",
+		Settings: map[string]any{"id": "abc123"},
+	}, repo, nil, noopProgress)
+	if err != nil {
+		t.Fatalf("BackupChunked() error = %v", err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	m, err := repo.GetManifest(manifestID)
+	if err != nil {
+		t.Fatalf("GetManifest() error = %v", err)
+	}
+
+	// The file mount: its own key, its own chunks, its own mode and mtime.
+	fileEntry, ok := m.Files[containerVolFilePrefix+"/hook.sh"]
+	if !ok {
+		t.Fatalf("file mount missing from the manifest; keys = %v", manifestKeys(m))
+	}
+	if len(fileEntry.Chunks) == 0 {
+		t.Error("the file mount recorded no chunks, so its contents were not backed up")
+	}
+	if fileEntry.Mode != 0o755 {
+		t.Errorf("mode = %04o, want 0755", fileEntry.Mode)
+	}
+	if fileEntry.ModTime == "" {
+		t.Error("the file mount recorded no mtime")
+	}
+	if _, wrong := m.Files[containerVolPrefix+"/hook.sh"]; wrong {
+		t.Error("the file mount was also recorded as a volume pointer")
+	}
+
+	// The socket: present for diagnostics, marked skipped, never walked.
+	sockEntry, ok := m.Files[containerVolPrefix+"/var/run/docker.sock"]
+	if !ok {
+		t.Fatalf("socket mount missing from the manifest; keys = %v", manifestKeys(m))
+	}
+	if !IsSkippedVolumeEntry(sockEntry) {
+		t.Errorf("socket entry = %+v, want the skip sentinel", sockEntry)
+	}
+
+	// And the ordinary directory mount is still a volume pointer.
+	dirEntry, ok := m.Files[containerVolPrefix+"/config"]
+	if !ok {
+		t.Fatalf("directory mount missing from the manifest; keys = %v", manifestKeys(m))
+	}
+	if len(dirEntry.Chunks) != 1 {
+		t.Errorf("directory mount chunks = %d, want one sub-manifest pointer", len(dirEntry.Chunks))
 	}
 }

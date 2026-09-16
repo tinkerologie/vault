@@ -30,6 +30,18 @@ func IsSyntheticContainerKey(key string) bool {
 	return false
 }
 
+// ContainerVolumeFileDest returns the container-internal path a
+// __volfile__<destination> key refers to, and whether the key is a single-file
+// bind mount (issue #380). Unlike a __vol__ entry there is no sub-manifest
+// behind it: the entry holds the file's chunks directly, so a caller that
+// expands volumes must not try to dereference it as a pointer.
+func ContainerVolumeFileDest(key string) (string, bool) {
+	if !strings.HasPrefix(key, containerVolFilePrefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(key, containerVolFilePrefix), true
+}
+
 // ContainerVolumeDest returns the container-internal destination path a
 // __vol__<destination> key refers to, and whether the key is a volume entry.
 func ContainerVolumeDest(key string) (string, bool) {

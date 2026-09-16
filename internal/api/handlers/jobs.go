@@ -63,6 +63,18 @@ func dedupManifestToTarIndex(itemName, itemType string, m dedup.Manifest, getSub
 		if isContainer && engine.IsSyntheticContainerKey(p) {
 			continue
 		}
+		// A single-file bind mount holds its chunks directly, so it needs no
+		// expansion — only its container-internal path, which is what the
+		// user recognises in the picker (issue #380).
+		if dest, isVolFile := engine.ContainerVolumeFileDest(p); isVolFile && isContainer {
+			idx.Files = append(idx.Files, engine.TarIndexEntry{
+				Path:    dest,
+				Size:    e.Size,
+				Mode:    fmt.Sprintf("%04o", e.Mode&0o7777),
+				ModTime: e.ModTime,
+			})
+			continue
+		}
 		if dest, isVol := engine.ContainerVolumeDest(p); isVol && isContainer {
 			if engine.IsSkippedVolumeEntry(e) || getSub == nil {
 				continue

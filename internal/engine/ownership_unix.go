@@ -7,6 +7,9 @@ import (
 	"syscall"
 )
 
+// openNoFollow is O_NOFOLLOW on unix platforms to prevent symlink traversal.
+const openNoFollow = syscall.O_NOFOLLOW
+
 // fileOwner returns the numeric owner of a stat result. The (-1, -1) pair
 // means "unknown" — chown treats a negative id as "leave unchanged", so it is
 // also the value applyOwner skips on.

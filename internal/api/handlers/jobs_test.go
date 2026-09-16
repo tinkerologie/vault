@@ -2302,3 +2302,62 @@ func TestSortRestorePointsNewestFirst_Ordering(t *testing.T) {
 		t.Errorf("last = %d, want 1 (oldest)", sorted[2].ID)
 	}
 }
+
+// TestDedupManifestToTarIndex_ListsSingleFileMounts covers the #380 branch: a
+// single-file bind mount carries its chunks on the container manifest itself,
+// so the picker must list it directly under its container-internal path
+// instead of trying to expand a sub-manifest it does not have.
+func TestDedupManifestToTarIndex_ListsSingleFileMounts(t *testing.T) {
+	calls := 0
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "tailscale",
+		Files: map[string]dedup.ManifestEntry{
+			"__volfile__/config/serve.json": {
+				Size:    42,
+				Mode:    0o755,
+				ModTime: "2026-01-02T03:04:05Z",
+				Chunks:  []dedup.ID{{7}},
+			},
+		},
+	}
+
+	idx := dedupManifestToTarIndex("tailscale", "container", m, subManifestStub(t, nil, &calls))
+	if len(idx.Files) != 1 {
+		t.Fatalf("file mount not listed exactly once: %+v", idx.Files)
+	}
+	got := idx.Files[0]
+	if got.Path != "/config/serve.json" {
+		t.Errorf("path = %q, want the container-internal path", got.Path)
+	}
+	if got.Size != 42 {
+		t.Errorf("size = %d, want 42", got.Size)
+	}
+	if got.Mode != "0755" {
+		t.Errorf("mode = %q, want 0755", got.Mode)
+	}
+	if got.ModTime != "2026-01-02T03:04:05Z" {
+		t.Errorf("modtime = %q, want the recorded mtime", got.ModTime)
+	}
+	if got.IsDir {
+		t.Error("a file mount must not be reported as a directory")
+	}
+	if calls != 0 {
+		t.Errorf("file mount dereferenced a sub-manifest %d times, want 0", calls)
+	}
+}
+
+// A folder item may legitimately hold a file whose name starts with the
+// container prefix; the #380 branch must not claim it.
+func TestDedupManifestToTarIndex_FolderKeepsVolFileNames(t *testing.T) {
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "docs",
+		Files:   map[string]dedup.ManifestEntry{"__volfile__/notes.txt": {Size: 9, Mode: 0o644}},
+	}
+
+	idx := dedupManifestToTarIndex("docs", "folder", m, nil)
+	if len(idx.Files) != 1 || idx.Files[0].Path != "__volfile__/notes.txt" {
+		t.Fatalf("folder path rewritten as a file mount: %+v", idx.Files)
+	}
+}
