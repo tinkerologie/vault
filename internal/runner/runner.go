@@ -1169,6 +1169,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	if lblErr != nil {
 		log.Printf("runner: reading label_exclusions_enabled: %v", lblErr)
 	}
+	appdataPath := r.appdataPath()
 
 	for itemIdx, item := range items {
 		// Check for cancellation between items.
@@ -1216,6 +1217,10 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			if im, ok := settings["included_mounts"]; ok {
 				backupItem.Settings["included_mounts"] = im
 			}
+			if ao, ok := settings["appdata_only"]; ok {
+				backupItem.Settings["appdata_only"] = ao
+			}
+			backupItem.Settings["appdata_path"] = appdataPath
 			backupItem.Settings["label_exclusions_enabled"] = labelExclusions
 			// Opt-in per item: a dump runs commands inside a live container and
 			// costs extra space, so it is never assumed.

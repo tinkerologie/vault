@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // TestNewDiscoverHandler checks the constructor returns a non-nil handler.
@@ -219,5 +221,38 @@ func TestDiscoverHandlers_ResponseShape(t *testing.T) {
 				t.Errorf("%s: items is %T, want []any", ep.name, items)
 			}
 		})
+	}
+}
+
+func TestDiscoverHandler_AppdataPath(t *testing.T) {
+	// Nil db returns default
+	hNil := NewDiscoverHandler(nil)
+	if got := hNil.appdataPath(); got != "/mnt/user/appdata" {
+		t.Errorf("hNil.appdataPath() = %q, want /mnt/user/appdata", got)
+	}
+
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer database.Close()
+
+	h := NewDiscoverHandler(database)
+	if got := h.appdataPath(); got != "/mnt/user/appdata" {
+		t.Errorf("default appdataPath = %q, want /mnt/user/appdata", got)
+	}
+
+	if err := database.SetSetting("appdata_path", "/mnt/cache/appdata"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	if got := h.appdataPath(); got != "/mnt/cache/appdata" {
+		t.Errorf("custom appdataPath = %q, want /mnt/cache/appdata", got)
+	}
+
+	if err := database.SetSetting("appdata_path", ""); err != nil {
+		t.Fatalf("SetSetting empty: %v", err)
+	}
+	if got := h.appdataPath(); got != "/mnt/user/appdata" {
+		t.Errorf("empty appdataPath = %q, want /mnt/user/appdata", got)
 	}
 }

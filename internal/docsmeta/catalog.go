@@ -50,6 +50,7 @@ var AppSettings = []SettingDoc{
 	{"log_level", "string", "info", "Minimum log level emitted by the daemon (\"debug\", \"info\", \"warn\", \"error\").", GroupGeneral},
 	{"snapshot_path_override", "string", "", "Override for the directory used to stage filesystem snapshots. Empty uses the built-in default.", GroupGeneral},
 	{"staging_dir_override", "string", "", "Override for the working directory used to stage archives before upload. Empty uses the built-in default.", GroupGeneral},
+	{"appdata_path", "string", "/mnt/user/appdata", "Path to the Unraid appdata share containing Docker container configurations.", GroupGeneral},
 	{"storage_verbose_logging", "bool", "false", "When enabled, storage adapters log every operation for troubleshooting.", GroupGeneral},
 	{"replication_enabled", "string", "", "Master toggle for the replication subsystem. Empty/false disables replication scheduling; \"true\" enables it.", GroupGeneral},
 

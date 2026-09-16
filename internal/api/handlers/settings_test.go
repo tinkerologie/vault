@@ -178,6 +178,147 @@ func TestSetStagingOverride_ClearOverride(t *testing.T) {
 	}
 }
 
+func TestGetAppdataPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/appdata", nil)
+	w := httptest.NewRecorder()
+	h.GetAppdataPath(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["path"] != "/mnt/user/appdata" {
+		t.Errorf("path = %q, want /mnt/user/appdata", resp["path"])
+	}
+	if resp["default"] != "/mnt/user/appdata" {
+		t.Errorf("default = %q, want /mnt/user/appdata", resp["default"])
+	}
+}
+
+func TestSetAppdataPath_Success(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	tmpDir, err := os.MkdirTemp("/tmp", "vault-appdata-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	body := `{"path": "` + tmpDir + `"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/appdata", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetAppdataPath(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["path"] != tmpDir {
+		t.Errorf("path = %q, want %s", resp["path"], tmpDir)
+	}
+
+	// Verify persistence via GET
+	reqGet := httptest.NewRequest(http.MethodGet, "/api/v1/settings/appdata", nil)
+	wGet := httptest.NewRecorder()
+	h.GetAppdataPath(wGet, reqGet)
+	var respGet map[string]string
+	_ = json.NewDecoder(wGet.Body).Decode(&respGet)
+	if respGet["path"] != tmpDir {
+		t.Errorf("GET path = %q, want %s", respGet["path"], tmpDir)
+	}
+}
+
+func TestSetAppdataPath_Reset(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"path": ""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/appdata", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetAppdataPath(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["path"] != "/mnt/user/appdata" {
+		t.Errorf("path = %q, want default /mnt/user/appdata", resp["path"])
+	}
+}
+
+func TestSetAppdataPath_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/appdata", strings.NewReader("bad json"))
+	w := httptest.NewRecorder()
+	h.SetAppdataPath(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestSetAppdataPath_RelativePath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"path": "relative/path"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/appdata", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetAppdataPath(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestSetAppdataPath_NonexistentPath(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	body := `{"path": "/tmp/nonexistent/appdata/path/does/not/exist"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/appdata", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.SetAppdataPath(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestSetAppdataPath_ProtectedPaths(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+
+	for _, p := range []string{"/", "/mnt", "/mnt/user", "/mnt/cache", "/mnt/disk1", "/dev", "/dev/null", "/proc", "/sys", "/run"} {
+		body := `{"path": "` + p + `"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/appdata", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.SetAppdataPath(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("path %q status = %d, want %d", p, w.Code, http.StatusBadRequest)
+		}
+	}
+}
+
 func TestSetSnapshotPath_ValidPath(t *testing.T) {
 	t.Parallel()
 

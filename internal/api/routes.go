@@ -204,6 +204,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/encryption/passphrase", settingsH.GetEncryptionPassphrase)
 			r.Get("/staging", settingsH.GetStagingInfo)
 			r.Put("/staging", settingsH.SetStagingOverride)
+			r.Get("/appdata", settingsH.GetAppdataPath)
+			r.Put("/appdata", settingsH.SetAppdataPath)
 			r.Post("/discord/test", settingsH.TestDiscordWebhook)
 			r.Get("/database", settingsH.GetDatabaseInfo)
 			r.Put("/database", settingsH.SetSnapshotPath)

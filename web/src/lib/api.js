@@ -202,6 +202,10 @@ export const api = {
   setSnapshotPath: (path) => request('PUT', '/settings/database', { snapshot_path: path }),
   setStagingOverride: (override) => request('PUT', '/settings/staging', { override }),
 
+  // Appdata
+  getAppdataPath: () => request('GET', '/settings/appdata'),
+  setAppdataPath: (path) => request('PUT', '/settings/appdata', { path }),
+
   // Discord
   testDiscordWebhook: (webhookUrl) => request('POST', '/settings/discord/test', { webhook_url: webhookUrl }),
 

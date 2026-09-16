@@ -2098,7 +2098,7 @@
               Container Mounts &amp; Exclusions
             </summary>
             <div class="space-y-4 mt-3 pl-6">
-              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Uncheck a mount to exclude its data (e.g. media or downloads). Vault automatically skips host shared-data paths (like /mnt/user/media or /mnt/user/downloads) to prevent oversized backups, but you can check any overridable share to back it up. System paths (like /dev or raw disks) cannot be included.</p>
+              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Container backups include appdata mounts by default based on the configured <a href="#/settings" class="text-vault hover:underline">Appdata Path</a>. Non-appdata bind mounts (e.g. large media or library paths) and shared data are excluded by default to prevent accidental multi-terabyte backups, while Docker named volumes and appdata mounts remain included. You can check any overridable mount to include it. System paths (like /dev or raw disks) cannot be included.</p>
               {#each selectedContainerItems as cItem (cItem.item_name)}
                 {@const currentExclusions = getExclusionPaths(cItem)}
                 {@const preset = containerPresets[cItem.item_name]}

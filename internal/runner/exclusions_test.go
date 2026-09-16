@@ -3,6 +3,8 @@ package runner
 import (
 	"reflect"
 	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 // TestMergeExclusions covers the contract of the global list: it is a floor
@@ -83,5 +85,32 @@ func TestMergeExclusionsPutsItemPathsFirst(t *testing.T) {
 	got := mergeExclusions([]any{"/item"}, []string{"/global"})
 	if len(got) != 2 || got[0] != "/item" {
 		t.Fatalf("got %v, want the item's own path first", got)
+	}
+}
+
+func TestRunnerAppdataPath(t *testing.T) {
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer database.Close()
+
+	r := &Runner{db: database}
+	if got := r.appdataPath(); got != "/mnt/user/appdata" {
+		t.Errorf("default appdataPath = %q, want /mnt/user/appdata", got)
+	}
+
+	if err := database.SetSetting("appdata_path", "/mnt/cache/appdata"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	if got := r.appdataPath(); got != "/mnt/cache/appdata" {
+		t.Errorf("custom appdataPath = %q, want /mnt/cache/appdata", got)
+	}
+
+	if err := database.SetSetting("appdata_path", ""); err != nil {
+		t.Fatalf("SetSetting empty: %v", err)
+	}
+	if got := r.appdataPath(); got != "/mnt/user/appdata" {
+		t.Errorf("empty setting appdataPath = %q, want /mnt/user/appdata", got)
 	}
 }

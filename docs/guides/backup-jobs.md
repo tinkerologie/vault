@@ -78,6 +78,15 @@ behaviour is the same for classic and deduplicated backups.
 
 You can list paths to exclude from a container backup (e.g. `/config/Library/Application Support/Plex Media Server/Cache` or `/config/Sonarr/MediaCover`). The job wizard exposes a free-text list per container, and Vault ships a `GET /api/v1/presets/exclusions` catalogue of common rules for popular containers (Plex, Sonarr, Radarr, etc.) the UI offers as starting points. For some apps the response also carries advisory `notes`/`warnings` (e.g. the Immich database caveat below), which the wizard shows inline.
 
+#### Container appdata path and volume exclusions
+
+Docker container backups focus on configuration and application state rather than large media libraries:
+
+- **Configured appdata path:** Vault derives container config mounts from the global `appdata_path` setting (default `/mnt/user/appdata`, configurable in **Settings → General**). Mounts located under this path (or `/mnt/cache/appdata`) and Unraid `/boot` configurations are included in container backups by default.
+- **Non-appdata bind mounts excluded by default:** Bind mounts outside the appdata path (e.g. `/mnt/user/media`, `/mnt/user/downloads`, or custom array paths) are marked as non-appdata and auto-excluded by default to prevent accidental multi-terabyte library backups in a container job. Docker named volumes (e.g. Compose volumes under `/var/lib/docker/volumes`) are recognized as application data and remain included by default.
+- **Per-mount override:** In the job wizard under _Container Mounts & Exclusions_, you can expand any container and check any overridable non-appdata or shared data mount to include it in the backup.
+- **System paths:** Device and virtual filesystem mounts (e.g. `/dev`, `/proc`, `/sys`, direct array disks `/mnt/disk*`, or root `/mnt`) are safety-critical and cannot be included.
+
 #### Backing up Immich
 
 Immich detection works for both the official `ghcr.io/immich-app/immich-server` image (media root mounted at `/data`) and the imagegenius fork `ghcr.io/imagegenius/immich` (`/photos`). The recommended exclusions cover both layouts:

@@ -61,6 +61,54 @@ var appdataPrefixes = []string{
 	"/mnt/user/appdata",
 }
 
+// effectiveAppdataPrefixes returns the set of directory prefixes treated as
+// container appdata. Built-in prefixes (/mnt/cache/appdata, /mnt/user/appdata)
+// are always included. If a custom appdataPath is specified and valid, it and its
+// complementary pool/user-share variant are added as well.
+func effectiveAppdataPrefixes(customPath string) []string {
+	if customPath == "" {
+		return append([]string(nil), appdataPrefixes...)
+	}
+	clean := filepath.Clean(customPath)
+	if clean == "/" || clean == "/mnt" || clean == "/mnt/user" || clean == "/mnt/cache" || clean == "." {
+		return append([]string(nil), appdataPrefixes...)
+	}
+	if rest := strings.TrimPrefix(clean, "/mnt/disk"); rest != clean && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
+		return append([]string(nil), appdataPrefixes...)
+	}
+	for _, dev := range devicePrefixes {
+		if clean == dev || strings.HasPrefix(clean, dev+"/") {
+			return append([]string(nil), appdataPrefixes...)
+		}
+	}
+
+	prefixes := []string{clean}
+	addPrefix := func(p string) {
+		for _, existing := range prefixes {
+			if existing == p {
+				return
+			}
+		}
+		prefixes = append(prefixes, p)
+	}
+
+	// Retain the built-in appdata prefixes (/mnt/cache/appdata, /mnt/user/appdata).
+	for _, p := range appdataPrefixes {
+		addPrefix(p)
+	}
+
+	// Unraid shares can often be accessed through /mnt/user/<share> or /mnt/cache/<share>
+	// (or pool drives). If the custom path is under /mnt/user/, also add the /mnt/cache/ counterpart.
+	if strings.HasPrefix(clean, "/mnt/user/") {
+		cacheVariant := "/mnt/cache/" + strings.TrimPrefix(clean, "/mnt/user/")
+		addPrefix(cacheVariant)
+	} else if strings.HasPrefix(clean, "/mnt/cache/") {
+		userVariant := "/mnt/user/" + strings.TrimPrefix(clean, "/mnt/cache/")
+		addPrefix(userVariant)
+	}
+	return prefixes
+}
+
 // volumeManifestEntry describes a single bind mount for the volumes.json manifest.
 type volumeManifestEntry struct {
 	Index       int    `json:"index"`
@@ -248,36 +296,35 @@ var devicePrefixes = []string{
 	"/run",
 }
 
-// shouldSkipVolume returns (skip bool, reason string, overridable bool) for an
-// Unraid bind mount. It skips known shared data paths and large non-appdata
-// volumes. Only shared data share skips (skipPrefixes) are overridable by the
-// user; device, virtual, direct-disk, and root skips are not (issue #307).
-func shouldSkipVolume(source string) (bool, string, bool) {
+// shouldSkipVolumeFiltered returns (skip bool, reason string, overridable bool) for an
+// Unraid bind mount or named volume. It skips known shared data paths and non-appdata volumes.
+//
+// Dangerous host mounts (/, /mnt, direct array disks /mnt/diskN, device nodes) are
+// permanently non-overridable. Named volumes (/var/lib/docker/volumes/...) are recognized as
+// container application data and included by default.
+//
+// When appdataOnly is true (the default for new container jobs and discovery),
+// any volume not matching an appdata prefix (or /boot, or a named volume) is soft-skipped with
+// reason "non-appdata path", overridable by the user.
+// When appdataOnly is false (legacy jobs without appdata_only: true),
+// non-appdata paths not in skipPrefixes remain included.
+func shouldSkipVolumeFiltered(source string, mountType string, appdataOnly bool, prefixes []string) (bool, string, bool) {
 	norm := filepath.Clean(source)
+
+	// Skip host root (/) — dangerous to back up directly.
+	if norm == "/" {
+		return true, "root / mount", false
+	}
+
+	// Skip the Unraid root mount (/mnt) itself if mapped directly.
+	if norm == "/mnt" {
+		return true, "root /mnt mount", false
+	}
 
 	// Skip device and virtual filesystem paths.
 	for _, prefix := range devicePrefixes {
 		if norm == prefix || strings.HasPrefix(norm, prefix+"/") {
 			return true, fmt.Sprintf("device/virtual path (%s)", prefix), false
-		}
-	}
-
-	// Always back up appdata volumes.
-	for _, prefix := range appdataPrefixes {
-		if strings.HasPrefix(norm, prefix) {
-			return false, "", false
-		}
-	}
-
-	// Always back up /boot paths (Unraid flash drive configs).
-	if strings.HasPrefix(norm, "/boot") {
-		return false, "", false
-	}
-
-	// Skip known shared data paths.
-	for _, prefix := range skipPrefixes {
-		if strings.HasPrefix(norm, prefix) {
-			return true, fmt.Sprintf("shared data volume (%s)", prefix), true
 		}
 	}
 
@@ -289,12 +336,38 @@ func shouldSkipVolume(source string) (bool, string, bool) {
 		return true, "direct disk volume", false
 	}
 
-	// Skip the Unraid root mount (/mnt) itself if mapped directly.
-	if norm == "/mnt" {
-		return true, "root /mnt mount", false
+	// Named volumes are container application data by definition (Docker Compose stacks, etc.).
+	if mountType == "volume" || strings.HasPrefix(norm, "/var/lib/docker/volumes/") {
+		return false, "", false
 	}
 
-	// Everything else (e.g. /tmp or custom paths) — back up.
+	// Always back up appdata volumes matching effective prefixes.
+	for _, prefix := range prefixes {
+		if norm == prefix || strings.HasPrefix(norm, prefix+"/") {
+			return false, "", false
+		}
+	}
+
+	// Always back up /boot paths (Unraid flash drive configs).
+	if norm == "/boot" || strings.HasPrefix(norm, "/boot/") {
+		return false, "", false
+	}
+
+	// Skip known shared data paths.
+	for _, prefix := range skipPrefixes {
+		if norm == prefix || strings.HasPrefix(norm, prefix+"/") {
+			return true, fmt.Sprintf("shared data volume (%s)", prefix), true
+		}
+	}
+
+	// When appdataOnly is true (default for new jobs and UI discovery), any
+	// other volume is treated as a soft-skip non-appdata path that the user
+	// can optionally override (issue #317).
+	if appdataOnly {
+		return true, "non-appdata path", true
+	}
+
+	// Everything else (e.g. /tmp or custom paths in legacy jobs) — back up.
 	return false, "", false
 }
 
@@ -656,15 +729,15 @@ type MountInfo struct {
 
 // ListMounts inspects the named container and returns its backup-eligible
 // mounts (bind mounts and named volumes), each annotated with the auto-skip
-// verdict from shouldSkipVolume. Matches the engine's backup behaviour: tmpfs,
-// device nodes, and anonymous volumes (which can't be reattached on restore)
+// verdict from shouldSkipVolumeFiltered. Matches the engine's backup behaviour:
+// tmpfs, device nodes, and anonymous volumes (which can't be reattached on restore)
 // are excluded. Results are sorted by destination for stable UI ordering.
 // labelExclusions controls whether the container's own vault.exclude label is
 // evaluated. Passed in rather than read here because the engine holds no
 // database handle — and discovery must agree with what the backup will
 // actually do, or the wizard shows mounts as skipped that will in fact be
-// backed up.
-func (h *ContainerHandler) ListMounts(ctx context.Context, name string, labelExclusions bool) ([]MountInfo, error) {
+// backed up. An optional customAppdataPath can be passed to expand effective appdata prefixes.
+func (h *ContainerHandler) ListMounts(ctx context.Context, name string, labelExclusions bool, customAppdataPath ...string) ([]MountInfo, error) {
 	inspectResult, err := h.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("inspecting container %q: %w", name, err)
@@ -677,12 +750,18 @@ func (h *ContainerHandler) ListMounts(ctx context.Context, name string, labelExc
 		labelPatterns = parseLabelExclusions(containerLabels(inspectResult.Container))
 	}
 
+	appdataPath := ""
+	if len(customAppdataPath) > 0 {
+		appdataPath = customAppdataPath[0]
+	}
+	prefixes := effectiveAppdataPrefixes(appdataPath)
+
 	mounts := make([]MountInfo, 0, len(inspectResult.Container.Mounts))
 	for _, m := range inspectResult.Container.Mounts {
 		if !backupableMount(string(m.Type)) || !restorableVolume(string(m.Type), m.Name) {
 			continue
 		}
-		skip, reason, overridable := shouldSkipVolume(m.Source)
+		skip, reason, overridable := shouldSkipVolumeFiltered(m.Source, string(m.Type), true, prefixes)
 		if len(labelPatterns) > 0 && shouldExcludeMount(labelPatterns, filepath.Clean(m.Destination)) {
 			skip = true
 			reason = "excluded by the container's " + VaultExcludeLabel + " label"
@@ -757,6 +836,43 @@ func isMountForceIncluded(included []string, destination string) bool {
 		}
 	}
 	return false
+}
+
+// extractAppdataOnly parses the appdata_only setting for a container backup
+// item. When true (the default for new jobs created after issue #317), non-appdata
+// mounts are excluded by default unless explicitly force-included. When false or
+// absent (legacy jobs), all mounts not matching skipPrefixes are included.
+func extractAppdataOnly(settings map[string]any) bool {
+	if settings == nil {
+		return false
+	}
+	raw, ok := settings["appdata_only"]
+	if !ok || raw == nil {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(v, "true") || v == "1"
+	}
+	return false
+}
+
+// extractAppdataPath parses the appdata_path setting injected into item.Settings
+// by the runner, or provided directly.
+func extractAppdataPath(settings map[string]any) string {
+	if settings == nil {
+		return ""
+	}
+	raw, ok := settings["appdata_path"]
+	if !ok || raw == nil {
+		return ""
+	}
+	if s, ok := raw.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // containerLabels returns a container's labels, tolerating a nil Config —
@@ -992,6 +1108,9 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	// the container declares for itself via the vault.exclude label.
 	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
 	includedMounts := extractIncludedMounts(item.Settings)
+	appdataOnly := extractAppdataOnly(item.Settings)
+	appdataPath := extractAppdataPath(item.Settings)
+	effectivePrefixes := effectiveAppdataPrefixes(appdataPath)
 
 	// Step 2a: logical database dump, BEFORE the container is stopped.
 	//
@@ -1045,7 +1164,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// via pathChangedSince.
 		var anyChanged bool
 		var err error
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, includedMounts, changedSince, prevBySource, prevResolvedBySource)
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, includedMounts, appdataOnly, effectivePrefixes, changedSince, prevBySource, prevResolvedBySource)
 		if err != nil {
 			return nil, err
 		}
@@ -1168,7 +1287,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				continue
 			}
 
-			if skip, reason, overridable := shouldSkipVolume(mount.Source); skip {
+			if skip, reason, overridable := shouldSkipVolumeFiltered(mount.Source, string(mount.Type), appdataOnly, effectivePrefixes); skip {
 				if overridable && isMountForceIncluded(includedMounts, mount.Destination) {
 					// Force-included by user: do not auto-skip unless an explicit exclusion applies.
 				} else {
@@ -1446,7 +1565,7 @@ func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, 
 // container at all: when no volume changed, the in-loop per-volume
 // pathChangedSince checks skip every volume anyway, so the stop/restart
 // cycle would be pure downtime with no consistency benefit.
-func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, includedMounts []string, changedSince time.Time, prevBySource map[string]map[string]struct{}, prevResolvedBySource map[string]string) (map[string]bool, bool, error) {
+func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, includedMounts []string, appdataOnly bool, effectivePrefixes []string, changedSince time.Time, prevBySource map[string]map[string]struct{}, prevResolvedBySource map[string]string) (map[string]bool, bool, error) {
 	changes := make(map[string]bool)
 	anyChanged := false
 	for _, mnt := range mounts {
@@ -1459,7 +1578,7 @@ func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, e
 		if !restorableVolume(string(mnt.Type), mnt.Name) {
 			continue
 		}
-		if skip, _, overridable := shouldSkipVolume(mnt.Source); skip {
+		if skip, _, overridable := shouldSkipVolumeFiltered(mnt.Source, string(mnt.Type), appdataOnly, effectivePrefixes); skip {
 			if !overridable || !isMountForceIncluded(includedMounts, mnt.Destination) {
 				continue
 			}
@@ -2327,6 +2446,9 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
 	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
 	includedMounts := extractIncludedMounts(item.Settings)
+	appdataOnly := extractAppdataOnly(item.Settings)
+	appdataPath := extractAppdataPath(item.Settings)
+	effectivePrefixes := effectiveAppdataPrefixes(appdataPath)
 	// Same all-mounts-excluded guard the classic path applies (see the
 	// countExcludedMounts call in Backup). The chunked path records each excluded
 	// mount as skipped and would otherwise commit a manifest holding no volume
@@ -2403,7 +2525,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		prevBySource := chunkedPrevBySource(parent, inspect.Mounts, repo)
 		// The chunked parent records no symlink resolution, so there is
 		// nothing to compare against and the listing is used as-is.
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, includedMounts, changedSince, prevBySource, nil)
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, includedMounts, appdataOnly, effectivePrefixes, changedSince, prevBySource, nil)
 		if err != nil {
 			return dedup.ID{}, err
 		}
@@ -2444,7 +2566,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
 				continue
 			}
-			if skip, reason, overridable := shouldSkipVolume(mnt.Source); skip {
+			if skip, reason, overridable := shouldSkipVolumeFiltered(mnt.Source, string(mnt.Type), appdataOnly, effectivePrefixes); skip {
 				if overridable && isMountForceIncluded(includedMounts, mnt.Destination) {
 					// Force-included by user: do not auto-skip unless an explicit exclusion applies.
 				} else {

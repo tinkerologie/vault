@@ -39,6 +39,22 @@ func (h *DiscoverHandler) labelExclusionsEnabled() bool {
 	return on
 }
 
+// appdataPath reports the configured appdata_path setting, defaulting to the
+// catalog value when unavailable.
+func (h *DiscoverHandler) appdataPath() string {
+	if h.db == nil {
+		return docsmeta.DefaultFor("appdata_path")
+	}
+	p, err := h.db.GetSetting("appdata_path", docsmeta.DefaultFor("appdata_path"))
+	if err != nil || p == "" {
+		if err != nil {
+			log.Printf("discover: reading appdata_path: %v", err)
+		}
+		return docsmeta.DefaultFor("appdata_path")
+	}
+	return p
+}
+
 // ListContainers returns all Docker containers discoverable by the engine.
 //
 //	GET /api/v1/containers
@@ -89,7 +105,7 @@ func (h *DiscoverHandler) ContainerMounts(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	mounts, err := handler.ListMounts(r.Context(), name, h.labelExclusionsEnabled())
+	mounts, err := handler.ListMounts(r.Context(), name, h.labelExclusionsEnabled(), h.appdataPath())
 	if err != nil {
 		respondJSON(w, http.StatusOK, map[string]any{
 			"mounts":    []engine.MountInfo{},

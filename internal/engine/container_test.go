@@ -93,6 +93,13 @@ func TestUntarDirectoryRejectsTraversal(t *testing.T) {
 	}
 }
 
+// shouldSkipVolume reports (skip bool, reason string, overridable bool) for an
+// Unraid bind mount or named volume source, using default appdata prefixes and
+// appdata-only filtering.
+func shouldSkipVolume(source string) (bool, string, bool) {
+	return shouldSkipVolumeFiltered(source, "", true, appdataPrefixes)
+}
+
 func TestShouldSkipVolume(t *testing.T) {
 	t.Parallel()
 
@@ -121,11 +128,12 @@ func TestShouldSkipVolume(t *testing.T) {
 		{"disk1", "/mnt/disk1/share", true, "direct disk volume", false},
 		{"disk12", "/mnt/disk12/data", true, "direct disk volume", false},
 
-		// Unassigned Devices (/mnt/disks/, plural) — backed up, not direct disk.
-		{"unassigned devices appdata", "/mnt/disks/SSD-Device/appdata/Jellyfin", false, "", false},
-		{"unassigned devices share", "/mnt/disks/SSD-Device/data", false, "", false},
+		// Unassigned Devices (/mnt/disks/, plural) — non-appdata by default unless configured.
+		{"unassigned devices appdata default", "/mnt/disks/SSD-Device/appdata/Jellyfin", true, "non-appdata path", true},
+		{"unassigned devices share", "/mnt/disks/SSD-Device/data", true, "non-appdata path", true},
 
-		// Root /mnt — skipped, non-overridable.
+		// Root / and /mnt — skipped, non-overridable.
+		{"root slash", "/", true, "root / mount", false},
 		{"root mnt", "/mnt", true, "root /mnt mount", false},
 
 		// Device and virtual filesystem paths — skipped, non-overridable.
@@ -135,10 +143,13 @@ func TestShouldSkipVolume(t *testing.T) {
 		{"sys", "/sys/class/net", true, "device/virtual path (/sys)", false},
 		{"run", "/run/udev", true, "device/virtual path (/run)", false},
 
-		// Other system paths — backed up.
-		{"tmp", "/tmp/something", false, "", false},
-		{"etc", "/etc/localtime", false, "", false},
-		{"custom", "/opt/myapp/config", false, "", false},
+		// Named volumes — included by default.
+		{"named volume default", "/var/lib/docker/volumes/foo/_data", false, "", false},
+
+		// Other system paths — non-appdata paths soft-skipped by default (issue #317).
+		{"tmp", "/tmp/something", true, "non-appdata path", true},
+		{"etc", "/etc/localtime", true, "non-appdata path", true},
+		{"custom", "/opt/myapp/config", true, "non-appdata path", true},
 	}
 
 	for _, tt := range tests {
@@ -155,6 +166,49 @@ func TestShouldSkipVolume(t *testing.T) {
 				t.Errorf("shouldSkipVolume(%q) overridable = %v, want %v", tt.source, gotOverridable, tt.wantOverridable)
 			}
 		})
+	}
+}
+
+func TestShouldSkipVolume_CustomAppdataPath(t *testing.T) {
+	t.Parallel()
+
+	prefixes := effectiveAppdataPrefixes("/mnt/disks/SSD-Device/appdata")
+	// Custom path should be included.
+	gotSkip, gotReason, gotOverridable := shouldSkipVolumeFiltered("/mnt/disks/SSD-Device/appdata/Jellyfin", "", true, prefixes)
+	if gotSkip || gotReason != "" || gotOverridable {
+		t.Errorf("expected custom appdata path to be included, got skip=%v, reason=%q, overridable=%v", gotSkip, gotReason, gotOverridable)
+	}
+
+	// Non-appdata path under /mnt/disks is still soft-skipped.
+	gotSkip, gotReason, gotOverridable = shouldSkipVolumeFiltered("/mnt/disks/SSD-Device/data", "", true, prefixes)
+	if !gotSkip || gotReason != "non-appdata path" || !gotOverridable {
+		t.Errorf("expected non-appdata path to be soft-skipped, got skip=%v, reason=%q, overridable=%v", gotSkip, gotReason, gotOverridable)
+	}
+}
+
+func TestShouldSkipVolume_Legacy(t *testing.T) {
+	t.Parallel()
+
+	// In legacy mode (appdataOnly = false), non-appdata paths outside skipPrefixes are included.
+	gotSkip, gotReason, gotOverridable := shouldSkipVolumeFiltered("/tmp/something", "", false, appdataPrefixes)
+	if gotSkip || gotReason != "" || gotOverridable {
+		t.Errorf("expected /tmp/something to be included in legacy mode, got skip=%v, reason=%q, overridable=%v", gotSkip, gotReason, gotOverridable)
+	}
+
+	// Shared data paths are still soft-skipped in legacy mode.
+	gotSkip, gotReason, gotOverridable = shouldSkipVolumeFiltered("/mnt/user/media/movies", "", false, appdataPrefixes)
+	if !gotSkip || !gotOverridable {
+		t.Errorf("expected shared data to be skipped in legacy mode, got skip=%v, overridable=%v", gotSkip, gotOverridable)
+	}
+}
+
+func TestShouldSkipVolume_NamedVolume(t *testing.T) {
+	t.Parallel()
+
+	// Type "volume" is included by default even if path is not under appdata
+	gotSkip, gotReason, gotOverridable := shouldSkipVolumeFiltered("/var/custom/storage", "volume", true, appdataPrefixes)
+	if gotSkip || gotReason != "" || gotOverridable {
+		t.Errorf("expected named volume to be included, got skip=%v, reason=%q, overridable=%v", gotSkip, gotReason, gotOverridable)
 	}
 }
 
@@ -1163,6 +1217,8 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 		mounts         []containertypes.MountPoint
 		exclusions     []string
 		includedMounts []string
+		appdataOnly    bool
+		prefixes       []string
 		prevBySource   map[string]map[string]struct{}
 		ctx            context.Context // defaults to context.Background() when nil
 		wantChanged    bool
@@ -1288,6 +1344,23 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 		},
 		wantChanged: true,
 	})
+	cases = append(cases, volCase{
+		name: "appdata_only true ignores changed non-appdata mount by default",
+		mounts: []containertypes.MountPoint{
+			bind(mkVolume(t, recent), "/data"),
+		},
+		appdataOnly: true,
+		wantChanged: false,
+	})
+	cases = append(cases, volCase{
+		name: "appdata_only true with force-included non-appdata mount detects change",
+		mounts: []containertypes.MountPoint{
+			bind(mkVolume(t, recent), "/data"),
+		},
+		includedMounts: []string{"/data"},
+		appdataOnly:    true,
+		wantChanged:    true,
+	})
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1295,7 +1368,7 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, tc.includedMounts, reference, tc.prevBySource, nil)
+			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, tc.includedMounts, tc.appdataOnly, tc.prefixes, reference, tc.prevBySource, nil)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -1528,5 +1601,450 @@ func TestContainerBackupDifferentialIncludesNewFileWithStaleMtime(t *testing.T) 
 				t.Errorf("differential archive should skip unchanged old.txt: %v", names)
 			}
 		})
+	}
+}
+
+func TestBackup_AppdataOnly_MixedMounts(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	appdataDir := filepath.Join(tmp, "appdata")
+	nonAppdataDir := filepath.Join(tmp, "other")
+	downloadsDir := filepath.Join(tmp, "downloads")
+	for _, d := range []string{appdataDir, nonAppdataDir, downloadsDir} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "file.txt"), []byte("hello"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:      "abc123",
+				Name:    "/test-app",
+				Created: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339Nano),
+				Config:  &containertypes.Config{Image: "nginx:latest"},
+				State:   &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: appdataDir, Destination: "/config"},
+					{Type: mounttypes.TypeBind, Source: nonAppdataDir, Destination: "/other"},
+					{Type: mounttypes.TypeBind, Source: downloadsDir, Destination: "/downloads"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+	h := &ContainerHandler{cli: mock}
+
+	destDir := t.TempDir()
+	item := BackupItem{
+		Name: "test-app",
+		Type: "container",
+		Settings: map[string]any{
+			"id":              "abc123",
+			"appdata_only":    true,
+			"appdata_path":    appdataDir,
+			"included_mounts": []string{"/downloads"},
+		},
+	}
+
+	result, err := h.Backup(context.Background(), item, destDir, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("Backup() error = %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("Backup() result.Success = false")
+	}
+
+	// Read volumes.json manifest
+	manifestEntries, present, err := readVolumeManifest(destDir)
+	if err != nil || !present {
+		t.Fatalf("readVolumeManifest error = %v, present = %v", err, present)
+	}
+	if len(manifestEntries) != 3 {
+		t.Fatalf("expected 3 entries in volumes.json, got %d", len(manifestEntries))
+	}
+
+	byDest := make(map[string]volumeManifestEntry)
+	for _, e := range manifestEntries {
+		byDest[e.Destination] = e
+	}
+
+	// /config (appdata): backed up
+	if !byDest["/config"].BackedUp {
+		t.Errorf("expected /config to be backed up, got %#v", byDest["/config"])
+	}
+	// /other (non-appdata): skipped
+	if byDest["/other"].BackedUp || byDest["/other"].SkipReason != "non-appdata path" {
+		t.Errorf("expected /other to be skipped with non-appdata path, got %#v", byDest["/other"])
+	}
+	// /downloads (non-appdata, but force-included): backed up
+	if !byDest["/downloads"].BackedUp {
+		t.Errorf("expected /downloads to be force-included and backed up, got %#v", byDest["/downloads"])
+	}
+}
+
+func TestBackup_AppdataOnly_AllMountsExcludedSucceedsWithMetadata(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:      "abc123",
+				Name:    "/test-app",
+				Created: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339Nano),
+				Config:  &containertypes.Config{Image: "nginx:latest"},
+				State:   &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: "/mnt/user/media", Destination: "/media"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+	h := &ContainerHandler{cli: mock}
+
+	destDir := t.TempDir()
+	item := BackupItem{
+		Name: "test-app",
+		Type: "container",
+		Settings: map[string]any{
+			"id":           "abc123",
+			"appdata_only": true,
+		},
+	}
+
+	// Should not return an error even though all mounts are excluded
+	result, err := h.Backup(context.Background(), item, destDir, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("expected Backup() to succeed with metadata only, got error = %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected result.Success = true")
+	}
+
+	// config.json must be written
+	if _, err := os.Stat(filepath.Join(destDir, "config.json")); err != nil {
+		t.Errorf("expected config.json to exist: %v", err)
+	}
+}
+
+func TestBackup_AllMountsExplicitlyExcluded_Fails(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:      "abc123",
+				Name:    "/test-app",
+				Created: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339Nano),
+				Config:  &containertypes.Config{Image: "nginx:latest"},
+				State:   &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: "/mnt/user/appdata/test-app", Destination: "/config"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+	h := &ContainerHandler{cli: mock}
+
+	destDir := t.TempDir()
+	item := BackupItem{
+		Name: "test-app",
+		Type: "container",
+		Settings: map[string]any{
+			"id":              "abc123",
+			"excluded_mounts": []string{"/config"},
+		},
+	}
+
+	_, err := h.Backup(context.Background(), item, destDir, func(string, int, string) {})
+	if err == nil {
+		t.Fatalf("expected Backup() to fail when all eligible mounts are explicitly excluded")
+	}
+	if !strings.Contains(err.Error(), "every backup-eligible mount of container test-app is excluded") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestEffectiveAppdataPrefixes(t *testing.T) {
+	t.Parallel()
+
+	// Empty path returns defaults.
+	def := effectiveAppdataPrefixes("")
+	if len(def) != 2 || def[0] != "/mnt/cache/appdata" || def[1] != "/mnt/user/appdata" {
+		t.Fatalf("unexpected defaults: %v", def)
+	}
+
+	// Already default path matches found=true
+	p1 := effectiveAppdataPrefixes("/mnt/user/appdata")
+	if len(p1) != 2 {
+		t.Fatalf("expected 2 prefixes, got %v", p1)
+	}
+
+	// Custom under /mnt/user adds cache variant
+	p2 := effectiveAppdataPrefixes("/mnt/user/custom-appdata")
+	hasCustomUser := false
+	hasCustomCache := false
+	for _, p := range p2 {
+		if p == "/mnt/user/custom-appdata" {
+			hasCustomUser = true
+		}
+		if p == "/mnt/cache/custom-appdata" {
+			hasCustomCache = true
+		}
+	}
+	if !hasCustomUser || !hasCustomCache {
+		t.Fatalf("expected custom user and cache variant, got %v", p2)
+	}
+
+	// Calling with cache variant directly
+	p3 := effectiveAppdataPrefixes("/mnt/cache/pool-appdata")
+	hasPoolUser := false
+	hasPoolCache := false
+	for _, p := range p3 {
+		if p == "/mnt/user/pool-appdata" {
+			hasPoolUser = true
+		}
+		if p == "/mnt/cache/pool-appdata" {
+			hasPoolCache = true
+		}
+	}
+	if !hasPoolUser || !hasPoolCache {
+		t.Fatalf("expected pool user and cache variant, got %v", p3)
+	}
+
+	// Custom path with existing variant
+	p4 := effectiveAppdataPrefixes("/mnt/disks/nvme/appdata")
+	hasDisk := false
+	for _, p := range p4 {
+		if p == "/mnt/disks/nvme/appdata" {
+			hasDisk = true
+		}
+	}
+	if !hasDisk {
+		t.Fatalf("expected nvme appdata prefix, got %v", p4)
+	}
+	hasDefaultUser := false
+	hasDefaultCache := false
+	for _, p := range p4 {
+		if p == "/mnt/user/appdata" {
+			hasDefaultUser = true
+		}
+		if p == "/mnt/cache/appdata" {
+			hasDefaultCache = true
+		}
+	}
+	if !hasDefaultCache {
+		t.Errorf("expected custom path to retain /mnt/cache/appdata fallback, got %v", p4)
+	}
+	if !hasDefaultUser {
+		t.Errorf("expected custom path to retain /mnt/user/appdata fallback, got %v", p4)
+	}
+}
+
+func TestExtractAppdataOnlyAndPath(t *testing.T) {
+	t.Parallel()
+
+	if extractAppdataOnly(nil) {
+		t.Error("expected nil settings to return false")
+	}
+	if extractAppdataOnly(map[string]any{}) {
+		t.Error("expected empty settings to return false")
+	}
+	if extractAppdataOnly(map[string]any{"appdata_only": nil}) {
+		t.Error("expected nil appdata_only to return false")
+	}
+	if !extractAppdataOnly(map[string]any{"appdata_only": true}) {
+		t.Error("expected bool true to return true")
+	}
+	if extractAppdataOnly(map[string]any{"appdata_only": false}) {
+		t.Error("expected bool false to return false")
+	}
+	if !extractAppdataOnly(map[string]any{"appdata_only": "true"}) {
+		t.Error("expected string true to return true")
+	}
+	if !extractAppdataOnly(map[string]any{"appdata_only": "1"}) {
+		t.Error("expected string 1 to return true")
+	}
+	if extractAppdataOnly(map[string]any{"appdata_only": "false"}) {
+		t.Error("expected string false to return false")
+	}
+	if extractAppdataOnly(map[string]any{"appdata_only": 123}) {
+		t.Error("expected non-string non-bool to return false")
+	}
+
+	if extractAppdataPath(nil) != "" {
+		t.Error("expected nil settings to return empty string")
+	}
+	if extractAppdataPath(map[string]any{}) != "" {
+		t.Error("expected empty settings to return empty string")
+	}
+	if extractAppdataPath(map[string]any{"appdata_path": nil}) != "" {
+		t.Error("expected nil appdata_path to return empty string")
+	}
+	if extractAppdataPath(map[string]any{"appdata_path": 123}) != "" {
+		t.Error("expected int appdata_path to return empty string")
+	}
+	if got := extractAppdataPath(map[string]any{"appdata_path": "/mnt/user/appdata"}); got != "/mnt/user/appdata" {
+		t.Errorf("got %q, want /mnt/user/appdata", got)
+	}
+}
+
+func TestBackup_AppdataOnly_NonAppdataMountAutoSkipped(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:      "abc123",
+				Name:    "/test-app",
+				Created: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339Nano),
+				Config:  &containertypes.Config{Image: "nginx:latest"},
+				State:   &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: "/mnt/user/media", Destination: "/media"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+	h := &ContainerHandler{cli: mock}
+
+	destDir := t.TempDir()
+	item := BackupItem{
+		Name: "test-app",
+		Type: "container",
+		Settings: map[string]any{
+			"id":           "abc123",
+			"appdata_only": true,
+		},
+	}
+
+	// Should succeed: non-appdata mount is auto-skipped and metadata backup succeeds
+	result, err := h.Backup(context.Background(), item, destDir, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("expected Backup() to succeed with metadata only, got error = %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected result.Success = true")
+	}
+
+	// config.json must be written
+	if _, err := os.Stat(filepath.Join(destDir, "config.json")); err != nil {
+		t.Errorf("expected config.json to exist: %v", err)
+	}
+}
+
+func TestBackup_ExplicitExclusionsAllMountsFails(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:      "abc1234",
+				Name:    "/test-app-failing",
+				Created: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339Nano),
+				Config:  &containertypes.Config{Image: "nginx:latest"},
+				State:   &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: "/mnt/user/appdata/test", Destination: "/config"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+	h := &ContainerHandler{cli: mock}
+
+	destDir := t.TempDir()
+	item := BackupItem{
+		Name: "test-app-failing",
+		Type: "container",
+		Settings: map[string]any{
+			"id":              "abc1234",
+			"appdata_only":    true,
+			"excluded_mounts": []string{"/config"},
+		},
+	}
+
+	// Should fail with error because all eligible mounts are explicitly excluded
+	_, err := h.Backup(context.Background(), item, destDir, func(string, int, string) {})
+	if err == nil {
+		t.Fatal("expected Backup() to fail when all eligible mounts are explicitly excluded")
+	}
+}
+
+func TestBackupChunked_AppdataOnly_NonAppdataMountAutoSkipped(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:      "abc5678",
+				Name:    "/test-chunked-app",
+				Created: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339Nano),
+				Config:  &containertypes.Config{Image: "nginx:latest"},
+				State:   &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: "/mnt/user/media", Destination: "/media"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+	h := &ContainerHandler{cli: mock}
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	item := BackupItem{
+		Name: "test-chunked-app",
+		Type: "container",
+		Settings: map[string]any{
+			"id":           "abc5678",
+			"appdata_only": true,
+		},
+	}
+
+	manifestID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
+	if err != nil {
+		t.Fatalf("expected BackupChunked() to succeed with metadata only, got error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	m, err := r.GetManifest(manifestID)
+	if err != nil {
+		t.Fatalf("GetManifest() error = %v", err)
+	}
+	if _, ok := m.Files["__inspect"]; !ok {
+		t.Errorf("expected __inspect in manifest")
 	}
 }

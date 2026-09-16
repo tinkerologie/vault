@@ -536,6 +536,81 @@ func (h *SettingsHandler) SetStagingOverride(w http.ResponseWriter, r *http.Requ
 	h.GetStagingInfo(w, r)
 }
 
+// GetAppdataPath returns the configured appdata path and its default.
+//
+//	GET /api/v1/settings/appdata
+func (h *SettingsHandler) GetAppdataPath(w http.ResponseWriter, _ *http.Request) {
+	current, _ := h.db.GetSetting("appdata_path", docsmeta.DefaultFor("appdata_path"))
+	respondJSON(w, http.StatusOK, map[string]string{
+		"path":    current,
+		"default": docsmeta.DefaultFor("appdata_path"),
+	})
+}
+
+// SetAppdataPath sets or resets the global appdata path.
+//
+//	PUT /api/v1/settings/appdata
+func (h *SettingsHandler) SetAppdataPath(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		path = docsmeta.DefaultFor("appdata_path")
+	} else {
+		normalizedPath, err := normalizeConfigurablePath(path)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		resolvedPath := normalizedPath
+		if target, err := filepath.EvalSymlinks(normalizedPath); err == nil {
+			resolvedPath = target
+		}
+		if resolvedPath == "/" || resolvedPath == "/mnt" || resolvedPath == "/mnt/user" || resolvedPath == "/mnt/cache" ||
+			normalizedPath == "/" || normalizedPath == "/mnt" || normalizedPath == "/mnt/user" || normalizedPath == "/mnt/cache" {
+			respondError(w, http.StatusBadRequest, "path cannot be root, /mnt, /mnt/user, or /mnt/cache")
+			return
+		}
+		for _, prefix := range []string{"/dev", "/proc", "/sys", "/run"} {
+			if resolvedPath == prefix || strings.HasPrefix(resolvedPath, prefix+"/") ||
+				normalizedPath == prefix || strings.HasPrefix(normalizedPath, prefix+"/") {
+				respondError(w, http.StatusBadRequest, "device and virtual filesystem paths are not allowed as appdata path")
+				return
+			}
+		}
+		if rest := strings.TrimPrefix(resolvedPath, "/mnt/disk"); rest != resolvedPath && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
+			respondError(w, http.StatusBadRequest, "direct disk paths are not allowed as appdata path")
+			return
+		}
+		if rest := strings.TrimPrefix(normalizedPath, "/mnt/disk"); rest != normalizedPath && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
+			respondError(w, http.StatusBadRequest, "direct disk paths are not allowed as appdata path")
+			return
+		}
+		if fi, err := os.Stat(resolvedPath); err != nil || !fi.IsDir() {
+			respondError(w, http.StatusBadRequest, "path does not exist or is not a directory")
+			return
+		}
+		path = normalizedPath
+	}
+
+	if err := h.db.SetSetting("appdata_path", path); err != nil {
+		respondInternalError(w, err)
+		return
+	}
+
+	h.notifyConfigChange()
+	respondJSON(w, http.StatusOK, map[string]string{
+		"path":    path,
+		"default": docsmeta.DefaultFor("appdata_path"),
+	})
+}
+
 // TestDiscordWebhook sends a test message to a Discord webhook URL.
 //
 //	POST /api/v1/settings/discord/test

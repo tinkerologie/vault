@@ -228,11 +228,15 @@
     if (selected.has(_key)) {
       selected.delete(_key)
     } else {
+      const initialSettings = { ...(item.settings || {}) }
+      if (type === 'container') {
+        initialSettings.appdata_only = true
+      }
       selected.set(_key, {
         item_type: type,
         item_name: item.name,
         item_id: item.settings?.id || item.name,
-        settings: JSON.stringify(item.settings || {}),
+        settings: JSON.stringify(initialSettings),
       })
     }
     emitChange()
@@ -260,11 +264,15 @@
       if (allSelected) {
         selected.delete(key)
       } else {
+        const initialSettings = { ...(it.settings || {}) }
+        if (itemType === 'container') {
+          initialSettings.appdata_only = true
+        }
         selected.set(key, {
           item_type: itemType,
           item_name: it.name,
           item_id: it.settings?.id || it.name,
-          settings: JSON.stringify(it.settings || {}),
+          settings: JSON.stringify(initialSettings),
         })
       }
     }

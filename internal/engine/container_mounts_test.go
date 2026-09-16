@@ -48,11 +48,52 @@ func TestListMountsIncludesBackupableMountsAndFlagsAutoSkip(t *testing.T) {
 		{Source: "/var/lib/docker/volumes/some-named-volume/_data", Destination: "/data", Type: "volume", AutoSkip: false, SkipReason: "", Overridable: false},
 		{Source: "/dev/rtc", Destination: "/dev/rtc", Type: "bind", AutoSkip: true, SkipReason: "device/virtual path (/dev)", Overridable: false},
 		{Source: "/mnt/disk1/data", Destination: "/disk1", Type: "bind", AutoSkip: true, SkipReason: "direct disk volume", Overridable: false},
-		{Source: "/", Destination: "/rootfs", Type: "bind", AutoSkip: false, SkipReason: "", Overridable: false},
+		{Source: "/", Destination: "/rootfs", Type: "bind", AutoSkip: true, SkipReason: "root / mount", Overridable: false},
 		{Source: "/mnt/user/media/tv", Destination: "/tv", Type: "bind", AutoSkip: true, SkipReason: "shared data volume (/mnt/user/media)", Overridable: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ListMounts() =\n  %#v\nwant\n  %#v", got, want)
+	}
+}
+
+// TestListMountsWithCustomAppdataPath verifies that an explicit appdata path
+// marks matching mounts as included rather than soft-skipped.
+func TestListMountsWithCustomAppdataPath(t *testing.T) {
+	t.Parallel()
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:   "beefcafe",
+				Name: "/custom-app",
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: "/mnt/nvme/docker/custom-app/config", Destination: "/config"},
+					{Type: mounttypes.TypeBind, Source: "/mnt/nvme/docker/custom-app/data", Destination: "/data"},
+				},
+			},
+		},
+	}
+	h := &ContainerHandler{cli: mock}
+
+	// Without custom path, /mnt/nvme/docker/... is soft-skipped as non-appdata path
+	gotDefault, err := h.ListMounts(context.Background(), "custom-app", false)
+	if err != nil {
+		t.Fatalf("ListMounts() default error = %v", err)
+	}
+	for _, m := range gotDefault {
+		if !m.AutoSkip || m.SkipReason != "non-appdata path" || !m.Overridable {
+			t.Errorf("expected %s to be soft-skipped under default path, got %#v", m.Destination, m)
+		}
+	}
+
+	// With custom path configured to /mnt/nvme/docker, mounts are included
+	gotCustom, err := h.ListMounts(context.Background(), "custom-app", false, "/mnt/nvme/docker")
+	if err != nil {
+		t.Fatalf("ListMounts() custom error = %v", err)
+	}
+	for _, m := range gotCustom {
+		if m.AutoSkip || m.SkipReason != "" {
+			t.Errorf("expected %s to be included under custom path, got %#v", m.Destination, m)
+		}
 	}
 }
 

@@ -34,6 +34,19 @@ func (r *Runner) globalExcludePaths() []string {
 	return paths
 }
 
+// appdataPath reads the configured appdata_path setting, defaulting to the catalog value.
+func (r *Runner) appdataPath() string {
+	val, err := r.db.GetSetting("appdata_path", docsmeta.DefaultFor("appdata_path"))
+	if err != nil {
+		log.Printf("runner: reading appdata_path (continuing with default): %v", err)
+		return docsmeta.DefaultFor("appdata_path")
+	}
+	if val == "" {
+		return docsmeta.DefaultFor("appdata_path")
+	}
+	return val
+}
+
 // mergeExclusions unions the global exclusion list with an item's own.
 //
 // Merged rather than overridden: a global list is a floor, not a replacement,

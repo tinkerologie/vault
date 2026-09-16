@@ -103,6 +103,11 @@
   let historyRetention = $state('365')
   let historyRetentionSaving = $state(false)
 
+  // Appdata path state
+  let appdataPath = $state('')
+  let appdataDefault = $state('/mnt/user/appdata')
+  let appdataSaving = $state(false)
+
   // Discord state
   let discordWebhookUrl = $state('')
   let discordNotifyOn = $state('always')
@@ -217,7 +222,7 @@
 
   onMount(async () => {
     try {
-      const [h, s, enc, staging, dbInfo, apiKeyStatus, changelog, latestRelease] = await Promise.all([
+      const [h, s, enc, staging, dbInfo, apiKeyStatus, changelog, latestRelease, appdataInfo] = await Promise.all([
         api.health(),
         api.getSettings(),
         api.getEncryptionStatus(),
@@ -226,6 +231,7 @@
         api.getAPIKeyStatus().catch(() => null),
         api.getChangelog().catch(() => []),
         api.getLatestRelease().catch(() => null),
+        api.getAppdataPath().catch(() => null),
       ])
       health = h
       settings = s || {}
@@ -233,6 +239,12 @@
       apiKeyEnabled = apiKeyStatus?.enabled || false
       stagingInfo = staging
       stagingOverrideInput = staging?.override || ''
+      if (appdataInfo) {
+        appdataPath = appdataInfo.path || appdataInfo.default || '/mnt/user/appdata'
+        appdataDefault = appdataInfo.default || '/mnt/user/appdata'
+      } else {
+        appdataPath = s?.appdata_path || '/mnt/user/appdata'
+      }
       discordWebhookUrl = s?.discord_webhook_url || ''
       discordNotifyOn = s?.discord_notify_on || 'always'
       discordBotUsername = s?.discord_bot_username || ''
@@ -423,6 +435,35 @@
       showToast(e.message, 'error')
     } finally {
       snapshotPathSaving = false
+    }
+  }
+
+  async function saveAppdataPath() {
+    if (readOnly) return
+    appdataSaving = true
+    try {
+      const res = await api.setAppdataPath(appdataPath)
+      appdataPath = res.path
+      appdataDefault = res.default || appdataDefault
+      showToast('Appdata path saved', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      appdataSaving = false
+    }
+  }
+
+  async function resetAppdataPath() {
+    if (readOnly) return
+    appdataSaving = true
+    try {
+      const res = await api.setAppdataPath('')
+      appdataPath = res.path
+      showToast('Appdata path reset to default', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      appdataSaving = false
     }
   }
 
@@ -1846,6 +1887,35 @@
 
       <!-- === GENERAL TAB (cont.) === -->
       {#if activeTab === 'general'}
+
+      <!-- Docker Appdata Path -->
+      <div id="set-appdata" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Docker Appdata Path <Tooltip text="The root directory where Docker containers store their configuration and runtime data on Unraid. Container backup jobs derive included mounts from this path by default." /></h2>
+          <p class="text-xs text-text-muted mt-0.5">Where Docker container configurations live. Non-appdata mounts are excluded from container backups by default to prevent accidental multi-terabyte media backups.</p>
+        </div>
+        <div class="p-5 space-y-4">
+          <div>
+            <span class="text-xs text-text-muted block mb-1.5">Appdata Directory</span>
+            <div class="flex gap-2 items-end">
+              <div class="flex-1" class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
+                <PathBrowser bind:value={appdataPath} includeZfs={true} />
+              </div>
+              {#if !readOnly}
+              <button onclick={saveAppdataPath} disabled={appdataSaving || !appdataPath} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+                {#if appdataSaving}<InlineSpinner />{/if}
+                Apply
+              </button>
+              {/if}
+            </div>
+            {#if appdataPath !== appdataDefault && !readOnly}
+              <button onclick={resetAppdataPath} disabled={appdataSaving} class="mt-2 text-xs text-vault hover:underline">
+                Reset to default ({appdataDefault})
+              </button>
+            {/if}
+          </div>
+        </div>
+      </div>
 
       <!-- Staging Directory -->
       {#if stagingInfo}
