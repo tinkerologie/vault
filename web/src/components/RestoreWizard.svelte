@@ -22,6 +22,10 @@
   // over whatever is already there (issue #321). Default on, because the
   // warning below has always promised exactly that.
   let cleanDestination = $state(true)
+  // A custom-destination container restore stops, removes, and recreates the
+  // live container and rewrites its volume mappings. That happened with no
+  // warning at all; it is now opt-in per restore (issue #336).
+  let acknowledgeContainerRemap = $state(false)
   let passphrase = $state('')
   let loading = $state(false)
   let allItems = $state([])
@@ -382,11 +386,21 @@
     restoreDestination = ''
     showDestOverride = false
     cleanDestination = true
+    acknowledgeContainerRemap = false
     preflightResult = null
     picker.clear()
   }
 
   let needsPassphrase = $derived(selectedPoint?.encryption === 'age')
+
+  // Only a container is stopped, removed, and recreated by a restore, so only
+  // a container needs the remap acknowledgement (issue #336).
+  let hasContainerItem = $derived(selectedItemsArray.some(item => item.type === 'container'))
+
+  // The acknowledgement is only meaningful while a custom destination is
+  // selected with a container in the set; anywhere else it must not block the
+  // button, and it resets so re-entering the choice asks again.
+  let needsRemapAcknowledgement = $derived(hasContainerItem && showDestOverride)
 
   // A partial restore writes only the files the user picked, so clearing the
   // destination would delete everything they did not pick. The backend
@@ -475,6 +489,9 @@
 
   function doRestore() {
     if (selectedItems.size === 0 || !selectedPoint) return
+    // Belt and braces alongside the disabled buttons: recreating a live
+    // container is not something to fall into (issue #336).
+    if (needsRemapAcknowledgement && !acknowledgeContainerRemap) return
     restoring = true
     restoringJobId = selectedPoint.jobId
 
@@ -773,7 +790,7 @@
         <div class="space-y-2">
           <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
             <input type="radio" name="rw_dest" class="accent-vault" checked={!showDestOverride}
-              onchange={() => { showDestOverride = false; restoreDestination = '' }} />
+              onchange={() => { showDestOverride = false; restoreDestination = ''; acknowledgeContainerRemap = false }} />
             Restore to original location
           </label>
           <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
@@ -787,6 +804,21 @@
             <PathBrowser bind:value={restoreDestination} label="Custom restore destination" />
             <p class="text-xs text-text-dim mt-1">Files will be written under this path instead of their original location.</p>
           </div>
+          {#if hasContainerItem}
+            <div class="mt-3 bg-warning/10 border border-warning/30 rounded-xl p-4">
+              <p class="text-sm font-medium text-warning">This also changes the live container</p>
+              <p class="text-xs text-text-muted mt-1">
+                Restoring a container to a custom destination stops it, removes it, and recreates it with its
+                volume mappings pointed at the new location. The Unraid template is rewritten to match, so the
+                Docker page's Edit form shows the same mappings. The container does not go back to its original
+                paths on its own.
+              </p>
+              <label class="flex items-start gap-2 cursor-pointer text-sm text-text mt-3">
+                <input type="checkbox" class="accent-vault mt-0.5" bind:checked={acknowledgeContainerRemap} />
+                <span>I understand the live container will be recreated and remapped</span>
+              </label>
+            </div>
+          {/if}
         {/if}
       </div>
 
@@ -1002,7 +1034,7 @@
     <!-- Restore -->
     <div class="flex items-center gap-4">
       <button type="button" onclick={doRestore}
-        disabled={restoring || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase) || !(preflightResult?.ok && preflightFresh)}
+        disabled={restoring || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase) || (needsRemapAcknowledgement && !acknowledgeContainerRemap) || !(preflightResult?.ok && preflightFresh)}
         class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
         {#if restoring}
           <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -1014,8 +1046,9 @@
       </button>
       {#if preflightResult && preflightFresh && !preflightResult.ok && !restoring && selectedPoint?.chain_status !== 'broken'}
         <button type="button"
+          disabled={needsRemapAcknowledgement && !acknowledgeContainerRemap}
           onclick={() => { if (window.confirm('Pre-flight checks did not all pass. Restore anyway?')) doRestore() }}
-          class="text-xs text-text-dim hover:text-text underline cursor-pointer">Restore anyway</button>
+          class="text-xs text-text-dim hover:text-text underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline">Restore anyway</button>
       {:else if !restoring && !(preflightResult && preflightFresh) && selectedPoint?.chain_status !== 'broken'}
         <p class="text-xs text-text-dim">Run the pre-flight checks above to enable Start Restore.</p>
       {/if}

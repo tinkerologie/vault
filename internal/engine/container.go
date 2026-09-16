@@ -1820,6 +1820,10 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 	// Build host config.
 	binds := inspect.HostConfig.Binds
 	// If restoring to an alternate destination, rewrite bind source paths.
+	// The pairs are kept so the Unraid template can be rewritten to the very
+	// same paths — the binds are the single source of truth for the remap,
+	// and the two drifting apart is what issue #336 reported.
+	var templateRewrites []volumePathRewrite
 	if restoreDest != "" {
 		rewritten := make([]string, 0, len(binds))
 		for _, bind := range binds {
@@ -1831,6 +1835,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 				}
 				newSource := filepath.Join(restoreDest, sourceName)
 				rewritten = append(rewritten, newSource+":"+parts[1])
+				templateRewrites = append(templateRewrites, volumePathRewrite{Old: parts[0], New: newSource})
 			} else {
 				rewritten = append(rewritten, bind)
 			}
@@ -1934,6 +1939,13 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		progress(item.Name, 80, "restoring template")
 		templateSrc := filepath.Join(sourceDir, "template.xml")
 		if data, readErr := os.ReadFile(templateSrc); readErr == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
+			// Keep the template in step with the binds the restore created.
+			// With no custom destination there is nothing to rewrite and the
+			// template is copied back byte-for-byte, as before (issue #336).
+			if len(templateRewrites) > 0 {
+				data = rewriteTemplateVolumePaths(data, templateRewrites)
+				log.Printf("engine: restore: rewrote %d volume path(s) in the Unraid template for %s so Edit shows the same mappings as the running container", len(templateRewrites), containerName)
+			}
 			templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
 			if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
 				_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
