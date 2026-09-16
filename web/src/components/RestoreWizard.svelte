@@ -4,7 +4,7 @@
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { isRestoreActive } from '../lib/restore-sync.js'
-  import { formatDate, formatBytes, itemDisplayLabel } from '../lib/utils.js'
+  import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
@@ -191,7 +191,7 @@
   })
 
   function itemKey(item) {
-    return `${item.item_type || item.type}:${itemDisplayLabel(item)}`
+    return `${effectiveItemType(item)}:${itemDisplayLabel(item)}`
   }
 
   // Gather all backed-up items across all jobs
@@ -206,13 +206,14 @@
 	  for (const detail of jobs) {
 		if (!detail?.items) continue
         for (const item of detail.items) {
-          const key = itemKey(item)
+          const effType = effectiveItemType(item)
+          const key = `${effType}:${itemDisplayLabel(item)}`
           if (!itemMap.has(key)) {
             itemMap.set(key, {
               name: item.item_name,
-              type: item.item_type,
+              type: effType,
               item_name: item.item_name,
-              item_type: item.item_type,
+              item_type: effType,
               item_id: item.item_id,
               settings: item.settings,
               jobs: [],
@@ -239,7 +240,11 @@
         // buttons and the command palette). Only matches items that are actually in
         // a backup job, so unknown/never-backed-up names just land on the picker.
         if (initialType && initialName && selectedItems.size === 0) {
-          const item = allItems.find(i => `${i.type}:${i.name}` === `${initialType}:${initialName}` || itemKey(i) === `${initialType}:${initialName}`)
+          const item = allItems.find(i =>
+            `${i.type}:${i.name}` === `${initialType}:${initialName}` ||
+            itemKey(i) === `${initialType}:${initialName}` ||
+            (initialType === 'folder' && i.type === 'flash' && i.name === initialName)
+          )
           if (item) selectedItems.set(itemKey(item), item)
         }
       }
@@ -248,51 +253,47 @@
     }
   }
 
-  let filteredItems = $derived(
-    typeFilter === 'all' ? allItems : allItems.filter(i => i.type === typeFilter)
-  )
+  let searchQuery = $state('')
+  let sortBy = $state('alpha-asc')
+
+  let filteredItems = $derived.by(() => {
+    let items = typeFilter === 'all' ? allItems : allItems.filter(i => i.type === typeFilter)
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase()
+      items = items.filter(i => {
+        const label = itemDisplayLabel(i).toLowerCase()
+        const name = (i.name || '').toLowerCase()
+        const type = (i.type || '').toLowerCase()
+        const jobNames = i.jobs.map(j => j.name || '').join(' ').toLowerCase()
+        return label.includes(q) || name.includes(q) || type.includes(q) || jobNames.includes(q)
+      })
+    }
+    const sorted = [...items]
+    switch (sortBy) {
+      case 'alpha-desc':
+        sorted.sort((a, b) => itemDisplayLabel(b).localeCompare(itemDisplayLabel(a), undefined, { sensitivity: 'base' }))
+        break
+      case 'type':
+        sorted.sort((a, b) => a.type.localeCompare(b.type) || itemDisplayLabel(a).localeCompare(itemDisplayLabel(b), undefined, { sensitivity: 'base' }))
+        break
+      case 'jobs':
+        sorted.sort((a, b) => b.jobs.length - a.jobs.length || itemDisplayLabel(a).localeCompare(itemDisplayLabel(b), undefined, { sensitivity: 'base' }))
+        break
+      case 'alpha-asc':
+      default:
+        sorted.sort((a, b) => itemDisplayLabel(a).localeCompare(itemDisplayLabel(b), undefined, { sensitivity: 'base' }))
+        break
+    }
+    return sorted
+  })
 
   let typeOptions = $derived.by(() => {
     const types = new Set(allItems.map(i => i.type))
-    return ['all', ...types]
+    const canonicalOrder = ['all', 'container', 'vm', 'folder', 'flash', 'plugin', 'zfs']
+    return canonicalOrder.filter(t => t === 'all' || types.has(t))
   })
 
-  // Naive `type + 's'` rendered the ZFS chip as "zfss" and lowercased the
-  // acronym. Label each type explicitly instead.
-  const TYPE_LABELS = {
-    all: 'All',
-    container: 'Containers',
-    vm: 'VMs',
-    folder: 'Folders',
-    flash: 'Flash Drive',
-    plugin: 'Plugins',
-    zfs: 'ZFS Datasets',
-  }
-  function typeLabel(t) {
-    return TYPE_LABELS[t] ?? t + 's'
-  }
-
   let selectedCount = $derived(selectedItems.size)
-
-  function typeIcon(type) {
-    switch (type) {
-      case 'container': return 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'
-      case 'vm': return 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'
-      case 'folder': return 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z'
-      case 'zfs': return 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4M4 12c0 2.21 3.582 4 8 4s8-1.79 8-4'
-      default: return 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7'
-    }
-  }
-
-  function typeColor(type) {
-    switch (type) {
-      case 'container': return 'text-blue-400'
-      case 'vm': return 'text-purple-400'
-      case 'folder': return 'text-amber-400'
-      case 'zfs': return 'text-cyan-400'
-      default: return 'text-text-muted'
-    }
-  }
 
   function toggleItem(item) {
     const key = itemKey(item)
@@ -582,68 +583,128 @@
         <p class="text-sm text-text-muted">No backed-up items found. Run a backup first.</p>
       </div>
     {:else}
-      <!-- Type filter tabs + selection controls -->
-      <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <div class="flex items-center gap-2">
-          {#each typeOptions as t (t)}
-            <button type="button" onclick={() => typeFilter = t}
-              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {typeFilter === t ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
-              {typeLabel(t)}
+      <!-- Type filter tabs + selection & search controls -->
+      <div class="flex flex-col gap-3 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <!-- Type filter tabs -->
+          <div class="flex items-center gap-1.5 flex-wrap">
+            {#each typeOptions as t (t)}
+              <button type="button" onclick={() => typeFilter = t}
+                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 {typeFilter === t ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
+                {#if t !== 'all'}
+                  <svg aria-hidden="true" class="w-3.5 h-3.5 {typeFilter === t ? 'text-white' : itemTypeColor(t)}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={itemTypeIcon(t)}/>
+                  </svg>
+                {/if}
+                {itemTypeLabel(t)}
+              </button>
+            {/each}
+          </div>
+          <!-- Select All / Clear -->
+          <div class="flex items-center gap-2 shrink-0">
+            <button type="button" onclick={selectAll}
+              class="px-3 py-1.5 text-xs font-medium rounded-lg bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4 transition-colors">
+              Select All
+            </button>
+            {#if selectedCount > 0}
+              <button type="button" onclick={clearSelection}
+                class="px-3 py-1.5 text-xs font-medium rounded-lg bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4 transition-colors">
+                Clear ({selectedCount})
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Search and Sort row -->
+        <div class="flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
+          <div class="relative flex-1 min-w-[200px]">
+            <svg aria-hidden="true" class="w-4 h-4 text-text-dim absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <input
+              type="text"
+              bind:value={searchQuery}
+              placeholder="Search items or jobs..."
+              class="w-full pl-9 pr-8 py-1.5 text-xs bg-surface-2 border border-border rounded-lg text-text placeholder-text-dim focus:outline-none focus:border-vault"
+            />
+            {#if searchQuery}
+              <button
+                type="button"
+                onclick={() => searchQuery = ''}
+                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-dim hover:text-text"
+                title="Clear search"
+              >
+                <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            {/if}
+          </div>
+
+          <div class="flex items-center gap-2 shrink-0 text-xs text-text-muted">
+            <span>Sort:</span>
+            <select
+              bind:value={sortBy}
+              class="bg-surface-2 border border-border rounded-lg px-2.5 py-1.5 text-xs text-text focus:outline-none focus:border-vault cursor-pointer"
+            >
+              <option value="alpha-asc">Name (A → Z)</option>
+              <option value="alpha-desc">Name (Z → A)</option>
+              <option value="type">Type</option>
+              <option value="jobs">Most Backed Up</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {#if filteredItems.length === 0}
+        <div class="text-center py-12 bg-surface-2 border border-border rounded-xl">
+          <p class="text-sm text-text-muted">No items match your filter.</p>
+        </div>
+      {:else}
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {#each filteredItems as item (itemKey(item))}
+            {@const selected = isSelected(item)}
+            <button type="button" onclick={() => toggleItem(item)}
+              class="bg-surface-2 border rounded-xl p-3 text-left hover:shadow-sm transition-all group
+                {selected ? 'border-vault ring-1 ring-vault/30 bg-surface-2/90' : 'border-border hover:border-vault/40'}">
+              <div class="flex items-center gap-2.5 mb-1.5">
+                <!-- Checkbox indicator -->
+                <div class="w-4.5 h-4.5 rounded border-2 flex items-center justify-center shrink-0 transition-colors
+                  {selected ? 'bg-vault border-vault' : 'border-border group-hover:border-vault/40'}">
+                  {#if selected}
+                    <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                  {/if}
+                </div>
+                <div class="w-7 h-7 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 group-hover:bg-vault/10 transition-colors">
+                  <svg aria-hidden="true" class="w-4 h-4 {itemTypeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={itemTypeIcon(item.type)}/></svg>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</p>
+                </div>
+                <span class="px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded bg-surface-3 shrink-0 {itemTypeColor(item.type)}">
+                  {itemTypeLabel(item.type)}
+                </span>
+              </div>
+              <p class="text-[11px] text-text-dim truncate pl-7">In {item.jobs.length} job{item.jobs.length !== 1 ? 's' : ''}: {item.jobs.map(j => j.name).join(', ')}</p>
             </button>
           {/each}
         </div>
-        <div class="flex items-center gap-2">
-          <button type="button" onclick={selectAll}
-            class="px-3 py-1.5 text-xs font-medium rounded-lg bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4 transition-colors">
-            Select All
-          </button>
-          {#if selectedCount > 0}
-            <button type="button" onclick={clearSelection}
-              class="px-3 py-1.5 text-xs font-medium rounded-lg bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4 transition-colors">
-              Clear
-            </button>
-          {/if}
+      {/if}
+
+      <!-- Selection summary + Floating Next button -->
+      <div class="sticky bottom-4 z-20 mt-6 p-3.5 bg-surface-2/95 backdrop-blur-md border border-border rounded-xl shadow-lg flex items-center justify-between transition-all">
+        <div class="flex items-center gap-3">
+          <div class="w-2.5 h-2.5 rounded-full {selectedCount > 0 ? 'bg-vault animate-pulse' : 'bg-text-dim'}"></div>
+          <span class="text-sm font-medium text-text">
+            {#if selectedCount > 0}
+              <span class="text-vault font-semibold">{selectedCount}</span> item{selectedCount !== 1 ? 's' : ''} selected
+            {:else}
+              Select items to restore
+            {/if}
+          </span>
         </div>
-      </div>
-
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {#each filteredItems as item (itemKey(item))}
-          {@const selected = isSelected(item)}
-          <button type="button" onclick={() => toggleItem(item)}
-            class="bg-surface-2 border rounded-xl p-4 text-left hover:shadow-sm transition-all group
-              {selected ? 'border-vault ring-1 ring-vault/30' : 'border-border hover:border-vault/40'}">
-            <div class="flex items-center gap-3 mb-2">
-              <!-- Checkbox indicator -->
-              <div class="w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors
-                {selected ? 'bg-vault border-vault' : 'border-border group-hover:border-vault/40'}">
-                {#if selected}
-                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
-                {/if}
-              </div>
-              <div class="w-9 h-9 rounded-lg bg-surface-3 flex items-center justify-center group-hover:bg-vault/10 transition-colors">
-                <svg aria-hidden="true" class="w-5 h-5 {typeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={typeIcon(item.type)}/></svg>
-              </div>
-              <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</p>
-                <p class="text-xs text-text-dim capitalize">{item.type}</p>
-              </div>
-            </div>
-            <p class="text-xs text-text-dim">In {item.jobs.length} job{item.jobs.length !== 1 ? 's' : ''}: {item.jobs.map(j => j.name).join(', ')}</p>
-          </button>
-        {/each}
-      </div>
-
-      <!-- Selection summary + Next button -->
-      <div class="flex items-center justify-between mt-4 pt-4 border-t border-border">
-        <span class="text-sm text-text-muted">
-          {#if selectedCount > 0}
-            {selectedCount} item{selectedCount !== 1 ? 's' : ''} selected
-          {:else}
-            Select items to restore
-          {/if}
-        </span>
         <button type="button" onclick={proceedToStep2} disabled={selectedCount === 0}
-          class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+          class="px-5 py-2 text-sm font-semibold text-white bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
           Next
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
@@ -661,9 +722,9 @@
       <div class="flex items-center gap-3 mt-2 flex-wrap">
         {#each selectedItemsArray as item (itemKey(item))}
           <div class="flex items-center gap-1.5 px-2.5 py-1 bg-surface-3 rounded-lg min-w-0">
-            <svg aria-hidden="true" class="w-4 h-4 shrink-0 {typeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={typeIcon(item.type)}/></svg>
+            <svg aria-hidden="true" class="w-4 h-4 shrink-0 {itemTypeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={itemTypeIcon(item.type)}/></svg>
             <span class="text-xs font-medium text-text truncate max-w-[200px]" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
-            <span class="text-xs text-text-dim capitalize shrink-0">({item.type})</span>
+            <span class="text-xs text-text-dim capitalize shrink-0">({itemTypeLabel(item.type)})</span>
           </div>
         {/each}
       </div>

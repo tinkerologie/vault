@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Restore wizard page 1 UI and item selection improvements (#327):** Reorganized Step 1 of the Restore Wizard with alphabetical item sorting by default, quick search filtering across labels and job names, distinct filter chips and dedicated icon badge for Unraid Flash Drive backups, compact card layouts with uppercase type badges, and a sticky bottom floating action bar with active selection counts so operators can proceed immediately without scrolling long item lists. Closes #327.
+
 - **Storage scan and import support encrypted manifests (#325):** Scanning a storage destination now automatically decrypts deduplicated manifests using the local server key and identifies age-encrypted manifests. When age-encrypted manifests are detected, the Import modal displays an encryption notice with a passphrase field and unlock button, allowing users to decrypt metadata and import backups securely. Closes #325.
 
 - **Stage classic folder backups beside the selected local destination (#366):** Classic folder backups targeting local storage now stage temporary archives directly in a `.vault-stage` directory on the target destination rather than defaulting to the first available cache pool. This eliminates out-of-space (`ENOSPC`) failures when backing up shares larger than cache pool free capacity. The staging folder is automatically excluded from recursive source walks. Closes #366.

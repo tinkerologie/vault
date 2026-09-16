@@ -404,6 +404,104 @@ export function normaliseItemType(type) {
 }
 
 /**
+ * Canonical SVG icons (path `d` strings) for item and backup types across the UI.
+ * @type {Record<string, string>}
+ */
+export const ITEM_TYPE_ICONS = {
+  container: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
+  vm: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+  folder: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
+  flash: 'M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2',
+  plugin: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z',
+  zfs: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4',
+}
+
+/**
+ * Canonical text color classes for item and backup types across the UI.
+ * @type {Record<string, string>}
+ */
+export const ITEM_TYPE_COLORS = {
+  container: 'text-blue-400',
+  vm: 'text-purple-400',
+  folder: 'text-amber-400',
+  flash: 'text-amber-400',
+  plugin: 'text-emerald-400',
+  zfs: 'text-cyan-400',
+}
+
+/**
+ * Canonical title labels for item and backup types across the UI.
+ * @type {Record<string, string>}
+ */
+export const ITEM_TYPE_LABELS = {
+  all: 'All',
+  container: 'Containers',
+  vm: 'VMs',
+  folder: 'Folders',
+  flash: 'Flash Drive',
+  plugin: 'Plugins',
+  zfs: 'ZFS Datasets',
+}
+
+/**
+ * Returns the SVG path data for a given item type.
+ * @param {string | null | undefined} type
+ * @returns {string}
+ */
+export function itemTypeIcon(type) {
+  const t = normaliseItemType(type)
+  return ITEM_TYPE_ICONS[t] || 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7'
+}
+
+/**
+ * Returns the Tailwind text color class for a given item type.
+ * @param {string | null | undefined} type
+ * @returns {string}
+ */
+export function itemTypeColor(type) {
+  const t = normaliseItemType(type)
+  return ITEM_TYPE_COLORS[t] || 'text-text-muted'
+}
+
+/**
+ * Returns the friendly plural label for an item type.
+ * @param {string | null | undefined} type
+ * @returns {string}
+ */
+export function itemTypeLabel(type) {
+  if (type === 'all') return 'All'
+  const t = normaliseItemType(type)
+  return ITEM_TYPE_LABELS[t] || (type ? type + 's' : 'Items')
+}
+
+/**
+ * Detects whether an item is specifically the Unraid flash drive backup.
+ * @param {{ item_type?: string, type?: string, settings?: any } | null | undefined} item
+ * @returns {boolean}
+ */
+export function isFlashItem(item) {
+  if (!item) return false
+  const t = item.item_type || item.type
+  if (t === 'flash') return true
+  if (t === 'folder') {
+    const settings = parseConfig(item.settings)
+    return settings?.preset === 'flash'
+  }
+  return false
+}
+
+/**
+ * Returns the effective item type, distinguishing 'flash' from 'folder'.
+ * @param {{ item_type?: string, type?: string, settings?: any } | null | undefined} item
+ * @returns {string}
+ */
+export function effectiveItemType(item) {
+  if (!item) return ''
+  if (isFlashItem(item)) return 'flash'
+  return normaliseItemType(item.item_type || item.type)
+}
+
+/**
  * The human-readable noun for an item type, pluralised for `count`.
  *
  * Unknown or absent types degrade to 'item'/'items' rather than echoing a raw
