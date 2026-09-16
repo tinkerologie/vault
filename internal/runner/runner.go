@@ -1043,6 +1043,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		// "item_manifests" so the restore path can resolve manifests per
 		// item even in multi-item jobs.
 		itemManifests = make(map[string]string)
+		// dedupVerified records that at least one item was read back and
+		// re-hashed on the dedup path (issue #382). Dedup has no per-file
+		// checksums to put in itemChecksums, so without this the restore
+		// point of a verified dedup run looked identical to an unverified
+		// one.
+		dedupVerified bool
 		failedNames   []string
 		jobStart      = time.Now()
 	)
@@ -1453,6 +1459,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				if mid, ok := result.Meta["manifest_id"].([]byte); ok && len(mid) == 32 {
 					itemManifests[item.ItemName] = hex.EncodeToString(mid)
 				}
+				if v, ok := result.Meta[metaDedupVerified].(bool); ok && v {
+					dedupVerified = true
+				}
 			}
 
 			r.broadcast(map[string]any{
@@ -1716,6 +1725,13 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				if len(checksums) > 0 {
 					itemChecksums[s.dbItem.ItemName] = checksums
 				}
+				if s.result != nil {
+					// Defensive symmetry with the non-deferred path (line 1462);
+					// deferred remote upload is currently disabled for dedup destinations.
+					if v, ok := s.result.Meta[metaDedupVerified].(bool); ok && v {
+						dedupVerified = true
+					}
+				}
 				r.broadcast(map[string]any{
 					"type":        "item_backup_done",
 					"job_id":      jobID,
@@ -1847,6 +1863,10 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}
 		if job.VerifyBackup && len(itemChecksums) > 0 {
 			rpMeta["checksums"] = itemChecksums
+		}
+		// Dedup contributes no checksums map, so the flag cannot be gated on
+		// one or a verified dedup run would report itself unverified (#382).
+		if job.VerifyBackup && (len(itemChecksums) > 0 || dedupVerified) {
 			rpMeta["verified"] = true
 		}
 		rpMeta["backup_type"] = btResult.BackupType
@@ -2502,7 +2522,7 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 			return nil, nil, err
 		}
 		if chunked, ok := handler.(engine.ChunkedHandler); ok {
-			return r.backupItemChunked(ctx, runID, item, dest, parentRP, chunked)
+			return r.backupItemChunked(ctx, runID, item, dest, parentRP, chunked, verify)
 		}
 		// Fall through to classic tar for non-chunked handlers (VM, ZFS).
 	}
@@ -2525,7 +2545,11 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 // handler's BackupChunked, flushes any pending pack, and returns a
 // BackupResult whose Meta carries the manifest ID for the runner to
 // persist on the resulting restore_points row.
-func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler) (*engine.BackupResult, map[string]string, error) {
+//
+// When verify is set the chunks across the item's entire manifest closure
+// are read back and re-hashed before the item is reported successful, which
+// is the dedup equivalent of the classic path's post-upload checksum pass (issue #382).
+func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler, verify bool) (*engine.BackupResult, map[string]string, error) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("adapter: %w", err)
@@ -2596,6 +2620,14 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 		return nil, nil, fmt.Errorf("repo flush: %w", err)
 	}
 
+	verified := false
+	if verify {
+		if err := r.verifyChunkedItem(ctx, runID, item, repo, manifestID); err != nil {
+			return nil, nil, err
+		}
+		verified = true
+	}
+
 	stats := repo.Stats()
 	itemLogical := repo.SessionLogicalBytes()
 	log.Printf("runner: dedup, item=%q, manifest=%x, chunks_total=%d, packs_total=%d, session_logical=%dB, physical=%dB",
@@ -2651,7 +2683,62 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 	if unchanged {
 		result.Meta[engine.MetaUnchanged] = true
 	}
+	if verified {
+		result.Meta[metaDedupVerified] = true
+	}
 	return result, nil, nil
+}
+
+// metaDedupVerified marks a dedup BackupResult whose chunks were read back
+// and re-hashed immediately after the backup. The classic path proves the
+// same thing with per-file SHA-256 checksums; dedup has no per-file digests
+// to report, so it reports the fact instead of inventing checksum data.
+const metaDedupVerified = "dedup_verified"
+
+// verifyChunkedItem re-reads every chunk the item's manifest depends on and
+// re-hashes it. This is the dedup path's answer to verify_backup, which until
+// issue #382 was silently a no-op on dedup destinations: the setting was
+// honoured for classic tar uploads and quietly ignored for chunked ones.
+//
+// A mismatch fails the item, matching the classic path. Detecting corruption
+// now — while the source data is still on disk and the operator is watching —
+// is the whole point; finding it months later during a restore is not a
+// verification, it is a data-loss report.
+func (r *Runner) verifyChunkedItem(ctx context.Context, runID int64, item engine.BackupItem, repo *dedup.Repo, manifestID dedup.ID) error {
+	manifestChunks, dataChunks, err := engine.WalkManifestClosure(repo, []dedup.ID{manifestID})
+	if err != nil {
+		return fmt.Errorf("verify %s: walking manifest: %w", item.Name, err)
+	}
+
+	var bytesRead int64
+	checked := 0
+	for _, cid := range append(append([]dedup.ID{}, manifestChunks...), dataChunks...) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		body, vErr := repo.ReadAndVerify(cid)
+		if vErr != nil {
+			return fmt.Errorf("verify %s: chunk %x: %w", item.Name, cid[:8], vErr)
+		}
+		bytesRead += int64(len(body))
+		checked++
+
+		// Heartbeat the stall watchdog so a large read-back on slow storage
+		// does not trigger a false stall-cancel (issue #110, #382).
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
+	}
+
+	r.runLog(runID, runLogLevelInfo,
+		fmt.Sprintf("Verified %s: %d chunks re-read and re-hashed (%s)",
+			item.Name, checked, format.Bytes(float64(bytesRead))),
+		map[string]any{
+			"item_name":  item.Name,
+			"chunks":     checked,
+			"bytes_read": bytesRead,
+		})
+	return nil
 }
 
 // stageItemLocally creates a temp directory and runs the appropriate engine

@@ -334,16 +334,10 @@ func (r *Runner) runVerifyLoopDedup(verifyID int64, rp db.RestorePoint, mode Ver
 		// Any failure increments filesFailed but the loop continues so we
 		// report every bad chunk, not just the first.
 		for _, cid := range allChunks {
-			body, getErr := repo.Get(cid)
-			if getErr != nil {
+			body, verifyErr := repo.ReadAndVerify(cid)
+			if verifyErr != nil {
 				filesFailed++
-				failures = append(failures, fmt.Sprintf("get chunk %x: %v", cid[:8], getErr))
-				continue
-			}
-			got := repo.ChunkID(body)
-			if got != cid {
-				filesFailed++
-				failures = append(failures, fmt.Sprintf("chunk id mismatch: want %x got %x", cid[:8], got[:8]))
+				failures = append(failures, fmt.Sprintf("chunk %x: %v", cid[:8], verifyErr))
 				continue
 			}
 			bytesRead += int64(len(body))

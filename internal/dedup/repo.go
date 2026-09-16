@@ -307,6 +307,26 @@ func (r *Repo) Get(id ID) ([]byte, error) {
 	return DecryptChunk(r.master, id, raw[1:])
 }
 
+// ReadAndVerify reads a chunk back and proves it is still the chunk it
+// claims to be: Get's AEAD tag catches tampering and bit-rot at the crypto
+// layer, and recomputing the content ID catches an index entry that points at
+// the wrong bytes. It returns the plaintext so callers can account for the
+// bytes read.
+//
+// Both the scheduled deep verify and the immediate post-backup check
+// (issue #382) go through here, so there is one definition of what
+// "this chunk is intact" means.
+func (r *Repo) ReadAndVerify(id ID) ([]byte, error) {
+	body, err := r.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if got := r.ChunkID(body); got != id {
+		return nil, fmt.Errorf("dedup: chunk id mismatch: want %x got %x", id[:8], got[:8])
+	}
+	return body, nil
+}
+
 // LocateForVerify exposes Index.Locate so the verify path (Task 12) can
 // Stat packs without decrypting chunk bodies.
 func (r *Repo) LocateForVerify(id ID) (packPath string, offset, length int64, err error) {
