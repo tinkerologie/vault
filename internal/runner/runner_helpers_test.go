@@ -52,11 +52,11 @@ func TestNewHandlerUnknown(t *testing.T) {
 func TestResolveBackupTypeFull(t *testing.T) {
 	t.Parallel()
 	r, _, _ := setupTestRunner(t)
-	res := r.resolveBackupType(db.Job{BackupTypeChain: ""})
+	res := r.resolveBackupType(db.Job{BackupTypeChain: ""}, runOptions{})
 	if res.BackupType != "full" || res.ParentRP != nil {
 		t.Errorf("empty chain → %+v, want full/no-parent", res)
 	}
-	res2 := r.resolveBackupType(db.Job{BackupTypeChain: "full"})
+	res2 := r.resolveBackupType(db.Job{BackupTypeChain: "full"}, runOptions{})
 	if res2.BackupType != "full" || res2.ParentRP != nil {
 		t.Errorf("full chain → %+v, want full/no-parent", res2)
 	}
@@ -72,7 +72,7 @@ func TestResolveBackupTypeIncrementalFallsBackToFull(t *testing.T) {
 		Name: "inc-job", BackupTypeChain: "incremental", StorageDestID: dest.ID,
 	})
 	job, _ := database.GetJob(jobID)
-	res := r.resolveBackupType(job)
+	res := r.resolveBackupType(job, runOptions{})
 	if res.BackupType != "full" {
 		t.Errorf("incremental with no history → %q, want full", res.BackupType)
 	}
@@ -97,7 +97,7 @@ func TestResolveBackupTypeIncrementalWithHistory(t *testing.T) {
 		t.Fatalf("CreateRestorePoint: %v", err)
 	}
 	job, _ := database.GetJob(jobID)
-	res := r.resolveBackupType(job)
+	res := r.resolveBackupType(job, runOptions{})
 	if res.BackupType != "incremental" {
 		t.Errorf("incremental with history → %q, want incremental", res.BackupType)
 	}
@@ -116,7 +116,7 @@ func TestResolveBackupTypeDifferentialFallsBackToFull(t *testing.T) {
 		Name: "diff-job", BackupTypeChain: "differential", StorageDestID: dest.ID,
 	})
 	job, _ := database.GetJob(jobID)
-	res := r.resolveBackupType(job)
+	res := r.resolveBackupType(job, runOptions{})
 	if res.BackupType != "full" {
 		t.Errorf("differential with no history → %q, want full", res.BackupType)
 	}
@@ -127,7 +127,7 @@ func TestResolveBackupTypeDifferentialFallsBackToFull(t *testing.T) {
 func TestResolveBackupTypeUnknownChainFallsBackToFull(t *testing.T) {
 	t.Parallel()
 	r, _, _ := setupTestRunner(t)
-	res := r.resolveBackupType(db.Job{BackupTypeChain: "weird"})
+	res := r.resolveBackupType(db.Job{BackupTypeChain: "weird"}, runOptions{})
 	if res.BackupType != "full" {
 		t.Errorf("unknown chain → %q, want full", res.BackupType)
 	}
@@ -512,5 +512,112 @@ func TestParseItemChecksumsInvalid(t *testing.T) {
 	}
 	if _, present := got["b"]; present {
 		t.Errorf("non-string hash should be skipped, got %v", got["b"])
+	}
+}
+
+// A scheduled full backup (issue #322) forces the type regardless of the
+// job's chain, and attaches no parent: it becomes the new base that later
+// incrementals and differentials chain from.
+func TestResolveBackupTypeForcedFull(t *testing.T) {
+	t.Parallel()
+	r, database, _ := setupTestRunner(t)
+
+	jobID, err := database.CreateJob(db.Job{
+		Name: "inc-job", BackupTypeChain: "incremental", FullBackupSchedule: "0 2 * * 0",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "completed", BackupType: "full"})
+	if err != nil {
+		t.Fatalf("CreateJobRun: %v", err)
+	}
+	if _, err := database.CreateRestorePoint(db.RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "inc-job/base", Metadata: "{}",
+	}); err != nil {
+		t.Fatalf("CreateRestorePoint: %v", err)
+	}
+	job, err := database.GetJob(jobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	// Without the force, the chain attaches to the existing restore point.
+	if res := r.resolveBackupType(job, runOptions{}); res.BackupType != "incremental" || res.ParentRP == nil {
+		t.Fatalf("unforced run = %+v, want incremental with a parent", res)
+	}
+
+	res := r.resolveBackupType(job, runOptions{forceType: "full"})
+	if res.BackupType != "full" {
+		t.Errorf("forced run type = %q, want full", res.BackupType)
+	}
+	if res.ParentRP != nil {
+		t.Errorf("forced full attached parent restore point %d — a full backup is the base of the chain", res.ParentRP.ID)
+	}
+}
+
+// Retrying a run that was forced to "full" (such as a scheduled full backup on
+// an incremental chain) must retain "full" rather than falling back to the
+// job's incremental/differential chain setting.
+func TestRunJobRetry_PreservesForcedFullBackupType(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	dest := createLocalDest(t, database, storageDir)
+
+	jobID, err := database.CreateJob(db.Job{
+		Name: "inc-job-retry", BackupTypeChain: "incremental", StorageDestID: dest.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	// Create an existing restore point so a normal run resolves to "incremental".
+	origSuccessRun, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "completed", BackupType: "full"})
+	if err != nil {
+		t.Fatalf("CreateJobRun: %v", err)
+	}
+	if _, err := database.CreateRestorePoint(db.RestorePoint{
+		JobRunID: origSuccessRun, JobID: jobID, BackupType: "full", StoragePath: "inc-job-retry/base", Metadata: "{}",
+	}); err != nil {
+		t.Fatalf("CreateRestorePoint: %v", err)
+	}
+
+	// Trip the destination breaker so runJobInternal records a skipped run
+	// without executing the storage pipeline.
+	if err := database.OpenBreaker(dest.ID, 3); err != nil {
+		t.Fatalf("OpenBreaker: %v", err)
+	}
+
+	// Create an original failed run that was forced to "full".
+	failedFullRunID, err := database.CreateJobRun(db.JobRun{
+		JobID: jobID, Status: "failed", BackupType: "full",
+	})
+	if err != nil {
+		t.Fatalf("CreateJobRun: %v", err)
+	}
+
+	// Retry that failed full run.
+	r.RunJobRetry(jobID, failedFullRunID, 1)
+
+	// Fetch runs for the job; find the retry run created after failedFullRunID.
+	runs, err := database.GetJobRuns(jobID, 10)
+	if err != nil {
+		t.Fatalf("GetJobRuns: %v", err)
+	}
+	var retryRun *db.JobRun
+	for i := range runs {
+		if runs[i].ID > failedFullRunID {
+			retryRun = &runs[i]
+			break
+		}
+	}
+	if retryRun == nil {
+		t.Fatalf("retry run not found in runs: %+v", runs)
+	}
+	if retryRun.RetryOfRunID == nil || *retryRun.RetryOfRunID != failedFullRunID {
+		t.Fatalf("retry run retry_of_run_id = %v, want %d", retryRun.RetryOfRunID, failedFullRunID)
+	}
+	if retryRun.BackupType != "full" {
+		t.Errorf("retry run backup_type = %q, want full (preserved from original run)", retryRun.BackupType)
 	}
 }

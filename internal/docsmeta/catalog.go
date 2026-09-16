@@ -170,6 +170,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"Job.KeepYearly":          "Long-term retention: number of yearly restore points to keep.",
 	"Job.VerifySchedule":      "Cron expression for scheduled re-verification. Empty means none.",
 	"Job.VerifyMode":          "Verification depth for scheduled verification (\"quick\" or \"deep\").",
+	"Job.FullBackupSchedule":  "Cron expression that forces a FULL backup on its own cadence, so an incremental or differential job carries its periodic full. Empty means none; ignored for a full chain.",
 	"Job.RetryMaxOverride":    "Per-job override for the maximum retry count. Null uses the global default.",
 	"Job.RetryDelaysOverride": "Per-job override for the retry backoff schedule (JSON array of seconds). Null uses the global default.",
 	"Job.AnomalySensitivity":  "Per-job anomaly-detection sensitivity override. Empty uses the global default.",

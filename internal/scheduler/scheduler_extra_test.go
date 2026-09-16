@@ -333,3 +333,82 @@ func TestNextRun(t *testing.T) {
 		t.Error("NextRun for missing job id should return ok=false")
 	}
 }
+
+// TestSchedulerFullBackupJob covers addFullBackupJob through Start: a job with
+// a full_backup_schedule gets a second, independent cron entry so an
+// incremental chain can carry its own periodic full (issue #322).
+func TestSchedulerFullBackupJob(t *testing.T) {
+	d := testDB(t)
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "t", Type: "local", Config: "{}"})
+	if _, err := d.CreateJob(db.Job{
+		Name: "inc-weekly-full", Enabled: true, Schedule: "0 * * * *",
+		BackupTypeChain: "incremental", StorageDestID: destID, FullBackupSchedule: "0 4 * * 0",
+	}); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	// The last-day token takes the daily-trigger path, as it does for the
+	// primary schedule.
+	if _, err := d.CreateJob(db.Job{
+		Name: "diff-monthly-full", Enabled: true, Schedule: "0 * * * *",
+		BackupTypeChain: "differential", StorageDestID: destID, FullBackupSchedule: "0 4 L * *",
+	}); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	// A job with no full-backup schedule must not get an entry.
+	if _, err := d.CreateJob(db.Job{
+		Name: "plain", Enabled: true, Schedule: "0 * * * *",
+		BackupTypeChain: "incremental", StorageDestID: destID,
+	}); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	s := New(d, func(int64) {})
+	s.SetFullBackupRunner(func(int64) {})
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	if len(s.fullBackupEntries) != 2 {
+		t.Errorf("fullBackupEntries = %d, want 2", len(s.fullBackupEntries))
+	}
+
+	// Reload tears the entries down and rebuilds them; leaking here would
+	// double-fire every full backup after any job edit.
+	if err := s.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if len(s.fullBackupEntries) != 2 {
+		t.Errorf("fullBackupEntries after reload = %d, want 2", len(s.fullBackupEntries))
+	}
+}
+
+// TestSchedulerFullBackupJobBadCron covers the error branch: a schedule the
+// cron parser rejects leaves no entry behind rather than a half-registered one.
+func TestSchedulerFullBackupJobBadCron(t *testing.T) {
+	d := testDB(t)
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "t", Type: "local", Config: "{}"})
+	if _, err := d.CreateJob(db.Job{
+		Name: "bad-full", Enabled: true, Schedule: "0 2 * * *",
+		BackupTypeChain: "incremental", StorageDestID: destID, FullBackupSchedule: "not-a-cron",
+	}); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	if _, err := d.CreateJob(db.Job{
+		Name: "bad-full-lastday", Enabled: true, Schedule: "0 2 * * *",
+		BackupTypeChain: "incremental", StorageDestID: destID, FullBackupSchedule: "99 99 L * *",
+	}); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	s := New(d, func(int64) {})
+	s.SetFullBackupRunner(func(int64) {})
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	if len(s.fullBackupEntries) != 0 {
+		t.Errorf("fullBackupEntries = %d, want 0 for unparseable schedules", len(s.fullBackupEntries))
+	}
+}

@@ -29,7 +29,9 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Jobs
 
-The job payload's `schedule` and `verify_schedule` fields are standard 5-field cron expressions (`minute hour day-of-month month day-of-week`). An empty string means manual-only — the scheduler skips the job entirely. Arbitrary expressions are accepted, including steps, ranges and lists, along with the `@daily`-style descriptors and Vault's `L` day-of-month token (last day of the month). An expression the scheduler cannot parse is rejected at create/update time rather than stored and silently never run.
+The job payload's `schedule`, `verify_schedule` and `full_backup_schedule` fields accept standard 5-field cron expressions (`minute hour day-of-month month day-of-week`). An empty `schedule` means manual-only for backups — the scheduler skips regular runs entirely. Similarly, an empty `verify_schedule` or `full_backup_schedule` disables that secondary schedule. Arbitrary expressions are accepted, including steps, ranges and lists, along with the `@daily`-style descriptors and Vault's `L` day-of-month token (last day of the month). An expression the scheduler cannot parse is rejected at create/update time rather than stored and silently never run.
+
+`full_backup_schedule` forces a **full** backup on its own cadence, independently of `schedule`, so an `incremental` or `differential` job carries its periodic full without a duplicate job. It is ignored — and cleared on save — when `backup_type_chain` is `full`, because every run is already a full.
 
 The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `differential`. Incremental and differential jobs automatically run as a **full** backup on their first run (when the job has no previous restore point to attach to); later runs capture only changes.
 

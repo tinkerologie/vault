@@ -83,6 +83,22 @@ func normalize(job *db.Job) error {
 	if err := scheduler.ValidateSchedule(job.Schedule); err != nil {
 		return invalidCause("schedule", err, "invalid schedule: %s", err.Error())
 	}
+	// The secondary schedules get the same treatment, for the same reason: an
+	// unparseable verify or full-backup cron leaves the job looking scheduled
+	// while that entry never registers (#322).
+	job.VerifySchedule = strings.TrimSpace(job.VerifySchedule)
+	if err := scheduler.ValidateSchedule(job.VerifySchedule); err != nil {
+		return invalidCause("verify_schedule", err, "invalid verify schedule: %s", err.Error())
+	}
+	job.FullBackupSchedule = strings.TrimSpace(job.FullBackupSchedule)
+	// A "full" chain has nothing to schedule a full *alongside* — every run is
+	// already a full — so the field is dropped rather than silently doubling
+	// the job's cadence. Only incremental and differential chains validate it.
+	if job.BackupTypeChain == "" || job.BackupTypeChain == "full" {
+		job.FullBackupSchedule = ""
+	} else if err := scheduler.ValidateSchedule(job.FullBackupSchedule); err != nil {
+		return invalidCause("full_backup_schedule", err, "invalid full backup schedule: %s", err.Error())
+	}
 	for field, value := range map[string]string{
 		"backup_type_chain": job.BackupTypeChain,
 		"compression":       job.Compression,

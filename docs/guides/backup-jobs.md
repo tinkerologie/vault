@@ -140,6 +140,14 @@ Choose the backup strategy and, under _Advanced options_, tune compression, rete
 | **Incremental**  | Changes since the last backup of any type | Slowest — may need to chain archives | Lowest                        |
 | **Differential** | Changes since the last _full_ backup      | Medium — needs full + one diff       | Medium                        |
 
+#### Scheduled full backups
+
+An incremental or differential job can run its own periodic **full** backup, under _Advanced options → Scheduled full backup_. It takes a second schedule, independent of the job's: hourly incrementals with a full every Sunday at 04:00, for example.
+
+This matters because every incremental or differential restore needs its chain intact back to the last full. A periodic full restarts the chain, which keeps restores fast and bounds how much a single damaged archive can cost you. Before this option the only way to get one was a duplicate job that differed solely in backup type.
+
+The option is hidden for **Full** jobs — every run is already a full — and clearing it turns the extra cadence off.
+
 !!! note "First run of an Incremental or Differential job"
 
     On the very first run there is no parent backup to attach to, so an **Incremental** or **Differential** job automatically performs a **Full** backup and only later runs capture changes. Choosing Incremental or Differential from the start is the correct workflow — there is no need to run a manual Full first.

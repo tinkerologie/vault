@@ -792,3 +792,58 @@ func TestGetJobRunsSince_PopulatesCompletedAt(t *testing.T) {
 		})
 	}
 }
+
+// full_backup_schedule (issue #322) must survive every read path, not just
+// the one the job editor happens to use: a column added to CreateJob but
+// missed in one SELECT silently reports the feature as disabled.
+func TestJobFullBackupScheduleRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+
+	id, err := d.CreateJob(Job{
+		Name: "inc-with-full", BackupTypeChain: "incremental",
+		Schedule: "0 * * * *", VerifySchedule: "0 5 * * 0", FullBackupSchedule: "0 4 * * 0",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	byID, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if byID.FullBackupSchedule != "0 4 * * 0" {
+		t.Errorf("GetJob full_backup_schedule = %q, want %q", byID.FullBackupSchedule, "0 4 * * 0")
+	}
+
+	byName, err := d.GetJobByName("inc-with-full")
+	if err != nil {
+		t.Fatalf("GetJobByName: %v", err)
+	}
+	if byName.FullBackupSchedule != "0 4 * * 0" {
+		t.Errorf("GetJobByName full_backup_schedule = %q, want %q", byName.FullBackupSchedule, "0 4 * * 0")
+	}
+
+	listed, err := d.ListJobs()
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(listed) != 1 || listed[0].FullBackupSchedule != "0 4 * * 0" {
+		t.Errorf("ListJobs full_backup_schedule = %+v, want %q", listed, "0 4 * * 0")
+	}
+
+	// And an update must be able to clear it again.
+	byID.FullBackupSchedule = ""
+	if err := d.UpdateJob(byID); err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+	after, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("GetJob after update: %v", err)
+	}
+	if after.FullBackupSchedule != "" {
+		t.Errorf("full_backup_schedule = %q after clearing, want empty", after.FullBackupSchedule)
+	}
+	if after.VerifySchedule != "0 5 * * 0" {
+		t.Errorf("verify_schedule = %q, want it untouched by the update", after.VerifySchedule)
+	}
+}

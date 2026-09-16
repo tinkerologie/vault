@@ -40,6 +40,12 @@ type Job struct {
 	// "quick" or "deep".
 	VerifySchedule string `json:"verify_schedule"`
 	VerifyMode     string `json:"verify_mode"`
+	// FullBackupSchedule is a second cron expression that forces a FULL
+	// backup on its own cadence, so an incremental or differential job can
+	// keep its chain short without a duplicate job existing purely to run
+	// the periodic full (issue #322). Empty means no scheduled full, which
+	// is also the only sensible value for a chain that is already "full".
+	FullBackupSchedule string `json:"full_backup_schedule"`
 	// Retry overrides (Task 7). nil means "use global default" from
 	// settings (retry_max_default / retry_delays_default).
 	// RetryDelaysOverride stores a JSON array of seconds, e.g. "[60,300]".

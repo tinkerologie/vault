@@ -28,6 +28,12 @@ type HealthChecker func()
 // not need to depend on the runner package.
 type VerifyRunner func(jobID int64, mode string)
 
+// FullBackupRunner is called when a job's scheduled FULL backup is due. It
+// forces a full run regardless of the job's backup_type_chain, so an
+// incremental or differential job can keep its own cadence and still have a
+// periodic full to chain from (issue #322).
+type FullBackupRunner func(jobID int64)
+
 // RetryDispatcher is called once per due retry. The daemon wires this
 // into Runner.RunJobRetry. Kept as a hook so scheduler does not depend
 // on the runner package.
@@ -41,10 +47,12 @@ type Scheduler struct {
 	replicationRunner ReplicationRunner
 	healthChecker     HealthChecker
 	verifyRunner      VerifyRunner
+	fullBackupRunner  FullBackupRunner
 	retryDispatcher   RetryDispatcher
 	entries           map[int64]cron.EntryID
 	lastDayEntries    map[int64]cron.EntryID // daily-trigger entries for L (last day) schedules
 	verifyEntries     map[int64]cron.EntryID
+	fullBackupEntries map[int64]cron.EntryID
 	replEntries       map[int64]cron.EntryID
 	mu                sync.Mutex
 }
@@ -52,13 +60,14 @@ type Scheduler struct {
 // New creates a Scheduler for backup jobs.
 func New(database *db.DB, runner JobRunner) *Scheduler {
 	return &Scheduler{
-		cron:           cron.New(),
-		db:             database,
-		runner:         runner,
-		entries:        make(map[int64]cron.EntryID),
-		lastDayEntries: make(map[int64]cron.EntryID),
-		verifyEntries:  make(map[int64]cron.EntryID),
-		replEntries:    make(map[int64]cron.EntryID),
+		cron:              cron.New(),
+		db:                database,
+		runner:            runner,
+		entries:           make(map[int64]cron.EntryID),
+		lastDayEntries:    make(map[int64]cron.EntryID),
+		verifyEntries:     make(map[int64]cron.EntryID),
+		fullBackupEntries: make(map[int64]cron.EntryID),
+		replEntries:       make(map[int64]cron.EntryID),
 	}
 }
 
@@ -85,6 +94,14 @@ func (s *Scheduler) SetVerifyRunner(fn VerifyRunner) {
 	s.verifyRunner = fn
 }
 
+// SetFullBackupRunner installs the per-job scheduled full-backup callback.
+// Must be called before Start() / Reload() for full-backup entries to register.
+func (s *Scheduler) SetFullBackupRunner(fn FullBackupRunner) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fullBackupRunner = fn
+}
+
 // SetRetryDispatcher installs the callback used by the retry watcher.
 // Must be called before Start() for the watcher cron entry to register.
 func (s *Scheduler) SetRetryDispatcher(fn RetryDispatcher) {
@@ -109,6 +126,11 @@ func (s *Scheduler) Start() error {
 		// a user can run nightly backups but only verify weekly.
 		if job.Enabled && job.VerifySchedule != "" && s.verifyRunner != nil {
 			s.addVerifyJob(job)
+		}
+		// A scheduled full backup is likewise independent: hourly
+		// incrementals with a weekly full is the shape issue #322 asks for.
+		if job.Enabled && job.FullBackupSchedule != "" && s.fullBackupRunner != nil {
+			s.addFullBackupJob(job)
 		}
 	}
 
@@ -164,6 +186,12 @@ func (s *Scheduler) Reload() error {
 		delete(s.verifyEntries, jobID)
 	}
 
+	// Remove all existing full-backup entries.
+	for jobID, entryID := range s.fullBackupEntries {
+		s.cron.Remove(entryID)
+		delete(s.fullBackupEntries, jobID)
+	}
+
 	// Remove all existing replication entries.
 	for srcID, entryID := range s.replEntries {
 		s.cron.Remove(entryID)
@@ -181,6 +209,11 @@ func (s *Scheduler) Reload() error {
 		}
 		if job.Enabled && job.VerifySchedule != "" && s.verifyRunner != nil {
 			s.addVerifyJob(job)
+		}
+		// A scheduled full backup is likewise independent: hourly
+		// incrementals with a weekly full is the shape issue #322 asks for.
+		if job.Enabled && job.FullBackupSchedule != "" && s.fullBackupRunner != nil {
+			s.addFullBackupJob(job)
 		}
 	}
 
@@ -236,6 +269,38 @@ func (s *Scheduler) addVerifyJob(job db.Job) {
 		return
 	}
 	s.verifyEntries[job.ID] = entryID
+}
+
+// addFullBackupJob registers the per-job scheduled full-backup cron entry.
+// The callback forces a full run; the job's own schedule keeps producing
+// incrementals or differentials, which then chain from this full.
+//
+// The "L" (last day of month) token gets the same treatment addJob gives it:
+// the entry fires daily and the callback checks the date, because the cron
+// parser has no notion of a last day.
+func (s *Scheduler) addFullBackupJob(job db.Job) {
+	jobID := job.ID
+	if schedule, ok := parseLastDaySchedule(job.FullBackupSchedule); ok {
+		entryID, err := s.cron.AddFunc(schedule, func() {
+			if isLastDayOfMonth(time.Now()) {
+				s.fullBackupRunner(jobID)
+			}
+		})
+		if err != nil {
+			log.Printf("Failed to schedule last-day full backup for job %d (%s): %v", job.ID, job.Name, err)
+			return
+		}
+		s.fullBackupEntries[job.ID] = entryID
+		return
+	}
+	entryID, err := s.cron.AddFunc(job.FullBackupSchedule, func() {
+		s.fullBackupRunner(jobID)
+	})
+	if err != nil {
+		log.Printf("Failed to schedule full backup for job %d (%s): %v", job.ID, job.Name, err)
+		return
+	}
+	s.fullBackupEntries[job.ID] = entryID
 }
 
 // ValidateSchedule reports whether spec is a schedule the scheduler can run.

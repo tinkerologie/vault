@@ -82,6 +82,11 @@ type runOptions struct {
 	retryOfRunID int64
 	retryAttempt int
 	manual       bool
+	// forceType overrides the job's backup_type_chain for this run. The
+	// scheduled full backup (issue #322) sets it to "full" so an
+	// incremental or differential job gets its periodic full without a
+	// duplicate job existing purely to run it.
+	forceType string
 }
 
 // retryOfRunIDPtr returns the nullable pointer form for db.JobRun. The
@@ -568,6 +573,14 @@ func (r *Runner) RunJobManual(jobID int64) {
 	r.runJobInternal(jobID, runOptions{manual: true})
 }
 
+// RunJobFull runs a job as a FULL backup whatever its backup_type_chain says.
+// The scheduler calls this on a job's full_backup_schedule (issue #322). It
+// goes through the same pipeline as every other run, so it queues behind an
+// in-flight run rather than racing it.
+func (r *Runner) RunJobFull(jobID int64) {
+	r.runJobInternal(jobID, runOptions{forceType: "full"})
+}
+
 // RunJobRetry executes a retry of a previously-failed run. The new
 // job_run row records retry_of_run_id and retry_attempt so the history
 // view can group the retry chain.
@@ -640,6 +653,17 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		return
 	}
 
+	// Recover forceType from the original run when retrying, so a failed
+	// scheduled full backup (issue #322) or other forced run retries with the
+	// same backup type rather than reverting to the job's default chain.
+	if opts.retryOfRunID > 0 && opts.forceType == "" {
+		if origRun, err := r.db.GetJobRun(opts.retryOfRunID); err == nil {
+			if origRun.BackupType == "full" && job.BackupTypeChain != "" && job.BackupTypeChain != "full" {
+				opts.forceType = "full"
+			}
+		}
+	}
+
 	items, err := r.db.GetJobItems(jobID)
 	if err != nil {
 		log.Printf("runner: failed to get items for job %d: %v", jobID, err)
@@ -659,7 +683,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		skipped := db.JobRun{
 			JobID:        job.ID,
 			Status:       "skipped",
-			BackupType:   r.resolveBackupType(job).BackupType,
+			BackupType:   r.resolveBackupType(job, opts).BackupType,
 			RetryAttempt: opts.retryAttempt,
 			RetryOfRunID: opts.retryOfRunIDPtr(),
 		}
@@ -699,7 +723,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		skippedRun := db.JobRun{
 			JobID:        job.ID,
 			Status:       "skipped",
-			BackupType:   r.resolveBackupType(job).BackupType,
+			BackupType:   r.resolveBackupType(job, opts).BackupType,
 			ItemsTotal:   0,
 			RetryAttempt: opts.retryAttempt,
 			RetryOfRunID: opts.retryOfRunIDPtr(),
@@ -746,7 +770,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	r.adaptiveClearPostpone(jobID)
 
 	// Resolve the actual backup type for this run (full/incremental/differential).
-	btResult := r.resolveBackupType(job)
+	btResult := r.resolveBackupType(job, opts)
 
 	// Stale-item detection (#119). Items whose backing container/VM/folder/
 	// plugin/dataset no longer exists are SKIPPED (not failed) and flagged in
@@ -6372,7 +6396,15 @@ type backupTypeResult struct {
 //     otherwise "incremental" with the most recent restore point as parent
 //   - "differential": returns "full" if no previous full exists,
 //     otherwise "differential" with the last full as parent
-func (r *Runner) resolveBackupType(job db.Job) backupTypeResult {
+//
+// opts.forceType == "full" short-circuits all of it: the run was requested as
+// a full regardless of the chain.
+func (r *Runner) resolveBackupType(job db.Job, opts runOptions) backupTypeResult {
+	// A forced full has no parent by definition: it is the new base of the
+	// chain that later incrementals and differentials attach to (#322).
+	if opts.forceType == "full" {
+		return backupTypeResult{BackupType: "full"}
+	}
 	chain := job.BackupTypeChain
 	if chain == "" || chain == "full" {
 		return backupTypeResult{BackupType: "full"}

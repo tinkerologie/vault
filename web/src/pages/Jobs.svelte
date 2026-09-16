@@ -209,6 +209,25 @@
     }
   }
 
+  // Scheduled full backups for incremental/differential chains (issue #322).
+  // Same shape as the verify schedule: a cron string in the form, empty means
+  // disabled. It only applies to a chain, so switching back to Full clears it
+  // — the server drops it too, and leaving it set would misreport the job.
+  let fullBackupEnabled = $derived((form.full_backup_schedule || '').trim() !== '')
+  function toggleFullBackupEnabled(e) {
+    if (e.currentTarget.checked) {
+      form.full_backup_schedule = form.full_backup_schedule || '0 4 * * 0'
+    } else {
+      form.full_backup_schedule = ''
+    }
+  }
+
+  $effect(() => {
+    if (form.backup_type_chain === 'full' && form.full_backup_schedule) {
+      form.full_backup_schedule = ''
+    }
+  })
+
   $effect(() => {
     // Re-trigger on any keep_* change.
     const policy = {
@@ -253,6 +272,7 @@
       keep_monthly: 0,
       keep_yearly: 0,
       verify_schedule: '',
+      full_backup_schedule: '',
       verify_mode: 'quick',
       compression: 'zstd',
       compression_level: '',
@@ -593,6 +613,7 @@
         keep_monthly: data.job.keep_monthly || 0,
         keep_yearly: data.job.keep_yearly || 0,
         verify_schedule: data.job.verify_schedule || '',
+        full_backup_schedule: data.job.full_backup_schedule || '',
         verify_mode: data.job.verify_mode || 'quick',
         compression: data.job.compression || 'zstd',
         compression_level: data.job.compression_level || '',
@@ -723,6 +744,7 @@
         keep_monthly: fullJob.keep_monthly || 0,
         keep_yearly: fullJob.keep_yearly || 0,
         verify_schedule: fullJob.verify_schedule || '',
+        full_backup_schedule: fullJob.full_backup_schedule || '',
         verify_mode: fullJob.verify_mode || 'quick',
         pre_script: fullJob.pre_script || '',
         post_script: fullJob.post_script || '',
@@ -1749,6 +1771,32 @@
             {/if}
           </div>
         </details>
+
+        <!-- Advanced: Scheduled full backup (issue #322) -->
+        {#if form.backup_type_chain !== 'full'}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Scheduled full backup <Tooltip text="Runs a full backup on its own cadence, in addition to this job's schedule. Incremental and differential runs chain from the most recent full, so a periodic full keeps restore chains short and bounds how much a single damaged archive can cost you. Without this you need a duplicate job that differs only in backup type." />
+            </summary>
+            <div class="mt-3 pl-6 space-y-3">
+              <label class="flex items-center gap-2 text-sm text-text-muted">
+                <input type="checkbox" checked={fullBackupEnabled} onchange={toggleFullBackupEnabled} class="accent-vault" />
+                Run a full backup on a schedule
+              </label>
+              {#if fullBackupEnabled}
+                <div class="bg-surface-3/50 border border-border rounded-lg p-3">
+                  <ScheduleBuilder bind:value={form.full_backup_schedule} />
+                </div>
+                <p class="text-xs text-text-dim">
+                  This runs in addition to the job's own schedule above. The
+                  {form.backup_type_chain === 'incremental' ? 'incremental' : 'differential'}
+                  runs that follow chain from it, so the chain restarts at each full.
+                </p>
+              {/if}
+            </div>
+          </details>
+        {/if}
 
         <!-- Advanced: Scripts -->
         <details class="group">
