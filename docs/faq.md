@@ -20,6 +20,10 @@ You reinstall Unraid and the Vault plugin, then use the Recover Vault wizard to 
 
 Yes. A container backup includes the container image, its XML template, and every mapped volume — including named volumes and appdata paths. You can exclude sub-paths per container (e.g. caches). See [Backup Jobs](guides/backup-jobs.md).
 
+## What about a container that has no volumes at all?
+
+It is still worth backing up, and Vault backs it up. The image, the container configuration and the Unraid template (when available) are captured regardless of how many mounts the container has, which is everything needed to recreate it exactly as it was — so there is no need to keep a compose file or a note of the settings safe separately. The job wizard says so where it lists the mount points.
+
 ## Can I run a job manually instead of on a schedule?
 
 Yes. Every job has a **Run Now** button, and you can leave the schedule empty to create a manual-only job that never runs on its own. See [Backup Jobs](guides/backup-jobs.md).
