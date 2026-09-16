@@ -77,8 +77,8 @@ func TestRunnerStatusActiveSnapshot(t *testing.T) {
 	// Populate the queue directly under the same mutex layout.
 	r.queueMu.Lock()
 	r.queue = []QueueEntry{
-		{JobID: 100, JobName: "queued-a", QueuedAt: "2026-01-01T00:00:00Z"},
-		{JobID: 101, JobName: "queued-b", QueuedAt: "2026-01-01T00:01:00Z"},
+		{ID: "q-1", JobID: 100, JobName: "queued-a", Kind: QueueKindBackup, Status: QueueStatusQueued, QueuedAt: "2026-01-01T00:00:00Z"},
+		{ID: "q-2", JobID: 101, JobName: "queued-b", Kind: QueueKindRestore, Status: QueueStatusQueued, QueuedAt: "2026-01-01T00:01:00Z"},
 	}
 	r.queueMu.Unlock()
 
@@ -97,6 +97,12 @@ func TestRunnerStatusActiveSnapshot(t *testing.T) {
 	}
 	if s.Queue[0].JobName != "queued-a" || s.Queue[1].JobName != "queued-b" {
 		t.Errorf("Queue contents wrong: %+v", s.Queue)
+	}
+	if s.Queue[0].ID != "q-1" || s.Queue[0].Kind != QueueKindBackup || s.Queue[0].Status != QueueStatusQueued {
+		t.Errorf("Queue[0] metadata wrong: %+v", s.Queue[0])
+	}
+	if s.Queue[1].ID != "q-2" || s.Queue[1].Kind != QueueKindRestore || s.Queue[1].Status != QueueStatusQueued {
+		t.Errorf("Queue[1] metadata wrong: %+v", s.Queue[1])
 	}
 
 	// Status() copies — mutating the returned slice must not affect runner state.

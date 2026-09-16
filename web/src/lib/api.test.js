@@ -160,3 +160,21 @@ describe('storage scan and import', () => {
   })
 })
 
+describe('queue', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('cancels queued entry by id', async () => {
+    const fetch = vi.fn(async () => new Response('{"message":"queue entry cancellation requested","entry_id":"q-123"}', {
+      status: 202,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.cancelQueueEntry('q-123')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/queue/q-123/cancel')
+    expect(fetch.mock.calls[0][1].method).toBe('POST')
+  })
+})
+

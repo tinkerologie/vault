@@ -49,6 +49,7 @@ export function getProgress() {
  *  re-appears even if the job_run_started message was missed.
  */
 export function restoreFromStatus(status) {
+  jobQueue = status?.queue || []
   if (!status?.active) return
   // Only overwrite a placeholder that never learned its run_id. A real,
   // already-tracked run (run_id set) is left untouched so a reconnect resync

@@ -338,6 +338,16 @@ Imported backups (Storage → _Scan_ + _Import_) carry per-item dedup manifest I
 
 ---
 
+## Job Queue & Queue Management
+
+Vault executes one mutating backup or restore operation at a time under its runner mutex. When multiple backup jobs or restores are triggered concurrently (either by schedule or manually via _Run Now_), subsequent operations enter the in-memory runner queue.
+
+- **Queue Visibility**: Active and pending operations are surfaced at the top of the **History** tab in the *Active & Queued Operations* card, showing the operation kind (`Backup`, `Restore`, `Cleanup`), status (`Queued` or `Running`), job name, and queued timestamp with live WebSocket updates.
+- **Cancelling Queued Operations**: Operators can cancel queued backup and restore operations directly from the History tab before execution begins by clicking **Cancel** and confirming the prompt.
+- **Cleanup Operations**: Background storage deletion and remote orphan cleanup operations (`Cleanup`) run to completion to prevent leaving orphaned remote files, and cannot be cancelled from the queue.
+
+---
+
 ## Next steps
 
 - Point your job at the right target: [Storage Destinations](storage-destinations.md)

@@ -4,6 +4,7 @@
   import { api, isReplicaMode } from '../lib/api.js'
   import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel, itemTypeNoun, commonItemType, unchangedItemCount } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
+  import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import SizeChart from '../components/SizeChart.svelte'
@@ -11,12 +12,39 @@
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Tooltip from '../components/Tooltip.svelte'
+  import Toast from '../components/Toast.svelte'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
   import { setOpenList, getAnomalyCounts, formatAnomalyTooltip } from '../lib/anomalies.svelte.js'
 
   /** Count open anomalies associated with a specific job run. */
   function runAnomalyCounts(runId) {
     return getAnomalyCounts({ job_run_id: runId })
+  }
+
+  const progress = getProgress()
+  let toast = $state({ message: '', type: 'info', key: 0 })
+  function showToast(message, type = 'info') {
+    toast = { message, type, key: toast.key + 1 }
+  }
+  let entryToCancel = $state(null)
+  let cancelInProgress = $state(false)
+
+  function promptCancelQueue(entry) {
+    entryToCancel = entry
+  }
+
+  async function confirmCancelQueue() {
+    if (!entryToCancel) return
+    cancelInProgress = true
+    try {
+      await api.cancelQueueEntry(entryToCancel.id)
+      showToast(`Cancelled queued ${entryToCancel.kind || 'operation'} for "${entryToCancel.job_name}"`, 'success')
+      entryToCancel = null
+    } catch (e) {
+      showToast(e.message || 'Failed to cancel queued item', 'error')
+    } finally {
+      cancelInProgress = false
+    }
   }
 
   let loading = $state(true)
@@ -72,10 +100,12 @@
   }
 
   onMount(() => {
+    api.getRunnerStatus().then(s => restoreFromStatus(s)).catch(() => {})
     loadData()
     loadTrend()
     loadAnomalies()
     const unsub = onWsMessage((msg) => {
+      handleProgressMessage(msg)
       if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed') {
         loadData(true)
       }
@@ -267,6 +297,87 @@
       <span class="text-sm">{error}</span>
     </div>
   {:else}
+    <!-- Active & Queued Operations -->
+    {#if (progress.running && progress.activeRun) || (progress.queue && progress.queue.length > 0)}
+      <div class="bg-surface-2 border border-border rounded-xl p-4 mb-6 shadow-sm">
+        <div class="flex items-center justify-between gap-2 mb-3">
+          <div class="flex items-center gap-2">
+            <span class="relative flex h-2 w-2">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2 bg-warning"></span>
+            </span>
+            <h2 class="text-xs font-semibold text-text uppercase tracking-wider">Active & Queued Operations ({(progress.running && progress.activeRun ? 1 : 0) + (progress.queue?.length || 0)})</h2>
+          </div>
+        </div>
+        <div class="divide-y divide-border/60">
+          {#if progress.running && progress.activeRun}
+            <div class="py-2.5 flex items-center justify-between gap-3 text-sm">
+              <div class="flex items-center gap-2.5 min-w-0">
+                {#if progress.activeRun.run_type === 'restore'}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">Restore</span>
+                {:else}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
+                {/if}
+
+                <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 flex items-center gap-1 shrink-0">
+                  <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  Running
+                </span>
+
+                <span class="font-medium text-text truncate">{progress.activeRun.job_name || `Job #${progress.activeRun.job_id}`}</span>
+                {#if progress.activeRun.started_at}
+                  <span class="text-xs text-text-muted shrink-0">· {relTime(progress.activeRun.started_at)}</span>
+                {/if}
+              </div>
+            </div>
+          {/if}
+          {#each progress.queue as entry (entry.id || entry.job_id + (entry.queued_at || ''))}
+            <div class="py-2.5 flex items-center justify-between gap-3 text-sm">
+              <div class="flex items-center gap-2.5 min-w-0">
+                {#if entry.kind === 'restore'}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">Restore</span>
+                {:else if entry.kind === 'delete'}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">Cleanup</span>
+                {:else}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
+                {/if}
+
+                {#if entry.status === 'running'}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 flex items-center gap-1 shrink-0">
+                    <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    Running
+                  </span>
+                {:else}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-warning/10 text-warning border border-warning/20 shrink-0">Queued</span>
+                {/if}
+
+                <span class="font-medium text-text truncate">{entry.job_name || `Job #${entry.job_id}`}</span>
+                {#if entry.queued_at}
+                  <span class="text-xs text-text-muted shrink-0">· {relTime(entry.queued_at)}</span>
+                {/if}
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                {#if !isReplicaMode() && entry.status === 'queued' && entry.kind !== 'delete'}
+                  <button
+                    type="button"
+                    onclick={() => promptCancelQueue(entry)}
+                    disabled={cancelInProgress && entryToCancel?.id === entry.id}
+                    class="px-2.5 py-1 text-xs text-danger hover:bg-danger/10 border border-danger/20 rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50"
+                    title="Cancel queued operation"
+                  >
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                    Cancel
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <!-- Stats bar -->
     <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6 stagger">
       <div class="bg-surface-2 border border-border rounded-xl p-3 text-center">
@@ -542,3 +653,15 @@
   onconfirm={handlePurge}
   oncancel={() => confirmPurge = false}
 />
+
+<ConfirmDialog
+  show={!!entryToCancel}
+  title="Cancel Queued Operation"
+  message={`Are you sure you want to cancel the queued ${entryToCancel?.kind || 'operation'} for "${entryToCancel?.job_name || ''}"?`}
+  confirmLabel={cancelInProgress ? 'Cancelling…' : 'Cancel Operation'}
+  variant="danger"
+  onconfirm={confirmCancelQueue}
+  oncancel={() => entryToCancel = null}
+/>
+
+<Toast message={toast.message} type={toast.type} key={toast.key} />

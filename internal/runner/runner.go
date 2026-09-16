@@ -6,6 +6,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -65,10 +66,23 @@ type RunStatus struct {
 	Queue              []QueueEntry `json:"queue,omitempty"`
 }
 
-// QueueEntry represents a job waiting to run.
+// Queue operation kinds and statuses.
+const (
+	QueueKindBackup  = "backup"
+	QueueKindRestore = "restore"
+	QueueKindDelete  = "delete"
+
+	QueueStatusQueued  = "queued"
+	QueueStatusRunning = "running"
+)
+
+// QueueEntry represents an operation waiting to run or running in the background.
 type QueueEntry struct {
+	ID       string `json:"id"`
 	JobID    int64  `json:"job_id"`
 	JobName  string `json:"job_name"`
+	Kind     string `json:"kind"`
+	Status   string `json:"status"`
 	QueuedAt string `json:"queued_at"`
 }
 
@@ -159,13 +173,11 @@ type Runner struct {
 
 	// queueMu protects the pending job queue and the cancelled-while-queued
 	// set. Queued runs are goroutines blocked on r.mu; a cancelled entry is
-	// removed from the display queue and its jobID recorded here so the
-	// goroutine aborts before running once it acquires the lock (issue #238).
-	// queueCancelled counts cancelled-but-not-yet-woken queued runs per job,
-	// so two queued Run Now invocations cancelled back-to-back both abort.
-	queueMu        sync.Mutex
-	queue          []QueueEntry
-	queueCancelled map[int64]int
+	// removed from the display queue and its entry ID recorded here so the
+	// goroutine aborts before running once it acquires the lock (issue #238, #302).
+	queueMu           sync.Mutex
+	queue             []QueueEntry
+	queueCancelledIDs map[string]struct{}
 
 	// postponeMu guards postponedSince: per-job adaptive postpone window
 	// state (issue #240), cleared when the job runs. In-memory only: a
@@ -203,9 +215,10 @@ const (
 // New creates a new Runner.
 func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 	r := &Runner{
-		db:        database,
-		hub:       hub,
-		serverKey: serverKey,
+		db:                database,
+		hub:               hub,
+		serverKey:         serverKey,
+		queueCancelledIDs: make(map[string]struct{}),
 	}
 	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", docsmeta.DefaultInt("breaker_fail_threshold"))
 	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", docsmeta.DefaultInt("breaker_close_successes"))
@@ -363,33 +376,85 @@ func (r *Runner) CancelJob(jobID int64) error {
 	return nil
 }
 
+func newQueueID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err == nil {
+		return fmt.Sprintf("q-%x", b)
+	}
+	return fmt.Sprintf("q-%d", time.Now().UnixNano())
+}
+
 // cancelQueued removes a pending queue entry for jobID and records the
 // cancellation so the blocked goroutine skips the run when it wakes up.
 // Returns true when a queued entry was cancelled.
 func (r *Runner) cancelQueued(jobID int64) bool {
 	r.queueMu.Lock()
-	found := false
+	var cancelledEntry *QueueEntry
 	for i, e := range r.queue {
-		if e.JobID == jobID {
+		if e.JobID == jobID && e.Kind != QueueKindDelete && e.Status != QueueStatusRunning {
+			entry := e
+			cancelledEntry = &entry
 			r.queue = append(r.queue[:i], r.queue[i+1:]...)
-			if r.queueCancelled == nil {
-				r.queueCancelled = make(map[int64]int)
+			if r.queueCancelledIDs == nil {
+				r.queueCancelledIDs = make(map[string]struct{})
 			}
-			r.queueCancelled[jobID]++
-			found = true
+			r.queueCancelledIDs[e.ID] = struct{}{}
 			break
 		}
 	}
 	r.queueMu.Unlock()
-	if found {
-		log.Printf("runner: cancelled queued run of job %d", jobID)
+	if cancelledEntry != nil {
+		log.Printf("runner: cancelled queued run of job %d (%s)", jobID, cancelledEntry.ID)
 		r.broadcastQueueUpdate()
 		r.broadcast(map[string]any{
-			"type":   "job_cancelling",
-			"job_id": jobID,
+			"type":     "job_cancelling",
+			"job_id":   jobID,
+			"entry_id": cancelledEntry.ID,
 		})
+		return true
 	}
-	return found
+	return false
+}
+
+// CancelQueueEntry cancels a queued entry by its queue ID before execution begins.
+// Returns an error if the entry is not found, or cannot be cancelled (e.g. delete operations or already running).
+func (r *Runner) CancelQueueEntry(entryID string) error {
+	r.queueMu.Lock()
+	var cancelledEntry *QueueEntry
+	for i, e := range r.queue {
+		if e.ID == entryID {
+			if e.Kind == QueueKindDelete {
+				r.queueMu.Unlock()
+				return fmt.Errorf("queue entry %q is a delete operation and cannot be cancelled", entryID)
+			}
+			if e.Status == QueueStatusRunning {
+				r.queueMu.Unlock()
+				return fmt.Errorf("queue entry %q is already running and cannot be cancelled from queue", entryID)
+			}
+			entry := e
+			cancelledEntry = &entry
+			r.queue = append(r.queue[:i], r.queue[i+1:]...)
+			if r.queueCancelledIDs == nil {
+				r.queueCancelledIDs = make(map[string]struct{})
+			}
+			r.queueCancelledIDs[entryID] = struct{}{}
+			break
+		}
+	}
+	r.queueMu.Unlock()
+
+	if cancelledEntry == nil {
+		return fmt.Errorf("queue entry %q not found", entryID)
+	}
+
+	log.Printf("runner: cancelled queued entry %s (job %d)", entryID, cancelledEntry.JobID)
+	r.broadcastQueueUpdate()
+	r.broadcast(map[string]any{
+		"type":     "job_cancelling",
+		"job_id":   cancelledEntry.JobID,
+		"entry_id": entryID,
+	})
+	return nil
 }
 
 func (r *Runner) setRunStatus(s *RunStatus) {
@@ -618,8 +683,11 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	}
 
 	entry := QueueEntry{
+		ID:       newQueueID(),
 		JobID:    jobID,
 		JobName:  jobName,
+		Kind:     QueueKindBackup,
+		Status:   QueueStatusQueued,
 		QueuedAt: time.Now().Format(time.RFC3339),
 	}
 	r.queueMu.Lock()
@@ -633,23 +701,22 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 	// Remove ourselves from the queue now that we hold the lock. If our
 	// entry is already gone and the job is flagged as cancelled-while-queued,
-	// abort before doing any work (issue #238).
+	// abort before doing any work (issue #238, #302).
 	r.queueMu.Lock()
 	foundSelf := false
 	for i, e := range r.queue {
-		if e.JobID == jobID && e.QueuedAt == entry.QueuedAt {
+		if e.ID == entry.ID {
 			r.queue = append(r.queue[:i], r.queue[i+1:]...)
 			foundSelf = true
 			break
 		}
 	}
 	cancelled := false
-	if !foundSelf && r.queueCancelled[jobID] > 0 {
-		r.queueCancelled[jobID]--
-		if r.queueCancelled[jobID] == 0 {
-			delete(r.queueCancelled, jobID)
+	if !foundSelf {
+		if _, ok := r.queueCancelledIDs[entry.ID]; ok {
+			delete(r.queueCancelledIDs, entry.ID)
+			cancelled = true
 		}
-		cancelled = true
 	}
 	r.queueMu.Unlock()
 
@@ -3447,12 +3514,52 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	r.markStart()
 	defer r.markFinish()
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	jobName := fmt.Sprintf("Job #%d", restorePoint.JobID)
 	if job, err := r.db.GetJob(restorePoint.JobID); err == nil {
 		jobName = job.Name
+	}
+
+	entry := QueueEntry{
+		ID:       newQueueID(),
+		JobID:    restorePoint.JobID,
+		JobName:  jobName,
+		Kind:     QueueKindRestore,
+		Status:   QueueStatusQueued,
+		QueuedAt: time.Now().Format(time.RFC3339),
+	}
+	r.queueMu.Lock()
+	r.queue = append(r.queue, entry)
+	r.queueMu.Unlock()
+
+	r.broadcastQueueUpdate()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Remove ourselves from the queue now that we hold the lock. If our
+	// entry was cancelled while queued, abort before running (issue #302).
+	r.queueMu.Lock()
+	foundSelf := false
+	for i, e := range r.queue {
+		if e.ID == entry.ID {
+			r.queue = append(r.queue[:i], r.queue[i+1:]...)
+			foundSelf = true
+			break
+		}
+	}
+	cancelled := false
+	if !foundSelf {
+		if _, ok := r.queueCancelledIDs[entry.ID]; ok {
+			delete(r.queueCancelledIDs, entry.ID)
+			cancelled = true
+		}
+	}
+	r.queueMu.Unlock()
+
+	r.broadcastQueueUpdate()
+	if cancelled {
+		log.Printf("runner: restore for job %d was cancelled while queued — skipping run", restorePoint.JobID)
+		return
 	}
 
 	run := db.JobRun{
@@ -5730,7 +5837,32 @@ func (r *Runner) CleanupJobStorage(jobID int64) error {
 // (issue #111). The caller deletes the DB row first and passes the details
 // here because the job (and its restore points) are gone by the time this runs.
 func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.StorageDestination, storagePaths []string) {
+	entry := QueueEntry{
+		ID:       newQueueID(),
+		JobID:    jobID,
+		JobName:  jobName,
+		Kind:     QueueKindDelete,
+		Status:   QueueStatusRunning,
+		QueuedAt: time.Now().Format(time.RFC3339),
+	}
+	r.queueMu.Lock()
+	r.queue = append(r.queue, entry)
+	r.queueMu.Unlock()
+	r.broadcastQueueUpdate()
+
 	go func() {
+		defer func() {
+			r.queueMu.Lock()
+			for i, e := range r.queue {
+				if e.ID == entry.ID {
+					r.queue = append(r.queue[:i], r.queue[i+1:]...)
+					break
+				}
+			}
+			r.queueMu.Unlock()
+			r.broadcastQueueUpdate()
+		}()
+
 		// A cleanup panic must stay observable: the job row is already gone,
 		// so a silent partial sweep would orphan remote data with no record.
 		defer func() {
@@ -5850,7 +5982,36 @@ func (r *Runner) reclaimDedupAfterJobDelete(adapter storage.Adapter, jobID int64
 // problem as job deletion (issue #111), so the caller removes the DB row first
 // and the remote sweep happens here.
 func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.StorageDestination, storagePath string) {
+	jobName := fmt.Sprintf("Job #%d", jobID)
+	if job, err := r.db.GetJob(jobID); err == nil && job.Name != "" {
+		jobName = job.Name
+	}
+	entry := QueueEntry{
+		ID:       newQueueID(),
+		JobID:    jobID,
+		JobName:  jobName,
+		Kind:     QueueKindDelete,
+		Status:   QueueStatusRunning,
+		QueuedAt: time.Now().Format(time.RFC3339),
+	}
+	r.queueMu.Lock()
+	r.queue = append(r.queue, entry)
+	r.queueMu.Unlock()
+	r.broadcastQueueUpdate()
+
 	go func() {
+		defer func() {
+			r.queueMu.Lock()
+			for i, e := range r.queue {
+				if e.ID == entry.ID {
+					r.queue = append(r.queue[:i], r.queue[i+1:]...)
+					break
+				}
+			}
+			r.queueMu.Unlock()
+			r.broadcastQueueUpdate()
+		}()
+
 		defer func() {
 			if rec := recover(); rec != nil {
 				log.Printf("runner: PANIC in async restore point cleanup for rp %d (recovered): %v", rpID, rec)

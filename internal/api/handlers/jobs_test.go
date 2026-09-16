@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1541,6 +1543,144 @@ func TestCancel_NoActiveJob(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CancelQueueEntry
+// ---------------------------------------------------------------------------
+
+func TestCancelQueueEntry_NotFound(t *testing.T) {
+	h := newJobHandler(t)
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPost, "/api/v1/queue/q-missing/cancel", nil), "id", "q-missing")
+	h.CancelQueueEntry(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCancelQueueEntry_MissingID(t *testing.T) {
+	h := newJobHandler(t)
+	w := httptest.NewRecorder()
+	r := newReq(http.MethodPost, "/api/v1/queue//cancel", nil)
+	h.CancelQueueEntry(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCancelQueueEntry_CannotCancelDelete(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	destID := seedStorageDest(t, d)
+	dest, _ := d.GetStorageDestination(destID)
+	h.runner.CleanupJobStorageAsync(1, "job-del", dest, nil)
+
+	var entryID string
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s := h.runner.Status()
+		if len(s.Queue) > 0 {
+			entryID = s.Queue[0].ID
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if entryID == "" {
+		t.Fatal("delete queue entry never appeared")
+	}
+
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPost, "/api/v1/queue/"+entryID+"/cancel", nil), "id", entryID)
+	h.CancelQueueEntry(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCancelQueueEntry_Success(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	destID := seedStorageDest(t, d)
+	scriptPath := filepath.Join(t.TempDir(), "pre.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	jobID1, err := d.CreateJob(db.Job{
+		Name:            "slow-job-1",
+		StorageDestID:   destID,
+		BackupTypeChain: "full",
+		PreScript:       scriptPath,
+		Enabled:         true,
+	})
+	if err != nil {
+		t.Fatalf("create job 1: %v", err)
+	}
+	jobID2, err := d.CreateJob(db.Job{
+		Name:            "queued-job-2",
+		StorageDestID:   destID,
+		BackupTypeChain: "full",
+		Enabled:         true,
+	})
+	if err != nil {
+		t.Fatalf("create job 2: %v", err)
+	}
+
+	// Trigger job 1 (running)
+	w1 := httptest.NewRecorder()
+	r1 := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(jobID1, 10)+"/run", nil), "id", strconv.FormatInt(jobID1, 10))
+	h.RunNow(w1, r1)
+	if w1.Code != http.StatusAccepted {
+		t.Fatalf("run job 1 status = %d, want 202", w1.Code)
+	}
+
+	// Wait until job 1 is actively running
+	deadlineJob1 := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadlineJob1) {
+		s := h.runner.Status()
+		if s.Active && s.JobID == jobID1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Trigger job 2 (queued behind job 1)
+	w2 := httptest.NewRecorder()
+	r2 := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(jobID2, 10)+"/run", nil), "id", strconv.FormatInt(jobID2, 10))
+	h.RunNow(w2, r2)
+	if w2.Code != http.StatusAccepted {
+		t.Fatalf("run job 2 status = %d, want 202", w2.Code)
+	}
+
+	// Wait for job 2 to appear in queue
+	var entryID string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		s := h.runner.Status()
+		for _, q := range s.Queue {
+			if q.JobID == jobID2 {
+				entryID = q.ID
+				break
+			}
+		}
+		if entryID != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if entryID == "" {
+		t.Fatal("job 2 never appeared in runner queue")
+	}
+
+	// Cancel job 2 via CancelQueueEntry handler
+	w3 := httptest.NewRecorder()
+	r3 := withURLParam(newReq(http.MethodPost, "/api/v1/queue/"+entryID+"/cancel", nil), "id", entryID)
+	h.CancelQueueEntry(w3, r3)
+
+	if w3.Code != http.StatusAccepted {
+		t.Fatalf("CancelQueueEntry status = %d, want 202; body: %s", w3.Code, w3.Body.String())
 	}
 }
 

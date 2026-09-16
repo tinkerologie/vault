@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
@@ -1253,6 +1254,25 @@ func (h *JobHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusAccepted, map[string]any{
 		"message": "cancellation requested",
 		"job_id":  id,
+	})
+}
+
+// CancelQueueEntry requests cancellation of a queued job or restore operation before it runs.
+//
+//	POST /api/v1/queue/{id}/cancel
+func (h *JobHandler) CancelQueueEntry(w http.ResponseWriter, r *http.Request) {
+	entryID := chi.URLParam(r, "id")
+	if entryID == "" {
+		respondError(w, http.StatusBadRequest, "missing queue entry id")
+		return
+	}
+	if err := h.runner.CancelQueueEntry(entryID); err != nil {
+		respondError(w, http.StatusConflict, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusAccepted, map[string]any{
+		"message":  "queue entry cancellation requested",
+		"entry_id": entryID,
 	})
 }
 

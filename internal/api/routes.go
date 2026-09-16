@@ -189,6 +189,13 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		r.Get("/runner/status", jobH.RunnerStatus)
 
+		r.Route("/queue", func(r chi.Router) {
+			if s.config.ReadOnly {
+				r.Use(ReadOnlyGuard)
+			}
+			r.Post("/{id}/cancel", jobH.CancelQueueEntry)
+		})
+
 		runlogH := handlers.NewRunLogHandler(s.db)
 		r.Get("/runs/{runId}/logs", runlogH.List)
 
