@@ -3,6 +3,7 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
+  import { getProgress, restoreFromStatus } from '../lib/progress.svelte.js'
   import { isRestoreActive } from '../lib/restore-sync.js'
   import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType, commonItemType } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
@@ -35,15 +36,62 @@
   let deletingRpId = $state(null)
   let confirmDeleteRpId = $state(null)
 
-  // Restore progress
+  // Restore progress and live logs
+  const progress = getProgress()
   let restoring = $state(false)
   let restoringJobId = $state(null)
+  let restoreOutcome = $state(null)
+  let restoreLogs = $state([])
+  let restoreLogsRunId = $state(null)
+  let logContainerEl = $state(null)
+
+  let isRestoreRunning = $derived(
+    restoring ||
+    (progress.running && progress.activeRun?.run_type === 'restore' && (!restoringJobId || progress.activeRun.job_id === restoringJobId))
+  )
+
+  function scrollToLogBottom() {
+    if (logContainerEl) {
+      setTimeout(() => {
+        if (logContainerEl) {
+          logContainerEl.scrollTop = logContainerEl.scrollHeight
+        }
+      }, 50)
+    }
+  }
+
+  function timeOnly(ts) {
+    if (!ts) return ''
+    const d = new Date(ts)
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
+
+  function resetWizard() {
+    step = 1
+    selectedItems.clear()
+    selectedPoint = null
+    restoreOutcome = null
+    restoreLogs = []
+    restoreLogsRunId = null
+  }
 
   async function reconcileRestoring() {
-    if (!restoring) return
     try {
       const status = await api.getRunnerStatus()
-      if (!isRestoreActive(status, restoringJobId)) {
+      restoreFromStatus(status)
+      if (status?.active && status.run_type === 'restore') {
+        restoring = true
+        restoringJobId = status.job_id
+        if (status.run_id && status.run_id !== restoreLogsRunId) {
+          restoreLogsRunId = status.run_id
+          api.getRunLogs(status.run_id, { limit: 500, tail: true }).then(res => {
+            if (res?.entries) {
+              restoreLogs = res.entries
+              scrollToLogBottom()
+            }
+          }).catch(() => {})
+        }
+      } else if (restoring && !isRestoreActive(status, restoringJobId)) {
         restoring = false
       }
     } catch {
@@ -177,17 +225,61 @@
   onMount(() => {
     reconcileRestoring()
     const unsub = onWsMessage((msg) => {
-      if (msg.type === 'job_run_completed') {
+      if (msg.type === 'job_run_started') {
+        if (msg.run_type === 'restore' && (!restoringJobId || msg.job_id === restoringJobId)) {
+          restoring = true
+          restoreOutcome = null
+          if (msg.run_id) {
+            restoreLogsRunId = msg.run_id
+            restoreLogs = []
+          }
+        }
+      } else if (msg.type === 'job_run_completed') {
         if (msg.run_type === 'restore' && (!restoringJobId || msg.job_id === restoringJobId)) {
           restoring = false
+          restoreOutcome = {
+            status: msg.status,
+            done: msg.items_done || 0,
+            total: msg.items_total || 0,
+            failed: msg.items_failed || 0,
+            sizeBytes: msg.size_bytes || 0,
+          }
+          if (restoreLogsRunId) {
+            api.getRunLogs(restoreLogsRunId, { limit: 500, tail: true }).then(res => {
+              if (res?.entries) {
+                restoreLogs = res.entries
+                scrollToLogBottom()
+              }
+            }).catch(() => {})
+          }
         }
       } else if (msg.type === 'runner_status_snapshot') {
         if (!isRestoreActive(msg.status, restoringJobId)) {
           restoring = false
         }
+      } else if (msg.type === 'run_log' && msg.entry) {
+        if (restoreLogsRunId && msg.entry.run_id === restoreLogsRunId) {
+          if (!restoreLogs.some(e => e.id === msg.entry.id)) {
+            restoreLogs = [...restoreLogs, msg.entry]
+            scrollToLogBottom()
+          }
+        }
       }
     })
     return unsub
+  })
+
+  $effect(() => {
+    const run = progress.activeRun
+    if (run && run.run_type === 'restore' && run.run_id && run.run_id !== restoreLogsRunId) {
+      restoreLogsRunId = run.run_id
+      api.getRunLogs(run.run_id, { limit: 500, tail: true }).then(res => {
+        if (res?.entries) {
+          restoreLogs = res.entries
+          scrollToLogBottom()
+        }
+      }).catch(() => {})
+    }
   })
 
   function itemKey(item) {
@@ -495,6 +587,9 @@
     if (needsRemapAcknowledgement && !acknowledgeContainerRemap) return
     restoring = true
     restoringJobId = selectedPoint.jobId
+    restoreOutcome = null
+    restoreLogs = []
+    restoreLogsRunId = null
 
     const items = Array.from(new Set(step3ItemsArray.map(item => item.name)))
 
@@ -1099,9 +1194,9 @@
     <!-- Restore -->
     <div class="flex items-center gap-4">
       <button type="button" onclick={doRestore}
-        disabled={restoring || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase) || (needsRemapAcknowledgement && !acknowledgeContainerRemap) || !(preflightResult?.ok && preflightFresh)}
-        class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-        {#if restoring}
+        disabled={isRestoreRunning || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase) || (needsRemapAcknowledgement && !acknowledgeContainerRemap) || !(preflightResult?.ok && preflightFresh)}
+        class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
+        {#if isRestoreRunning}
           <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
           Restoring...
         {:else}
@@ -1109,14 +1204,129 @@
           Start Restore
         {/if}
       </button>
-      {#if preflightResult && preflightFresh && !preflightResult.ok && !restoring && selectedPoint?.chain_status !== 'broken'}
+      {#if preflightResult && preflightFresh && !preflightResult.ok && !isRestoreRunning && selectedPoint?.chain_status !== 'broken'}
         <button type="button"
           disabled={needsRemapAcknowledgement && !acknowledgeContainerRemap}
           onclick={() => { if (window.confirm('Pre-flight checks did not all pass. Restore anyway?')) doRestore() }}
           class="text-xs text-text-dim hover:text-text underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline">Restore anyway</button>
-      {:else if !restoring && !(preflightResult && preflightFresh) && selectedPoint?.chain_status !== 'broken'}
+      {:else if !isRestoreRunning && !(preflightResult && preflightFresh) && selectedPoint?.chain_status !== 'broken'}
         <p class="text-xs text-text-dim">Run the pre-flight checks above to enable Start Restore.</p>
       {/if}
     </div>
+
+    <!-- Live Restore Progress Bar -->
+    {#if isRestoreRunning}
+      {@const progressItems = Object.entries(progress.itemProgress)}
+      {@const activeItemPct = progressItems.reduce((maxPct, [, info]) => info.status === 'running' ? Math.max(maxPct, info.percent || 0) : maxPct, 0)}
+      {@const overallPct = progress.overallTotal > 0 ? Math.min(100, Math.round((((progress.overallDone + progress.overallFailed) + (activeItemPct / 100)) / progress.overallTotal) * 100)) : activeItemPct}
+      {@const elapsedStr = progress.elapsedSec >= 3600 ? `${Math.floor(progress.elapsedSec / 3600)}h ${Math.floor((progress.elapsedSec % 3600) / 60)}m` : progress.elapsedSec >= 60 ? `${Math.floor(progress.elapsedSec / 60)}m ${progress.elapsedSec % 60}s` : `${progress.elapsedSec}s`}
+
+      <div class="bg-surface-2 border border-vault/30 rounded-xl p-4 mt-5" role="status" aria-live="polite">
+        <div class="flex items-center gap-2 mb-3">
+          <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
+          <span class="text-xs font-semibold uppercase tracking-wider text-text-muted">Restore in progress</span>
+          {#if progress.activeRun?.job_name}
+            <span class="ml-auto text-xs px-2 py-0.5 rounded-full bg-vault/15 text-vault font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
+          {/if}
+        </div>
+        <div class="flex items-center justify-between text-xs text-text-muted mb-1.5">
+          <span>Overall progress</span>
+          <span class="font-mono text-text-dim tabular-nums font-medium">{overallPct}%</span>
+        </div>
+        <div class="w-full h-2.5 bg-surface-4 rounded-full overflow-hidden">
+          <div class="h-full rounded-full transition-all duration-300 {overallPct < 100 ? 'shimmer-bar' : 'bg-vault'}" style="width: {overallPct}%"></div>
+        </div>
+        <div class="flex items-center justify-between text-xs text-text-dim mt-2 tabular-nums">
+          <span>{progress.overallDone}/{progress.overallTotal} items · {elapsedStr}</span>
+          {#if progress.overallFailed > 0}
+            <span class="text-danger font-medium">{progress.overallFailed} failed</span>
+          {/if}
+        </div>
+        {#if progress.currentItem}
+          <p class="text-xs text-text-dim mt-2 truncate">
+            Restoring: <span class="text-text font-medium">{progress.currentItem.name}</span>
+            {#if progress.currentItem.item_type} <span class="text-text-muted">({progress.currentItem.item_type})</span>{/if}
+          </p>
+        {/if}
+        {#if progress.phaseMessage}
+          <p class="text-xs text-warning animate-pulse mt-1.5">{progress.phaseMessage}</p>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Outcome Banner -->
+    {#if restoreOutcome}
+      <div class="mt-5 p-4 rounded-xl border flex items-start justify-between gap-3
+        {restoreOutcome.status === 'completed' ? 'bg-success/10 border-success/30' : restoreOutcome.status === 'partial' ? 'bg-warning/10 border-warning/30' : 'bg-danger/10 border-danger/30'}">
+        <div class="flex items-start gap-3">
+          {#if restoreOutcome.status === 'completed'}
+            <svg aria-hidden="true" class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            <div>
+              <p class="text-sm font-semibold text-success">Restore completed successfully</p>
+              <p class="text-xs text-text-muted mt-0.5">{restoreOutcome.done}/{restoreOutcome.total} items restored{restoreOutcome.sizeBytes ? ` · ${formatBytes(restoreOutcome.sizeBytes)}` : ''}</p>
+            </div>
+          {:else if restoreOutcome.status === 'partial'}
+            <svg aria-hidden="true" class="w-5 h-5 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+            <div>
+              <p class="text-sm font-semibold text-warning">Restore completed with errors</p>
+              <p class="text-xs text-text-muted mt-0.5">{restoreOutcome.done}/{restoreOutcome.total} items restored, {restoreOutcome.failed} failed{restoreOutcome.sizeBytes ? ` · ${formatBytes(restoreOutcome.sizeBytes)}` : ''}</p>
+            </div>
+          {:else}
+            <svg aria-hidden="true" class="w-5 h-5 text-danger shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+            <div>
+              <p class="text-sm font-semibold text-danger">Restore failed</p>
+              <p class="text-xs text-text-muted mt-0.5">{restoreOutcome.failed} of {restoreOutcome.total} items failed to restore</p>
+            </div>
+          {/if}
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button type="button" onclick={resetWizard}
+            class="text-xs px-3 py-1.5 rounded-lg bg-surface-3 hover:bg-surface-4 text-text font-medium transition-colors cursor-pointer">
+            Done
+          </button>
+          <button type="button" onclick={() => { restoreOutcome = null }}
+            title="Dismiss notification" aria-label="Dismiss notification"
+            class="p-1 text-text-dim hover:text-text rounded transition-colors cursor-pointer">
+            <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Live Restore Logs -->
+    {#if restoreLogs.length > 0}
+      <div class="bg-surface-2 border border-border rounded-xl p-4 mt-4">
+        <div class="flex items-center justify-between mb-2.5">
+          <div class="flex items-center gap-2">
+            <svg aria-hidden="true" class="w-4 h-4 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+            <span class="text-xs font-semibold text-text">Restore Log</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-3 text-text-dim font-medium tabular-nums">{restoreLogs.length}</span>
+          </div>
+          {#if isRestoreRunning}
+            <span class="flex items-center gap-1.5 text-[11px] text-vault font-medium">
+              <span class="w-1.5 h-1.5 rounded-full bg-vault animate-ping"></span>
+              Live
+            </span>
+          {/if}
+        </div>
+        <div bind:this={logContainerEl} class="max-h-56 overflow-y-auto bg-surface-1 border border-border rounded-lg p-3 font-mono text-xs space-y-1.5 select-text">
+          {#each restoreLogs as entry (entry.id)}
+            <div class="flex items-baseline gap-2">
+              <span class="text-text-dim text-[10px] shrink-0 tabular-nums">{timeOnly(entry.ts)}</span>
+              <span class="text-[10px] px-1 py-0.5 rounded uppercase font-semibold shrink-0 {entry.level === 'error' ? 'bg-danger/20 text-danger' : entry.level === 'warn' ? 'bg-warning/20 text-warning' : 'bg-surface-3 text-text-dim'}">{entry.level}</span>
+              <span class="text-text-muted break-all flex-1 {entry.level === 'error' ? 'text-danger' : ''}">{entry.message}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
   {/if}
 </div>

@@ -3,6 +3,7 @@
   import { api } from '../lib/api.js'
   import { getRawHash } from '../lib/router.svelte.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
+  import { handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -33,8 +34,26 @@
 
   onMount(() => {
     loadJobs()
+    api.getRunnerStatus().then(status => {
+      restoreFromStatus(status)
+    }).catch(() => {})
     const unsub = onWsMessage((msg) => {
-      if (msg.type === 'job_run_completed' || msg.type === 'import_completed') {
+      handleProgressMessage(msg)
+      if (msg.type === 'job_run_completed') {
+        loadJobs()
+        if (msg.run_type === 'restore') {
+          const total = msg.items_total || msg.items_done || 0
+          const done = msg.items_done || 0
+          const failed = msg.items_failed || 0
+          if (msg.status === 'completed') {
+            showToast(`Restore completed successfully (${done}/${total} items restored)`, 'success')
+          } else if (msg.status === 'partial') {
+            showToast(`Restore partially completed (${done}/${total} restored, ${failed} failed)`, 'warning')
+          } else {
+            showToast(`Restore failed (${failed} items failed)`, 'error')
+          }
+        }
+      } else if (msg.type === 'import_completed') {
         loadJobs()
       }
     })
