@@ -6,6 +6,18 @@ plugin_dir: "/usr/local/emhttp/plugins/{{ plugin_name }}"
 config_dir: "/boot/config/plugins/{{ plugin_name }}"
 binary_path: "/usr/local/sbin/vault"
 rc_script: "/etc/rc.d/rc.vault"
+
+# Options shared by every delegated scp upload. ControlMaster matters: the
+# uploads are separate processes, and without a shared connection each one
+# authenticates again — Unraid's sshd starts refusing those logins part-way
+# through a deploy, which leaves the plugin half-updated with its service
+# already stopped.
+scp_common_opts: >-
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  -o PubkeyAuthentication=no -o PreferredAuthentications=password
+  -o ConnectTimeout=10
+  -o ControlMaster=auto -o ControlPath=/tmp/.vault-deploy-%r@%h:%p
+  -o ControlPersist=120s
 api_port: "{{ hostvars[inventory_hostname].api_port | default(24085) }}"
 bind_address: "{{ hostvars[inventory_hostname].bind_address | default('127.0.0.1') }}"
 verify_local_port: "{{ hostvars[inventory_hostname].verify_local_port | default(42485) }}"

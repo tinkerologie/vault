@@ -52,9 +52,7 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
-          -o ConnectTimeout=10
+          scp {{ scp_common_opts }}
           {{ plugin_binary }}
           {{ ansible_user }}@{{ ansible_host }}:{{ binary_path }}
       register: scp_binary
@@ -72,10 +70,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/Vault.page
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/Vault.page
+      register: scp_upload_vault_page_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_vault_page_via_scp.rc == 0
       changed_when: true
 
     - name: Upload Backups top-nav page via SCP
@@ -83,10 +84,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/Backups.page
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/Backups.page
+      register: scp_upload_backups_top_nav_page_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_backups_top_nav_page_via_scp.rc == 0
       changed_when: true
 
     - name: Upload plugin README via SCP
@@ -94,10 +98,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/README.md
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/README.md
+      register: scp_upload_plugin_readme_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_plugin_readme_via_scp.rc == 0
       changed_when: true
 
     - name: Clean up old sub-page files
@@ -116,10 +123,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/api.php
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/api.php
+      register: scp_upload_php_includes_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_php_includes_via_scp.rc == 0
       changed_when: true
 
     - name: Upload control.php via SCP
@@ -127,10 +137,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/control.php
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/control.php
+      register: scp_upload_control_php_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_control_php_via_scp.rc == 0
       changed_when: true
 
     - name: Upload app.php via SCP
@@ -138,10 +151,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/app.php
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/app.php
+      register: scp_upload_app_php_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_app_php_via_scp.rc == 0
       changed_when: true
 
     - name: Upload proxy.php via SCP
@@ -149,10 +165,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/proxy.php
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/proxy.php
+      register: scp_upload_proxy_php_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_proxy_php_via_scp.rc == 0
       changed_when: true
 
     - name: Upload apply.sh via SCP
@@ -160,10 +179,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/apply.sh
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/apply.sh
+      register: scp_upload_apply_sh_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_apply_sh_via_scp.rc == 0
       changed_when: true
 
     - name: Set apply.sh permissions
@@ -179,11 +201,14 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/event/started
           {{ playbook_dir }}/../plugin/event/stopping_svcs
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/event/
+      register: scp_upload_emhttp_event_scripts_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_emhttp_event_scripts_via_scp.rc == 0
       changed_when: true
 
     - name: Set event script permissions
@@ -199,10 +224,13 @@
       ansible.builtin.command:
         cmd: >
           sshpass -p '{{ ansible_password }}'
-          scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o PubkeyAuthentication=no -o PreferredAuthentications=password
+          scp -r {{ scp_common_opts }}
           {{ playbook_dir }}/../web/dist/.
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/ui/
+      register: scp_upload_proxied_web_ui_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_proxied_web_ui_via_scp.rc == 0
       changed_when: true
 
     - name: Write plugin config file
