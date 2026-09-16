@@ -19,6 +19,7 @@ func TestIsSyntheticContainerKey(t *testing.T) {
 	}{
 		{containerInspectKey, true},
 		{containerImageMetaKey, true},
+		{containerTemplateKey, true},
 		{ContainerDBDumpKey, true},
 		{ContainerDBReplayKey, true},
 		{"__vol__/config", false},

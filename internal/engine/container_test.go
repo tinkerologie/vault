@@ -577,6 +577,10 @@ type mockDockerClient struct {
 	// synthetic tar body so tests can drive the full classic Backup pipeline
 	// (the milestone-pinning test) without a real daemon.
 	imageSaveErr error
+	// createOK opts a test into a successful ContainerCreate so the restore
+	// path can be driven past the recreate step. Off by default: every other
+	// test wants an unexpected create call to be loud.
+	createOK bool
 }
 
 func (m *mockDockerClient) ContainerInspect(ctx context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
@@ -605,6 +609,9 @@ func (m *mockDockerClient) ContainerList(ctx context.Context, _ client.Container
 	return client.ContainerListResult{}, errors.New("mockDockerClient: ContainerList not implemented")
 }
 func (m *mockDockerClient) ContainerCreate(ctx context.Context, _ client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+	if m.createOK {
+		return client.ContainerCreateResult{ID: "created-id"}, nil
+	}
 	return client.ContainerCreateResult{}, errors.New("mockDockerClient: ContainerCreate not implemented")
 }
 func (m *mockDockerClient) ContainerStart(ctx context.Context, _ string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {

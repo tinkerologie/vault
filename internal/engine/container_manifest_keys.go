@@ -13,18 +13,18 @@ import (
 // its own rules and drift from what the engine wrote.
 
 // IsSyntheticContainerKey reports whether a container manifest key holds engine
-// metadata rather than restorable file content: __inspect, __image_meta, and
-// the two database-dump keys a database_dump-enabled item adds.
+// metadata rather than restorable file content: __inspect, __image_meta,
+// __template, and the two database-dump keys a database_dump-enabled item adds.
 //
-// Such entries must never surface in a file picker. __inspect and __image_meta
-// are internal JSON blobs whose sizes describe the blob rather than any
-// restored file; __dbdump__ carries the logical dump, which restore replays
-// into the live server rather than extracting to a path; and
+// Such entries must never surface in a file picker. __inspect, __image_meta,
+// and __template are internal metadata blobs whose sizes describe the blob
+// rather than any restored file; __dbdump__ carries the logical dump, which
+// restore replays into the live server rather than extracting to a path; and
 // __dbdump_replay__ is a zero-value marker that would otherwise render as a
 // spurious "0 B" file (issue #333).
 func IsSyntheticContainerKey(key string) bool {
 	switch key {
-	case containerInspectKey, containerImageMetaKey, ContainerDBDumpKey, ContainerDBReplayKey:
+	case containerInspectKey, containerImageMetaKey, containerTemplateKey, ContainerDBDumpKey, ContainerDBReplayKey:
 		return true
 	}
 	return false

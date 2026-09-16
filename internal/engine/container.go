@@ -1305,7 +1305,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// The template is used by the Unraid Docker Manager (Community Apps) to
 		// recognize and manage the container. Path pattern:
 		//   /boot/config/plugins/dockerMan/templates-user/my-<name>.xml
-		templatePath := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+item.Name+".xml")
+		templatePath := containerTemplatePath(item.Name)
 		if data, err := os.ReadFile(templatePath); err == nil { // #nosec G304 G703 — templatePath is fixed base dir + item.Name from Docker inspect
 			includeTemplate := true
 			if hasChangedSince {
@@ -1932,12 +1932,13 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		return fmt.Errorf("creating container: %w", err)
 	}
 
-	// Step 5: Restore Unraid template XML (classic path only; the
-	// dedup-chunked path passes sourceDir="" because no template sidecar
-	// is captured in volumes-only scope).
+	// Step 5: Restore the Unraid template XML. Both formats reach this one
+	// path: the classic backup writes the template into its source directory,
+	// and the chunked restore materialises the template it captured into a
+	// directory of the same shape (see writeChunkedRestoreSidecars).
 	if sourceDir != "" {
 		progress(item.Name, 80, "restoring template")
-		templateSrc := filepath.Join(sourceDir, "template.xml")
+		templateSrc := filepath.Join(sourceDir, containerTemplateFile)
 		if data, readErr := os.ReadFile(templateSrc); readErr == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
 			// Keep the template in step with the binds the restore created.
 			// With no custom destination there is nothing to rewrite and the
@@ -1946,7 +1947,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 				data = rewriteTemplateVolumePaths(data, templateRewrites)
 				log.Printf("engine: restore: rewrote %d volume path(s) in the Unraid template for %s so Edit shows the same mappings as the running container", len(templateRewrites), containerName)
 			}
-			templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
+			templateDest := containerTemplatePath(containerName) // #nosec G703 //nolint:gosec // path is constructed from trusted container name
 			if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
 				_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
 			}
@@ -2134,19 +2135,44 @@ func findDatabaseDump(sourceDir string) string {
 //	                       represented with Size: -1 and an empty Chunks slice,
 //	                       so the volume manifest is preserved for diagnostics
 //	                       even when we didn't back it up.
+//	__template           → one-chunk entry holding the Unraid template XML
+//	                       (best-effort; absent when the container has none)
 //	__dbdump__           → chunked logical database dump, written only when the
 //	                       item enables database_dump (see container_db.go)
 //	__dbdump_replay__    → zero-value marker entry: present when the dump should
 //	                       be replayed into the live server on restore
+//
+// dockerTemplatesDir is where Unraid's Docker Manager keeps the per-container
+// templates. A var, not a const, only so tests can point it at a temporary
+// directory instead of a real /boot; production never reassigns it. Mirrors
+// pluginsDir in plugin.go.
+var dockerTemplatesDir = "/boot/config/plugins/dockerMan/templates-user"
+
+// containerTemplateFile is the template's name inside a classic backup's
+// source directory, and inside the temporary directory the chunked restore
+// materialises for the shared restore path.
+const containerTemplateFile = "template.xml"
+
 const (
 	containerInspectKey   = "__inspect"
 	containerImageMetaKey = "__image_meta"
-	containerVolPrefix    = "__vol__"
+	// containerTemplateKey holds the Unraid template XML as a one-chunk
+	// entry, the same shape as __image_meta. The classic path captures the
+	// template as a sidecar file; without this key a dedup restore recreated
+	// the container but left the Docker page's Edit form pointing at whatever
+	// template happened to still be on the flash drive (issue #379).
+	containerTemplateKey = "__template"
+	containerVolPrefix   = "__vol__"
 	// volumeSkippedSize is the sentinel size stored on a __vol__<dest> entry
 	// when shouldSkipVolume returned true at backup time. Restore uses this
 	// to skip the entry without trying to dereference a missing chunk ID.
 	volumeSkippedSize int64 = -1
 )
+
+// containerTemplatePath is where Unraid keeps a container's template.
+func containerTemplatePath(containerName string) string {
+	return filepath.Join(dockerTemplatesDir, "my-"+containerName+".xml")
+}
 
 // BackupChunked is the dedup-repo equivalent of Backup. Scope is
 // volumes-only: each BIND mount's source tree is delegated to
@@ -2287,6 +2313,18 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				m.Files[ContainerDBDumpKey] = entry
 			}
 		}
+	}
+
+	// The Unraid template, as a one-chunk entry. Captured unconditionally
+	// rather than only when it changed, unlike the classic differential: a
+	// dedup manifest has to stand on its own for a single-point restore, and
+	// the chunk store makes an unchanged template free to repeat (issue #379).
+	if entry, tErr := chunkFileIntoRepo(repo, containerTemplatePath(item.Name)); tErr == nil {
+		m.Files[containerTemplateKey] = entry
+	} else if !os.IsNotExist(tErr) {
+		// Best-effort, like the classic path: a container installed outside
+		// Community Apps simply has no template.
+		log.Printf("engine: chunked: could not capture the Unraid template for %s: %v", item.Name, tErr)
 	}
 
 	needsStop := wasRunning && !noStop
@@ -2572,22 +2610,21 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	}
 
 	// 5. Recreate + start container (shared helper with classic restore).
-	//    Pass sourceDir="" because the chunked format has no template.xml
-	//    or image_meta.json sidecars — image_meta seeding above already
-	//    handled the update-status seeding from the manifest entry.
-	// Reassemble the logical dump, if this backup carried one, so the shared
-	// recreate path reloads it exactly as it does for a classic backup.
-	// Without this a dedup restore would silently ignore a dump the backup
-	// went to the trouble of taking.
-	dumpDir, cleanupDump, err := writeChunkedDatabaseDump(repo, m)
+	//    The chunked format keeps its sidecars in the manifest rather than as
+	//    files, so they are materialised into a directory shaped like a
+	//    classic backup's — the logical database dump, so a dedup restore does
+	//    not silently ignore a dump the backup went to the trouble of taking,
+	//    and the Unraid template, so the Docker page's Edit form matches the
+	//    container that was just recreated (issue #379).
+	sidecarDir, cleanupSidecars, err := writeChunkedRestoreSidecars(repo, m)
 	if err != nil {
 		return err
 	}
-	if cleanupDump != nil {
-		defer cleanupDump()
+	if cleanupSidecars != nil {
+		defer cleanupSidecars()
 	}
 
-	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, dumpDir, progress); err != nil {
+	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, sidecarDir, progress); err != nil {
 		return err
 	}
 	if progress != nil {
@@ -2683,56 +2720,71 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 	return nil
 }
 
-// writeChunkedDatabaseDump materialises a manifest's database dump into a
-// temporary directory shaped like a classic backup's source directory, so the
-// shared restore path finds it with no special-casing. Returns an empty path
-// when the manifest carries no dump.
-func writeChunkedDatabaseDump(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
-	entry, ok := m.Files[ContainerDBDumpKey]
-	if !ok || len(entry.Chunks) == 0 {
+// writeChunkedRestoreSidecars materialises the manifest entries that the
+// classic format carries as files — the logical database dump and the Unraid
+// template — into one temporary directory shaped like a classic backup's
+// source directory, so the shared restore path finds them with no
+// special-casing. Returns an empty path when the manifest carries neither.
+func writeChunkedRestoreSidecars(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
+	dumpEntry, hasDump := m.Files[ContainerDBDumpKey]
+	hasDump = hasDump && len(dumpEntry.Chunks) > 0
+	templateEntry, hasTemplate := m.Files[containerTemplateKey]
+	hasTemplate = hasTemplate && len(templateEntry.Chunks) > 0
+	if !hasDump && !hasTemplate {
 		return "", nil, nil
 	}
-	dir, err := os.MkdirTemp("", "vault-dbrestore-*")
+
+	dir, err := os.MkdirTemp("", "vault-chunked-restore-*")
 	if err != nil {
-		return "", nil, fmt.Errorf("creating database dump directory: %w", err)
+		return "", nil, fmt.Errorf("creating restore sidecar directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
-	// Carry the replay marker across into the classic-shaped directory so the
-	// shared restore path applies the same rule on both.
-	if _, replay := m.Files[ContainerDBReplayKey]; replay {
-		if err := writeDatabaseReplayMarker(dir); err != nil {
+	if hasDump {
+		// Carry the replay marker across into the classic-shaped directory so
+		// the shared restore path applies the same rule on both.
+		if _, replay := m.Files[ContainerDBReplayKey]; replay {
+			if err := writeDatabaseReplayMarker(dir); err != nil {
+				cleanup()
+				return "", nil, fmt.Errorf("writing database replay marker: %w", err)
+			}
+		}
+		// Stored uncompressed by the chunked backup, so it is written back
+		// under the bare name; findDatabaseDump accepts either form.
+		if err := writeChunkedEntryToFile(repo, dumpEntry, filepath.Join(dir, DatabaseDumpFile)); err != nil {
 			cleanup()
-			return "", nil, fmt.Errorf("writing database replay marker: %w", err)
+			return "", nil, fmt.Errorf("writing database dump: %w", err)
 		}
 	}
 
-	// Stored uncompressed by the chunked backup, so it is written back under
-	// the bare name; findDatabaseDump accepts either form.
-	path := filepath.Join(dir, DatabaseDumpFile)
+	if hasTemplate {
+		if err := writeChunkedEntryToFile(repo, templateEntry, filepath.Join(dir, containerTemplateFile)); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("writing template xml: %w", err)
+		}
+	}
+
+	return dir, cleanup, nil
+}
+
+// writeChunkedEntryToFile reassembles one manifest entry's chunks into path.
+func writeChunkedEntryToFile(repo *dedup.Repo, entry dedup.ManifestEntry, path string) error {
 	f, err := os.Create(path) // #nosec G304 — path is inside a vault-created temp directory
 	if err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("creating database dump file: %w", err)
+		return err
 	}
 	for _, id := range entry.Chunks {
 		chunk, err := repo.Get(id)
 		if err != nil {
 			_ = f.Close()
-			cleanup()
-			return "", nil, fmt.Errorf("reading database dump chunk: %w", err)
+			return fmt.Errorf("reading chunk: %w", err)
 		}
 		if _, err := f.Write(chunk); err != nil {
 			_ = f.Close()
-			cleanup()
-			return "", nil, fmt.Errorf("writing database dump: %w", err)
+			return err
 		}
 	}
-	if err := f.Close(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("closing database dump: %w", err)
-	}
-	return dir, cleanup, nil
+	return f.Close()
 }
 
 // contextCopy copies from src to dst, checking for context cancellation
