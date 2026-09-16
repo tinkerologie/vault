@@ -684,8 +684,8 @@ func TestTarBaseName(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			if got := tarBaseName(tc.in); got != tc.want {
-				t.Errorf("tarBaseName(%q) = %q, want %q", tc.in, got, tc.want)
+			if got := TarBaseName(tc.in); got != tc.want {
+				t.Errorf("TarBaseName(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

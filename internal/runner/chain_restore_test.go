@@ -222,7 +222,7 @@ func TestStageRestorePointItemMissingItemDirectory(t *testing.T) {
 		"chain-test-missing-dir/3_inc/chain-container/volume_0.tar": string(fullDiffTar),
 	})
 	chainReporter := restoreProgressReporter{RunID: runID, ItemName: "chain-container", ItemType: "container", ItemsTotal: 1}
-	mergedDir, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, step2RP, step3RP}, "chain-container", "", chainReporter, fullChainDir)
+	mergedDir, _, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, step2RP, step3RP}, "chain-container", "", chainReporter, fullChainDir)
 	if err != nil {
 		t.Fatalf("stageContainerChainMerged with missing intermediate directory failed: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestStageContainerChainMerged(t *testing.T) {
 			tmpDir := t.TempDir()
 			reporter := restoreProgressReporter{ItemName: "my-item", ItemType: "container", ItemsTotal: 1}
 
-			mergedDir, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "my-item", "", reporter, tmpDir)
+			mergedDir, _, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "my-item", "", reporter, tmpDir)
 			if err != nil {
 				t.Fatalf("stageContainerChainMerged: %v", err)
 			}
@@ -408,7 +408,7 @@ func TestStageContainerChainMergedRunLog(t *testing.T) {
 	tmpDir := t.TempDir()
 	reporter := restoreProgressReporter{RunID: runID, ItemName: "my-item", ItemType: "container", ItemsTotal: 1}
 
-	if _, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "my-item", "", reporter, tmpDir); err != nil {
+	if _, _, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "my-item", "", reporter, tmpDir); err != nil {
 		t.Fatalf("stageContainerChainMerged: %v", err)
 	}
 

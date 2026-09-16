@@ -27,6 +27,13 @@ type TarIndexEntry struct {
 	Mode    string `json:"mode"`    // octal string e.g. "0644"
 	ModTime string `json:"modtime"` // RFC3339
 	IsDir   bool   `json:"is_dir,omitempty"`
+	// IsSymlink marks a symbolic-link entry. A symlink's tar header records
+	// size 0 while its on-disk Lstat size is the length of its target, so
+	// without this the chain-restore prune cannot tell a resurrected symlink
+	// from a file it does not own and leaves it behind (issue #345 review
+	// feedback). Absent in sidecars written before this field existed, which
+	// leaves those backups' symlinks unpruned exactly as before.
+	IsSymlink bool `json:"is_symlink,omitempty"`
 }
 
 const tarIndexVersion = 1
@@ -74,17 +81,21 @@ func WriteTarIndex(archivePath string) error {
 		if err != nil {
 			return fmt.Errorf("reading tar entry for indexing: %w", err)
 		}
-		// Skip global headers and tar-internal records (xattr/longname).
+		// Skip the pax metadata records, which are not files. GNU
+		// longname/longlink records need no case of their own: archive/tar's
+		// reader consumes them itself and applies them to the header that
+		// follows, so they never reach Next.
 		switch hdr.Typeflag {
 		case tar.TypeXGlobalHeader, tar.TypeXHeader:
 			continue
 		}
 		index.Files = append(index.Files, TarIndexEntry{
-			Path:    hdr.Name,
-			Size:    hdr.Size,
-			Mode:    fmt.Sprintf("%04o", hdr.Mode&0o7777),
-			ModTime: hdr.ModTime.UTC().Format("2006-01-02T15:04:05Z"),
-			IsDir:   hdr.Typeflag == tar.TypeDir,
+			Path:      hdr.Name,
+			Size:      hdr.Size,
+			Mode:      fmt.Sprintf("%04o", hdr.Mode&0o7777),
+			ModTime:   hdr.ModTime.UTC().Format("2006-01-02T15:04:05Z"),
+			IsDir:     hdr.Typeflag == tar.TypeDir,
+			IsSymlink: hdr.Typeflag == tar.TypeSymlink,
 		})
 	}
 

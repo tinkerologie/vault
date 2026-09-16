@@ -132,7 +132,7 @@ func canonicalVolumeArchives(stepDir string) (map[string]string, error) {
 			if me.Archive == "" || me.Source == "" {
 				continue
 			}
-			sourceByArchive[tarBaseName(me.Archive)] = me.Source
+			sourceByArchive[TarBaseName(me.Archive)] = me.Source
 		}
 	}
 
@@ -149,7 +149,7 @@ func canonicalVolumeArchives(stepDir string) (map[string]string, error) {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "volume_") {
 			continue
 		}
-		base := tarBaseName(e.Name())
+		base := TarBaseName(e.Name())
 		canonicalBase := base
 		if source, ok := sourceByArchive[base]; ok {
 			canonicalBase = volumeArchiveBase(source)
@@ -159,9 +159,9 @@ func canonicalVolumeArchives(stepDir string) (map[string]string, error) {
 	return out, nil
 }
 
-// tarBaseName strips any compression suffix, leaving the ".tar" base that
+// TarBaseName strips any compression suffix, leaving the ".tar" base that
 // findArchive probes.
-func tarBaseName(name string) string {
+func TarBaseName(name string) string {
 	if i := strings.Index(name, ".tar"); i >= 0 {
 		return name[:i] + ".tar"
 	}

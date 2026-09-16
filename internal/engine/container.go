@@ -120,6 +120,28 @@ func safeVolumeArchiveName(name string) bool {
 	return strings.Contains(name, ".tar")
 }
 
+// readVolumeManifest reads a staged restore point's volumes.json, reporting
+// separately whether the file was present at all.
+//
+// "Absent" and "present but unreadable" must stay distinct: the legacy index
+// fallback in legacyVolumeIndex is only safe when we KNOW no manifest was
+// written. Treating a corrupt manifest as absent would re-enable the
+// loop-position fallback and hand mounts each other's archives (issue #352).
+func readVolumeManifest(dir string) ([]volumeManifestEntry, bool, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "volumes.json")) // #nosec G304 — dir is a vault-controlled staging directory
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("reading volumes.json: %w", err)
+	}
+	var manifest []volumeManifestEntry
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, true, fmt.Errorf("parsing volumes.json: %w", err)
+	}
+	return manifest, true, nil
+}
+
 // legacyVolumeIndex decides which index, if any, the legacy
 // volume_<index>.tar name may be built from, returning a negative value to
 // disable that fallback.
@@ -156,7 +178,7 @@ func resolveVolumeArchive(sourceDir, manifestArchive, source string, legacyIndex
 		// Normalise away the compression suffix: a chain merge re-tars the
 		// overlay under the plain base name, so the recorded ".tar.zst" may
 		// no longer exist while ".tar" does.
-		bases = append(bases, tarBaseName(manifestArchive))
+		bases = append(bases, TarBaseName(manifestArchive))
 	} else if manifestArchive != "" {
 		log.Printf("engine: restore: ignoring unsafe volume archive name %q in volumes.json", manifestArchive)
 	}
@@ -1445,17 +1467,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Step 3: Restore volumes.
 	// Load the volumes manifest (if present) to know which were skipped.
 	progress(item.Name, 30, "restoring volumes")
-	// "Absent" and "present but unreadable" must stay distinct: the legacy
-	// index fallback below is only safe when we KNOW no manifest was written.
-	// Treating a corrupt manifest as absent would re-enable the loop-position
-	// fallback and hand mounts each other's archives (issue #352).
-	var savedManifest []volumeManifestEntry
-	manifestPresent := false
-	if mData, err := os.ReadFile(filepath.Join(sourceDir, "volumes.json")); err == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
-		manifestPresent = true
-		if err := json.Unmarshal(mData, &savedManifest); err != nil {
-			return fmt.Errorf("parsing volumes.json for %s: %w", item.Name, err)
-		}
+	savedManifest, manifestPresent, err := readVolumeManifest(sourceDir)
+	if err != nil {
+		return fmt.Errorf("volumes manifest for %s: %w", item.Name, err)
 	}
 
 	// The restore file picker's selection arrives as container-internal

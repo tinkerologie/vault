@@ -345,7 +345,7 @@ func TestStageContainerChainMergedSkipsHistoricalSteps(t *testing.T) {
 	tmpDir := t.TempDir()
 	reporter := restoreProgressReporter{ItemName: "new-container", ItemType: "container", ItemsTotal: 1}
 
-	mergedDir, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "new-container", "", reporter, tmpDir)
+	mergedDir, _, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "new-container", "", reporter, tmpDir)
 	if err != nil {
 		t.Fatalf("stageContainerChainMerged: %v", err)
 	}

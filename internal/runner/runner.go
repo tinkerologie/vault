@@ -3554,6 +3554,211 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 	}
 }
 
+// pruneContainerChainResurrected removes files that the classic container
+// chain merge wrote but that the newest restore point's authoritative
+// per-volume listing no longer holds — files deleted, or newly excluded,
+// after the base full (issue #345). It is the container counterpart of
+// pruneChainResurrected, which does the same for folders (issue #231).
+//
+// Best-effort and per-volume: a volume whose newest listing or whose earlier
+// tar indexes cannot be read is left alone, preserving the pure-union
+// behaviour for that volume rather than guessing.
+//
+// Unlike the folder prune this applies NO modification-time guard. The
+// container untar restores each file's archived mtime (os.Chtimes from the
+// tar header), so a freshly extracted file carries its ORIGINAL timestamp,
+// not the extraction time — an "extracted during this replay" mtime test
+// would match nothing and the prune would never fire. Membership in the
+// written set plus an exact size match is the ownership guard instead.
+func (r *Runner) pruneContainerChainResurrected(stepDirs []string, mergedDir, destination string, newestID int64) {
+	if len(stepDirs) < 2 {
+		return
+	}
+	newestStep := stepDirs[len(stepDirs)-1]
+
+	// Resolve the volumes and their on-disk targets from the merged
+	// directory, which carries the newest step's config and manifest — the
+	// same inputs ContainerHandler.Restore just used, so the targets are the
+	// exact paths it wrote to.
+	volumes, err := engine.ContainerVolumeTargets(mergedDir, destination)
+	if err != nil {
+		log.Printf("runner: cannot resolve container volume targets — skipping chain prune: %v", err)
+		return
+	}
+
+	// Per-step source -> archive name. A step names its archives however the
+	// Vault that wrote it did, so each step is asked separately.
+	archivesByStep := make([]map[string]string, len(stepDirs))
+	for i, dir := range stepDirs {
+		archives, archErr := engine.ContainerVolumeArchives(dir)
+		if archErr != nil {
+			log.Printf("runner: chain step %s has an unreadable volumes manifest — skipping chain prune: %v", filepath.Base(dir), archErr)
+			return
+		}
+		archivesByStep[i] = archives
+	}
+
+	totalPruned := 0
+	for _, vol := range volumes {
+		// A file mount is a single file the restore overwrites wholesale, and
+		// a volume that was never backed up was never written.
+		if !vol.BackedUp || vol.IsFile {
+			continue
+		}
+		pruned, ok := r.pruneContainerVolume(vol, stepDirs, archivesByStep, newestStep)
+		if !ok {
+			continue
+		}
+		totalPruned += pruned
+	}
+
+	if totalPruned > 0 {
+		log.Printf("runner: container chain prune removed %d entr%s deleted/excluded since restore point %d's chain base",
+			totalPruned, map[bool]string{true: "y", false: "ies"}[totalPruned == 1], newestID)
+	}
+}
+
+// pruneContainerVolume prunes one volume's restore target. It reports the
+// number of entries removed and whether the prune ran at all; a false ok means
+// the volume's sidecars were incomplete and it was deliberately left alone.
+func (r *Runner) pruneContainerVolume(vol engine.ContainerVolumeTarget, stepDirs []string, archivesByStep []map[string]string, newestStep string) (int, bool) {
+	// Keep set: the newest step's effective listing for THIS volume. That
+	// listing is the authoritative post-exclusion file set at backup time,
+	// so anything absent from it was deleted or newly excluded.
+	newestArchive, ok := archivesByStep[len(stepDirs)-1][vol.Source]
+	if !ok {
+		return 0, false
+	}
+	listing, ok := readLocalSidecar(newestStep, newestArchive, engine.ListingSuffix)
+	if !ok {
+		log.Printf("runner: volume %s has no effective listing in the newest step — skipping its chain prune", vol.Source)
+		return 0, false
+	}
+	keep := make(map[string]struct{}, len(listing.Files))
+	for _, f := range listing.Files {
+		keep[f.Path] = struct{}{}
+	}
+
+	// Written set: the union of everything the EARLIER steps could have
+	// written for this volume. Later steps win, so a recorded size matches
+	// the extraction that survived the merge. A step that did not archive
+	// this volume simply has no entry; a step that did but whose index is
+	// unreadable means we cannot know its writes, so the volume is skipped
+	// rather than guessed at.
+	type writtenEntry struct {
+		isDir     bool
+		isSymlink bool
+		size      int64
+	}
+	written := make(map[string]writtenEntry)
+	for i, dir := range stepDirs[:len(stepDirs)-1] {
+		archive, present := archivesByStep[i][vol.Source]
+		if !present {
+			continue
+		}
+		idx, idxOK := readLocalSidecar(dir, archive, engine.IndexSuffix)
+		if !idxOK {
+			log.Printf("runner: chain step %s has no readable tar index for volume %s — skipping its chain prune", filepath.Base(dir), vol.Source)
+			return 0, false
+		}
+		for _, f := range idx.Files {
+			// Tar directory entries carry a trailing slash; the effective
+			// listing records the same path without one. Normalise so a
+			// directory the newest listing still holds is matched by the
+			// keep set rather than being offered up for removal.
+			rel := strings.TrimSuffix(f.Path, "/")
+			written[rel] = writtenEntry{isDir: f.IsDir, isSymlink: f.IsSymlink, size: f.Size}
+		}
+	}
+	if len(written) == 0 {
+		return 0, true
+	}
+
+	// The index sidecars travel with the backup and could be tampered with.
+	// All prune I/O goes through an os.Root scoped to the volume's restore
+	// target: the kernel-enforced boundary rejects absolute paths, ".."
+	// traversal, AND escapes through symlinked intermediate directories
+	// (CWE-22), while operating on the exact index path with no
+	// normalization.
+	root, err := os.OpenRoot(vol.Target)
+	if err != nil {
+		return 0, false
+	}
+	defer root.Close()
+
+	pruned := 0
+	var pruneDirs []string
+	for rel, we := range written {
+		if rel == "" {
+			continue
+		}
+		if _, kept := keep[rel]; kept {
+			continue
+		}
+		if we.isDir {
+			pruneDirs = append(pruneDirs, rel)
+			continue
+		}
+		if we.isSymlink {
+			// A symlink's tar header records size 0 while its Lstat size is
+			// the length of its target, so the size guard below can never
+			// match one. Being a symlink at the archived path is the
+			// ownership evidence instead. A sidecar written before the
+			// index recorded symlinks reports isSymlink false, so those
+			// backups' symlinks stay unpruned as they always were.
+			if info, statErr := root.Lstat(rel); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				if err := root.Remove(rel); err == nil {
+					pruned++
+				}
+			}
+			continue
+		}
+		// Ownership guard: only remove a regular file whose size matches the
+		// archived entry, so a same-named file the user put there themselves
+		// (different size) survives. See the note on the caller about why
+		// there is no mtime component here.
+		info, statErr := root.Lstat(rel)
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() != we.size {
+			continue
+		}
+		if err := root.Remove(rel); err == nil {
+			pruned++
+		}
+	}
+	// Directories last, deepest first, and only when empty (Remove, not
+	// RemoveAll, so a directory holding anything kept is left alone).
+	sort.Slice(pruneDirs, func(i, j int) bool { return len(pruneDirs[i]) > len(pruneDirs[j]) })
+	for _, rel := range pruneDirs {
+		if err := root.Remove(rel); err == nil {
+			pruned++
+		}
+	}
+	return pruned, true
+}
+
+// readLocalSidecar reads an archive's sidecar out of a staged chain step.
+// The archive name recorded in a manifest carries its compression suffix, but
+// the merge re-tars under the plain base, so both spellings are tried.
+func readLocalSidecar(stepDir, archive, suffix string) (engine.TarIndex, bool) {
+	candidates := []string{archive + suffix}
+	if base := engine.TarBaseName(archive); base != archive {
+		candidates = append(candidates, base+suffix)
+	}
+	for _, name := range candidates {
+		f, err := os.Open(filepath.Join(stepDir, name)) // #nosec G304 — stepDir is a vault-controlled staging directory and name is a validated archive base
+		if err != nil {
+			continue
+		}
+		idx, readErr := engine.ReadTarIndex(f)
+		_ = f.Close()
+		if readErr != nil {
+			continue
+		}
+		return idx, true
+	}
+	return engine.TarIndex{}, false
+}
+
 // ReadItemSidecar exposes sidecar reading for API handlers (the restore
 // wizard's file picker filters merged chain contents by the listing).
 func (r *Runner) ReadItemSidecar(dest db.StorageDestination, rp db.RestorePoint, itemName, suffix string) (engine.TarIndex, bool) {
@@ -3865,14 +4070,26 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 
 	if itemType == "container" {
 		// Classic container chains must be merged, not flattened: a
-		// differential/incremental step's partial volume_N.tar would
+		// differential/incremental step's partial volume archive would
 		// otherwise overwrite the full step's complete archive in the shared
 		// staging dir, dropping base files (issue #320).
-		mergedDir, err := r.stageContainerChainMerged(ctx, chain, itemName, passphrase, reporter, tmpDir)
+		mergedDir, stepDirs, err := r.stageContainerChainMerged(ctx, chain, itemName, passphrase, reporter, tmpDir)
 		if err != nil {
 			return err
 		}
-		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100)
+		if err := r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100); err != nil {
+			return err
+		}
+		// The merge is a pure union, so a file deleted after the base full
+		// comes back (issue #345). Prune what the overlay wrote but the
+		// newest point's authoritative listing no longer holds. Whole-item
+		// restores only — a partial file-picker restore writes nothing
+		// prunable — and only when there is an earlier step to have
+		// resurrected anything.
+		if len(filePaths) == 0 && len(stepDirs) > 1 {
+			r.pruneContainerChainResurrected(stepDirs, mergedDir, destination, chain[len(chain)-1].ID)
+		}
+		return nil
 	}
 
 	stagedSteps := 0
@@ -3905,11 +4122,11 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 // overwrite the full step's complete archive, or base files would be dropped
 // (issue #320).
 //
-// NOTE: the merge is a pure union — a file deleted after the base full is
-// merged back in. The folder classic path compensates via pruneChainResurrected
-// (issue #231, folder-scoped and closed); the container path has no equivalent
-// prune yet, so deleted files can reappear on restore. Out of scope for #320.
-func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.RestorePoint, itemName, passphrase string, reporter restoreProgressReporter, tmpDir string) (string, error) {
+// The merge stays a pure union — a file deleted after the base full is merged
+// back in. pruneContainerChainResurrected removes those afterwards (issue
+// #345), which is why the ordered step directories are returned alongside the
+// merged one: the prune reads each step's manifest and sidecars from them.
+func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.RestorePoint, itemName, passphrase string, reporter restoreProgressReporter, tmpDir string) (string, []string, error) {
 	stepDirs := make([]string, 0, len(chain))
 	for i, rp := range chain {
 		if !rpContainsItem(rp, itemName) {
@@ -3921,24 +4138,26 @@ func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.Resto
 		log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
 		stepDir := filepath.Join(tmpDir, fmt.Sprintf("step_%d", i))
 		if err := os.MkdirAll(stepDir, 0o755); err != nil {
-			return "", fmt.Errorf("creating chain step dir: %w", err)
+			return "", nil, fmt.Errorf("creating chain step dir: %w", err)
 		}
 		phaseStart := (i * 40) / len(chain)
 		phaseEnd := ((i + 1) * 40) / len(chain)
 		if err := r.stageRestorePointItem(ctx, rp, itemName, stepDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
-			return "", fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
+			return "", nil, fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
 		}
 		stepDirs = append(stepDirs, stepDir)
 	}
 	if len(stepDirs) == 0 {
-		return "", fmt.Errorf("item %q is not present in the restore chain", itemName)
+		return "", nil, fmt.Errorf("item %q is not present in the restore chain", itemName)
 	}
 
 	mergedDir := filepath.Join(tmpDir, "merged")
 	if err := engine.MergeContainerChainStaging(ctx, stepDirs, mergedDir); err != nil {
-		return "", fmt.Errorf("merging container chain: %w", err)
+		return "", nil, fmt.Errorf("merging container chain: %w", err)
 	}
-	return mergedDir, nil
+	// The step directories stay in place for the caller's prune; they live
+	// under the restore temp dir and go away with it.
+	return mergedDir, stepDirs, nil
 }
 
 // restoreSinglePoint restores a single restore point (without chain logic).
