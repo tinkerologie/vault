@@ -157,6 +157,66 @@ func TestJobDeferRemoteUploadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestJobAutoIncludeContainersRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})
+
+	id, err := d.CreateJob(Job{
+		Name:                  "auto-include-job",
+		StorageDestID:         destID,
+		BackupTypeChain:       "full",
+		AutoIncludeContainers: true,
+	})
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+
+	got, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("Get error = %v", err)
+	}
+	if !got.AutoIncludeContainers {
+		t.Errorf("AutoIncludeContainers after create = false, want true")
+	}
+
+	byName, err := d.GetJobByName("auto-include-job")
+	if err != nil {
+		t.Fatalf("GetJobByName error = %v", err)
+	}
+	if !byName.AutoIncludeContainers {
+		t.Errorf("GetJobByName AutoIncludeContainers = false, want true")
+	}
+
+	got.AutoIncludeContainers = false
+	if err := d.UpdateJob(got); err != nil {
+		t.Fatalf("Update error = %v", err)
+	}
+	got2, err := d.GetJob(id)
+	if err != nil {
+		t.Fatalf("GetJob after update error = %v", err)
+	}
+	if got2.AutoIncludeContainers {
+		t.Errorf("AutoIncludeContainers after update to false = true, want false")
+	}
+
+	jobs, err := d.ListJobs()
+	if err != nil {
+		t.Fatalf("ListJobs error = %v", err)
+	}
+	found := false
+	for _, j := range jobs {
+		if j.ID == id {
+			found = true
+			if j.AutoIncludeContainers {
+				t.Errorf("ListJobs AutoIncludeContainers = true, want false")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("ListJobs did not return job with ID %d", id)
+	}
+}
+
 func TestGetJobByName(t *testing.T) {
 	d := setupTestDB(t)
 	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "test", Type: "local", Config: "{}"})

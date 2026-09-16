@@ -334,6 +334,9 @@ var alterMigrations = []string{
 	// storage destination, classic folder/file backups stage temporary archives
 	// on the destination itself (<path>/.vault-stage) rather than cache pools.
 	"ALTER TABLE storage_destinations ADD COLUMN stage_beside_destination INTEGER NOT NULL DEFAULT 0",
+	// Auto-include new containers (#324). When enabled, newly discovered
+	// containers are automatically added to the job on each backup run.
+	"ALTER TABLE jobs ADD COLUMN auto_include_containers INTEGER NOT NULL DEFAULT 0",
 }
 
 // dataMigrations are idempotent row rewrites, applied after alterMigrations.

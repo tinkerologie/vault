@@ -29,8 +29,9 @@ func TestAnomalyMigrationsAreIdempotent(t *testing.T) {
 
 	// Verify new columns on jobs and storage_destinations.
 	colQueries := map[string]string{
-		"jobs.anomaly_sensitivity":                 `SELECT anomaly_sensitivity FROM jobs LIMIT 1`,
-		"storage_destinations.anomaly_sensitivity": `SELECT anomaly_sensitivity FROM storage_destinations LIMIT 1`,
+		"jobs.anomaly_sensitivity":                      `SELECT anomaly_sensitivity FROM jobs LIMIT 1`,
+		"jobs.auto_include_containers":                  `SELECT auto_include_containers FROM jobs LIMIT 1`,
+		"storage_destinations.anomaly_sensitivity":      `SELECT anomaly_sensitivity FROM storage_destinations LIMIT 1`,
 		"storage_destinations.stage_beside_destination": `SELECT stage_beside_destination FROM storage_destinations LIMIT 1`,
 	}
 	for label, q := range colQueries {

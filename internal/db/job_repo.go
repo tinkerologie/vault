@@ -28,8 +28,8 @@ func (d *DB) CreateJob(job Job) (int64, error) {
 		keep_latest, keep_daily, keep_weekly, keep_monthly, keep_yearly,
 		verify_schedule, verify_mode, full_backup_schedule,
 		retry_max_override, retry_delays_override,
-		max_parallel_uploads, adaptive_enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		max_parallel_uploads, adaptive_enabled, auto_include_containers)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.CompressionLevel, job.Encryption, job.ContainerMode,
 		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, nullableID(job.StorageDestID),
@@ -37,7 +37,7 @@ func (d *DB) CreateJob(job Job) (int64, error) {
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 		job.VerifySchedule, job.VerifyMode, job.FullBackupSchedule,
 		job.RetryMaxOverride, job.RetryDelaysOverride,
-		job.MaxParallelUploads, job.AdaptiveEnabled,
+		job.MaxParallelUploads, job.AdaptiveEnabled, job.AutoIncludeContainers,
 	)
 	if err != nil {
 		return 0, err
@@ -60,6 +60,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		COALESCE(anomaly_sensitivity, ''),
 		COALESCE(max_parallel_uploads, 1),
 		COALESCE(adaptive_enabled, 0),
+		COALESCE(auto_include_containers, 0),
 		created_at, updated_at
 		FROM jobs WHERE id = ?`, id,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -70,7 +71,7 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		&job.VerifySchedule, &job.VerifyMode, &job.FullBackupSchedule,
 		&job.RetryMaxOverride, &job.RetryDelaysOverride,
 		&job.AnomalySensitivity,
-		&job.MaxParallelUploads, &job.AdaptiveEnabled,
+		&job.MaxParallelUploads, &job.AdaptiveEnabled, &job.AutoIncludeContainers,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound
@@ -92,6 +93,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 		COALESCE(anomaly_sensitivity, ''),
 		COALESCE(max_parallel_uploads, 1),
 		COALESCE(adaptive_enabled, 0),
+		COALESCE(auto_include_containers, 0),
 		created_at, updated_at
 		FROM jobs ORDER BY name`)
 	if err != nil {
@@ -109,7 +111,7 @@ func (d *DB) ListJobs() ([]Job, error) {
 			&job.VerifySchedule, &job.VerifyMode, &job.FullBackupSchedule,
 			&job.RetryMaxOverride, &job.RetryDelaysOverride,
 			&job.AnomalySensitivity,
-			&job.MaxParallelUploads, &job.AdaptiveEnabled,
+			&job.MaxParallelUploads, &job.AdaptiveEnabled, &job.AutoIncludeContainers,
 			&job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -127,7 +129,7 @@ func (d *DB) UpdateJob(job Job) error {
 		verify_schedule=?, verify_mode=?, full_backup_schedule=?,
 		retry_max_override=?, retry_delays_override=?,
 		anomaly_sensitivity=?,
-		max_parallel_uploads=?, adaptive_enabled=?,
+		max_parallel_uploads=?, adaptive_enabled=?, auto_include_containers=?,
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.CompressionLevel, job.Encryption, job.ContainerMode,
@@ -137,7 +139,7 @@ func (d *DB) UpdateJob(job Job) error {
 		job.VerifySchedule, job.VerifyMode, job.FullBackupSchedule,
 		job.RetryMaxOverride, job.RetryDelaysOverride,
 		job.AnomalySensitivity,
-		job.MaxParallelUploads, job.AdaptiveEnabled,
+		job.MaxParallelUploads, job.AdaptiveEnabled, job.AutoIncludeContainers,
 		job.ID,
 	)
 	return err
@@ -165,6 +167,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		COALESCE(anomaly_sensitivity, ''),
 		COALESCE(max_parallel_uploads, 1),
 		COALESCE(adaptive_enabled, 0),
+		COALESCE(auto_include_containers, 0),
 		created_at, updated_at
 		FROM jobs WHERE name = ?`, name,
 	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
@@ -175,7 +178,7 @@ func (d *DB) GetJobByName(name string) (Job, error) {
 		&job.VerifySchedule, &job.VerifyMode, &job.FullBackupSchedule,
 		&job.RetryMaxOverride, &job.RetryDelaysOverride,
 		&job.AnomalySensitivity,
-		&job.MaxParallelUploads, &job.AdaptiveEnabled,
+		&job.MaxParallelUploads, &job.AdaptiveEnabled, &job.AutoIncludeContainers,
 		&job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return job, ErrNotFound

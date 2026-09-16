@@ -63,9 +63,12 @@ type Job struct {
 	MaxParallelUploads int `json:"max_parallel_uploads"`
 	// AdaptiveEnabled defers this job's runs while its containers/VMs/folders
 	// are actively in use (issue #240); thresholds come from global settings.
-	AdaptiveEnabled bool      `json:"adaptive_enabled"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	AdaptiveEnabled bool `json:"adaptive_enabled"`
+	// AutoIncludeContainers automatically discovers and adds newly created Docker
+	// containers to this job on each backup run (issue #324).
+	AutoIncludeContainers bool      `json:"auto_include_containers"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // EffectiveUploadConcurrency returns the upload concurrency to use, mapping the

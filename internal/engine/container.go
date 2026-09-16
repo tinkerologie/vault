@@ -663,6 +663,11 @@ func (h *ContainerHandler) ListItems() ([]BackupItem, error) {
 			"image": c.Image,
 			"state": string(c.State),
 		}
+		if val, ok := c.Labels[VaultExcludeLabel]; ok {
+			settings["labels"] = map[string]string{
+				VaultExcludeLabel: val,
+			}
+		}
 		// Advisory hint so the job wizard can offer a logical dump only where
 		// one is plausible. Image-only: the container list carries no
 		// environment, and inspecting every container to get it would put N API
@@ -898,6 +903,38 @@ func containerLabels(inspect container.InspectResponse) map[string]string {
 // file or template carries its own answer, and adding the container to a job
 // needs no further configuration.
 const VaultExcludeLabel = "vault.exclude"
+
+// ContainerHasExcludeLabel reports whether a container's settings declare the
+// vault.exclude label. Used by auto-include reconciliation to skip containers
+// whose owners explicitly declared they should not be backed up or declared exclusions.
+func ContainerHasExcludeLabel(settings map[string]any) bool {
+	if settings == nil {
+		return false
+	}
+	var raw string
+	if labels, ok := settings["labels"].(map[string]string); ok {
+		v, exists := labels[VaultExcludeLabel]
+		if !exists {
+			return false
+		}
+		raw = v
+	} else if m, ok := settings["labels"].(map[string]any); ok {
+		v, exists := m[VaultExcludeLabel]
+		if !exists {
+			return false
+		}
+		if s, ok := v.(string); ok {
+			raw = s
+		}
+	} else {
+		return false
+	}
+	raw = strings.TrimSpace(raw)
+	if strings.EqualFold(raw, "false") || raw == "0" {
+		return false
+	}
+	return true
+}
 
 // countExcludedMounts reports how many backup-eligible mounts exist and how
 // many of them the exclusion list removes. Used to catch the case where a

@@ -180,3 +180,31 @@ func TestListMountsHonoursTheLabelToggle(t *testing.T) {
 		t.Fatal("backup honoured a label while the toggle is off")
 	}
 }
+
+func TestContainerHasExcludeLabel(t *testing.T) {
+	cases := []struct {
+		name     string
+		settings map[string]any
+		want     bool
+	}{
+		{"nil settings", nil, false},
+		{"empty settings", map[string]any{}, false},
+		{"other labels map[string]string", map[string]any{"labels": map[string]string{"foo": "bar"}}, false},
+		{"other labels map[string]any", map[string]any{"labels": map[string]any{"foo": "bar"}}, false},
+		{"exclude label true map[string]string", map[string]any{"labels": map[string]string{VaultExcludeLabel: "true"}}, true},
+		{"exclude label true map[string]any", map[string]any{"labels": map[string]any{VaultExcludeLabel: "true"}}, true},
+		{"exclude label 1", map[string]any{"labels": map[string]string{VaultExcludeLabel: "1"}}, true},
+		{"exclude label path", map[string]any{"labels": map[string]string{VaultExcludeLabel: "/data"}}, true},
+		{"exclude label empty", map[string]any{"labels": map[string]string{VaultExcludeLabel: ""}}, true},
+		{"exclude label false", map[string]any{"labels": map[string]string{VaultExcludeLabel: "false"}}, false},
+		{"exclude label 0", map[string]any{"labels": map[string]string{VaultExcludeLabel: "0"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ContainerHasExcludeLabel(tc.settings)
+			if got != tc.want {
+				t.Errorf("ContainerHasExcludeLabel(%v) = %v, want %v", tc.settings, got, tc.want)
+			}
+		})
+	}
+}

@@ -87,6 +87,15 @@ Docker container backups focus on configuration and application state rather tha
 - **Per-mount override:** In the job wizard under _Container Mounts & Exclusions_, you can expand any container and check any overridable non-appdata or shared data mount to include it in the backup.
 - **System paths:** Device and virtual filesystem mounts (e.g. `/dev`, `/proc`, `/sys`, direct array disks `/mnt/disk*`, or root `/mnt`) are safety-critical and cannot be included.
 
+#### Auto-include new containers
+
+Container backup jobs can optionally enable **Auto-Include New Containers**:
+
+- **Automatic discovery:** Any newly created Docker container discovered during a scheduled or manual run is automatically enrolled in the job.
+- **Safe defaults:** Auto-added containers default to backing up appdata mounts and Docker named volumes; non-appdata bind mounts (e.g. multi-terabyte media shares) are excluded by default.
+- **Exclusion label:** Containers carrying the Docker label `vault.exclude` are skipped from auto-inclusion.
+- **Automatic pruning:** When a container is permanently removed from Docker, it is automatically pruned from the job after remaining absent for at least 24 hours, preventing stale item alerts while protecting against transient downtime.
+
 #### Backing up Immich
 
 Immich detection works for both the official `ghcr.io/immich-app/immich-server` image (media root mounted at `/data`) and the imagegenius fork `ghcr.io/imagegenius/immich` (`/photos`). The recommended exclusions cover both layouts:

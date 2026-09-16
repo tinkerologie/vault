@@ -284,6 +284,7 @@
       verify_backup: true,
       defer_remote_upload: false,
       adaptive_enabled: false,
+      auto_include_containers: false,
       encryption: 'none',
       storage_dest_id: 0,
       retry_max_override: '',
@@ -628,6 +629,7 @@
         verify_backup: data.job.verify_backup ?? true,
         defer_remote_upload: data.job.defer_remote_upload ?? false,
         adaptive_enabled: data.job.adaptive_enabled ?? false,
+        auto_include_containers: data.job.auto_include_containers ?? false,
         encryption: data.job.encryption || 'none',
         storage_dest_id: data.job.storage_dest_id || 0,
         // Backend uses null to mean "fall back to the global default". The
@@ -752,6 +754,7 @@
         verify_backup: fullJob.verify_backup ?? true,
         defer_remote_upload: fullJob.defer_remote_upload ?? false,
         adaptive_enabled: fullJob.adaptive_enabled ?? false,
+        auto_include_containers: fullJob.auto_include_containers ?? false,
         retry_max_override: fullJob.retry_max_override == null ? '' : String(fullJob.retry_max_override),
         retry_delays_override: fullJob.retry_delays_override == null ? '' : String(fullJob.retry_delays_override),
         anomaly_sensitivity: fullJob.anomaly_sensitivity || '',
@@ -2005,6 +2008,27 @@
             </div>
           </div>
         </details>
+
+        {#if form.selectedTypes.includes('containers') || form.selectedTypes.includes('container') || hasContainers || form.auto_include_containers}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Auto-Include New Containers <Tooltip text="Automatically adds newly created Docker containers to this job on each backup run, and automatically prunes deleted containers." />
+            </summary>
+            <div class="mt-3 pl-6">
+              <div class="flex items-start gap-3">
+                <label class="relative inline-flex items-center cursor-pointer mt-0.5">
+                  <input type="checkbox" bind:checked={form.auto_include_containers} aria-label="Automatically back up new containers" class="sr-only peer" />
+                  <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                </label>
+                <div>
+                  <p class="text-sm text-text">Automatically back up newly discovered containers</p>
+                  <p class="text-xs text-text-dim mt-0.5">New Docker containers on this server are automatically enrolled into this job on each backup run. Auto-added containers default to backing up appdata mounts and named volumes; non-appdata bind mounts (e.g. large media shares) are excluded by default until reviewed under Container Mounts &amp; Exclusions. Containers carrying the <code class="text-vault font-mono text-[11px]">vault.exclude</code> label are skipped.</p>
+                </div>
+              </div>
+            </div>
+          </details>
+        {/if}
 
         {#if hasVMs}
           <details class="group" open>

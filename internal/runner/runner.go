@@ -136,6 +136,13 @@ type Runner struct {
 	// for this Runner (e.g. in unit tests that don't need it).
 	evaluator anomalyEnqueuer
 
+	// containerLister optionally overrides container discovery for tests.
+	// When nil, engine.NewContainerHandler().ListItems() is used.
+	containerLister func() ([]engine.BackupItem, error)
+
+	// autoPruneGracePeriod optionally overrides defaultAutoPruneGracePeriod for tests.
+	autoPruneGracePeriod time.Duration
+
 	// statusMu protects the live run status fields below.
 	statusMu   sync.RWMutex
 	currentRun *RunStatus
@@ -186,6 +193,10 @@ const (
 	finalizeSnapshotTimeout  = 5 * time.Minute
 	finalizeRetentionTimeout = 10 * time.Minute
 	finalizeNotifyTimeout    = 2 * time.Minute
+
+	// defaultAutoPruneGracePeriod is the duration a deleted container must remain absent
+	// before being pruned from an auto-include job (issue #324).
+	defaultAutoPruneGracePeriod = 24 * time.Hour
 )
 
 // New creates a new Runner.
@@ -752,6 +763,13 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		return
 	}
 
+	// Reconcile auto-include containers (issue #324). When enabled, newly
+	// discovered containers are automatically added to the job's item list before
+	// adaptive busy checks and backup run.
+	if job.AutoIncludeContainers {
+		r.reconcileAutoIncludeContainers(job, &items)
+	}
+
 	// Adaptive backups gate (issue #240): defer the run while any of the
 	// job's workloads are actively in use. Manual "Run Now" is exempt — an
 	// operator clicking the button wants the backup immediately. The probe
@@ -775,6 +793,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// Stale-item detection (#119). Items whose backing container/VM/folder/
 	// plugin/dataset no longer exists are SKIPPED (not failed) and flagged in
 	// the DB for user-triggered remediation — Vault never auto-removes them.
+	// For jobs with AutoIncludeContainers enabled (issue #324), missing containers
+	// that have exceeded the absence grace period are automatically pruned.
 	// This runs BEFORE the run record is created so ItemsTotal and the
 	// job_run_started broadcast reflect the items we actually process.
 	// originalItemCount and staleNames are captured outside the stale-detection
@@ -783,7 +803,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	originalItemCount := len(items)
 	var staleNames []string
 	{
-		inv := engine.GatherInventory()
+		inv := r.gatherInventory()
 		var staleIDs, reappearedIDs []int64
 		var staleInfo []map[string]any
 		kept := items[:0]
@@ -794,6 +814,21 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			}
 			status := inv.Status(item.ItemType, item.ItemName, settings)
 			if status == engine.StatusMissing {
+				if job.AutoIncludeContainers && inv.ContainersAvailable && item.ItemType == "container" {
+					// Auto-prune deleted containers after grace period (issue #324).
+					// If missing for the first time, track MissingSince so transient downtime or recreates
+					// don't immediately delete the container configuration.
+					if item.MissingSince != nil {
+						if missingTime, err := time.Parse(time.RFC3339, *item.MissingSince); err == nil && time.Since(missingTime) >= r.pruneGracePeriod() {
+							if err := r.db.DeleteJobItem(item.ID); err != nil {
+								log.Printf("runner: job %d: auto-remove deleted container %q (id %d): %v", jobID, item.ItemName, item.ID, err)
+							} else {
+								log.Printf("runner: job %d: auto-removed container %q absent since %s (exceeded grace period)", jobID, item.ItemName, *item.MissingSince)
+								continue
+							}
+						}
+					}
+				}
 				staleIDs = append(staleIDs, item.ID)
 				staleNames = append(staleNames, item.ItemName)
 				staleInfo = append(staleInfo, map[string]any{
@@ -2100,6 +2135,120 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	r.runFinalizationStep("notify", jobID, runID, finalizeNotifyTimeout, func(context.Context) {
 		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDurationSec, localFailedNames)
 	})
+}
+
+// listLiveContainers returns the list of containers currently present on the system.
+// containerLister is used when set (in tests); otherwise NewContainerHandler().ListItems() is called.
+func (r *Runner) listLiveContainers() ([]engine.BackupItem, error) {
+	if r.containerLister != nil {
+		return r.containerLister()
+	}
+	ch, err := engine.NewContainerHandler()
+	if err != nil {
+		return nil, err
+	}
+	return ch.ListItems()
+}
+
+// gatherInventory returns a live system inventory snapshot, using containerLister when injected.
+func (r *Runner) gatherInventory() engine.LiveInventory {
+	if r.containerLister != nil {
+		inv := engine.LiveInventory{
+			Containers: map[string]bool{},
+			VMs:        map[string]bool{},
+			ZFS:        map[string]bool{},
+		}
+		if items, err := r.containerLister(); err == nil {
+			for _, it := range items {
+				inv.Containers[it.Name] = true
+			}
+			inv.ContainersAvailable = true
+		}
+		return inv
+	}
+	return engine.GatherInventory()
+}
+
+// pruneGracePeriod returns the grace period before an absent container is pruned from an auto-include job.
+func (r *Runner) pruneGracePeriod() time.Duration {
+	if r.autoPruneGracePeriod > 0 {
+		return r.autoPruneGracePeriod
+	}
+	return defaultAutoPruneGracePeriod
+}
+
+// reconcileAutoIncludeContainers discovers newly added Docker containers on the host
+// and automatically adds them to the job's item list before backup runs (issue #324).
+func (r *Runner) reconcileAutoIncludeContainers(job db.Job, items *[]db.JobItem) {
+	liveContainers, err := r.listLiveContainers()
+	if err != nil {
+		log.Printf("runner: job %d: auto-include failed to list live containers: %v", job.ID, err)
+		return
+	}
+
+	tracked := make(map[string]bool, len(*items))
+	maxSortOrder := -1
+	for _, it := range *items {
+		if it.ItemType == "container" {
+			tracked[it.ItemName] = true
+		}
+		if it.SortOrder > maxSortOrder {
+			maxSortOrder = it.SortOrder
+		}
+	}
+
+	var addedCount int
+	for _, c := range liveContainers {
+		if c.Type != "container" {
+			continue
+		}
+		if tracked[c.Name] {
+			continue
+		}
+		// Skip containers carrying the vault.exclude label.
+		if engine.ContainerHasExcludeLabel(c.Settings) {
+			log.Printf("runner: job %d: skipping container %q with %s label from auto-include", job.ID, c.Name, engine.VaultExcludeLabel)
+			continue
+		}
+
+		// Newly auto-added containers default to appdata_only=true so non-appdata mounts
+		// (e.g. large media libraries) are safely excluded by default (issues #317, #324).
+		settings := make(map[string]any, len(c.Settings)+1)
+		for k, v := range c.Settings {
+			settings[k] = v
+		}
+		settings["appdata_only"] = true
+		settingsJSON, err := json.Marshal(settings)
+		if err != nil {
+			log.Printf("runner: job %d: failed to marshal settings for auto-included container %q: %v", job.ID, c.Name, err)
+			continue
+		}
+
+		itemID := c.Name
+		if id, ok := c.Settings["id"].(string); ok && id != "" {
+			itemID = id
+		}
+
+		newItem := db.JobItem{
+			JobID:     job.ID,
+			ItemType:  "container",
+			ItemName:  c.Name,
+			ItemID:    itemID,
+			Settings:  string(settingsJSON),
+			SortOrder: maxSortOrder + 1 + addedCount,
+		}
+
+		id, err := r.db.AddJobItem(newItem)
+		if err != nil {
+			log.Printf("runner: job %d: failed to add auto-included container %q: %v", job.ID, c.Name, err)
+			continue
+		}
+		newItem.ID = id
+		*items = append(*items, newItem)
+		log.Printf("runner: job %d: auto-added new container %q to job", job.ID, c.Name)
+		addedCount++
+		tracked[c.Name] = true
+	}
 }
 
 // newHandler instantiates the engine handler for the given backup item type.
