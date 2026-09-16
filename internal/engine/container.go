@@ -60,14 +60,19 @@ var appdataPrefixes = []string{
 
 // volumeManifestEntry describes a single bind mount for the volumes.json manifest.
 type volumeManifestEntry struct {
-	Index         int      `json:"index"`
-	Source        string   `json:"source"`
-	Destination   string   `json:"destination"`
-	BackedUp      bool     `json:"backed_up"`
-	SkipReason    string   `json:"skip_reason,omitempty"`
-	Archive       string   `json:"archive,omitempty"`
-	IsFile        bool     `json:"is_file,omitempty"`
-	ExcludedPaths []string `json:"excluded_paths,omitempty"`
+	Index       int    `json:"index"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	BackedUp    bool   `json:"backed_up"`
+	SkipReason  string `json:"skip_reason,omitempty"`
+	Archive     string `json:"archive,omitempty"`
+	// ResolvedSource is Source with symlinks resolved — the path the walk,
+	// the tar filter and the effective listing were actually keyed to. The
+	// next differential compares it against its own resolution to prove the
+	// parent listing still describes the same tree (issue #353).
+	ResolvedSource string   `json:"resolved_source,omitempty"`
+	IsFile         bool     `json:"is_file,omitempty"`
+	ExcludedPaths  []string `json:"excluded_paths,omitempty"`
 
 	// Metadata of the mount's own root directory. A tar archive records
 	// nothing about the directory it was made from — the walk starts at its
@@ -297,6 +302,45 @@ func shouldSkipVolume(source string) (bool, string) {
 // most-reported gap (compose stacks were previously backed up as empty).
 func backupableMount(mountType string) bool {
 	return mountType == "bind" || mountType == "volume"
+}
+
+// resolveMountSource resolves symlinks in a mount's host path, best-effort.
+//
+// WriteEffectiveListing resolves before it walks, so a listing's relative
+// paths are keyed to the RESOLVED path. Change detection and the tar filter
+// must walk from the same root or their relative paths do not match the
+// listing, the lookup misses, and the volume silently degrades to mtime-only
+// filtering — re-introducing the issue #320 data-loss class for that volume
+// (issue #353). An unresolvable path is returned unchanged so a mount that is
+// merely unreadable here still reaches the stat below and fails there, with
+// the error the operator needs.
+func resolveMountSource(source string) string {
+	if resolved, err := filepath.EvalSymlinks(source); err == nil {
+		return resolved
+	}
+	return source
+}
+
+// reuseParentVolumeListing reports whether the parent restore point's
+// effective listing for a volume still describes the same tree.
+//
+// A repointed symlink is the case that matters: the listing then describes a
+// DIFFERENT tree, and a file in the new tree whose relative path happens to
+// match one in the listing reads as "not new" and is filtered out on mtime —
+// the issue #320 data-loss class again. Capturing that volume in full is the
+// only safe answer.
+//
+// The proof is the parent's recorded resolution. A parent that recorded none
+// was taken before issue #353, and for it the pre-existing behaviour is kept:
+// reuse the listing. Forcing a full capture there would re-archive every
+// volume of every container on the first differential after an upgrade, to
+// guard against a mount that was probably never a symlink at all.
+func reuseParentVolumeListing(source, resolvedSource string, prevResolved map[string]string) bool {
+	recorded, ok := prevResolved[source]
+	if !ok || recorded == "" {
+		return true
+	}
+	return recorded == resolvedSource
 }
 
 // isHex64 reports whether s is a 64-character lowercase hex string — Docker's
@@ -897,6 +941,11 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	// differential/incremental runs (issue #320).
 	prevBySource := prevVolumeListingSet(item.Settings)
 
+	// The symlink resolution each of those listings was keyed to, so a mount
+	// whose symlink was repointed since the parent backup is captured in full
+	// rather than filtered against a listing of a different tree (issue #353).
+	prevResolvedBySource := prevVolumeResolvedSources(item.Settings)
+
 	// Extract path exclusions from item settings: free-text exclude_paths plus
 	// the checkbox-driven excluded_mounts from the job wizard, plus anything
 	// the container declares for itself via the vault.exclude label.
@@ -954,7 +1003,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// via pathChangedSince.
 		var anyChanged bool
 		var err error
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource)
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource, prevResolvedBySource)
 		if err != nil {
 			return nil, err
 		}
@@ -1110,11 +1159,30 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				continue
 			}
 
-			if hasChangedSince {
+			// Everything from here on touches the mount on disk, so it
+			// works from the resolved path — the same basis
+			// WriteEffectiveListing uses (issue #353). The logical Docker
+			// paths stay in charge of the exclusion, skip and naming
+			// decisions above, and mount.Source remains the manifest's
+			// cross-run correlation key.
+			resolvedSource := resolveMountSource(mount.Source)
+			entry.ResolvedSource = resolvedSource
+			reuseListing := reuseParentVolumeListing(mount.Source, resolvedSource, prevResolvedBySource)
+			if hasChangedSince && !reuseListing {
+				log.Printf("engine: volume %s resolves to %s, which is not what the parent backup recorded — capturing it in full",
+					mount.Source, resolvedSource)
+			}
+			// A parent listing that cannot be trusted leaves nothing to
+			// filter against, so the volume is captured in full rather than
+			// filtered on mtime alone — which is what dropped stale-mtime
+			// new files in the first place.
+			filterVolume := hasChangedSince && reuseListing
+
+			if filterVolume {
 				changed, cached := volChanges[mount.Source]
 				if !cached {
 					var err error
-					changed, err = pathChangedSinceWithPrev(ctx, mount.Source, changedSince, prevBySource[mount.Source])
+					changed, err = pathChangedSinceWithPrev(ctx, resolvedSource, changedSince, prevBySource[mount.Source])
 					if err != nil {
 						return fmt.Errorf("checking volume %s changes: %w", mount.Source, err)
 					}
@@ -1128,7 +1196,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			}
 
 			// Detect file-based bind mounts (e.g. Tailscale hook files).
-			srcInfo, err := os.Lstat(mount.Source)
+			srcInfo, err := os.Lstat(resolvedSource)
 			if err != nil {
 				return fmt.Errorf("stat volume %s: %w", mount.Source, err)
 			}
@@ -1136,7 +1204,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			// Auto-downgrade compression for media-heavy volumes (single-file
 			// bind mounts are auto-handled too — the helper inspects whatever
 			// path it's given). Saves CPU on Immich/Jellyfin/etc. appdata.
-			effectiveCompression := MaybeDowngradeCompression(mount.Source, item.Compression)
+			effectiveCompression := MaybeDowngradeCompression(resolvedSource, item.Compression)
 			archiveName := volumeArchiveBase(mount.Source) + archiveExt(effectiveCompression)
 			volDest := filepath.Join(destDir, archiveName)
 
@@ -1145,12 +1213,12 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				entry.RootUID, entry.RootGID = fileOwner(srcInfo)
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
 
-				if hasChangedSince {
-					if err := tarDirectoryFilteredWithPrev(ctx, mount.Source, volDest, changedSince, volExclusions, effectiveCompression, prevBySource[mount.Source]); err != nil {
+				if filterVolume {
+					if err := tarDirectoryFilteredWithPrev(ctx, resolvedSource, volDest, changedSince, volExclusions, effectiveCompression, prevBySource[mount.Source]); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				} else {
-					if err := tarDirectory(ctx, mount.Source, volDest, volExclusions, effectiveCompression); err != nil {
+					if err := tarDirectory(ctx, resolvedSource, volDest, volExclusions, effectiveCompression); err != nil {
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
 					}
 				}
@@ -1163,7 +1231,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				// file set after exclusions) — lets the NEXT differential detect
 				// NEW files with stale mtimes (issue #320). Best-effort, mirroring
 				// folder.go's WriteEffectiveListing usage.
-				if err := WriteEffectiveListing(mount.Source, volDest, volExclusions); err != nil {
+				if err := WriteEffectiveListing(resolvedSource, volDest, volExclusions); err != nil {
 					log.Printf("engine: warning: failed to write volume listing for %s: %v", mount.Source, err)
 				} else {
 					result.Files = append(result.Files, backupFileInfo(volDest+ListingSuffix))
@@ -1189,7 +1257,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				// already handled at the volume level above via
 				// shouldExcludeMount (issue #70).
 
-				if err := tarFile(ctx, mount.Source, volDest, effectiveCompression); err != nil {
+				if err := tarFile(ctx, resolvedSource, volDest, effectiveCompression); err != nil {
 					return fmt.Errorf("archiving volume file %s: %w", mount.Source, err)
 				}
 				entry.IsFile = true
@@ -1320,7 +1388,7 @@ func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, 
 // container at all: when no volume changed, the in-loop per-volume
 // pathChangedSince checks skip every volume anyway, so the stop/restart
 // cycle would be pure downtime with no consistency benefit.
-func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, changedSince time.Time, prevBySource map[string]map[string]struct{}) (map[string]bool, bool, error) {
+func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, changedSince time.Time, prevBySource map[string]map[string]struct{}, prevResolvedBySource map[string]string) (map[string]bool, bool, error) {
 	changes := make(map[string]bool)
 	anyChanged := false
 	for _, mnt := range mounts {
@@ -1339,9 +1407,18 @@ func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, e
 		if shouldExcludeMount(exclusions, mnt.Destination) {
 			continue
 		}
-		changed, err := pathChangedSinceWithPrev(ctx, mnt.Source, changedSince, prevBySource[mnt.Source])
-		if err != nil {
-			return nil, false, fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
+		// Walk from the resolved path so the relative paths match the
+		// listing's, and treat a source whose resolution no longer matches
+		// the parent's as changed: it is captured in full anyway, and the
+		// container must be stopped for that capture (issue #353).
+		resolved := resolveMountSource(mnt.Source)
+		changed := true
+		if reuseParentVolumeListing(mnt.Source, resolved, prevResolvedBySource) {
+			var err error
+			changed, err = pathChangedSinceWithPrev(ctx, resolved, changedSince, prevBySource[mnt.Source])
+			if err != nil {
+				return nil, false, fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
+			}
 		}
 		changes[mnt.Source] = changed
 		if changed {
@@ -2197,7 +2274,9 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		// prev-aware stop check. Without it, a running container whose only
 		// change is such a file is not stopped and is backed up live.
 		prevBySource := chunkedPrevBySource(parent, inspect.Mounts, repo)
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource)
+		// The chunked parent records no symlink resolution, so there is
+		// nothing to compare against and the listing is used as-is.
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource, nil)
 		if err != nil {
 			return dedup.ID{}, err
 		}
@@ -2267,6 +2346,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			// len(pe.Chunks) > 0 guard also rejects a pre-PR parent entry
 			// that recorded the volume as the -1 skip sentinel, which must
 			// be re-chunked rather than carried forward.
+			// Every filesystem operation below works from the resolved
+			// path, matching the classic path and the effective listing
+			// (issue #353). mnt.Source stays the manifest's key.
+			resolvedSource := resolveMountSource(mnt.Source)
+
 			var volParent *dedup.Manifest
 			if hasChangedSince && parent != nil {
 				if pe, ok := parent.Files[key]; ok && len(pe.Chunks) > 0 {
@@ -2280,7 +2364,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				changed, cached := volChanges[mnt.Source]
 				if !cached {
 					var err error
-					changed, err = pathChangedSince(ctx, mnt.Source, changedSince)
+					changed, err = pathChangedSince(ctx, resolvedSource, changedSince)
 					if err != nil {
 						return fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
 					}
@@ -2300,7 +2384,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 						Name: mnt.Destination,
 						Type: "folder",
 						Settings: map[string]any{
-							"path":          mnt.Source,
+							"path":          resolvedSource,
 							"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 						},
 					}
@@ -2320,7 +2404,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				Name: mnt.Destination,
 				Type: "folder",
 				Settings: map[string]any{
-					"path":          mnt.Source,
+					"path":          resolvedSource,
 					"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 				},
 			}

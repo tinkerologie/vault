@@ -33,10 +33,23 @@ func TestLoadParentVolumeListingPaths(t *testing.T) {
 	)
 
 	cases := []struct {
-		name  string
-		files map[string]string
-		want  map[string][]string
+		name         string
+		files        map[string]string
+		want         map[string][]string
+		wantResolved map[string]string
 	}{
+		{
+			// A manifest written since issue #353 also records what each
+			// mount source resolved to, so the engine can prove the mount
+			// still points at the same tree before reusing the listing.
+			name: "resolved sources are returned alongside the paths",
+			files: map[string]string{
+				itemPrefix + "/volumes.json":              `[{"index":0,"source":"` + sourcePath + `","resolved_source":"/mnt/disk1/appdata/foo","destination":"/data","backed_up":true,"archive":"volume_0.tar"}]`,
+				itemPrefix + "/volume_0.tar.listing.json": `{"version":1,"archive":"volume_0.tar","files":[{"path":"old.txt"}]}`,
+			},
+			want:         map[string][]string{sourcePath: {"old.txt"}},
+			wantResolved: map[string]string{sourcePath: "/mnt/disk1/appdata/foo"},
+		},
 		{
 			name: "manifest and listing resolve to per-volume paths",
 			files: map[string]string{
@@ -104,9 +117,19 @@ func TestLoadParentVolumeListingPaths(t *testing.T) {
 			parentRP := db.RestorePoint{StoragePath: "chain-test/1_full"}
 
 			r := New(database, ws.NewHub(), nil)
-			got := r.loadParentVolumeListingPaths(&parentRP, dest, "my-item", "")
+			got, gotResolved := r.loadParentVolumeListingPaths(&parentRP, dest, "my-item", "")
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("loadParentVolumeListingPaths() = %#v, want %#v", got, tc.want)
+			}
+			// A manifest predating issue #353 records no resolution, which
+			// must come back empty rather than invented.
+			if len(gotResolved) != len(tc.wantResolved) {
+				t.Fatalf("resolved sources = %#v, want %#v", gotResolved, tc.wantResolved)
+			}
+			for src, resolved := range tc.wantResolved {
+				if gotResolved[src] != resolved {
+					t.Errorf("resolved source for %s = %q, want %q", src, gotResolved[src], resolved)
+				}
 			}
 		})
 	}
@@ -195,7 +218,7 @@ func TestLoadParentVolumeListingPaths_Encrypted(t *testing.T) {
 			parentRP := db.RestorePoint{StoragePath: "chain-test/1_full"}
 
 			r := New(database, ws.NewHub(), nil)
-			got := r.loadParentVolumeListingPaths(&parentRP, dest, "my-item", tc.passphrase)
+			got, _ := r.loadParentVolumeListingPaths(&parentRP, dest, "my-item", tc.passphrase)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("loadParentVolumeListingPaths() = %#v, want %#v", got, tc.want)
 			}
@@ -212,13 +235,15 @@ func TestApplyClassicDiffListing(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name               string
-		itemType           string
-		listingPaths       []string
-		volumeListingPaths map[string][]string
-		wantChangedSince   bool
-		wantPrevKey        string
-		wantPrevValue      any
+		name                  string
+		itemType              string
+		listingPaths          []string
+		volumeListingPaths    map[string][]string
+		volumeResolvedSources map[string]string
+		wantResolvedSources   map[string]string
+		wantChangedSince      bool
+		wantPrevKey           string
+		wantPrevValue         any
 	}{
 		{
 			name:             "folder with listing keeps changed_since and attaches prev_listing_paths",
@@ -243,6 +268,18 @@ func TestApplyClassicDiffListing(t *testing.T) {
 			wantPrevValue:      map[string][]string{"/mnt/appdata": {"old.txt"}},
 		},
 		{
+			// Issue #353: the resolutions travel with the listing so the
+			// engine can prove each mount still points at the same tree.
+			name:                  "container listing carries the parent's resolved sources",
+			itemType:              "container",
+			volumeListingPaths:    map[string][]string{"/mnt/appdata": {"old.txt"}},
+			volumeResolvedSources: map[string]string{"/mnt/appdata": "/mnt/disk1/appdata"},
+			wantChangedSince:      true,
+			wantPrevKey:           "prev_volume_listing_paths",
+			wantPrevValue:         map[string][]string{"/mnt/appdata": {"old.txt"}},
+			wantResolvedSources:   map[string]string{"/mnt/appdata": "/mnt/disk1/appdata"},
+		},
+		{
 			name:               "container with nil listing clears changed_since (full archive)",
 			itemType:           "container",
 			volumeListingPaths: nil,
@@ -253,11 +290,20 @@ func TestApplyClassicDiffListing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			settings := map[string]any{"changed_since": "2026-08-24T00:00:00Z"}
-			applyClassicDiffListing(settings, tc.itemType, tc.listingPaths, tc.volumeListingPaths)
+			applyClassicDiffListing(settings, tc.itemType, tc.listingPaths, tc.volumeListingPaths, tc.volumeResolvedSources)
 
 			_, hasChangedSince := settings["changed_since"]
 			if hasChangedSince != tc.wantChangedSince {
 				t.Fatalf("changed_since present = %v, want %v (settings = %#v)", hasChangedSince, tc.wantChangedSince, settings)
+			}
+
+			gotResolved, hasResolved := settings["prev_volume_resolved_sources"]
+			if tc.wantResolvedSources == nil {
+				if hasResolved {
+					t.Fatalf("unexpected prev_volume_resolved_sources set: %#v", settings)
+				}
+			} else if !reflect.DeepEqual(gotResolved, tc.wantResolvedSources) {
+				t.Fatalf("prev_volume_resolved_sources = %#v, want %#v", gotResolved, tc.wantResolvedSources)
 			}
 
 			if tc.wantPrevKey != "" {

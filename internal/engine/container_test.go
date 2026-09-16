@@ -1144,7 +1144,7 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, reference, tc.prevBySource)
+			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, reference, tc.prevBySource, nil)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")

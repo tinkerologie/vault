@@ -1217,12 +1217,13 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				if !dest.DedupEnabled {
 					var listingPaths []string
 					var volumeListingPaths map[string][]string
+					var volumeResolvedSources map[string]string
 					if item.ItemType == "folder" {
 						listingPaths = r.loadParentListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
 					} else {
-						volumeListingPaths = r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
+						volumeListingPaths, volumeResolvedSources = r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
 					}
-					applyClassicDiffListing(backupItem.Settings, item.ItemType, listingPaths, volumeListingPaths)
+					applyClassicDiffListing(backupItem.Settings, item.ItemType, listingPaths, volumeListingPaths, volumeResolvedSources)
 					if _, hasChangedSince := backupItem.Settings["changed_since"]; !hasChangedSince {
 						log.Printf("runner: parent listing unavailable for %s — degrading %s backup to a full archive (mtime-only filtering would drop stale-mtime new files)", item.ItemName, btResult.BackupType)
 					}
@@ -3872,17 +3873,17 @@ func (r *Runner) loadParentListingPaths(parentRP *db.RestorePoint, dest db.Stora
 // changed_since to degrade to a full archive (see applyClassicDiffListing) —
 // never a partial map that would leave the unresolved volume on mtime-only
 // filtering.
-func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) map[string][]string {
+func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) (map[string][]string, map[string]string) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer storage.CloseAdapter(adapter)
 
 	itemPrefix := path.Join(parentRP.StoragePath, itemName)
 	entries, err := adapter.List(itemPrefix)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	// Index files by base name so the manifest's archive names resolve to
@@ -3936,19 +3937,25 @@ func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db
 	// correlation key — the volume_N index can shift when mounts are reordered.
 	manifestRC, ok := openSidecar("volumes.json")
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	var vols []struct {
-		Source  string `json:"source"`
-		Archive string `json:"archive,omitempty"`
+		Source string `json:"source"`
+		// ResolvedSource is the symlink-resolved path the listing's relative
+		// paths are keyed to (issue #353). Absent in backups taken before it
+		// was recorded; the engine then trusts the listing only for a source
+		// that resolves to itself.
+		ResolvedSource string `json:"resolved_source,omitempty"`
+		Archive        string `json:"archive,omitempty"`
 	}
 	decodeErr := json.NewDecoder(manifestRC).Decode(&vols)
 	_ = manifestRC.Close()
 	if decodeErr != nil {
-		return nil
+		return nil, nil
 	}
 
 	out := make(map[string][]string)
+	resolved := make(map[string]string)
 	for _, v := range vols {
 		if v.Archive == "" {
 			continue
@@ -3960,23 +3967,26 @@ func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db
 			// filtering in the engine — silently dropping a NEW
 			// stale-mtime file. Returning nil makes the caller clear
 			// changed_since and degrade to a full archive instead.
-			return nil
+			return nil, nil
 		}
 		idx, err := engine.ReadTarIndex(listingRC)
 		_ = listingRC.Close()
 		if err != nil {
-			return nil
+			return nil, nil
 		}
 		paths := make([]string, 0, len(idx.Files))
 		for _, f := range idx.Files {
 			paths = append(paths, f.Path)
 		}
 		out[v.Source] = paths
+		if v.ResolvedSource != "" {
+			resolved[v.Source] = v.ResolvedSource
+		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, nil
 	}
-	return out
+	return out, resolved
 }
 
 // applyClassicDiffListing resolves the changed_since / prev-listing settings
@@ -3987,7 +3997,7 @@ func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db
 // never silent mtime-only filtering, which would drop a NEW stale-mtime file
 // (e.g. cp -a), the literal issue #320 data-loss class. Dedup items carry
 // forward via the parent manifest in the engine and never reach this helper.
-func applyClassicDiffListing(settings map[string]any, itemType string, listingPaths []string, volumeListingPaths map[string][]string) {
+func applyClassicDiffListing(settings map[string]any, itemType string, listingPaths []string, volumeListingPaths map[string][]string, volumeResolvedSources map[string]string) {
 	switch itemType {
 	case "folder":
 		if listingPaths != nil {
@@ -3998,6 +4008,13 @@ func applyClassicDiffListing(settings map[string]any, itemType string, listingPa
 	case "container":
 		if volumeListingPaths != nil {
 			settings["prev_volume_listing_paths"] = volumeListingPaths
+			// The resolution each listing was keyed to, so the engine can
+			// prove the mount still points at the same tree (issue #353).
+			// Absent for a parent taken before it was recorded, which the
+			// engine treats as "trust only an unsymlinked source".
+			if len(volumeResolvedSources) > 0 {
+				settings["prev_volume_resolved_sources"] = volumeResolvedSources
+			}
 		} else {
 			delete(settings, "changed_since")
 		}

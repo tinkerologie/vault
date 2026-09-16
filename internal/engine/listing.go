@@ -149,3 +149,34 @@ func prevVolumeListingSet(settings map[string]any) map[string]map[string]struct{
 	}
 	return out
 }
+
+// prevVolumeResolvedSources parses the "prev_volume_resolved_sources" setting
+// (injected by the runner for differential/incremental classic container
+// backups) into mount source host path -> the symlink-resolved path the
+// parent restore point's per-volume effective listing was keyed to.
+//
+// Returns nil when the setting is absent, which is also what a parent taken
+// before issue #353 produces; reuseParentVolumeListing then falls back to
+// trusting the listing only for a source that resolves to itself. Both the
+// typed map[string]string (direct runner->engine calls) and the JSON-decoded
+// map[string]any forms are accepted.
+func prevVolumeResolvedSources(settings map[string]any) map[string]string {
+	raw, ok := settings["prev_volume_resolved_sources"]
+	if !ok || raw == nil {
+		return nil
+	}
+	out := map[string]string{}
+	switch v := raw.(type) {
+	case map[string]string:
+		for src, resolved := range v {
+			out[src] = resolved
+		}
+	case map[string]any:
+		for src, val := range v {
+			if resolved, isStr := val.(string); isStr {
+				out[src] = resolved
+			}
+		}
+	}
+	return out
+}
