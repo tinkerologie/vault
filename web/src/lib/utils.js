@@ -543,7 +543,7 @@ export function commonItemType(items) {
   if (!Array.isArray(items) || items.length === 0) return ''
   let found = ''
   for (const item of items) {
-    const t = normaliseItemType(item?.item_type || item?.type)
+    const t = effectiveItemType(item) || normaliseItemType(item?.item_type || item?.type)
     if (!t) return ''
     if (!found) found = t
     else if (found !== t) return ''

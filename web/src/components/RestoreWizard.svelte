@@ -4,7 +4,7 @@
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { isRestoreActive } from '../lib/restore-sync.js'
-  import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType } from '../lib/utils.js'
+  import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType, commonItemType } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
@@ -728,6 +728,9 @@
           </div>
         {/each}
       </div>
+      <p class="text-sm text-text-muted mt-3">
+        Select a restore point to restore from. Each entry represents a saved backup version showing its archive size and estimated restore size. The activity graph highlights backup density across days.
+      </p>
     </div>
 
     {#if loadingPoints}
@@ -747,6 +750,7 @@
         deletingId={deletingRpId}
         confirmDeleteId={confirmDeleteRpId}
         sizeFor={selectedRestoreSize}
+        itemType={commonItemType(selectedItemsArray)}
       />
       <p class="text-xs text-text-dim mt-3 text-center">{restorePoints.length} restore point{restorePoints.length !== 1 ? 's' : ''}</p>
     {/if}

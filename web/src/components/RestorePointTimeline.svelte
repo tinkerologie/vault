@@ -1,5 +1,5 @@
 <script>
-  import { formatBytes, formatDate, relTime } from '../lib/utils.js'
+  import { formatBytes, formatDate, relTime, itemTypeCountLabel } from '../lib/utils.js'
   import Tooltip from './Tooltip.svelte'
 
   let {
@@ -12,6 +12,8 @@
     confirmDeleteId = null,
     /** Optional (rp) => bytes for the displayed size (e.g. selected-items only). */
     sizeFor,
+    /** Optional item type for type-specific nouns in count labels */
+    itemType = '',
   } = $props()
 
   function parseMeta(rp) {
@@ -78,6 +80,22 @@
   let strip = $derived([...days].reverse())
   let maxDaySize = $derived(Math.max(1, ...days.map((d) => d.size)))
 
+  let graphLabels = $derived.by(() => {
+    if (strip.length <= 1) return []
+    if (strip.length === 2) {
+      return [
+        { text: strip[0].label, align: 'text-left' },
+        { text: strip[1].label, align: 'text-right' },
+      ]
+    }
+    const midIdx = Math.floor((strip.length - 1) / 2)
+    return [
+      { text: strip[0].label, align: 'text-left' },
+      { text: strip[midIdx].label, align: 'text-center' },
+      { text: strip[strip.length - 1].label, align: 'text-right' },
+    ]
+  })
+
   function scrollToDay(key) {
     const el = document.getElementById(`rpday-${key}`)
     if (!el) return
@@ -103,8 +121,9 @@
         {/each}
       </div>
       <div class="flex justify-between text-[10px] text-text-dim mt-1.5">
-        <span>{strip[0].label}</span>
-        <span>{strip[strip.length - 1].label}</span>
+        {#each graphLabels as label (label.align)}
+          <span class={label.align}>{label.text}</span>
+        {/each}
       </div>
     </div>
   {/if}
@@ -114,7 +133,7 @@
     <div id="rpday-{day.key}" class="scroll-mt-4">
       <div class="flex items-baseline justify-between mb-2">
         <h4 class="text-xs font-semibold text-text-muted">{day.label}</h4>
-        <span class="text-[11px] text-text-dim">{day.points.length} backup{day.points.length !== 1 ? 's' : ''} · {formatBytes(day.size)}</span>
+        <span class="text-[11px] text-text-dim font-medium">{formatBytes(day.size)}</span>
       </div>
       <div class="space-y-1.5 border-l border-border pl-4 ml-1">
         {#each day.points as rp (rp.id)}
@@ -163,12 +182,15 @@
                     type="button"
                     onclick={(e) => { e.stopPropagation(); onDelete(rp) }}
                     disabled={deletingId === rp.id}
-                    title={confirmDeleteId === rp.id ? 'Click again to confirm' : 'Delete this backup'}
-                    aria-label="Delete restore point"
-                    class="p-1 rounded transition-colors {confirmDeleteId === rp.id ? 'text-danger hover:text-danger/80' : 'text-text-dim hover:text-danger'} disabled:opacity-40 cursor-pointer"
+                    title={confirmDeleteId === rp.id ? 'Click to confirm permanent deletion' : 'Delete this backup'}
+                    aria-label={confirmDeleteId === rp.id ? 'Confirm deletion of restore point' : 'Delete restore point'}
+                    class="rounded transition-all cursor-pointer disabled:opacity-40 {confirmDeleteId === rp.id ? 'px-2 py-0.5 text-xs font-medium text-danger bg-danger/15 hover:bg-danger/25 border border-danger/40 flex items-center gap-1.5' : 'p-1 text-text-dim hover:text-danger'}"
                   >
                     {#if deletingId === rp.id}
                       <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    {:else if confirmDeleteId === rp.id}
+                      <svg class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                      <span>Delete?</span>
                     {:else}
                       <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                     {/if}
@@ -177,11 +199,16 @@
               </div>
             </div>
 
-            <div class="flex items-center gap-4 text-xs text-text-dim mt-1.5">
-              <span>{formatBytes(dsz)}{dsz !== rp.size_bytes ? ' selected' : ''}</span>
+            <div class="flex items-center gap-4 text-xs text-text-dim mt-1.5 flex-wrap">
+              {#if dsz !== rp.size_bytes}
+                <span title="Estimated restore size for selected items"><span class="text-text-muted">Restore:</span> {formatBytes(dsz)}</span>
+                <span title="Total backup archive size"><span class="text-text-muted">Backup:</span> {formatBytes(rp.size_bytes)}</span>
+              {:else}
+                <span title="Backup archive size"><span class="text-text-muted">Size:</span> {formatBytes(rp.size_bytes)}</span>
+              {/if}
               {#if rp.jobName}<span class="text-text-muted truncate">{rp.jobName}</span>{/if}
               {#if itemCount != null}
-                <span>{itemCount} item{itemCount !== 1 ? 's' : ''}</span>
+                <span>{itemTypeCountLabel(itemCount, itemType)}</span>
               {/if}
             </div>
 

@@ -589,5 +589,30 @@ describe('isFlashItem and effectiveItemType', () => {
     expect(effectiveItemType({ item_type: 'plugin' })).toBe('plugin')
     expect(effectiveItemType(null)).toBe('')
   })
+
+  it('detects flash items in commonItemType', () => {
+    expect(commonItemType([{ item_type: 'folder', settings: { preset: 'flash' } }])).toBe('flash')
+    expect(commonItemType([
+      { item_type: 'folder', settings: { preset: 'flash' } },
+      { type: 'flash' },
+    ])).toBe('flash')
+    expect(commonItemType([
+      { item_type: 'folder', settings: { preset: 'flash' } },
+      { item_type: 'folder' },
+    ])).toBe('')
+  })
+})
+
+describe('itemTypeCountLabel with itemType', () => {
+  it('formats counts with type-specific nouns', () => {
+    expect(itemTypeCountLabel(1, 'container')).toBe('1 container')
+    expect(itemTypeCountLabel(8, 'container')).toBe('8 containers')
+    expect(itemTypeCountLabel(1, 'vm')).toBe('1 VM')
+    expect(itemTypeCountLabel(3, 'vm')).toBe('3 VMs')
+    expect(itemTypeCountLabel(1, 'flash')).toBe('1 flash drive')
+    expect(itemTypeCountLabel(2, 'flash')).toBe('2 flash drives')
+    expect(itemTypeCountLabel(5, 'plugin')).toBe('5 plugins')
+    expect(itemTypeCountLabel(4, '')).toBe('4 items')
+  })
 })
 

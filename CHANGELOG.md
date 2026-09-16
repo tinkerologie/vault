@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Restore wizard page 2 timeline, size, and confirmation UX improvements (#332):** In Step 2 of the Restore Wizard, clarified backup sizes by displaying explicit "Restore:" and "Backup:" labels instead of the ambiguous "selected" suffix, updated item counts to use type-specific nouns (e.g. "containers", "VMs", "flash drives") when the selection is homogeneous, simplified daily group headers to display aggregate sizes directly, added intermediate date labels to the activity density graph, added an introductory overview paragraph explaining the version list, and upgraded restore point deletion to an expanding two-click "Delete?" confirmation badge with descriptive accessibility labels. Closes #332.
+
 - **Restore wizard page 1 UI and item selection improvements (#327):** Reorganized Step 1 of the Restore Wizard with alphabetical item sorting by default, quick search filtering across labels and job names, distinct filter chips and dedicated icon badge for Unraid Flash Drive backups, compact card layouts with uppercase type badges, and a sticky bottom floating action bar with active selection counts so operators can proceed immediately without scrolling long item lists. Closes #327.
 
 - **Storage scan and import support encrypted manifests (#325):** Scanning a storage destination now automatically decrypts deduplicated manifests using the local server key and identifies age-encrypted manifests. When age-encrypted manifests are detected, the Import modal displays an encryption notice with a passphrase field and unlock button, allowing users to decrypt metadata and import backups securely. Closes #325.
