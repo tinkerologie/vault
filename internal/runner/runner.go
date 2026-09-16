@@ -980,8 +980,13 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	r.logActivity("info", "backup", fmt.Sprintf("Backup started, job=%q", job.Name),
 		structuredDetails(startedDetails))
 
+	// <job name>/<timestamp>. The run ID used to lead the folder name, which
+	// made every run of a job sort apart from its siblings and buried the one
+	// thing an operator browsing storage actually wants — when it ran
+	// (issue #319). The run ID lives in the database, where the restore point
+	// already links back to it.
 	timestamp := time.Now().Format("2006-01-02_150405")
-	basePath := fmt.Sprintf("%s/%d_%s", job.Name, runID, timestamp)
+	basePath := uniqueRunPath(dest, fmt.Sprintf("%s/%s", job.Name, timestamp), runID)
 
 	// Resolve encryption passphrase if job has encryption enabled.
 	var encryptPassphrase string
@@ -5711,7 +5716,10 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]
 
 	var manifests []map[string]any
 
-	// Walk <job_name>/<run_id>_<timestamp>/manifest.json.
+	// Walk <job_name>/<run_folder>/manifest.json. The run folder is a plain
+	// timestamp since issue #319 and was <run_id>_<timestamp> before it; the
+	// walk reads whatever directory names it finds and never parses them, so
+	// both layouts are discovered without a migration.
 	for _, jobDir := range topEntries {
 		if !jobDir.IsDir {
 			continue
