@@ -112,6 +112,10 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "type is required")
 		return
 	}
+	if dest.StageBesideDestination && dest.Type != "local" {
+		respondError(w, http.StatusBadRequest, "stage_beside_destination is only supported for local storage destinations")
+		return
+	}
 	// Validate the config can construct a working adapter before persisting.
 	// Catches typos like type:"bogus", empty configs, malformed JSON in the
 	// config blob, and other misconfigurations that would otherwise sit in
@@ -174,11 +178,12 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// after creation; we reject attempts to change them rather than
 	// silently ignore.
 	var patch struct {
-		Name                  *string `json:"name"`
-		Type                  *string `json:"type"`
-		Config                *string `json:"config"`
-		DedupEnabled          *bool   `json:"dedup_enabled"`
-		BackupDatabaseEnabled *bool   `json:"backup_database_enabled"`
+		Name                   *string `json:"name"`
+		Type                   *string `json:"type"`
+		Config                 *string `json:"config"`
+		DedupEnabled           *bool   `json:"dedup_enabled"`
+		BackupDatabaseEnabled  *bool   `json:"backup_database_enabled"`
+		StageBesideDestination *bool   `json:"stage_beside_destination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
@@ -223,6 +228,13 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if patch.BackupDatabaseEnabled != nil {
 		existing.BackupDatabaseEnabled = *patch.BackupDatabaseEnabled
+	}
+	if patch.StageBesideDestination != nil {
+		if *patch.StageBesideDestination && existing.Type != "local" {
+			respondError(w, http.StatusBadRequest, "stage_beside_destination is only supported for local storage destinations")
+			return
+		}
+		existing.StageBesideDestination = *patch.StageBesideDestination
 	}
 	if err := h.db.UpdateStorageDestination(existing); err != nil {
 		respondWriteError(w, err, "storage destination")
@@ -1273,6 +1285,7 @@ func storageResponseWithCapacity(d db.StorageDestination) map[string]any {
 		"type":                     d.Type,
 		"config":                   redactConfig(d.Config),
 		"dedup_enabled":            d.DedupEnabled,
+		"stage_beside_destination": d.StageBesideDestination,
 		"last_health_check_at":     d.LastHealthCheckAt,
 		"last_health_check_status": d.LastHealthCheckStatus,
 		"last_health_check_error":  d.LastHealthCheckError,

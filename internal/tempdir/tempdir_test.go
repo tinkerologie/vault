@@ -553,3 +553,93 @@ func TestResolveInfoCacheCascadePopulated(t *testing.T) {
 		t.Errorf("expected 1 available cache, got %d", availableCount)
 	}
 }
+
+func TestCreateBackupDirStageBesideWins(t *testing.T) {
+	cacheRoot := t.TempDir()
+	cleanup := SetCachePathsForTest([]string{cacheRoot})
+	defer cleanup()
+
+	localDestDir := t.TempDir()
+
+	// 1. StageBeside = true: local destination-adjacent path wins over cache pool.
+	destBeside := StorageConfig{
+		Type:        "local",
+		Config:      `{"path":"` + localDestDir + `"}`,
+		StageBeside: true,
+	}
+	dir, cleanupDir, err := CreateBackupDir(destBeside, "")
+	if err != nil {
+		t.Fatalf("CreateBackupDir(StageBeside=true) error = %v", err)
+	}
+	defer cleanupDir()
+
+	if !strings.HasPrefix(dir, localDestDir) {
+		t.Errorf("expected dir under localDestDir %s, got %s", localDestDir, dir)
+	}
+
+	// 2. StageBeside = false: cache pool wins over local destination.
+	destNormal := StorageConfig{
+		Type:        "local",
+		Config:      `{"path":"` + localDestDir + `"}`,
+		StageBeside: false,
+	}
+	dirNorm, cleanupNorm, err := CreateBackupDir(destNormal, "")
+	if err != nil {
+		t.Fatalf("CreateBackupDir(StageBeside=false) error = %v", err)
+	}
+	defer cleanupNorm()
+
+	if !strings.HasPrefix(dirNorm, cacheRoot) {
+		t.Errorf("expected dir under cacheRoot %s, got %s", cacheRoot, dirNorm)
+	}
+}
+
+func TestResolveInfoStageBesideWins(t *testing.T) {
+	cacheRoot := t.TempDir()
+	cleanup := SetCachePathsForTest([]string{cacheRoot})
+	defer cleanup()
+
+	localDestDir := t.TempDir()
+	dests := []StorageConfig{
+		{
+			Type:        "local",
+			Config:      `{"path":"` + localDestDir + `"}`,
+			StageBeside: true,
+		},
+	}
+
+	info := ResolveInfo(dests, "")
+	if info.Source != "destination" {
+		t.Errorf("Source = %q, want %q", info.Source, "destination")
+	}
+	expectedPath := filepath.Join(localDestDir, StageDirName)
+	if info.ResolvedPath != expectedPath {
+		t.Errorf("ResolvedPath = %q, want %q", info.ResolvedPath, expectedPath)
+	}
+	foundCascade := false
+	for _, c := range info.Cascade {
+		if c.Source == "destination" && c.Available && c.Path == expectedPath {
+			foundCascade = true
+		}
+	}
+	if !foundCascade {
+		t.Errorf("expected available cascade entry with Source 'destination' and path %q, got: %+v", expectedPath, info.Cascade)
+	}
+}
+
+func TestRankCandidatesByFreeSpace(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+
+	ranked := rankCandidatesByFreeSpace([]string{dir1, missing, dir2})
+	if len(ranked) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(ranked))
+	}
+	// Missing directory was filtered out.
+	for _, p := range ranked {
+		if p == missing {
+			t.Errorf("unexpected missing dir in ranked candidates: %s", missing)
+		}
+	}
+}

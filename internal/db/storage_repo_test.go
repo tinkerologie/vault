@@ -75,6 +75,72 @@ func TestStorageDestinationAnomalySensitivityRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStorageDestinationStageBesideDestinationRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+	id, err := d.CreateStorageDestination(StorageDestination{Name: "stage-beside-dest", Type: "local", Config: "{}"})
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+
+	// Defaults to false on create.
+	got, err := d.GetStorageDestination(id)
+	if err != nil {
+		t.Fatalf("Get error = %v", err)
+	}
+	if got.StageBesideDestination {
+		t.Errorf("StageBesideDestination after create = %v, want false", got.StageBesideDestination)
+	}
+
+	// Set via UpdateStorageDestination and confirm it round-trips.
+	got.StageBesideDestination = true
+	if err := d.UpdateStorageDestination(got); err != nil {
+		t.Fatalf("Update error = %v", err)
+	}
+	got2, err := d.GetStorageDestination(id)
+	if err != nil {
+		t.Fatalf("GetStorageDestination after update error = %v", err)
+	}
+	if !got2.StageBesideDestination {
+		t.Errorf("StageBesideDestination after update = %v, want true", got2.StageBesideDestination)
+	}
+
+	// Also verify ListStorageDestinations loads it.
+	dests, err := d.ListStorageDestinations()
+	if err != nil {
+		t.Fatalf("List error = %v", err)
+	}
+	found := false
+	for _, dest := range dests {
+		if dest.ID == id {
+			found = true
+			if !dest.StageBesideDestination {
+				t.Errorf("ListStorageDestinations StageBesideDestination = %v, want true", dest.StageBesideDestination)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("destination id %d not found in ListStorageDestinations", id)
+	}
+
+	// Create a new destination with StageBesideDestination = true directly.
+	id2, err := d.CreateStorageDestination(StorageDestination{
+		Name:                   "stage-beside-dest-direct",
+		Type:                   "local",
+		Config:                 "{}",
+		StageBesideDestination: true,
+	})
+	if err != nil {
+		t.Fatalf("Create direct error = %v", err)
+	}
+	gotDirect, err := d.GetStorageDestination(id2)
+	if err != nil {
+		t.Fatalf("Get direct error = %v", err)
+	}
+	if !gotDirect.StageBesideDestination {
+		t.Errorf("StageBesideDestination created direct = %v, want true", gotDirect.StageBesideDestination)
+	}
+}
+
 func TestListStorageDestinations(t *testing.T) {
 	d := setupTestDB(t)
 	d.CreateStorageDestination(StorageDestination{Name: "a", Type: "local", Config: "{}"})

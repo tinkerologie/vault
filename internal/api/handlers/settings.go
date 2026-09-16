@@ -497,7 +497,7 @@ func (h *SettingsHandler) GetStagingInfo(w http.ResponseWriter, r *http.Request)
 	}
 	configs := make([]tempdir.StorageConfig, len(dests))
 	for i, d := range dests {
-		configs[i] = tempdir.StorageConfig{Type: d.Type, Config: d.Config}
+		configs[i] = tempdir.StorageConfig{Type: d.Type, Config: d.Config, StageBeside: d.StageBesideDestination}
 	}
 	info := tempdir.ResolveInfo(configs, override)
 	respondJSON(w, http.StatusOK, info)

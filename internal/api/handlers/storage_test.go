@@ -559,6 +559,57 @@ func TestStorageCreate_Local(t *testing.T) {
 	}
 }
 
+func TestStorageCreate_StageBesideDestination_Local(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+
+	storageDir := t.TempDir()
+	cfgJSON, _ := json.Marshal(map[string]string{"path": storageDir})
+	payload, _ := json.Marshal(map[string]any{
+		"name":                     "local-stage-beside",
+		"type":                     "local",
+		"config":                   string(cfgJSON),
+		"stage_beside_destination": true,
+	})
+
+	w := httptest.NewRecorder()
+	h.Create(w, httptest.NewRequest(http.MethodPost, "/api/v1/storage", bytes.NewReader(payload)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if stageBeside, ok := resp["stage_beside_destination"].(bool); !ok || !stageBeside {
+		t.Errorf("stage_beside_destination = %v, want true", resp["stage_beside_destination"])
+	}
+}
+
+func TestStorageCreate_StageBesideDestination_NonLocal_Rejected(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+
+	cfgJSON, _ := json.Marshal(map[string]string{
+		"bucket":     "vault-bk",
+		"region":     "us-east-1",
+		"access_key": "AK",
+		"secret_key": "SK",
+	})
+	payload, _ := json.Marshal(map[string]any{
+		"name":                     "s3-stage-beside",
+		"type":                     "s3",
+		"config":                   string(cfgJSON),
+		"stage_beside_destination": true,
+	})
+
+	w := httptest.NewRecorder()
+	h.Create(w, httptest.NewRequest(http.MethodPost, "/api/v1/storage", bytes.NewReader(payload)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestStorageCreate_MissingName(t *testing.T) {
 	t.Parallel()
 	h, _ := newDedupStorageHandler(t, false)
@@ -623,6 +674,57 @@ func TestStorageUpdate_Name(t *testing.T) {
 	}
 	if resp["name"] != "renamed-dest" {
 		t.Errorf("name = %v, want renamed-dest", resp["name"])
+	}
+}
+
+func TestStorageUpdate_StageBesideDestination_Local(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	body := []byte(`{"stage_beside_destination":true}`)
+	w := httptest.NewRecorder()
+	h.Update(w, reqWithID(http.MethodPut, "/api/v1/storage/"+idStr, idStr, body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if stageBeside, ok := resp["stage_beside_destination"].(bool); !ok || !stageBeside {
+		t.Errorf("stage_beside_destination = %v, want true", resp["stage_beside_destination"])
+	}
+
+	// Verify persistence in DB
+	saved, err := h.db.GetStorageDestination(destID)
+	if err != nil {
+		t.Fatalf("GetStorageDestination: %v", err)
+	}
+	if !saved.StageBesideDestination {
+		t.Errorf("saved.StageBesideDestination = false, want true")
+	}
+}
+
+func TestStorageUpdate_StageBesideDestination_NonLocal_Rejected(t *testing.T) {
+	t.Parallel()
+	h, _ := newDedupStorageHandler(t, false)
+
+	s3ID, err := h.db.CreateStorageDestination(db.StorageDestination{
+		Name:   "s3-test",
+		Type:   "s3",
+		Config: `{"bucket":"b","region":"r","access_key":"k","secret_key":"s"}`,
+	})
+	if err != nil {
+		t.Fatalf("create s3 destination: %v", err)
+	}
+	idStr := strconv.FormatInt(s3ID, 10)
+
+	body := []byte(`{"stage_beside_destination":true}`)
+	w := httptest.NewRecorder()
+	h.Update(w, reqWithID(http.MethodPut, "/api/v1/storage/"+idStr, idStr, body))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
 	}
 }
 

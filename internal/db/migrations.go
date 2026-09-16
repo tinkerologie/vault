@@ -330,6 +330,10 @@ var alterMigrations = []string{
 	// Scheduled full backups for incremental/differential chains (#322).
 	// A second cron expression per job; empty means no scheduled full.
 	"ALTER TABLE jobs ADD COLUMN full_backup_schedule TEXT DEFAULT ''",
+	// Staging beside local destinations (#366). When set to 1 for a local
+	// storage destination, classic folder/file backups stage temporary archives
+	// on the destination itself (<path>/.vault-stage) rather than cache pools.
+	"ALTER TABLE storage_destinations ADD COLUMN stage_beside_destination INTEGER NOT NULL DEFAULT 0",
 }
 
 // dataMigrations are idempotent row rewrites, applied after alterMigrations.

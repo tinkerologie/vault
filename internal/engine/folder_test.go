@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/tempdir"
 )
 
 func TestFolderHandlerListItems(t *testing.T) {
@@ -677,5 +680,144 @@ func TestFolderBackup_ProgressMilestones(t *testing.T) {
 				t.Errorf("progress milestones missing %q; got:\n%s", tc.want, joined)
 			}
 		})
+	}
+}
+
+// TestFolderBackupExcludesNestedStagingDir verifies that when destDir is nested
+// inside the source path (e.g. stage-beside-destination on local storage),
+// the staging directory is automatically excluded from the archive (issue #366).
+func TestFolderBackupExcludesNestedStagingDir(t *testing.T) {
+	t.Parallel()
+
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "real_file.txt"), []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a nested staging directory inside the source folder.
+	nestedStage := filepath.Join(srcDir, "backups", tempdir.StageDirName, "backup-run-123")
+	if err := os.MkdirAll(nestedStage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Place a file inside the nested stage that must NOT be archived.
+	if err := os.WriteFile(filepath.Join(nestedStage, "staged_file.tmp"), []byte("temporary data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := NewFolderHandler()
+	if err != nil {
+		t.Fatalf("NewFolderHandler: %v", err)
+	}
+
+	item := BackupItem{
+		Name:        "nested-stage-test",
+		Type:        "folder",
+		Settings:    map[string]any{"path": srcDir},
+		Compression: "none",
+	}
+
+	res, err := h.Backup(context.Background(), item, nestedStage, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("Backup() error = %v", err)
+	}
+	if !res.Success {
+		t.Fatal("Backup() returned success = false")
+	}
+
+	// Read the tar archive to verify staged_file.tmp was excluded.
+	archivePath := filepath.Join(nestedStage, "data.tar")
+	f, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer f.Close()
+
+	tr := tar.NewReader(f)
+	var archivedFiles []string
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar header: %v", err)
+		}
+		archivedFiles = append(archivedFiles, hdr.Name)
+	}
+
+	for _, name := range archivedFiles {
+		if strings.Contains(name, tempdir.StageDirName) || strings.Contains(name, "staged_file.tmp") {
+			t.Errorf("archive unexpectedly contains nested staging file %s (all: %v)", name, archivedFiles)
+		}
+	}
+
+	hasReal := false
+	for _, name := range archivedFiles {
+		if filepath.Base(name) == "real_file.txt" {
+			hasReal = true
+			break
+		}
+	}
+	if !hasReal {
+		t.Errorf("expected real_file.txt in archive, got: %v", archivedFiles)
+	}
+}
+
+func TestFolderBackupStagingOutsideSource(t *testing.T) {
+	t.Parallel()
+
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "real_file.txt"), []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	outsideStage := filepath.Join(t.TempDir(), "stage", tempdir.StageDirName, "backup-run-456")
+	if err := os.MkdirAll(outsideStage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := NewFolderHandler()
+	if err != nil {
+		t.Fatalf("NewFolderHandler: %v", err)
+	}
+
+	item := BackupItem{
+		Name:        "outside-stage-test",
+		Type:        "folder",
+		Settings:    map[string]any{"path": srcDir},
+		Compression: "none",
+	}
+
+	res, err := h.Backup(context.Background(), item, outsideStage, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("Backup() error = %v", err)
+	}
+	if !res.Success {
+		t.Fatal("Backup() returned success = false")
+	}
+
+	archivePath := filepath.Join(outsideStage, "data.tar")
+	f, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer f.Close()
+
+	tr := tar.NewReader(f)
+	found := false
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar header: %v", err)
+		}
+		if filepath.Base(hdr.Name) == "real_file.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected real_file.txt in archive")
 	}
 }

@@ -18,6 +18,7 @@
       type: 'local',
       config: { path: '' },
       dedup_enabled: false,
+      stage_beside_destination: false,
     }
   }
 
@@ -39,6 +40,7 @@
       // an unrelated field doesn't reset it. The dedicated row toggle on
       // the card is still the primary control.
       backup_database_enabled: !!dest.backup_database_enabled,
+      stage_beside_destination: !!dest.stage_beside_destination,
     }
   }
 
@@ -66,6 +68,7 @@
         // editing other fields doesn't accidentally disable it. New
         // destinations default to false.
         backup_database_enabled: !!form.backup_database_enabled,
+        stage_beside_destination: form.type === 'local' ? !!form.stage_beside_destination : false,
       }
       let result
       if (init) {
@@ -98,6 +101,7 @@
       ...form,
       type: nextType,
       config: defaults[nextType] || {},
+      stage_beside_destination: nextType === 'local' ? form.stage_beside_destination : false,
     }
     formTestResult = null
   }
@@ -211,6 +215,15 @@
       <span class="block text-sm font-medium text-text-muted mb-1.5">Path</span>
       <PathBrowser bind:value={form.config.path} />
     </div>
+    <label class="flex items-start gap-2 text-sm text-text-muted">
+      <input type="checkbox" bind:checked={form.stage_beside_destination} class="accent-vault mt-1" />
+      <span class="flex-1">
+        <span class="block font-medium text-text">Stage temporary backups beside this destination</span>
+        <span class="block text-xs text-text-muted mt-0.5">
+          Prefers a hidden <code>.vault-stage</code> folder on the destination disk instead of the cache pool (falling back to the normal staging cascade if unavailable). Useful for large backups that might fill up smaller cache drives during compression.
+        </span>
+      </span>
+    </label>
   {:else if form.type === 'sftp'}
     <div class="grid grid-cols-3 gap-3">
       <div class="col-span-2">

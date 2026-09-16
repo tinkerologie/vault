@@ -2780,7 +2780,11 @@ func (r *Runner) verifyChunkedItem(ctx context.Context, runID int64, item engine
 // non-deferred path, or hold it across the upload phase for deferred mode).
 func (r *Runner) stageItemLocally(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination) (string, *engine.BackupResult, func(), error) {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
-	tmpDir, cleanup, err := tempdir.CreateBackupDir(tempdir.StorageConfig{Type: dest.Type, Config: dest.Config}, stageOverride)
+	tmpDir, cleanup, err := tempdir.CreateBackupDir(tempdir.StorageConfig{
+		Type:        dest.Type,
+		Config:      dest.Config,
+		StageBeside: dest.StageBesideDestination,
+	}, stageOverride)
 	if err != nil {
 		return "", nil, func() {}, fmt.Errorf("creating temp dir: %w", err)
 	}

@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/ruaan-deysel/vault/internal/tempdir"
 	"github.com/ruaan-deysel/vault/internal/unraid"
 )
 
@@ -108,6 +110,32 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// Honour user path exclusions (e.g. the flash drive's own recycle-bin
 	// folder), matching the dedup BackupChunked path (issue #204).
 	exclusions := extractExcludePaths(item.Settings)
+
+	// When destDir (the staging directory) is located within srcPath, automatically
+	// exclude it so the backup does not archive its own staging directory (issue #366).
+	cleanDest := filepath.Clean(destDir)
+	if resolvedDest, err := filepath.EvalSymlinks(destDir); err == nil {
+		cleanDest = resolvedDest
+	}
+	isInside := func(rel string) bool {
+		return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	excludeStaging := func(root, target string) {
+		if rel, err := filepath.Rel(root, target); err == nil && isInside(rel) {
+			parent := filepath.Dir(target)
+			if filepath.Base(parent) == tempdir.StageDirName {
+				if relParent, err := filepath.Rel(root, parent); err == nil && isInside(relParent) {
+					exclusions = append(exclusions, relParent)
+					return
+				}
+			}
+			exclusions = append(exclusions, rel)
+		}
+	}
+	excludeStaging(srcPath, cleanDest)
+	if originalPath != srcPath {
+		excludeStaging(originalPath, destDir)
+	}
 
 	// Previous backup's effective listing (item-relative paths), used to detect
 	// NEW files with stale mtimes in differential/incremental runs (issue #320).

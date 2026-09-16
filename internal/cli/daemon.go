@@ -399,7 +399,7 @@ var daemonCmd = &cobra.Command{
 		if dests, err := database.ListStorageDestinations(); err == nil {
 			configs := make([]tempdir.StorageConfig, len(dests))
 			for i, d := range dests {
-				configs[i] = tempdir.StorageConfig{Type: d.Type, Config: d.Config}
+				configs[i] = tempdir.StorageConfig{Type: d.Type, Config: d.Config, StageBeside: d.StageBesideDestination}
 			}
 			tempdir.CleanupStale(configs)
 		} else {

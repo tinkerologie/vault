@@ -44,6 +44,20 @@ Backups can be encrypted with your backup password using **age** encryption — 
 
 Vault uses content-defined deduplication (Keyed-FastCDC with a per-destination dedup repository) so that repeated data across runs and sources is stored only once. This reduces the storage footprint of backup chains. Maintenance helpers `vault dedup gc` and `vault dedup repair` are available for garbage collection and repository repair.
 
+## Staging work area
+
+When creating classic compressed archives (such as folder items), Vault temporarily assembles the archive in a local staging directory before finalizing it.
+
+Staging path selection follows a prioritized cascade:
+
+1. **Custom staging override** — if configured under **Settings > Temporary Work Area**.
+2. **Destination-adjacent staging** — if the destination is a local path with **Stage temporary backups beside this destination** enabled, staging happens in a hidden `.vault-stage` directory on that disk.
+3. **Cache pools** — Unraid SSD/NVMe cache pools (`/mnt/cache`, `/mnt/fast_nvme`, etc.), ranked by available free space.
+4. **Local storage destination** — local backup storage disks.
+5. **System temporary directory** — `/tmp` or OS default temp dir.
+
+Staged archives are automatically cleaned up when the run finishes or upon daemon startup if a previous run was abruptly interrupted.
+
 ## Verification
 
 Every run produces a **SHA-256 verification** of what was written, and you can trigger an on-demand verify of any restore point. Verification confirms that stored backup data matches what Vault expects, so you find integrity problems before you need to restore.

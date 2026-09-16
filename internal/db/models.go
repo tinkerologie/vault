@@ -193,9 +193,13 @@ type StorageDestination struct {
 	// AnomalySensitivity is a per-destination sensitivity override
 	// ("strict", "balanced", "permissive"). Empty string means use the
 	// global default.
-	AnomalySensitivity string    `json:"anomaly_sensitivity"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	AnomalySensitivity string `json:"anomaly_sensitivity"`
+	// StageBesideDestination specifies whether classic backups using this local
+	// destination should stage temporary files beside the destination (<path>/.vault-stage)
+	// rather than on discovered cache pools (issue #366).
+	StageBesideDestination bool      `json:"stage_beside_destination"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 type ActivityLogEntry struct {

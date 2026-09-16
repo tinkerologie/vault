@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -128,8 +129,56 @@ func PrependCachePaths(paths []string) {
 
 // StorageConfig is the minimal config subset needed to extract a local path.
 type StorageConfig struct {
-	Type   string
-	Config string // JSON blob from storage_destinations.config
+	Type        string
+	Config      string // JSON blob from storage_destinations.config
+	StageBeside bool   // Prefer local-destination-adjacent path over cache pools (issue #366)
+}
+
+func localDestPath(dest StorageConfig) string {
+	if dest.Type != "local" {
+		return ""
+	}
+	var cfg struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(dest.Config), &cfg); err == nil && cfg.Path != "" {
+		return cfg.Path
+	}
+	return ""
+}
+
+type candidatePath struct {
+	path  string
+	free  uint64
+	order int
+}
+
+func rankCandidatesByFreeSpace(paths []string) []string {
+	var candidates []candidatePath
+	for i, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		free, _ := diskSpace(p)
+		candidates = append(candidates, candidatePath{
+			path:  p,
+			free:  free,
+			order: i,
+		})
+	}
+	// Sort by free descending, tie-breaking by original order ascending.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].free != candidates[j].free {
+			return candidates[i].free > candidates[j].free
+		}
+		return candidates[i].order < candidates[j].order
+	})
+	result := make([]string, len(candidates))
+	for i, c := range candidates {
+		result[i] = c.path
+	}
+	return result
 }
 
 // StagingInfo contains information about the resolved staging directory.
@@ -178,34 +227,44 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 		log.Printf("tempdir: override path %s unusable, falling back to cascade", override)
 	}
 
-	// Try fast cache/SSD paths first.
-	for _, base := range cachePaths() {
+	tryPath := func(base string) (string, func(), bool) {
 		info, err := os.Stat(base)
 		if err != nil || !info.IsDir() {
-			continue
+			return "", nil, false
 		}
 		stageBase := filepath.Join(base, StageDirName)
-		if err := os.MkdirAll(stageBase, 0750); err == nil {
-			dir, err := os.MkdirTemp(stageBase, pattern)
-			if err == nil {
-				return dir, cleanupFunc(dir, stageBase), nil
-			}
+		if err := os.MkdirAll(stageBase, 0750); err != nil {
+			return "", nil, false
+		}
+		dir, err := os.MkdirTemp(stageBase, pattern)
+		if err != nil {
+			return "", nil, false
+		}
+		return dir, cleanupFunc(dir, stageBase), true
+	}
+
+	localPath := localDestPath(dest)
+
+	// When StageBeside is active on a local destination, try destination-adjacent
+	// staging before cache pools (issue #366).
+	if dest.StageBeside && localPath != "" {
+		if dir, cleanup, ok := tryPath(localPath); ok {
+			return dir, cleanup, nil
+		}
+		log.Printf("tempdir: stage beside path %s unusable, falling back to cache cascade", localPath)
+	}
+
+	// Try fast cache/SSD paths, ranked by available free space (issue #366).
+	for _, base := range rankCandidatesByFreeSpace(cachePaths()) {
+		if dir, cleanup, ok := tryPath(base); ok {
+			return dir, cleanup, nil
 		}
 	}
 
-	// Fall back to local storage path adjacent to the backup destination.
-	if dest.Type == "local" {
-		var cfg struct {
-			Path string `json:"path"`
-		}
-		if err := json.Unmarshal([]byte(dest.Config), &cfg); err == nil && cfg.Path != "" {
-			stageBase := filepath.Join(cfg.Path, StageDirName)
-			if err := os.MkdirAll(stageBase, 0750); err == nil {
-				dir, err := os.MkdirTemp(stageBase, pattern)
-				if err == nil {
-					return dir, cleanupFunc(dir, stageBase), nil
-				}
-			}
+	// Fall back to local storage path adjacent to the backup destination (if not already tried).
+	if !dest.StageBeside && localPath != "" {
+		if dir, cleanup, ok := tryPath(localPath); ok {
+			return dir, cleanup, nil
 		}
 	}
 
@@ -321,7 +380,30 @@ func cleanLegacyDirs(seen map[string]bool) {
 func ResolveInfo(destinations []StorageConfig, override string) StagingInfo {
 	info := StagingInfo{Override: override}
 
-	// Build cascade list.
+	// Separate StageBeside destinations from normal local destinations.
+	var besideDests []string
+	var normalDests []string
+	for _, dest := range destinations {
+		if p := localDestPath(dest); p != "" {
+			if dest.StageBeside {
+				besideDests = append(besideDests, p)
+			} else {
+				normalDests = append(normalDests, p)
+			}
+		}
+	}
+
+	// Build cascade list for display:
+	// StageBeside destinations first (highest priority after override),
+	// followed by cache paths, then remaining local destinations, then system.
+	for _, p := range besideDests {
+		stagePath := filepath.Join(p, StageDirName)
+		ci := CascadeItem{Path: stagePath, Source: "destination"}
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			ci.Available = true
+		}
+		info.Cascade = append(info.Cascade, ci)
+	}
 	for _, base := range cachePaths() {
 		stagePath := filepath.Join(base, StageDirName)
 		ci := CascadeItem{Path: stagePath, Source: "cache"}
@@ -330,39 +412,48 @@ func ResolveInfo(destinations []StorageConfig, override string) StagingInfo {
 		}
 		info.Cascade = append(info.Cascade, ci)
 	}
-	for _, dest := range destinations {
-		if dest.Type != "local" {
-			continue
+	for _, p := range normalDests {
+		stagePath := filepath.Join(p, StageDirName)
+		ci := CascadeItem{Path: stagePath, Source: "local-storage"}
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			ci.Available = true
 		}
-		var cfg struct {
-			Path string `json:"path"`
-		}
-		if err := json.Unmarshal([]byte(dest.Config), &cfg); err == nil && cfg.Path != "" {
-			stagePath := filepath.Join(cfg.Path, StageDirName)
-			ci := CascadeItem{Path: stagePath, Source: "local-storage"}
-			if fi, err := os.Stat(cfg.Path); err == nil && fi.IsDir() {
-				ci.Available = true
-			}
-			info.Cascade = append(info.Cascade, ci)
-		}
+		info.Cascade = append(info.Cascade, ci)
 	}
 	info.Cascade = append(info.Cascade, CascadeItem{Path: os.TempDir(), Available: true, Source: "system"})
 
-	// Resolve which path wins.
+	// Resolve which path wins:
 	if override != "" {
 		if fi, err := os.Stat(override); err == nil && fi.IsDir() {
 			info.ResolvedPath = override
 			info.Source = "override"
 		}
 	}
+
 	if info.ResolvedPath == "" {
-		for _, ci := range info.Cascade {
-			if ci.Available {
-				info.ResolvedPath = ci.Path
-				info.Source = ci.Source
-				break
-			}
+		if ranked := rankCandidatesByFreeSpace(besideDests); len(ranked) > 0 {
+			info.ResolvedPath = filepath.Join(ranked[0], StageDirName)
+			info.Source = "destination"
 		}
+	}
+
+	if info.ResolvedPath == "" {
+		if ranked := rankCandidatesByFreeSpace(cachePaths()); len(ranked) > 0 {
+			info.ResolvedPath = filepath.Join(ranked[0], StageDirName)
+			info.Source = "cache"
+		}
+	}
+
+	if info.ResolvedPath == "" {
+		if ranked := rankCandidatesByFreeSpace(normalDests); len(ranked) > 0 {
+			info.ResolvedPath = filepath.Join(ranked[0], StageDirName)
+			info.Source = "local-storage"
+		}
+	}
+
+	if info.ResolvedPath == "" {
+		info.ResolvedPath = os.TempDir()
+		info.Source = "system"
 	}
 
 	// Get disk space.

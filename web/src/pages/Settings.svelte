@@ -1859,6 +1859,7 @@
             <p class="text-sm text-text font-mono">{stagingInfo.resolved_path}</p>
             <p class="text-xs text-text-muted mt-0.5">
               {stagingInfo.source === 'override' ? 'Custom location' :
+               stagingInfo.source === 'destination' ? 'Staged beside local destination' :
                stagingInfo.source === 'cache' ? 'Using SSD cache for fast backup processing' :
                stagingInfo.source === 'local-storage' ? 'Local storage fallback' :
                'System temp fallback'}

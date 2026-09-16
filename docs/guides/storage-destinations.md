@@ -21,15 +21,17 @@ Vault writes compressed (and optionally encrypted) backup archives to a storage 
 
 ## Local
 
-| Field    | Description                                                                                                                               |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Path** | Absolute path where Vault will write backups (e.g. `/mnt/user/backups`). The directory must exist and be writable by the `vault` process. |
+| Field                             | Description                                                                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Path**                          | Absolute path where Vault will write backups (e.g. `/mnt/user/backups`). The directory must exist and be writable by the `vault` process. |
+| **Stage beside this destination** | Stage temporary backup archives in a `.vault-stage` directory on this destination's disk rather than in cache pools or system temp.       |
 
 **Notes:**
 
 - Local destinations are the fastest option — no network overhead.
 - Avoid putting backups on the same array as the source data if you want protection against disk failure.
 - Vault only wakes the destination disk when it needs to write; it does not keep disks spinning between runs.
+- **Staging beside destination:** When enabled, classic folder backups and other staged items create their temporary archives in a hidden `.vault-stage` directory directly on the destination disk. This avoids filling smaller NVMe/SSD cache drives when creating multi-gigabyte archives. Vault automatically excludes this `.vault-stage` folder if the destination path lives inside the folder being backed up.
 
 ---
 
