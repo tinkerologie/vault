@@ -113,16 +113,23 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// NEW files with stale mtimes in differential/incremental runs (issue #320).
 	prevPaths := prevListingSet(item.Settings)
 
+	// Files the archiver could not read intact are reported rather than
+	// aborting the run — a single bad block used to fail every flash backup
+	// until the offending file was deleted (issue #393).
+	var skippedFiles []string
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
-		if err := tarDirectoryFilteredWithPrev(ctx, srcPath, archivePath, changedSince, exclusions, effectiveCompression, prevPaths); err != nil {
+		var err error
+		if skippedFiles, err = tarDirectoryFilteredReporting(ctx, srcPath, archivePath, changedSince, exclusions, effectiveCompression, prevPaths); err != nil {
 			return nil, fmt.Errorf("archiving changed files in %s: %w", srcPath, err)
 		}
 	} else {
-		if err := tarDirectory(ctx, srcPath, archivePath, exclusions, effectiveCompression); err != nil {
+		var err error
+		if skippedFiles, err = tarDirectoryReporting(ctx, srcPath, archivePath, exclusions, effectiveCompression); err != nil {
 			return nil, fmt.Errorf("archiving %s: %w", srcPath, err)
 		}
 	}
+	recordSkippedFiles(result, skippedFiles)
 	result.Files = append(result.Files, backupFileInfo(archivePath))
 
 	// Best-effort sidecar index for partial restore. Failures here are
@@ -139,7 +146,7 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// Authoritative point-in-time listing (full effective file set after
 	// exclusions) — lets chain restore prune files deleted or newly excluded
 	// since the base full backup (issue #231). Best-effort like the index.
-	if err := WriteEffectiveListing(srcPath, archivePath, exclusions); err != nil {
+	if err := WriteEffectiveListing(srcPath, archivePath, exclusions, skippedFiles); err != nil {
 		_ = err
 	} else {
 		result.Files = append(result.Files, backupFileInfo(archivePath+ListingSuffix))

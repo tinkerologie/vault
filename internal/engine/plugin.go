@@ -199,19 +199,25 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 		exclusions := extractExcludePaths(item.Settings)
 		prevPaths := prevListingSet(item.Settings)
 
+		// Files the archiver could not read intact are reported rather than
+		// aborting the run (issue #393).
+		var skippedFiles []string
 		if !changedSince.IsZero() {
 			// WithPrev, not the plain filtered variant: a NEW file whose
 			// mtime predates the cut-off (cp -a) is invisible to an mtime
 			// test and is caught by its absence from the parent listing
 			// (issue #320).
-			if err := tarDirectoryFilteredWithPrev(ctx, configDir, archivePath, changedSince, exclusions, effectiveCompression, prevPaths); err != nil {
+			var err error
+			if skippedFiles, err = tarDirectoryFilteredReporting(ctx, configDir, archivePath, changedSince, exclusions, effectiveCompression, prevPaths); err != nil {
 				return nil, fmt.Errorf("archiving changed plugin config files: %w", err)
 			}
 		} else {
-			if err := tarDirectory(ctx, configDir, archivePath, exclusions, effectiveCompression); err != nil {
+			var err error
+			if skippedFiles, err = tarDirectoryReporting(ctx, configDir, archivePath, exclusions, effectiveCompression); err != nil {
 				return nil, fmt.Errorf("archiving plugin config: %w", err)
 			}
 		}
+		recordSkippedFiles(result, skippedFiles)
 		result.Files = append(result.Files, backupFileInfo(archivePath))
 		if err := WriteTarIndex(archivePath); err == nil {
 			result.Files = append(result.Files, backupFileInfo(archivePath+IndexSuffix))
@@ -221,7 +227,7 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 		// not parity decoration: the NEXT run loads it as its parent listing,
 		// and without it the runner has no listing to load and degrades the
 		// run to a full archive.
-		if err := WriteEffectiveListing(configDir, archivePath, exclusions); err == nil {
+		if err := WriteEffectiveListing(configDir, archivePath, exclusions, skippedFiles); err == nil {
 			result.Files = append(result.Files, backupFileInfo(archivePath+ListingSuffix))
 		}
 	}

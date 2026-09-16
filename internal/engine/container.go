@@ -2,6 +2,7 @@ package engine
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -1213,15 +1214,27 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				entry.RootUID, entry.RootGID = fileOwner(srcInfo)
 				volExclusions := mapExclusionsToVolume(exclusions, mount.Destination)
 
+				// Files the archiver could not read intact are reported
+				// rather than aborting the run (issue #393). The paths are
+				// qualified by mount source, because a bare relative path is
+				// ambiguous across a container's several volumes.
+				var volSkipped []string
 				if filterVolume {
-					if err := tarDirectoryFilteredWithPrev(ctx, resolvedSource, volDest, changedSince, volExclusions, effectiveCompression, prevBySource[mount.Source]); err != nil {
-						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+					var archiveErr error
+					if volSkipped, archiveErr = tarDirectoryFilteredReporting(ctx, resolvedSource, volDest, changedSince, volExclusions, effectiveCompression, prevBySource[mount.Source]); archiveErr != nil {
+						return fmt.Errorf("archiving volume %s: %w", mount.Source, archiveErr)
 					}
 				} else {
-					if err := tarDirectory(ctx, resolvedSource, volDest, volExclusions, effectiveCompression); err != nil {
-						return fmt.Errorf("archiving volume %s: %w", mount.Source, err)
+					var archiveErr error
+					if volSkipped, archiveErr = tarDirectoryReporting(ctx, resolvedSource, volDest, volExclusions, effectiveCompression); archiveErr != nil {
+						return fmt.Errorf("archiving volume %s: %w", mount.Source, archiveErr)
 					}
 				}
+				rawVolSkipped := append([]string(nil), volSkipped...)
+				for i := range volSkipped {
+					volSkipped[i] = filepath.Join(mount.Source, volSkipped[i])
+				}
+				recordSkippedFiles(result, volSkipped)
 
 				if len(volExclusions) > 0 {
 					entry.ExcludedPaths = volExclusions
@@ -1231,7 +1244,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				// file set after exclusions) — lets the NEXT differential detect
 				// NEW files with stale mtimes (issue #320). Best-effort, mirroring
 				// folder.go's WriteEffectiveListing usage.
-				if err := WriteEffectiveListing(resolvedSource, volDest, volExclusions); err != nil {
+				if err := WriteEffectiveListing(resolvedSource, volDest, volExclusions, rawVolSkipped); err != nil {
 					log.Printf("engine: warning: failed to write volume listing for %s: %v", mount.Source, err)
 				} else {
 					result.Files = append(result.Files, backupFileInfo(volDest+ListingSuffix))
@@ -2863,18 +2876,147 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 	}
 }
 
-// tarDirectory creates a tar archive of srcDir at destPath. The compression
-// argument selects the archive compression layer ("none", "gzip", or "zstd").
-func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []string, compression string) (err error) {
+// maxStagedFileSize bounds the in-memory staging buffer used to prove a regular
+// file is fully readable before its tar header is committed. Files at or below
+// it — the overwhelming majority of a flash or appdata tree — are read once
+// into memory, so an unreadable one is skipped cleanly and never enters the
+// archive at all (issue #393). Larger files stream straight into the tar
+// writer: buffering those would cost a second full copy of the tree, which is
+// too high a price to pay on every healthy backup.
+const maxStagedFileSize = 32 << 20 // 32 MiB
+
+// zeroPad writes n zero bytes to w. It completes a tar entry whose source went
+// unreadable after the header was already committed: tar demands exactly
+// header.Size content bytes, so without the padding every entry after it is
+// unreadable too.
+func zeroPad(w io.Writer, n int64) error {
+	buf := make([]byte, 32*1024)
+	for n > 0 {
+		chunk := int64(len(buf))
+		if n < chunk {
+			chunk = n
+		}
+		written, err := w.Write(buf[:chunk])
+		n -= int64(written)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeRegularFileToTar writes one regular file's header and content, and
+// reports whether the file failed to make it into the archive intact.
+//
+// A read error partway through a file used to abort the entire backup, so a
+// single bad block on the flash drive made every flash backup fail until the
+// offending file was deleted (issue #393). Such a file is now skipped and
+// reported instead of taking the whole run down with it.
+//
+// header.Size is authoritative for the tar stream, which is what dictates the
+// ordering here. Below the threshold the content is read first and the header
+// then written with the byte count actually obtained, so a file that goes
+// unreadable leaves no trace in the archive — and one that shrank mid-walk is
+// archived at its true size rather than tripping the #166 short-write check.
+// Above the threshold the header must be committed before the read, so the
+// only possible repair for a mid-read failure is to zero-fill the remainder:
+// the entry stays in the archive with a tail of zeros and is reported as
+// skipped, so nobody mistakes it for an intact copy.
+//
+// Context cancellation is never a skip — it is returned as an error so the run
+// still aborts.
+func writeRegularFileToTar(ctx context.Context, root *os.Root, tw *tar.Writer, rel string, header *tar.Header) (bool, error) {
+	f, err := root.Open(rel)
+	if err != nil {
+		log.Printf("engine: skipping unopenable file %s: %v", rel, err)
+		return true, nil
+	}
+	defer f.Close()
+	return writeTarEntry(ctx, tw, rel, header, f)
+}
+
+// writeTarEntry is writeRegularFileToTar's core, split out from the file
+// opening so a read failure can be exercised directly — the filesystem offers
+// no portable way to make a read return EIO on demand.
+func writeTarEntry(ctx context.Context, tw *tar.Writer, rel string, header *tar.Header, src io.Reader) (bool, error) {
+	if header.Size <= maxStagedFileSize {
+		staged := &bytes.Buffer{}
+		if header.Size > 0 {
+			staged.Grow(int(header.Size)) // bounded by maxStagedFileSize
+		}
+		// LimitReader guards against the file growing between stat and copy.
+		n, copyErr := contextCopy(ctx, staged, io.LimitReader(src, header.Size))
+		if copyErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, ctxErr
+			}
+			log.Printf("engine: skipping unreadable file %s: %v", rel, copyErr)
+			return true, nil
+		}
+		header.Size = n
+		if err := tw.WriteHeader(header); err != nil {
+			return false, fmt.Errorf("writing tar header for %s: %w", rel, err)
+		}
+		if _, err := tw.Write(staged.Bytes()); err != nil {
+			return false, fmt.Errorf("writing file %s to tar: %w", rel, err)
+		}
+		return false, nil
+	}
+
+	if err := tw.WriteHeader(header); err != nil {
+		return false, fmt.Errorf("writing tar header for %s: %w", rel, err)
+	}
+	n, copyErr := contextCopy(ctx, tw, io.LimitReader(src, header.Size))
+	if copyErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+	} else if n == header.Size {
+		return false, nil
+	}
+
+	// Two ways to get here, and both leave the committed header promising
+	// bytes that were never written: the read failed part-way, or the file
+	// shrank between the stat and this copy (a rotated log, a compacted
+	// database) so the copy ended early with no error at all. Either way the
+	// entry has to be padded to the promised length, or tw.Close fails with
+	// "missed writing N bytes" and takes the whole backup down (issue #166).
+	// Short of rewriting the header — impossible once it is on the wire —
+	// zero-filling is the only repair, so the file is reported as skipped.
+	if padErr := zeroPad(tw, header.Size-n); padErr != nil {
+		return false, fmt.Errorf("writing file %s to tar: %w", rel, padErr)
+	}
+	if copyErr != nil {
+		log.Printf("engine: file %s became unreadable after %d of %d bytes — the remainder is zero-filled and the file is reported as skipped: %v", rel, n, header.Size, copyErr)
+	} else {
+		log.Printf("engine: file %s shrank from %d to %d bytes while it was being archived — the remainder is zero-filled and the file is reported as skipped", rel, header.Size, n)
+	}
+	return true, nil
+}
+
+// tarDirectory creates a tar archive of srcDir at destPath, discarding the
+// list of files it had to skip. Callers that report skipped files to the
+// operator use tarDirectoryReporting instead.
+func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []string, compression string) error {
+	_, err := tarDirectoryReporting(ctx, srcDir, destPath, exclusions, compression)
+	return err
+}
+
+// tarDirectoryReporting creates a tar archive of srcDir at destPath. The
+// compression argument selects the archive compression layer ("none", "gzip",
+// or "zstd"). It returns the source-relative paths of the files that could not
+// be archived intact (issue #393); the archive itself is still valid and the
+// error is nil, so the caller decides how to surface them.
+func tarDirectoryReporting(ctx context.Context, srcDir, destPath string, exclusions []string, compression string) (skipped []string, err error) {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
-		return fmt.Errorf("opening source root: %w", err)
+		return nil, fmt.Errorf("opening source root: %w", err)
 	}
 	defer root.Close()
 
 	outFile, err := os.Create(destPath) // #nosec G304 — destPath is destDir + fixed archive name, caller-controlled
 	if err != nil {
-		return fmt.Errorf("creating archive file: %w", err)
+		return nil, fmt.Errorf("creating archive file: %w", err)
 	}
 	// Data-critical closes: tar footer, compression trailer, final flush to
 	// disk. Any failure means a truncated archive and MUST fail the backup
@@ -2889,7 +3031,7 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 
 	cw, closeCompress, err := compressedWriter(outFile, compression)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		if cerr := closeCompress(); cerr != nil && err == nil {
@@ -2981,28 +3123,19 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 		header.Size = currentInfo.Size()
 		warnIfSparse(rel, currentInfo)
 
-		if err := tw.WriteHeader(header); err != nil {
-			return fmt.Errorf("writing tar header for %s: %w", rel, err)
+		fileSkipped, writeErr := writeRegularFileToTar(ctx, root, tw, rel, header)
+		if writeErr != nil {
+			return writeErr
 		}
-
-		f, err := root.Open(rel)
-		if err != nil {
-			log.Printf("engine: skipping unopenable file %s: %v", rel, err)
-			return nil
-		}
-		defer f.Close()
-
-		// Use LimitReader to avoid "write too long" if the file grows
-		// between stat and copy.
-		if _, err := contextCopy(ctx, tw, io.LimitReader(f, header.Size)); err != nil {
-			return fmt.Errorf("writing file %s to tar: %w", rel, err)
+		if fileSkipped {
+			skipped = append(skipped, rel)
 		}
 		return nil
 	})
-	return err
+	return skipped, err
 }
 
-// tarDirectoryFilteredWithPrev creates a tar archive of srcDir at destPath
+// tarDirectoryFilteredReporting creates a tar archive of srcDir at destPath
 // including only files whose modification time is after changedSince (directory
 // entries are always included to preserve structure), plus a prevPaths set of
 // item-relative paths recorded in the previous backup's effective listing. A
@@ -3010,16 +3143,16 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 // unchanged; when prevPaths is non-nil, a file ABSENT from the set (a NEW file
 // copied in with a stale timestamp) is archived instead of dropped (issue #320).
 // A nil prevPaths preserves the mtime-only behaviour.
-func tarDirectoryFilteredWithPrev(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string, compression string, prevPaths map[string]struct{}) (err error) {
+func tarDirectoryFilteredReporting(ctx context.Context, srcDir, destPath string, changedSince time.Time, exclusions []string, compression string, prevPaths map[string]struct{}) (skipped []string, err error) {
 	root, err := os.OpenRoot(srcDir)
 	if err != nil {
-		return fmt.Errorf("opening source root: %w", err)
+		return nil, fmt.Errorf("opening source root: %w", err)
 	}
 	defer root.Close()
 
 	outFile, err := os.Create(destPath) // #nosec G304 — destPath is destDir + fixed archive name, caller-controlled
 	if err != nil {
-		return fmt.Errorf("creating archive file: %w", err)
+		return nil, fmt.Errorf("creating archive file: %w", err)
 	}
 	// Data-critical closes — see tarDirectory (#166). LIFO order: tar →
 	// compressor → file.
@@ -3031,7 +3164,7 @@ func tarDirectoryFilteredWithPrev(ctx context.Context, srcDir, destPath string, 
 
 	cw, closeCompress, err := compressedWriter(outFile, compression)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		if cerr := closeCompress(); cerr != nil && err == nil {
@@ -3134,23 +3267,16 @@ func tarDirectoryFilteredWithPrev(ctx context.Context, srcDir, destPath string, 
 		}
 		header.Size = currentInfo.Size()
 
-		if err := tw.WriteHeader(header); err != nil {
-			return fmt.Errorf("writing tar header for %s: %w", rel, err)
+		fileSkipped, writeErr := writeRegularFileToTar(ctx, root, tw, rel, header)
+		if writeErr != nil {
+			return writeErr
 		}
-
-		f, err := root.Open(rel)
-		if err != nil {
-			log.Printf("engine: skipping unopenable file %s: %v", rel, err)
-			return nil
-		}
-		defer f.Close()
-
-		if _, err := contextCopy(ctx, tw, io.LimitReader(f, header.Size)); err != nil {
-			return fmt.Errorf("writing file %s to tar: %w", rel, err)
+		if fileSkipped {
+			skipped = append(skipped, rel)
 		}
 		return nil
 	})
-	return err
+	return skipped, err
 }
 
 // untarDirectory extracts a tar archive from srcPath into destDir. The archive

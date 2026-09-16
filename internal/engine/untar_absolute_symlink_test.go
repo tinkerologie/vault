@@ -192,7 +192,7 @@ func TestTarDirectoryFilteredRecordsSymlinkOwner(t *testing.T) {
 
 	archive := filepath.Join(t.TempDir(), "out.tar")
 	// Zero changedSince and no prevPaths: everything is considered changed.
-	if err := tarDirectoryFilteredWithPrev(context.Background(), src, archive, time.Time{}, nil, "none", nil); err != nil {
+	if _, err := tarDirectoryFilteredReporting(context.Background(), src, archive, time.Time{}, nil, "none", nil); err != nil {
 		t.Fatal(err)
 	}
 

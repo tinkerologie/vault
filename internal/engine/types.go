@@ -32,6 +32,14 @@ type BackupResult struct {
 // "nothing had changed" (issue #326).
 const MetaUnchanged = "unchanged"
 
+// MetaSkippedFiles is the BackupResult.Meta key an engine sets when the classic
+// tar path could not archive one or more files intact — a bad block on the
+// flash drive, for instance, which used to abort the whole run (issue #393).
+// The value is a []string of item-relative paths. The item still succeeded and
+// stays restorable; the key exists so the runner can warn the operator and mark
+// the run partial rather than reporting a clean backup that silently lost data.
+const MetaSkippedFiles = "skipped_files"
+
 type BackupFile struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`

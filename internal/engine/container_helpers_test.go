@@ -102,7 +102,7 @@ func TestTarDirectoryFilteredIncludesAllWhenChangedSinceZero(t *testing.T) {
 	}
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, time.Time{}, nil, CompressionNone, nil)
+	_, err := tarDirectoryFilteredReporting(context.Background(), src, dst, time.Time{}, nil, CompressionNone, nil)
 	if err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestTarDirectoryFilteredSkipsOlderFiles(t *testing.T) {
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
 	// changedSince = 1h ago — old file should be skipped, new file kept.
-	err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, time.Now().Add(-1*time.Hour), nil, CompressionNone, nil)
+	_, err := tarDirectoryFilteredReporting(context.Background(), src, dst, time.Now().Add(-1*time.Hour), nil, CompressionNone, nil)
 	if err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestTarDirectoryFilteredHonoursExclusions(t *testing.T) {
 	}
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, time.Time{}, []string{"*.log", "logs"}, CompressionNone, nil)
+	_, err := tarDirectoryFilteredReporting(context.Background(), src, dst, time.Time{}, []string{"*.log", "logs"}, CompressionNone, nil)
 	if err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestTarDirectoryFilteredCancelledContext(t *testing.T) {
 	cancel()
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	err := tarDirectoryFilteredWithPrev(ctx, src, dst, time.Time{}, nil, CompressionNone, nil)
+	_, err := tarDirectoryFilteredReporting(ctx, src, dst, time.Time{}, nil, CompressionNone, nil)
 	if err == nil {
 		t.Fatal("expected ctx.Err() to surface when context is cancelled")
 	}
@@ -210,7 +210,7 @@ func TestTarDirectoryFilteredMissingSrc(t *testing.T) {
 	t.Parallel()
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	err := tarDirectoryFilteredWithPrev(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"), dst, time.Time{}, nil, CompressionNone, nil)
+	_, err := tarDirectoryFilteredReporting(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"), dst, time.Time{}, nil, CompressionNone, nil)
 	if err == nil {
 		t.Fatal("expected error opening missing source root")
 	}
@@ -353,7 +353,7 @@ func TestTarDirectoryFilteredPreservesSymlinks(t *testing.T) {
 	}
 
 	dst := filepath.Join(t.TempDir(), "out.tar")
-	if err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, time.Time{}, nil, CompressionNone, nil); err != nil {
+	if _, err := tarDirectoryFilteredReporting(context.Background(), src, dst, time.Time{}, nil, CompressionNone, nil); err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
 
@@ -473,7 +473,7 @@ func TestUntarDirectoryFilteredCancelledContext(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	archive := filepath.Join(t.TempDir(), "ctx.tar")
-	if err := tarDirectoryFilteredWithPrev(context.Background(), src, archive, time.Time{}, nil, CompressionNone, nil); err != nil {
+	if _, err := tarDirectoryFilteredReporting(context.Background(), src, archive, time.Time{}, nil, CompressionNone, nil); err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
 
@@ -498,7 +498,7 @@ func TestUntarDirectoryFilteredAppliesIncludeFilter(t *testing.T) {
 	}
 
 	archive := filepath.Join(t.TempDir(), "with-filter.tar")
-	if err := tarDirectoryFilteredWithPrev(context.Background(), src, archive, time.Time{}, nil, CompressionNone, nil); err != nil {
+	if _, err := tarDirectoryFilteredReporting(context.Background(), src, archive, time.Time{}, nil, CompressionNone, nil); err != nil {
 		t.Fatalf("tarDirectoryFiltered: %v", err)
 	}
 
@@ -602,8 +602,8 @@ func TestTarDirectoryFilteredWithPrevNewFiles(t *testing.T) {
 			}
 
 			dst := filepath.Join(t.TempDir(), "out.tar")
-			if err := tarDirectoryFilteredWithPrev(context.Background(), src, dst, changedSince, nil, CompressionNone, tt.prevPaths); err != nil {
-				t.Fatalf("tarDirectoryFilteredWithPrev: %v", err)
+			if _, err := tarDirectoryFilteredReporting(context.Background(), src, dst, changedSince, nil, CompressionNone, tt.prevPaths); err != nil {
+				t.Fatalf("tarDirectoryFilteredReporting: %v", err)
 			}
 
 			names := listTarEntries(t, dst)

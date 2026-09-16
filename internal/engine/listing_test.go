@@ -4,7 +4,7 @@ import "testing"
 
 // TestPrevListingSet verifies the "prev_listing_paths" setting is parsed into a
 // lookup set for the classic differential/incremental folder path (issue #320).
-// Absent or nil settings produce nil so tarDirectoryFilteredWithPrev falls back
+// Absent or nil settings produce nil so tarDirectoryFilteredReporting falls back
 // to its mtime-only behaviour; an empty listing yields an empty (non-nil) set
 // so a file added to a previously-empty source is still treated as new.
 func TestPrevListingSet(t *testing.T) {

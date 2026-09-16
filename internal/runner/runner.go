@@ -1027,6 +1027,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		itemsDone      int
 		itemsFailed    int
 		itemsProcessed int
+		// Items that succeeded but could not archive every file intact
+		// (issue #393) — enough on its own to make the run partial.
+		itemsWithSkips int
 		itemResults    []map[string]any
 		itemChecksums  = make(map[string]map[string]string)
 		vmCheckpoints  = make(map[string]string)
@@ -1413,6 +1416,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				resEntry["verified"] = true
 			}
 			markUnchanged(resEntry, result)
+			if skipped := markSkippedFiles(resEntry, result); len(skipped) > 0 {
+				itemsWithSkips++
+				r.runLog(runID, runLogLevelWarn,
+					skippedFilesMessage(item.ItemName, item.ItemType, skipped),
+					map[string]any{"item_name": item.ItemName, "item_type": item.ItemType, "skipped_files": skipped})
+			}
 			// For ZFS items, capture the snapshot the engine created so future
 			// incremental/differential backups can reference it as their -i
 			// parent (issue #180).
@@ -1685,6 +1694,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 					resEntry["verified"] = true
 				}
 				markUnchanged(resEntry, s.result)
+				if skipped := markSkippedFiles(resEntry, s.result); len(skipped) > 0 {
+					itemsWithSkips++
+					r.runLog(runID, runLogLevelWarn,
+						skippedFilesMessage(s.dbItem.ItemName, s.dbItem.ItemType, skipped),
+						map[string]any{"item_name": s.dbItem.ItemName, "item_type": s.dbItem.ItemType, "skipped_files": skipped})
+				}
 				if s.dbItem.ItemType == "zfs" {
 					captureZFSResult(s.engineItem.Settings, s.result, s.dbItem.ItemName, zfsSnapshots, resEntry)
 				}
@@ -1751,6 +1766,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	} else if itemsFailed > 0 && itemsDone == 0 {
 		status = "failed"
 	} else if itemsFailed > 0 {
+		status = "partial"
+	} else if itemsWithSkips > 0 {
+		// Every item succeeded, but at least one could not read every file it
+		// was asked to archive. Reporting that as a clean "completed" would
+		// hide the gap, so it reuses the existing partial status and its
+		// JobPartial notification (issue #393).
 		status = "partial"
 	}
 
@@ -2186,6 +2207,61 @@ func markUnchanged(resEntry map[string]any, result *engine.BackupResult) {
 	if unchanged, ok := result.Meta[engine.MetaUnchanged].(bool); ok && unchanged {
 		resEntry["unchanged"] = true
 	}
+}
+
+// markSkippedFiles records on a per-item run-log entry the files the engine
+// could not archive intact (engine.MetaSkippedFiles) and returns them.
+//
+// The item's status stays "ok" — the archive is valid and everything else in it
+// restores — but the caller raises the run to "partial" and emits a warning, so
+// a bad block on the flash drive is visible to the operator instead of being
+// buried in the daemon log (issue #393).
+func markSkippedFiles(resEntry map[string]any, result *engine.BackupResult) []string {
+	if result == nil {
+		return nil
+	}
+	skipped := skippedFilePaths(result.Meta[engine.MetaSkippedFiles])
+	if len(skipped) == 0 {
+		return nil
+	}
+	resEntry["skipped_files"] = skipped
+	return skipped
+}
+
+// skippedFilePaths reads the MetaSkippedFiles value in both the form the
+// engine sets in-process ([]string) and the form it takes after a JSON round
+// trip ([]any), so the warning survives whichever path the result travelled.
+func skippedFilePaths(v any) []string {
+	switch typed := v.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, raw := range typed {
+			if p, ok := raw.(string); ok && p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// skippedFilesMessage renders a run-log line for the files an item skipped,
+// naming the first few so the operator can act without digging through the
+// daemon log, and counting the rest so a widely failing disk cannot flood the
+// run log.
+func skippedFilesMessage(itemName, itemType string, skipped []string) string {
+	const named = 5
+	shown := skipped
+	suffix := ""
+	if len(shown) > named {
+		shown = shown[:named]
+		suffix = fmt.Sprintf(" and %d more", len(skipped)-named)
+	}
+	return fmt.Sprintf("Skipped %d unreadable file(s) in %s (%s): %s%s",
+		len(skipped), itemName, itemType, strings.Join(shown, ", "), suffix)
 }
 
 // ResolveItemManifestID is the public counterpart of the private

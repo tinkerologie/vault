@@ -20,13 +20,25 @@ const ListingSuffix = ".listing.json"
 
 // WriteEffectiveListing walks srcPath with the same exclusion semantics as
 // the archive walk and writes the full effective listing sidecar next to the
-// archive. Best-effort from the engine's perspective — callers may log and
-// ignore failures; without a listing, chain restore simply skips the prune
-// pass (its prior behaviour).
-func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) error {
+// archive. Files the archiver skipped (e.g. unreadable bad blocks or permission
+// errors) can be passed in skipped; they are omitted from the listing so
+// subsequent differential/incremental runs do not treat them as already
+// captured (issues #320, #393). Best-effort from the engine's perspective — callers
+// may log and ignore failures; without a listing, chain restore simply skips
+// the prune pass (its prior behaviour).
+func WriteEffectiveListing(srcPath, archivePath string, exclusions []string, skipped ...[]string) error {
 	// Resolve symlinks so cache-only Unraid shares are traversed correctly.
 	if resolved, err := filepath.EvalSymlinks(srcPath); err == nil {
 		srcPath = resolved
+	}
+
+	var skippedSet map[string]struct{}
+	if len(skipped) > 0 && len(skipped[0]) > 0 {
+		skippedSet = make(map[string]struct{}, len(skipped[0]))
+		for _, s := range skipped[0] {
+			clean := filepath.ToSlash(filepath.Clean(s))
+			skippedSet[clean] = struct{}{}
+		}
 	}
 
 	idx := TarIndex{Version: tarIndexVersion, Archive: filepath.Base(archivePath)}
@@ -48,6 +60,12 @@ func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) err
 			}
 			return nil
 		}
+		slashRel := filepath.ToSlash(rel)
+		if skippedSet != nil {
+			if _, ok := skippedSet[slashRel]; ok {
+				return nil
+			}
+		}
 		// Match the archive walk's eligibility: special file types are never
 		// archived, so they must not appear in the authoritative listing
 		// either (a listed-but-unarchivable path would shield a stale file
@@ -56,7 +74,7 @@ func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) err
 			return nil
 		}
 		idx.Files = append(idx.Files, TarIndexEntry{
-			Path:    filepath.ToSlash(rel),
+			Path:    slashRel,
 			Size:    info.Size(),
 			Mode:    fmt.Sprintf("%04o", info.Mode().Perm()),
 			ModTime: info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
@@ -81,7 +99,7 @@ func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) err
 // prevListingSet parses the "prev_listing_paths" setting (injected by the
 // runner for differential/incremental classic folder backups) into a lookup
 // set of item-relative paths. Returns nil when the setting is absent or empty,
-// so tarDirectoryFilteredWithPrev degrades to its mtime-only behaviour.
+// so tarDirectoryFilteredReporting degrades to its mtime-only behaviour.
 func prevListingSet(settings map[string]any) map[string]struct{} {
 	raw, ok := settings["prev_listing_paths"]
 	if !ok || raw == nil {
@@ -126,7 +144,7 @@ func pathsToSet(paths []string) map[string]struct{} {
 // per-volume lookup keyed by mount source host path -> volume-relative path
 // set recorded in the parent restore point's per-volume effective listing.
 // Returns nil when the setting is absent, so pathChangedSinceWithPrev and
-// tarDirectoryFilteredWithPrev degrade to their mtime-only behaviour. Both the
+// tarDirectoryFilteredReporting degrade to their mtime-only behaviour. Both the
 // typed map[string][]string (direct runner->engine calls) and the JSON-decoded
 // map[string]any forms are accepted.
 func prevVolumeListingSet(settings map[string]any) map[string]map[string]struct{} {
@@ -179,4 +197,20 @@ func prevVolumeResolvedSources(settings map[string]any) map[string]string {
 		}
 	}
 	return out
+}
+
+// recordSkippedFiles adds paths the classic tar path could not archive intact
+// to result.Meta under MetaSkippedFiles, appending to whatever a previous call
+// recorded so a container with several volumes reports all of them (issue
+// #393). An empty slice records nothing, so a healthy backup carries no key at
+// all and every existing Meta consumer is unaffected.
+func recordSkippedFiles(result *BackupResult, skipped []string) {
+	if result == nil || len(skipped) == 0 {
+		return
+	}
+	if result.Meta == nil {
+		result.Meta = map[string]any{}
+	}
+	existing, _ := result.Meta[MetaSkippedFiles].([]string)
+	result.Meta[MetaSkippedFiles] = append(existing, skipped...)
 }
