@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Auto-add newly created containers to container backup jobs (#324):** Jobs configured to protect Docker containers can now enable "Auto-include newly created containers". During preflight reconciliation, newly deployed containers on the host are automatically discovered, configured with `appdata_only=true` (safely excluding bulk media mounts by default), and added to the job's item list. Containers tagged with the `vault.exclude` label are respected and ignored. Additionally, containers missing past the configurable absence grace period are automatically pruned from the job. Closes #324.
+
 - **Appdata path prompt and default exclusion of non-appdata volumes (#317):** When configuring container backup jobs, Vault now prompts for the host's appdata root paths (defaulting to `/mnt/user/appdata` and `/mnt/cache/appdata`). Container bind mounts outside the configured appdata directories (such as bulk `/mnt/user/media` storage) are automatically excluded by default to avoid unintended multi-terabyte archives, while Docker named volumes and appdata mounts remain protected. Users can inspect excluded mounts and toggle them back in at any time. Closes #317.
 
 - **User override for auto-skipped shared-data mounts (#307):** Added an explicit toggle in the container job editor allowing users to include bind mounts that Vault automatically skips as shared or media data, accompanied by clear warnings regarding backup duration and storage consumption. Closes #307.
