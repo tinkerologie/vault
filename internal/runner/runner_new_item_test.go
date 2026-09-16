@@ -495,7 +495,7 @@ func TestRestoreMergedChainGenericSkipsHistoricalSteps(t *testing.T) {
 
 	// restoreMergedChain for generic type will stage step 2 (skipping step 1) and invoke restoreStagedItem.
 	// We expect restoreStagedItem to fail on unknown handler, confirming staging of step 2 succeeded and step 1 was skipped.
-	err = r.restoreMergedChain(context.Background(), []db.RestorePoint{baseRP, childRP}, "custom-item", "custom", t.TempDir(), "", nil, reporter)
+	err = r.restoreMergedChain(context.Background(), []db.RestorePoint{baseRP, childRP}, "custom-item", "custom", t.TempDir(), "", nil, false, reporter)
 	if err == nil {
 		t.Fatalf("expected error from unknown item type handler, got nil")
 	}

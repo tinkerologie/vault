@@ -73,7 +73,7 @@ func TestRestoreChunkedVolumes_CustomDestBindMount(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, false, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestRestoreChunkedVolumes_DefaultDestRestoresToSource(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, false, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestRestoreChunkedVolumes_CustomDestNamedVolume(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, false, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestRestoreChunkedVolumes_SkippedVolumeNotRestored(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, t.TempDir(), nil, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, t.TempDir(), nil, false, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -235,7 +235,7 @@ func TestRestoreChunkedVolumes_InvalidMountSource(t *testing.T) {
 
 	// restoreDest="" causes volumeRestoreTarget to return Source directly,
 	// so normalizeRestorePath must reject /dev/vault.
-	err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, nil)
+	err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, false, nil)
 	if err == nil {
 		t.Fatal("restoreChunkedVolumes() expected error for path outside allowed roots, got nil")
 	}
@@ -290,7 +290,7 @@ func TestRestoreChunkedVolumes_FilePickerSelection(t *testing.T) {
 	}
 
 	selection := []string{"/config/wanted.yml"}
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, selection, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, selection, false, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -335,7 +335,7 @@ func TestRestoreChunkedVolumes_MountPointSelection(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, []string{"/config"}, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, []string{"/config"}, false, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -384,7 +384,7 @@ func TestRestoreChunkedVolumes_NestedMounts(t *testing.T) {
 	t.Run("a file in the nested mount comes only from that mount", func(t *testing.T) {
 		restoreDest := t.TempDir()
 		selection := []string{"/config/cache/f.yml"}
-		if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, selection, nil); err != nil {
+		if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, selection, false, nil); err != nil {
 			t.Fatalf("restoreChunkedVolumes() error = %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(restoreDest, "cache", "f.yml")); err != nil {
@@ -398,7 +398,7 @@ func TestRestoreChunkedVolumes_NestedMounts(t *testing.T) {
 
 	t.Run("picking the parent mount point covers the nested mount", func(t *testing.T) {
 		restoreDest := t.TempDir()
-		if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, []string{"/config"}, nil); err != nil {
+		if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, []string{"/config"}, false, nil); err != nil {
 			t.Fatalf("restoreChunkedVolumes() error = %v", err)
 		}
 		for _, rel := range []string{filepath.Join("config", "settings.yml"), filepath.Join("cache", "f.yml")} {
@@ -441,7 +441,7 @@ func TestRestoreChunkedVolumes_RestoresVolumeRootMode(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, false, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -482,7 +482,7 @@ func TestRestoreChunkedVolumes_LegacyEntryLeavesRootAlone(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, false, nil); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 

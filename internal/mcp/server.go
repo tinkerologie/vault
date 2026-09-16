@@ -486,12 +486,16 @@ type restoreItemInput struct {
 	ItemType       string `json:"item_type"`
 	Destination    string `json:"destination,omitempty"`
 	Passphrase     string `json:"passphrase,omitempty"`
+	// CleanDestination mirrors the API's clean_destination: omitted means
+	// the destination is replaced, false merges the restore into whatever
+	// is already there.
+	CleanDestination *bool `json:"clean_destination,omitempty"`
 }
 
 func (s *MCPServer) addRestoreItemTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "restore_item",
-		Description: "Restore an item from a specific restore point",
+		Description: "Restore an item from a specific restore point. The destination is replaced by default; pass clean_destination=false to merge into its existing contents instead.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input restoreItemInput) (*mcp.CallToolResult, any, error) {
 		rps, err := s.db.ListRestorePoints(input.JobID)
 		if err != nil {
@@ -508,7 +512,8 @@ func (s *MCPServer) addRestoreItemTool() {
 			return nil, nil, fmt.Errorf("restore point %d not found", input.RestorePointID)
 		}
 		go func() {
-			if err := s.runner.RestoreItem(*found, input.ItemName, input.ItemType, input.Destination, input.Passphrase); err != nil {
+			if err := s.runner.RestoreItem(*found, input.ItemName, input.ItemType, input.Destination, input.Passphrase,
+				runner.RestoreItemOptions{CleanDestination: input.CleanDestination}); err != nil {
 				log.Printf("mcp: restore failed: %v", err)
 			}
 		}()

@@ -3057,6 +3057,10 @@ type RestoreTarget struct {
 	Name      string
 	Type      string
 	FilePaths []string
+	// CleanDestination asks the handler to replace the target's contents
+	// rather than merge the backup on top of them (issue #321). Ignored for a
+	// partial restore, where FilePaths names only some of the target's files.
+	CleanDestination bool
 }
 
 // startStallWatchdog launches a goroutine that cancels ctx when no progress
@@ -3310,7 +3314,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			map[string]any{"item_name": t.Name, "item_type": t.Type})
 
 		start := time.Now()
-		restoreErr := r.restoreItemWithReporter(ctx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, reporter)
+		restoreErr := r.restoreItemWithReporter(ctx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
 		elapsed := time.Since(start)
 
 		result := map[string]any{
@@ -3431,27 +3435,44 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	r.runLog(runID, sumLevel, sumMsg, sumData)
 }
 
+// RestoreItemOptions carries the choices a scripted restore can make that the
+// HTTP API exposes as request fields.
+type RestoreItemOptions struct {
+	// CleanDestination replaces the destination's contents rather than
+	// merging into them. Nil means the default — replace, matching the API's
+	// clean_destination — so an automation that wants the old additive
+	// behaviour has to ask for it, but can.
+	CleanDestination *bool
+}
+
 // RestoreItem restores a single item from a restore point.
 // If destination is non-empty, it overrides the original restore path.
 // If passphrase is non-empty, .age files are decrypted before restoring.
 // For incremental/differential restore points, the full chain is restored
 // in order (base full → incremental/differential overlays).
-func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string) error {
+// The destination is replaced unless opts says otherwise (issue #321).
+func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error {
+	cleanDestination := true
+	for _, o := range opts {
+		if o.CleanDestination != nil {
+			cleanDestination = *o.CleanDestination
+		}
+	}
 	// Deliberately context.Background(): this is the un-tracked scripted/MCP
 	// entry point with no registered cancel func or stall watchdog. The tracked
 	// RunRestore path threads its own cancellable ctx through the chain.
-	return r.restoreItemWithReporter(context.Background(), restorePoint, itemName, itemType, destination, passphrase, nil, restoreProgressReporter{})
+	return r.restoreItemWithReporter(context.Background(), restorePoint, itemName, itemType, destination, passphrase, nil, cleanDestination, restoreProgressReporter{})
 }
 
-func (r *Runner) restoreItemWithReporter(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreItemWithReporter(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
 	// Notify exactly once per item restore, after the whole chain (if any)
 	// has been replayed — not once per chain step.
-	err := r.restoreItemChain(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+	err := r.restoreItemChain(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 	r.sendRestoreNotification(itemName, itemType, err)
 	return err
 }
 
-func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
 		chain, err := r.buildRestoreChain(restorePoint)
@@ -3472,10 +3493,10 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Restore point %d carries a complete dedup manifest — restoring %s directly (no chain replay)", restorePoint.ID, itemName),
 				map[string]any{"restore_point_id": restorePoint.ID, "item_name": itemName})
-			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 		}
 		if usesMergedRestoreChain(itemType) {
-			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, reporter)
+			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 		}
 		replayStart := time.Now()
 		replayedSteps := 0
@@ -3490,7 +3511,7 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 				map[string]any{"step": i + 1, "steps": len(chain), "backup_type": rp.BackupType, "restore_point_id": rp.ID})
 			log.Printf("runner: restoring chain step %d/%d (type=%s, id=%d)",
 				i+1, len(chain), rp.BackupType, rp.ID)
-			if err := r.restoreSinglePoint(ctx, rp, itemName, itemType, destination, passphrase, filePaths, reporter); err != nil {
+			if err := r.restoreSinglePoint(ctx, rp, itemName, itemType, destination, passphrase, filePaths, cleanDestination && replayedSteps == 0, reporter); err != nil {
 				return fmt.Errorf("restoring chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
 			replayedSteps++
@@ -3512,7 +3533,7 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		}
 		return nil
 	}
-	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 }
 
 // pruneChainResurrected removes files that the classic chain overlay wrote
@@ -4163,7 +4184,7 @@ func usesMergedRestoreChain(itemType string) bool {
 	}
 }
 
-func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
@@ -4206,7 +4227,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		if err := flattenVMChain(ctx, stepDirs, flattenedDir); err != nil {
 			return fmt.Errorf("flattening VM chain: %w", err)
 		}
-		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100)
+		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, cleanDestination, reporter, 40, 100)
 	}
 
 	if itemType == "container" {
@@ -4218,7 +4239,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		if err != nil {
 			return err
 		}
-		if err := r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100); err != nil {
+		if err := r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, cleanDestination, reporter, 40, 100); err != nil {
 			return err
 		}
 		// The merge is a pure union, so a file deleted after the base full
@@ -4253,7 +4274,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		return fmt.Errorf("item %q is not present in the restore chain", itemName)
 	}
 
-	return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+	return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, cleanDestination, reporter, 40, 100)
 }
 
 // stageContainerChainMerged stages each restore point in a classic container
@@ -4304,9 +4325,9 @@ func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.Resto
 // restoreSinglePoint restores a single restore point (without chain logic).
 // For dedup restore points (manifest_id set, or item_manifests in metadata),
 // the chunked restore path is taken instead of the classic stage + restore.
-func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
 	if manifestID, ok := resolveManifestID(restorePoint, itemName); ok {
-		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, filePaths, reporter)
+		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, filePaths, cleanDestination, reporter)
 	}
 
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
@@ -4320,7 +4341,7 @@ func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.Restore
 		return err
 	}
 
-	return r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+	return r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, cleanDestination, reporter, 40, 100)
 }
 
 // resolveManifestID returns the dedup manifest ID for itemName from a
@@ -4357,7 +4378,7 @@ func resolveManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool) {
 // manifest_id was persisted for a handler that can't chunk), and invokes
 // RestoreChunked. destPath is passed through to the handler so it can write
 // directly to the target — no local staging required.
-func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
 	job, err := r.db.GetJob(rp.JobID)
 	if err != nil {
 		return fmt.Errorf("getting job: %w", err)
@@ -4421,6 +4442,8 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 	if len(filePaths) > 0 {
 		item.Settings["restore_file_paths"] = filePaths
 	}
+	// Replace-don't-merge (issue #321).
+	item.Settings[engine.SettingCleanDestination] = cleanDestination
 
 	admit := newBroadcastThrottle()
 	progress := func(name string, pct int, msg string) {
@@ -4715,7 +4738,7 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, itemType, destination, tmpDir string, filePaths []string, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
+func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, itemType, destination, tmpDir string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
 	var handler engine.Handler
 	var err error
 	switch itemType {
@@ -4779,6 +4802,11 @@ func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, i
 	if len(filePaths) > 0 {
 		backupItem.Settings["restore_file_paths"] = filePaths
 	}
+
+	// Replace-don't-merge (issue #321). Handlers that extract a directory
+	// tree clear their resolved target first; the rest ignore the setting,
+	// and every handler declines it for a partial restore.
+	backupItem.Settings[engine.SettingCleanDestination] = cleanDestination
 
 	return handler.Restore(ctx, backupItem, tmpDir, progress)
 }

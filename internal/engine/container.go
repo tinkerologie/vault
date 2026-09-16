@@ -1639,6 +1639,12 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			if err := os.MkdirAll(targetPath, 0750); err != nil {
 				return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
 			}
+			// Replace the volume rather than merging into it, when the
+			// restore asked for that (issue #321). Per volume, so a
+			// container's other mounts are untouched.
+			if err := cleanRestoreDestination(item, targetPath, volIncludes); err != nil {
+				return err
+			}
 			if err := untarDirectoryFiltered(ctx, volArchive, targetPath, volIncludes); err != nil {
 				return fmt.Errorf("restoring volume %s: %w", targetPath, err)
 			}
@@ -2548,7 +2554,8 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	if progress != nil {
 		progress(item.Name, 40, "restoring volumes")
 	}
-	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, extractRestoreFilePaths(item.Settings), progress); err != nil {
+	cleanVolumes, _ := item.Settings[SettingCleanDestination].(bool)
+	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, extractRestoreFilePaths(item.Settings), cleanVolumes, progress); err != nil {
 		return err
 	}
 
@@ -2583,7 +2590,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 // (mirroring classic Restore and recreateAndStartContainer's bind rewrite).
 // The function needs no Docker client — it delegates file extraction to
 // FolderHandler.RestoreChunked — making it testable without a Docker mock.
-func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, selection []string, progress ProgressFunc) error {
+func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, selection []string, clean bool, progress ProgressFunc) error {
 	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
 		return err
 	}
@@ -2646,12 +2653,15 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err := os.MkdirAll(src, 0o750); err != nil {
 			return fmt.Errorf("mkdir volume %s: %w", src, err)
 		}
-		proxy := BackupItem{Name: dest, Type: "folder"}
+		proxy := BackupItem{Name: dest, Type: "folder", Settings: map[string]any{}}
 		if len(volIncludes) > 0 {
 			// FolderHandler.RestoreChunked already filters its manifest by this
 			// setting, so the volume-relative paths go straight through.
-			proxy.Settings = map[string]any{"restore_file_paths": volIncludes}
+			proxy.Settings["restore_file_paths"] = volIncludes
 		}
+		// RestoreChunked owns the clearing, and declines it for a partial
+		// restore (issue #321).
+		proxy.Settings[SettingCleanDestination] = clean
 		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}

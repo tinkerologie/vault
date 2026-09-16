@@ -1313,11 +1313,19 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		// tar entry paths chosen from the index sidecar. Items absent
 		// from this map (or with an empty slice) restore everything.
 		FilePaths map[string][]string `json:"file_paths"`
+		// CleanDestination asks each item's restore to replace its target's
+		// contents rather than merge the backup on top of them (issue #321).
+		// A pointer so an omitted field can default to enabled: the restore
+		// wizard has always warned that a restore overwrites existing data,
+		// and until now it quietly did not. Setting it to false opts back
+		// into the additive merge.
+		CleanDestination *bool `json:"clean_destination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	cleanDestination := req.CleanDestination == nil || *req.CleanDestination
 	if req.RestorePointID == 0 {
 		respondError(w, http.StatusBadRequest, "restore_point_id is required")
 		return
@@ -1412,9 +1420,10 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	runnerTargets := make([]runner.RestoreTarget, 0, len(targets))
 	for _, t := range targets {
 		runnerTargets = append(runnerTargets, runner.RestoreTarget{
-			Name:      t.Name,
-			Type:      t.Type,
-			FilePaths: req.FilePaths[t.Name],
+			Name:             t.Name,
+			Type:             t.Type,
+			FilePaths:        req.FilePaths[t.Name],
+			CleanDestination: cleanDestination,
 		})
 	}
 

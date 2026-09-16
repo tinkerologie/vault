@@ -13,7 +13,7 @@ func TestRestoreStagedItem_UnknownType(t *testing.T) {
 	err := r.restoreStagedItem(
 		context.Background(), 1, "noname", "weird-unknown-type",
 		"", t.TempDir(), nil,
-		restoreProgressReporter{}, 0, 100,
+		false, restoreProgressReporter{}, 0, 100,
 	)
 	if err == nil {
 		t.Fatal("expected unknown-type error")
@@ -28,7 +28,7 @@ func TestRestoreStagedItem_VMHandlerError(t *testing.T) {
 	err := r.restoreStagedItem(
 		context.Background(), 1, "any", "vm",
 		"", t.TempDir(), nil,
-		restoreProgressReporter{}, 0, 100,
+		false, restoreProgressReporter{}, 0, 100,
 	)
 	if err == nil {
 		t.Fatal("expected VMHandler error on non-Linux")
@@ -43,7 +43,7 @@ func TestRestoreStagedItem_PluginHandlerError(t *testing.T) {
 	err := r.restoreStagedItem(
 		context.Background(), 1, "any", "plugin",
 		"", t.TempDir(), nil,
-		restoreProgressReporter{}, 0, 100,
+		false, restoreProgressReporter{}, 0, 100,
 	)
 	if err == nil {
 		t.Fatal("expected PluginHandler error on non-Linux")
@@ -57,7 +57,7 @@ func TestRestoreStagedItem_ZFSHandlerError(t *testing.T) {
 	err := r.restoreStagedItem(
 		context.Background(), 1, "any", "zfs",
 		"", t.TempDir(), nil,
-		restoreProgressReporter{}, 0, 100,
+		false, restoreProgressReporter{}, 0, 100,
 	)
 	if err == nil {
 		t.Fatal("expected ZFSHandler error on non-Linux")
@@ -75,7 +75,7 @@ func TestRestoreStagedItem_FolderHappyPath(t *testing.T) {
 	err := r.restoreStagedItem(
 		context.Background(), 1, "Test Folder", "folder",
 		t.TempDir(), t.TempDir(), nil,
-		restoreProgressReporter{}, 0, 100,
+		false, restoreProgressReporter{}, 0, 100,
 	)
 	// The inner Restore call errors because tmpDir has no archive. But
 	// the surrounding restoreStagedItem reached that point — that's

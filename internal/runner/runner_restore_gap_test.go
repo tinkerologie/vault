@@ -29,7 +29,7 @@ func TestRestoreSinglePointDedupRouteToChunkedMissingJob(t *testing.T) {
 		Metadata: `{"item_manifests":{"plex":"` + hexID + `"}}`,
 	}
 
-	err := r.restoreSinglePoint(context.Background(), rp, "plex", "container", "", "", nil, restoreProgressReporter{})
+	err := r.restoreSinglePoint(context.Background(), rp, "plex", "container", "", "", nil, false, restoreProgressReporter{})
 	if err == nil {
 		t.Fatal("restoreSinglePoint to chunked-path with missing job should error")
 	}
@@ -73,7 +73,7 @@ func TestRestoreSinglePointDedupRouteToChunkedMissingDest(t *testing.T) {
 	const hexID = "1111111111111111111111111111111111111111111111111111111111111111"
 	rp := db.RestorePoint{ID: 1, JobID: jobID, Metadata: `{"item_manifests":{"plex":"` + hexID + `"}}`}
 
-	err = r.restoreSinglePoint(context.Background(), rp, "plex", "container", "", "", nil, restoreProgressReporter{})
+	err = r.restoreSinglePoint(context.Background(), rp, "plex", "container", "", "", nil, false, restoreProgressReporter{})
 	if err == nil {
 		t.Fatal("restoreSinglePoint with missing storage destination should error")
 	}
@@ -113,7 +113,7 @@ func TestRestoreSinglePointClassicEmpty(t *testing.T) {
 	}
 
 	err := r.restoreSinglePoint(context.Background(), rp, "no-such-item", "totally-unknown-type",
-		"", "", nil, restoreProgressReporter{})
+		"", "", nil, false, restoreProgressReporter{})
 	if err == nil {
 		t.Fatal("restoreSinglePoint with unknown item type should error from restoreStagedItem")
 	}
@@ -137,7 +137,7 @@ func TestRestoreSinglePointDedupChunkedBadHandlerType(t *testing.T) {
 	raw, _ := hex.DecodeString(hexID)
 	rp := db.RestorePoint{ID: 1, JobID: jobID, ManifestID: raw}
 
-	err := r.restoreSinglePoint(context.Background(), rp, "x", "bogus-type", "", "", nil, restoreProgressReporter{})
+	err := r.restoreSinglePoint(context.Background(), rp, "x", "bogus-type", "", "", nil, false, restoreProgressReporter{})
 	if err == nil {
 		t.Fatal("restoreSinglePoint with unknown item type should error")
 	}

@@ -18,6 +18,10 @@
   let selectedPoint = $state(null)
   let restoreDestination = $state('')
   let showDestOverride = $state(false)
+  // Clear the destination before extracting, rather than merging the backup
+  // over whatever is already there (issue #321). Default on, because the
+  // warning below has always promised exactly that.
+  let cleanDestination = $state(true)
   let passphrase = $state('')
   let loading = $state(false)
   let allItems = $state([])
@@ -377,10 +381,23 @@
     passphrase = ''
     restoreDestination = ''
     showDestOverride = false
+    cleanDestination = true
     preflightResult = null
+    picker.clear()
   }
 
   let needsPassphrase = $derived(selectedPoint?.encryption === 'age')
+
+  // A partial restore writes only the files the user picked, so clearing the
+  // destination would delete everything they did not pick. The backend
+  // declines to clear in that case; the wizard says so rather than leaving a
+  // ticked box that does nothing (issue #321).
+  let hasPartialSelection = $derived(
+    Array.from(picker.entries()).some(([key, entry]) => {
+      const item = selectedItems.get(key)
+      return item && entry?.selected && entry.selected.size > 0 && item.jobs?.some(j => j.id === selectedPoint?.jobId)
+    })
+  )
 
   function parseMetadata(meta) {
     if (!meta) return {}
@@ -473,6 +490,7 @@
     if (passphrase) {
       payload.passphrase = passphrase
     }
+    payload.clean_destination = cleanDestination && !hasPartialSelection
 
     // Feature B: per-item partial restore. Build file_paths map from any
     // picker entries that have a non-empty selection. Items without an
@@ -772,6 +790,27 @@
         {/if}
       </div>
 
+      <!-- Replace vs merge (issue #321). -->
+      <div>
+        <p class="text-sm font-medium text-text-muted mb-2">Existing files at the destination</p>
+        <label class="flex items-start gap-2 cursor-pointer text-sm text-text">
+          <input type="checkbox" class="accent-vault mt-0.5" bind:checked={cleanDestination}
+            disabled={hasPartialSelection} />
+          <span>
+            Clear the destination first
+            <span class="block text-xs text-text-dim mt-0.5">
+              {#if hasPartialSelection}
+                Not available for a partial restore — clearing the destination would delete the files you did not select.
+              {:else if cleanDestination}
+                Anything at the destination that is not in this backup is deleted, so the restored result matches the backup exactly.
+              {:else}
+                The backup is written over the existing files. Anything not in the backup is left where it is.
+              {/if}
+            </span>
+          </span>
+        </label>
+      </div>
+
       <!-- Passphrase -->
       {#if needsPassphrase}
         <div>
@@ -891,7 +930,9 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
       </svg>
       <div>
-        <p class="text-sm font-medium text-warning">This will overwrite existing data</p>
+        <p class="text-sm font-medium text-warning">
+          {cleanDestination && !hasPartialSelection ? 'This will delete and replace existing data' : 'This will overwrite existing data'}
+        </p>
         <p class="text-xs text-text-muted mt-0.5">Restoring will replace current files for
           {#if selectedCount === 1}
             <strong class="text-text" title={itemDisplayLabel(selectedItemsArray[0])}>{itemDisplayLabel(selectedItemsArray[0])}</strong>
@@ -904,6 +945,11 @@
             at its original location
           {/if}
           with the backup version.
+          {#if cleanDestination && !hasPartialSelection}
+            Everything else already at that location is deleted first.
+          {:else}
+            Files that are not in the backup are left where they are.
+          {/if}
         </p>
       </div>
     </div>

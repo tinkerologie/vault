@@ -219,6 +219,13 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// (the legacy whole-archive path).
 	include := extractRestoreFilePaths(item.Settings)
 
+	// Replace the target rather than merging into it, when the restore asked
+	// for that (issue #321). Declines for a partial restore, which would
+	// otherwise delete every file the user did not pick.
+	if err := cleanRestoreDestination(item, destPath, include); err != nil {
+		return err
+	}
+
 	if err := untarDirectoryFiltered(ctx, archivePath, destPath, include); err != nil {
 		return fmt.Errorf("extracting to %s: %w", destPath, err)
 	}
@@ -432,7 +439,13 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	// Honour the partial-restore file picker: when restore_file_paths is
 	// set, only reconstruct the selected entries (and descendants of any
 	// selected directory) — mirroring untarDirectoryFiltered's semantics.
-	include := newIncludeSet(extractRestoreFilePaths(item.Settings))
+	includePaths := extractRestoreFilePaths(item.Settings)
+	include := newIncludeSet(includePaths)
+
+	// Same replace-don't-merge contract as the classic path (issue #321).
+	if err := cleanRestoreDestination(item, destPath, includePaths); err != nil {
+		return err
+	}
 
 	var dirs, files []string
 	for p, e := range m.Files {
