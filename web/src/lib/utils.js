@@ -567,3 +567,163 @@ export function unchangedItemCount(items) {
   if (!Array.isArray(items)) return 0
   return items.filter(item => item?.unchanged === true).length
 }
+
+/**
+ * Splits a path into non-empty segments, normalizing backslashes and stripping
+ * leading and trailing slashes.
+ *
+ * @param {string | null | undefined} path
+ * @returns {string[]}
+ */
+export function splitPath(path) {
+  if (!path || typeof path !== 'string') return []
+  return path.replace(/\\/g, '/').split('/').filter(Boolean)
+}
+
+/**
+ * Normalizes a path by removing leading and trailing slashes and backslashes.
+ *
+ * @param {string | null | undefined} path
+ * @returns {string}
+ */
+export function normalizePath(path) {
+  return splitPath(path).join('/')
+}
+
+/**
+ * Builds a hierarchical tree from a flat list of TarIndexEntry objects.
+ *
+ * Folders are sorted before files, and both are sorted alphabetically.
+ * Each node includes descendantLeafPaths and descendantLeafCount to support
+ * efficient subtree selection and tri-state checkbox derivation.
+ *
+ * @param {Array<{ path: string, size?: number, mode?: string, modtime?: string, is_dir?: boolean }> | null | undefined} files
+ * @returns {Array<{
+ *   name: string,
+ *   path: string,
+ *   isDir: boolean,
+ *   size: number,
+ *   mode?: string,
+ *   modtime?: string,
+ *   children: Array<any>,
+ *   descendantLeafPaths: string[],
+ *   descendantLeafCount: number,
+ * }>}
+ */
+export function buildFileTree(files) {
+  if (!Array.isArray(files) || files.length === 0) return []
+
+  const rootNodes = []
+  const dirMap = new Map()
+
+  function getOrCreateDir(dirPath, segName) {
+    if (dirMap.has(dirPath)) return dirMap.get(dirPath)
+
+    const node = {
+      name: segName,
+      path: dirPath,
+      isDir: true,
+      size: 0,
+      mode: '',
+      modtime: '',
+      children: [],
+      descendantLeafPaths: [],
+      descendantLeafCount: 0,
+    }
+    dirMap.set(dirPath, node)
+
+    const segments = splitPath(dirPath)
+    if (segments.length === 1) {
+      rootNodes.push(node)
+    } else {
+      const parentPath = segments.slice(0, -1).join('/')
+      const parent = getOrCreateDir(parentPath, segments[segments.length - 2])
+      parent.children.push(node)
+    }
+    return node
+  }
+
+  for (const f of files) {
+    if (!f || !f.path) continue
+    const segments = splitPath(f.path)
+    if (segments.length === 0) continue
+
+    const isExplicitDir = Boolean(f.is_dir) || f.path.endsWith('/')
+    const fullNormalizedPath = segments.join('/')
+
+    if (isExplicitDir) {
+      const dirNode = getOrCreateDir(fullNormalizedPath, segments[segments.length - 1])
+      if (f.mode) dirNode.mode = f.mode
+      if (f.modtime) dirNode.modtime = f.modtime
+      continue
+    }
+
+    const fileNode = {
+      name: segments[segments.length - 1],
+      path: fullNormalizedPath,
+      isDir: false,
+      size: Number(f.size) || 0,
+      mode: f.mode || '',
+      modtime: f.modtime || '',
+      children: [],
+      descendantLeafPaths: [fullNormalizedPath],
+      descendantLeafCount: 1,
+    }
+
+    if (segments.length === 1) {
+      rootNodes.push(fileNode)
+    } else {
+      const parentPath = segments.slice(0, -1).join('/')
+      const parent = getOrCreateDir(parentPath, segments[segments.length - 2])
+      parent.children.push(fileNode)
+    }
+  }
+
+  function finalize(node) {
+    if (!node.isDir) return
+
+    let totalSize = 0
+    const leafPaths = []
+
+    node.children.sort((a, b) => {
+      if (a.isDir !== b.isDir) {
+        return a.isDir ? -1 : 1
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    })
+
+    for (const child of node.children) {
+      finalize(child)
+      totalSize += child.size
+      if (child.isDir) {
+        leafPaths.push(...child.descendantLeafPaths)
+      } else {
+        leafPaths.push(child.path)
+      }
+    }
+
+    node.size = totalSize
+    // If a directory had no files or subdirectories, it counts as its own restorable leaf
+    if (node.children.length === 0) {
+      node.descendantLeafPaths = [node.path]
+      node.descendantLeafCount = 1
+    } else {
+      node.descendantLeafPaths = leafPaths
+      node.descendantLeafCount = leafPaths.length
+    }
+  }
+
+  rootNodes.sort((a, b) => {
+    if (a.isDir !== b.isDir) {
+      return a.isDir ? -1 : 1
+    }
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  })
+
+  for (const root of rootNodes) {
+    finalize(root)
+  }
+
+  return rootNodes
+}
+
