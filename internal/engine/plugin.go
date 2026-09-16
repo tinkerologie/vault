@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
@@ -76,6 +77,12 @@ func pluginPath(name string) string {
 		return ""
 	}
 	return filepath.Join(pluginsDir, name)
+}
+
+// PluginPath returns the canonical config directory for a plugin under
+// /boot/config/plugins/. Exported for runner chain prune and restore path resolution.
+func PluginPath(name string) string {
+	return pluginPath(name)
 }
 
 // PluginHandler implements Handler for Unraid plugin backup/restore.
@@ -177,12 +184,45 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
 		effectiveCompression := MaybeDowngradeCompression(configDir, item.Compression)
 		archivePath := filepath.Join(destDir, "config.tar"+archiveExt(effectiveCompression))
-		if err := tarDirectory(ctx, configDir, archivePath, nil, effectiveCompression); err != nil {
-			return nil, fmt.Errorf("archiving plugin config: %w", err)
+
+		// A plugin config directory is a single tree, so it takes the folder
+		// path's treatment verbatim: the incremental cut-off, the user's
+		// exclusions, and the parent's effective listing. Without this the
+		// whole directory was re-archived on every run and the backup type
+		// was cosmetic (issue #351).
+		var changedSince time.Time
+		if cs, ok := item.Settings["changed_since"].(string); ok && cs != "" {
+			if t, pErr := time.Parse(time.RFC3339, cs); pErr == nil {
+				changedSince = t
+			}
+		}
+		exclusions := extractExcludePaths(item.Settings)
+		prevPaths := prevListingSet(item.Settings)
+
+		if !changedSince.IsZero() {
+			// WithPrev, not the plain filtered variant: a NEW file whose
+			// mtime predates the cut-off (cp -a) is invisible to an mtime
+			// test and is caught by its absence from the parent listing
+			// (issue #320).
+			if err := tarDirectoryFilteredWithPrev(ctx, configDir, archivePath, changedSince, exclusions, effectiveCompression, prevPaths); err != nil {
+				return nil, fmt.Errorf("archiving changed plugin config files: %w", err)
+			}
+		} else {
+			if err := tarDirectory(ctx, configDir, archivePath, exclusions, effectiveCompression); err != nil {
+				return nil, fmt.Errorf("archiving plugin config: %w", err)
+			}
 		}
 		result.Files = append(result.Files, backupFileInfo(archivePath))
 		if err := WriteTarIndex(archivePath); err == nil {
 			result.Files = append(result.Files, backupFileInfo(archivePath+IndexSuffix))
+		}
+
+		// The authoritative point-in-time listing. This is a prerequisite,
+		// not parity decoration: the NEXT run loads it as its parent listing,
+		// and without it the runner has no listing to load and degrades the
+		// run to a full archive.
+		if err := WriteEffectiveListing(configDir, archivePath, exclusions); err == nil {
+			result.Files = append(result.Files, backupFileInfo(archivePath+ListingSuffix))
 		}
 	}
 
@@ -289,7 +329,21 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	if src == "" {
 		return dedup.ID{}, fmt.Errorf("plugin: cannot resolve directory for %q", item.Name)
 	}
-	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: map[string]any{"path": src}}
+	// Forward the incremental cut-off and exclusions into the folder proxy.
+	// Dropping changed_since here is what made every dedup plugin backup a
+	// full one: buildChunkedManifest's carry-forward branch never ran, so
+	// every file was re-chunked (issue #351). prev_listing_paths is
+	// deliberately NOT forwarded — the dedup path carries unchanged files
+	// forward through the parent manifest, which it already receives, and
+	// buildChunkedManifest does not read that setting.
+	proxySettings := map[string]any{"path": src}
+	if cs, ok := item.Settings["changed_since"].(string); ok && cs != "" {
+		proxySettings["changed_since"] = cs
+	}
+	if ex, ok := item.Settings["exclude_paths"]; ok && ex != nil {
+		proxySettings["exclude_paths"] = ex
+	}
+	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: proxySettings}
 	fh := &FolderHandler{}
 	m, _, _, err := fh.buildChunkedManifest(ctx, proxy, repo, parent, progress)
 	if err != nil {

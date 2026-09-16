@@ -280,6 +280,25 @@ func TestApplyClassicDiffListing(t *testing.T) {
 			wantResolvedSources:   map[string]string{"/mnt/appdata": "/mnt/disk1/appdata"},
 		},
 		{
+			// Issue #351: a plugin's config directory is a single tree, so
+			// it takes the folder's flat listing shape.
+			name:             "plugin with listing keeps changed_since and attaches prev_listing_paths",
+			itemType:         "plugin",
+			listingPaths:     []string{"config.cfg"},
+			wantChangedSince: true,
+			wantPrevKey:      "prev_listing_paths",
+			wantPrevValue:    []string{"config.cfg"},
+		},
+		{
+			// Every plugin restore point written before #351 has no listing
+			// sidecar, so the first differential after the fix must degrade
+			// to a full archive rather than filter on mtime alone.
+			name:             "plugin with nil listing clears changed_since (full archive)",
+			itemType:         "plugin",
+			listingPaths:     nil,
+			wantChangedSince: false,
+		},
+		{
 			name:               "container with nil listing clears changed_since (full archive)",
 			itemType:           "container",
 			volumeListingPaths: nil,
@@ -362,5 +381,40 @@ func TestIsSidecarBase(t *testing.T) {
 				t.Errorf("isSidecarBase(%q, %q) = %v, want %v", tc.base, tc.suffix, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestClassicDiffListingType pins which item types participate in the
+// parent-listing flow. A type that receives changed_since but has no listing
+// branch would keep the cut-off with nothing to filter against — mtime-only
+// filtering, the issue #320 data-loss class — which is why the gate and
+// applyClassicDiffListing must agree on the same set.
+func TestClassicDiffListingType(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]bool{
+		"container": true,
+		"folder":    true,
+		"plugin":    true,
+		"vm":        false,
+		"zfs":       false,
+		"flash":     false,
+		"":          false,
+	}
+
+	for itemType, want := range cases {
+		if got := classicDiffListingType(itemType); got != want {
+			t.Errorf("classicDiffListingType(%q) = %v, want %v", itemType, got, want)
+		}
+		// Every participating type must have a branch that attaches a
+		// listing; a silent fall-through is the bug this guards.
+		if !want {
+			continue
+		}
+		settings := map[string]any{"changed_since": "2026-08-24T00:00:00Z"}
+		applyClassicDiffListing(settings, itemType, nil, nil, nil)
+		if _, ok := settings["changed_since"]; ok {
+			t.Errorf("%s: applyClassicDiffListing must clear changed_since when no listing resolved", itemType)
+		}
 	}
 }

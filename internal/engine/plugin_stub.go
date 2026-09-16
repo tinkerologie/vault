@@ -43,3 +43,8 @@ func (h *PluginHandler) BackupChunked(_ context.Context, _ BackupItem, _ *dedup.
 func (h *PluginHandler) RestoreChunked(_ context.Context, _ BackupItem, _ *dedup.Repo, _ dedup.ID, _ string, _ ProgressFunc) error {
 	return errors.New("plugin: unsupported on this platform")
 }
+
+// PluginPath is a stub on non-Linux platforms.
+func PluginPath(_ string) string {
+	return ""
+}

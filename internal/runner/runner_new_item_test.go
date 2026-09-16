@@ -503,3 +503,128 @@ func TestRestoreMergedChainGenericSkipsHistoricalSteps(t *testing.T) {
 		t.Errorf("step 2 should have been found, got %v", err)
 	}
 }
+
+// TestPruneChainResurrected_PluginDestinationResolution verifies that pruneChainResurrected
+// resolves the plugin directory when destination is empty and item is a plugin.
+func TestPruneChainResurrected_PluginDestinationResolution(t *testing.T) {
+	t.Parallel()
+
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	storageDir := t.TempDir()
+	storageConfig := fmt.Sprintf(`{"path":%q}`, storageDir)
+	storageID, err := database.CreateStorageDestination(db.StorageDestination{
+		Name:   "local",
+		Type:   "local",
+		Config: storageConfig,
+	})
+	if err != nil {
+		t.Fatalf("CreateStorageDestination: %v", err)
+	}
+
+	jobID, err := database.CreateJob(db.Job{
+		Name:          "plugin-prune-job",
+		StorageDestID: storageID,
+		Schedule:      "@daily",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	pluginDest := t.TempDir()
+	settingsJSON := fmt.Sprintf(`{"path":%q}`, pluginDest)
+	_, err = database.AddJobItem(db.JobItem{
+		JobID:    jobID,
+		ItemType: "plugin",
+		ItemName: "test-plugin",
+		ItemID:   "test-plugin-id",
+		Settings: settingsJSON,
+	})
+	if err != nil {
+		t.Fatalf("AddJobItem: %v", err)
+	}
+
+	basePath := "prune-test/1_full"
+	childPath := "prune-test/2_inc"
+
+	baseDir := filepath.Join(storageDir, filepath.FromSlash(basePath), "test-plugin")
+	childDir := filepath.Join(storageDir, filepath.FromSlash(childPath), "test-plugin")
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		t.Fatalf("MkdirAll base: %v", err)
+	}
+	if err := os.MkdirAll(childDir, 0755); err != nil {
+		t.Fatalf("MkdirAll child: %v", err)
+	}
+
+	resurrectedContent := []byte("resurrected file content")
+	survivingContent := []byte("surviving file content")
+	if err := os.WriteFile(filepath.Join(pluginDest, "resurrected.conf"), resurrectedContent, 0644); err != nil {
+		t.Fatalf("WriteFile resurrected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDest, "surviving.conf"), survivingContent, 0644); err != nil {
+		t.Fatalf("WriteFile surviving: %v", err)
+	}
+
+	baseIdx := engine.TarIndex{
+		Version: 1,
+		Files: []engine.TarIndexEntry{
+			{Path: "resurrected.conf", Size: int64(len(resurrectedContent))},
+			{Path: "surviving.conf", Size: int64(len(survivingContent))},
+		},
+	}
+	baseIdxData, err := json.Marshal(baseIdx)
+	if err != nil {
+		t.Fatalf("marshal base index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "config.tar.index.json"), baseIdxData, 0644); err != nil {
+		t.Fatalf("write base index: %v", err)
+	}
+
+	childListing := engine.TarIndex{
+		Version: 1,
+		Files: []engine.TarIndexEntry{
+			{Path: "surviving.conf", Size: int64(len(survivingContent))},
+		},
+	}
+	childListingData, err := json.Marshal(childListing)
+	if err != nil {
+		t.Fatalf("marshal child listing: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(childDir, "config.tar.listing.json"), childListingData, 0644); err != nil {
+		t.Fatalf("write child listing: %v", err)
+	}
+
+	baseRP := db.RestorePoint{
+		ID:          1,
+		JobID:       jobID,
+		BackupType:  "full",
+		StoragePath: basePath,
+		Metadata:    `{"item_sizes":{"test-plugin":100}}`,
+		CreatedAt:   time.Now().Add(-time.Hour),
+	}
+	childRP := db.RestorePoint{
+		ID:                   2,
+		JobID:                jobID,
+		BackupType:           "incremental",
+		StoragePath:          childPath,
+		ParentRestorePointID: 1,
+		Metadata:             `{"item_sizes":{"test-plugin":10}}`,
+		CreatedAt:            time.Now(),
+	}
+
+	r := New(database, ws.NewHub(), nil)
+
+	r.pruneChainResurrected([]db.RestorePoint{baseRP, childRP}, "test-plugin", "", "", time.Now())
+
+	if _, err := os.Stat(filepath.Join(pluginDest, "resurrected.conf")); !os.IsNotExist(err) {
+		t.Errorf("resurrected.conf was not pruned: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(pluginDest, "surviving.conf")); err != nil {
+		t.Errorf("surviving.conf was unexpectedly removed: %v", err)
+	}
+}
+
