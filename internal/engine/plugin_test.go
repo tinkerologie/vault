@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
@@ -470,4 +471,82 @@ func TestPluginDisplayName(t *testing.T) {
 	if got := pluginDisplayName(p); got != "Direct Test" {
 		t.Errorf("pluginDisplayName() = %q, want %q", got, "Direct Test")
 	}
+}
+
+// TestPluginRestoreDestination is a regression test for #381: the classic
+// (tar) PluginHandler.Restore hardcoded the config target to
+// pluginPath(name), so a user who picked an alternate restore destination
+// had their choice silently discarded and the live plugin config overwritten
+// — the very outcome the setting exists to avoid. The chunked path had
+// already been fixed for #274; this closes the parity gap.
+func TestPluginRestoreDestination(t *testing.T) {
+	base := t.TempDir()
+	orig := pluginsDir
+	pluginsDir = base
+	t.Cleanup(func() { pluginsDir = orig })
+
+	// A plugin as Unraid lays it out: the installer next to a config dir.
+	if err := os.WriteFile(filepath.Join(base, "p.plg"), []byte("<PLUGIN/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "p"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "p", "config.toml"), []byte("x=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	h := &PluginHandler{}
+	noop := func(string, int, string) {}
+	sourceDir := t.TempDir()
+	if _, err := h.Backup(ctx, BackupItem{Name: "p", Type: "plugin"}, sourceDir, noop); err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+
+	t.Run("restore_destination is honoured", func(t *testing.T) {
+		dst := t.TempDir()
+		// Clear the live config so a fallback restore is detectable.
+		if err := os.Remove(filepath.Join(base, "p", "config.toml")); err != nil {
+			t.Fatal(err)
+		}
+		item := BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"restore_destination": dst}}
+		if err := h.Restore(ctx, item, sourceDir, noop); err != nil {
+			t.Fatalf("Restore: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dst, "config.toml")); err != nil {
+			t.Errorf("config should be restored to restore_destination: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(base, "p", "config.toml")); !os.IsNotExist(err) {
+			t.Errorf("the live plugin config must be left alone (err=%v)", err)
+		}
+		// The installer always goes back to pluginsDir: Unraid scans only
+		// that directory, so relocating it would orphan the plugin.
+		if _, err := os.Stat(filepath.Join(base, "p.plg")); err != nil {
+			t.Errorf("the .plg installer should still land in pluginsDir: %v", err)
+		}
+	})
+
+	t.Run("falls back to the plugin directory when unset", func(t *testing.T) {
+		if err := os.RemoveAll(filepath.Join(base, "p")); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.Restore(ctx, BackupItem{Name: "p", Type: "plugin"}, sourceDir, noop); err != nil {
+			t.Fatalf("Restore: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(base, "p", "config.toml")); err != nil {
+			t.Errorf("config should fall back to pluginPath(name): %v", err)
+		}
+	})
+
+	t.Run("a destination outside the approved roots is rejected", func(t *testing.T) {
+		item := BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"restore_destination": "/nope/escape"}}
+		err := h.Restore(ctx, item, sourceDir, noop)
+		if err == nil {
+			t.Fatal("a restore destination outside the approved roots should be rejected")
+		}
+		if !strings.Contains(err.Error(), "invalid restore path") {
+			t.Errorf("error %q should name the invalid restore path", err)
+		}
+	})
 }

@@ -291,7 +291,20 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// Step 2: Restore config directory.
 	progress(item.Name, 60, "restoring config")
 	if configArchive, err := findArchive(sourceDir, "config.tar"); err == nil {
+		// Honour an alternate destination, the same way the chunked path and
+		// ContainerHandler.Restore do. Without this the setting was silently
+		// dropped and the config always landed back in /boot/config/plugins
+		// (issue #381). The .plg installer deliberately stays at pluginsDir:
+		// Unraid only scans that directory, so relocating the installer would
+		// produce a plugin that can never be recognised.
 		configDir := pluginPath(pluginName)
+		if restoreDest, _ := item.Settings["restore_destination"].(string); restoreDest != "" {
+			normalized, err := normalizeRestorePath(restoreDest)
+			if err != nil {
+				return err
+			}
+			configDir = normalized
+		}
 		if err := os.MkdirAll(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
