@@ -38,7 +38,9 @@ For the exact retention fields on a job, see the [Job Configuration reference](r
 
 ## Encryption
 
-Backups can be encrypted with your backup password using **age** encryption — a modern, audited standard. Encryption is applied to the backup content so that data at rest on the destination cannot be read without the password.
+Backups can be encrypted with your backup password using **age** encryption — a modern, audited standard. Encryption is applied to the backup content and to run manifests (`manifest.json`) so that data at rest and backup metadata (such as job name, items, and settings) on the storage destination cannot be read without the password.
+
+For deduplicated storage destinations, manifests are automatically encrypted using AES-256-GCM keyed off the destination's master key, keeping metadata protected without extra user intervention.
 
 ## Deduplication
 

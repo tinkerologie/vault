@@ -487,7 +487,23 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	manifests, err := h.runner.ScanStorageManifests(dest)
+	var req struct {
+		Path       string `json:"path"`
+		Passphrase string `json:"passphrase"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	path := req.Path
+	if path == "" {
+		path = r.URL.Query().Get("path")
+	}
+	passphrase := req.Passphrase
+	if passphrase == "" {
+		passphrase = r.URL.Query().Get("passphrase")
+	}
+
+	manifests, err := h.runner.ScanStorageManifests(dest, passphrase)
 	if err != nil {
 		respondInternalError(w, err)
 		return
@@ -495,7 +511,7 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 
 	// Also scan for appdata.backup (ab_*) directories.
 	// Optional ?path= parameter allows scanning a custom subfolder.
-	abManifests, err := h.runner.ScanAppdataBackups(dest, r.URL.Query().Get("path"))
+	abManifests, err := h.runner.ScanAppdataBackups(dest, path)
 	if err != nil {
 		log.Printf("Warning: appdata.backup scan failed: %v", err)
 	}
@@ -543,14 +559,15 @@ func (h *StorageHandler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Backups []map[string]any `json:"backups"`
+		Backups    []map[string]any `json:"backups"`
+		Passphrase string           `json:"passphrase"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	imported, err := h.runner.ImportBackups(id, req.Backups)
+	imported, err := h.runner.ImportBackups(id, req.Backups, req.Passphrase)
 	if err != nil {
 		respondInternalError(w, err)
 		return

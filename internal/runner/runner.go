@@ -4,6 +4,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -2005,7 +2006,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		// write only degrades out-of-band recovery, not normal DB-driven restore.
 		manifestDest := dest // stable copy for closure
 		r.runFinalizationStep("manifest", jobID, runID, finalizeManifestTimeout, func(stepCtx context.Context) {
-			r.writeManifest(stepCtx, manifestDest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, itemManifests, timestamp)
+			r.writeManifest(stepCtx, manifestDest, basePath, job, items, runID, btResult.BackupType, itemsDone, itemsFailed, totalSize, itemChecksums, itemManifests, timestamp, encryptPassphrase)
 		})
 
 		// Auto-backup the SQLite database to a centralised storage location.
@@ -5385,11 +5386,15 @@ func (r *Runner) ResolvePassphrase() string {
 // about the backup run: files, checksums, encryption status, and timestamps.
 // This enables out-of-band recovery without access to the database.
 //
+// For destinations with deduplication enabled, or classic jobs with age encryption
+// enabled, the manifest body is encrypted before writing and wrapped in an
+// envelope (issue #325).
+//
 // itemManifests carries per-item dedup manifest IDs (hex-encoded) when the
 // destination has dedup enabled; pass nil/empty for non-dedup jobs. Without
 // it, restoring an imported dedup backup on another instance can't resolve
 // chunks because the manifest-ID linkage lives only in the local DB.
-func (r *Runner) writeManifest(ctx context.Context, dest db.StorageDestination, basePath string, job db.Job, items []db.JobItem, runID int64, backupType string, itemsDone, itemsFailed int, totalSize int64, itemChecksums map[string]map[string]string, itemManifests map[string]string, timestamp string) {
+func (r *Runner) writeManifest(ctx context.Context, dest db.StorageDestination, basePath string, job db.Job, items []db.JobItem, runID int64, backupType string, itemsDone, itemsFailed int, totalSize int64, itemChecksums map[string]map[string]string, itemManifests map[string]string, timestamp string, encryptPassphrase string) {
 	// Serialize items so a future import can recreate JobItems with the
 	// correct type, name, and per-item settings (e.g. folder path,
 	// container exclude_paths, ZFS dataset). Without this, importing a
@@ -5455,8 +5460,46 @@ func (r *Runner) writeManifest(ctx context.Context, dest db.StorageDestination, 
 	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
 	defer stopOnCancel()
 
+	payloadToWrite := data
+	if dest.DedupEnabled {
+		repo, err := r.openDedupRepo(adapter, dest)
+		if err != nil {
+			log.Printf("runner: failed to open dedup repo to encrypt manifest: %v", err)
+			return
+		}
+		ciphertext, err := repo.EncryptManifest(data)
+		if err != nil {
+			log.Printf("runner: failed to encrypt dedup manifest: %v", err)
+			return
+		}
+		envBytes, err := encodeManifestEnvelope("dedup", "aes-256-gcm", ciphertext)
+		if err != nil {
+			log.Printf("runner: failed to encode dedup manifest envelope: %v", err)
+			return
+		}
+		payloadToWrite = envBytes
+	} else if job.Encryption == "age" && encryptPassphrase != "" {
+		encReader, err := crypto.EncryptReader(encryptPassphrase, bytes.NewReader(data))
+		if err != nil {
+			log.Printf("runner: failed to start age encryption for manifest: %v", err)
+			return
+		}
+		ciphertext, err := io.ReadAll(encReader)
+		_ = encReader.Close()
+		if err != nil {
+			log.Printf("runner: failed to encrypt age manifest: %v", err)
+			return
+		}
+		envBytes, err := encodeManifestEnvelope("age", "age", ciphertext)
+		if err != nil {
+			log.Printf("runner: failed to encode age manifest envelope: %v", err)
+			return
+		}
+		payloadToWrite = envBytes
+	}
+
 	manifestPath := filepath.Join(basePath, "manifest.json")
-	if err := adapter.Write(manifestPath, strings.NewReader(string(data))); err != nil {
+	if err := adapter.Write(manifestPath, bytes.NewReader(payloadToWrite)); err != nil {
 		log.Printf("runner: failed to write manifest to %s: %v", manifestPath, err)
 	}
 }
@@ -5885,8 +5928,14 @@ func manifestVersionTooNew(m map[string]any) (int, bool) {
 }
 
 // ScanStorageManifests scans a storage destination for backup manifests
-// and returns metadata about each discovered backup run.
-func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]any, error) {
+// and returns metadata about each discovered backup run. Optional passphrase
+// allows decrypting age-encrypted manifests during discovery (issue #325).
+func (r *Runner) ScanStorageManifests(dest db.StorageDestination, passphrase ...string) ([]map[string]any, error) {
+	var pass string
+	if len(passphrase) > 0 {
+		pass = passphrase[0]
+	}
+
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		return nil, fmt.Errorf("creating storage adapter: %w", err)
@@ -5928,6 +5977,55 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination) ([]map[string]
 			if err != nil {
 				continue
 			}
+
+			// If this manifest is wrapped in an encrypted envelope (issue #325),
+			// attempt decryption according to the key scheme.
+			if isEnv, env := detectManifestEnvelope(data); isEnv {
+				var plaintext []byte
+				switch env.Key {
+				case "dedup":
+					if _, statErr := adapter.Stat("_vault/repo.json"); statErr == nil {
+						repo, openErr := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+						if openErr == nil {
+							if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
+								if pt, decErr2 := repo.DecryptManifest(cipherBytes); decErr2 == nil {
+									plaintext = pt
+								} else {
+									log.Printf("runner: scan: failed to decrypt dedup manifest %s: %v", manifestPath, decErr2)
+								}
+							}
+						} else {
+							log.Printf("runner: scan: failed to open dedup repo for %s: %v", manifestPath, openErr)
+						}
+					}
+				case "age":
+					if pass != "" {
+						if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
+							if decReader, err := crypto.DecryptReader(pass, bytes.NewReader(cipherBytes)); err == nil {
+								if pt, readErr := io.ReadAll(decReader); readErr == nil {
+									plaintext = pt
+								}
+								_ = decReader.Close()
+							}
+						}
+					}
+				}
+
+				if plaintext == nil {
+					// Decryption not possible or passphrase missing/wrong: return placeholder.
+					manifests = append(manifests, map[string]any{
+						"job_name":     filepath.Base(jobDir.Path),
+						"storage_path": runDir.Path,
+						"encrypted":    true,
+						"key":          env.Key,
+						"algo":         env.Algo,
+						"encryption":   env.Key,
+					})
+					continue
+				}
+				data = plaintext
+			}
+
 			var manifest map[string]any
 			if err := json.Unmarshal(data, &manifest); err != nil {
 				continue
@@ -6053,10 +6151,85 @@ func parseAppdataTimestamp(dirName string) string {
 // native Vault format (writeManifest) it also propagates job-level
 // settings (retention, modes, verify) and recreates the per-item rows
 // (JobItems) so the restore wizard can list snapshots immediately.
-func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any) (int, error) {
+// Optional passphrase allows decrypting age-encrypted manifests if encrypted
+// placeholders are passed (issue #325).
+func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, passphrase ...string) (int, error) {
+	var pass string
+	if len(passphrase) > 0 {
+		pass = passphrase[0]
+	}
+
 	imported := 0
 
 	for _, b := range backups {
+		if isEnc, _ := b["encrypted"].(bool); isEnc {
+			storagePath, _ := b["storage_path"].(string)
+			if storagePath == "" {
+				continue
+			}
+			dest, err := r.db.GetStorageDestination(storageDestID)
+			if err != nil {
+				log.Printf("runner: import: destination %d not found: %v", storageDestID, err)
+				continue
+			}
+			adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+			if err != nil {
+				log.Printf("runner: import: adapter error for dest %d: %v", storageDestID, err)
+				continue
+			}
+			manifestPath := storagePath + "/manifest.json"
+			rc, err := adapter.Read(manifestPath)
+			if err != nil {
+				storage.CloseAdapter(adapter)
+				log.Printf("runner: import: failed to read manifest %s: %v", manifestPath, err)
+				continue
+			}
+			data, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				storage.CloseAdapter(adapter)
+				log.Printf("runner: import: failed to read %s: %v", manifestPath, err)
+				continue
+			}
+
+			if isEnv, env := detectManifestEnvelope(data); isEnv {
+				var plaintext []byte
+				switch env.Key {
+				case "dedup":
+					if repo, openErr := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey); openErr == nil {
+						if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
+							plaintext, _ = repo.DecryptManifest(cipherBytes)
+						}
+					}
+				case "age":
+					if pass != "" {
+						if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
+							if decReader, err := crypto.DecryptReader(pass, bytes.NewReader(cipherBytes)); err == nil {
+								if pt, readErr := io.ReadAll(decReader); readErr == nil {
+									plaintext = pt
+								}
+								_ = decReader.Close()
+							}
+						}
+					}
+				}
+				storage.CloseAdapter(adapter)
+				if plaintext == nil {
+					log.Printf("runner: import: cannot decrypt encrypted backup %s", storagePath)
+					continue
+				}
+				var decryptedManifest map[string]any
+				if err := json.Unmarshal(plaintext, &decryptedManifest); err != nil {
+					log.Printf("runner: import: invalid decrypted manifest %s: %v", manifestPath, err)
+					continue
+				}
+				decryptedManifest["storage_path"] = storagePath
+				b = decryptedManifest
+			} else {
+				storage.CloseAdapter(adapter)
+			}
+		}
+
 		jobName, _ := b["job_name"].(string)
 		storagePath, _ := b["storage_path"].(string)
 		backupType, _ := b["backup_type"].(string)

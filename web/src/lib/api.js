@@ -81,8 +81,15 @@ export const api = {
   // breaker is otherwise managed automatically by the runner / pre-flight
   // check. Returns 204 on success and resets consecutive_failures to 0.
   closeBreaker: (id) => request('POST', `/storage/${id}/breaker/close`),
-  scanStorage: (id, path = '') => request('POST', `/storage/${id}/scan${path ? '?path=' + encodeURIComponent(path) : ''}`),
-  importBackups: (id, backups) => request('POST', `/storage/${id}/import`, { backups }),
+  scanStorage: (id, path = '', passphrase = '') => {
+    const params = new URLSearchParams()
+    if (path) params.set('path', path)
+    if (passphrase) params.set('passphrase', passphrase)
+    const qs = params.toString()
+    return request('POST', `/storage/${id}/scan${qs ? '?' + qs : ''}`, passphrase ? { path, passphrase } : null)
+  },
+  importBackups: (id, backups, passphrase = '') =>
+    request('POST', `/storage/${id}/import`, { backups, ...(passphrase ? { passphrase } : {}) }),
   // Restore the Vault database from a backup on this destination. With
   // verifyOnly the server only checks the file (and passphrase, when
   // encrypted) without touching the live DB.

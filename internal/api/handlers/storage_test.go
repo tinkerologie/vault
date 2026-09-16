@@ -1193,6 +1193,27 @@ func TestStorageScan_EmptyDest(t *testing.T) {
 	}
 }
 
+func TestStorageScan_WithPassphrase(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	// JSON body with path and passphrase
+	body := []byte(`{"path":"","passphrase":"test-pass"}`)
+	w := httptest.NewRecorder()
+	h.Scan(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/scan", idStr, body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	// Query string with passphrase
+	w2 := httptest.NewRecorder()
+	h.Scan(w2, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/scan?passphrase=test-pass", idStr, nil))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w2.Code, w2.Body.String())
+	}
+}
+
 func TestStorageScan_NotFound(t *testing.T) {
 	t.Parallel()
 	h, _ := newDedupStorageHandler(t, false)
@@ -1213,7 +1234,7 @@ func TestStorageImport_EmptyList(t *testing.T) {
 	h, destID := newDedupStorageHandler(t, false)
 	idStr := strconv.FormatInt(destID, 10)
 
-	body := []byte(`{"backups":[]}`)
+	body := []byte(`{"backups":[],"passphrase":"secret"}`)
 	w := httptest.NewRecorder()
 	h.Import(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/import", idStr, body))
 	if w.Code != http.StatusOK {

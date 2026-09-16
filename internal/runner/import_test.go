@@ -1,13 +1,17 @@
 package runner
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -25,11 +29,11 @@ func setupTestRunner(t *testing.T) (*Runner, *db.DB, string) {
 	return r, database, storageDir
 }
 
-func createLocalDest(t *testing.T, database *db.DB, storageDir string) db.StorageDestination {
+func createNamedLocalDest(t *testing.T, database *db.DB, name, storageDir string) db.StorageDestination {
 	t.Helper()
 	cfg := `{"path":"` + strings.ReplaceAll(storageDir, `\`, `\\`) + `"}`
 	id, err := database.CreateStorageDestination(db.StorageDestination{
-		Name:   "test-local",
+		Name:   name,
 		Type:   "local",
 		Config: cfg,
 	})
@@ -38,6 +42,11 @@ func createLocalDest(t *testing.T, database *db.DB, storageDir string) db.Storag
 	}
 	dest, _ := database.GetStorageDestination(id)
 	return dest
+}
+
+func createLocalDest(t *testing.T, database *db.DB, storageDir string) db.StorageDestination {
+	t.Helper()
+	return createNamedLocalDest(t, database, "test-local", storageDir)
 }
 
 func TestImportBackups(t *testing.T) {
@@ -769,3 +778,474 @@ func TestImportBackupsRejectsNewerManifestVersion(t *testing.T) {
 		t.Fatalf("current-version manifest was not imported: %v", err)
 	}
 }
+
+func TestScanAndImportAgeEncryptedManifest(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	dest := createLocalDest(t, database, storageDir)
+
+	runDir := filepath.Join(storageDir, "age-job", "2026-04-01_020000")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := map[string]any{
+		"version":           float64(manifestVersionCurrent),
+		"job_name":          "age-job",
+		"backup_type":       "full",
+		"backup_type_chain": "full",
+		"encryption":        "age",
+		"compression":       "zstd",
+		"size_bytes":        float64(1024),
+		"items": []any{
+			map[string]any{"name": "test-container", "type": "container", "id": "cont123"},
+		},
+	}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	passphrase := "secret123"
+	encReader, err := crypto.EncryptReader(passphrase, bytes.NewReader(manifestBytes))
+	if err != nil {
+		t.Fatalf("crypto.EncryptReader: %v", err)
+	}
+	cipherBytes, err := io.ReadAll(encReader)
+	_ = encReader.Close()
+	if err != nil {
+		t.Fatalf("reading ciphertext: %v", err)
+	}
+
+	envBytes, err := encodeManifestEnvelope("age", "age", cipherBytes)
+	if err != nil {
+		t.Fatalf("encodeManifestEnvelope: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "manifest.json"), envBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Scan without passphrase -> returns encrypted placeholder.
+	scanned, err := r.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests error: %v", err)
+	}
+	if len(scanned) != 1 {
+		t.Fatalf("expected 1 scanned manifest, got %d", len(scanned))
+	}
+	if enc, _ := scanned[0]["encrypted"].(bool); !enc {
+		t.Errorf("expected encrypted == true, got %v", scanned[0]["encrypted"])
+	}
+	if scanned[0]["key"] != "age" {
+		t.Errorf("expected key == age, got %v", scanned[0]["key"])
+	}
+	if scanned[0]["items"] != nil {
+		t.Errorf("expected items to be nil without passphrase")
+	}
+
+	// 2. Scan with wrong passphrase -> still returns encrypted placeholder.
+	scannedWrong, err := r.ScanStorageManifests(dest, "wrongpass")
+	if err != nil {
+		t.Fatalf("ScanStorageManifests with wrong pass error: %v", err)
+	}
+	if len(scannedWrong) != 1 || scannedWrong[0]["encrypted"] != true {
+		t.Fatalf("expected encrypted placeholder on wrong passphrase")
+	}
+
+	// 3. Scan with correct passphrase -> returns decrypted manifest.
+	scannedDec, err := r.ScanStorageManifests(dest, passphrase)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests with correct pass error: %v", err)
+	}
+	if len(scannedDec) != 1 {
+		t.Fatalf("expected 1 scanned manifest, got %d", len(scannedDec))
+	}
+	if scannedDec[0]["encrypted"] != nil {
+		t.Errorf("expected encrypted to be nil after decryption, got %v", scannedDec[0]["encrypted"])
+	}
+	if scannedDec[0]["job_name"] != "age-job" {
+		t.Errorf("expected job_name == age-job, got %v", scannedDec[0]["job_name"])
+	}
+	items, _ := scannedDec[0]["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+
+	// 4. Import using the encrypted placeholder and correct passphrase.
+	imported, err := r.ImportBackups(dest.ID, scanned, passphrase)
+	if err != nil {
+		t.Fatalf("ImportBackups: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("imported = %d, want 1", imported)
+	}
+
+	job, err := database.GetJobByName("age-job")
+	if err != nil {
+		t.Fatalf("GetJobByName: %v", err)
+	}
+	if job.Encryption != "age" {
+		t.Errorf("job.Encryption = %q, want age", job.Encryption)
+	}
+	jobItems, err := database.GetJobItems(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobItems: %v", err)
+	}
+	if len(jobItems) != 1 || jobItems[0].ItemName != "test-container" {
+		t.Fatalf("expected test-container item, got %+v", jobItems)
+	}
+}
+
+func TestScanAndImportDedupEncryptedManifest(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	r.serverKey = testServerKey()
+
+	dest := createLocalDest(t, database, storageDir)
+	dest.DedupEnabled = true
+	_ = database.UpdateStorageDestination(dest)
+
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatalf("NewAdapter: %v", err)
+	}
+	repo, err := dedup.InitRepo(database, adapter, dest.ID, r.serverKey)
+	if err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+	storage.CloseAdapter(adapter)
+
+	runDir := filepath.Join(storageDir, "dedup-job", "2026-04-01_030000")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := map[string]any{
+		"version":           float64(manifestVersionCurrent),
+		"job_name":          "dedup-job",
+		"backup_type":       "full",
+		"backup_type_chain": "full",
+		"compression":       "zstd",
+		"size_bytes":        float64(4096),
+		"items": []any{
+			map[string]any{"name": "my-vm", "type": "vm", "id": "vm-uuid-1"},
+		},
+	}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cipherBytes, err := repo.EncryptManifest(manifestBytes)
+	if err != nil {
+		t.Fatalf("repo.EncryptManifest: %v", err)
+	}
+	envBytes, err := encodeManifestEnvelope("dedup", "aes-256-gcm", cipherBytes)
+	if err != nil {
+		t.Fatalf("encodeManifestEnvelope: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "manifest.json"), envBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Scan: dedup decrypts transparently using daemon serverKey.
+	scanned, err := r.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests error: %v", err)
+	}
+	if len(scanned) != 1 {
+		t.Fatalf("expected 1 scanned manifest, got %d", len(scanned))
+	}
+	if scanned[0]["encrypted"] != nil {
+		t.Errorf("expected dedup manifest to be decrypted transparently, got encrypted=%v", scanned[0]["encrypted"])
+	}
+	if scanned[0]["job_name"] != "dedup-job" {
+		t.Errorf("expected job_name == dedup-job, got %v", scanned[0]["job_name"])
+	}
+
+	// Import:
+	imported, err := r.ImportBackups(dest.ID, scanned)
+	if err != nil {
+		t.Fatalf("ImportBackups: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("imported = %d, want 1", imported)
+	}
+
+	job, err := database.GetJobByName("dedup-job")
+	if err != nil {
+		t.Fatalf("GetJobByName: %v", err)
+	}
+	jobItems, err := database.GetJobItems(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobItems: %v", err)
+	}
+	if len(jobItems) != 1 || jobItems[0].ItemName != "my-vm" {
+		t.Fatalf("expected my-vm item, got %+v", jobItems)
+	}
+}
+
+func TestWriteManifestEncrypted(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	r, database, storageDir := setupTestRunner(t)
+	r.serverKey = testServerKey()
+
+	// 1. Test age encrypted writeManifest
+	destAge := createNamedLocalDest(t, database, "dest-age-write", filepath.Join(storageDir, "dest_age"))
+	jobAge := db.Job{
+		ID:          1,
+		Name:        "age-write-job",
+		Encryption:  "age",
+		Compression: "zstd",
+	}
+	items := []db.JobItem{
+		{ItemID: "c1", ItemName: "app1", ItemType: "container"},
+	}
+	runAgeDir := "age-write-job/2026-04-01_100000"
+	r.writeManifest(ctx, destAge, runAgeDir, jobAge, items, 1, "full", 1, 0, 100, nil, nil, "2026-04-01_100000", "mysecret")
+
+	// Read written manifest file from disk
+	writtenAge, err := os.ReadFile(filepath.Join(storageDir, "dest_age", runAgeDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("failed to read age manifest.json: %v", err)
+	}
+	isEnv, env := detectManifestEnvelope(writtenAge)
+	if !isEnv || env.Key != "age" {
+		t.Fatalf("expected age envelope, got isEnv=%v, env=%+v", isEnv, env)
+	}
+
+	// Scan without passphrase -> placeholder
+	scannedAge, err := r.ScanStorageManifests(destAge)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests: %v", err)
+	}
+	if len(scannedAge) != 1 || scannedAge[0]["encrypted"] != true {
+		t.Fatalf("expected encrypted placeholder, got %+v", scannedAge)
+	}
+
+	// Scan with passphrase -> decrypted
+	scannedAgeDec, err := r.ScanStorageManifests(destAge, "mysecret")
+	if err != nil {
+		t.Fatalf("ScanStorageManifests with passphrase: %v", err)
+	}
+	if len(scannedAgeDec) != 1 || scannedAgeDec[0]["job_name"] != "age-write-job" {
+		t.Fatalf("expected decrypted manifest, got %+v", scannedAgeDec)
+	}
+
+	// 2. Test dedup encrypted writeManifest
+	destDedup := createNamedLocalDest(t, database, "dest-dedup-write", filepath.Join(storageDir, "dest_dedup"))
+	destDedup.DedupEnabled = true
+	_ = database.UpdateStorageDestination(destDedup)
+
+	adapter, err := storage.NewAdapter(destDedup.Type, destDedup.Config)
+	if err != nil {
+		t.Fatalf("NewAdapter: %v", err)
+	}
+	if _, err := dedup.InitRepo(database, adapter, destDedup.ID, r.serverKey); err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+	storage.CloseAdapter(adapter)
+
+	jobDedup := db.Job{
+		ID:          2,
+		Name:        "dedup-write-job",
+		Compression: "zstd",
+	}
+	runDedupDir := "dedup-write-job/2026-04-01_110000"
+	r.writeManifest(ctx, destDedup, runDedupDir, jobDedup, items, 2, "full", 1, 0, 200, nil, nil, "2026-04-01_110000", "")
+
+	writtenDedup, err := os.ReadFile(filepath.Join(storageDir, "dest_dedup", runDedupDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("failed to read dedup manifest.json: %v", err)
+	}
+	isEnv, env = detectManifestEnvelope(writtenDedup)
+	if !isEnv || env.Key != "dedup" {
+		t.Fatalf("expected dedup envelope, got isEnv=%v, env=%+v", isEnv, env)
+	}
+
+	// Scan -> transparently decrypted
+	scannedDedup, err := r.ScanStorageManifests(destDedup)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests: %v", err)
+	}
+	if len(scannedDedup) != 1 || scannedDedup[0]["job_name"] != "dedup-write-job" {
+		t.Fatalf("expected transparently decrypted manifest, got %+v", scannedDedup)
+	}
+}
+
+func TestScanEncryptedDedupFailureModes(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	r.serverKey = testServerKey()
+
+	dest := createNamedLocalDest(t, database, "dest-failure-modes", storageDir)
+
+	// 1. Dedup envelope exists, but _vault/repo.json does not exist.
+	runDir1 := filepath.Join(storageDir, "job1", "2026-04-01_120000")
+	if err := os.MkdirAll(runDir1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env1, err := encodeManifestEnvelope("dedup", "aes-256-gcm", []byte("some-cipher"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir1, "manifest.json"), env1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	scanned, err := r.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests: %v", err)
+	}
+	if len(scanned) != 1 || scanned[0]["encrypted"] != true {
+		t.Fatalf("expected placeholder when repo.json missing, got %+v", scanned)
+	}
+
+	// 2. Init repo, but encrypt with wrong/corrupted data so DecryptManifest fails.
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dedup.InitRepo(database, adapter, dest.ID, r.serverKey); err != nil {
+		t.Fatal(err)
+	}
+	storage.CloseAdapter(adapter)
+
+	// Write invalid ciphertext in dedup envelope
+	env2, err := encodeManifestEnvelope("dedup", "aes-256-gcm", []byte("not-valid-gcm-ciphertext-12345678901234567890"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir1, "manifest.json"), env2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	scanned2, err := r.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests: %v", err)
+	}
+	if len(scanned2) != 1 || scanned2[0]["encrypted"] != true {
+		t.Fatalf("expected placeholder when DecryptManifest fails, got %+v", scanned2)
+	}
+
+	// 3. Corrupt base64 in envelope
+	corruptEnv := []byte(`{"vault_manifest_enc":1,"key":"dedup","algo":"aes-256-gcm","payload":"not-valid-base64!"}`)
+	if err := os.WriteFile(filepath.Join(runDir1, "manifest.json"), corruptEnv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanned3, err := r.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests: %v", err)
+	}
+	if len(scanned3) != 1 || scanned3[0]["encrypted"] != true {
+		t.Fatalf("expected placeholder when decodeManifestEnvelope fails, got %+v", scanned3)
+	}
+}
+
+func TestImportEncryptedManifestEdgeCases(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	r.serverKey = testServerKey()
+
+	dest := createNamedLocalDest(t, database, "dest-import-edges", storageDir)
+
+	// 1. Missing storage_path
+	imported, err := r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": ""},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported for empty storage_path, got %d, err: %v", imported, err)
+	}
+
+	// 2. Non-existent storage destination ID
+	imported, err = r.ImportBackups(99999, []map[string]any{
+		{"encrypted": true, "storage_path": "job/run1"},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported for missing dest, got %d, err: %v", imported, err)
+	}
+
+	// 3. Missing manifest.json file
+	imported, err = r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": "job/nonexistent"},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported for missing manifest file, got %d, err: %v", imported, err)
+	}
+
+	// 4. File is plaintext JSON, not envelope
+	runDir := filepath.Join(storageDir, "plain-job", "run1")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "manifest.json"), []byte(`{"version":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	imported, err = r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": "plain-job/run1"},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported when not envelope, got %d, err: %v", imported, err)
+	}
+
+	// 5. Decrypted manifest has invalid JSON
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := dedup.InitRepo(database, adapter, dest.ID, r.serverKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage.CloseAdapter(adapter)
+
+	badPlaintextCipher, err := repo.EncryptManifest([]byte("not-valid-json!"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badEnv, err := encodeManifestEnvelope("dedup", "aes-256-gcm", badPlaintextCipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badRunDir := filepath.Join(storageDir, "bad-json-job", "run1")
+	if err := os.MkdirAll(badRunDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badRunDir, "manifest.json"), badEnv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	imported, err = r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": "bad-json-job/run1"},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported when decrypted JSON invalid, got %d, err: %v", imported, err)
+	}
+
+	// 6. Successful dedup placeholder import
+	validManifest := []byte(`{"version":1,"job_name":"dedup-placeholder-job","items":[{"name":"c1","type":"container"}]}`)
+	validCipher, err := repo.EncryptManifest(validManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validEnv, err := encodeManifestEnvelope("dedup", "aes-256-gcm", validCipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validRunDir := filepath.Join(storageDir, "dedup-placeholder-job", "run1")
+	if err := os.MkdirAll(validRunDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(validRunDir, "manifest.json"), validEnv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	imported, err = r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": "dedup-placeholder-job/run1"},
+	})
+	if err != nil || imported != 1 {
+		t.Fatalf("expected 1 imported for dedup placeholder, got %d, err: %v", imported, err)
+	}
+}
+

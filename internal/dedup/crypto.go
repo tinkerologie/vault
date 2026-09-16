@@ -159,3 +159,53 @@ func UnsealMaster(serverKey, sealed []byte) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// EncryptManifestBlob encrypts plaintext under a key derived from master using AES-256-GCM.
+// A fresh random 12-byte nonce is generated for each encryption.
+// Output layout: nonce || ciphertext || tag.
+func EncryptManifestBlob(master, plaintext []byte) ([]byte, error) {
+	if len(master) != SecretSize {
+		return nil, fmt.Errorf("dedup: master key must be %d bytes, got %d", SecretSize, len(master))
+	}
+	key := deriveKey(master, "vault/manifest-enc/v1", 32)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("dedup: aes new cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("dedup: gcm new: %w", err)
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("dedup: rand read nonce: %w", err)
+	}
+	ct := aead.Seal(nil, nonce, plaintext, nil)
+	return append(nonce, ct...), nil
+}
+
+// DecryptManifestBlob inverts EncryptManifestBlob. Returns an error if authentication fails
+// or ciphertext is malformed.
+func DecryptManifestBlob(master, ciphertext []byte) ([]byte, error) {
+	if len(master) != SecretSize {
+		return nil, fmt.Errorf("dedup: master key must be %d bytes, got %d", SecretSize, len(master))
+	}
+	key := deriveKey(master, "vault/manifest-enc/v1", 32)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("dedup: aes new cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("dedup: gcm new: %w", err)
+	}
+	if len(ciphertext) < aead.NonceSize()+aead.Overhead() {
+		return nil, fmt.Errorf("dedup: ciphertext too short")
+	}
+	nonce, ct := ciphertext[:aead.NonceSize()], ciphertext[aead.NonceSize():]
+	out, err := aead.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return nil, fmt.Errorf("dedup: decrypt manifest: %w", err)
+	}
+	return out, nil
+}

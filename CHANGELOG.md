@@ -22,9 +22,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Storage scan and import support encrypted manifests (#325):** Scanning a storage destination now automatically decrypts deduplicated manifests using the local server key and identifies age-encrypted manifests. When age-encrypted manifests are detected, the Import modal displays an encryption notice with a passphrase field and unlock button, allowing users to decrypt metadata and import backups securely. Closes #325.
+
 - **Stage classic folder backups beside the selected local destination (#366):** Classic folder backups targeting local storage now stage temporary archives directly in a `.vault-stage` directory on the target destination rather than defaulting to the first available cache pool. This eliminates out-of-space (`ENOSPC`) failures when backing up shares larger than cache pool free capacity. The staging folder is automatically excluded from recursive source walks. Closes #366.
 
 - **Dropped job-run-ID prefix from backup run folders (#319):** Backup run directories in classic storage destinations no longer include the internal auto-incrementing job run ID in their folder names, standardizing on `<timestamp>_<type>` (e.g. `2026-09-15_143000_full`). Historical restore points formatted with the previous `<run_id>_<timestamp>_<type>` convention remain fully discoverable and restorable without manual migration. Closes #319.
+
+### Security
+
+- **Encrypt manifest.json at rest (#325):** Backup run manifests (`manifest.json`) stored on destinations now have their metadata encrypted at rest. For deduplicated destinations, manifests are encrypted with AES-256-GCM using the destination's master key. For age-encrypted jobs, manifests are encrypted with age using the job's passphrase. This prevents unauthorized inspection of job configuration, protected item lists, container names, and paths on untrusted remote storage. Existing unencrypted manifests remain fully discoverable and readable without migration. Closes #325.
+
 
 ### Fixed
 

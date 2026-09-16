@@ -29,11 +29,17 @@
   let importStorageId = $state(0)
   let importStorageName = $state('')
   let importBasePath = $state('')
+  let importPassphrase = $state('')
   let scanning = $state(false)
   let scannedBackups = $state([])
   let selectedBackups = $state(new SvelteSet())
   let vaultDBInfo = $state(null)
   let importing = $state(false)
+
+  let needsPassphrase = $derived(scannedBackups.some(b => b.encrypted && b.key === 'age'))
+  let hasLockedSelected = $derived(
+    [...selectedBackups].some(idx => scannedBackups[idx]?.encrypted && !importPassphrase)
+  )
 
   // Per-destination dedup stats, polled every 30s for dedup-enabled
   // destinations. Keyed by destination ID. cleanupBusy / verifyBusy track
@@ -283,6 +289,7 @@
     importStorageId = id
     importStorageName = name
     importBasePath = ''
+    importPassphrase = ''
     scannedBackups = []
     selectedBackups = new SvelteSet()
     vaultDBInfo = null
@@ -293,7 +300,7 @@
   async function scanStorage() {
     scanning = true
     try {
-      const results = await api.scanStorage(importStorageId, importBasePath)
+      const results = await api.scanStorage(importStorageId, importBasePath, importPassphrase)
       scannedBackups = results?.backups || []
       vaultDBInfo = results?.vault_db || null
       selectedBackups = new SvelteSet(scannedBackups.map((_b, i) => i))
@@ -324,7 +331,7 @@
     importing = true
     try {
       const backups = scannedBackups.filter((_b, i) => selectedBackups.has(i))
-      const result = await api.importBackups(importStorageId, backups)
+      const result = await api.importBackups(importStorageId, backups, importPassphrase)
       showToast(`Imported ${result.imported} of ${result.total} backups`, 'success')
       showImport = false
     } catch (e) {
@@ -809,6 +816,34 @@
     <div class="space-y-4">
       <p class="text-sm text-text-muted">Found <strong class="text-text">{scannedBackups.length}</strong> backup{scannedBackups.length !== 1 ? 's' : ''} on storage. Select which to import.</p>
 
+      {#if needsPassphrase}
+        <div class="p-3 bg-vault/5 border border-vault/30 rounded-lg space-y-2">
+          <div class="flex items-center gap-2 text-xs font-medium text-vault">
+            <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+            </svg>
+            <span>One or more backups are encrypted. Enter the passphrase to unlock manifest details and import.</span>
+          </div>
+          <div class="flex gap-2">
+            <input
+              type="password"
+              bind:value={importPassphrase}
+              placeholder="Enter encryption passphrase"
+              class="flex-1 px-3 py-1.5 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-dim focus:outline-none focus:border-vault"
+              onkeydown={(e) => e.key === 'Enter' && !scanning && importPassphrase && scanStorage()}
+            />
+            <button
+              type="button"
+              onclick={scanStorage}
+              disabled={scanning || !importPassphrase}
+              class="px-3 py-1.5 text-xs font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              Unlock
+            </button>
+          </div>
+        </div>
+      {/if}
+
       <!-- Select All -->
       <label class="flex items-center gap-2 text-sm text-text-muted cursor-pointer">
         <input type="checkbox" checked={selectedBackups.size === scannedBackups.length}
@@ -825,12 +860,24 @@
             <div class="flex-1 min-w-0">
               <div class="flex items-center justify-between">
                 <p class="text-sm font-medium text-text truncate">{backup.job_name || 'Unknown Job'}</p>
-                <span class="text-xs text-text-dim shrink-0 ml-2">{formatBytes(backup.size_bytes)}</span>
+                {#if backup.size_bytes}
+                  <span class="text-xs text-text-dim shrink-0 ml-2">{formatBytes(backup.size_bytes)}</span>
+                {/if}
               </div>
               <div class="flex flex-wrap gap-x-3 mt-1 text-xs text-text-dim">
-                <span>{backup.backup_type || 'full'}</span>
-                <span>{backup.compression || 'none'}</span>
-                {#if backup.encryption && backup.encryption !== 'none'}<span class="inline-flex items-center gap-1"><svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg> {backup.encryption}</span>{/if}
+                {#if backup.backup_type}<span>{backup.backup_type}</span>{/if}
+                {#if backup.compression}<span>{backup.compression}</span>{/if}
+                {#if backup.encrypted}
+                  <span class="inline-flex items-center gap-1 text-warning">
+                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    Locked ({backup.key})
+                  </span>
+                {:else if backup.encryption && backup.encryption !== 'none'}
+                  <span class="inline-flex items-center gap-1">
+                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    {backup.encryption}
+                  </span>
+                {/if}
                 {#if backup.created_at}<span>{formatDate(backup.created_at)}</span>{/if}
               </div>
               <p class="text-xs text-text-dim mt-0.5 truncate font-mono">{backup.storage_path}</p>
@@ -868,7 +915,8 @@
         <button
           type="button"
           onclick={doImport}
-          disabled={selectedBackups.size === 0 || importing}
+          disabled={selectedBackups.size === 0 || importing || hasLockedSelected}
+          title={hasLockedSelected ? 'Please unlock encrypted backups before importing' : ''}
           class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {#if importing}Importing...{:else}Import {selectedBackups.size} Backup{selectedBackups.size !== 1 ? 's' : ''}{/if}

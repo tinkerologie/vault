@@ -464,3 +464,13 @@ func (r *Repo) SessionLogicalBytes() int64 {
 	defer r.statsMu.RUnlock()
 	return r.stats.LogicalBytes
 }
+
+// EncryptManifest encrypts manifest plaintext with the repo's master key.
+func (r *Repo) EncryptManifest(plaintext []byte) ([]byte, error) {
+	return EncryptManifestBlob(r.master, plaintext)
+}
+
+// DecryptManifest decrypts manifest ciphertext with the repo's master key.
+func (r *Repo) DecryptManifest(ciphertext []byte) ([]byte, error) {
+	return DecryptManifestBlob(r.master, ciphertext)
+}

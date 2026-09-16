@@ -334,7 +334,7 @@ Operational notes:
 - `vault dedup repair --dest <id>` rebuilds the SQLite chunk/pack index from the on-storage `*.idx` blobs — use when the local DB is lost or corrupted but the destination is intact.
 - Dedup-mode and non-dedup destinations can coexist on the same Vault install; the flag is per-destination and immutable after creation.
 
-Imported backups (Storage → _Scan_ + _Import_) carry per-item dedup manifest IDs in their `manifest.json`, so dedup restore points produced on one Vault instance can be re-discovered and restored on another.
+Imported backups (Storage → _Scan_ + _Import_) carry per-item dedup manifest IDs in their `manifest.json`, so dedup restore points produced on one Vault instance can be re-discovered and restored on another. Run manifests are encrypted at rest (AES-256-GCM for deduplicated destinations, age encryption for age-encrypted jobs); scanning an age-encrypted destination prompts for the decryption passphrase to unlock and import the backup metadata.
 
 ---
 

@@ -123,3 +123,75 @@ func TestCryptoDeriveKeysDeterministic(t *testing.T) {
 		t.Fatal("chunk-hash and splitter keys must differ (different info strings)")
 	}
 }
+
+func TestCryptoManifestBlobRoundTrip(t *testing.T) {
+	master := bytes.Repeat([]byte{0x88}, 32)
+	plain := []byte(`{"version":1,"job_name":"my-job","items":[{"name":"appdata"}]}`)
+
+	ct, err := EncryptManifestBlob(master, plain)
+	if err != nil {
+		t.Fatalf("EncryptManifestBlob: %v", err)
+	}
+
+	// Ciphertext must be longer than plaintext (12-byte nonce + 16-byte GCM tag).
+	if len(ct) != len(plain)+12+16 {
+		t.Fatalf("unexpected ciphertext length: got %d, want %d", len(ct), len(plain)+28)
+	}
+
+	out, err := DecryptManifestBlob(master, ct)
+	if err != nil {
+		t.Fatalf("DecryptManifestBlob: %v", err)
+	}
+	if !bytes.Equal(out, plain) {
+		t.Fatalf("round-trip mismatch: got %s want %s", out, plain)
+	}
+}
+
+func TestCryptoManifestBlobWrongKeyFails(t *testing.T) {
+	master1 := bytes.Repeat([]byte{0x88}, 32)
+	master2 := bytes.Repeat([]byte{0x99}, 32)
+	plain := []byte(`{"version":1}`)
+
+	ct, err := EncryptManifestBlob(master1, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecryptManifestBlob(master2, ct); err == nil {
+		t.Fatal("DecryptManifestBlob accepted wrong master key")
+	}
+}
+
+func TestCryptoManifestBlobTamperFails(t *testing.T) {
+	master := bytes.Repeat([]byte{0x88}, 32)
+	plain := []byte(`{"version":1}`)
+
+	ct, err := EncryptManifestBlob(master, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct[len(ct)-1] ^= 0x01 // tamper with GCM tag
+	if _, err := DecryptManifestBlob(master, ct); err == nil {
+		t.Fatal("DecryptManifestBlob accepted tampered ciphertext")
+	}
+}
+
+func TestCryptoManifestBlobTooShortFails(t *testing.T) {
+	master := bytes.Repeat([]byte{0x88}, 32)
+	if _, err := DecryptManifestBlob(master, []byte("too short")); err == nil {
+		t.Fatal("DecryptManifestBlob accepted truncated ciphertext")
+	}
+}
+
+func TestCryptoManifestBlobInvalidMasterKey(t *testing.T) {
+	shortMaster := bytes.Repeat([]byte{0x88}, 16)
+	plain := []byte(`{"version":1}`)
+
+	if _, err := EncryptManifestBlob(shortMaster, plain); err == nil {
+		t.Fatal("EncryptManifestBlob accepted short master key")
+	}
+	if _, err := DecryptManifestBlob(shortMaster, []byte("some-ciphertext-data")); err == nil {
+		t.Fatal("DecryptManifestBlob accepted short master key")
+	}
+}
+
+

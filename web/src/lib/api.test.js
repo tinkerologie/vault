@@ -91,3 +91,72 @@ describe('history trend', () => {
     expect(fetch.mock.calls[0][0]).toBe('/api/v1/history/trend?period=7d&metric=duration')
   })
 })
+
+describe('storage scan and import', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('scans storage with default parameters', async () => {
+    const fetch = vi.fn(async () => new Response('{"backups":[]}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.scanStorage(42)
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/scan')
+    expect(fetch.mock.calls[0][1].body).toBeUndefined()
+  })
+
+  it('scans storage with custom path and passphrase', async () => {
+    const fetch = vi.fn(async () => new Response('{"backups":[]}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.scanStorage(42, 'backups/sub', 'secret123')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/scan?path=backups%2Fsub&passphrase=secret123')
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      path: 'backups/sub',
+      passphrase: 'secret123',
+    })
+  })
+
+  it('imports backups without passphrase', async () => {
+    const fetch = vi.fn(async () => new Response('{"imported":1,"total":1}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.importBackups(42, [{ job_name: 'job1' }])
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/import')
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      backups: [{ job_name: 'job1' }],
+    })
+  })
+
+  it('imports backups with passphrase', async () => {
+    const fetch = vi.fn(async () => new Response('{"imported":1,"total":1}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.importBackups(42, [{ job_name: 'job1' }], 'secret123')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/import')
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      backups: [{ job_name: 'job1' }],
+      passphrase: 'secret123',
+    })
+  })
+})
+
