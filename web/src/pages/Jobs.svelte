@@ -1049,6 +1049,29 @@
     }
   }
 
+  function getIncludedMounts(item) {
+    const settings = parseItemSettings(item)
+    return Array.isArray(settings.included_mounts) ? settings.included_mounts : []
+  }
+
+  function updateIncludedMounts(itemName, mounts) {
+    form = {
+      ...form,
+      items: form.items.map((item) => {
+        if (item.item_type !== 'container' || item.item_name !== itemName) return item
+
+        const settings = { ...parseItemSettings(item) }
+        if (mounts.length === 0) {
+          delete settings.included_mounts
+        } else {
+          settings.included_mounts = mounts
+        }
+
+        return { ...item, settings: JSON.stringify(settings) }
+      }),
+    }
+  }
+
   function getItemByName(itemName) {
     return form.items.find((i) => i.item_type === 'container' && i.item_name === itemName)
   }
@@ -1070,6 +1093,11 @@
     return getExclusionPaths(item).some((p) => cleanMountPath(p) === dest)
   }
 
+  function isMountForceIncluded(item, destination) {
+    const dest = cleanMountPath(destination)
+    return getIncludedMounts(item).some((d) => cleanMountPath(d) === dest)
+  }
+
   function toggleExcludedMount(itemName, destination, included) {
     const item = getItemByName(itemName)
     const dest = cleanMountPath(destination)
@@ -1080,6 +1108,18 @@
       updateExclusionPaths('container', itemName, getExclusionPaths(item).filter((p) => cleanMountPath(p) !== dest))
     } else {
       updateExcludedMounts(itemName, [...new Set([...getExcludedMounts(item), destination])])
+    }
+  }
+
+  function toggleForceIncludeMount(itemName, destination, included) {
+    const item = getItemByName(itemName)
+    const dest = cleanMountPath(destination)
+    if (included) {
+      updateIncludedMounts(itemName, [...new Set([...getIncludedMounts(item), destination])])
+      updateExcludedMounts(itemName, getExcludedMounts(item).filter((d) => cleanMountPath(d) !== dest))
+      updateExclusionPaths('container', itemName, getExclusionPaths(item).filter((p) => cleanMountPath(p) !== dest))
+    } else {
+      updateIncludedMounts(itemName, getIncludedMounts(item).filter((d) => cleanMountPath(d) !== dest))
     }
   }
 
@@ -2058,7 +2098,7 @@
               Container Mounts &amp; Exclusions
             </summary>
             <div class="space-y-4 mt-3 pl-6">
-              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Uncheck a mount to exclude its data (e.g. media or downloads). Mounts Vault auto-skips are shown disabled with the reason.</p>
+              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Uncheck a mount to exclude its data (e.g. media or downloads). Vault automatically skips host shared-data paths (like /mnt/user/media or /mnt/user/downloads) to prevent oversized backups, but you can check any overridable share to back it up. System paths (like /dev or raw disks) cannot be included.</p>
               {#each selectedContainerItems as cItem (cItem.item_name)}
                 {@const currentExclusions = getExclusionPaths(cItem)}
                 {@const preset = containerPresets[cItem.item_name]}
@@ -2082,7 +2122,8 @@
                         <span class="block text-text-dim mt-0.5">
                           Exports the databases with the server running, alongside the files below. Copying a database's
                           files while it is writing can capture a torn state; a dump is always consistent and can be
-                          reloaded into a different version. Uses the credentials already in the container.
+                          reloaded into a different version. (For file-based databases like SQLite, back up their directory
+                          mount below instead.) Uses the credentials already in the container.
                         </span>
                       </span>
                     </label>
@@ -2104,19 +2145,31 @@
                   {:else}
                     <div class="space-y-1.5">
                       {#each mounts as mount (mount.destination)}
-                        {@const included = !mount.auto_skip && !isMountWholeExcluded(cItem, mount.destination)}
-                        <label class="flex items-start gap-2.5 py-1 {mount.auto_skip ? 'opacity-60' : 'cursor-pointer'}">
+                        {@const isOverridable = mount.auto_skip && mount.overridable}
+                        {@const included = isOverridable
+                          ? (isMountForceIncluded(cItem, mount.destination) && !isMountWholeExcluded(cItem, mount.destination))
+                          : (!mount.auto_skip && !isMountWholeExcluded(cItem, mount.destination))}
+                        {@const isDisabled = mount.auto_skip && !mount.overridable}
+                        <label class="flex items-start gap-2.5 py-1 {isDisabled ? 'opacity-60' : 'cursor-pointer'}">
                           <input
                             type="checkbox"
                             class="mt-0.5 accent-vault"
                             checked={included}
-                            disabled={mount.auto_skip}
-                            onchange={(e) => toggleExcludedMount(cItem.item_name, mount.destination, e.currentTarget.checked)}
+                            disabled={isDisabled}
+                            onchange={(e) => {
+                              if (isOverridable) {
+                                toggleForceIncludeMount(cItem.item_name, mount.destination, e.currentTarget.checked)
+                              } else {
+                                toggleExcludedMount(cItem.item_name, mount.destination, e.currentTarget.checked)
+                              }
+                            }}
                           />
                           <span class="min-w-0 flex-1">
                             <span class="flex items-center gap-2 flex-wrap">
                               <span class="text-sm font-mono text-text">{mount.destination}</span>
-                              {#if mount.auto_skip}
+                              {#if isOverridable && included}
+                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-vault/15 text-vault border border-vault/30 font-medium">included (override)</span>
+                              {:else if mount.auto_skip}
                                 <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-dim border border-border">auto-excluded</span>
                               {/if}
                               {#if mount.type === 'volume'}

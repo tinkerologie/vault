@@ -1213,6 +1213,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			if em, ok := settings["excluded_mounts"]; ok {
 				backupItem.Settings["excluded_mounts"] = em
 			}
+			if im, ok := settings["included_mounts"]; ok {
+				backupItem.Settings["included_mounts"] = im
+			}
 			backupItem.Settings["label_exclusions_enabled"] = labelExclusions
 			// Opt-in per item: a dump runs commands inside a live container and
 			// costs extra space, so it is never assumed.

@@ -29,6 +29,16 @@ Pick which items to include in this job. Vault discovers items automatically fro
 - Tailscale-enabled containers are fully supported.
 - Bind-mounts that point at the host root (`/` → `/rootfs`, used by Glances, Telegraf, Netdata, cAdvisor, node-exporter) are detected and skipped without walking the host filesystem.
 
+#### Mount point detection and auto-skip overrides
+
+When configuring container backups, Vault lists each container's bind mounts and named volumes:
+
+- **Appdata paths** (e.g. `/mnt/cache/appdata/...`, `/mnt/user/appdata/...`) and named volumes are included by default.
+- **Shared data paths** (such as `/mnt/user/media`, `/mnt/user/downloads`, `/mnt/user/isos`, `/mnt/user/domains`, `/mnt/user/backups`, `/mnt/remotes`) are auto-skipped by default to prevent inadvertently creating massive backups.
+- **Overriding shared data auto-skips**: If an application (such as Gotify or a custom service) stores application state or an SQLite database inside a shared path, you can check that mount in the job editor. Overridden mounts display an `included (override)` badge and are backed up.
+- **System and hardware paths** (`/dev`, `/proc`, `/sys`, `/run`, root `/mnt`, and direct `/mnt/diskN` paths) are always skipped and cannot be overridden for safety.
+- **Database dumps vs file-based databases**: Logical SQL dumps (`database.sql`) are available for server databases (PostgreSQL, MySQL, MariaDB). For file-based databases like SQLite, back up their directory mount directly; no separate dump option is needed.
+
 #### Container database dumps
 
 For containers Vault recognises as a database (PostgreSQL, MySQL, MariaDB), a

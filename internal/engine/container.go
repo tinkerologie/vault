@@ -248,34 +248,36 @@ var devicePrefixes = []string{
 	"/run",
 }
 
-// shouldSkipVolume returns (skip bool, reason string) for an Unraid bind mount.
-// It skips known shared data paths and large non-appdata volumes.
-func shouldSkipVolume(source string) (bool, string) {
+// shouldSkipVolume returns (skip bool, reason string, overridable bool) for an
+// Unraid bind mount. It skips known shared data paths and large non-appdata
+// volumes. Only shared data share skips (skipPrefixes) are overridable by the
+// user; device, virtual, direct-disk, and root skips are not (issue #307).
+func shouldSkipVolume(source string) (bool, string, bool) {
 	norm := filepath.Clean(source)
 
 	// Skip device and virtual filesystem paths.
 	for _, prefix := range devicePrefixes {
 		if norm == prefix || strings.HasPrefix(norm, prefix+"/") {
-			return true, fmt.Sprintf("device/virtual path (%s)", prefix)
+			return true, fmt.Sprintf("device/virtual path (%s)", prefix), false
 		}
 	}
 
 	// Always back up appdata volumes.
 	for _, prefix := range appdataPrefixes {
 		if strings.HasPrefix(norm, prefix) {
-			return false, ""
+			return false, "", false
 		}
 	}
 
 	// Always back up /boot paths (Unraid flash drive configs).
 	if strings.HasPrefix(norm, "/boot") {
-		return false, ""
+		return false, "", false
 	}
 
 	// Skip known shared data paths.
 	for _, prefix := range skipPrefixes {
 		if strings.HasPrefix(norm, prefix) {
-			return true, fmt.Sprintf("shared data volume (%s)", prefix)
+			return true, fmt.Sprintf("shared data volume (%s)", prefix), true
 		}
 	}
 
@@ -284,16 +286,16 @@ func shouldSkipVolume(source string) (bool, string) {
 	// (the Unassigned Devices mount point), which holds legitimate appdata and
 	// data that must be backed up.
 	if rest := strings.TrimPrefix(norm, "/mnt/disk"); rest != norm && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
-		return true, "direct disk volume"
+		return true, "direct disk volume", false
 	}
 
 	// Skip the Unraid root mount (/mnt) itself if mapped directly.
 	if norm == "/mnt" {
-		return true, "root /mnt mount"
+		return true, "root /mnt mount", false
 	}
 
 	// Everything else (e.g. /tmp or custom paths) — back up.
-	return false, ""
+	return false, "", false
 }
 
 // backupableMount reports whether a Docker mount TYPE holds real on-disk data
@@ -649,6 +651,7 @@ type MountInfo struct {
 	Type        string `json:"type"`
 	AutoSkip    bool   `json:"auto_skip"`
 	SkipReason  string `json:"skip_reason,omitempty"`
+	Overridable bool   `json:"overridable,omitempty"`
 }
 
 // ListMounts inspects the named container and returns its backup-eligible
@@ -679,10 +682,11 @@ func (h *ContainerHandler) ListMounts(ctx context.Context, name string, labelExc
 		if !backupableMount(string(m.Type)) || !restorableVolume(string(m.Type), m.Name) {
 			continue
 		}
-		skip, reason := shouldSkipVolume(m.Source)
-		if !skip && len(labelPatterns) > 0 && shouldExcludeMount(labelPatterns, filepath.Clean(m.Destination)) {
+		skip, reason, overridable := shouldSkipVolume(m.Source)
+		if len(labelPatterns) > 0 && shouldExcludeMount(labelPatterns, filepath.Clean(m.Destination)) {
 			skip = true
 			reason = "excluded by the container's " + VaultExcludeLabel + " label"
+			overridable = false
 		}
 		mounts = append(mounts, MountInfo{
 			Source:      m.Source,
@@ -690,6 +694,7 @@ func (h *ContainerHandler) ListMounts(ctx context.Context, name string, labelExc
 			Type:        string(m.Type),
 			AutoSkip:    skip,
 			SkipReason:  reason,
+			Overridable: overridable,
 		})
 	}
 	sort.Slice(mounts, func(i, j int) bool {
@@ -719,6 +724,39 @@ func extractExcludedMounts(settings map[string]any) []string {
 		return out
 	}
 	return nil
+}
+
+// extractIncludedMounts parses the included_mounts setting — the list of
+// container-side mount destinations the user explicitly force-included even
+// though the auto-skip heuristic would normally skip them (issue #307).
+func extractIncludedMounts(settings map[string]any) []string {
+	raw, ok := settings["included_mounts"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func isMountForceIncluded(included []string, destination string) bool {
+	dest := filepath.Clean(destination)
+	for _, inc := range included {
+		if filepath.Clean(inc) == dest {
+			return true
+		}
+	}
+	return false
 }
 
 // containerLabels returns a container's labels, tolerating a nil Config —
@@ -953,6 +991,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 	// the checkbox-driven excluded_mounts from the job wizard, plus anything
 	// the container declares for itself via the vault.exclude label.
 	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
+	includedMounts := extractIncludedMounts(item.Settings)
 
 	// Step 2a: logical database dump, BEFORE the container is stopped.
 	//
@@ -1006,7 +1045,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// via pathChangedSince.
 		var anyChanged bool
 		var err error
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource, prevResolvedBySource)
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, includedMounts, changedSince, prevBySource, prevResolvedBySource)
 		if err != nil {
 			return nil, err
 		}
@@ -1129,12 +1168,16 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				continue
 			}
 
-			if skip, reason := shouldSkipVolume(mount.Source); skip {
-				log.Printf("engine: skipping volume %s for %s: %s", mount.Source, item.Name, reason)
-				entry.BackedUp = false
-				entry.SkipReason = reason
-				manifest = append(manifest, entry)
-				continue
+			if skip, reason, overridable := shouldSkipVolume(mount.Source); skip {
+				if overridable && isMountForceIncluded(includedMounts, mount.Destination) {
+					// Force-included by user: do not auto-skip unless an explicit exclusion applies.
+				} else {
+					log.Printf("engine: skipping volume %s for %s: %s", mount.Source, item.Name, reason)
+					entry.BackedUp = false
+					entry.SkipReason = reason
+					manifest = append(manifest, entry)
+					continue
+				}
 			}
 
 			// Honour exclusion patterns at the volume level for BOTH directory
@@ -1403,7 +1446,7 @@ func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, 
 // container at all: when no volume changed, the in-loop per-volume
 // pathChangedSince checks skip every volume anyway, so the stop/restart
 // cycle would be pure downtime with no consistency benefit.
-func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, changedSince time.Time, prevBySource map[string]map[string]struct{}, prevResolvedBySource map[string]string) (map[string]bool, bool, error) {
+func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, exclusions []string, includedMounts []string, changedSince time.Time, prevBySource map[string]map[string]struct{}, prevResolvedBySource map[string]string) (map[string]bool, bool, error) {
 	changes := make(map[string]bool)
 	anyChanged := false
 	for _, mnt := range mounts {
@@ -1416,8 +1459,10 @@ func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, e
 		if !restorableVolume(string(mnt.Type), mnt.Name) {
 			continue
 		}
-		if skip, _ := shouldSkipVolume(mnt.Source); skip {
-			continue
+		if skip, _, overridable := shouldSkipVolume(mnt.Source); skip {
+			if !overridable || !isMountForceIncluded(includedMounts, mnt.Destination) {
+				continue
+			}
 		}
 		if shouldExcludeMount(exclusions, mnt.Destination) {
 			continue
@@ -2281,6 +2326,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	// (shouldExcludeMount) and surviving mounts get their patterns mapped to
 	// volume-relative paths (mapExclusionsToVolume) for the chunked walk.
 	exclusions := containerExclusionsWithLabels(item.Settings, containerLabels(inspect))
+	includedMounts := extractIncludedMounts(item.Settings)
 	// Same all-mounts-excluded guard the classic path applies (see the
 	// countExcludedMounts call in Backup). The chunked path records each excluded
 	// mount as skipped and would otherwise commit a manifest holding no volume
@@ -2357,7 +2403,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		prevBySource := chunkedPrevBySource(parent, inspect.Mounts, repo)
 		// The chunked parent records no symlink resolution, so there is
 		// nothing to compare against and the listing is used as-is.
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource, nil)
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, includedMounts, changedSince, prevBySource, nil)
 		if err != nil {
 			return dedup.ID{}, err
 		}
@@ -2398,10 +2444,14 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
 				continue
 			}
-			if skip, reason := shouldSkipVolume(mnt.Source); skip {
-				log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
-				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
-				continue
+			if skip, reason, overridable := shouldSkipVolume(mnt.Source); skip {
+				if overridable && isMountForceIncluded(includedMounts, mnt.Destination) {
+					// Force-included by user: do not auto-skip unless an explicit exclusion applies.
+				} else {
+					log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
+					m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+					continue
+				}
 			}
 			// Honour exclusion patterns at the volume level — for a `/` → `/rootfs`
 			// bind mount (Glances, Telegraf, Netdata) this prevents walking the

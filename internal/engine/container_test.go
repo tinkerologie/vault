@@ -97,58 +97,62 @@ func TestShouldSkipVolume(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		source     string
-		wantSkip   bool
-		wantReason string
+		name            string
+		source          string
+		wantSkip        bool
+		wantReason      string
+		wantOverridable bool
 	}{
 		// Appdata — always backed up.
-		{"appdata cache", "/mnt/cache/appdata/plex", false, ""},
-		{"appdata user share", "/mnt/user/appdata/radarr", false, ""},
-		{"boot config", "/boot/config/plugins/vault", false, ""},
+		{"appdata cache", "/mnt/cache/appdata/plex", false, "", false},
+		{"appdata user share", "/mnt/user/appdata/radarr", false, "", false},
+		{"boot config", "/boot/config/plugins/vault", false, "", false},
 
-		// Shared data — always skipped.
-		{"media movies", "/mnt/user/media/movies", true, "shared data volume (/mnt/user/media)"},
-		{"media tv", "/mnt/user/media/tv", true, "shared data volume (/mnt/user/media)"},
-		{"downloads", "/mnt/user/downloads/complete", true, "shared data volume (/mnt/user/downloads)"},
-		{"isos", "/mnt/user/isos", true, "shared data volume (/mnt/user/isos)"},
-		{"domains", "/mnt/user/domains/win10", true, "shared data volume (/mnt/user/domains)"},
-		{"backups", "/mnt/user/backups/vault", true, "shared data volume (/mnt/user/backups)"},
-		{"remotes", "/mnt/remotes/nas", true, "shared data volume (/mnt/remotes)"},
+		// Shared data — skipped by default, but user-overridable (issue #307).
+		{"media movies", "/mnt/user/media/movies", true, "shared data volume (/mnt/user/media)", true},
+		{"media tv", "/mnt/user/media/tv", true, "shared data volume (/mnt/user/media)", true},
+		{"downloads", "/mnt/user/downloads/complete", true, "shared data volume (/mnt/user/downloads)", true},
+		{"isos", "/mnt/user/isos", true, "shared data volume (/mnt/user/isos)", true},
+		{"domains", "/mnt/user/domains/win10", true, "shared data volume (/mnt/user/domains)", true},
+		{"backups", "/mnt/user/backups/vault", true, "shared data volume (/mnt/user/backups)", true},
+		{"remotes", "/mnt/remotes/nas", true, "shared data volume (/mnt/remotes)", true},
 
-		// Direct disk access — skipped.
-		{"disk1", "/mnt/disk1/share", true, "direct disk volume"},
-		{"disk12", "/mnt/disk12/data", true, "direct disk volume"},
+		// Direct disk access — skipped, non-overridable.
+		{"disk1", "/mnt/disk1/share", true, "direct disk volume", false},
+		{"disk12", "/mnt/disk12/data", true, "direct disk volume", false},
 
 		// Unassigned Devices (/mnt/disks/, plural) — backed up, not direct disk.
-		{"unassigned devices appdata", "/mnt/disks/SSD-Device/appdata/Jellyfin", false, ""},
-		{"unassigned devices share", "/mnt/disks/SSD-Device/data", false, ""},
+		{"unassigned devices appdata", "/mnt/disks/SSD-Device/appdata/Jellyfin", false, "", false},
+		{"unassigned devices share", "/mnt/disks/SSD-Device/data", false, "", false},
 
-		// Root /mnt — skipped.
-		{"root mnt", "/mnt", true, "root /mnt mount"},
+		// Root /mnt — skipped, non-overridable.
+		{"root mnt", "/mnt", true, "root /mnt mount", false},
 
-		// Device and virtual filesystem paths — skipped.
-		{"dev rtc", "/dev/rtc", true, "device/virtual path (/dev)"},
-		{"dev dri", "/dev/dri", true, "device/virtual path (/dev)"},
-		{"proc", "/proc/self/fd", true, "device/virtual path (/proc)"},
-		{"sys", "/sys/class/net", true, "device/virtual path (/sys)"},
-		{"run", "/run/udev", true, "device/virtual path (/run)"},
+		// Device and virtual filesystem paths — skipped, non-overridable.
+		{"dev rtc", "/dev/rtc", true, "device/virtual path (/dev)", false},
+		{"dev dri", "/dev/dri", true, "device/virtual path (/dev)", false},
+		{"proc", "/proc/self/fd", true, "device/virtual path (/proc)", false},
+		{"sys", "/sys/class/net", true, "device/virtual path (/sys)", false},
+		{"run", "/run/udev", true, "device/virtual path (/run)", false},
 
 		// Other system paths — backed up.
-		{"tmp", "/tmp/something", false, ""},
-		{"etc", "/etc/localtime", false, ""},
-		{"custom", "/opt/myapp/config", false, ""},
+		{"tmp", "/tmp/something", false, "", false},
+		{"etc", "/etc/localtime", false, "", false},
+		{"custom", "/opt/myapp/config", false, "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			gotSkip, gotReason := shouldSkipVolume(tt.source)
+			gotSkip, gotReason, gotOverridable := shouldSkipVolume(tt.source)
 			if gotSkip != tt.wantSkip {
 				t.Errorf("shouldSkipVolume(%q) skip = %v, want %v", tt.source, gotSkip, tt.wantSkip)
 			}
 			if gotReason != tt.wantReason {
 				t.Errorf("shouldSkipVolume(%q) reason = %q, want %q", tt.source, gotReason, tt.wantReason)
+			}
+			if gotOverridable != tt.wantOverridable {
+				t.Errorf("shouldSkipVolume(%q) overridable = %v, want %v", tt.source, gotOverridable, tt.wantOverridable)
 			}
 		})
 	}
@@ -923,6 +927,112 @@ func TestContainerChunkedHonoursExclusions(t *testing.T) {
 	}
 }
 
+// TestContainerChunkedAutoSkipAndIncludedMounts tests that shared data mounts are
+// auto-skipped by default, non-overridable mounts stay skipped even if included,
+// and explicit exclusions override force-includes (issue #307).
+func TestContainerChunkedAutoSkipAndIncludedMounts(t *testing.T) {
+	appdataSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(appdataSrc, "config.yml"), []byte("foo: bar\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "deadbeef",
+				Name:   "/sonarr",
+				Config: &containertypes.Config{Image: "sonarr:latest"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: appdataSrc, Destination: "/config"},
+					{Type: mounttypes.TypeBind, Source: "/mnt/user/media/tv", Destination: "/tv"},
+					{Type: mounttypes.TypeBind, Source: "/dev/rtc", Destination: "/dev/rtc"},
+				},
+			},
+		},
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+	h := &ContainerHandler{cli: mock}
+
+	// 1. Without included_mounts: /tv and /dev/rtc are skipped automatically.
+	itemDefault := BackupItem{
+		Name: "sonarr",
+		Type: "container",
+		Settings: map[string]any{
+			"id": "deadbeef",
+		},
+	}
+	mID, err := h.BackupChunked(context.Background(), itemDefault, r, nil, nil)
+	if err != nil {
+		t.Fatalf("BackupChunked() default error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := r.GetManifest(mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if tvEntry, ok := m.Files[containerVolPrefix+"/tv"]; !ok || tvEntry.Size != volumeSkippedSize {
+		t.Errorf("default /tv = %+v, want size %d (skipped)", tvEntry, volumeSkippedSize)
+	}
+	if rtcEntry, ok := m.Files[containerVolPrefix+"/dev/rtc"]; !ok || rtcEntry.Size != volumeSkippedSize {
+		t.Errorf("default /dev/rtc = %+v, want size %d (skipped)", rtcEntry, volumeSkippedSize)
+	}
+
+	// 2. Non-overridable mount force-included: /dev/rtc cannot be overridden, still skipped.
+	itemNonOverridable := BackupItem{
+		Name: "sonarr",
+		Type: "container",
+		Settings: map[string]any{
+			"id":              "deadbeef",
+			"included_mounts": []string{"/dev/rtc"},
+		},
+	}
+	mIDNon, err := h.BackupChunked(context.Background(), itemNonOverridable, r, nil, nil)
+	if err != nil {
+		t.Fatalf("BackupChunked() non-overridable error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	mNon, err := r.GetManifest(mIDNon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rtcEntry, ok := mNon.Files[containerVolPrefix+"/dev/rtc"]; !ok || rtcEntry.Size != volumeSkippedSize {
+		t.Errorf("force-included /dev/rtc = %+v, want size %d (must remain skipped)", rtcEntry, volumeSkippedSize)
+	}
+
+	// 3. Explicitly excluded mount overrides force-include.
+	itemExplicitExclude := BackupItem{
+		Name: "sonarr",
+		Type: "container",
+		Settings: map[string]any{
+			"id":              "deadbeef",
+			"included_mounts": []string{"/tv"},
+			"excluded_mounts": []string{"/tv"},
+		},
+	}
+	mIDEx, err := h.BackupChunked(context.Background(), itemExplicitExclude, r, nil, nil)
+	if err != nil {
+		t.Fatalf("BackupChunked() explicit exclusion error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	mEx, err := r.GetManifest(mIDEx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tvEntry, ok := mEx.Files[containerVolPrefix+"/tv"]; !ok || tvEntry.Size != volumeSkippedSize {
+		t.Errorf("explicitly excluded /tv with force-include = %+v, want size %d (skipped)", tvEntry, volumeSkippedSize)
+	}
+}
+
 func manifestKeys(m dedup.Manifest) []string {
 	keys := make([]string, 0, len(m.Files))
 	for k := range m.Files {
@@ -1049,13 +1159,14 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 	}
 
 	type volCase struct {
-		name         string
-		mounts       []containertypes.MountPoint
-		exclusions   []string
-		prevBySource map[string]map[string]struct{}
-		ctx          context.Context // defaults to context.Background() when nil
-		wantChanged  bool
-		wantErr      bool
+		name           string
+		mounts         []containertypes.MountPoint
+		exclusions     []string
+		includedMounts []string
+		prevBySource   map[string]map[string]struct{}
+		ctx            context.Context // defaults to context.Background() when nil
+		wantChanged    bool
+		wantErr        bool
 	}
 
 	cases := []volCase{
@@ -1087,6 +1198,39 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 			},
 			exclusions:  []string{"/rootfs"},
 			wantChanged: false,
+		},
+		{
+			name: "auto-skipped shared-data mount is ignored by default",
+			mounts: []containertypes.MountPoint{
+				bind("/mnt/user/media/movies", "/movies"),
+			},
+			wantChanged: false,
+		},
+		{
+			name: "auto-skipped shared-data mount with force-include is not skipped",
+			mounts: []containertypes.MountPoint{
+				bind(filepath.Join("/mnt/user/media", "nonexistent-test-mount-"+t.Name()), "/movies"),
+			},
+			includedMounts: []string{"/movies"},
+			// Not skipped -> attempts to walk non-existent path -> errors
+			wantErr: true,
+		},
+		{
+			name: "auto-skipped shared-data mount with force-include but explicit exclusion is ignored",
+			mounts: []containertypes.MountPoint{
+				bind("/mnt/user/media/movies", "/movies"),
+			},
+			includedMounts: []string{"/movies"},
+			exclusions:     []string{"/movies"},
+			wantChanged:    false,
+		},
+		{
+			name: "non-overridable auto-skipped mount is ignored even if force-included",
+			mounts: []containertypes.MountPoint{
+				bind("/dev/rtc", "/dev/rtc"),
+			},
+			includedMounts: []string{"/dev/rtc"},
+			wantChanged:    false,
 		},
 		{
 			name: "non-backupable mount type is ignored",
@@ -1151,7 +1295,7 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, reference, tc.prevBySource, nil)
+			volChanges, anyChanged, err := anyVolumeChangedSince(ctx, tc.mounts, tc.exclusions, tc.includedMounts, reference, tc.prevBySource, nil)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")

@@ -27,6 +27,8 @@ func TestListMountsIncludesBackupableMountsAndFlagsAutoSkip(t *testing.T) {
 					{Type: mounttypes.TypeBind, Source: "/", Destination: "/rootfs"},
 					{Type: mounttypes.TypeVolume, Name: "some-named-volume", Source: "/var/lib/docker/volumes/some-named-volume/_data", Destination: "/data"},
 					{Type: mounttypes.TypeVolume, Name: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Source: "/var/lib/docker/volumes/anon/_data", Destination: "/anon"},
+					{Type: mounttypes.TypeBind, Source: "/dev/rtc", Destination: "/dev/rtc"},
+					{Type: mounttypes.TypeBind, Source: "/mnt/disk1/data", Destination: "/disk1"},
 				},
 			},
 		},
@@ -42,10 +44,12 @@ func TestListMountsIncludesBackupableMountsAndFlagsAutoSkip(t *testing.T) {
 	// real host path under /var/lib/docker/volumes). Anonymous volumes (64-hex
 	// name) are excluded — they can't be reliably restored. Sorted by destination.
 	want := []MountInfo{
-		{Source: "/mnt/cache/appdata/sonarr", Destination: "/config", Type: "bind", AutoSkip: false, SkipReason: ""},
-		{Source: "/var/lib/docker/volumes/some-named-volume/_data", Destination: "/data", Type: "volume", AutoSkip: false, SkipReason: ""},
-		{Source: "/", Destination: "/rootfs", Type: "bind", AutoSkip: false, SkipReason: ""},
-		{Source: "/mnt/user/media/tv", Destination: "/tv", Type: "bind", AutoSkip: true, SkipReason: "shared data volume (/mnt/user/media)"},
+		{Source: "/mnt/cache/appdata/sonarr", Destination: "/config", Type: "bind", AutoSkip: false, SkipReason: "", Overridable: false},
+		{Source: "/var/lib/docker/volumes/some-named-volume/_data", Destination: "/data", Type: "volume", AutoSkip: false, SkipReason: "", Overridable: false},
+		{Source: "/dev/rtc", Destination: "/dev/rtc", Type: "bind", AutoSkip: true, SkipReason: "device/virtual path (/dev)", Overridable: false},
+		{Source: "/mnt/disk1/data", Destination: "/disk1", Type: "bind", AutoSkip: true, SkipReason: "direct disk volume", Overridable: false},
+		{Source: "/", Destination: "/rootfs", Type: "bind", AutoSkip: false, SkipReason: "", Overridable: false},
+		{Source: "/mnt/user/media/tv", Destination: "/tv", Type: "bind", AutoSkip: true, SkipReason: "shared data volume (/mnt/user/media)", Overridable: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ListMounts() =\n  %#v\nwant\n  %#v", got, want)
@@ -91,5 +95,47 @@ func TestContainerExclusionsOnlyMounts(t *testing.T) {
 	want := []string{"/rootfs"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("containerExclusions() = %#v, want %#v", got, want)
+	}
+}
+
+// TestExtractIncludedMounts verifies parsing of the included_mounts setting
+// across types (string slice, any slice from JSON, empty).
+func TestExtractIncludedMounts(t *testing.T) {
+	t.Parallel()
+
+	if got := extractIncludedMounts(nil); got != nil {
+		t.Errorf("extractIncludedMounts(nil) = %v, want nil", got)
+	}
+	if got := extractIncludedMounts(map[string]any{}); got != nil {
+		t.Errorf("extractIncludedMounts(empty) = %v, want nil", got)
+	}
+
+	strMap := map[string]any{"included_mounts": []string{"/tv", "/data"}}
+	if got := extractIncludedMounts(strMap); !reflect.DeepEqual(got, []string{"/tv", "/data"}) {
+		t.Errorf("extractIncludedMounts([]string) = %v, want %v", got, []string{"/tv", "/data"})
+	}
+
+	anyMap := map[string]any{"included_mounts": []any{"/tv", "/data", ""}}
+	if got := extractIncludedMounts(anyMap); !reflect.DeepEqual(got, []string{"/tv", "/data"}) {
+		t.Errorf("extractIncludedMounts([]any) = %v, want %v", got, []string{"/tv", "/data"})
+	}
+}
+
+// TestIsMountForceIncluded checks path cleaning and matching for force-included mounts.
+func TestIsMountForceIncluded(t *testing.T) {
+	t.Parallel()
+
+	inc := []string{"/tv", "/data/"}
+	if !isMountForceIncluded(inc, "/tv") {
+		t.Errorf("expected /tv to match")
+	}
+	if !isMountForceIncluded(inc, "/data") {
+		t.Errorf("expected /data to match /data/")
+	}
+	if isMountForceIncluded(inc, "/other") {
+		t.Errorf("did not expect /other to match")
+	}
+	if isMountForceIncluded(nil, "/tv") {
+		t.Errorf("did not expect match on nil list")
 	}
 }
