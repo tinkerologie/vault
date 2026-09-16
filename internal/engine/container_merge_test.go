@@ -140,7 +140,7 @@ func TestMergeContainerChainStagingSidecarsAndImage(t *testing.T) {
 				for _, f := range []struct{ name, content string }{
 					{"config.json", `{"full":true}`},
 					{"template.xml", "<template/>"},
-					{"volumes.json", `{"volumes":[]}`},
+					{"volumes.json", `[]`}, // volumes.json is a top-level array of entries
 					{"image.tar", "image-bytes"},
 				} {
 					if err := os.WriteFile(filepath.Join(full, f.name), []byte(f.content), 0o600); err != nil {
@@ -155,7 +155,7 @@ func TestMergeContainerChainStagingSidecarsAndImage(t *testing.T) {
 			verify: func(t *testing.T, outDir string) {
 				assertMergedFile(t, outDir, "config.json", `{"diff":true}`)
 				assertMergedFile(t, outDir, "template.xml", "<template/>")
-				assertMergedFile(t, outDir, "volumes.json", `{"volumes":[]}`)
+				assertMergedFile(t, outDir, "volumes.json", `[]`)
 				assertMergedFile(t, outDir, "image.tar", "image-bytes")
 			},
 		},

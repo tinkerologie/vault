@@ -3,6 +3,7 @@ package engine
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,6 +78,135 @@ type volumeManifestEntry struct {
 	RootMode uint32 `json:"root_mode,omitempty"`
 	RootUID  int    `json:"root_uid,omitempty"`
 	RootGID  int    `json:"root_gid,omitempty"`
+}
+
+// volumeStableKey returns the identity Vault correlates a container mount by
+// across backup, chain merge and restore. The mount's source host path is
+// stable across a container recreation; its position in inspect.Mounts is not.
+// Naming archives by that position meant a recreate that reordered the mounts
+// silently paired one volume's differential archive with a different volume's
+// base full (issue #352).
+func volumeStableKey(source string) string {
+	return source
+}
+
+// volumeArchiveBase derives a per-volume archive filename from the stable key.
+// The key is hashed rather than sanitised so the name is a fixed length and
+// free of path separators whatever the source path looks like. Both affixes
+// are load-bearing: MergeContainerChainStaging discovers volume archives by
+// the "volume_" prefix, and findArchive appends the compression suffix to the
+// ".tar" base.
+func volumeArchiveBase(source string) string {
+	sum := sha256.Sum256([]byte(volumeStableKey(source)))
+	return fmt.Sprintf("volume_%x.tar", sum[:8])
+}
+
+// safeVolumeArchiveName reports whether a name read out of a backup's
+// volumes.json may be joined onto the staging directory. The manifest travels
+// with the backup and can come from remote storage, so it is untrusted input
+// at the restore boundary: a name like "../../etc/shadow.tar" would otherwise
+// be opened outside the staging directory. Only a bare volume_*.tar filename
+// — the shape the engine itself writes — is accepted.
+func safeVolumeArchiveName(name string) bool {
+	if name == "" || name != filepath.Base(name) {
+		return false
+	}
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	if !strings.HasPrefix(name, "volume_") {
+		return false
+	}
+	return strings.Contains(name, ".tar")
+}
+
+// legacyVolumeIndex decides which index, if any, the legacy
+// volume_<index>.tar name may be built from, returning a negative value to
+// disable that fallback.
+//
+// The legacy name is only safe to try when we know which backup-time index it
+// belongs to. A matched manifest entry carries it. A restore point with no
+// manifest at all leaves the current loop position as the only available
+// guess. A manifest that exists but does NOT list this mount means the mount
+// is new or changed since the backup — probing an index there would hand it
+// another volume's archive, which is the mis-pairing issue #352 is about.
+func legacyVolumeIndex(entry volumeManifestEntry, entryFound, manifestPresent bool, loopIndex int) int {
+	switch {
+	case entryFound:
+		return entry.Index
+	case !manifestPresent:
+		return loopIndex
+	default:
+		return -1
+	}
+}
+
+// resolveVolumeArchive locates a volume's archive on disk, preferring the name
+// the manifest recorded, then the stable-key name, then the legacy index name
+// so restore points written before #352 keep restoring.
+//
+// legacyIndex is the index the legacy name is built from, or a negative value
+// to disable that fallback entirely. It must be the index the BACKUP recorded,
+// never the current loop position: falling back to the loop position would
+// reintroduce the very mis-pairing #352 fixes, since that position is exactly
+// what a container recreate can shift.
+func resolveVolumeArchive(sourceDir, manifestArchive, source string, legacyIndex int) (string, error) {
+	bases := make([]string, 0, 3)
+	if safeVolumeArchiveName(manifestArchive) {
+		// Normalise away the compression suffix: a chain merge re-tars the
+		// overlay under the plain base name, so the recorded ".tar.zst" may
+		// no longer exist while ".tar" does.
+		bases = append(bases, tarBaseName(manifestArchive))
+	} else if manifestArchive != "" {
+		log.Printf("engine: restore: ignoring unsafe volume archive name %q in volumes.json", manifestArchive)
+	}
+	if source != "" {
+		bases = append(bases, volumeArchiveBase(source))
+	}
+	if legacyIndex >= 0 {
+		bases = append(bases, fmt.Sprintf("volume_%d.tar", legacyIndex))
+	}
+	if len(bases) == 0 {
+		return "", fmt.Errorf("no archive name could be resolved for volume %s in %s", source, sourceDir)
+	}
+
+	var lastErr error
+	seen := make(map[string]bool, len(bases))
+	for _, base := range bases {
+		if seen[base] {
+			continue
+		}
+		seen[base] = true
+		p, err := findArchive(sourceDir, base)
+		if err == nil {
+			return p, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+// findVolumeManifestEntry resolves the manifest entry for a mount, preferring
+// the stable key and falling back to the mount index so manifests written
+// before #352 still resolve.
+func findVolumeManifestEntry(manifest []volumeManifestEntry, source string, index int) (volumeManifestEntry, bool) {
+	if source != "" {
+		for _, me := range manifest {
+			if me.Source == source {
+				return me, true
+			}
+		}
+	}
+	// Fall back to the index only for entries that recorded no source at
+	// all. When a source was recorded and did not match, the mount is new or
+	// changed — returning some other volume's entry would be worse than
+	// returning none.
+	for _, me := range manifest {
+		if me.Source == "" && me.Index == index {
+			return me, true
+		}
+	}
+	return volumeManifestEntry{}, false
 }
 
 // devicePrefixes are virtual / system filesystem paths that must never be
@@ -686,7 +816,8 @@ func containerExclusions(settings map[string]any) []string {
 //  1. Inspects the container and saves its config as JSON.
 //  2. Stops the container if running (unless no_stop is set).
 //  3. Saves the container image as image.tar.
-//  4. Tars each bind mount volume to volume_N.tar.gz.
+//  4. Tars each bind mount volume to volume_<key>.tar, where <key> is
+//     derived from the mount source so the name survives a mount reorder.
 //  5. Restarts the container if it was stopped.
 func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	result := &BackupResult{ItemName: item.Name}
@@ -984,7 +1115,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			// bind mounts are auto-handled too — the helper inspects whatever
 			// path it's given). Saves CPU on Immich/Jellyfin/etc. appdata.
 			effectiveCompression := MaybeDowngradeCompression(mount.Source, item.Compression)
-			archiveName := fmt.Sprintf("volume_%d.tar%s", i, archiveExt(effectiveCompression))
+			archiveName := volumeArchiveBase(mount.Source) + archiveExt(effectiveCompression)
 			volDest := filepath.Join(destDir, archiveName)
 
 			if srcInfo.IsDir() {
@@ -1314,9 +1445,17 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Step 3: Restore volumes.
 	// Load the volumes manifest (if present) to know which were skipped.
 	progress(item.Name, 30, "restoring volumes")
+	// "Absent" and "present but unreadable" must stay distinct: the legacy
+	// index fallback below is only safe when we KNOW no manifest was written.
+	// Treating a corrupt manifest as absent would re-enable the loop-position
+	// fallback and hand mounts each other's archives (issue #352).
 	var savedManifest []volumeManifestEntry
+	manifestPresent := false
 	if mData, err := os.ReadFile(filepath.Join(sourceDir, "volumes.json")); err == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
-		_ = json.Unmarshal(mData, &savedManifest)
+		manifestPresent = true
+		if err := json.Unmarshal(mData, &savedManifest); err != nil {
+			return fmt.Errorf("parsing volumes.json for %s: %w", item.Name, err)
+		}
 	}
 
 	// The restore file picker's selection arrives as container-internal
@@ -1341,14 +1480,26 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			log.Printf("engine: restore: skipping volume %s — the selected files are all outside it", mount.Destination)
 			continue
 		}
-		volArchive, err := findArchive(sourceDir, fmt.Sprintf("volume_%d.tar", i))
+		// Correlate by the mount's stable key rather than its position:
+		// Docker can report the same mounts in a different order after a
+		// container recreate, which paired one volume's archive with another
+		// volume's target (issue #352). Restore points written before that
+		// fix are still index-named, hence the fallbacks.
+		savedEntry, entryFound := findVolumeManifestEntry(savedManifest, mount.Source, i)
+
+		legacyIndex := legacyVolumeIndex(savedEntry, entryFound, manifestPresent, i)
+
+		volArchive, err := resolveVolumeArchive(sourceDir, savedEntry.Archive, mount.Source, legacyIndex)
 		if err != nil {
-			// Check manifest to explain why.
-			for _, me := range savedManifest {
-				if me.Index == i && !me.BackedUp {
-					log.Printf("engine: restore: skipping volume %s (was excluded: %s)", mount.Source, me.SkipReason)
-					break
-				}
+			// Explain the absence when the manifest recorded a reason.
+			if !savedEntry.BackedUp && savedEntry.SkipReason != "" {
+				log.Printf("engine: restore: skipping volume %s (was excluded: %s)", mount.Source, savedEntry.SkipReason)
+			} else {
+				// Nothing recorded a reason: the mount exists in the config
+				// but no archive could be resolved for it — a source path
+				// that changed since the backup lands here. Say so, rather
+				// than reporting a complete restore with a volume missing.
+				log.Printf("engine: restore: skipping volume %s — no archive found: %v", mount.Source, err)
 			}
 			continue // skip if archive doesn't exist
 		}
@@ -1367,16 +1518,10 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		}
 		targetPath = normalizedTargetPath
 
-		// Check the manifest for what this mount was: a file-based bind mount
+		// The manifest records what this mount was: a file-based bind mount
 		// extracts differently, and a directory mount carries the metadata of
-		// its own root, which no tar archive records.
-		var savedEntry volumeManifestEntry
-		for _, me := range savedManifest {
-			if me.Index == i {
-				savedEntry = me
-				break
-			}
-		}
+		// its own root, which no tar archive records. savedEntry was resolved
+		// by stable key above.
 		isFileMount := savedEntry.IsFile
 
 		if isFileMount {

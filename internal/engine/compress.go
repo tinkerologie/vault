@@ -22,7 +22,7 @@ import (
 // continue to restore correctly.
 func findArchive(dir, base string) (string, error) {
 	candidates := []string{
-		base,         // e.g. volume_0.tar / image.tar
+		base,         // e.g. volume_<key>.tar / image.tar
 		base + ".gz", // legacy or gzip jobs after runner-side decompress strip
 		base + ".zst",
 	}

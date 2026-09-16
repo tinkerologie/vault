@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -47,32 +48,30 @@ func MergeContainerChainStaging(ctx context.Context, stepDirs []string, outDir s
 		}
 	}
 
-	// Collect distinct volume archive base names (e.g. "volume_0.tar") across
-	// every step, normalising the compression suffix.
-	bases := map[string]struct{}{}
-	for _, dir := range stepDirs {
-		entries, err := os.ReadDir(dir)
+	// Group each step's volume archives by the VOLUME they hold rather than by
+	// the filename they happen to carry. A chain can span the #352 naming
+	// change: the base full may be index-named (volume_0.tar) while a later
+	// differential is stable-key named (volume_<hash>.tar). Grouping by raw
+	// filename would leave those two as separate archives, so restore would
+	// pick the differential alone and drop every unchanged file the base
+	// full held — the issue #320 data-loss class, reintroduced across an
+	// upgrade. Each step's volumes.json maps its archive names to mount
+	// sources, which is the identity both naming schemes share.
+	perStep := make([]map[string]string, len(stepDirs)) // canonical base -> archive base in that step
+	canonical := map[string]struct{}{}
+	for i, dir := range stepDirs {
+		byCanonical, err := canonicalVolumeArchives(dir)
 		if err != nil {
-			continue
+			return err
 		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			name := e.Name()
-			if !strings.HasPrefix(name, "volume_") {
-				continue
-			}
-			base := name
-			if i := strings.Index(base, ".tar"); i >= 0 {
-				base = base[:i] + ".tar"
-			}
-			bases[base] = struct{}{}
+		perStep[i] = byCanonical
+		for base := range byCanonical {
+			canonical[base] = struct{}{}
 		}
 	}
 
-	sorted := make([]string, 0, len(bases))
-	for b := range bases {
+	sorted := make([]string, 0, len(canonical))
+	for b := range canonical {
 		sorted = append(sorted, b)
 	}
 	sort.Strings(sorted)
@@ -84,13 +83,17 @@ func MergeContainerChainStaging(ctx context.Context, stepDirs []string, outDir s
 		}
 		// Overlay each step's archive, oldest first. A step that did not
 		// archive this volume (unchanged) simply has no matching archive.
-		for _, dir := range stepDirs {
-			archive, err := findArchive(dir, base)
+		for i, dir := range stepDirs {
+			stepBase, ok := perStep[i][base]
+			if !ok {
+				continue
+			}
+			archive, err := findArchive(dir, stepBase)
 			if err != nil {
 				continue
 			}
 			if err := untarDirectory(ctx, archive, work); err != nil {
-				return fmt.Errorf("extracting %s from %s: %w", base, dir, err)
+				return fmt.Errorf("extracting %s from %s: %w", stepBase, dir, err)
 			}
 		}
 		// Re-tar the merged tree as a plain archive; findArchive checks the
@@ -103,6 +106,66 @@ func MergeContainerChainStaging(ctx context.Context, stepDirs []string, outDir s
 		}
 	}
 	return nil
+}
+
+// canonicalVolumeArchives maps each volume archive present in a chain step to
+// the canonical name for the volume it holds, keyed canonical -> as-found.
+//
+// The canonical name is derived from the mount source recorded in the step's
+// volumes.json, so an index-named archive and a stable-key-named archive for
+// the same volume land on the same key and get overlaid. A step with no
+// manifest (or an archive the manifest does not describe) keeps its own name,
+// which preserves the previous filename-only behaviour for that archive. An
+// unreadable step yields no archives, matching the merge's long-standing
+// skip-the-step contract.
+func canonicalVolumeArchives(stepDir string) (map[string]string, error) {
+	sourceByArchive := map[string]string{}
+	if data, err := os.ReadFile(filepath.Join(stepDir, "volumes.json")); err == nil { // #nosec G304 — stepDir is a vault-controlled staging directory
+		// A manifest that exists but will not parse must stop the merge.
+		// Falling back to filename-only grouping here is what silently drops
+		// a base full's data when the chain spans the #352 naming change.
+		var manifest []volumeManifestEntry
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return nil, fmt.Errorf("parsing volumes.json in chain step %s: %w", stepDir, err)
+		}
+		for _, me := range manifest {
+			if me.Archive == "" || me.Source == "" {
+				continue
+			}
+			sourceByArchive[tarBaseName(me.Archive)] = me.Source
+		}
+	}
+
+	entries, err := os.ReadDir(stepDir)
+	if err != nil {
+		// Preserve the long-standing contract that an unreadable step is
+		// skipped rather than failing the whole merge; the readable steps
+		// still merge.
+		return map[string]string{}, nil
+	}
+
+	out := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), "volume_") {
+			continue
+		}
+		base := tarBaseName(e.Name())
+		canonicalBase := base
+		if source, ok := sourceByArchive[base]; ok {
+			canonicalBase = volumeArchiveBase(source)
+		}
+		out[canonicalBase] = base
+	}
+	return out, nil
+}
+
+// tarBaseName strips any compression suffix, leaving the ".tar" base that
+// findArchive probes.
+func tarBaseName(name string) string {
+	if i := strings.Index(name, ".tar"); i >= 0 {
+		return name[:i] + ".tar"
+	}
+	return name
 }
 
 func mergeCopyFile(src, dst string) error {

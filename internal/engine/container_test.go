@@ -1319,10 +1319,13 @@ func TestContainerBackupDifferentialIncludesNewFileWithStaleMtime(t *testing.T) 
 			if _, err := (&ContainerHandler{cli: fullMock}).Backup(context.Background(), fullItem, fullDest, noopProgress); err != nil {
 				t.Fatalf("full Backup: %v", err)
 			}
-			if _, err := os.Stat(filepath.Join(fullDest, "volume_0.tar")); err != nil {
+			// Archives are named by the mount's stable key, not its index
+			// (issue #352).
+			volBase := volumeArchiveBase(volSrc)
+			if _, err := os.Stat(filepath.Join(fullDest, volBase)); err != nil {
 				t.Fatalf("full backup missing volume archive: %v", err)
 			}
-			if _, err := os.Stat(filepath.Join(fullDest, "volume_0.tar.listing.json")); err != nil {
+			if _, err := os.Stat(filepath.Join(fullDest, volBase+ListingSuffix)); err != nil {
 				t.Fatalf("full backup missing volume listing sidecar: %v", err)
 			}
 
@@ -1358,7 +1361,7 @@ func TestContainerBackupDifferentialIncludesNewFileWithStaleMtime(t *testing.T) 
 			}
 
 			// The volume must NOT have been skipped: archive + listing exist.
-			archive := filepath.Join(diffDest, "volume_0.tar")
+			archive := filepath.Join(diffDest, volBase)
 			if _, err := os.Stat(archive); err != nil {
 				t.Fatalf("differential volume was skipped (archive missing): %v", err)
 			}
