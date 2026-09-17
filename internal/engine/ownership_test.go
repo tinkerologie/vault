@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
@@ -389,11 +390,52 @@ func TestApplyMetadataRejectsUnsafePaths(t *testing.T) {
 	}
 	applyOwner(unsafe, 0, 0)
 
+	origFi, err := os.Stat(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pastMtime := origFi.ModTime().Add(-24 * time.Hour)
+	applyModTime(unsafe, pastMtime.Format(time.RFC3339))
+	newFi, err := os.Stat(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !newFi.ModTime().Equal(origFi.ModTime()) {
+		t.Errorf("mtime changed on victim from %v to %v", origFi.ModTime(), newFi.ModTime())
+	}
+
 	if err := mkdirRestored(dir+"/sub/../made", 0o755); err == nil {
 		t.Error("mkdirRestored() accepted a traversing path, want an error")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "made")); err == nil {
 		t.Error("mkdirRestored() created a directory from a traversing path")
+	}
+}
+
+func TestApplyModTime(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(f, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetTime := time.Date(2025, 5, 10, 12, 0, 0, 0, time.UTC)
+	applyModTime(f, targetTime.Format(time.RFC3339))
+	fi, err := os.Stat(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.ModTime().Equal(targetTime) {
+		t.Errorf("mtime = %v, want %v", fi.ModTime(), targetTime)
+	}
+
+	// Invalid timestamp should be quietly ignored
+	applyModTime(f, "not-a-timestamp")
+	fiAfter, err := os.Stat(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fiAfter.ModTime().Equal(targetTime) {
+		t.Errorf("mtime changed after invalid timestamp: %v", fiAfter.ModTime())
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
@@ -106,6 +107,9 @@ func restorePathSafe(p string) bool {
 	if !filepath.IsAbs(p) {
 		return false
 	}
+	if strings.Contains(p, "../") || strings.Contains(p, "..\\") {
+		return false
+	}
 	for _, part := range strings.Split(filepath.ToSlash(p), "/") {
 		if part == ".." {
 			return false
@@ -129,6 +133,20 @@ func applyMode(path string, mode os.FileMode) {
 	}
 }
 
+// applyModTime sets a restored path's modification time. Restores go through
+// this rather than os.Chtimes directly: like applyMode and applyOwner, it
+// validates the path through restorePathSafe and swallows parse/chtimes errors
+// so time-setting never fails a restore whose bytes are already back.
+func applyModTime(path string, mtime string) {
+	if !restorePathSafe(path) {
+		log.Printf("engine: restore: refusing to set mtime on suspicious path %q", path)
+		return
+	}
+	if t, err := time.Parse(time.RFC3339, mtime); err == nil {
+		_ = os.Chtimes(path, t, t)
+	}
+}
+
 // mkdirRestored creates a restored directory, forcing the daemon's own
 // rwx bits on regardless of the recorded mode: the entries beneath it still
 // have to be written, and a directory restored read-only would lock the
@@ -137,6 +155,9 @@ func applyMode(path string, mode os.FileMode) {
 func mkdirRestored(path string, mode os.FileMode) error {
 	if !restorePathSafe(path) {
 		return fmt.Errorf("refusing to create suspicious path %q", path)
+	}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to restore directory through symlink at %s", path)
 	}
 	return os.MkdirAll(path, mode.Perm()|0o700)
 }

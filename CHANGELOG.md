@@ -44,6 +44,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
+- **Sanitize and validate target paths before setting modification times on restored files:** `FolderHandler.RestoreChunked` now validates and normalizes destination directories through `normalizeRestorePath` upon entry, validates that all restored directory and file paths remain strictly contained within the destination root and free of path traversal sequences, and wraps modification time updates in `applyModTime` guarded by `restorePathSafe`. This addresses CodeQL alert #74 (`go/path-injection`).
+
 - **Encrypt manifest.json at rest (#325):** Backup run manifests (`manifest.json`) stored on destinations now have their metadata encrypted at rest. For deduplicated destinations, manifests are encrypted with AES-256-GCM using the destination's master key. For age-encrypted jobs, manifests are encrypted with age using the job's passphrase. This prevents unauthorized inspection of job configuration, protected item lists, container names, and paths on untrusted remote storage. Existing unencrypted manifests remain fully discoverable and readable without migration. Closes #325.
 
 

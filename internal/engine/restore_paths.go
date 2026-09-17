@@ -15,8 +15,33 @@ var restoreAllowedRoots = []string{"/mnt", "/boot", "/tmp", "/etc", "/opt", "/us
 var _ = normalizeVMRestorePlan
 
 func normalizeRestorePath(path string) (string, error) {
-	normalizedPath, err := safepath.NormalizeAbsoluteUnderRoots(path, restoreAllowedRoots)
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid restore path %q: path is required", path)
+	}
+	for _, part := range strings.FieldsFunc(trimmed, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return "", fmt.Errorf("invalid restore path %q: path traversal components not allowed", path)
+		}
+	}
+
+	normalizedPath, err := safepath.NormalizeAbsoluteUnderRoots(trimmed, restoreAllowedRoots)
 	if err != nil {
+		// If path was already resolved (e.g. /var -> /private/var on macOS),
+		// it may not match the un-evaluated roots in restoreAllowedRoots.
+		// Check if resolving its path puts it within approved roots.
+		cleanPath := filepath.Clean(trimmed)
+		if filepath.IsAbs(cleanPath) {
+			if resolved, rErr := resolveRestorePath(cleanPath); rErr == nil {
+				allowed, aErr := restorePathWithinAllowedRoots(resolved)
+				if aErr != nil {
+					return "", fmt.Errorf("invalid restore path %q: %w", path, aErr)
+				}
+				if allowed {
+					return resolved, nil
+				}
+			}
+		}
 		return "", fmt.Errorf("invalid restore path %q: %w", path, err)
 	}
 

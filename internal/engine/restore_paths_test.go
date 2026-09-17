@@ -25,6 +25,8 @@ func TestNormalizeRestorePath(t *testing.T) {
 		{name: "mnt allowed", input: "/mnt/cache/vault", want: "/mnt/cache/vault"},
 		{name: "dev rejected", input: "/dev/null", wantErr: true},
 		{name: "relative rejected", input: "tmp/vault", wantErr: true},
+		{name: "traversal rejected", input: "/tmp/../etc/passwd", wantErr: true},
+		{name: "empty rejected", input: "   ", wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -39,6 +41,25 @@ func TestNormalizeRestorePath(t *testing.T) {
 				t.Fatalf("normalizeRestorePath() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeRestorePath_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{"/tmp/vault-restore", "/mnt/cache/vault"}
+	for _, p := range paths {
+		first, err := normalizeRestorePath(p)
+		if err != nil {
+			t.Fatalf("first normalizeRestorePath(%q): %v", p, err)
+		}
+		second, err := normalizeRestorePath(first)
+		if err != nil {
+			t.Fatalf("second normalizeRestorePath(%q): %v", first, err)
+		}
+		if second != first {
+			t.Fatalf("normalizeRestorePath not idempotent: got %q, want %q", second, first)
+		}
 	}
 }
 

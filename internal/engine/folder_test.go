@@ -821,3 +821,207 @@ func TestFolderBackupStagingOutsideSource(t *testing.T) {
 		t.Errorf("expected real_file.txt in archive")
 	}
 }
+
+func TestFolderHandler_RestoreChunked_RejectsUnsafeDestination(t *testing.T) {
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	ctx := context.Background()
+
+	m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{}}
+	mid, err := r.PutManifest("test", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{}}
+	if err := h.RestoreChunked(ctx, item, r, mid, "/dev/victim", nil); err == nil {
+		t.Error("expected error for destination outside approved roots")
+	}
+
+	if err := h.RestoreChunked(ctx, item, r, mid, "relative/path", nil); err == nil {
+		t.Error("expected error for relative destination path")
+	}
+
+	if err := h.RestoreChunked(ctx, item, r, mid, "", nil); err == nil {
+		t.Error("expected error for empty destination path")
+	}
+}
+
+func TestFolderHandler_RestoreChunked_RejectsSuspiciousManifestPath(t *testing.T) {
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	ctx := context.Background()
+	dst := t.TempDir()
+
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"../escape.txt": {
+				Mode:   0o644,
+				Chunks: []dedup.ID{},
+			},
+		},
+	}
+	mid, err := r.PutManifest("test", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": dst}}
+	if err := h.RestoreChunked(ctx, item, r, mid, dst, nil); err == nil {
+		t.Error("expected error for suspicious manifest file path containing ../")
+	}
+
+	mDir := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"../escapedir": {
+				IsDir:  true,
+				Mode:   0o755,
+				Chunks: []dedup.ID{},
+			},
+		},
+	}
+	midDir, err := r.PutManifest("test", mDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.RestoreChunked(ctx, item, r, midDir, dst, nil); err == nil {
+		t.Error("expected error for suspicious manifest dir path containing ../")
+	}
+}
+
+func TestFolderHandler_RestoreChunked_RejectsSymlinkTarget(t *testing.T) {
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	ctx := context.Background()
+
+	dst := t.TempDir()
+	outside := t.TempDir()
+
+	// Pre-existing symlink inside dst pointing outside
+	linkPath := filepath.Join(dst, "link_to_outside")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"link_to_outside/file.txt": {
+				Mode:   0o644,
+				Chunks: []dedup.ID{},
+			},
+		},
+	}
+	mid, err := r.PutManifest("test", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": dst}}
+	if err := h.RestoreChunked(ctx, item, r, mid, dst, nil); err == nil {
+		t.Error("expected error when restoring file through pre-existing symlink pointing outside base")
+	}
+
+	// Pre-existing symlink as a file target
+	fileLink := filepath.Join(dst, "symlink_file.txt")
+	outsideFile := filepath.Join(outside, "victim.txt")
+	if err := os.WriteFile(outsideFile, []byte("preserve"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, fileLink); err != nil {
+		t.Fatal(err)
+	}
+
+	mFile := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"symlink_file.txt": {
+				Mode:   0o644,
+				Chunks: []dedup.ID{},
+			},
+		},
+	}
+	midFile, err := r.PutManifest("test", mFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.RestoreChunked(ctx, item, r, midFile, dst, nil); err == nil {
+		t.Error("expected error when restoring file through pre-existing symlink")
+	}
+
+	// Pre-existing symlink as an empty directory target
+	dirLink := filepath.Join(dst, "symlink_dir")
+	outsideDir := filepath.Join(outside, "target_dir")
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, dirLink); err != nil {
+		t.Fatal(err)
+	}
+
+	mDir := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"symlink_dir": {
+				Mode:   uint32(os.ModeDir | 0o755),
+				Chunks: []dedup.ID{},
+			},
+		},
+	}
+	midDir, err := r.PutManifest("test", mDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.RestoreChunked(ctx, item, r, midDir, dst, nil); err == nil {
+		t.Error("expected error when restoring directory through pre-existing symlink")
+	}
+}
+
+func TestFolderHandler_RestoreChunked_RejectsDirectorySymlinkTarget(t *testing.T) {
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	ctx := context.Background()
+
+	dst := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	linkPath := filepath.Join(dst, "empty-dir")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Skip("filesystem does not support symlinks")
+	}
+
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"empty-dir": {
+				IsDir: true,
+				Mode:  0o755,
+			},
+		},
+	}
+	mid, err := r.PutManifest("test", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": dst}}
+	if err := h.RestoreChunked(ctx, item, r, mid, dst, nil); err == nil {
+		t.Fatal("expected error when restoring directory through pre-existing symlink")
+	}
+
+	if got := modeOf(t, outside); got != 0o700 {
+		t.Errorf("outside dir mode = %04o, want 0700", got)
+	}
+}

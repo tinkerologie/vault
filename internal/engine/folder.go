@@ -453,6 +453,23 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 // fetched in order and concatenated; mtime is preserved via os.Chtimes.
 // Empty files (zero chunks) are created as zero-byte files.
 func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	if destPath == "" {
+		if rd, ok := item.Settings["restore_destination"].(string); ok && rd != "" {
+			destPath = rd
+		} else if p, ok := item.Settings["path"].(string); ok && p != "" {
+			destPath = p
+		}
+	}
+	if destPath == "" {
+		return fmt.Errorf("cannot determine restore path: no path in settings or argument")
+	}
+
+	normalizedDestPath, err := normalizeRestorePath(destPath)
+	if err != nil {
+		return err
+	}
+	destPath = normalizedDestPath
+
 	m, err := repo.GetManifest(manifestID)
 	if err != nil {
 		return err
@@ -497,12 +514,27 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		gid  int
 	}
 	dirMetas := make([]dirMeta, 0, len(dirs))
+	cleanDest := filepath.Clean(destPath)
+	destPrefix := cleanDest + string(filepath.Separator)
 	for _, d := range dirs {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		full, err := safepath.JoinUnderBase(destPath, d, true)
 		if err != nil {
+			return fmt.Errorf("restore mkdir %s: %w", d, err)
+		}
+		if (full != cleanDest && !strings.HasPrefix(full, destPrefix)) || strings.Contains(full, "../") || !restorePathSafe(full) {
+			return fmt.Errorf("refusing to restore directory to suspicious path %q", full)
+		}
+		if err := resolveWithinBase(destPath, full); err != nil {
+			return fmt.Errorf("restore mkdir %s: %w", d, err)
+		}
+		if info, err := os.Lstat(full); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("refusing to restore directory %s through symlink at %s", d, full)
+			}
+		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("restore mkdir %s: %w", d, err)
 		}
 		mode := os.FileMode(m.Files[d].Mode)
@@ -529,6 +561,12 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if err != nil {
 			return fmt.Errorf("restore %s: %w", fp, err)
 		}
+		if !strings.HasPrefix(full, destPrefix) || strings.Contains(full, "../") || !restorePathSafe(full) {
+			return fmt.Errorf("refusing to restore to suspicious path %q", full)
+		}
+		if err := resolveWithinBase(destPath, full); err != nil {
+			return fmt.Errorf("restore %s: %w", fp, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
 		}
@@ -536,8 +574,11 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if mode == 0 {
 			mode = 0o644
 		}
-		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — full is validated by safepath.JoinUnderBase
+		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, mode) // #nosec G304 — full is validated by safepath.JoinUnderBase, resolveWithinBase, and openNoFollow
 		if err != nil {
+			if isSymlinkErr(err) {
+				return fmt.Errorf("refusing to restore %s through symlink at %s", fp, full)
+			}
 			return err
 		}
 		for _, cid := range e.Chunks {
@@ -559,9 +600,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		applyMode(full, mode)
 		uid, gid := e.Owner()
 		applyOwner(full, uid, gid)
-		if t, err := time.Parse(time.RFC3339, e.ModTime); err == nil {
-			_ = os.Chtimes(full, t, t)
-		}
+		applyModTime(full, e.ModTime)
 		if progress != nil {
 			progress(item.Name, -1, fmt.Sprintf("restored %s", fp))
 		}

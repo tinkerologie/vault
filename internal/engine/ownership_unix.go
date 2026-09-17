@@ -3,12 +3,19 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
 
 // openNoFollow is O_NOFOLLOW on unix platforms to prevent symlink traversal.
 const openNoFollow = syscall.O_NOFOLLOW
+
+// isSymlinkErr reports whether err indicates an open failed because the target
+// is a symlink (O_NOFOLLOW).
+func isSymlinkErr(err error) bool {
+	return errors.Is(err, syscall.ELOOP)
+}
 
 // fileOwner returns the numeric owner of a stat result. The (-1, -1) pair
 // means "unknown" — chown treats a negative id as "leave unchanged", so it is
