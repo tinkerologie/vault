@@ -10,8 +10,6 @@ import (
 	"github.com/ruaan-deysel/vault/internal/safepath"
 )
 
-var restoreAllowedRoots = []string{"/mnt", "/boot", "/tmp", "/etc", "/opt", "/usr/local", "/var", "/home"}
-
 var _ = normalizeVMRestorePlan
 
 func normalizeRestorePath(path string) (string, error) {
@@ -25,7 +23,7 @@ func normalizeRestorePath(path string) (string, error) {
 		}
 	}
 
-	normalizedPath, err := safepath.NormalizeAbsoluteUnderRoots(trimmed, restoreAllowedRoots)
+	normalizedPath, err := safepath.NormalizeAbsoluteUnderRoots(trimmed, safepath.RestoreAllowedRoots())
 	if err != nil {
 		// If path was already resolved (e.g. /var -> /private/var on macOS),
 		// it may not match the un-evaluated roots in restoreAllowedRoots.
@@ -305,7 +303,7 @@ func evalRestoreSymlinks(path string) (string, error) {
 
 func restorePathWithinAllowedRoots(path string) (bool, error) {
 	cleanPath := filepath.Clean(path)
-	for _, root := range restoreAllowedRoots {
+	for _, root := range safepath.RestoreAllowedRoots() {
 		resolvedRoot, err := resolveRestorePath(filepath.Clean(root))
 		if err != nil {
 			return false, fmt.Errorf("resolving restore root %q: %w", root, err)

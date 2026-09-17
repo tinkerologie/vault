@@ -226,6 +226,9 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("cannot determine restore path: no path in settings or metadata")
 	}
 
+	if !restorePathSafe(destPath) || strings.Contains(destPath, "../") || strings.Contains(destPath, "..\\") {
+		return fmt.Errorf("suspicious restore destination %q", destPath)
+	}
 	normalizedDestPath, err := normalizeRestorePath(destPath)
 	if err != nil {
 		return err
@@ -239,7 +242,7 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("backup archive not found: %w", err)
 	}
 
-	if err := os.MkdirAll(destPath, 0750); err != nil {
+	if err := mkdirRestored(destPath, 0750); err != nil {
 		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
 	}
 

@@ -133,17 +133,34 @@ func applyMode(path string, mode os.FileMode) {
 	}
 }
 
+// applyModTimeFromTime sets a restored path's modification time from a time.Time.
+// Restores go through this rather than os.Chtimes directly: like applyMode,
+// applyOwner, and applyModTime, it validates the path through restorePathSafe and
+// swallows chtimes errors so time-setting never fails a restore whose bytes are already back.
+func applyModTimeFromTime(path string, t time.Time) {
+	if !restorePathSafe(path) || strings.Contains(path, "../") || strings.Contains(path, "..\\") {
+		log.Printf("engine: restore: refusing to set mtime on suspicious path %q", path)
+		return
+	}
+	if t.IsZero() {
+		return
+	}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		log.Printf("engine: restore: refusing to set mtime on symlink %q", path)
+		return
+	}
+	if err := chtimesNoFollow(path, t); err != nil {
+		log.Printf("engine: restore: setting mtime on %s: %v", path, err)
+	}
+}
+
 // applyModTime sets a restored path's modification time. Restores go through
 // this rather than os.Chtimes directly: like applyMode and applyOwner, it
 // validates the path through restorePathSafe and swallows parse/chtimes errors
 // so time-setting never fails a restore whose bytes are already back.
 func applyModTime(path string, mtime string) {
-	if !restorePathSafe(path) {
-		log.Printf("engine: restore: refusing to set mtime on suspicious path %q", path)
-		return
-	}
 	if t, err := time.Parse(time.RFC3339, mtime); err == nil {
-		_ = os.Chtimes(path, t, t)
+		applyModTimeFromTime(path, t)
 	}
 }
 
@@ -153,7 +170,7 @@ func applyModTime(path string, mtime string) {
 // extractor out of its own children. applyMode puts the recorded mode back
 // once nothing more will be written inside.
 func mkdirRestored(path string, mode os.FileMode) error {
-	if !restorePathSafe(path) {
+	if !restorePathSafe(path) || strings.Contains(path, "../") || strings.Contains(path, "..\\") {
 		return fmt.Errorf("refusing to create suspicious path %q", path)
 	}
 	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {

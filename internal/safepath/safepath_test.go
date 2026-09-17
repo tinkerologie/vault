@@ -66,6 +66,19 @@ func TestNormalizeAbsoluteUnderRoots(t *testing.T) {
 	}
 }
 
+func TestRestoreAllowedRoots(t *testing.T) {
+	t.Parallel()
+	roots1 := RestoreAllowedRoots()
+	if len(roots1) == 0 {
+		t.Fatal("expected non-empty RestoreAllowedRoots")
+	}
+	roots1[0] = "/mutated"
+	roots2 := RestoreAllowedRoots()
+	if roots2[0] == "/mutated" {
+		t.Fatal("RestoreAllowedRoots returned mutable internal storage")
+	}
+}
+
 func TestNormalizeComponent(t *testing.T) {
 	t.Parallel()
 

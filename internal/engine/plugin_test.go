@@ -549,4 +549,15 @@ func TestPluginRestoreDestination(t *testing.T) {
 			t.Errorf("error %q should name the invalid restore path", err)
 		}
 	})
+
+	t.Run("a destination with path traversal is rejected", func(t *testing.T) {
+		item := BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"restore_destination": "../suspicious"}}
+		err := h.Restore(ctx, item, sourceDir, noop)
+		if err == nil {
+			t.Fatal("a restore destination with path traversal should be rejected")
+		}
+		if !strings.Contains(err.Error(), "suspicious") {
+			t.Errorf("error %q should name suspicious path", err)
+		}
+	})
 }

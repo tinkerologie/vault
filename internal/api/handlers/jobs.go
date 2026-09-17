@@ -1303,6 +1303,14 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 	}
 	// Body is optional (unencrypted, original-location restore needs nothing).
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Destination != "" {
+		normalized, err := normalizeRestoreDestination(req.Destination)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
+			return
+		}
+		req.Destination = normalized
+	}
 
 	job, err := h.db.GetJob(id)
 	if err != nil {
@@ -1361,6 +1369,28 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	if req.RestorePointID == 0 {
 		respondError(w, http.StatusBadRequest, "restore_point_id is required")
 		return
+	}
+	if req.Destination != "" {
+		normalized, err := normalizeRestoreDestination(req.Destination)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
+			return
+		}
+		req.Destination = normalized
+	}
+	for item, paths := range req.FilePaths {
+		for _, p := range paths {
+			if strings.Contains(p, "../") || strings.Contains(p, "..\\") {
+				respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid file path in item %q: path traversal not allowed", item))
+				return
+			}
+			for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+				if part == ".." {
+					respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid file path in item %q: path traversal not allowed", item))
+					return
+				}
+			}
+		}
 	}
 
 	// Find the restore point in the database.

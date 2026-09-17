@@ -299,13 +299,16 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		// produce a plugin that can never be recognised.
 		configDir := pluginPath(pluginName)
 		if restoreDest, _ := item.Settings["restore_destination"].(string); restoreDest != "" {
+			if !restorePathSafe(restoreDest) || strings.Contains(restoreDest, "../") || strings.Contains(restoreDest, "..\\") {
+				return fmt.Errorf("suspicious plugin restore destination %q", restoreDest)
+			}
 			normalized, err := normalizeRestorePath(restoreDest)
 			if err != nil {
 				return err
 			}
 			configDir = normalized
 		}
-		if err := os.MkdirAll(configDir, 0755); err != nil {
+		if err := mkdirRestored(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
 		include := extractRestoreFilePaths(item.Settings)

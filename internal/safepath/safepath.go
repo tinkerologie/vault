@@ -6,6 +6,13 @@ import (
 	"strings"
 )
 
+var restoreAllowedRoots = []string{"/mnt", "/boot", "/tmp", "/etc", "/opt", "/usr/local", "/var", "/home", "/private/var", "/private/tmp"}
+
+// RestoreAllowedRoots returns a defensive copy of the authorized top-level root directories for restore operations.
+func RestoreAllowedRoots() []string {
+	return append([]string(nil), restoreAllowedRoots...)
+}
+
 // NormalizeRelative cleans an untrusted relative path and rejects paths that
 // escape their eventual base directory.
 func NormalizeRelative(path string, allowRoot bool) (string, error) {
