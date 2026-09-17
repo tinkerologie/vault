@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Direct file downloads from storage browser modal (#311):** Operators can now download individual files directly from the Storage browser dialog. Files streamed from destinations include an appropriate `Content-Disposition: attachment; filename="..."` header, and the browser UI offers per-file download actions with in-flight loading indicators and toast feedback. Closes #311.
+
 - **Restore progress, live run logs, and completion status on restore page (#316):** Surfaced real-time restore progress and results directly on the Restore page. Step 3 of the Restore Wizard now features an overall progress bar with active item, item type, elapsed time, and phase indicators driven by WebSocket runner events. Once the restore finishes, an outcome banner details item success/failure counts and total restored bytes with a quick reset action, and an embedded live restore log panel displays formatted, level-coded log messages streamed from the daemon. Additionally, global toast notifications alert operators when a restore operation completes or fails. Closes #316.
 
 - **Future jobs queue visibility and cancellation (#302):** Concurrently triggered backup, restore, and cleanup operations are now tracked with unique queue identifiers, operation kinds (`backup`, `restore`, `delete`), and statuses (`queued`, `running`). An "Active & Queued Operations" card is now surfaced at the top of the History tab with real-time WebSocket synchronization. Operators can cancel queued backup and restore operations directly from the queue before execution begins via `POST /api/v1/queue/{id}/cancel` and the web UI. Closes #302.

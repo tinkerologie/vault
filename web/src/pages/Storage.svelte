@@ -927,5 +927,5 @@
 </Modal>
 
 {#if browseDest}
-  <StorageBrowser destId={browseDest.id} destName={browseDest.name} onclose={() => browseDest = null} />
+  <StorageBrowser destId={browseDest.id} destName={browseDest.name} ontoast={showToast} onclose={() => browseDest = null} />
 {/if}

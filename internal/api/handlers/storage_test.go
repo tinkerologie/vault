@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -1057,6 +1058,68 @@ func TestStorageDownloadFile_NotFoundStorage(t *testing.T) {
 	h.DownloadFile(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestStorageDownloadFile_Success(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "vault.db")
+	d, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	storageDir := t.TempDir()
+	cfg, _ := json.Marshal(map[string]string{"path": storageDir})
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name:   "download-test",
+		Type:   "local",
+		Config: string(cfg),
+	})
+	if err != nil {
+		t.Fatalf("create storage destination: %v", err)
+	}
+
+	testSubdir := filepath.Join(storageDir, "backups")
+	if err := os.MkdirAll(testSubdir, 0o755); err != nil {
+		t.Fatalf("mkdir backups: %v", err)
+	}
+	testContent := []byte("hello storage download test content")
+	testFilePath := filepath.Join(testSubdir, `archive-"sample".tar.zst`)
+	if err := os.WriteFile(testFilePath, testContent, 0o644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+
+	h := NewStorageHandler(d, nil, nil)
+
+	idStr := strconv.FormatInt(destID, 10)
+	targetPath := `backups/archive-"sample".tar.zst`
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/storage/"+idStr+"/files?path="+url.QueryEscape(targetPath), nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", idStr)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	h.DownloadFile(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if w.Body.String() != string(testContent) {
+		t.Fatalf("body = %q, want %q", w.Body.String(), string(testContent))
+	}
+	expectedCD := `attachment; filename="archive-\"sample\".tar.zst"`
+	if cd := w.Header().Get("Content-Disposition"); cd != expectedCD {
+		t.Errorf("Content-Disposition = %q, want %q", cd, expectedCD)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/octet-stream")
+	}
+	expectedLen := strconv.Itoa(len(testContent))
+	if cl := w.Header().Get("Content-Length"); cl != expectedLen {
+		t.Errorf("Content-Length = %q, want %q", cl, expectedLen)
 	}
 }
 

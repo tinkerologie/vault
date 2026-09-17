@@ -154,6 +154,20 @@ export const api = {
   cancelJob: (id) => request('POST', `/jobs/${id}/cancel`),
   cancelQueueEntry: (id) => request('POST', `/queue/${id}/cancel`),
   listStorageFiles: (id, prefix = '') => request('GET', `/storage/${id}/list${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ''}`),
+  downloadStorageFile: async (id, path) => {
+    const { url, options } = buildApiRequest('GET', `/storage/${id}/files?path=${encodeURIComponent(path)}`, {})
+    const res = await fetch(url, options)
+    if (res.status === 401) throw new Error('Not authorized — your session or API key may have expired.')
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      let data = null
+      if (text) {
+        try { data = JSON.parse(text) } catch { /* non-JSON body */ }
+      }
+      throw new Error((data && data.error) || text || `HTTP ${res.status}`)
+    }
+    return res.blob()
+  },
   restoreJob: (id, data) => request('POST', `/jobs/${id}/restore`, data),
   // preflightRestore runs cheap pre-restore checks (storage reachable, backup
   // present, decryptable, free space) and returns { ok, checks:[{id,label,status,detail}] }.

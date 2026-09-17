@@ -178,3 +178,55 @@ describe('queue', () => {
   })
 })
 
+describe('storage file download', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('downloads storage file as blob when response is ok', async () => {
+    const fakeBlob = new Blob(['binary data'], { type: 'application/octet-stream' })
+    const fetch = vi.fn(async () => new Response(fakeBlob, {
+      status: 200,
+      headers: { 'content-disposition': 'attachment; filename="test.tar.zst"' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    const blob = await api.downloadStorageFile(42, 'backups/test.tar.zst')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/files?path=backups%2Ftest.tar.zst')
+    expect(blob).toBeInstanceOf(Blob)
+  })
+
+  it('throws error with message from error json when response is not ok', async () => {
+    const fetch = vi.fn(async () => new Response('{"error":"file not found: missing"}', {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(api.downloadStorageFile(42, 'backups/missing.tar.zst'))
+      .rejects.toThrow('file not found: missing')
+  })
+
+  it('throws authorization error on 401 response', async () => {
+    const fetch = vi.fn(async () => new Response('Unauthorized', {
+      status: 401,
+      headers: { 'content-type': 'text/plain' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(api.downloadStorageFile(42, 'backups/test.tar.zst'))
+      .rejects.toThrow('Not authorized — your session or API key may have expired.')
+  })
+
+  it('falls back to text body when response error is non-JSON', async () => {
+    const fetch = vi.fn(async () => new Response('Bad Gateway from proxy', {
+      status: 502,
+      headers: { 'content-type': 'text/plain' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(api.downloadStorageFile(42, 'backups/test.tar.zst'))
+      .rejects.toThrow('Bad Gateway from proxy')
+  })
+})
+
