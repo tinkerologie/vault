@@ -53,6 +53,8 @@ var AppSettings = []SettingDoc{
 	{"appdata_path", "string", "/mnt/user/appdata", "Path to the Unraid appdata share containing Docker container configurations.", GroupGeneral},
 	{"storage_verbose_logging", "bool", "false", "When enabled, storage adapters log every operation for troubleshooting.", GroupGeneral},
 	{"replication_enabled", "string", "", "Master toggle for the replication subsystem. Empty/false disables replication scheduling; \"true\" enables it.", GroupGeneral},
+	{"fuse_mount_base_dir", "string", "", "Base directory on the host where read-only FUSE backup mounts are attached. Empty uses /mnt/vault-fuse or a temporary directory.", GroupGeneral},
+	{"fuse_mount_idle_minutes", "int", "30", "Idle timeout in minutes after which inactive FUSE backup mounts are automatically unmounted.", GroupGeneral},
 
 	// Backup engine
 	{"adaptive_idle_cpu_percent", "int", "20", "Adaptive backups: a container or VM is considered busy above this CPU percentage (single-core units).", GroupBackup},

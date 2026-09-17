@@ -20,6 +20,7 @@ require (
 	github.com/go-chi/httprate v0.16.0
 	github.com/google/uuid v1.6.0
 	github.com/grandcat/zeroconf v1.0.0
+	github.com/hanwen/go-fuse/v2 v2.11.0
 	github.com/klauspost/compress v1.20.0
 	github.com/moby/moby/api v1.56.0
 	github.com/moby/moby/client v0.6.0

@@ -8,6 +8,8 @@
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import RestoreWizard from '../components/RestoreWizard.svelte'
+  import ActiveMounts from '../components/ActiveMounts.svelte'
+  import { refreshMounts } from '../lib/mounts.svelte.js'
 
   let loading = $state(true)
   let jobs = $state([])
@@ -34,6 +36,7 @@
 
   onMount(() => {
     loadJobs()
+    refreshMounts()
     api.getRunnerStatus().then(status => {
       restoreFromStatus(status)
     }).catch(() => {})
@@ -80,6 +83,18 @@
       showToast(`Restore failed: ${e.message}`, 'error')
     }
   }
+
+  function handleMounted(session) {
+    showToast(`Mounted backup at ${session.mount_path}`, 'success')
+  }
+
+  function handleUnmounted(mount) {
+    showToast(`Unmounted ${mount.mount_path}`, 'info')
+  }
+
+  function handleUnmountError(err) {
+    showToast(`Failed to unmount: ${err.message}`, 'error')
+  }
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
@@ -90,6 +105,8 @@
     <p class="text-sm text-text-muted mt-1">Browse and restore from backup snapshots</p>
   </div>
 
+  <ActiveMounts onunmount={handleUnmounted} onunmounterror={handleUnmountError} />
+
   {#if loading}
     <Spinner text="Loading..." />
   {:else if jobs.length === 0}
@@ -99,6 +116,6 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <RestoreWizard {jobs} onrestore={handleRestore} {initialJobId} {initialType} {initialName} />
+    <RestoreWizard {jobs} onrestore={handleRestore} onmount={handleMounted} {initialJobId} {initialType} {initialName} />
   {/if}
 </div>

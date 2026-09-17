@@ -179,6 +179,13 @@ export const api = {
   // Runner
   getRunnerStatus: () => request('GET', '/runner/status'),
 
+  // Mounts (#312)
+  listMounts: (activeOnly = true) => request('GET', `/mounts?active=${activeOnly}`),
+  getMount: (id) => request('GET', `/mounts/${id}`),
+  mountRestorePoint: (jobId, rpId) =>
+    request('POST', `/jobs/${jobId}/restore-points/${rpId}/mount`, null, { timeoutMs: TEST_TIMEOUT_MS }),
+  unmount: (id) => request('POST', `/mounts/${id}/unmount`),
+
   // Discovery
   browse: (path = '', { includeZfs = false } = {}) => {
     const params = new URLSearchParams()

@@ -12,6 +12,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/api/handlers"
 	"github.com/ruaan-deysel/vault/internal/db"
 	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
+	"github.com/ruaan-deysel/vault/internal/mount"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/ws"
@@ -49,6 +50,8 @@ type Server struct {
 	replicationHandler *handlers.ReplicationHandler
 	anomalyHandler     *handlers.AnomalyHandler
 	recoveryHandler    *handlers.RecoveryHandler
+	mountHandler       *handlers.MountHandler
+	mountMgr           *mount.Manager
 
 	// configChangeHook is called after any handler mutates persistent
 	// configuration. It flushes the DB to USB flash.
@@ -90,6 +93,8 @@ func NewServer(database *db.DB, cfg ServerConfig) *Server {
 	}
 	s.runner = runner.New(database, s.hub, cfg.ServerKey)
 	go s.hub.Run()
+	s.mountMgr = mount.NewManager(database, s.hub, cfg.ServerKey)
+	s.mountMgr.Start(context.Background())
 	s.router = s.setupRoutes()
 	return s
 }
@@ -167,6 +172,11 @@ func (s *Server) Runner() *runner.Runner {
 	return s.runner
 }
 
+// MountManager returns the mount lifecycle manager.
+func (s *Server) MountManager() *mount.Manager {
+	return s.mountMgr
+}
+
 // SetReplicationSyncer sets the replication syncer for use by API handlers.
 func (s *Server) SetReplicationSyncer(syncer *replication.Syncer) {
 	s.syncer = syncer
@@ -235,6 +245,10 @@ func (s *Server) StartWithContext(ctx context.Context) error {
 			log.Println("server shutdown: runner drained cleanly")
 		}
 		drainCancel()
+
+		if s.mountMgr != nil {
+			s.mountMgr.Stop(ctx)
+		}
 
 		// Phase 2: HTTP server shutdown.
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

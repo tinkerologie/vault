@@ -168,6 +168,21 @@ CREATE TABLE IF NOT EXISTS dedup_gc_runs (
 
 CREATE INDEX IF NOT EXISTS idx_dedup_gc_runs_storage ON dedup_gc_runs(storage_id, completed_at DESC);
 
+CREATE TABLE IF NOT EXISTS mount_sessions (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_id           INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+	restore_point_id INTEGER REFERENCES restore_points(id) ON DELETE CASCADE,
+	storage_dest_id  INTEGER NOT NULL REFERENCES storage_destinations(id),
+	mount_path       TEXT NOT NULL,
+	status           TEXT NOT NULL DEFAULT 'active',
+	started_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+	stopped_at       DATETIME,
+	last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	error            TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_mount_sessions_status ON mount_sessions(status);
+
 CREATE TABLE IF NOT EXISTS anomalies (
 	id              INTEGER PRIMARY KEY AUTOINCREMENT,
 	fingerprint     TEXT NOT NULL,
@@ -337,6 +352,9 @@ var alterMigrations = []string{
 	// Auto-include new containers (#324). When enabled, newly discovered
 	// containers are automatically added to the job on each backup run.
 	"ALTER TABLE jobs ADD COLUMN auto_include_containers INTEGER NOT NULL DEFAULT 0",
+	// FUSE read-only mounts (#312). Tracks active and historical mount sessions.
+	"CREATE TABLE IF NOT EXISTS mount_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, restore_point_id INTEGER REFERENCES restore_points(id) ON DELETE CASCADE, storage_dest_id INTEGER NOT NULL REFERENCES storage_destinations(id), mount_path TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', started_at DATETIME DEFAULT CURRENT_TIMESTAMP, stopped_at DATETIME, last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP, error TEXT DEFAULT '')",
+	"CREATE INDEX IF NOT EXISTS idx_mount_sessions_status ON mount_sessions(status)",
 }
 
 // dataMigrations are idempotent row rewrites, applied after alterMigrations.

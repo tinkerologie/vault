@@ -159,6 +159,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 		if s.nextRunResolver != nil {
 			jobH.SetNextRunResolver(s.nextRunResolver)
 		}
+
+		mountH := handlers.NewMountHandler(s.mountMgr, s.db)
+		s.mountHandler = mountH
+
 		r.Route("/jobs", func(r chi.Router) {
 			if s.config.ReadOnly {
 				r.Use(ReadOnlyGuard)
@@ -181,10 +185,20 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/{id}/run", jobH.RunNow)
 			r.Post("/{id}/cancel", jobH.Cancel)
 			r.Post("/{id}/restore", jobH.Restore)
+			r.Post("/{id}/restore-points/{rpid}/mount", mountH.MountRestorePoint)
 			r.Get("/{id}/next-run", jobH.NextRun)
 			r.Get("/{id}/stale-items", jobH.GetStaleItems)
 			r.Post("/{id}/stale-items/remove", jobH.RemoveStaleItems)
 			r.Delete("/{id}/items/{itemId}", jobH.DeleteJobItem)
+		})
+
+		r.Route("/mounts", func(r chi.Router) {
+			if s.config.ReadOnly {
+				r.Use(ReadOnlyGuard)
+			}
+			r.Get("/", mountH.List)
+			r.Get("/{id}", mountH.Get)
+			r.Post("/{id}/unmount", mountH.Unmount)
 		})
 
 		r.Get("/runner/status", jobH.RunnerStatus)

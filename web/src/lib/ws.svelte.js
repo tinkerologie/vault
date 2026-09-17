@@ -10,6 +10,12 @@ import {
   handleBulkAcked,
   notifyBaselineUpdated,
 } from './anomalies.svelte.js'
+import {
+  handleMountStarted,
+  handleMountActive,
+  handleMountUnmounted,
+  handleMountFailed,
+} from './mounts.svelte.js'
 
 let ws = null
 let listeners = []
@@ -81,6 +87,18 @@ function emitMessage(msg) {
       break
     case 'baseline.updated':
       notifyBaselineUpdated(msg.data)
+      break
+    case 'mount.started':
+      handleMountStarted(msg.data)
+      break
+    case 'mount.active':
+      handleMountActive(msg.data)
+      break
+    case 'mount.unmounted':
+      handleMountUnmounted(msg.data)
+      break
+    case 'mount.failed':
+      handleMountFailed(msg.data)
       break
   }
 }

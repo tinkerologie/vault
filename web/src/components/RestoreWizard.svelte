@@ -12,7 +12,7 @@
   import Tooltip from './Tooltip.svelte'
   import FileTree from './FileTree.svelte'
 
-  let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null } = $props()
+  let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null, onmount = null } = $props()
 
   let step = $state(1)
   let selectedItems = $state(new SvelteMap()) // key: "type:name", value: item object
@@ -74,6 +74,8 @@
     restoreOutcome = null
     restoreLogs = []
     restoreLogsRunId = null
+    mountedSession = null
+    mountError = null
   }
 
   async function reconcileRestoring() {
@@ -578,6 +580,46 @@
     acknowledgeContainerRemap = false
     preflightResult = null
     picker.clear()
+    mountedSession = null
+    mountError = null
+  }
+
+  let mounting = $state(false)
+  let mountError = $state(null)
+  let mountedSession = $state(null)
+
+  let isDeduplicated = $derived.by(() => {
+    if (!selectedPoint) return false
+    if (selectedPoint.manifest_id) return true
+    if (selectedPoint.metadata) {
+      try {
+        const meta = typeof selectedPoint.metadata === 'string' ? JSON.parse(selectedPoint.metadata) : selectedPoint.metadata
+        if (meta?.item_manifests && Object.keys(meta.item_manifests).length > 0) return true
+      } catch {
+        // ignore parse errors
+      }
+    }
+    return false
+  })
+
+  async function doMount() {
+    if (!selectedPoint) return
+    const jobId = selectedPoint.jobId || selectedPoint.job_id
+    if (!jobId) return
+
+    mounting = true
+    mountError = null
+    try {
+      const session = await api.mountRestorePoint(jobId, selectedPoint.id)
+      mountedSession = session
+      if (onmount) {
+        onmount(session)
+      }
+    } catch (err) {
+      mountError = err.message
+    } finally {
+      mounting = false
+    }
   }
 
   let needsPassphrase = $derived(selectedPoint?.encryption === 'age')
@@ -1307,8 +1349,8 @@
       {/if}
     </div>
 
-    <!-- Restore -->
-    <div class="flex items-center gap-4">
+    <!-- Restore and Mount actions -->
+    <div class="flex items-center gap-4 flex-wrap">
       <button type="button" onclick={doRestore}
         disabled={isRestoreRunning || hasEmptySelection || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase) || (needsRemapAcknowledgement && !acknowledgeContainerRemap) || !(preflightResult?.ok && preflightFresh)}
         class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
@@ -1320,6 +1362,20 @@
           Start Restore
         {/if}
       </button>
+
+      {#if isDeduplicated}
+        <button type="button" onclick={doMount} disabled={mounting || isRestoreRunning || !!mountedSession}
+          class="w-full sm:w-auto px-4 py-2.5 text-sm font-medium text-text bg-surface-3 hover:bg-surface-4 border border-border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
+          {#if mounting}
+            <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Mounting…
+          {:else}
+            <svg aria-hidden="true" class="w-4 h-4 text-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+            Mount as Filesystem
+          {/if}
+        </button>
+      {/if}
+
       {#if preflightResult && preflightFresh && !preflightResult.ok && !isRestoreRunning && selectedPoint?.chain_status !== 'broken'}
         <button type="button"
           disabled={hasEmptySelection || (needsRemapAcknowledgement && !acknowledgeContainerRemap)}
@@ -1329,6 +1385,28 @@
         <p class="text-xs text-text-dim">Run the pre-flight checks above to enable Start Restore.</p>
       {/if}
     </div>
+    {#if mountedSession}
+      <div class="bg-surface-2 border border-emerald-500/40 rounded-xl p-4 mt-4 flex items-start justify-between gap-3">
+        <div class="flex items-start gap-3">
+          <svg aria-hidden="true" class="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+          <div>
+            <p class="text-sm font-medium text-text">Backup mounted read-only</p>
+            <p class="text-xs text-text-muted mt-1">Available at <code class="text-text font-mono bg-surface-3 px-1.5 py-0.5 rounded select-all">{mountedSession.mount_path}</code></p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick={() => navigator.clipboard?.writeText(mountedSession.mount_path).catch(() => {})}
+            class="text-xs px-2.5 py-1.5 rounded-lg border border-border bg-surface-3 hover:bg-surface-4 text-text transition-colors cursor-pointer">
+            Copy Path
+          </button>
+        </div>
+      </div>
+    {/if}
+    {#if mountError}
+      <p class="text-xs text-danger font-medium mt-2">{mountError}</p>
+    {/if}
     {#if hasEmptySelection}
       <p class="text-xs text-danger font-medium mt-2">One or more items have 0 files selected. Please select at least one file to restore, or remove the item in Step 1.</p>
     {/if}

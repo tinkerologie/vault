@@ -230,3 +230,63 @@ describe('storage file download', () => {
   })
 })
 
+describe('mounts', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('lists active mounts with active filter', async () => {
+    const fetch = vi.fn(async () => new Response('[]', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.listMounts(true)
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/mounts?active=true')
+  })
+
+  it('gets mount details by id', async () => {
+    const fetch = vi.fn(async () => new Response('{"id":42}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    const res = await api.getMount(42)
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/mounts/42')
+    expect(res).toEqual({ id: 42 })
+  })
+
+  it('mounts restore point for job', async () => {
+    const fetch = vi.fn(async () => new Response('{"id":1,"status":"active"}', {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    const res = await api.mountRestorePoint(10, 20)
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/jobs/10/restore-points/20/mount')
+    expect(fetch.mock.calls[0][1]?.method).toBe('POST')
+    expect(res).toEqual({ id: 1, status: 'active' })
+  })
+
+  it('unmounts session by id', async () => {
+    const fetch = vi.fn(async () => new Response('{"ok":true}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.unmount(5)
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/mounts/5/unmount')
+    expect(fetch.mock.calls[0][1]?.method).toBe('POST')
+  })
+})
+
