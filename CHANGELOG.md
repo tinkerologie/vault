@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.09.01] - 2026-09-28
+
 ### Added
 
 - **FUSE read-only mounts for backups (#312):** Operators can now mount deduplicated backup snapshots as standard read-only filesystems on the host to inspect archive contents, compare versions, or copy out specific files using standard Linux shell tools and file managers. Backups can be mounted directly from Step 3 of the Restore Wizard via "Mount as Filesystem" or through the `vault mount` CLI subcommand. Active mounts are tracked and managed via SQLite and exposed through REST API routes (`GET /api/v1/mounts`, `GET /api/v1/mounts/{id}`, `POST /api/v1/mounts/{id}/unmount`, `POST /api/v1/jobs/{id}/restore-points/{rpid}/mount`), WebSocket event broadcasting (`mount.started`, `mount.active`, `mount.unmounted`, `mount.failed`), and an "Active Backup Mounts" card on the Restore page with path copying and one-click unmounting. Inactive mounts are automatically reclaimed by an idle timeout sweeper. Closes #312.
