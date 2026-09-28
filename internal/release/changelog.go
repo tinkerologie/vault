@@ -43,7 +43,7 @@ func Parse(md string) ([]Release, error) {
 	var cur *Release
 	var section string
 
-	for _, line := range strings.Split(md, "\n") {
+	for line := range strings.SplitSeq(md, "\n") {
 		if m := versionLine.FindStringSubmatch(line); m != nil {
 			// Flush previous, start new.
 			if cur != nil && cur.Version != "Unreleased" && cur.Version != "" {

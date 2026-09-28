@@ -17,7 +17,6 @@ func TestNewS3Adapter_PartialCredentials(t *testing.T) {
 		{"secret only", "", "SK"},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := NewS3Adapter(S3Config{

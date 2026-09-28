@@ -128,7 +128,6 @@ func TestJoinUnderBase(t *testing.T) {
 		{name: "cleans base path", base: "/var/data/", path: "x", allowRoot: false, want: "/var/data/x"},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := JoinUnderBase(c.base, c.path, c.allowRoot)

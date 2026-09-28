@@ -222,12 +222,12 @@ func unsuitableMountPoints(infoPath string) map[string]bool {
 		// mountinfo format: ID PARENT MAJ:MIN ROOT MOUNTPOINT OPTS - FSTYPE SOURCE SUPEROPTS
 		// The "-" separator splits the optional fields from the FS info.
 		line := scanner.Text()
-		sepIdx := strings.Index(line, " - ")
-		if sepIdx < 0 {
+		before, after, ok := strings.Cut(line, " - ")
+		if !ok {
 			continue
 		}
-		left := strings.Fields(line[:sepIdx])
-		right := strings.Fields(line[sepIdx+3:])
+		left := strings.Fields(before)
+		right := strings.Fields(after)
 		if len(left) < 5 || len(right) < 1 {
 			continue
 		}

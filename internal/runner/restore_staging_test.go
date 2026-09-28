@@ -51,10 +51,7 @@ func (a *stagingAdapter) ReadRange(path string, offset, length int64) (io.ReadCl
 	if offset < 0 || offset > int64(len(data)) {
 		return nil, fmt.Errorf("stagingAdapter: bad offset %d for %s (len=%d)", offset, path, len(data))
 	}
-	end := offset + length
-	if end > int64(len(data)) {
-		end = int64(len(data))
-	}
+	end := min(offset+length, int64(len(data)))
 	return io.NopCloser(bytes.NewReader(data[offset:end])), nil
 }
 func (a *stagingAdapter) Delete(_ string) error { return fmt.Errorf("stagingAdapter: Delete not impl") }

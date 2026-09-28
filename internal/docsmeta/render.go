@@ -90,8 +90,7 @@ func RenderStruct(title string, v any) string {
 	b.WriteString("| Field | Type | JSON key | Description |\n")
 	b.WriteString("| --- | --- | --- | --- |\n")
 
-	for i := 0; i < rt.NumField(); i++ {
-		f := rt.Field(i)
+	for f := range rt.Fields() {
 		if f.PkgPath != "" { // unexported
 			continue
 		}

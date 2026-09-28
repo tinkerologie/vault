@@ -364,7 +364,6 @@ func TestJobHasAnomalyOverride(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.notifyOn+"/"+string(tc.sev), func(t *testing.T) {
 			t.Parallel()
 			got := jobHasAnomalyOverride(tc.notifyOn, tc.sev)
@@ -397,7 +396,6 @@ func TestSeverityAtLeast(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.candidate)+">="+string(tc.min), func(t *testing.T) {
 			t.Parallel()
 			if got := severityAtLeast(tc.candidate, tc.min); got != tc.want {
@@ -416,7 +414,6 @@ func TestSetNotifier_ExistingNotifyOnBehaviourUnaffected(t *testing.T) {
 
 	legacyTokens := []string{"always", "failure", "never", ""}
 	for _, tok := range legacyTokens {
-		tok := tok
 		t.Run(tok, func(t *testing.T) {
 			t.Parallel()
 			// None of the legacy tokens should trigger anomaly override.

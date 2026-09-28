@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -131,10 +132,8 @@ func validateSnapshotPath(path string) (string, error) {
 	// Reject ".." components BEFORE cleaning — filepath.Clean would silently
 	// normalise them away, defeating traversal detection.  Use forward-slash
 	// splitting so the check works regardless of OS path separator.
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("path traversal not allowed in snapshot path")
-		}
+	if slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "..") {
+		return "", fmt.Errorf("path traversal not allowed in snapshot path")
 	}
 
 	absPath, err := filepath.Abs(filepath.Clean(path))
@@ -146,10 +145,8 @@ func validateSnapshotPath(path string) (string, error) {
 	// traversal components by checking path elements, not substrings, so
 	// legitimate names like "backups..2026" are not rejected. This also
 	// serves as a CodeQL-recognised sanitiser barrier for go/path-injection.
-	for _, part := range strings.Split(filepath.ToSlash(absPath), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("path traversal not allowed in snapshot path")
-		}
+	if slices.Contains(strings.Split(filepath.ToSlash(absPath), "/"), "..") {
+		return "", fmt.Errorf("path traversal not allowed in snapshot path")
 	}
 
 	return absPath, nil

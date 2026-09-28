@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -609,8 +610,8 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		}
 	}
 	// Deepest first, so a parent is only finalised once its children are done.
-	for i := len(dirMetas) - 1; i >= 0; i-- {
-		d := dirMetas[i]
+	for _, d := range slices.Backward(dirMetas) {
+
 		// MkdirAll leaves an existing directory's mode untouched, which an
 		// in-place restore over a previous one relies on this to correct.
 		applyMode(d.full, d.mode)

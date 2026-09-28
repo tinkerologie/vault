@@ -3,7 +3,7 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ruaan-deysel/vault)
 [![Build & Test](https://github.com/ruaan-deysel/vault/actions/workflows/build.yml/badge.svg)](https://github.com/ruaan-deysel/vault/actions/workflows/build.yml)
 [![Latest Release](https://img.shields.io/github/v/release/ruaan-deysel/vault?sort=date&label=release)](https://github.com/ruaan-deysel/vault/releases/latest)
-[![Go Version](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/go-1.27-00ADD8?logo=go)](https://go.dev/)
 [![Svelte](https://img.shields.io/badge/svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
 [![codecov](https://codecov.io/gh/ruaan-deysel/vault/graph/badge.svg?token=agzVe2CQxE)](https://codecov.io/gh/ruaan-deysel/vault)
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/ruaan-deysel/vault?utm_source=oss&utm_medium=github&utm_campaign=ruaan-deysel%2Fvault&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)

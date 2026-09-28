@@ -282,7 +282,7 @@ func TestCapacityTraj_TotalBytesReset(t *testing.T) {
 	// Build 20 samples: first 15 at 1 TiB total, then a disk resize to 2 TiB
 	// at sample index 15. Post-reset window = 5 samples → < 14 → no anomaly.
 	var samples []db.CapacitySample
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		samples = append(samples, db.CapacitySample{
 			ID:         int64(i + 1),
 			DestID:     1,
@@ -327,7 +327,7 @@ func TestCapacityTraj_TotalBytesReset_SufficientWindow(t *testing.T) {
 	// 5 samples at 1 TiB (declining), then 20 post-reset samples at 2 TiB
 	// with flat/growing free space. The pre-reset samples should be ignored.
 	var samples []db.CapacitySample
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		samples = append(samples, db.CapacitySample{
 			ID:         int64(i + 1),
 			DestID:     1,

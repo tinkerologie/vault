@@ -316,7 +316,6 @@ func TestCountRunningBackupsOnDestination(t *testing.T) {
 		{"a destination with no jobs counts zero", 99999, 0},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			n, err := d.CountRunningBackupsOnDestination(tc.dest)
 			if err != nil {

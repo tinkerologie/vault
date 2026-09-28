@@ -437,7 +437,7 @@ func TestEvaluatorRefreshBaseline(t *testing.T) {
 
 	// Seed minBaselineSamples completed runs.
 	var lastRunID int64
-	for i := 0; i < minBaselineSamples; i++ {
+	for i := range minBaselineSamples {
 		rid, _ := d.CreateJobRun(db.JobRun{
 			JobID: jobID, Status: "running", BackupType: "full", RunType: "backup",
 		})
@@ -495,7 +495,7 @@ func TestEvaluatorBaselineUpdatedEvent(t *testing.T) {
 
 	// Seed only (minBaselineSamples - 1) runs → too few samples, no event expected.
 	var shortRunID int64
-	for i := 0; i < minBaselineSamples-1; i++ {
+	for i := range minBaselineSamples - 1 {
 		rid, _ := d.CreateJobRun(db.JobRun{
 			JobID: jobID, Status: "running", BackupType: "full", RunType: "backup",
 		})

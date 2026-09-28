@@ -60,8 +60,8 @@ const (
 // splitCompression separates an "algo:level" compression spec into its parts.
 // A spec with no ":" yields an empty level (the algorithm default).
 func splitCompression(spec string) (algo, level string) {
-	if i := strings.IndexByte(spec, ':'); i >= 0 {
-		return spec[:i], spec[i+1:]
+	if before, after, ok := strings.Cut(spec, ":"); ok {
+		return before, after
 	}
 	return spec, ""
 }

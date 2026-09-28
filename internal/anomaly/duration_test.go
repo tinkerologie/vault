@@ -10,7 +10,9 @@ import (
 )
 
 // durationSecs is a convenience helper to create a *int for DurationSeconds.
-func durationSecs(s int) *int { return &s }
+//
+//go:fix inline
+func durationSecs(s int) *int { return new(s) }
 
 // buildDurationEC constructs a minimal EvalContext for DurationDriftDetector
 // tests. Pass status="" to use the default "completed" status.
@@ -34,7 +36,7 @@ func buildDurationEC(
 		ID:              42,
 		JobID:           7,
 		Status:          status,
-		DurationSeconds: durationSecs(observedSecs),
+		DurationSeconds: new(observedSecs),
 		ItemsDone:       itemsDone,
 	}
 	job := &db.Job{ID: 7}
@@ -209,7 +211,7 @@ func TestDurationDrift(t *testing.T) {
 				t.Errorf("Metric: want %q, got %q", tc.wantMetric, a.Metric)
 			}
 			// Verify Details JSON contains the required keys and z_score is finite.
-			var d map[string]interface{}
+			var d map[string]any
 			if err := json.Unmarshal([]byte(a.Details), &d); err != nil {
 				t.Fatalf("Details not valid JSON: %v (got %q)", err, a.Details)
 			}
@@ -244,7 +246,7 @@ func TestDurationDrift_MADZeroZScoreIsZero(t *testing.T) {
 	if a.Details == "" {
 		t.Fatal("Details must be non-empty JSON")
 	}
-	var d map[string]interface{}
+	var d map[string]any
 	if err := json.Unmarshal([]byte(a.Details), &d); err != nil {
 		t.Fatalf("Details not valid JSON: %v (got %q)", err, a.Details)
 	}

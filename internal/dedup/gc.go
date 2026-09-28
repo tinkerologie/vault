@@ -426,10 +426,9 @@ func (r *Repo) compactMixedPacks(mixed []mixedCandidate, threshold float64, res 
 		}
 		res.CompactedPacks++
 	}
-	reclaimed := successfullyDrainedBytes - totalNewBytes
-	if reclaimed < 0 {
-		reclaimed = 0 // defensive; should not happen since survivors are a strict subset
-	}
+	reclaimed := max(successfullyDrainedBytes-totalNewBytes,
+		// defensive; should not happen since survivors are a strict subset
+		0)
 	res.ReclaimedBytes = reclaimed
 	return nil
 }

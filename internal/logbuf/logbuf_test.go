@@ -76,11 +76,11 @@ func TestRingWriteReturnsOriginalLength(t *testing.T) {
 func TestRingConcurrentWrites(t *testing.T) {
 	r := New(1024)
 	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 64; j++ {
+			for range 64 {
 				_, _ = r.Write([]byte("xxxxx\n"))
 			}
 		}(i)

@@ -150,7 +150,7 @@ func TestCancelTwoQueuedRunsOfSameJob(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := r.CancelJob(jobID); err != nil {
 			r.mu.Unlock()
 			t.Fatalf("CancelJob #%d = %v, want nil", i+1, err)
@@ -158,7 +158,7 @@ func TestCancelTwoQueuedRunsOfSameJob(t *testing.T) {
 	}
 
 	r.mu.Unlock()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):

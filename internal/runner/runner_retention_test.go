@@ -53,7 +53,7 @@ func TestEnforceRetentionKeepCountTrimsOlder(t *testing.T) {
 
 	// 5 standalone fulls aged 4d→0d.
 	var ids []int64
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		ago := time.Duration(4-i) * 24 * time.Hour
 		path := filepath.Join("ret-job", "run_"+time.Now().Add(-ago).Format("20060102"))
 		ids = append(ids, createRestorePointWithAge(t, database, jobID, "full", path, 0, ago))
@@ -138,7 +138,7 @@ func TestEnforceRetentionLTRKeepsLatest(t *testing.T) {
 		KeepLatest: 2,
 	})
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		ago := time.Duration(i) * 24 * time.Hour
 		createRestorePointWithAge(t, database, jobID, "full",
 			"ltr-job/run_"+time.Now().Add(-ago).Format("20060102"), 0, ago)

@@ -13,7 +13,7 @@ import (
 func buildOneMixedPack(t *testing.T, r *Repo, liveN, deadN int) (liveMID []ID, liveIDs []ID) {
 	t.Helper()
 	liveIDs = make([]ID, 0, liveN)
-	for i := 0; i < liveN; i++ {
+	for range liveN {
 		b := make([]byte, 4096)
 		_, _ = rand.Read(b)
 		id, err := r.Put(b)
@@ -23,7 +23,7 @@ func buildOneMixedPack(t *testing.T, r *Repo, liveN, deadN int) (liveMID []ID, l
 		liveIDs = append(liveIDs, id)
 	}
 	deadIDs := make([]ID, 0, deadN)
-	for i := 0; i < deadN; i++ {
+	for range deadN {
 		b := make([]byte, 4096)
 		_, _ = rand.Read(b)
 		id, err := r.Put(b)
@@ -212,7 +212,7 @@ func TestCompactionPreservesOldPackOnReadFailure(t *testing.T) {
 	// manifest into a second pack. This guarantees the manifest survives
 	// when we later nuke the data pack's blob.
 	liveIDs := make([]ID, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		b := make([]byte, 4096)
 		_, _ = rand.Read(b)
 		id, err := r.Put(b)
@@ -222,7 +222,7 @@ func TestCompactionPreservesOldPackOnReadFailure(t *testing.T) {
 		liveIDs[i] = id
 	}
 	deadIDs := make([]ID, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		b := make([]byte, 4096)
 		_, _ = rand.Read(b)
 		id, err := r.Put(b)

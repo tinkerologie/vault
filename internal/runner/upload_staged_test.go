@@ -168,7 +168,7 @@ func TestUploadStagedFiles_ParallelAllChecksums(t *testing.T) {
 	t.Parallel()
 	r, _ := newTestRunner(t)
 	tmp := t.TempDir()
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		name := filepath.Join(tmp, "vol"+strconv.Itoa(i)+".tar")
 		if err := os.WriteFile(name, bytes.Repeat([]byte{byte(i)}, 4096), 0600); err != nil {
 			t.Fatal(err)

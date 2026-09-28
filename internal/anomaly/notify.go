@@ -175,7 +175,7 @@ func severityRank(s Severity) int {
 //   - "anomaly:warning"  → matches severity == warning or critical
 //   - "anomaly:info"     → matches any severity (same as any)
 func jobHasAnomalyOverride(notifyOn string, sev Severity) bool {
-	for _, token := range strings.Split(notifyOn, ",") {
+	for token := range strings.SplitSeq(notifyOn, ",") {
 		token = strings.TrimSpace(token)
 		switch token {
 		case "anomaly:any", "anomaly:info":

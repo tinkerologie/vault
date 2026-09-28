@@ -1,7 +1,7 @@
 # Multi-stage build for vault-replica Docker image.
 # Produces a minimal Alpine-based image with the vault binary.
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 RUN apk add --no-cache nodejs npm git
 

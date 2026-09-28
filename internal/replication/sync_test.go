@@ -504,7 +504,7 @@ func TestSyncSourceFullPath(t *testing.T) {
 	t.Parallel()
 
 	// Track whether each expected handler was hit.
-	var fileBytesServed int64
+	var fileBytesServed atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/health":
@@ -524,7 +524,7 @@ func TestSyncSourceFullPath(t *testing.T) {
 			})
 		case r.URL.Path == "/api/v1/storage/9/files":
 			body := []byte("DATA")
-			atomic.AddInt64(&fileBytesServed, int64(len(body)))
+			fileBytesServed.Add(int64(len(body)))
 			_, _ = w.Write(body)
 		default:
 			t.Logf("unexpected path: %s", r.URL.Path)
@@ -562,7 +562,7 @@ func TestSyncSourceFullPath(t *testing.T) {
 	if len(*seen) == 0 || (*seen)[len(*seen)-1] != 1.0 {
 		t.Errorf("last progress = %v, want 1.0", *seen)
 	}
-	if atomic.LoadInt64(&fileBytesServed) == 0 {
+	if fileBytesServed.Load() == 0 {
 		t.Errorf("no file bytes were downloaded via /files endpoint")
 	}
 

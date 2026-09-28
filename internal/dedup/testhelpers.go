@@ -56,10 +56,7 @@ func (f *FakeAdapter) ReadRange(path string, offset, length int64) (io.ReadClose
 	if offset >= int64(len(b)) {
 		return nil, io.ErrUnexpectedEOF
 	}
-	end := offset + length
-	if end > int64(len(b)) {
-		end = int64(len(b))
-	}
+	end := min(offset+length, int64(len(b)))
 	return io.NopCloser(bytes.NewReader(b[offset:end])), nil
 }
 

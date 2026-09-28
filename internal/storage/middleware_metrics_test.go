@@ -12,7 +12,7 @@ func (okWriter) Write(string, io.Reader) error { return nil }
 
 func TestMetricsCountsCalls(t *testing.T) {
 	m := withMetrics(okWriter{}, "dest-1")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_ = m.Write("p", nil)
 	}
 	snap := m.(*metricsAdapter).Snapshot()

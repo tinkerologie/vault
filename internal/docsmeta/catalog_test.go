@@ -85,7 +85,7 @@ func TestAllGetSettingKeysAreRegistered(t *testing.T) {
 // generated reference documents. The local storage config is an anonymous inline
 // struct (no named type) and is documented under the synthetic key
 // LocalConfig.Path, so it is intentionally excluded here.
-var registeredConfigStructs = []interface{}{
+var registeredConfigStructs = []any{
 	db.Job{},
 	db.StorageDestination{},
 	storage.SFTPConfig{},
@@ -100,8 +100,7 @@ var registeredConfigStructs = []interface{}{
 func TestAllExportedConfigFieldsAreDocumented(t *testing.T) {
 	for _, v := range registeredConfigStructs {
 		rt := reflect.TypeOf(v)
-		for i := 0; i < rt.NumField(); i++ {
-			f := rt.Field(i)
+		for f := range rt.Fields() {
 			if f.PkgPath != "" {
 				continue // unexported
 			}

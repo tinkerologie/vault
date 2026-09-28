@@ -162,7 +162,7 @@ func TestReopenConcurrentAccess(t *testing.T) {
 			}
 		}
 	}()
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		// Close first, as the real restore flow does. Skipping the Close
 		// leaves the reader's connection holding a read lock on the file,
 		// and Reopen's schema writes then fail with SQLITE_BUSY.

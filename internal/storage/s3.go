@@ -699,12 +699,10 @@ func (a *S3Adapter) TestConnection() error {
 	if _, err := a.client.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: aws.String(a.config.Bucket),
 	}); err != nil {
-		var nf *types.NotFound
-		if errors.As(err, &nf) {
+		if _, ok := errors.AsType[*types.NotFound](err); ok {
 			return fmt.Errorf("s3: bucket %q does not exist or is inaccessible", a.config.Bucket)
 		}
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
+		if apiErr, ok := errors.AsType[smithy.APIError](err); ok {
 			return fmt.Errorf("s3: %s: %s", apiErr.ErrorCode(), apiErr.ErrorMessage())
 		}
 		return fmt.Errorf("s3: head bucket: %w", err)

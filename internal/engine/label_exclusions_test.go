@@ -2,6 +2,7 @@ package engine
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -100,12 +101,7 @@ func TestLabelExclusionsMatchLikeTypedOnes(t *testing.T) {
 }
 
 func contains(hay []string, needle string) bool {
-	for _, h := range hay {
-		if h == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(hay, needle)
 }
 
 // TestLabelExclusionsRejectCatchAll is the guardrail on label authority.

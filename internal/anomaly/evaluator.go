@@ -99,9 +99,7 @@ func (e *Evaluator) EnqueueRun(runID int64) {
 // second call is a no-op and the single-worker invariant is preserved.
 func (e *Evaluator) Start() {
 	e.startOnce.Do(func() {
-		e.wg.Add(1)
-		go func() {
-			defer e.wg.Done()
+		e.wg.Go(func() {
 			for {
 				select {
 				case <-e.done:
@@ -110,7 +108,7 @@ func (e *Evaluator) Start() {
 					e.evaluateRun(runID)
 				}
 			}
-		}()
+		})
 	})
 }
 

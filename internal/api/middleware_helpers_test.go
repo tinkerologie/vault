@@ -47,7 +47,6 @@ func TestRemoteAddrHost_AllBranches(t *testing.T) {
 		{"only brackets", "[]", "-"},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := remoteAddrHost(tt.in)
@@ -77,7 +76,6 @@ func TestIsLoopback_AllBranches(t *testing.T) {
 		{"empty", "", false},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := isLoopback(tt.addr)

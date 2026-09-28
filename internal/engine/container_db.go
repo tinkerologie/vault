@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -157,10 +158,8 @@ func databaseCredentials(kind DatabaseKind, env []string) dbCredentials {
 			if !ok {
 				continue
 			}
-			for _, k := range keys {
-				if name == k {
-					return value
-				}
+			if slices.Contains(keys, name) {
+				return value
 			}
 		}
 		return ""

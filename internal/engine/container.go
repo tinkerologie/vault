@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -83,10 +84,8 @@ func effectiveAppdataPrefixes(customPath string) []string {
 
 	prefixes := []string{clean}
 	addPrefix := func(p string) {
-		for _, existing := range prefixes {
-			if existing == p {
-				return
-			}
+		if slices.Contains(prefixes, p) {
+			return
 		}
 		prefixes = append(prefixes, p)
 	}
@@ -98,11 +97,11 @@ func effectiveAppdataPrefixes(customPath string) []string {
 
 	// Unraid shares can often be accessed through /mnt/user/<share> or /mnt/cache/<share>
 	// (or pool drives). If the custom path is under /mnt/user/, also add the /mnt/cache/ counterpart.
-	if strings.HasPrefix(clean, "/mnt/user/") {
-		cacheVariant := "/mnt/cache/" + strings.TrimPrefix(clean, "/mnt/user/")
+	if after, ok := strings.CutPrefix(clean, "/mnt/user/"); ok {
+		cacheVariant := "/mnt/cache/" + after
 		addPrefix(cacheVariant)
-	} else if strings.HasPrefix(clean, "/mnt/cache/") {
-		userVariant := "/mnt/user/" + strings.TrimPrefix(clean, "/mnt/cache/")
+	} else if after, ok := strings.CutPrefix(clean, "/mnt/cache/"); ok {
+		userVariant := "/mnt/user/" + after
 		addPrefix(userVariant)
 	}
 	return prefixes
@@ -611,8 +610,8 @@ func mapExclusionsToVolume(exclusions []string, mountDestination string) []strin
 			continue
 		}
 
-		if strings.HasPrefix(cleanExcl, prefix) {
-			rel := strings.TrimPrefix(cleanExcl, prefix)
+		if after, ok := strings.CutPrefix(cleanExcl, prefix); ok {
+			rel := after
 			if rel != "" {
 				mapped = append(mapped, rel)
 			}
@@ -1015,7 +1014,7 @@ func parseLabelExclusions(labels map[string]string) []string {
 		return nil
 	}
 	var out []string
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		p := strings.TrimSpace(part)
 		if p == "" {
 			continue
@@ -2095,10 +2094,8 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		PidMode:    container.PidMode(inspect.HostConfig.PidMode),
 		Tmpfs:      inspect.HostConfig.Tmpfs,
 		ShmSize:    inspect.HostConfig.ShmSize,
-		Resources: container.Resources{
-			CpusetCpus: inspect.HostConfig.CpusetCpus,
-			Memory:     inspect.HostConfig.Memory,
-		},
+		CpusetCpus: inspect.HostConfig.CpusetCpus,
+		Memory:     inspect.HostConfig.Memory,
 	}
 
 	// Convert devices.
@@ -3355,10 +3352,7 @@ const maxStagedFileSize = 32 << 20 // 32 MiB
 func zeroPad(w io.Writer, n int64) error {
 	buf := make([]byte, 32*1024)
 	for n > 0 {
-		chunk := int64(len(buf))
-		if n < chunk {
-			chunk = n
-		}
+		chunk := min(n, int64(len(buf)))
 		written, err := w.Write(buf[:chunk])
 		n -= int64(written)
 		if err != nil {
@@ -3932,8 +3926,8 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 	}
 	// Deepest first: a parent's mode is only safe to restore once nothing
 	// more will be written beneath it.
-	for i := len(dirs) - 1; i >= 0; i-- {
-		d := dirs[i]
+	for _, d := range slices.Backward(dirs) {
+
 		// MkdirAll leaves an existing directory's mode alone, so an in-place
 		// restore needs the explicit chmod as much as a fresh one does.
 		applyMode(d.path, d.mode)

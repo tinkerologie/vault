@@ -202,8 +202,8 @@ func populateManifestTree(ctx context.Context, repo *dedup.Repo, cache *ChunkCac
 		}
 
 		// Check for container volume mount points: __vol__<dest>
-		if strings.HasPrefix(key, "__vol__") {
-			dest := strings.TrimPrefix(key, "__vol__")
+		if after, ok := strings.CutPrefix(key, "__vol__"); ok {
+			dest := after
 			dest = strings.TrimPrefix(dest, "/")
 			volDir := addDirToTree(ctx, rootDir, dest, modTime, onActivity)
 			if len(entry.Chunks) > 0 {
@@ -219,8 +219,8 @@ func populateManifestTree(ctx context.Context, repo *dedup.Repo, cache *ChunkCac
 		}
 
 		// Check for container single-file bind mounts: __volfile__<dest>
-		if strings.HasPrefix(key, "__volfile__") {
-			dest := strings.TrimPrefix(key, "__volfile__")
+		if after, ok := strings.CutPrefix(key, "__volfile__"); ok {
+			dest := after
 			dest = strings.TrimPrefix(dest, "/")
 			reader, err := NewFileReader(repo, entry, cache)
 			if err != nil {

@@ -21,8 +21,8 @@ func testDB(t *testing.T) *db.DB {
 
 func TestSchedulerStartStop(t *testing.T) {
 	d := testDB(t)
-	var called int32
-	runner := func(jobID int64) { atomic.AddInt32(&called, 1) }
+	var called atomic.Int32
+	runner := func(jobID int64) { called.Add(1) }
 
 	s := New(d, runner)
 	if err := s.Start(); err != nil {
@@ -36,8 +36,8 @@ func TestSchedulerWithJob(t *testing.T) {
 	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "test", Type: "local", Config: "{}"})
 	d.CreateJob(db.Job{Name: "test-job", Enabled: true, Schedule: "* * * * *", StorageDestID: destID})
 
-	var called int32
-	runner := func(jobID int64) { atomic.AddInt32(&called, 1) }
+	var called atomic.Int32
+	runner := func(jobID int64) { called.Add(1) }
 
 	s := New(d, runner)
 	if err := s.Start(); err != nil {
@@ -127,8 +127,8 @@ func TestSchedulerLastDayJob(t *testing.T) {
 	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "test", Type: "local", Config: "{}"})
 	d.CreateJob(db.Job{Name: "last-day-job", Enabled: true, Schedule: "0 2 L * *", StorageDestID: destID})
 
-	var called int32
-	runner := func(jobID int64) { atomic.AddInt32(&called, 1) }
+	var called atomic.Int32
+	runner := func(jobID int64) { called.Add(1) }
 
 	s := New(d, runner)
 	if err := s.Start(); err != nil {

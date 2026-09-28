@@ -343,7 +343,7 @@ func TestRunnerStatusConcurrent(t *testing.T) {
 	r, _, _ := setupTestRunner(t)
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

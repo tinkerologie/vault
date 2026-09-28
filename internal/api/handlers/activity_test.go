@@ -101,7 +101,7 @@ func TestActivityList_LimitClampedToMax(t *testing.T) {
 	h := NewActivityHandler(d)
 
 	// Seed 3 entries.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		d.LogActivity("info", "backup", "msg", "{}")
 	}
 
@@ -208,7 +208,7 @@ func TestActivityList_BeforeIDPagesBackwards(t *testing.T) {
 	d := newTestDB(t)
 	h := NewActivityHandler(d)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		d.LogActivity("info", "backup", "msg", "{}")
 	}
 
@@ -273,7 +273,7 @@ func TestActivityList_BeforeIDWithCategory(t *testing.T) {
 	d := newTestDB(t)
 	h := NewActivityHandler(d)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		d.LogActivity("info", "backup", "msg", "{}")
 		d.LogActivity("info", "system", "msg", "{}")
 	}

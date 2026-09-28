@@ -36,7 +36,6 @@ func TestStaleStatus(t *testing.T) {
 		{"unknown type", "weird", "x", nil, StatusUnknown},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if got := inv.Status(c.itemType, c.item, c.settings); got != c.want {

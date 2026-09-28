@@ -103,7 +103,6 @@ func TestRunScheduledVerifyBackupContention(t *testing.T) {
 		{"quick runs alongside an active backup", "quick", true, 1},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r, database, storageDir := setupTestRunner(t)

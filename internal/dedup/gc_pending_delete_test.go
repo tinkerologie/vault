@@ -411,7 +411,7 @@ func TestGCRepeatedFailuresWriteOneTombstone(t *testing.T) {
 	}
 
 	adapter.failDelete = true
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if _, err := RunGC(r, nil, GCOptions{}); err != nil {
 			t.Fatalf("sweep %d: %v", i, err)
 		}

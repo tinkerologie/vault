@@ -42,12 +42,9 @@ func TestEvaluateTrendDetectors_CapacityAnomaly(t *testing.T) {
 	// OLS slope ≈ -1 GB/day; ETA ≈ 3 days → critical (< warnDays/2 = 7).
 	t0 := clk.Now().AddDate(0, 0, -20)
 	const total = int64(1 << 40)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		sampledAt := t0.Add(time.Duration(i) * 24 * time.Hour)
-		freeBytes := int64(22e9) - int64(i)*int64(1e9)
-		if freeBytes < 0 {
-			freeBytes = 0
-		}
+		freeBytes := max(int64(22e9)-int64(i)*int64(1e9), 0)
 		if err := d.InsertCapacitySample(db.CapacitySample{
 			DestID:     destID,
 			SampledAt:  sampledAt,
@@ -174,12 +171,9 @@ func TestEvaluateTrendDetectors_PanicIsolation(t *testing.T) {
 	}
 
 	t0 := clk.Now().AddDate(0, 0, -20)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		sampledAt := t0.Add(time.Duration(i) * 24 * time.Hour)
-		freeBytes := int64(22e9) - int64(i)*int64(1e9)
-		if freeBytes < 0 {
-			freeBytes = 0
-		}
+		freeBytes := max(int64(22e9)-int64(i)*int64(1e9), 0)
 		_ = d.InsertCapacitySample(db.CapacitySample{
 			DestID:     destID,
 			SampledAt:  sampledAt,

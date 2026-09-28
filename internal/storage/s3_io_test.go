@@ -35,7 +35,6 @@ func TestStripPrefix(t *testing.T) {
 		{"exact basePf", "vault/", "vault/", ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := stripPrefix(tc.key, tc.basePf); got != tc.want {
@@ -256,10 +255,7 @@ func (m *s3Mock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if m.getChunkSize > 0 {
 				flusher, _ := w.(http.Flusher)
 				for cs := 0; cs < len(slice); cs += m.getChunkSize {
-					ce := cs + m.getChunkSize
-					if ce > len(slice) {
-						ce = len(slice)
-					}
+					ce := min(cs+m.getChunkSize, len(slice))
 					_, _ = w.Write(slice[cs:ce])
 					if flusher != nil {
 						flusher.Flush()
@@ -276,10 +272,7 @@ func (m *s3Mock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if m.getChunkSize > 0 {
 			flusher, _ := w.(http.Flusher)
 			for start := 0; start < len(obj); start += m.getChunkSize {
-				end := start + m.getChunkSize
-				if end > len(obj) {
-					end = len(obj)
-				}
+				end := min(start+m.getChunkSize, len(obj))
 				_, _ = w.Write(obj[start:end])
 				if flusher != nil {
 					flusher.Flush()

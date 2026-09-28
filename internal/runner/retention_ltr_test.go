@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func makeDailyPoints(t *testing.T, end time.Time, days int) []db.RestorePoint {
 	t.Helper()
 	loc := end.Location()
 	out := make([]db.RestorePoint, 0, days)
-	for i := 0; i < days; i++ {
+	for i := range days {
 		day := time.Date(end.Year(), end.Month(), end.Day()-i, 12, 0, 0, 0, loc)
 		out = append(out, db.RestorePoint{
 			ID:        int64(days - i), // newest gets highest ID
@@ -51,7 +52,6 @@ func TestLTRPolicyIsActive(t *testing.T) {
 		{"mixed", LTRPolicy{KeepLatest: 3, KeepWeekly: 4, KeepYearly: 5}, true},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if got := c.p.IsActive(); got != c.want {
@@ -160,7 +160,7 @@ func TestLTRDirectlyKept_MixedPolicy(t *testing.T) {
 	}
 
 	// All five newest points must be kept (covered by latest/daily/weekly/monthly).
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		id := points[i].ID
 		if _, ok := kept[id]; !ok {
 			t.Errorf("expected newest point ID %d (idx %d) to be kept", id, i)
@@ -223,6 +223,6 @@ func sortedIDs(m map[int64]struct{}) []int64 {
 	for id := range m {
 		out = append(out, id)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }

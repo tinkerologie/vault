@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/ruaan-deysel/vault/internal/safepath"
@@ -17,10 +18,8 @@ func normalizeRestorePath(path string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("invalid restore path %q: path is required", path)
 	}
-	for _, part := range strings.FieldsFunc(trimmed, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if part == ".." {
-			return "", fmt.Errorf("invalid restore path %q: path traversal components not allowed", path)
-		}
+	if slices.Contains(strings.FieldsFunc(trimmed, func(r rune) bool { return r == '/' || r == '\\' }), "..") {
+		return "", fmt.Errorf("invalid restore path %q: path traversal components not allowed", path)
 	}
 
 	normalizedPath, err := safepath.NormalizeAbsoluteUnderRoots(trimmed, safepath.RestoreAllowedRoots())
@@ -181,8 +180,8 @@ func resolveSymlinkTarget(destDir, symlinkPath, linkTarget string) error {
 // step before handling ".." so that the real filesystem structure is followed.
 func walkPathComponents(base, relPath string) (string, error) {
 	current := base
-	parts := strings.Split(filepath.ToSlash(relPath), "/")
-	for _, part := range parts {
+	parts := strings.SplitSeq(filepath.ToSlash(relPath), "/")
+	for part := range parts {
 		switch part {
 		case "", ".":
 			continue

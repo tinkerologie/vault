@@ -105,7 +105,6 @@ func TestCompressedWriterAllModes(t *testing.T) {
 	t.Parallel()
 
 	for _, mode := range []string{CompressionNone, CompressionGzip, CompressionZstd, "", "unknown"} {
-		mode := mode
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			var buf bytes.Buffer

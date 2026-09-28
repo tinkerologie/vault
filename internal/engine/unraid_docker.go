@@ -59,13 +59,13 @@ func ensureUnraidImageTag(image string) string {
 		return image
 	}
 	// Strip any digest suffix — Unraid keys by tag, not digest.
-	if at := strings.Index(image, "@"); at >= 0 {
-		image = image[:at]
-	}
+	image, _, _ = strings.Cut(image, "@")
 	// Add `:latest` if no tag is present in the final path component.
-	tagPos := strings.LastIndex(image, ":")
-	slashPos := strings.LastIndex(image, "/")
-	if tagPos <= slashPos {
+	lastComponent := image
+	if _, after, found := strings.CutLast(image, "/"); found {
+		lastComponent = after
+	}
+	if !strings.Contains(lastComponent, ":") {
 		image += ":latest"
 	}
 	// Add `library/` prefix for docker official single-name images.

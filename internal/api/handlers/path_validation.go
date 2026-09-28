@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/ruaan-deysel/vault/internal/safepath"
@@ -19,12 +20,10 @@ func normalizeRestoreDestination(path string) (string, error) {
 	if strings.Contains(path, "../") || strings.Contains(path, "..\\") {
 		return "", fmt.Errorf("path traversal not allowed")
 	}
-	for _, part := range strings.FieldsFunc(path, func(r rune) bool {
+	if slices.Contains(strings.FieldsFunc(path, func(r rune) bool {
 		return r == '/' || r == '\\'
-	}) {
-		if part == ".." {
-			return "", fmt.Errorf("path traversal not allowed")
-		}
+	}), "..") {
+		return "", fmt.Errorf("path traversal not allowed")
 	}
 	return safepath.NormalizeAbsoluteUnderRoots(path, safepath.RestoreAllowedRoots())
 }

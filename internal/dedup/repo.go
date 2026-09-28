@@ -104,7 +104,7 @@ type Stats struct {
 	LogicalBytes        int64     `json:"logical_bytes"`
 	PhysicalBytes       int64     `json:"physical_bytes"`
 	WastedBytesEstimate int64     `json:"wasted_bytes_estimate"`
-	LastGCAt            time.Time `json:"last_gc_at,omitempty"`
+	LastGCAt            time.Time `json:"last_gc_at"`
 	LastGCFreedBytes    int64     `json:"last_gc_freed_bytes"`
 }
 

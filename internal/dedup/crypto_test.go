@@ -193,5 +193,3 @@ func TestCryptoManifestBlobInvalidMasterKey(t *testing.T) {
 		t.Fatal("DecryptManifestBlob accepted short master key")
 	}
 }
-
-

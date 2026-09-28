@@ -14,7 +14,7 @@ func TestBroadcastThrottleCollapsesPerFileUpdates(t *testing.T) {
 	admit := newBroadcastThrottle()
 
 	var emitted int
-	for i := 0; i < 46000; i++ {
+	for range 46000 {
 		if admit(-1) { // the folder walk reports percent = -1 per file
 			emitted++
 		}
@@ -31,7 +31,7 @@ func TestBroadcastThrottleAlwaysEmitsTerminal(t *testing.T) {
 	admit := newBroadcastThrottle()
 
 	admit(-1) // consume the leading allowance
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !admit(100) {
 			t.Fatalf("terminal update %d was throttled", i)
 		}

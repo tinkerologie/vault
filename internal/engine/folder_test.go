@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,9 +200,7 @@ func TestFolderHandlerBackupHonoursExclusions(t *testing.T) {
 			"path":          src,
 			"exclude_paths": []string{"*.log", ".Recycle.Bin"},
 		}
-		for k, v := range extra {
-			settings[k] = v
-		}
+		maps.Copy(settings, extra)
 		dest := t.TempDir()
 		item := BackupItem{Name: "flash", Type: "folder", Compression: CompressionGzip, Settings: settings}
 		if _, err := h.Backup(context.Background(), item, dest, func(string, int, string) {}); err != nil {

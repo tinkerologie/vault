@@ -269,10 +269,7 @@ func (l *LocalAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	bsize := int64(s.Bsize)          //nolint:gosec,unconvert // Bsize varies (uint32 on Darwin, int64 on Linux); cast is required on Darwin, redundant on Linux
 	total := int64(s.Blocks) * bsize //nolint:gosec,unconvert
 	free := int64(s.Bavail) * bsize  //nolint:gosec,unconvert
-	used := total - free
-	if used < 0 {
-		used = 0
-	}
+	used := max(total-free, 0)
 	return Capacity{
 		TotalBytes: total,
 		UsedBytes:  used,

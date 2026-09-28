@@ -1343,7 +1343,7 @@ func TestUpdate_LogLevel_ConcurrentInterleaving(t *testing.T) {
 	var wg sync.WaitGroup
 	barrier := make(chan struct{})
 
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

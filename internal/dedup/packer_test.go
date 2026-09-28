@@ -14,7 +14,7 @@ func TestPackerFlushesAtTarget(t *testing.T) {
 	packsWritten := 0
 	p := NewPacker(a, master, "test/packs", func(info PackInfo) { packsWritten++ })
 	chunk := make([]byte, 1<<20) // 1 MiB
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		if _, err := rand.Read(chunk); err != nil {
 			t.Fatal(err)
 		}

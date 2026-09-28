@@ -228,8 +228,7 @@ func isSMBNotFound(err error) bool {
 	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
 		return true
 	}
-	var respErr *smb2.ResponseError
-	if errors.As(err, &respErr) {
+	if respErr, ok := errors.AsType[*smb2.ResponseError](err); ok {
 		switch respErr.Code {
 		case 0xC0000034, 0xC000003A, 0xC000000F:
 			// STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND, STATUS_NO_SUCH_FILE
@@ -377,10 +376,7 @@ func smbFileFsInfoToCapacity(info smb2.FileFsInfo, probedAt time.Time) (Capacity
 	}
 	total := int64(info.TotalBlockCount() * bsize)    //nolint:gosec // SMB FsInfo values fit int64 in practice
 	free := int64(info.AvailableBlockCount() * bsize) //nolint:gosec,unconvert
-	used := total - free
-	if used < 0 {
-		used = 0
-	}
+	used := max(total-free, 0)
 	return Capacity{
 		TotalBytes: total,
 		UsedBytes:  used,

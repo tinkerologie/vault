@@ -125,10 +125,7 @@ func (c *closeTrackerAdapter) ReadRange(p string, offset, length int64) (io.Read
 	if offset > int64(len(b)) {
 		offset = int64(len(b))
 	}
-	end := offset + length
-	if end > int64(len(b)) {
-		end = int64(len(b))
-	}
+	end := min(offset+length, int64(len(b)))
 	c.tracker = &closeTracker{Reader: bytes.NewReader(b[offset:end])}
 	return c.tracker, nil
 }

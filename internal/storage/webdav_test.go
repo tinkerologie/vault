@@ -65,7 +65,6 @@ func TestNewWebDAVAdapter(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			a, err := NewWebDAVAdapter(tt.config)
@@ -379,7 +378,6 @@ func TestWebDAVStallTimeoutDefaults(t *testing.T) {
 		{"negative disables", -1, 0},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			a, err := NewWebDAVAdapter(WebDAVConfig{URL: "https://x.test/", StallTimeoutSeconds: tc.cfg})
@@ -607,10 +605,7 @@ func TestWebDAVReadRangeChunkedObject(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadAll() error = %v", err)
 			}
-			end := tc.offset + tc.length
-			if end > size {
-				end = size
-			}
+			end := min(tc.offset+tc.length, size)
 			if !bytes.Equal(got, data[tc.offset:end]) {
 				t.Fatalf("ReadRange(%d, %d) returned %d bytes with wrong content, want bytes [%d,%d)",
 					tc.offset, tc.length, len(got), tc.offset, end)
@@ -857,10 +852,10 @@ func TestWebDAVWriteRetriesMkdirOnLocked(t *testing.T) {
 	// walk: the top-level MKCOL gets 409 (parent missing), then a per-segment
 	// MKCOL returns the lock. Reproduce Koofr's behaviour by returning 423 on
 	// the leaf segment's first creation, then succeeding.
-	var leafMkcols int32
+	var leafMkcols atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "MKCOL" && strings.HasSuffix(r.URL.Path, "/run/telegraf/") &&
-			atomic.AddInt32(&leafMkcols, 1) == 2 {
+			leafMkcols.Add(1) == 2 {
 			w.WriteHeader(http.StatusLocked) // 423 on the segment-walk creation
 			return
 		}
@@ -881,7 +876,7 @@ func TestWebDAVWriteRetriesMkdirOnLocked(t *testing.T) {
 	if err := a.Write("run/telegraf/config.json", strings.NewReader("{}")); err != nil {
 		t.Fatalf("Write should retry a transient 423 on mkdir, got: %v", err)
 	}
-	if got := atomic.LoadInt32(&leafMkcols); got < 3 {
+	if got := leafMkcols.Load(); got < 3 {
 		t.Errorf("leaf MKCOL attempts = %d, want >= 3 (409 probe, 423, retried success)", got)
 	}
 }

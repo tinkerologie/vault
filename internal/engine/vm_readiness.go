@@ -53,13 +53,7 @@ func (h *VMHandler) waitForVMGuestAgent(ctx context.Context, dom libvirt.Domain,
 			return fmt.Errorf("timed out waiting for guest agent on domain %s", name)
 		}
 
-		attemptTimeout := int32(remaining / time.Second)
-		if attemptTimeout < 1 {
-			attemptTimeout = 1
-		}
-		if attemptTimeout > 5 {
-			attemptTimeout = 5
-		}
+		attemptTimeout := min(max(int32(remaining/time.Second), 1), 5)
 
 		_, err := h.conn.QEMUDomainAgentCommand(dom, `{"execute":"guest-ping"}`, attemptTimeout, 0)
 		if err == nil {
@@ -114,8 +108,7 @@ func (h *VMHandler) detectVMReadyHost(dom libvirt.Domain) (string, error) {
 	}
 
 	if lastErr != nil {
-		var libvirtErr libvirt.Error
-		if errors.As(lastErr, &libvirtErr) {
+		if libvirtErr, ok := errors.AsType[libvirt.Error](lastErr); ok {
 			code := libvirt.ErrorNumber(libvirtErr.Code)
 			if code == libvirt.ErrAgentUnresponsive || code == libvirt.ErrAgentCommandTimeout || code == libvirt.ErrAgentCommandFailed {
 				return "", fmt.Errorf("libvirt could not determine a guest address; configure an explicit TCP host or enable guest network reporting: %w", lastErr)

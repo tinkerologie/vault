@@ -22,7 +22,6 @@ func TestParseChangedSince(t *testing.T) {
 		{name: "valid RFC3339", in: map[string]any{"changed_since": "2024-01-01T00:00:00Z"}, want: true},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			got, ok := parseChangedSince(c.in)

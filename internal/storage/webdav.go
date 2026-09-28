@@ -389,13 +389,7 @@ func newStallReader(src io.Reader, timeout time.Duration) *stallReader {
 
 func (r *stallReader) watch(ctx context.Context) {
 	// Poll at min(timeout/4, 30s); cheap and prompt enough.
-	interval := r.timeout / 4
-	if interval > 30*time.Second {
-		interval = 30 * time.Second
-	}
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := max(min(r.timeout/4, 30*time.Second), time.Second)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -884,10 +878,7 @@ func (r *webDAVChunkRangeReader) Read(p []byte) (int, error) {
 				return 0, fmt.Errorf("webdav: chunked object truncated with %d bytes unread: %w", r.remaining, io.ErrUnexpectedEOF)
 			}
 			chunk := r.chunks[r.idx]
-			need := chunk.Size - r.chunkOff
-			if need > r.remaining {
-				need = r.remaining
-			}
+			need := min(chunk.Size-r.chunkOff, r.remaining)
 			rc, err := r.w.rawRangeRequest(chunk.Path, r.chunkOff, need)
 			if err != nil {
 				return 0, err

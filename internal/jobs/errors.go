@@ -40,8 +40,7 @@ func invalidCause(field string, cause error, format string, args ...any) error {
 
 // IsValidation reports whether err is a caller-fault validation failure.
 func IsValidation(err error) (*ValidationError, bool) {
-	var ve *ValidationError
-	if errors.As(err, &ve) {
+	if ve, ok := errors.AsType[*ValidationError](err); ok {
 		return ve, true
 	}
 	return nil, false

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -541,12 +542,7 @@ func listTarEntries(t *testing.T, archivePath string) []string {
 }
 
 func containsName(names []string, want string) bool {
-	for _, n := range names {
-		if n == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(names, want)
 }
 
 // TestTarDirectoryFilteredWithPrevNewFiles covers the classic-path half of

@@ -14,8 +14,7 @@ func TestHeartbeatWritesFile(t *testing.T) {
 	path := filepath.Join(dir, "heartbeat")
 	hb := NewHeartbeat(path, "test-v1", 50*time.Millisecond)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	hb.Start(ctx)
 
 	// Wait for first write.

@@ -78,7 +78,7 @@ type DedupStatsInfo struct {
 	PhysicalBytes       int64     `json:"physical_bytes"`
 	DedupRatio          float64   `json:"dedup_ratio"`
 	WastedBytesEstimate int64     `json:"wasted_bytes_estimate"`
-	LastGCAt            time.Time `json:"last_gc_at,omitempty"`
+	LastGCAt            time.Time `json:"last_gc_at"`
 	LastGCFreedBytes    int64     `json:"last_gc_freed_bytes"`
 	Error               string    `json:"error,omitempty"`
 }

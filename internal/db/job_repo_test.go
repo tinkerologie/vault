@@ -450,7 +450,7 @@ func TestRetentionCount(t *testing.T) {
 	runID, _ := d.CreateJobRun(JobRun{JobID: jobID, Status: "completed", BackupType: "full", ItemsTotal: 1})
 
 	// Create 5 restore points.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_, err := d.CreateRestorePoint(RestorePoint{
 			JobRunID: runID, JobID: jobID, BackupType: "full",
 			StoragePath: "/backups/rp" + string(rune('a'+i)), Metadata: "{}",
@@ -663,7 +663,7 @@ func TestListJobRunsLimitsEachJobAndSortsGlobally(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for j := 0; j < 3; j++ {
+		for j := range 3 {
 			runID, createErr := d.CreateJobRun(JobRun{JobID: jobIDs[i], Status: "success", BackupType: "full"})
 			if createErr != nil {
 				t.Fatal(createErr)

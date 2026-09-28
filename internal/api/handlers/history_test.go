@@ -16,12 +16,12 @@ func TestHistoryList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		jobID, createErr := d.CreateJob(db.Job{Name: fmt.Sprintf("job-%d", i), StorageDestID: destID})
 		if createErr != nil {
 			t.Fatal(createErr)
 		}
-		for j := 0; j < 2; j++ {
+		for range 2 {
 			if _, createErr = d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"}); createErr != nil {
 				t.Fatal(createErr)
 			}
@@ -83,7 +83,7 @@ func TestHistoryListCapsLimitPerJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 1001; i++ {
+	for range 1001 {
 		if _, err = d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"}); err != nil {
 			t.Fatal(err)
 		}
@@ -143,7 +143,7 @@ func TestHistoryPurge_WithRunsSeeded(t *testing.T) {
 		t.Fatalf("create job: %v", err)
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, err := d.CreateJobRun(db.JobRun{
 			JobID: jobID, Status: "success", BackupType: "full",
 		}); err != nil {

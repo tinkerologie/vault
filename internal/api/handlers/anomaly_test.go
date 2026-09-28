@@ -77,7 +77,7 @@ func seedAnomalyN(t *testing.T, d *db.DB, n int) []int64 {
 	t.Helper()
 	base := time.Now().Add(-time.Duration(n) * time.Second)
 	ids := make([]int64, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ts := base.Add(time.Duration(i) * time.Second)
 		a := db.Anomaly{
 			Fingerprint: "fp-bulk-" + strconv.Itoa(i) + "-" + strconv.FormatInt(ts.UnixNano(), 10),
@@ -802,7 +802,7 @@ func TestAnomalyGetTrajectory_WithSamples(t *testing.T) {
 
 	// Insert two capacity samples.
 	now := time.Now()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := d.InsertCapacitySample(db.CapacitySample{
 			DestID:     destID,
 			SampledAt:  now.Add(-time.Duration(i) * time.Hour),

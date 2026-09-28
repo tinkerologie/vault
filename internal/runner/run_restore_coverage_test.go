@@ -11,11 +11,11 @@ import (
 	"github.com/ruaan-deysel/vault/internal/engine"
 )
 
-var runRestoreSeq int64
+var runRestoreSeq atomic.Int64
 
 func nextUniqueRunner(t *testing.T) string {
 	t.Helper()
-	n := atomic.AddInt64(&runRestoreSeq, 1)
+	n := runRestoreSeq.Add(1)
 	return string(rune('0' + (n % 10))) // simple per-test unique suffix
 }
 

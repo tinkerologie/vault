@@ -8,8 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"

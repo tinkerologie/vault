@@ -23,7 +23,7 @@ import (
 )
 
 // uniqueSeq provides monotonically increasing IDs for unique name generation.
-var uniqueSeq int64
+var uniqueSeq atomic.Int64
 
 // ---------------------------------------------------------------------------
 // Helper: build a *JobHandler wired to a real temp-file DB + runner.
@@ -59,7 +59,7 @@ func newJobHandlerDB(t *testing.T) (*JobHandler, *db.DB) {
 // generate unique names within a single test that calls seed helpers multiple
 // times against the same DB (which has UNIQUE constraints on name columns).
 func nextUnique() string {
-	return strconv.FormatInt(atomic.AddInt64(&uniqueSeq, 1), 10)
+	return strconv.FormatInt(uniqueSeq.Add(1), 10)
 }
 
 // seedStorageDest creates a uniquely named local storage destination and
@@ -1180,7 +1180,7 @@ func TestRetentionPreview_ActivePolicy(t *testing.T) {
 
 	// Seed a few restore points.
 	runID, _ := d.CreateJobRun(db.JobRun{JobID: id, Status: "success", BackupType: "full"})
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_, _ = d.CreateRestorePoint(db.RestorePoint{
 			JobRunID:    runID,
 			JobID:       id,

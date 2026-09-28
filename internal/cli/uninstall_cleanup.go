@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -439,12 +440,7 @@ func normalizePath(path string) string {
 
 func isExactPreserveRoot(path string, preserveRoots []string) bool {
 	path = normalizePath(path)
-	for _, root := range preserveRoots {
-		if path == root {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(preserveRoots, path)
 }
 
 func hasPreservedDescendant(path string, preserveRoots []string) bool {

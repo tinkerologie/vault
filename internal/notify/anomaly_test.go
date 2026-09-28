@@ -22,7 +22,6 @@ func TestBuildAnomalyEmbed_ColourMapping(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.severity, func(t *testing.T) {
 			t.Parallel()
 			embed := BuildAnomalyEmbed(AnomalyEmbedParams{
@@ -207,7 +206,6 @@ func TestRenderAnomalyDetails(t *testing.T) {
 		{"not json", "not json", ""},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if got := renderAnomalyDetails(c.details); got != c.want {

@@ -106,7 +106,6 @@ func TestSanitizeS3KeySegment(t *testing.T) {
 		{"", ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.in, func(t *testing.T) {
 			t.Parallel()
 			if got := sanitizeS3KeySegment(tc.in); got != tc.want {

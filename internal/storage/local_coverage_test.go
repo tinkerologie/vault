@@ -209,13 +209,7 @@ func (e *errOnRead) Read(p []byte) (int, error) {
 	if e.read >= e.after {
 		return 0, e.err
 	}
-	remaining := e.after - e.read
-	if remaining > len(p) {
-		remaining = len(p)
-	}
-	if remaining > len(e.data)-e.read {
-		remaining = len(e.data) - e.read
-	}
+	remaining := min(min(e.after-e.read, len(p)), len(e.data)-e.read)
 	if remaining <= 0 {
 		return 0, e.err
 	}

@@ -15,9 +15,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1334,9 +1336,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 		// VM items need the backup mode (snapshot or cold).
 		if item.ItemType == "vm" {
-			for key, value := range settings {
-				backupItem.Settings[key] = value
-			}
+			maps.Copy(backupItem.Settings, settings)
 			backupItem.Settings["id"] = itemID
 			backupItem.Settings["backup_mode"] = job.VMMode
 			backupItem.Settings["backup_type"] = btResult.BackupType
@@ -1404,9 +1404,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 		// ZFS items need the dataset and related metadata from settings.
 		if item.ItemType == "zfs" {
-			for key, value := range settings {
-				backupItem.Settings[key] = value
-			}
+			maps.Copy(backupItem.Settings, settings)
 			backupItem.Settings["backup_type"] = btResult.BackupType
 			// For incremental/differential ZFS backups, read the parent
 			// snapshot for this item from the parent restore point's
@@ -2282,9 +2280,7 @@ func (r *Runner) reconcileAutoIncludeContainers(job db.Job, items *[]db.JobItem)
 		// Newly auto-added containers default to appdata_only=true so non-appdata mounts
 		// (e.g. large media libraries) are safely excluded by default (issues #317, #324).
 		settings := make(map[string]any, len(c.Settings)+1)
-		for k, v := range c.Settings {
-			settings[k] = v
-		}
+		maps.Copy(settings, c.Settings)
 		settings["appdata_only"] = true
 		settingsJSON, err := json.Marshal(settings)
 		if err != nil {
@@ -3313,8 +3309,8 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 		if passphrase != "" {
 			enc, encErr := crypto.EncryptReader(passphrase, src)
 			if encErr != nil {
-				for i := len(closers) - 1; i >= 0; i-- {
-					_ = closers[i].Close()
+				for _, closer := range slices.Backward(closers) {
+					_ = closer.Close()
 				}
 				return nil, fmt.Errorf("encrypting %s: %w", entryName, encErr)
 			}
@@ -3336,10 +3332,7 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 					lastBroadcast = time.Now()
 					pct := 0
 					if fileSize > 0 {
-						pct = int(uploaded * 100 / fileSize)
-						if pct > 100 {
-							pct = 100
-						}
+						pct = min(int(uploaded*100/fileSize), 100)
 					}
 					progress(pct, fmt.Sprintf("Uploading %s", entryName))
 				}
@@ -3385,8 +3378,8 @@ type multiCloseReader struct {
 
 func (m *multiCloseReader) Close() error {
 	var err error
-	for i := len(m.closers) - 1; i >= 0; i-- {
-		if e := m.closers[i].Close(); e != nil && err == nil {
+	for _, v := range slices.Backward(m.closers) {
+		if e := v.Close(); e != nil && err == nil {
 			err = e
 		}
 	}
@@ -4908,10 +4901,7 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		fmt.Sprintf("Downloading %s: %d file(s), size=%s", itemName, len(restoreFiles), format.Bytes(float64(totalBytes))),
 		map[string]any{"item_name": itemName, "files": len(restoreFiles), "size_bytes": totalBytes})
 
-	concurrency := job.EffectiveUploadConcurrency()
-	if concurrency < 1 {
-		concurrency = 1
-	}
+	concurrency := max(job.EffectiveUploadConcurrency(), 1)
 
 	var (
 		dlMu     sync.Mutex

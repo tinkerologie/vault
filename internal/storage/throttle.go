@@ -137,10 +137,7 @@ func waitPaced(lim *rate.Limiter, n int) {
 		return
 	}
 	for n > 0 {
-		c := n
-		if c > burst {
-			c = burst
-		}
+		c := min(n, burst)
 		// WaitN blocks until enough tokens accumulate. Burst capacity
 		// equals one second of bytes so the very first read after a
 		// quiet period drains the bucket without blocking; sustained

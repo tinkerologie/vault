@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Go toolchain and dependency updates (#437):** Updated Go from 1.26.5 to 1.27.1 across module configuration, CI workflows, contributor docs, and the Docker builder image (`golang:1.27-alpine`). Adopted Go 1.27 standard library features (`uuid`, `strings.CutLast`) and `go fix` modernizers (`range n`, `slices.Contains`, `strings.SplitSeq`/`FieldsSeq`, `sync.WaitGroup.Go`, `atomic.Int64`/`Bool`, `errors.AsType`, `testing.T.Context`, `min`/`max`, `strings.Cut`/`CutPrefix`), replacing the direct `github.com/google/uuid` dependency with the standard library `uuid` package, and updated Go and web npm dependencies to their latest releases. Closes #437.
+
 ## [v2026.09.01] - 2026-09-28
 
 ### Added

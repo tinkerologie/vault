@@ -246,7 +246,7 @@ func TestListAnomaliesLimitCappedAt100(t *testing.T) {
 	defer cancel()
 
 	// Seed 110 anomalies.
-	for i := 0; i < 110; i++ {
+	for i := range 110 {
 		seedAnomaly(t, database, fmt.Sprintf("cap-%03d", i))
 	}
 
@@ -271,7 +271,7 @@ func TestListAnomaliesPayloadUnder16KB(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		seedAnomaly(t, database, fmt.Sprintf("payload-%03d", i))
 	}
 

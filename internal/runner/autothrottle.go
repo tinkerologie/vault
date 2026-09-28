@@ -129,17 +129,17 @@ func busiestInterfaceTxBytes() (string, int64, error) {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
-		idx := strings.Index(line, ":")
-		if idx < 0 {
+		before, after, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		name := strings.TrimSpace(line[:idx])
+		name := strings.TrimSpace(before)
 		if name == "lo" || strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "docker") ||
 			strings.HasPrefix(name, "virbr") || strings.HasPrefix(name, "vnet") || strings.HasPrefix(name, "tun") ||
 			strings.HasPrefix(name, "wg") {
 			continue
 		}
-		fields := strings.Fields(line[idx+1:])
+		fields := strings.Fields(after)
 		if len(fields) < 9 {
 			continue
 		}

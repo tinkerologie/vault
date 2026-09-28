@@ -207,8 +207,8 @@ func TestReplaceAttrTimeFormatting(t *testing.T) {
 	}
 
 	// Extract time value: time=...
-	idx := strings.Index(out, "time=")
-	timePart := out[idx+5:]
+	_, after, _ := strings.Cut(out, "time=")
+	timePart := after
 	if spaceIdx := strings.Index(timePart, " "); spaceIdx != -1 {
 		timePart = timePart[:spaceIdx]
 	}

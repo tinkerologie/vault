@@ -331,7 +331,7 @@ func TestAppendRunLogEnforcesPerRunCap(t *testing.T) {
 			if err != nil {
 				t.Fatalf("prepare seed: %v", err)
 			}
-			for i := 0; i < MaxRunLogEntriesPerRun; i++ {
+			for i := range MaxRunLogEntriesPerRun {
 				if _, err := stmt.ExecContext(ctx, runID, fmt.Sprintf("seed-%d", i)); err != nil {
 					t.Fatalf("seed row %d: %v", i, err)
 				}

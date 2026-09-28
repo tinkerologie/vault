@@ -97,10 +97,7 @@ type postponeState struct {
 // the max-postpone window has elapsed (run anyway).
 func (r *Runner) adaptivePostpone(jobID int64, jobName, reason string) bool {
 	maxPostpone := time.Duration(r.adaptiveSettingInt("adaptive_max_postpone_minutes")) * time.Minute
-	recheck := time.Duration(r.adaptiveSettingInt("adaptive_recheck_minutes")) * time.Minute
-	if recheck < 30*time.Second {
-		recheck = 30 * time.Second
-	}
+	recheck := max(time.Duration(r.adaptiveSettingInt("adaptive_recheck_minutes"))*time.Minute, 30*time.Second)
 
 	r.postponeMu.Lock()
 	st := r.postponedSince[jobID]

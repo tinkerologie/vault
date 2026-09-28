@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -201,12 +202,7 @@ func TestHealthSummary_PendingItemNotInRestorePoint(t *testing.T) {
 }
 
 func contains(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, want)
 }
 
 func TestHealthSummary_WithFailedRun(t *testing.T) {

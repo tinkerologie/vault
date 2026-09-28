@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	libvirt "github.com/digitalocean/go-libvirt"
@@ -100,13 +101,7 @@ func backupProgressPercent(params []libvirt.TypedParam) int {
 		return 50
 	}
 
-	percent := int((processed * 100) / total)
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
+	percent := min(max(int((processed*100)/total), 0), 100)
 
 	return 35 + (percent * 50 / 100)
 }
@@ -124,10 +119,8 @@ func backupProgressMessage(params []libvirt.TypedParam) string {
 func typedParamBool(params []libvirt.TypedParam, keys ...string) (bool, bool) {
 	for _, param := range params {
 		normalized := normalizeTypedParamField(param.Field)
-		for _, key := range keys {
-			if normalized == key {
-				return typedParamValueBool(param.Value), true
-			}
+		if slices.Contains(keys, normalized) {
+			return typedParamValueBool(param.Value), true
 		}
 	}
 

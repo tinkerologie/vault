@@ -448,7 +448,7 @@ func TestAnomalyRepoListKeysetPagination(t *testing.T) {
 	// Insert 5 anomalies with different last_seen_at timestamps so ordering is deterministic.
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	total := 5
-	for i := 0; i < total; i++ {
+	for i := range total {
 		a := makeAnomaly("fp-page-" + strconv.Itoa(i))
 		a.LastSeenAt = base.Add(time.Duration(i) * time.Minute)
 		a.FirstSeenAt = a.LastSeenAt

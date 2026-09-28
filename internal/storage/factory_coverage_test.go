@@ -18,7 +18,6 @@ func TestNewAdapter_BadJSON_AllTypes(t *testing.T) {
 		{"s3", `{not json`},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.kind, func(t *testing.T) {
 			t.Parallel()
 			if _, err := NewAdapter(tt.kind, tt.blob); err == nil {

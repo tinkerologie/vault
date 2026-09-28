@@ -232,8 +232,8 @@ func TestPluginBackupChunkedForwardsChangedSince(t *testing.T) {
 
 	var chunked []string
 	progress := func(_ string, _ int, msg string) {
-		if strings.HasPrefix(msg, "chunked ") {
-			chunked = append(chunked, strings.TrimPrefix(msg, "chunked "))
+		if after, ok := strings.CutPrefix(msg, "chunked "); ok {
+			chunked = append(chunked, after)
 		}
 	}
 

@@ -25,7 +25,6 @@ func TestSMBFullPath(t *testing.T) {
 		{name: "empty allowed at root", base: "backups", input: "", allowRoot: true, want: filepath.Clean("backups")},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			a, err := NewSMBAdapter(SMBConfig{Host: "x", Share: "s", BasePath: tt.base})
@@ -63,7 +62,6 @@ func TestSMBBasePathOrShareRoot(t *testing.T) {
 		{"mixed slashes -> .", "//\\\\", "."},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			a := &SMBAdapter{config: SMBConfig{BasePath: tc.base}}

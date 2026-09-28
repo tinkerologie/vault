@@ -436,7 +436,7 @@ func detectTimeFormatFromPath(path string) string {
 func parseTimeFormatINI(content string) string {
 	sections := map[string]map[string]string{}
 	currentSection := ""
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			currentSection = line[1 : len(line)-1]

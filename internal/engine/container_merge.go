@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -27,8 +28,8 @@ func MergeContainerChainStaging(ctx context.Context, stepDirs []string, outDir s
 
 	// Plain sidecars: newest step wins.
 	for _, name := range []string{"config.json", "template.xml", "volumes.json"} {
-		for i := len(stepDirs) - 1; i >= 0; i-- {
-			src := filepath.Join(stepDirs[i], name)
+		for _, stepDir := range slices.Backward(stepDirs) {
+			src := filepath.Join(stepDir, name)
 			if _, err := os.Stat(src); err == nil {
 				if err := mergeCopyFile(src, filepath.Join(outDir, name)); err != nil {
 					return fmt.Errorf("merge sidecar %s: %w", name, err)
@@ -39,8 +40,8 @@ func MergeContainerChainStaging(ctx context.Context, stepDirs []string, outDir s
 	}
 
 	// image.tar: locate across steps (compression suffix varies).
-	for i := len(stepDirs) - 1; i >= 0; i-- {
-		if src, err := findArchive(stepDirs[i], "image.tar"); err == nil {
+	for _, stepDir := range slices.Backward(stepDirs) {
+		if src, err := findArchive(stepDir, "image.tar"); err == nil {
 			if err := mergeCopyFile(src, filepath.Join(outDir, filepath.Base(src))); err != nil {
 				return fmt.Errorf("merge image archive: %w", err)
 			}
@@ -162,8 +163,8 @@ func canonicalVolumeArchives(stepDir string) (map[string]string, error) {
 // TarBaseName strips any compression suffix, leaving the ".tar" base that
 // findArchive probes.
 func TarBaseName(name string) string {
-	if i := strings.Index(name, ".tar"); i >= 0 {
-		return name[:i] + ".tar"
+	if before, _, ok := strings.Cut(name, ".tar"); ok {
+		return before + ".tar"
 	}
 	return name
 }

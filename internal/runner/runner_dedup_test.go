@@ -223,7 +223,7 @@ func TestOpenDedupManifestsSession(t *testing.T) {
 		// missing manifest rather than the session going stale after the first.
 		// Asserting the specific chunk-lookup miss is what distinguishes a live
 		// session from one that failed for some other reason on the second call.
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			_, err := get(bogusID)
 			if !errors.Is(err, sql.ErrNoRows) {
 				t.Fatalf("lookup %d: err = %v, want a missing-chunk lookup failure", i+1, err)

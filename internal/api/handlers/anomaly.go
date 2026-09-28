@@ -399,7 +399,7 @@ func parseMultiParam(values []string) []string {
 	var out []string
 	seen := make(map[string]bool)
 	for _, v := range values {
-		for _, part := range strings.Split(v, ",") {
+		for part := range strings.SplitSeq(v, ",") {
 			part = strings.TrimSpace(part)
 			if part != "" && !seen[part] {
 				out = append(out, part)

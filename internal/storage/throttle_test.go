@@ -43,10 +43,7 @@ func (r *recordingAdapter) ReadRange(p string, offset, length int64) (io.ReadClo
 	if offset >= int64(len(b)) {
 		return nil, io.EOF
 	}
-	end := offset + length
-	if end > int64(len(b)) {
-		end = int64(len(b))
-	}
+	end := min(offset+length, int64(len(b)))
 	return io.NopCloser(bytes.NewReader(b[offset:end])), nil
 }
 func (r *recordingAdapter) Delete(p string) error                  { delete(r.data, p); return nil }
@@ -113,7 +110,7 @@ func TestThrottled_MetadataNotThrottled(t *testing.T) {
 	throttled := WrapThrottled(inner, 1) // 1 Mbps = 125 KB/s
 
 	start := time.Now()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, _ = throttled.List("/")
 		_, _ = throttled.Stat("/")
 		_ = throttled.Delete("/missing")

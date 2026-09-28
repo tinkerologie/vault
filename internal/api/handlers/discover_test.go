@@ -197,7 +197,6 @@ func TestDiscoverHandlers_ResponseShape(t *testing.T) {
 	}
 
 	for _, ep := range endpoints {
-		ep := ep
 		t.Run(ep.name, func(t *testing.T) {
 			t.Parallel()
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/discover", nil)

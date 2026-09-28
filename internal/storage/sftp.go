@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -93,19 +94,15 @@ func validateKeyFilePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("key file path must not be empty")
 	}
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("path traversal not allowed in key file path")
-		}
+	if slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "..") {
+		return "", fmt.Errorf("path traversal not allowed in key file path")
 	}
 	absPath, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return "", fmt.Errorf("resolve key file path: %w", err)
 	}
-	for _, part := range strings.Split(filepath.ToSlash(absPath), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("path traversal not allowed in key file path")
-		}
+	if slices.Contains(strings.Split(filepath.ToSlash(absPath), "/"), "..") {
+		return "", fmt.Errorf("path traversal not allowed in key file path")
 	}
 	return absPath, nil
 }
@@ -397,8 +394,7 @@ func isSFTPNotFound(err error) bool {
 	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) || errors.Is(err, sftp.ErrSSHFxNoSuchFile) {
 		return true
 	}
-	var statusErr *sftp.StatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*sftp.StatusError](err); ok {
 		return statusErr.FxCode() == sftp.ErrSSHFxNoSuchFile || statusErr.Code == 2 // 2 is SSH_FX_NO_SUCH_FILE
 	}
 	return false
@@ -549,10 +545,7 @@ func sftpStatVFSToCapacity(st *sftp.StatVFS, probedAt time.Time) (Capacity, erro
 	bsize := int64(st.Frsize)         //nolint:gosec,unconvert // Frsize varies by platform; cast is required on Darwin, redundant on Linux
 	total := int64(st.Blocks) * bsize //nolint:gosec,unconvert
 	free := int64(st.Bavail) * bsize  //nolint:gosec,unconvert
-	used := total - free
-	if used < 0 {
-		used = 0
-	}
+	used := max(total-free, 0)
 	return Capacity{
 		TotalBytes: total,
 		UsedBytes:  used,

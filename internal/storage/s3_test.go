@@ -104,7 +104,6 @@ func TestNewS3Adapter(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			a, err := NewS3Adapter(tt.config)
@@ -142,7 +141,6 @@ func TestNormalizeS3Endpoint(t *testing.T) {
 		{"empty host with path rejected", "https:///bucket", "", true},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := normalizeS3Endpoint(tt.in)
@@ -282,7 +280,6 @@ func TestStaticS3EndpointResolver(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			r := &staticS3EndpointResolver{endpoint: tt.endpoint, usePathStyle: tt.usePathStyle}
@@ -324,7 +321,6 @@ func TestS3AdapterPartSize(t *testing.T) {
 		{name: "explicit 256 MiB", configMB: 256, wantBytes: 256 * 1024 * 1024, wantCeiling: 256 * 1024 * 1024 * 10000},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			a, err := NewS3Adapter(S3Config{
@@ -378,7 +374,6 @@ func TestS3AdapterChecksumDisabledForCustomEndpoints(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			a, err := NewS3Adapter(S3Config{
@@ -414,7 +409,6 @@ func TestS3AdapterUploadTimeout(t *testing.T) {
 		{name: "large explicit value", configMins: 720, wantTimeout: 12 * time.Hour},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			a, err := NewS3Adapter(S3Config{

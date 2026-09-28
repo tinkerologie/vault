@@ -47,12 +47,10 @@ func classify(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	var forced *retryableError
-	if errors.As(err, &forced) {
+	if _, ok := errors.AsType[*retryableError](err); ok {
 		return true
 	}
-	var hse *httpStatusError
-	if errors.As(err, &hse) {
+	if hse, ok := errors.AsType[*httpStatusError](err); ok {
 		switch hse.code {
 		case 408, 429, 500, 502, 503, 504:
 			return true

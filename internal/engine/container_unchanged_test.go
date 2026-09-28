@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -133,9 +134,7 @@ func TestChunkedManifestUnchanged(t *testing.T) {
 	}
 	clone := func(mutate func(map[string]dedup.ManifestEntry)) map[string]dedup.ManifestEntry {
 		out := make(map[string]dedup.ManifestEntry, len(base))
-		for k, v := range base {
-			out[k] = v
-		}
+		maps.Copy(out, base)
 		mutate(out)
 		return out
 	}

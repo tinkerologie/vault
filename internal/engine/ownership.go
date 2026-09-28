@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -110,12 +111,7 @@ func restorePathSafe(p string) bool {
 	if strings.Contains(p, "../") || strings.Contains(p, "..\\") {
 		return false
 	}
-	for _, part := range strings.Split(filepath.ToSlash(p), "/") {
-		if part == ".." {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(strings.Split(filepath.ToSlash(p), "/"), "..")
 }
 
 // applyMode sets a restored path's permission bits. Restores go through this

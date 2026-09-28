@@ -1248,4 +1248,3 @@ func TestImportEncryptedManifestEdgeCases(t *testing.T) {
 		t.Fatalf("expected 1 imported for dedup placeholder, got %d, err: %v", imported, err)
 	}
 }
-

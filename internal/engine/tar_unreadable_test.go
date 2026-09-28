@@ -45,10 +45,7 @@ func (r *zeroReader) Read(p []byte) (int, error) {
 	if r.remaining <= 0 {
 		return 0, io.EOF
 	}
-	n := int64(len(p))
-	if n > r.remaining {
-		n = r.remaining
-	}
+	n := min(int64(len(p)), r.remaining)
 	for i := range p[:n] {
 		p[i] = 0
 	}

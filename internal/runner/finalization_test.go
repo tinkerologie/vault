@@ -14,21 +14,21 @@ func TestRunFinalizationStepFast(t *testing.T) {
 	t.Parallel()
 	r, _ := newTestRunner(t)
 
-	var called int32
-	var sawCancelled int32
+	var called atomic.Int32
+	var sawCancelled atomic.Int32
 	start := time.Now()
 	r.runFinalizationStep("fast-step", 1, 100, 5*time.Second, func(ctx context.Context) {
-		atomic.StoreInt32(&called, 1)
+		called.Store(1)
 		if ctx.Err() != nil {
-			atomic.StoreInt32(&sawCancelled, 1)
+			sawCancelled.Store(1)
 		}
 	})
 	elapsed := time.Since(start)
 
-	if atomic.LoadInt32(&called) != 1 {
+	if called.Load() != 1 {
 		t.Fatal("runFinalizationStep: fast fn was not called")
 	}
-	if atomic.LoadInt32(&sawCancelled) != 0 {
+	if sawCancelled.Load() != 0 {
 		t.Fatal("runFinalizationStep: fast fn saw a cancelled context before its timeout elapsed")
 	}
 	// Should return well under 1s for a no-op fn.

@@ -192,12 +192,6 @@ func capacitySampleFor(capacity storage.Capacity, err error) (free, total int64,
 	if err != nil || capacity.TotalBytes <= 0 {
 		return 0, 0, false
 	}
-	free = capacity.FreeBytes
-	if free < 0 {
-		free = 0
-	}
-	if free > capacity.TotalBytes {
-		free = capacity.TotalBytes
-	}
+	free = min(max(capacity.FreeBytes, 0), capacity.TotalBytes)
 	return free, capacity.TotalBytes, true
 }

@@ -538,5 +538,3 @@ func TestRestoreChunkedVolumes_EmptySingleFileMount(t *testing.T) {
 		t.Fatalf("restored file size = %d, want 0", info.Size())
 	}
 }
-
-

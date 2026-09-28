@@ -179,7 +179,7 @@ func TestSizeDrift(t *testing.T) {
 				t.Errorf("Metric: want %q, got %q", tc.wantMetric, a.Metric)
 			}
 			// Verify Details JSON contains the required keys.
-			var d map[string]interface{}
+			var d map[string]any
 			if err := json.Unmarshal([]byte(a.Details), &d); err != nil {
 				t.Fatalf("Details not valid JSON: %v (got %q)", err, a.Details)
 			}
@@ -218,7 +218,7 @@ func TestSizeDrift_ShrinkageMADZero(t *testing.T) {
 	if a.Details == "" {
 		t.Fatalf("Details must be non-empty JSON")
 	}
-	var d map[string]interface{}
+	var d map[string]any
 	if err := json.Unmarshal([]byte(a.Details), &d); err != nil {
 		t.Fatalf("Details not valid JSON: %v (got %q)", err, a.Details)
 	}

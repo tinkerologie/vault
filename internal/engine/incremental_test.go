@@ -161,7 +161,6 @@ func TestPathChangedSinceHonoursCancellation(t *testing.T) {
 		{name: "in-walk callback guard", cancelAt: 2},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := &nthErrCancelCtx{Context: context.Background(), cancelAt: tc.cancelAt}

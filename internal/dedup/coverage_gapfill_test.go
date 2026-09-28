@@ -757,7 +757,7 @@ func TestGCSweepTombstoneFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Populate one pack of dead chunks (no manifests referencing them).
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, err := r.Put([]byte{byte(i), 'x'}); err != nil {
 			t.Fatal(err)
 		}
@@ -798,7 +798,7 @@ func TestGCSweepStorageDeleteFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, err := r.Put([]byte{byte(i), 'y'}); err != nil {
 			t.Fatal(err)
 		}

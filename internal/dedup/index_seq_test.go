@@ -36,7 +36,7 @@ func TestIndexAppendListsDirectoryOnce(t *testing.T) {
 	idx.adapter = counter
 
 	const appends = 50
-	for i := 0; i < appends; i++ {
+	for i := range appends {
 		info := PackInfo{ID: "p", Path: "_vault/packs/p/p", SizeBytes: 1, ChunkCount: 0}
 		if err := idx.AppendStorageIndex(info); err != nil {
 			t.Fatalf("append %d: %v", i, err)
@@ -96,7 +96,7 @@ func TestIndexTwoWritersDoNotCollide(t *testing.T) {
 	if idxA.writerID == idxB.writerID {
 		t.Fatal("two Index instances share a writer ID")
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if err := idxA.AppendStorageIndex(PackInfo{ID: "a", Path: "pa"}); err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +186,7 @@ func TestIndexNextSeqConcurrentSameInstance(t *testing.T) {
 	const n = 100
 	seqs := make([]int64, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

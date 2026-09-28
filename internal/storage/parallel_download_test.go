@@ -21,10 +21,7 @@ type rangeAdapter struct {
 }
 
 func (a *rangeAdapter) ReadRange(_ string, offset, length int64) (io.ReadCloser, error) {
-	end := offset + length
-	if end > int64(len(a.data)) {
-		end = int64(len(a.data))
-	}
+	end := min(offset+length, int64(len(a.data)))
 	slice := a.data[offset:end]
 	if a.failAtOffset > 0 && offset == a.failAtOffset && a.failedOnce.CompareAndSwap(false, true) {
 		return io.NopCloser(&errMidReader{data: slice}), nil

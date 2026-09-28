@@ -627,4 +627,3 @@ func TestPruneChainResurrected_PluginDestinationResolution(t *testing.T) {
 		t.Errorf("surviving.conf was unexpectedly removed: %v", err)
 	}
 }
-

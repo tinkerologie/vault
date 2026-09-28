@@ -154,7 +154,7 @@ func TestReliability_StreakAtThreshold(t *testing.T) {
 
 	threshold := SensBalanced.Streak() // 2
 	runs := make([]db.JobRun, threshold+1)
-	for i := 0; i < threshold; i++ {
+	for i := range threshold {
 		runs[i] = makeRun(int64(200+i), "failed", 0)
 	}
 	runs[threshold] = makeRun(int64(200+threshold), "success", 0) // break streak
@@ -183,7 +183,7 @@ func TestReliability_StreakAtThreshold(t *testing.T) {
 	}
 
 	// Details JSON must contain {"streak": <threshold>}.
-	var d2 map[string]interface{}
+	var d2 map[string]any
 	if err := json.Unmarshal([]byte(streakAnomaly.Details), &d2); err != nil {
 		t.Fatalf("Details not valid JSON: %v (got %q)", err, streakAnomaly.Details)
 	}
@@ -308,7 +308,7 @@ func TestReliability_VerifyRegression(t *testing.T) {
 	}
 
 	// Details must contain newest_status and previous_status.
-	var dd map[string]interface{}
+	var dd map[string]any
 	if err := json.Unmarshal([]byte(verifyAnomaly.Details), &dd); err != nil {
 		t.Fatalf("Details not valid JSON: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestReliability_BothSignalsFire(t *testing.T) {
 	// Build a run history with streak at threshold (balanced=2).
 	threshold := SensBalanced.Streak()
 	runs := make([]db.JobRun, threshold+1)
-	for i := 0; i < threshold; i++ {
+	for i := range threshold {
 		runs[i] = makeRun(int64(500+i), "failed", 0)
 	}
 	runs[threshold] = makeRun(int64(500+threshold), "success", 0)
@@ -487,7 +487,7 @@ func TestReliability_SummaryNamesJob(t *testing.T) {
 			if tc.setupRuns {
 				threshold := SensBalanced.Streak() // 2
 				runs = make([]db.JobRun, threshold)
-				for i := 0; i < threshold; i++ {
+				for i := range threshold {
 					runs[i] = makeRun(int64(100+i), "failed", 0)
 				}
 			}

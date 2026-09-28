@@ -491,7 +491,7 @@ func TestSaveSnapshotRunsWALCheckpoint(t *testing.T) {
 	defer src.Close()
 
 	// Write rows so there are pages in the WAL.
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if _, err := src.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`,
 			fmt.Sprintf("wal-test-%d", i), "v"); err != nil {
 			t.Fatalf("insert: %v", err)
@@ -537,7 +537,7 @@ func TestSnapshotRotationKeepsSeven(t *testing.T) {
 	sm := NewSnapshotManager(src, snapPath, snapPath)
 
 	// 9 saves; rotation should keep only 7 in rotated/.
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		if _, err := src.Exec(`INSERT INTO settings (key, value) VALUES (?, '')`,
 			fmt.Sprintf("rotate-test-%d", i)); err != nil {
 			t.Fatalf("insert: %v", err)
@@ -586,7 +586,7 @@ func TestScheduleFlushCoalescesAndFlushes(t *testing.T) {
 	sm.flushDebounce = 30 * time.Millisecond
 
 	// A burst of rapid config changes coalesces into one queued flush.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		sm.ScheduleFlush()
 	}
 	if !sm.flushPending.Load() {
@@ -622,7 +622,7 @@ func TestSaveSnapshotAtomic(t *testing.T) {
 	snap := filepath.Join(dir, "vault.db")
 	sm := NewSnapshotManager(d, snap, snap)
 
-	for i := 0; i < 2; i++ { // second save overwrites the first atomically
+	for i := range 2 { // second save overwrites the first atomically
 		if err := sm.SaveSnapshot(); err != nil {
 			t.Fatalf("SaveSnapshot #%d: %v", i+1, err)
 		}

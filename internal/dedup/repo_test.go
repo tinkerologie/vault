@@ -109,7 +109,7 @@ func TestRepoManifestRoundTrip(t *testing.T) {
 	r, _, cleanup := newTestRepo(t)
 	defer cleanup()
 	m := Manifest{Version: ManifestVersion, Item: "test", Files: map[string]ManifestEntry{}}
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		m.Files[fmt.Sprintf("file_%d", i)] = ManifestEntry{Size: int64(i), Chunks: []ID{{byte(i % 256)}}}
 	}
 	id, err := r.PutManifest("test", m)
@@ -133,7 +133,7 @@ func TestRepoLargeManifestSegmentation(t *testing.T) {
 	defer cleanup()
 	// Build a manifest whose JSON exceeds ManifestSegmentSize.
 	m := Manifest{Version: ManifestVersion, Item: "big", Files: map[string]ManifestEntry{}}
-	for i := 0; i < 60000; i++ {
+	for i := range 60000 {
 		m.Files[fmt.Sprintf("very/long/path/to/file/number_%06d.bin", i)] = ManifestEntry{
 			Size:   int64(i),
 			Chunks: []ID{{byte(i % 256), byte((i / 256) % 256)}},

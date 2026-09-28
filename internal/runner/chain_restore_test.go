@@ -517,7 +517,11 @@ func writeStorageFiles(t *testing.T, adapter storage.Adapter, files map[string]s
 		if err := adapter.Write(path, strings.NewReader(content)); err != nil {
 			t.Fatalf("adapter.Write(%s): %v", path, err)
 		}
-		checksums[path[strings.LastIndex(path, "/")+1:]] = checksumString(content)
+		fileName := path
+		if _, after, found := strings.CutLast(path, "/"); found {
+			fileName = after
+		}
+		checksums[fileName] = checksumString(content)
 	}
 	return checksums
 }

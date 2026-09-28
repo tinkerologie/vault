@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 )
@@ -186,9 +187,7 @@ func prevVolumeResolvedSources(settings map[string]any) map[string]string {
 	out := map[string]string{}
 	switch v := raw.(type) {
 	case map[string]string:
-		for src, resolved := range v {
-			out[src] = resolved
-		}
+		maps.Copy(out, v)
 	case map[string]any:
 		for src, val := range v {
 			if resolved, isStr := val.(string); isStr {

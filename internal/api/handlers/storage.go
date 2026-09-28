@@ -1011,7 +1011,7 @@ func (h *StorageHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, "invalid prefix")
 			return
 		}
-		for _, seg := range strings.Split(normalized, "/") {
+		for seg := range strings.SplitSeq(normalized, "/") {
 			if seg == "." || seg == ".." {
 				respondError(w, http.StatusBadRequest, "invalid prefix")
 				return

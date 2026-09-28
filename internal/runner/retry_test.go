@@ -11,8 +11,12 @@ import (
 
 // ptrInt64 / ptrStr are small test helpers that mirror the model's
 // nullable-as-pointer convention.
-func ptrInt64(v int64) *int64 { return &v }
-func ptrStr(s string) *string { return &s }
+//
+//go:fix inline
+func ptrInt64(v int64) *int64 { return new(v) }
+
+//go:fix inline
+func ptrStr(s string) *string { return new(s) }
 
 func TestResolveRetryPolicyGlobal(t *testing.T) {
 	job := db.Job{}
@@ -27,8 +31,8 @@ func TestResolveRetryPolicyGlobal(t *testing.T) {
 
 func TestResolveRetryPolicyOverride(t *testing.T) {
 	job := db.Job{
-		RetryMaxOverride:    ptrInt64(1),
-		RetryDelaysOverride: ptrStr("[60,120]"),
+		RetryMaxOverride:    new(int64(1)),
+		RetryDelaysOverride: new("[60,120]"),
 	}
 	p := resolveRetryPolicy(job, 2, []int{900, 3600, 14400})
 	if p.Max != 1 {
@@ -41,7 +45,7 @@ func TestResolveRetryPolicyOverride(t *testing.T) {
 
 func TestResolveRetryPolicyInvalidJSONFallsBack(t *testing.T) {
 	job := db.Job{
-		RetryDelaysOverride: ptrStr("not json"),
+		RetryDelaysOverride: new("not json"),
 	}
 	p := resolveRetryPolicy(job, 2, []int{900})
 	if len(p.Delays) != 1 || p.Delays[0] != 900 {
@@ -250,7 +254,7 @@ func TestCreateJobRunPersistsRetryFields(t *testing.T) {
 		JobID:        jobID,
 		Status:       "running",
 		BackupType:   "full",
-		RetryOfRunID: ptrInt64(parentRunID),
+		RetryOfRunID: new(parentRunID),
 		RetryAttempt: 1,
 	})
 	if err != nil {

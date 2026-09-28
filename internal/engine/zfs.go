@@ -282,7 +282,7 @@ func (h *ZFSHandler) Restore(ctx context.Context, item BackupItem, sourceDir str
 	}
 
 	// Validate the destination pool exists.
-	pool := strings.SplitN(destDataset, "/", 2)[0]
+	pool, _, _ := strings.Cut(destDataset, "/")
 	pools, err := h.client.Zpool.List(ctx)
 	if err != nil {
 		return fmt.Errorf("listing pools: %w", err)

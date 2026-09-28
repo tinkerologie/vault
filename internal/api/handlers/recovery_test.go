@@ -313,14 +313,6 @@ func TestRecoveryGetPlan_InstallStepAlwaysReady(t *testing.T) {
 	}
 }
 
-// min is a local helper for Go < 1.21 builds.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func TestPathAudit(t *testing.T) {
 	d := newTestDB(t)
 	h := NewRecoveryHandler(d, "v1.0.0")

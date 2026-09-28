@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1384,11 +1385,9 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 				respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid file path in item %q: path traversal not allowed", item))
 				return
 			}
-			for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
-				if part == ".." {
-					respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid file path in item %q: path traversal not allowed", item))
-					return
-				}
+			if slices.Contains(strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }), "..") {
+				respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid file path in item %q: path traversal not allowed", item))
+				return
 			}
 		}
 	}

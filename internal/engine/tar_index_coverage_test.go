@@ -45,7 +45,6 @@ func TestBaseName_AllVariants(t *testing.T) {
 		{in: "", want: ""},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
 			got := baseName(tt.in)

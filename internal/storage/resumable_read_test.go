@@ -24,10 +24,7 @@ func (f *flakyAdapter) ReadRange(_ string, offset, length int64) (io.ReadCloser,
 	if offset < 0 || offset > int64(len(f.data)) {
 		return nil, errors.New("bad offset")
 	}
-	end := offset + length
-	if end > int64(len(f.data)) {
-		end = int64(len(f.data))
-	}
+	end := min(offset+length, int64(len(f.data)))
 	slice := f.data[offset:end]
 	fail := f.opens <= f.failTimes
 	return &flakyStream{data: slice, failAfter: f.failAfter, fail: fail}, nil

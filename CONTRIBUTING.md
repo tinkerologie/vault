@@ -11,7 +11,7 @@ Vault is a Go backup daemon for Unraid with a Svelte 5 web UI, shipped as an Unr
 
 Before you start, install the tools used by the repo:
 
-- **Go 1.26.x** (see `go.mod`) — the binary is pure Go and builds with `CGO_ENABLED=0`.
+- **Go 1.27.x** (see `go.mod`) — the binary is pure Go and builds with `CGO_ENABLED=0`.
 - **Node.js + npm** — required for the Svelte UI in `web/`.
 - **Python 3 + pip** — needed for `pre-commit` and any hook tooling.
 - **Docker** — optional but useful for the repo's container build target.
