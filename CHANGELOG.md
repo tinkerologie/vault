@@ -6,10 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Changed
-
-- **Go toolchain and dependency updates (#437):** Updated Go from 1.26.5 to 1.27.1 across module configuration, CI workflows, contributor docs, and the Docker builder image (`golang:1.27-alpine`). Adopted Go 1.27 standard library features (`uuid`, `strings.CutLast`) and `go fix` modernizers (`range n`, `slices.Contains`, `strings.SplitSeq`/`FieldsSeq`, `sync.WaitGroup.Go`, `atomic.Int64`/`Bool`, `errors.AsType`, `testing.T.Context`, `min`/`max`, `strings.Cut`/`CutPrefix`), replacing the direct `github.com/google/uuid` dependency with the standard library `uuid` package, and updated Go and web npm dependencies to their latest releases. Closes #437.
-
 ## [v2026.09.01] - 2026-09-28
 
 ### Added
@@ -35,6 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Post-backup chunk verification for deduplicated jobs (#382):** Deduplicated backup jobs with `verify_backup` enabled now immediately read back and hash all written chunks upon session completion. Verification status is recorded in restore point metadata and surfaced in the job run results, guarding against silent backend write corruption before staging files are cleared. Closes #382.
 
 ### Changed
+
+- **Go toolchain and dependency updates (#437):** Updated Go from 1.26.5 to 1.27.1 across module configuration, CI workflows, contributor docs, and the Docker builder image (`golang:1.27-alpine`). Adopted Go 1.27 standard library features (`uuid`, `strings.CutLast`) and `go fix` modernizers (`range n`, `slices.Contains`, `strings.SplitSeq`/`FieldsSeq`, `sync.WaitGroup.Go`, `atomic.Int64`/`Bool`, `errors.AsType`, `testing.T.Context`, `min`/`max`, `strings.Cut`/`CutPrefix`), replacing the direct `github.com/google/uuid` dependency with the standard library `uuid` package, and updated Go and web npm dependencies to their latest releases. Closes #437.
 
 - **Unflatten file contents and modernize selection in restore UI (#323):** Step 3 of the Restore Wizard now presents archive contents as an expandable, collapsible hierarchical tree rather than a single flat list. Directories lazily render their child nodes when expanded, maintaining fast DOM performance even with backups containing thousands of files. When contents load, all files and folders are selected by default, inverting the checkbox semantics so that checking an item explicitly includes it and unchecking explicitly excludes it. Folder checkboxes provide tri-state indication (`checked`, `indeterminate`, `unchecked`), searching automatically expands matching branches and highlights relevant items, and "Select all", "Deselect all", "Expand all", and "Collapse all" controls offer convenient batch operations. Ambiguous "Clear to restore everything" messaging has been removed, and selecting 0 files blocks execution with an informative warning to safeguard against accidental whole-archive restores. Closes #323.
 
