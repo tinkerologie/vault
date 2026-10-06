@@ -98,6 +98,14 @@ To survive Unraid's USB-backed boot (where writing every commit to flash would w
 
 On startup the daemon restores from the **freshest integrity-passing source** among the primary snapshot, the default cache snapshot, rotated snapshot copies, the USB-direct live DB (written when a boot ran without a mounted pool), and the USB shadow — falling back to a fresh DB only if none pass. Freshness is compared by modification time so a boot that ran in USB-direct mode can never be silently reverted by an older cache snapshot on the next hybrid boot (issue #241). An emhttp event script (`event/stopping_svcs`) stops the daemon gracefully on array stop/reboot so the final flush completes, and `event/started` ensures the daemon is running once the array is up.
 
+### Vault directories on Unraid storage
+
+- **`<pool>/.vault/`** — the primary database snapshot (`vault.db`) plus timestamped copies under `rotated/`. Unraid exposes every top-level pool directory as a user share, so this same directory is also visible as **`/mnt/user/.vault`**. It is intentional persistent storage, not stray files; move it under **Settings → General → Database Location** if you prefer another location.
+- **`<pool>/.vault-stage/`** — temporary staging for backups and restores, emptied as each run finishes.
+- **`/mnt/addons/vault-fuse/mount-<id>/`** — read-only FUSE backup mounts. Each directory is created only when a mount starts and removed when it ends. Unraid reserves `/mnt/addons` for plugin and remote mounts; when it does not exist, Vault uses `<tmp>/vault-fuse`. `fuse_mount_base_dir` overrides the root. Releases up to v2026.09.01 used `/mnt/vault-fuse`, which Fix Common Problems flags as an invalid folder; Vault now removes that directory at startup once it is empty, and never deletes non-empty content there.
+
+Do not delete `.vault` or `.vault-stage` while Vault is running. Pool discovery never treats `addons` or `vault-fuse` as pools.
+
 ## Project Structure
 
 ```text

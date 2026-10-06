@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -507,6 +508,13 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 			files = append(files, p)
 		}
 	}
+	if len(includePaths) > 0 {
+		// The picker sends leaf files, so the directories that contain them
+		// never match the filter. Restore their recorded mode and owner too,
+		// instead of leaving them to the file-parent MkdirAll as daemon-owned
+		// 0755 (#442).
+		dirs = append(dirs, manifestAncestorDirs(m.Files, dirs, files)...)
+	}
 	sort.Strings(dirs)
 	// Directory metadata is applied after every file is written: a directory
 	// restored read-only, or owned by an account the daemon is not, would
@@ -618,6 +626,30 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		applyOwner(d.full, d.uid, d.gid)
 	}
 	return nil
+}
+
+// manifestAncestorDirs returns the manifest directory entries that are
+// ancestors of the matched entries but were not matched themselves. Only
+// directories recorded in the manifest are returned, so a partial restore
+// never creates a directory the backup did not contain.
+func manifestAncestorDirs(entries map[string]dedup.ManifestEntry, matchedDirs, matchedFiles []string) []string {
+	seen := make(map[string]struct{}, len(matchedDirs))
+	for _, d := range matchedDirs {
+		seen[d] = struct{}{}
+	}
+	var out []string
+	for _, p := range slices.Concat(matchedDirs, matchedFiles) {
+		for parent := path.Dir(p); parent != "." && parent != "/" && parent != ""; parent = path.Dir(parent) {
+			if _, ok := seen[parent]; ok {
+				break
+			}
+			seen[parent] = struct{}{}
+			if e, ok := entries[parent]; ok && e.IsDir {
+				out = append(out, parent)
+			}
+		}
+	}
+	return out
 }
 
 // extractRestoreFilePaths reads the "restore_file_paths" setting injected

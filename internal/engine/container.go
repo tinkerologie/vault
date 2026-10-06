@@ -3802,7 +3802,11 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			return fmt.Errorf("reading tar entry: %w", err)
 		}
 
-		if !includeSet.matches(header.Name) {
+		// Directories on the way to a selected entry are restored too so
+		// their recorded mode and owner apply rather than the parent
+		// MkdirAll fallback (#442); their other contents stay filtered.
+		if !includeSet.matches(header.Name) &&
+			(header.Typeflag != tar.TypeDir || !includeSet.isAncestorOf(header.Name)) {
 			continue
 		}
 

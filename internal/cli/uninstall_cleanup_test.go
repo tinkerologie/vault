@@ -200,3 +200,39 @@ func TestRunUninstallCleanupFallsBackSafelyWithoutDatabase(t *testing.T) {
 		t.Fatalf("expected unknown backup content to remain during fallback cleanup: %v", err)
 	}
 }
+
+func TestRunUninstallCleanupRemovesOnlyEmptyFUSERoots(t *testing.T) {
+	t.Parallel()
+
+	tmpRoot := t.TempDir()
+	configDir := filepath.Join(tmpRoot, "config")
+	emptyRoot := filepath.Join(tmpRoot, "mnt", "vault-fuse")
+	busyRoot := filepath.Join(tmpRoot, "mnt", "addons", "vault-fuse")
+	busyFile := filepath.Join(busyRoot, "mount-1", "file.txt")
+	for _, dir := range []string{configDir, filepath.Join(emptyRoot, "mount-7"), filepath.Dir(busyFile)} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(busyFile, []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", busyFile, err)
+	}
+
+	cfg := uninstallCleanupConfig{
+		DBPath:            filepath.Join(configDir, "vault.db"),
+		ConfigDir:         configDir,
+		DefaultSnapshotDB: filepath.Join(tmpRoot, "snapshot", "vault.db"),
+		CachePaths:        []string{filepath.Join(tmpRoot, "cache")},
+		FUSERoots:         []string{emptyRoot, busyRoot, filepath.Join(tmpRoot, "missing")},
+	}
+	if err := runUninstallCleanup(cfg); err != nil {
+		t.Fatalf("runUninstallCleanup() error = %v", err)
+	}
+
+	if _, err := os.Stat(emptyRoot); !os.IsNotExist(err) {
+		t.Errorf("expected empty FUSE root %s to be removed, got %v", emptyRoot, err)
+	}
+	if _, err := os.Stat(busyFile); err != nil {
+		t.Errorf("expected non-empty FUSE root content to remain: %v", err)
+	}
+}

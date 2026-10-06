@@ -94,6 +94,9 @@ type RemoteJob struct {
 	RetentionCount  int    `json:"retention_count"`
 	RetentionDays   int    `json:"retention_days"`
 	StorageDestID   int64  `json:"storage_dest_id"`
+	// SourceID is non-zero when the job is itself a replica on the remote
+	// peer. Older peers omit the field, so the zero value means "local".
+	SourceID int64 `json:"source_id"`
 }
 
 // RemoteRestorePoint mirrors the fields of db.RestorePoint needed for replication.

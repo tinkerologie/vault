@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Expanded Playwright browser test coverage across core UI workflows:** Added automated end-to-end browser specifications for Backup Jobs (creation wizard, item pickers, schedule/retention, run now, delete), Storage Management (destination creation, test connection, remote browser drawer, refresh, delete), Settings (tab navigation, dark/light theme, Discord webhook tests, diagnostics zip export), Activity Logs (search and level filters, wrap/details toggle, log purge), History (operation metrics, search, run log inspector), and Disaster Recovery (5-step cold recovery wizard).
 
+### Fixed
+
+- **Replication no longer bounces jobs between reciprocal peers (#440):** When two Vault servers are configured as each other's replication source, a sync now imports only the jobs the remote server created itself (`source_id` 0) and skips jobs it had replicated from elsewhere. Previously each sync re-imported the other side's copies, creating ever-deeper `[A] [B] …` job names. Only the pulling server needs the update. Nested jobs created before this fix are not removed automatically; delete them manually, or delete and re-create the affected replication source. The Replication page now describes replication as pulling from the remote server. Closes #440.
+
+- **Partial folder restores keep directory owner and permissions (#442):** Restoring selected files from a folder backup now applies each containing directory's recorded owner, group and mode, instead of creating it as `root:root 0755`. Previously SMB users could not rename, move or delete files in the restored directory. Applies to deduplicated and classic backups. Unselected sibling files are still not restored. Closes #442.
+
+- **FUSE backup mounts moved out of `/mnt` root (#446):** Read-only backup mounts now live under Unraid's `/mnt/addons/vault-fuse/mount-<id>`, or under a temporary directory when `/mnt/addons` does not exist, and each mount's directory is created only when that mount starts. If a mount directory cannot be created under `/mnt/addons/vault-fuse`, Vault retries once under the temporary directory (unless `fuse_mount_base_dir` is configured). This clears the Fix Common Problems warning "Invalid folder vault-fuse contained within /mnt". On startup Vault removes the old `/mnt/vault-fuse` directory and leftover empty session directories, never deleting non-empty content. Uninstall removes both mount roots only when empty, and pool discovery never treats `addons` or `vault-fuse` as storage pools. `/mnt/user/.vault` is Vault's database snapshot directory (`<pool>/.vault`, shown under `/mnt/user` because Unraid exposes top-level pool folders as shares); it is intentional and can be moved under **Settings → General → Database Location**. Closes #446.
+
 ## [v2026.09.01] - 2026-09-28
 
 ### Added
@@ -61,7 +69,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Sanitize and validate target paths before setting modification times on restored files:** `FolderHandler.RestoreChunked` now validates and normalizes destination directories through `normalizeRestorePath` upon entry, validates that all restored directory and file paths remain strictly contained within the destination root and free of path traversal sequences, and wraps modification time updates in `applyModTime` guarded by `restorePathSafe`. This addresses CodeQL alert #74 (`go/path-injection`).
 
 - **Encrypt manifest.json at rest (#325):** Backup run manifests (`manifest.json`) stored on destinations now have their metadata encrypted at rest. For deduplicated destinations, manifests are encrypted with AES-256-GCM using the destination's master key. For age-encrypted jobs, manifests are encrypted with age using the job's passphrase. This prevents unauthorized inspection of job configuration, protected item lists, container names, and paths on untrusted remote storage. Existing unencrypted manifests remain fully discoverable and readable without migration. Closes #325.
-
 
 ### Fixed
 

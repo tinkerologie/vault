@@ -1,6 +1,9 @@
 package engine
 
-import "strings"
+import (
+	"path"
+	"strings"
+)
 
 // tarIncludeSet is the path-filter used by untarDirectoryFiltered to select
 // only the tar entries explicitly requested by a partial restore. An empty
@@ -13,6 +16,8 @@ type tarIncludeSet struct {
 	// dirs holds those exact entries that look like directory prefixes
 	// (always treated as such for the "include descendants" rule below).
 	dirs []string
+	// ancestors holds every strict parent directory of an exact entry.
+	ancestors map[string]struct{}
 }
 
 // newIncludeSet builds a tarIncludeSet from a list of paths. Empty input
@@ -21,7 +26,10 @@ func newIncludeSet(paths []string) tarIncludeSet {
 	if len(paths) == 0 {
 		return tarIncludeSet{}
 	}
-	set := tarIncludeSet{exact: make(map[string]struct{}, len(paths))}
+	set := tarIncludeSet{
+		exact:     make(map[string]struct{}, len(paths)),
+		ancestors: make(map[string]struct{}),
+	}
 	for _, p := range paths {
 		p = strings.Trim(strings.ReplaceAll(p, "\\", "/"), "/")
 		if p == "" {
@@ -33,6 +41,9 @@ func newIncludeSet(paths []string) tarIncludeSet {
 		// (no extension and no segments below it), we also include any
 		// descendant entry whose name has this as a prefix.
 		set.dirs = append(set.dirs, p+"/")
+		for parent := path.Dir(p); parent != "." && parent != "/"; parent = path.Dir(parent) {
+			set.ancestors[parent] = struct{}{}
+		}
 	}
 	return set
 }
@@ -57,4 +68,15 @@ func (s tarIncludeSet) matches(name string) bool {
 		}
 	}
 	return false
+}
+
+// isAncestorOf reports whether name is a strict ancestor directory of an
+// explicitly requested path. Partial restores select leaf files, so the
+// directories containing them never match; a caller that sees one of these
+// directory entries can still restore its recorded metadata (#442) without
+// pulling in any sibling content.
+func (s tarIncludeSet) isAncestorOf(name string) bool {
+	clean := strings.Trim(strings.ReplaceAll(name, "\\", "/"), "/")
+	_, ok := s.ancestors[clean]
+	return ok
 }

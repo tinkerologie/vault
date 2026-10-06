@@ -55,6 +55,15 @@ func TestDiscoverPoolsIn(t *testing.T) {
 			want: []string{"cache", "mypool"},
 		},
 		{
+			name: "excludes mount namespaces (#446)",
+			setup: func(root string) {
+				for _, n := range []string{"addons", "vault-fuse", "cache"} {
+					os.Mkdir(filepath.Join(root, n), 0o755)
+				}
+			},
+			want: []string{"cache"},
+		},
+		{
 			name:  "nonexistent root returns empty",
 			setup: nil, // use a non-existent path below
 			want:  nil,

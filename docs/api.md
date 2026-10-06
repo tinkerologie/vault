@@ -136,6 +136,8 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 
 A replication source's `schedule` field takes the same cron expressions as a job's (see [Jobs](#jobs)); an empty string means the source is only synced on demand.
 
+Replication is pull-based: a sync imports only the remote jobs whose `source_id` is `0`, i.e. jobs created on that server. Jobs the remote server itself replicated from elsewhere are skipped, so two servers can each configure the other as a source without bouncing jobs back and forth. Multi-hop relays (A → B → C) are not forwarded; configure each origin server as a direct source.
+
 | Method | Endpoint                 | Description                     |
 | ------ | ------------------------ | ------------------------------- |
 | GET    | `/replication`           | List replication sources        |

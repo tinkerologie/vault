@@ -821,3 +821,96 @@ func TestCompleteSyncStatusHonest(t *testing.T) {
 		})
 	}
 }
+
+// TestSyncSourceSkipsReplicatedRemoteJobs guards #440: two peers configured
+// as each other's source must not re-import jobs the remote peer itself
+// replicated, which nested "[A] [B] …" prefixes on every sync.
+func TestSyncSourceSkipsReplicatedRemoteJobs(t *testing.T) {
+	t.Parallel()
+
+	var rpRequests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/health":
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+		case r.URL.Path == "/api/v1/jobs":
+			_, _ = w.Write([]byte(`[
+				{"id": 1, "name": "nightly", "source_id": 0},
+				{"id": 2, "name": "[peerA] nightly", "source_id": 7},
+				{"id": 3, "name": "legacy"}
+			]`))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/jobs/2/"):
+			t.Errorf("replicated remote job was synced: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		case strings.Contains(r.URL.Path, "/restore-points"):
+			rpRequests.Add(1)
+			_ = json.NewEncoder(w).Encode([]RemoteRestorePoint{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	d := openTestDB(t)
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{
+		Name: "local", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`,
+	})
+	srcID, _ := d.CreateReplicationSource(db.ReplicationSource{
+		Name: "peerB", URL: srv.URL, StorageDestID: destID,
+	})
+	s := NewSyncer(d, nil)
+
+	for i := range 2 {
+		res, err := s.SyncSource(srcID, nil)
+		if err != nil {
+			t.Fatalf("SyncSource #%d: %v", i+1, err)
+		}
+		if res.JobsFailed != 0 {
+			t.Errorf("sync #%d JobsFailed = %d, want 0", i+1, res.JobsFailed)
+		}
+	}
+
+	jobs, err := d.ListReplicatedJobs(srcID)
+	if err != nil {
+		t.Fatalf("ListReplicatedJobs: %v", err)
+	}
+	var names []string
+	for _, j := range jobs {
+		names = append(names, j.Name)
+	}
+	want := []string{"[peerB] legacy", "[peerB] nightly"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("replicated jobs = %v, want %v", names, want)
+	}
+	if got := rpRequests.Load(); got != 4 {
+		t.Errorf("restore-point requests = %d, want 4 (2 local jobs x 2 syncs)", got)
+	}
+
+	src, err := d.GetReplicationSource(srcID)
+	if err != nil {
+		t.Fatalf("GetReplicationSource: %v", err)
+	}
+	if src.LastSyncStatus != "success" {
+		t.Errorf("LastSyncStatus = %q, want success", src.LastSyncStatus)
+	}
+}
+
+func TestClientListJobsDecodesSourceID(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":1,"name":"a","source_id":3},{"id":2,"name":"b"}]`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	jobs, err := c.ListJobs()
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 2 || jobs[0].SourceID != 3 || jobs[1].SourceID != 0 {
+		t.Errorf("jobs = %+v, want SourceID 3 then 0", jobs)
+	}
+}

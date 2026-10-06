@@ -159,6 +159,12 @@ This can appear if the daemon restarts mid-request. Wait a few seconds and refre
 **Configuration lost after reboot**
 Vault uses a hybrid SQLite layout — a working DB in RAM, a periodic snapshot on a discovered cache pool, and a USB shadow on the Unraid flash drive. On boot it restores the freshest valid copy among the persisted copies (cache snapshot, rotated copies, USB shadow, and the USB-direct database left by a boot where no pool was mounted), so configuration — including the Temporary Work Area path — survives reboots and pool-mount races. You can confirm which source was used via `GET /api/v1/health` (`startup.restoration`). If you've changed the snapshot path manually, confirm it points to persistent storage under **Settings → General → Database Location**.
 
+**What is `/mnt/user/.vault`?**
+It is Vault's database snapshot directory, `<pool>/.vault`, which holds `vault.db` and its `rotated/` copies. Unraid shows every top-level pool directory as a user share, so it also appears under `/mnt/user`. Don't delete it while Vault is running; move it under **Settings → General → Database Location** instead. `.vault-stage` next to it is temporary staging.
+
+**Fix Common Problems reports "Invalid folder vault-fuse contained within /mnt"**
+Older releases created `/mnt/vault-fuse` for FUSE backup mounts. Vault now mounts under `/mnt/addons/vault-fuse` and removes the old directory at startup once it is empty. If the warning persists, check that no backup mount is still active, then restart Vault.
+
 **Mirrored cache pool not detected**
 Vault scans `/mnt/` for pool mounts at startup. If your pool isn't shown, make sure it's mounted before the Vault service starts, then override the snapshot path manually under **Settings → General → Database Location**.
 

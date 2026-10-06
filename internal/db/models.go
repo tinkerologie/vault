@@ -292,8 +292,9 @@ type CapacitySample struct {
 	TotalBytes int64     `json:"total_bytes"`
 }
 
-// ReplicationSource represents a replication target (remote Vault server)
-// where local backups are pushed for disaster recovery.
+// ReplicationSource represents a remote Vault server that this instance pulls
+// backups from for disaster recovery. Only jobs created on the remote server
+// (source_id == 0 there) are imported; its own replicas are skipped (#440).
 type ReplicationSource struct {
 	ID             int64      `json:"id"`
 	Name           string     `json:"name"`

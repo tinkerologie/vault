@@ -54,3 +54,26 @@ func TestTarIncludeSet_PrefixCollisionDoesNotOverMatch(t *testing.T) {
 		t.Error("prefix similarity must not cross directory boundary")
 	}
 }
+
+func TestIncludeSetIsAncestorOf(t *testing.T) {
+	t.Parallel()
+	set := newIncludeSet([]string{"3DS/Games/a.cia", "docs/"})
+	for name, want := range map[string]bool{
+		"3DS":             true,
+		"3DS/":            true,
+		"3DS/Games/":      true,
+		"3DS/Games/a.cia": false, // the selection itself, not an ancestor
+		"3DSX":            false,
+		"docs":            false,
+		"Other":           false,
+		".":               false,
+		"":                false,
+	} {
+		if got := set.isAncestorOf(name); got != want {
+			t.Errorf("isAncestorOf(%q) = %v, want %v", name, got, want)
+		}
+	}
+	if newIncludeSet(nil).isAncestorOf("3DS") {
+		t.Error("empty set reported an ancestor")
+	}
+}

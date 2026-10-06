@@ -38,7 +38,7 @@ func init() {
 	mountCmd.Flags().Int64Var(&mountRPID, "restore-point", 0, "restore point ID (required)")
 	mountCmd.Flags().StringVar(&mountDBVal, "db", defaultDedupDBPath, "path to vault.db")
 	mountCmd.Flags().StringVar(&mountKey, "key", "", "path to vault.key (default: <dir of --db>/vault.key)")
-	mountCmd.Flags().StringVar(&mountDir, "target", "", "target mount directory (default: /mnt/vault-fuse/mount-<id>)")
+	mountCmd.Flags().StringVar(&mountDir, "target", "", "target mount directory (default: <fuse_mount_base_dir>/mount-<id>, else /mnt/addons/vault-fuse/mount-<id>, or <tmp>/vault-fuse/mount-<id> when /mnt/addons is absent)")
 	_ = mountCmd.MarkFlagRequired("job")
 	_ = mountCmd.MarkFlagRequired("restore-point")
 

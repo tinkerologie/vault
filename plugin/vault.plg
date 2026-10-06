@@ -192,6 +192,8 @@ rm -f /var/log/vault.log
 rm -f /var/run/vault.pid
 rm -rf /boot/config/plugins/vault/*.txz
 rm -rf /boot/config/plugins/vault/*.tgz
+# Empty-only: never remove a FUSE mount root that still holds anything.
+rmdir /mnt/vault-fuse /mnt/addons/vault-fuse 2>/dev/null || true
 
 echo "Vault plugin removed"
 ]]></INLINE>

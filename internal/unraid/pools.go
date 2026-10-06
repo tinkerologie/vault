@@ -23,11 +23,17 @@ var mountInfoPath = "/proc/self/mountinfo"
 // (a plain dir of symlinks/subfolders, not a real mounted pool). The plugin
 // rebuilds it periodically, so staging a backup there fails mid-run with
 // ENOENT when the view is regenerated (issue #204).
+//
+// "addons" is Unraid's namespace for plugin/remote mounts and "vault-fuse" is
+// Vault's own pre-#446 FUSE mount root; neither is storage, so neither may
+// receive staging data or database snapshots.
 var excludedNames = map[string]bool{
 	"user":       true,
 	"user0":      true,
 	"disks":      true,
 	"remotes":    true,
+	"addons":     true,
+	"vault-fuse": true,
 	"RecycleBin": true,
 }
 

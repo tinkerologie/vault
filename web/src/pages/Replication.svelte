@@ -292,7 +292,7 @@
   <div class="flex items-center justify-between mb-6">
     <div>
       <h1 class="text-2xl font-bold text-text">Replication</h1>
-      <p class="text-sm text-text-muted mt-1">Replicate backups to remote Vault servers for disaster recovery</p>
+      <p class="text-sm text-text-muted mt-1">Pull backups from remote Vault servers for disaster recovery</p>
     </div>
     {#if sources.length > 0 && !isReplicaMode()}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
@@ -469,7 +469,7 @@
           <label for="repl-url" class="block text-sm font-medium text-text mb-1">Remote Vault URL</label>
           <input id="repl-url" type="url" required bind:value={form.url} placeholder="http://192.168.1.100:24085"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
-          <p class="text-xs text-text-dim mt-1">The base URL of the remote Vault server (include port)</p>
+          <p class="text-xs text-text-dim mt-1">The base URL of the remote Vault server (include port). Only jobs created on that server are synced; jobs it replicated from other servers are skipped.</p>
         </div>
 
         <div>
@@ -515,7 +515,7 @@
         </div>
 
       <div>
-        <span class="block text-sm font-medium text-text mb-1">Sync Schedule <Tooltip text="Controls how frequently Vault syncs restore points to the replication target." /></span>
+        <span class="block text-sm font-medium text-text mb-1">Sync Schedule <Tooltip text="Controls how frequently Vault pulls restore points from the remote Vault server." /></span>
         <ScheduleBuilder bind:value={form.schedule} />
       </div>
 

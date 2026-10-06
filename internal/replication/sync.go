@@ -159,6 +159,12 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 	// syncs leaked one SFTP pool (or NFS mount) per tick without this (#173).
 	defer storage.CloseAdapter(localAdapter)
 
+	// Only pull jobs the remote peer created itself. Jobs the remote peer
+	// replicated from elsewhere carry a non-zero source_id; re-importing them
+	// makes reciprocal peers bounce jobs back and forth, nesting "[A] [B] …"
+	// prefixes on every sync (#440).
+	remoteJobs = localOriginJobs(remoteJobs)
+
 	result := &SyncResult{}
 	totalJobs := len(remoteJobs)
 	if totalJobs == 0 {
@@ -197,6 +203,19 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 
 	s.completeSyncStatus(sourceID, src.Name, result, progress)
 	return result, nil
+}
+
+// localOriginJobs returns the remote jobs that originated on the remote peer,
+// dropping jobs that are replicas there (non-zero SourceID).
+func localOriginJobs(jobs []RemoteJob) []RemoteJob {
+	local := make([]RemoteJob, 0, len(jobs))
+	for _, j := range jobs {
+		if j.SourceID != 0 {
+			continue
+		}
+		local = append(local, j)
+	}
+	return local
 }
 
 // completeSyncStatus broadcasts sync completion and updates the DB status.

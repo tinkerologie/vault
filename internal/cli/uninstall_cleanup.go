@@ -13,6 +13,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
+	"github.com/ruaan-deysel/vault/internal/mount"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
 	"github.com/ruaan-deysel/vault/internal/unraid"
 	"github.com/spf13/cobra"
@@ -31,6 +32,9 @@ type uninstallCleanupConfig struct {
 	HybridWorkingDir  string
 	DefaultSnapshotDB string
 	CachePaths        []string
+	// FUSERoots are default FUSE mount roots removed only when empty, so an
+	// uninstall leaves no Vault directory directly under /mnt (#446).
+	FUSERoots []string
 }
 
 type uninstallCleanupState struct {
@@ -96,6 +100,7 @@ func defaultUninstallCleanupConfig() uninstallCleanupConfig {
 		HybridWorkingDir:  "/var/local/vault",
 		DefaultSnapshotDB: snapshotDB,
 		CachePaths:        paths,
+		FUSERoots:         mount.DefaultMountRoots(),
 	}
 }
 
@@ -124,6 +129,12 @@ func runUninstallCleanup(cfg uninstallCleanupConfig) error {
 
 	if err := removeAll(cfg.HybridWorkingDir); err != nil {
 		return err
+	}
+
+	for _, root := range cfg.FUSERoots {
+		if err := mount.RemoveEmptyMountRoot(root); err != nil {
+			log.Printf("cleanup-uninstall: keeping FUSE mount root %s: %v", root, err)
+		}
 	}
 
 	for _, path := range managedSnapshotPaths(cfg, state) {

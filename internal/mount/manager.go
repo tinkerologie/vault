@@ -37,12 +37,35 @@ func closeAdapter(a storage.Adapter) {
 	}
 }
 
+// Mount roots. Variables so tests can redirect them away from the host /mnt.
+var (
+	// addonsRoot is Unraid's namespace for plugin and remote mounts. Anything
+	// else created directly under /mnt is flagged by Fix Common Problems as an
+	// invalid folder (#446).
+	addonsRoot = "/mnt/addons"
+	// legacyMountRoot is where releases up to v2026.09.01 put FUSE mounts.
+	legacyMountRoot = "/mnt/vault-fuse"
+	// tempRoot returns the parent for the fallback mount root.
+	tempRoot = os.TempDir
+)
+
+const mountRootName = "vault-fuse"
+
+// DefaultMountRoots lists every root Vault may have used for default FUSE
+// mounts, for cleanup that must not leave Vault directories under /mnt.
+func DefaultMountRoots() []string {
+	return []string{legacyMountRoot, filepath.Join(addonsRoot, mountRootName)}
+}
+
 // Manager orchestrates FUSE mounts, SQLite persistence, and WebSocket notifications.
 type Manager struct {
 	db           *db.DB
 	hub          *ws.Hub
 	serverKey    []byte
 	baseMountDir string
+	// baseIsDefault is false when the base came from fuse_mount_base_dir or
+	// SetBaseMountDir; only the default base falls back to the temp dir.
+	baseIsDefault bool
 
 	mu           sync.Mutex
 	activeMounts map[int64]activeMount
@@ -50,21 +73,26 @@ type Manager struct {
 	stopOnce     sync.Once
 }
 
-// NewManager creates a mount lifecycle manager.
+// NewManager creates a mount lifecycle manager. It creates no directories;
+// a mount's directory is created only when that mount starts.
 func NewManager(d *db.DB, hub *ws.Hub, serverKey []byte) *Manager {
-	baseDir := defaultBaseMountDir()
+	baseDir, isDefault := "", true
 	if d != nil {
 		if custom, err := d.GetSetting("fuse_mount_base_dir", docsmeta.DefaultFor("fuse_mount_base_dir")); err == nil && custom != "" {
-			baseDir = custom
+			baseDir, isDefault = custom, false
 		}
 	}
+	if isDefault {
+		baseDir = defaultBaseMountDir()
+	}
 	return &Manager{
-		db:           d,
-		hub:          hub,
-		serverKey:    append([]byte(nil), serverKey...),
-		baseMountDir: baseDir,
-		activeMounts: make(map[int64]activeMount),
-		stopSweeper:  make(chan struct{}),
+		db:            d,
+		hub:           hub,
+		serverKey:     append([]byte(nil), serverKey...),
+		baseMountDir:  baseDir,
+		baseIsDefault: isDefault,
+		activeMounts:  make(map[int64]activeMount),
+		stopSweeper:   make(chan struct{}),
 	}
 }
 
@@ -73,23 +101,59 @@ func (m *Manager) SetBaseMountDir(dir string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.baseMountDir = dir
+	m.baseIsDefault = false
 }
 
+// defaultBaseMountDir resolves the default mount root without creating it:
+// /mnt/addons/vault-fuse when Unraid's /mnt/addons exists, otherwise a
+// directory under the system temp dir.
 func defaultBaseMountDir() string {
-	if _, err := os.Stat("/mnt"); err == nil {
-		testDir := "/mnt/vault-fuse"
-		if err := os.MkdirAll(testDir, 0755); err == nil {
-			return testDir
+	if info, err := os.Stat(addonsRoot); err == nil && info.IsDir() {
+		return filepath.Join(addonsRoot, mountRootName)
+	}
+	return fallbackBaseMountDir()
+}
+
+func fallbackBaseMountDir() string {
+	return filepath.Join(tempRoot(), mountRootName)
+}
+
+// sessionMountDir creates and returns the directory for a mount session. An
+// explicit target is used as given. Otherwise the directory goes under the
+// base, and when the default base cannot be created (for example a read-only
+// /mnt/addons) it retries once under the temp-dir fallback.
+func (m *Manager) sessionMountDir(targetDir string, sessID int64) (string, error) {
+	if targetDir != "" {
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			return "", fmt.Errorf("mount: create target %s: %w", targetDir, err)
+		}
+		return targetDir, nil
+	}
+	m.mu.Lock()
+	base, isDefault := m.baseMountDir, m.baseIsDefault
+	m.mu.Unlock()
+
+	name := fmt.Sprintf("mount-%d", sessID)
+	dir := filepath.Join(base, name)
+	err := os.MkdirAll(dir, 0o755)
+	if err == nil {
+		return dir, nil
+	}
+	if fallback := fallbackBaseMountDir(); isDefault && fallback != base {
+		log.Printf("WARN mount: cannot create %s (%v); using %s", dir, err, fallback)
+		dir = filepath.Join(fallback, name)
+		if err = os.MkdirAll(dir, 0o755); err == nil {
+			return dir, nil
 		}
 	}
-	fallback := filepath.Join(os.TempDir(), "vault-fuse")
-	_ = os.MkdirAll(fallback, 0755)
-	return fallback
+	return "", fmt.Errorf("mount: create mount directory %s: %w", dir, err)
 }
 
 // Start launches the periodic idle sweeper and cleans up stale mounts from previous daemon runs.
 func (m *Manager) Start(ctx context.Context) {
 	m.CleanupStale(ctx)
+	m.cleanupOrphanedSessionDirs()
+	m.cleanupLegacyRoot()
 	go m.runIdleSweeper(ctx)
 }
 
@@ -122,15 +186,129 @@ func (m *Manager) CleanupStale(ctx context.Context) {
 	}
 
 	m.mu.Lock()
-	baseDir := m.baseMountDir
+	roots := []string{m.baseMountDir, legacyMountRoot}
 	m.mu.Unlock()
 
 	for _, s := range stale {
 		log.Printf("INFO mount: cleaning up stale mount %s (session %d)", s.MountPath, s.ID)
-		_ = unmountPath(s.MountPath)
-		if rel, err := filepath.Rel(baseDir, s.MountPath); err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
-			_ = os.Remove(s.MountPath)
+		if err := unmountPath(s.MountPath); err != nil {
+			log.Printf("WARN mount: keeping %s, unmount failed: %v", s.MountPath, err)
+			continue
 		}
+		if !withinAnyRoot(s.MountPath, roots) {
+			continue
+		}
+		removeEmptyDir(s.MountPath)
+	}
+}
+
+// cleanupLegacyRoot removes the pre-#446 /mnt/vault-fuse root once nothing is
+// left in it. Only empty mount-<id> directories and the root itself are
+// removed, never recursively, so nothing that is still mounted or holds data
+// can be deleted.
+func (m *Manager) cleanupLegacyRoot() {
+	m.mu.Lock()
+	base := m.baseMountDir
+	m.mu.Unlock()
+	if filepath.Clean(base) == filepath.Clean(legacyMountRoot) {
+		return
+	}
+	if !sweepSessionDirs(legacyMountRoot) {
+		return
+	}
+	if err := os.Remove(legacyMountRoot); err != nil {
+		log.Printf("INFO mount: keeping legacy mount root %s: %v", legacyMountRoot, err)
+		return
+	}
+	log.Printf("INFO mount: removed legacy mount root %s", legacyMountRoot)
+}
+
+// cleanupOrphanedSessionDirs removes empty mount-<id> directories left under
+// the current base by an earlier run. A session whose unmount failed is marked
+// stopped by CleanupStale, so without this sweep its directory would never be
+// retried. Live mount points are kept: os.Remove refuses a busy or non-empty
+// directory, and nothing is unmounted here because a `vault mount` CLI
+// session may share the base.
+func (m *Manager) cleanupOrphanedSessionDirs() {
+	m.mu.Lock()
+	base := m.baseMountDir
+	m.mu.Unlock()
+	if base != "" {
+		sweepSessionDirs(base)
+	}
+}
+
+// sweepSessionDirs removes the empty mount-<id> directories directly inside
+// root. It reports false when root is not a real directory or cannot be read.
+func sweepSessionDirs(root string) bool {
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		log.Printf("WARN mount: read mount root %s: %v", root, err)
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !isSessionDirName(e.Name()) {
+			continue
+		}
+		removeEmptyDir(filepath.Join(root, e.Name()))
+	}
+	return true
+}
+
+// RemoveEmptyMountRoot removes root when it is a real directory holding
+// nothing but empty mount-<id> session directories. It never follows symlinks
+// or removes other content; a missing root is not an error.
+func RemoveEmptyMountRoot(root string) error {
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	sweepSessionDirs(root)
+	return os.Remove(root)
+}
+
+func isSessionDirName(name string) bool {
+	id, ok := strings.CutPrefix(name, "mount-")
+	if !ok || id == "" {
+		return false
+	}
+	_, err := strconv.ParseInt(id, 10, 64)
+	return err == nil
+}
+
+// withinAnyRoot reports whether p sits strictly below one of roots.
+func withinAnyRoot(p string, roots []string) bool {
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(p))
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// removeEmptyDir removes p only when it is a real directory (not a symlink);
+// os.Remove refuses non-empty directories and busy mount points.
+func removeEmptyDir(p string) {
+	info, err := os.Lstat(p)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	if err := os.Remove(p); err != nil {
+		log.Printf("INFO mount: keeping %s: %v", p, err)
 	}
 }
 
@@ -296,14 +474,15 @@ func (m *Manager) MountRestorePointTo(ctx context.Context, jobID, rpID int64, ta
 		return nil, fmt.Errorf("mount: create session record: %w", err)
 	}
 
-	mountDir := targetDir
-	if mountDir == "" {
-		m.mu.Lock()
-		base := m.baseMountDir
-		m.mu.Unlock()
-		mountDir = filepath.Join(base, fmt.Sprintf("mount-%d", sessID))
+	mountDir, err := m.sessionMountDir(targetDir, sessID)
+	if err != nil {
+		_ = m.db.UpdateMountSessionStatus(sessID, "failed", err.Error())
+		m.broadcast("mount.failed", map[string]any{
+			"session_id": sessID,
+			"error":      err.Error(),
+		})
+		return nil, err
 	}
-	_ = os.MkdirAll(mountDir, 0755)
 
 	// Update session with final mount directory
 	if err := m.db.UpdateMountSessionPath(sessID, mountDir); err != nil {
@@ -444,6 +623,7 @@ func (m *Manager) Get(sessionID int64) (db.MountSession, error) {
 	return m.db.GetMountSession(sessionID)
 }
 
-func unmountPath(path string) error {
-	return unmountPlatform(path)
-}
+// unmountPath detaches a mount point. A variable so tests can simulate the
+// platform outcome: unprivileged Linux reports EPERM even for a plain,
+// unmounted directory.
+var unmountPath = unmountPlatform

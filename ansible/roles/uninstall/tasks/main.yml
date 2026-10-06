@@ -105,6 +105,7 @@
     rm -rf {{ plugin_dir }}
     rm -f {{ pid_file }}
     rm -f {{ log_path }}
+    rmdir /mnt/vault-fuse /mnt/addons/vault-fuse 2>/dev/null || true
   changed_when: true
 
 - name: Remove config directory when backup copy was requested
