@@ -4,7 +4,8 @@
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getProgress, restoreFromStatus } from '../lib/progress.svelte.js'
-  import { isRestoreActive } from '../lib/restore-sync.js'
+  import { shouldClearOnSnapshot } from '../lib/restore-sync.js'
+  import { getPointCoverage, assignItemsToChosenPoints } from '../lib/restore-plan.js'
   import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType, commonItemType, buildFileTree } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
   import Spinner from './Spinner.svelte'
@@ -17,25 +18,41 @@
   let step = $state(1)
   let selectedItems = $state(new SvelteMap()) // key: "type:name", value: item object
   let autoSelectApplied = false // deep-link auto-select is one-time per mount
-  let selectedPoint = $state(null)
-  let restoreDestination = $state('')
-  let showDestOverride = $state(false)
-  // Clear the destination before extracting, rather than merging the backup
-  // over whatever is already there (issue #321). Default on, because the
-  // warning below has always promised exactly that.
-  let cleanDestination = $state(true)
-  // A custom-destination container restore stops, removes, and recreates the
-  // live container and rewrites its volume mappings. That happened with no
-  // warning at all; it is now opt-in per restore (issue #336).
-  let acknowledgeContainerRemap = $state(false)
-  let passphrase = $state('')
+
+  // Chosen restore points per job (key: jobId -> point object)
+  let chosenPoints = $state(new SvelteMap())
+  // Track restore point fetch status per job (key: jobId -> { jobId, jobName, loading, error, points })
+  let jobPointsStatus = $state(new SvelteMap())
+
   let loading = $state(false)
   let allItems = $state([])
   let restorePoints = $state([])
-  let loadingPoints = $state(false)
   let typeFilter = $state('all')
   let deletingRpId = $state(null)
   let confirmDeleteRpId = $state(null)
+
+  // Per-unit settings (key: jobId -> { restoreDestination, showDestOverride, cleanDestination, acknowledgeContainerRemap, passphrase, preflightResult, preflightRunning, preflightSig })
+  let unitSettings = $state(new SvelteMap())
+
+  const DEFAULT_UNIT_SETTINGS = Object.freeze({
+    restoreDestination: '',
+    showDestOverride: false,
+    cleanDestination: true,
+    acknowledgeContainerRemap: false,
+    passphrase: '',
+    preflightResult: null,
+    preflightRunning: false,
+    preflightSig: '',
+  })
+
+  function getUnitSettings(jobId) {
+    return unitSettings.get(jobId) || DEFAULT_UNIT_SETTINGS
+  }
+
+  function updateUnitSetting(jobId, patch) {
+    const cur = unitSettings.get(jobId) || DEFAULT_UNIT_SETTINGS
+    unitSettings.set(jobId, { ...cur, ...patch })
+  }
 
   // Restore progress and live logs
   const progress = getProgress()
@@ -44,11 +61,18 @@
   let restoreOutcome = $state(null)
   let restoreLogs = $state([])
   let restoreLogsRunId = $state(null)
+  let selectedLogUnitJobId = $state(null)
   let logContainerEl = $state(null)
+
+  // Track unit runs: jobId -> { jobId, jobName, state, runId, done, total, failed, error, sizeBytes }
+  let unitRuns = $state(new SvelteMap())
 
   let isRestoreRunning = $derived(
     restoring ||
-    (progress.running && progress.activeRun?.run_type === 'restore' && (!restoringJobId || progress.activeRun.job_id === restoringJobId))
+    Array.from(unitRuns.values()).some(u => u.state === 'queued' || u.state === 'running') ||
+    (progress.running && progress.activeRun?.run_type === 'restore' &&
+      (!restoringJobId || progress.activeRun.job_id === restoringJobId ||
+       Array.from(unitRuns.values()).some(u => u.jobId === progress.activeRun.job_id || (u.runId && u.runId === progress.activeRun.run_id))))
   )
 
   function scrollToLogBottom() {
@@ -70,77 +94,131 @@
   function resetWizard() {
     step = 1
     selectedItems.clear()
-    selectedPoint = null
+    chosenPoints.clear()
+    jobPointsStatus.clear()
+    unitSettings.clear()
+    unitRuns.clear()
+    restorePoints = []
     restoreOutcome = null
     restoreLogs = []
     restoreLogsRunId = null
+    selectedLogUnitJobId = null
     mountedSession = null
     mountError = null
+  }
+
+  function checkAllUnitsFinished() {
+    const entries = Array.from(unitRuns.values())
+    if (entries.length === 0) return
+    const anyActive = entries.some(u => u.state === 'queued' || u.state === 'running')
+    if (anyActive) return
+
+    restoring = false
+    const anySuccess = entries.some(u => u.state === 'completed' || (u.state === 'partial' && u.done > 0))
+    const anyFailure = entries.some(u => u.state !== 'completed')
+
+    const totalDone = entries.reduce((s, u) => s + (u.done || 0), 0)
+    const totalItems = entries.reduce((s, u) => s + (u.total || 0), 0)
+    const totalFailed = entries.reduce((s, u) => {
+      if (u.state === 'completed') return s
+      if (u.failed) return s + u.failed
+      if (u.state === 'partial') return s + Math.max(0, (u.total || 0) - (u.done || 0))
+      return s + (u.total || 0)
+    }, 0)
+    const totalSize = entries.reduce((s, u) => s + (u.sizeBytes || 0), 0)
+
+    let finalStatus = 'completed'
+    if (!anySuccess) {
+      finalStatus = 'failed'
+    } else if (anyFailure) {
+      finalStatus = 'partial'
+    }
+
+    restoreOutcome = {
+      status: finalStatus,
+      done: totalDone,
+      total: totalItems,
+      failed: totalFailed,
+      sizeBytes: totalSize,
+    }
   }
 
   async function reconcileRestoring() {
     try {
       const status = await api.getRunnerStatus()
       restoreFromStatus(status)
+      const submittedJobIds = new Set(Array.from(unitRuns.keys()))
       if (status?.active && status.run_type === 'restore') {
-        restoring = true
-        restoringJobId = status.job_id
-        if (status.run_id && status.run_id !== restoreLogsRunId) {
-          restoreLogsRunId = status.run_id
-          api.getRunLogs(status.run_id, { limit: 500, tail: true }).then(res => {
-            if (res?.entries) {
-              restoreLogs = res.entries
-              scrollToLogBottom()
-            }
-          }).catch(() => {})
+        if (submittedJobIds.size === 0 || submittedJobIds.has(status.job_id)) {
+          restoring = true
+          restoringJobId = status.job_id
+          const runEntry = unitRuns.get(status.job_id)
+          if (runEntry) {
+            unitRuns.set(status.job_id, {
+              ...runEntry,
+              state: 'running',
+              runId: status.run_id || runEntry.runId,
+            })
+          }
+          if (status.run_id && status.run_id !== restoreLogsRunId) {
+            restoreLogsRunId = status.run_id
+            api.getRunLogs(status.run_id, { limit: 500, tail: true }).then(res => {
+              if (res?.entries) {
+                restoreLogs = res.entries
+                scrollToLogBottom()
+              }
+            }).catch(() => {})
+          }
         }
-      } else if (restoring && !isRestoreActive(status, restoringJobId)) {
+      } else if (restoring && shouldClearOnSnapshot(status, submittedJobIds.size > 0 ? submittedJobIds : restoringJobId)) {
         restoring = false
       }
     } catch {
-      // Leaves state unchanged on any API error, so a transient failure does not
-      // incorrectly re-enable the button.
+      // Leaves state unchanged on any API error
     }
   }
 
-  // Pre-flight: cheap go/no-go checks run before a restore. The result is only
-  // trusted while the inputs that produced it are unchanged (preflightFresh):
-  // change the passphrase or destination and the gate re-arms automatically.
-  let preflightResult = $state(null)
-  let preflightRunning = $state(false)
-  let preflightSig = $state('')
+  // Pre-flight checks per unit
+  function getUnitRestoreSig(unit) {
+    const s = getUnitSettings(unit.jobId)
+    return JSON.stringify({
+      r: unit?.point?.id ?? null,
+      p: s.passphrase,
+      o: s.showDestOverride,
+      d: s.showDestOverride ? s.restoreDestination : '',
+    })
+  }
 
-  // Signature of the inputs that affect a restore's pre-flight outcome.
-  let restoreSig = $derived(JSON.stringify({
-    p: passphrase,
-    o: showDestOverride,
-    d: showDestOverride ? restoreDestination : '',
-  }))
-  // True when the current result reflects the current inputs.
-  let preflightFresh = $derived(preflightResult != null && preflightSig === restoreSig)
+  function isUnitPreflightFresh(unit) {
+    const s = getUnitSettings(unit.jobId)
+    return s.preflightResult != null && s.preflightSig === getUnitRestoreSig(unit)
+  }
 
-  async function runPreflight() {
-    if (!selectedPoint) return
-    const sigAtRun = restoreSig
-    preflightRunning = true
-    preflightResult = null
+  async function runPreflight(unit) {
+    if (!unit?.point) return
+    const s = getUnitSettings(unit.jobId)
+    const sigAtRun = getUnitRestoreSig(unit)
+    updateUnitSetting(unit.jobId, { preflightRunning: true, preflightResult: null })
     try {
       const payload = {}
-      if (showDestOverride && restoreDestination.trim()) payload.destination = restoreDestination.trim()
-      if (passphrase) payload.passphrase = passphrase
-      preflightResult = await api.preflightRestore(selectedPoint.jobId, selectedPoint.id, payload)
+      if (s.showDestOverride && s.restoreDestination.trim()) payload.destination = s.restoreDestination.trim()
+      if (s.passphrase) payload.passphrase = s.passphrase
+      const res = await api.preflightRestore(unit.jobId, unit.point.id, payload)
+      updateUnitSetting(unit.jobId, { preflightResult: res, preflightSig: sigAtRun, preflightRunning: false })
     } catch (e) {
-      preflightResult = { ok: false, checks: [{ id: 'error', label: 'Pre-flight could not run', status: 'fail', detail: e.message || 'request failed' }] }
-    } finally {
-      preflightSig = sigAtRun
-      preflightRunning = false
+      updateUnitSetting(unit.jobId, {
+        preflightResult: { ok: false, checks: [{ id: 'error', label: 'Pre-flight could not run', status: 'fail', detail: e.message || 'request failed' }] },
+        preflightSig: sigAtRun,
+        preflightRunning: false,
+      })
     }
+  }
+
+  async function runAllPreflights() {
+    await Promise.all(restoreUnits.map(unit => runPreflight(unit)))
   }
 
   // Partial-restore file picker (Feature B + Issue #323).
-  // Per-item map: itemKey -> { contents: TarIndex|null, tree: Array|null, selected: SvelteSet<string>,
-  //                             expandedPaths: SvelteSet<string>, loading: boolean, error: string,
-  //                             search: string, open: boolean }
   let picker = $state(new SvelteMap())
 
   function ensurePickerEntry(item) {
@@ -161,19 +239,12 @@
     return picker.get(key)
   }
 
-  // updateEntry replaces the picker entry with a shallow clone + patch.
-  // SvelteMap tracks set(); mutating a value in place after an `await`
-  // boundary does NOT propagate (Svelte 5 only sees the synchronous
-  // mutation). We always go through this helper to keep that contract.
   function updateEntry(item, patch) {
     const key = itemKey(item)
     const cur = ensurePickerEntry(item)
     picker.set(key, { ...cur, ...patch })
   }
 
-  // Partial (per-file) restore only exists for item types whose backups are
-  // tar archives with an index sidecar. VM and ZFS backups are whole-image
-  // artefacts, so offering the picker would just 404 on the missing sidecar.
   function supportsFilePicker(type) {
     return type === 'container' || type === 'folder' || type === 'plugin'
   }
@@ -185,11 +256,13 @@
     if (willOpen && !cur.contents && !cur.loading) {
       updateEntry(item, { loading: true, error: '' })
       try {
-        const contents = await api.getRestorePointContents(selectedPoint.jobId, selectedPoint.id, item.name)
+        const assignment = restorePlan.assignments.get(itemKey(item))
+        const point = assignment?.point
+        if (!point) throw new Error('No restore point found for item')
+        const contents = await api.getRestorePointContents(point.jobId, point.id, item.name)
         const files = contents?.files || []
         const tree = buildFileTree(files)
         const totalFiles = tree.reduce((sum, n) => sum + (n.descendantLeafCount || 0), 0)
-        // Issue #323: All files / folders selected by default upon loading contents
         const selected = new SvelteSet()
         for (const root of tree) {
           for (const p of root.descendantLeafPaths) {
@@ -320,28 +393,88 @@
     updateEntry(item, {})
   }
 
+  function switchLogUnit(unitRun) {
+    selectedLogUnitJobId = unitRun.jobId
+    if (unitRun.runId) {
+      restoreLogsRunId = unitRun.runId
+      api.getRunLogs(unitRun.runId, { limit: 500, tail: true }).then(res => {
+        if (res?.entries) {
+          restoreLogs = res.entries
+          scrollToLogBottom()
+        }
+      }).catch(() => {})
+    }
+  }
+
   onMount(() => {
     reconcileRestoring()
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'job_run_started') {
-        if (msg.run_type === 'restore' && (!restoringJobId || msg.job_id === restoringJobId)) {
-          restoring = true
-          restoreOutcome = null
-          if (msg.run_id) {
-            restoreLogsRunId = msg.run_id
-            restoreLogs = []
+        if (msg.run_type === 'restore') {
+          let runEntry = unitRuns.get(msg.job_id)
+          if (!runEntry && unitRuns.size === 0 && (!restoringJobId || msg.job_id === restoringJobId)) {
+            restoring = true
+            restoringJobId = msg.job_id
+            restoreOutcome = null
+            if (msg.run_id) {
+              restoreLogsRunId = msg.run_id
+              restoreLogs = []
+            }
+          } else if (runEntry) {
+            restoring = true
+            unitRuns.set(msg.job_id, {
+              ...runEntry,
+              state: 'running',
+              runId: msg.run_id || runEntry.runId,
+            })
+            const curSelected = selectedLogUnitJobId ? unitRuns.get(selectedLogUnitJobId) : null
+            const curSelectedActive = curSelected && (curSelected.state === 'queued' || curSelected.state === 'running')
+            if (!selectedLogUnitJobId || selectedLogUnitJobId === msg.job_id || !curSelectedActive) {
+              selectedLogUnitJobId = msg.job_id
+              restoreLogsRunId = msg.run_id
+              restoreLogs = []
+              if (msg.run_id) {
+                api.getRunLogs(msg.run_id, { limit: 500, tail: true }).then(res => {
+                  if (res?.entries) {
+                    restoreLogs = res.entries
+                    scrollToLogBottom()
+                  }
+                }).catch(() => {})
+              }
+            }
           }
         }
       } else if (msg.type === 'job_run_completed') {
-        if (msg.run_type === 'restore' && (!restoringJobId || msg.job_id === restoringJobId)) {
-          restoring = false
-          restoreOutcome = {
-            status: msg.status,
-            done: msg.items_done || 0,
-            total: msg.items_total || 0,
-            failed: msg.items_failed || 0,
-            sizeBytes: msg.size_bytes || 0,
+        if (msg.run_type === 'restore') {
+          let runEntry = null
+          if (msg.run_id) {
+            runEntry = Array.from(unitRuns.values()).find(u => u.runId === msg.run_id)
           }
+          if (!runEntry && msg.job_id) {
+            runEntry = unitRuns.get(msg.job_id)
+          }
+
+          if (runEntry) {
+            unitRuns.set(runEntry.jobId, {
+              ...runEntry,
+              state: msg.status,
+              done: msg.items_done || 0,
+              total: msg.items_total || runEntry.total,
+              failed: msg.items_failed || 0,
+              sizeBytes: msg.size_bytes || 0,
+            })
+            checkAllUnitsFinished()
+          } else if (unitRuns.size === 0 && (!restoringJobId || msg.job_id === restoringJobId)) {
+            restoring = false
+            restoreOutcome = {
+              status: msg.status,
+              done: msg.items_done || 0,
+              total: msg.items_total || 0,
+              failed: msg.items_failed || 0,
+              sizeBytes: msg.size_bytes || 0,
+            }
+          }
+
           if (restoreLogsRunId) {
             api.getRunLogs(restoreLogsRunId, { limit: 500, tail: true }).then(res => {
               if (res?.entries) {
@@ -352,8 +485,41 @@
           }
         }
       } else if (msg.type === 'runner_status_snapshot') {
-        if (!isRestoreActive(msg.status, restoringJobId)) {
-          restoring = false
+        const submittedJobIds = new Set(Array.from(unitRuns.keys()))
+        if (shouldClearOnSnapshot(msg.status, submittedJobIds.size > 0 ? submittedJobIds : restoringJobId)) {
+          if (unitRuns.size === 0) {
+            restoring = false
+          } else {
+            const activeUnits = Array.from(unitRuns.values()).filter(u => u.state === 'queued' || u.state === 'running')
+            if (activeUnits.length === 0) {
+              checkAllUnitsFinished()
+            } else {
+              Promise.all(activeUnits.map(async (u) => {
+                try {
+                  const res = await api.getJobHistory(u.jobId, 5)
+                  const runs = Array.isArray(res) ? res : []
+                  const matching = u.runId
+                    ? runs.find(r => r.id === u.runId)
+                    : runs.find(r => r.run_type === 'restore' && (!u.submittedAt || new Date(r.started_at).getTime() >= u.submittedAt - 10000))
+                  if (matching && matching.status !== 'running') {
+                    unitRuns.set(u.jobId, {
+                      ...u,
+                      state: matching.status,
+                      runId: matching.id || u.runId,
+                      done: matching.items_done || 0,
+                      total: matching.items_total || u.total,
+                      failed: matching.items_failed || 0,
+                      sizeBytes: matching.size_bytes || 0,
+                    })
+                  }
+                } catch {
+                  // Keep existing state if API fetch fails
+                }
+              })).then(() => {
+                checkAllUnitsFinished()
+              })
+            }
+          }
         }
       } else if (msg.type === 'run_log' && msg.entry) {
         if (restoreLogsRunId && msg.entry.run_id === restoreLogsRunId) {
@@ -370,13 +536,22 @@
   $effect(() => {
     const run = progress.activeRun
     if (run && run.run_type === 'restore' && run.run_id && run.run_id !== restoreLogsRunId) {
-      restoreLogsRunId = run.run_id
-      api.getRunLogs(run.run_id, { limit: 500, tail: true }).then(res => {
-        if (res?.entries) {
-          restoreLogs = res.entries
-          scrollToLogBottom()
-        }
-      }).catch(() => {})
+      const submittedJobIds = new Set(Array.from(unitRuns.keys()))
+      const curSelected = selectedLogUnitJobId ? unitRuns.get(selectedLogUnitJobId) : null
+      const curSelectedActive = curSelected && (curSelected.state === 'queued' || curSelected.state === 'running')
+      if (
+        (submittedJobIds.size === 0 || submittedJobIds.has(run.job_id)) &&
+        (!selectedLogUnitJobId || selectedLogUnitJobId === run.job_id || !curSelectedActive)
+      ) {
+        selectedLogUnitJobId = run.job_id
+        restoreLogsRunId = run.run_id
+        api.getRunLogs(run.run_id, { limit: 500, tail: true }).then(res => {
+          if (res?.entries) {
+            restoreLogs = res.entries
+            scrollToLogBottom()
+          }
+        }).catch(() => {})
+      }
     }
   })
 
@@ -390,11 +565,11 @@
   })
 
   function gatherItems() {
-	loading = true
-	try {
-	  const itemMap = new SvelteMap()
-	  for (const detail of jobs) {
-		if (!detail?.items) continue
+    loading = true
+    try {
+      const itemMap = new SvelteMap()
+      for (const detail of jobs) {
+        if (!detail?.items) continue
         for (const item of detail.items) {
           const effType = effectiveItemType(item)
           const key = `${effType}:${itemDisplayLabel(item)}`
@@ -409,15 +584,12 @@
               jobs: [],
             })
           }
-		  itemMap.get(key).jobs.push(detail)
+          itemMap.get(key).jobs.push(detail)
         }
       }
       allItems = Array.from(itemMap.values())
-      // Deep-link auto-select runs once per mount so a later gatherItems refresh
-      // (e.g. a WS event) can't re-select items the user has since cleared.
       if (!autoSelectApplied && jobs.length > 0) {
         autoSelectApplied = true
-        // Auto-select items from a pre-selected job (e.g. quick restore from Dashboard)
         if (initialJobId) {
           const jid = Number(initialJobId)
           for (const item of allItems) {
@@ -426,9 +598,6 @@
             }
           }
         }
-        // Auto-select a specific item from a type+name deep-link (Dashboard restore
-        // buttons and the command palette). Only matches items that are actually in
-        // a backup job, so unknown/never-backed-up names just land on the picker.
         if (initialType && initialName && selectedItems.size === 0) {
           const item = allItems.find(i =>
             `${i.type}:${i.name}` === `${initialType}:${initialName}` ||
@@ -484,6 +653,27 @@
   })
 
   let selectedCount = $derived(selectedItems.size)
+  let selectedItemsArray = $derived(Array.from(selectedItems.values()))
+
+  let relevantJobs = $derived.by(() => {
+    const map = new SvelteMap()
+    for (const item of selectedItemsArray) {
+      for (const j of (item.jobs || [])) {
+        if (!map.has(j.id)) map.set(j.id, j)
+      }
+    }
+    return Array.from(map.values())
+  })
+
+  let isMultiJob = $derived(relevantJobs.length > 1)
+  let loadingPoints = $derived(Array.from(jobPointsStatus.values()).some(s => s.loading))
+
+  let restorePlan = $derived(assignItemsToChosenPoints(selectedItemsArray, chosenPoints, itemKey))
+  let restoreUnits = $derived(restorePlan.units)
+  let planComplete = $derived(restorePlan.isComplete)
+
+  // Backward compatibility alias for single unit
+  let selectedPoint = $derived(restoreUnits[0]?.point ?? null)
 
   function toggleItem(item) {
     const key = itemKey(item)
@@ -508,80 +698,134 @@
     selectedItems.clear()
   }
 
+  function updateRestorePointsList() {
+    const all = []
+    for (const status of jobPointsStatus.values()) {
+      all.push(...status.points)
+    }
+    restorePoints = all
+      .filter(p => getPointCoverage(p, selectedItemsArray).coverageCount > 0)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+  }
+
+  async function retryJobFetch(jobId) {
+    const cur = jobPointsStatus.get(jobId)
+    if (!cur) return
+    jobPointsStatus.set(jobId, { ...cur, loading: true, error: null })
+    try {
+      const job = jobs.find(j => j.id === jobId)
+      const pts = (await api.getRestorePoints(jobId)) || []
+      const enriched = pts.map(p => ({
+        ...p,
+        jobName: job?.name || cur.jobName,
+        jobId: jobId,
+        encryption: job?.encryption,
+      }))
+      jobPointsStatus.set(jobId, {
+        ...cur,
+        loading: false,
+        error: null,
+        points: enriched,
+      })
+    } catch (e) {
+      jobPointsStatus.set(jobId, {
+        ...cur,
+        loading: false,
+        error: e?.message || 'Failed to load restore points',
+        points: [],
+      })
+    }
+    updateRestorePointsList()
+  }
+
   async function proceedToStep2() {
     if (selectedItems.size === 0) return
     step = 2
-    loadingPoints = true
     restorePoints = []
-    try {
-      // Collect all jobs that contain any of the selected items
-      const selectedArr = Array.from(selectedItems.values())
-      const relevantJobIds = new SvelteSet()
-      for (const item of selectedArr) {
-        for (const job of item.jobs) {
-          relevantJobIds.add(job.id)
+    chosenPoints.clear()
+    jobPointsStatus.clear()
+    unitSettings.clear()
+
+    const jobsMap = new SvelteMap()
+    for (const item of selectedItemsArray) {
+      for (const j of (item.jobs || [])) {
+        jobsMap.set(j.id, j)
+      }
+    }
+
+    for (const [jobId, job] of jobsMap.entries()) {
+      jobPointsStatus.set(jobId, {
+        jobId,
+        jobName: job.name || `Job #${jobId}`,
+        loading: true,
+        error: null,
+        points: [],
+      })
+    }
+
+    const promises = Array.from(jobsMap.entries()).map(async ([jobId, job]) => {
+      try {
+        const pts = (await api.getRestorePoints(jobId)) || []
+        const enriched = pts.map(p => ({
+          ...p,
+          jobName: job.name,
+          jobId: jobId,
+          encryption: job.encryption,
+        }))
+        jobPointsStatus.set(jobId, {
+          jobId,
+          jobName: job.name,
+          loading: false,
+          error: null,
+          points: enriched,
+        })
+      } catch (err) {
+        jobPointsStatus.set(jobId, {
+          jobId,
+          jobName: job.name,
+          loading: false,
+          error: err?.message || 'Failed to load restore points',
+          points: [],
+        })
+      }
+    })
+
+    await Promise.all(promises)
+    updateRestorePointsList()
+  }
+
+  function handlePointSelect(point) {
+    confirmDeleteRpId = null
+    const cov = getPointCoverage(point, selectedItemsArray)
+
+    // Preserve immediate Step 3 navigation for fully covered single-job selection
+    if (!isMultiJob && cov.coversAll) {
+      chosenPoints.clear()
+      chosenPoints.set(point.jobId, point)
+      step = 3
+      picker.clear()
+      mountedSession = null
+      mountError = null
+      return
+    }
+
+    // Multi-job or partial coverage: record chosen point for this job
+    const prevPoint = chosenPoints.get(point.jobId)
+    if (prevPoint?.id !== point.id) {
+      for (const item of selectedItemsArray) {
+        if (item.jobs.some(j => j.id === point.jobId)) {
+          picker.delete(itemKey(item))
         }
       }
-
-      // Fetch restore points from all relevant jobs in parallel
-      const jobMap = new Map(Array.from(relevantJobIds).map(id => [id, jobs.find(j => j.id === id)]))
-      const pointsByJob = await Promise.all(
-        Array.from(relevantJobIds).map(jobId =>
-          api.getRestorePoints(jobId).catch(() => []).then(points => ({
-            jobId,
-            points: points || []
-          }))
-        )
-      )
-
-      // Flatten and enrich restore points
-      const allPoints = []
-      for (const { jobId, points } of pointsByJob) {
-        const job = jobMap.get(jobId)
-        for (const p of points) {
-          allPoints.push({ ...p, jobName: job?.name, jobId: jobId, encryption: job?.encryption })
-        }
-      }
-
-      // Only show restore points that actually contain every selected item.
-      // A restore point records its membership in metadata.item_sizes /
-      // item_manifests; an item added to a job after a backup ran is NOT in
-      // that backup, so showing it would be misleading and the restore would
-      // fail. Legacy restore points with no recorded membership are kept
-      // (unknown → fall back to whole-archive behaviour).
-      const selectedNames = Array.from(selectedItems.values()).map(i => i.name)
-      const containsSelected = (rp) => {
-        if (!selectedArr.every(item => item.jobs.some(j => j.id === rp.jobId))) {
-          return false
-        }
-        const meta = parseMetadata(rp.metadata)
-        const names = new Set([
-          ...Object.keys(meta.item_sizes || {}),
-          ...Object.keys(meta.item_manifests || {}),
-        ])
-        if (names.size === 0) return true // legacy: membership unknown
-        return selectedNames.every(n => names.has(n))
-      }
-
-      // Sort by date descending
-      restorePoints = allPoints.filter(containsSelected).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-    } catch { /* ignore */ } finally {
-      loadingPoints = false
+      chosenPoints.set(point.jobId, point)
     }
   }
 
-  function selectPoint(point) {
-    selectedPoint = point
-    step = 3
-    passphrase = ''
-    restoreDestination = ''
-    showDestOverride = false
-    cleanDestination = true
-    acknowledgeContainerRemap = false
-    preflightResult = null
-    picker.clear()
-    mountedSession = null
-    mountError = null
+  function removeUncoveredItems() {
+    for (const item of restorePlan.uncovered) {
+      selectedItems.delete(itemKey(item))
+    }
+    updateRestorePointsList()
   }
 
   let mounting = $state(false)
@@ -589,11 +833,12 @@
   let mountedSession = $state(null)
 
   let isDeduplicated = $derived.by(() => {
-    if (!selectedPoint) return false
-    if (selectedPoint.manifest_id) return true
-    if (selectedPoint.metadata) {
+    const pt = restoreUnits[0]?.point
+    if (!pt) return false
+    if (pt.manifest_id) return true
+    if (pt.metadata) {
       try {
-        const meta = typeof selectedPoint.metadata === 'string' ? JSON.parse(selectedPoint.metadata) : selectedPoint.metadata
+        const meta = typeof pt.metadata === 'string' ? JSON.parse(pt.metadata) : pt.metadata
         if (meta?.item_manifests && Object.keys(meta.item_manifests).length > 0) return true
       } catch {
         // ignore parse errors
@@ -602,15 +847,16 @@
     return false
   })
 
-  async function doMount() {
-    if (!selectedPoint) return
-    const jobId = selectedPoint.jobId || selectedPoint.job_id
-    if (!jobId) return
+  async function doMount(unit) {
+    const targetUnit = unit || restoreUnits[0]
+    if (!targetUnit?.point) return
+    const jobId = targetUnit.jobId
+    const pointId = targetUnit.point.id
 
     mounting = true
     mountError = null
     try {
-      const session = await api.mountRestorePoint(jobId, selectedPoint.id)
+      const session = await api.mountRestorePoint(jobId, pointId)
       mountedSession = session
       if (onmount) {
         onmount(session)
@@ -622,28 +868,16 @@
     }
   }
 
-  let needsPassphrase = $derived(selectedPoint?.encryption === 'age')
-
-  // Only a container is stopped, removed, and recreated by a restore, so only
-  // a container needs the remap acknowledgement (issue #336).
-  let hasContainerItem = $derived(selectedItemsArray.some(item => item.type === 'container'))
-
-  // The acknowledgement is only meaningful while a custom destination is
-  // selected with a container in the set; anywhere else it must not block the
-  // button, and it resets so re-entering the choice asks again.
-  let needsRemapAcknowledgement = $derived(hasContainerItem && showDestOverride)
-
   function parseMetadata(meta) {
     if (!meta) return {}
     try { return JSON.parse(meta) } catch { return {} }
   }
 
-  /** Calculate the total size of only the selected items from a restore point's metadata. */
-  function selectedRestoreSize(rp) {
+  function selectedRestoreSize(rp, items = selectedItemsArray) {
     const meta = parseMetadata(rp.metadata)
     const itemSizes = meta.item_sizes
     if (!itemSizes) return rp.size_bytes
-    const selectedNames = new Set(Array.from(selectedItems.values()).map(i => i.name))
+    const selectedNames = new Set((items || []).map(i => i.name))
     let total = 0
     for (const [name, size] of Object.entries(itemSizes)) {
       if (selectedNames.has(name)) total += size
@@ -651,58 +885,66 @@
     return total || rp.size_bytes
   }
 
-  let selectedItemsArray = $derived(Array.from(selectedItems.values()))
-
-  let step3ItemsArray = $derived(
-    selectedPoint
-      ? selectedItemsArray.filter(item => item.jobs.some(j => j.id === selectedPoint.jobId))
-      : selectedItemsArray
-  )
-  let step3Count = $derived(step3ItemsArray.length)
-
-  // Issue #323: A restore is partial only when a proper subset of an item's
-  // files is selected. If all files remain selected, or if the item's
-  // contents were not loaded, whole-archive extract will run.
-  let hasPartialSelection = $derived(
-    Array.from(picker.entries()).some(([key, entry]) => {
-      const item = selectedItems.get(key)
+  function unitHasPartialSelection(unit) {
+    return unit.items.some(item => {
+      const entry = picker.get(itemKey(item))
       const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)
-      return item && entry?.selected && entry.selected.size > 0 && entry.selected.size < total && item.jobs?.some(j => j.id === selectedPoint?.jobId)
+      return entry?.selected && entry.selected.size > 0 && entry.selected.size < total
     })
-  )
+  }
 
-  // Block restore if an opened item with restorable files has 0 files selected.
-  let hasEmptySelection = $derived(
-    step3ItemsArray.some(item => {
+  function unitHasEmptySelection(unit) {
+    return unit.items.some(item => {
       const entry = picker.get(itemKey(item))
       const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)
       return entry?.contents && total > 0 && entry.selected.size === 0
     })
+  }
+
+
+  function isUnitBlocked(unit) {
+    if (!unit) return true
+    if (unit.items.length === 0 || unitHasEmptySelection(unit)) return true
+    if (unit.point?.chain_status === 'broken') return true
+    const s = getUnitSettings(unit.jobId)
+    const hasContainer = unit.items.some(i => i.type === 'container')
+    if (hasContainer && s.showDestOverride && !s.acknowledgeContainerRemap) return true
+    if (unit.point?.encryption === 'age' && !s.passphrase) return true
+    return false
+  }
+
+  let anyUnitBlocked = $derived(
+    selectedItems.size === 0 ||
+    restoreUnits.length === 0 ||
+    restoreUnits.some(unit => isUnitBlocked(unit))
   )
 
-  // Overwrite-banner target (issue #205 / E5). Only ever show a concrete path
-  // when it's actually known — otherwise say "original location" honestly.
-  //   { path }     → show this exact path
-  //   { original } → say the restore goes to its original location
-  //   null         → show no location clause (multi-item / indeterminate)
-  // folder/flash items store their filesystem path as the item name. Containers
-  // and VMs have no single persisted source path (appdata can live off
-  // /mnt/user; container/VM restores may touch several mounts), so we do NOT
-  // fabricate a /mnt/user/appdata path for them.
-  let restoreTargetPath = $derived.by(() => {
-    if (showDestOverride) {
-      const dest = restoreDestination.trim()
-      // Blank custom destination → backend falls back to original location.
-      return dest ? { path: dest } : { original: true }
-    }
-    const currentCount = selectedPoint ? step3Count : selectedCount
-    if (currentCount !== 1) return null
-    const item = selectedPoint ? step3ItemsArray[0] : selectedItemsArray[0]
-    if (!item) return null
-    if (item.type === 'folder' || item.type === 'flash') return { path: itemDisplayLabel(item) }
-    return { original: true }
-  })
-  // The newest restore point is the recommended one to restore from.
+  let allUnitsPreflightPassing = $derived(
+    restoreUnits.length > 0 && restoreUnits.every(unit => {
+      const s = getUnitSettings(unit.jobId)
+      return s.preflightResult?.ok && isUnitPreflightFresh(unit)
+    })
+  )
+
+  let anyUnitPreflightRunning = $derived(
+    restoreUnits.some(unit => getUnitSettings(unit.jobId).preflightRunning)
+  )
+
+  let allUnitsPreflightFresh = $derived(
+    restoreUnits.length > 0 && restoreUnits.every(unit => isUnitPreflightFresh(unit))
+  )
+
+  let canStartRestore = $derived(
+    !isRestoreRunning &&
+    !anyUnitBlocked &&
+    allUnitsPreflightPassing
+  )
+
+  let canRestoreAnyway = $derived(
+    !isRestoreRunning &&
+    !anyUnitBlocked
+  )
+
   let recommendedRpId = $derived(restorePoints[0]?.id ?? null)
 
   function chainDependencies(rp) {
@@ -727,57 +969,108 @@
     return `Kept because ${count} newer restore point${count === 1 ? '' : 's'} still depend on it.`
   }
 
-  function doRestore() {
-    if (selectedItems.size === 0 || !selectedPoint) return
-    // Belt and braces alongside the disabled buttons: recreating a live
-    // container is not something to fall into (issue #336).
-    if (needsRemapAcknowledgement && !acknowledgeContainerRemap) return
-    if (hasEmptySelection) return
+  async function doRestore() {
+    if (anyUnitBlocked) return
+
     restoring = true
-    restoringJobId = selectedPoint.jobId
     restoreOutcome = null
     restoreLogs = []
     restoreLogsRunId = null
+    selectedLogUnitJobId = restoreUnits[0]?.jobId ?? null
 
-    const items = Array.from(new Set(step3ItemsArray.map(item => item.name)))
+    const submissionTime = Date.now()
+    unitRuns.clear()
+    for (const unit of restoreUnits) {
+      unitRuns.set(unit.jobId, {
+        jobId: unit.jobId,
+        jobName: unit.jobName,
+        state: 'queued',
+        runId: null,
+        submittedAt: submissionTime,
+        done: 0,
+        total: unit.items.length,
+        failed: 0,
+        error: null,
+        sizeBytes: 0,
+      })
+    }
 
-    const payload = {
-      restore_point_id: selectedPoint.id,
-      items,
-    }
-    if (showDestOverride && restoreDestination.trim()) {
-      payload.destination = restoreDestination.trim()
-    }
-    if (passphrase) {
-      payload.passphrase = passphrase
-    }
-    payload.clean_destination = cleanDestination && !hasPartialSelection
+    for (const unit of restoreUnits) {
+      const s = getUnitSettings(unit.jobId)
 
-    // Feature B + Issue #323: per-item partial restore. Build file_paths map from
-    // picker entries that have a partial selection (some but not all files).
-    // Items with all files selected or unopened restore in full (fast path).
-    const filePaths = {}
-    for (const [key, entry] of picker.entries()) {
-      const item = selectedItems.get(key)
-      if (item && entry?.contents && entry?.selected) {
-        const total = entry.totalFiles ?? (entry.contents.files?.length || 0)
-        if (entry.selected.size > 0 && entry.selected.size < total) {
-          if (item.jobs.some(j => j.id === selectedPoint.jobId)) {
+      const payload = {
+        restore_point_id: unit.point.id,
+        items: Array.from(new Set(unit.items.map(i => i.name))),
+        clean_destination: s.cleanDestination && !unitHasPartialSelection(unit),
+      }
+      if (s.showDestOverride && s.restoreDestination.trim()) {
+        payload.destination = s.restoreDestination.trim()
+      }
+      if (s.passphrase) {
+        payload.passphrase = s.passphrase
+      }
+
+      const filePaths = {}
+      for (const item of unit.items) {
+        const entry = picker.get(itemKey(item))
+        if (entry?.contents && entry?.selected) {
+          const total = entry.totalFiles ?? (entry.contents.files?.length || 0)
+          if (entry.selected.size > 0 && entry.selected.size < total) {
             filePaths[item.name] = Array.from(entry.selected)
           }
         }
       }
-    }
-    if (Object.keys(filePaths).length > 0) {
-      payload.file_paths = filePaths
-    }
+      if (Object.keys(filePaths).length > 0) {
+        payload.file_paths = filePaths
+      }
 
-    onrestore(selectedPoint.jobId, payload)
+      try {
+        const res = await onrestore(unit.jobId, payload)
+        if (res && res.ok === false) {
+          const cur = unitRuns.get(unit.jobId)
+          if (cur) {
+            unitRuns.set(unit.jobId, {
+              ...cur,
+              state: 'rejected',
+              error: res.error || 'Server rejected restore request',
+            })
+          }
+        }
+      } catch (err) {
+        const cur = unitRuns.get(unit.jobId)
+        if (cur) {
+          unitRuns.set(unit.jobId, {
+            ...cur,
+            state: 'rejected',
+            error: err?.message || 'Failed to submit restore request',
+          })
+        }
+      }
+    }
+    checkAllUnitsFinished()
+  }
+
+  function handleRestoreAnyway() {
+    const failedUnits = restoreUnits.filter(unit => {
+      const s = getUnitSettings(unit.jobId)
+      return !s.preflightResult?.ok
+    })
+    const names = failedUnits.map(u => u.jobName).join(', ')
+    if (window.confirm(`Pre-flight checks did not all pass for: ${names}. Restore anyway?`)) {
+      doRestore()
+    }
   }
 
   function goBack() {
-    if (step === 3) { step = 2; selectedPoint = null }
-    else if (step === 2) { step = 1; restorePoints = [] }
+    if (step === 3) {
+      step = 2
+    } else if (step === 2) {
+      step = 1
+      restorePoints = []
+      chosenPoints.clear()
+      jobPointsStatus.clear()
+      unitSettings.clear()
+    }
   }
 
   async function deleteRestorePoint(rp) {
@@ -788,8 +1081,17 @@
     confirmDeleteRpId = null
     deletingRpId = rp.id
     try {
-      await api.deleteRestorePoint(rp.job_id, rp.id)
+      await api.deleteRestorePoint(rp.job_id || rp.jobId, rp.id)
       restorePoints = restorePoints.filter(p => p.id !== rp.id)
+      for (const [jid, status] of jobPointsStatus.entries()) {
+        jobPointsStatus.set(jid, {
+          ...status,
+          points: status.points.filter(p => p.id !== rp.id)
+        })
+      }
+      if (chosenPoints.get(rp.jobId)?.id === rp.id) {
+        chosenPoints.delete(rp.jobId)
+      }
     } catch (e) {
       console.error('Failed to delete restore point', e)
     } finally {
@@ -802,7 +1104,17 @@
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
     {#each [{n:1, label:'Select Items'}, {n:2, label:'Choose Version'}, {n:3, label:'Restore'}] as s (s.n)}
-      <button type="button" onclick={() => { if (s.n < step) { if (s.n === 1) { step = 1; selectedPoint = null } else if (s.n === 2) { step = 2; selectedPoint = null } } }}
+      <button type="button" onclick={() => {
+        if (s.n < step) {
+          const curStep = step
+          if (s.n === 1) {
+            goBack()
+            if (curStep === 3) goBack()
+          } else if (s.n === 2) {
+            step = 2
+          }
+        }
+      }}
         class="flex items-center gap-2 {s.n <= step ? '' : 'opacity-40'}">
         <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-white' : s.n === step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
@@ -950,7 +1262,7 @@
           </span>
         </div>
         <button type="button" onclick={proceedToStep2} disabled={selectedCount === 0}
-          class="px-5 py-2 text-sm font-semibold text-white bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
+          class="px-5 py-2 text-sm font-semibold text-white bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
           Next
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
@@ -961,7 +1273,7 @@
   {:else if step === 2}
     <div class="mb-4">
       <button type="button" onclick={goBack}
-        class="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors">
+        class="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors cursor-pointer">
         <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         Back to items
       </button>
@@ -975,304 +1287,492 @@
         {/each}
       </div>
       <p class="text-sm text-text-muted mt-3">
-        Select a restore point to restore from. Each entry represents a saved backup version showing its archive size and estimated restore size. The activity graph highlights backup density across days.
+        {#if isMultiJob}
+          Your selection comes from {relevantJobs.length} backup jobs. Choose one restore point for each job.
+        {:else}
+          Select a restore point to restore from. Each entry represents a saved backup version showing its archive size and estimated restore size.
+        {/if}
       </p>
     </div>
+
+    <!-- Job fetch error alerts with retry -->
+    {#each Array.from(jobPointsStatus.values()).filter(s => s.error) as failedJob (failedJob.jobId)}
+      <div class="bg-danger/10 border border-danger/30 rounded-xl p-3 mb-3 flex items-center justify-between gap-3 text-xs">
+        <span class="text-danger">Failed to load restore points for <strong>{failedJob.jobName}</strong>: {failedJob.error}</span>
+        <button type="button" onclick={() => retryJobFetch(failedJob.jobId)}
+          class="px-2.5 py-1 rounded bg-surface-3 hover:bg-surface-4 text-text font-medium cursor-pointer">
+          Retry
+        </button>
+      </div>
+    {/each}
+
+    <!-- Coverage summary & Recovery actions -->
+    {#if isMultiJob || (chosenPoints.size > 0 && !planComplete)}
+      <div class="bg-surface-2 border border-border rounded-xl p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-2.5">
+          <div>
+            <h3 class="text-sm font-semibold text-text">Restore Plan Coverage</h3>
+            <p class="text-xs text-text-muted mt-0.5">
+              {isMultiJob ? `Items span ${relevantJobs.length} backup jobs.` : 'Items in current selection:'}
+              Choose restore points below until all items are covered.
+            </p>
+          </div>
+          {#if planComplete}
+            <span class="text-xs px-2.5 py-1 rounded-full bg-success/15 text-success font-medium flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+              Plan complete
+            </span>
+          {:else}
+            <span class="text-xs px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400 font-medium">
+              {restorePlan.uncovered.length} item{restorePlan.uncovered.length === 1 ? '' : 's'} not covered yet
+            </span>
+          {/if}
+        </div>
+
+        <!-- Items list with assigned version -->
+        <div class="divide-y divide-border/50 border border-border/50 rounded-lg overflow-hidden bg-surface-1 mb-3">
+          {#each selectedItemsArray as item (itemKey(item))}
+            {@const assignment = restorePlan.assignments.get(itemKey(item))}
+            <div class="flex items-center justify-between p-2.5 text-xs">
+              <div class="flex items-center gap-2 min-w-0">
+                <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0 {itemTypeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={itemTypeIcon(item.type)}/></svg>
+                <span class="font-medium text-text truncate">{itemDisplayLabel(item)}</span>
+                <span class="text-text-dim">({item.type})</span>
+              </div>
+              <div class="shrink-0 text-right">
+                {#if assignment}
+                  <span class="text-emerald-400 font-medium">
+                    {assignment.point.jobName || `Job #${assignment.jobId}`} · {formatDate(assignment.point.created_at)}
+                  </span>
+                {:else}
+                  <span class="text-amber-400 font-medium">Not covered yet</span>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        <!-- Recovery actions if incomplete -->
+        {#if !planComplete}
+          <div class="flex items-center justify-between flex-wrap gap-2 text-xs">
+            <p class="text-text-dim">Select a restore point from each job below, or remove uncovered items to proceed.</p>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick={removeUncoveredItems}
+                class="px-2.5 py-1.5 rounded-lg border border-border bg-surface-3 hover:bg-surface-4 text-text transition-colors cursor-pointer">
+                Remove uncovered items from selection ({restorePlan.uncovered.length})
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     {#if loadingPoints}
       <Spinner text="Loading restore points..." />
     {:else if restorePoints.length === 0}
-      <div class="text-center py-12">
+      <div class="text-center py-12 bg-surface-2 border border-border rounded-xl">
         <div class="mb-3 opacity-30"><svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
-        <p class="text-sm text-text-muted">No restore points found for the selected items.</p>
+        <p class="text-sm text-text-muted">No restore points found covering the selected items.</p>
+        <p class="text-xs text-text-dim mt-1">Checked jobs: {relevantJobs.map(j => j.name).join(', ')}</p>
       </div>
     {:else}
       <RestorePointTimeline
         points={restorePoints}
+        chosenPoints={chosenPoints}
         selectedId={selectedPoint?.id ?? null}
         recommendedId={recommendedRpId}
-        onSelect={(rp) => { confirmDeleteRpId = null; selectPoint(rp) }}
+        onSelect={(rp) => handlePointSelect(rp)}
         onDelete={deleteRestorePoint}
         deletingId={deletingRpId}
         confirmDeleteId={confirmDeleteRpId}
         sizeFor={selectedRestoreSize}
         itemType={commonItemType(selectedItemsArray)}
+        selectedItems={selectedItemsArray}
       />
       <p class="text-xs text-text-dim mt-3 text-center">{restorePoints.length} restore point{restorePoints.length !== 1 ? 's' : ''}</p>
+
+      <!-- Step 2 Continue Button -->
+      <div class="flex items-center justify-between mt-6">
+        <button type="button" onclick={goBack}
+          class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text rounded-lg border border-border bg-surface-2 transition-colors cursor-pointer">
+          Back
+        </button>
+        <button type="button" onclick={() => { if (planComplete) step = 3 }} disabled={!planComplete}
+          class="px-5 py-2 text-sm font-semibold text-white bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
+          Continue
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>
     {/if}
 
   <!-- Step 3: Restore options -->
   {:else if step === 3}
     <div class="mb-4">
       <button type="button" onclick={goBack}
-        class="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors">
+        class="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors cursor-pointer">
         <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         Back to versions
       </button>
     </div>
 
-    <!-- Summary card -->
+    <!-- Summary header -->
     <div class="bg-surface-2 border border-border rounded-xl p-5 mb-6">
-      <h3 class="text-sm font-semibold text-text mb-3">Restore Summary</h3>
+      <h3 class="text-sm font-semibold text-text mb-3">
+        {restoreUnits.length === 1 ? 'Restore Summary' : 'Multi-Job Restore Plan'}
+      </h3>
       <div class="space-y-2 text-sm">
         <div class="flex justify-between">
-          <span class="text-text-muted">Items</span>
+          <span class="text-text-muted">Total Items</span>
           <span class="text-text font-medium">
-            {#if step3Count === 1}
-              {itemDisplayLabel(step3ItemsArray[0])} ({step3ItemsArray[0].type})
-            {:else}
-              {step3Count} items
-            {/if}
+            {selectedCount} item{selectedCount !== 1 ? 's' : ''} across {restoreUnits.length} backup {restoreUnits.length === 1 ? 'job' : 'jobs'}
           </span>
         </div>
-        {#if step3Count > 1}
-          <div class="flex flex-wrap gap-1.5 justify-end">
-            {#each step3ItemsArray as item (itemKey(item))}
-              <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-dim truncate max-w-[150px]" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
-            {/each}
+        {#if restoreUnits.length === 1}
+          {@const unit = restoreUnits[0]}
+          <div class="flex justify-between">
+            <span class="text-text-muted">Job</span>
+            <span class="text-text font-medium">{unit.jobName}</span>
           </div>
-        {/if}
-        <div class="flex justify-between">
-          <span class="text-text-muted">Restore Point</span>
-          <span class="text-text">{formatDate(selectedPoint.created_at)}</span>
-        </div>
-        <div class="flex justify-between">
-          <span class="text-text-muted">Size</span>
-          <span class="text-text">{formatBytes(selectedPoint ? selectedRestoreSize(selectedPoint) : 0)}{selectedPoint && selectedRestoreSize(selectedPoint) !== selectedPoint.size_bytes ? ' (selected items)' : ''}</span>
-        </div>
-        <div class="flex justify-between">
-          <span class="text-text-muted">Backup Type</span>
-          <span class="text-text uppercase text-xs">{selectedPoint.backup_type}</span>
-        </div>
-        <div class="flex justify-between">
-          <span class="text-text-muted">Chain Health</span>
-          <span class="inline-flex items-center gap-1">
-            <span class="text-xs font-medium {chainHealthTone(selectedPoint)}">{chainHealthLabel(selectedPoint)}</span>
-            {#if selectedPoint?.chain_status !== 'broken' && chainDependencies(selectedPoint) > 0}
-              <Tooltip text="Chain length is {selectedPoint.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
-            {/if}
-          </span>
-        </div>
-      </div>
-    </div>
-
-    {#if selectedPoint?.chain_status === 'broken'}
-      <div class="bg-danger/10 border border-danger/30 rounded-xl p-4 mb-4 flex items-start gap-3">
-        <svg aria-hidden="true" class="w-5 h-5 text-danger shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-7.938 4h15.876c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L2.33 16c-.77 1.333.192 3 1.732 3z"/>
-        </svg>
-        <div>
-          <p class="text-sm font-medium text-danger">Restore chain is broken</p>
-          <p class="text-xs text-text-muted mt-0.5">{selectedPoint.chain_warning}</p>
-        </div>
-      </div>
-    {:else if chainDependencies(selectedPoint) > 0}
-      <div class="bg-info/10 border border-info/30 rounded-xl p-4 mb-4 flex items-start gap-3">
-        <svg aria-hidden="true" class="w-5 h-5 text-info shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
-        </svg>
-        <div>
-          <p class="text-sm font-medium text-info">Restore will replay the full chain</p>
-          <p class="text-xs text-text-muted mt-0.5">This point depends on {chainDependencies(selectedPoint)} earlier backup{chainDependencies(selectedPoint) === 1 ? '' : 's'} and Vault will stage them before restoring.</p>
-          {#if selectedPoint?.base_full_created_at}
-            <p class="text-xs text-text-muted mt-0.5">Based on the full backup from {formatDate(selectedPoint.base_full_created_at)}{selectedPoint.base_full_size_bytes ? ` (${formatBytes(selectedPoint.base_full_size_bytes)})` : ''}.</p>
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    {#if selectedPoint?.retention_preserved}
-      <div class="bg-warning/10 border border-warning/30 rounded-xl p-4 mb-4 flex items-start gap-3">
-        <svg aria-hidden="true" class="w-5 h-5 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        <div>
-          <p class="text-sm font-medium text-warning">Retention is preserving this restore point</p>
-          <p class="text-xs text-text-muted mt-0.5">{retentionPreservedMessage(selectedPoint)}</p>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Options -->
-    <div class="space-y-5 mb-6">
-      <!-- Destination: original (default) or a custom path. -->
-      <div>
-        <p class="text-sm font-medium text-text-muted mb-2">Restore destination</p>
-        <div class="space-y-2">
-          <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
-            <input type="radio" name="rw_dest" class="accent-vault" checked={!showDestOverride}
-              onchange={() => { showDestOverride = false; restoreDestination = ''; acknowledgeContainerRemap = false }} />
-            Restore to original location
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
-            <input type="radio" name="rw_dest" class="accent-vault" checked={showDestOverride}
-              onchange={() => { showDestOverride = true }} />
-            Custom destination
-          </label>
-        </div>
-        {#if showDestOverride}
-          <div class="mt-2">
-            <PathBrowser bind:value={restoreDestination} label="Custom restore destination" />
-            <p class="text-xs text-text-dim mt-1">Files will be written under this path instead of their original location.</p>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Restore Point</span>
+            <span class="text-text">{formatDate(unit.point.created_at)}</span>
           </div>
-          {#if hasContainerItem}
-            <div class="mt-3 bg-warning/10 border border-warning/30 rounded-xl p-4">
-              <p class="text-sm font-medium text-warning">This also changes the live container</p>
-              <p class="text-xs text-text-muted mt-1">
-                Restoring a container to a custom destination stops it, removes it, and recreates it with its
-                volume mappings pointed at the new location. The Unraid template is rewritten to match, so the
-                Docker page's Edit form shows the same mappings. The container does not go back to its original
-                paths on its own.
-              </p>
-              <label class="flex items-start gap-2 cursor-pointer text-sm text-text mt-3">
-                <input type="checkbox" class="accent-vault mt-0.5" bind:checked={acknowledgeContainerRemap} />
-                <span>I understand the live container will be recreated and remapped</span>
-              </label>
-            </div>
-          {/if}
-        {/if}
-      </div>
-
-      <!-- Replace vs merge (issue #321). -->
-      <div>
-        <p class="text-sm font-medium text-text-muted mb-2">Existing files at the destination</p>
-        <label class="flex items-start gap-2 cursor-pointer text-sm text-text">
-          <input type="checkbox" class="accent-vault mt-0.5" bind:checked={cleanDestination}
-            disabled={hasPartialSelection} />
-          <span>
-            Clear the destination first
-            <span class="block text-xs text-text-dim mt-0.5">
-              {#if hasPartialSelection}
-                Not available for a partial restore — clearing the destination would delete the files you did not select.
-              {:else if cleanDestination}
-                Anything at the destination that is not in this backup is deleted, so the restored result matches the backup exactly.
-              {:else}
-                The backup is written over the existing files. Anything not in the backup is left where it is.
+          <div class="flex justify-between">
+            <span class="text-text-muted">Size</span>
+            <span class="text-text">{formatBytes(selectedRestoreSize(unit.point, unit.items))}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Backup Type</span>
+            <span class="text-text uppercase text-xs">{unit.point.backup_type}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Chain Health</span>
+            <span class="inline-flex items-center gap-1">
+              <span class="text-xs font-medium {chainHealthTone(unit.point)}">{chainHealthLabel(unit.point)}</span>
+              {#if unit.point?.chain_status !== 'broken' && chainDependencies(unit.point) > 0}
+                <Tooltip text="Chain length is {unit.point.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
               {/if}
-            </span>
-          </span>
-        </label>
-      </div>
-
-      <!-- Passphrase -->
-      {#if needsPassphrase}
-        <div>
-          <label for="rw_passphrase" class="block text-sm font-medium text-text-muted mb-2">Encryption Passphrase</label>
-          <input id="rw_passphrase" type="password" autocomplete="off" bind:value={passphrase}
-            placeholder="Enter the passphrase used to encrypt these backups"
-            class="w-full sm:w-96 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
-          <p class="text-xs text-text-dim mt-1">This backup uses age encryption. A passphrase is required to decrypt.</p>
-        </div>
-      {/if}
-    </div>
-
-    <!-- Per-item file picker (Feature B). Folder/plugin/container-volume
-         items now expose a "Restore specific files…" disclosure that
-         loads the tar index sidecar and lets the user pick which entries
-         to extract. Items with an empty selection restore in full. -->
-    <div class="mb-6 space-y-3">
-      {#each step3ItemsArray as item (itemKey(item))}
-        {@const entry = picker.get(itemKey(item))}
-        {@const sel = entry?.selected?.size || 0}
-        {@const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)}
-        {@const emptyContents = !!entry?.contents && total === 0}
-        {#if !supportsFilePicker(item.type)}
-          <div class="bg-surface-2 border border-border rounded-xl p-3 text-sm flex items-center justify-between gap-3">
-            <span class="flex items-center gap-2 min-w-0">
-              <span class="font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
-              <span class="text-xs text-text-dim shrink-0">({item.type})</span>
-            </span>
-            <span class="text-xs text-text-muted shrink-0">
-              {item.type === 'vm' ? 'Restored in full (disk images, domain XML, NVRAM)' : 'Restored in full'}
             </span>
           </div>
         {:else}
-        <details class="group bg-surface-2 border border-border rounded-xl"
-          open={entry?.open || false}>
-          <summary class="flex items-center justify-between gap-3 cursor-pointer select-none p-3 text-sm"
-            onclick={(e) => { e.preventDefault(); togglePickerOpen(item) }}>
-            <span class="flex items-center gap-2 min-w-0">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              <span class="font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
-              <span class="text-xs text-text-dim shrink-0">({item.type})</span>
-            </span>
-            <span class="text-xs text-text-muted">
-              {#if total > 0}
-                {#if sel === total}
-                  <span class="text-emerald-400 font-medium">All {total} files selected</span>
-                {:else if sel > 0}
-                  <span class="text-amber-400 font-medium">{sel} of {total} files selected</span>
-                {:else}
-                  <span class="text-danger font-medium">0 of {total} files selected (none)</span>
-                {/if}
-              {:else if entry?.error}
-                <span class="text-danger">{entry.error}</span>
-              {:else if entry?.loading}
-                Loading…
-              {:else if emptyContents}
-                No restorable files
-              {:else}
-                Click to browse contents
-              {/if}
-            </span>
-          </summary>
-          {#if entry?.open}
-            <div class="border-t border-border p-3 space-y-2">
-              {#if entry.loading}
-                <p class="text-xs text-text-muted">Loading file list…</p>
-              {:else if entry.error}
-                <p class="text-xs text-danger">{entry.error}</p>
-                <p class="text-xs text-text-muted">This restore point may have been produced before partial restore was added; whole-archive extract will run instead.</p>
-              {:else if !entry.contents}
-                <p class="text-xs text-text-muted">No contents loaded.</p>
-              {:else if emptyContents}
-                <!-- Distinct from an empty filter result: this backup captured
-                     no restorable file for the item at all, so there is
-                     nothing to filter. Most often a container whose volumes
-                     were all excluded, anonymous, or virtual. -->
-                <p class="text-xs text-text-muted">This backup captured no restorable files for this item.</p>
-                {#if item.type === 'container'}
-                  <p class="text-xs text-text-dim">Every volume was excluded by the job, anonymous, or a virtual path. Restoring still recreates the container from its saved configuration and image.</p>
-                {/if}
-              {:else}
-                <div class="flex flex-wrap items-center gap-2">
-                  <input type="text" placeholder="Filter by path…" bind:value={entry.search}
-                    class="flex-1 min-w-40 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-dim focus:outline-none focus:ring-1 focus:ring-vault" />
-                  <button type="button" onclick={() => selectAllFiles(item)}
-                    class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors">Select all</button>
-                  <button type="button" onclick={() => deselectAllFiles(item)}
-                    class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors">Deselect all</button>
-                  <button type="button" onclick={() => expandAllFolders(item)} title="Expand all folders"
-                    class="text-xs px-2 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors">Expand all</button>
-                  <button type="button" onclick={() => collapseAllFolders(item)} title="Collapse all folders"
-                    class="text-xs px-2 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors">Collapse all</button>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+            {#each restoreUnits as unit (unit.jobId)}
+              <div class="bg-surface-3/50 border border-border/60 rounded-lg p-3 text-xs">
+                <div class="flex items-center justify-between font-medium text-text mb-1">
+                  <span>{unit.jobName}</span>
+                  <span class="{chainHealthTone(unit.point)}">{chainHealthLabel(unit.point)}</span>
                 </div>
-                <div class="max-h-72 overflow-y-auto border border-border rounded-lg bg-surface-3/30 p-1">
-                  {#if entry.tree && entry.tree.length > 0}
-                    <FileTree
-                      nodes={entry.tree}
-                      selected={entry.selected}
-                      expandedPaths={entry.expandedPaths}
-                      search={entry.search}
-                      ontoggle={(node) => toggleNodePicked(item, node)}
-                      ontoggleexpand={(dirPath) => toggleFolderExpanded(item, dirPath)}
-                    />
-                  {/if}
+                <div class="text-text-dim text-[11px]">
+                  {unit.items.length} item{unit.items.length !== 1 ? 's' : ''} · {formatDate(unit.point.created_at)} ({formatBytes(selectedRestoreSize(unit.point, unit.items))})
                 </div>
-                {#if sel === total && total > 0}
-                  <p class="text-xs text-text-muted">All {total} files selected. Entire backup will be restored.</p>
-                {:else if sel > 0 && sel < total}
-                  <p class="text-xs text-info">Partial restore: restoring {sel} of {total} selected files.</p>
-                {:else if sel === 0 && total > 0}
-                  <p class="text-xs text-danger font-medium">No files selected. You must select at least one file to restore, or remove {item.name} from the restore in Step 1.</p>
-                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Render configuration per unit -->
+    {#each restoreUnits as unit (unit.jobId)}
+      {@const s = getUnitSettings(unit.jobId)}
+      {@const hasContainer = unit.items.some(item => item.type === 'container')}
+      {@const hasPartial = unitHasPartialSelection(unit)}
+      {@const unitEmpty = unitHasEmptySelection(unit)}
+      {@const needsAgePassphrase = unit.point?.encryption === 'age'}
+      {@const isBroken = unit.point?.chain_status === 'broken'}
+      {@const fresh = isUnitPreflightFresh(unit)}
+      {@const preflight = s.preflightResult}
+
+      <div class="bg-surface-2 border border-border rounded-xl p-5 mb-6 space-y-5">
+        {#if restoreUnits.length > 1}
+          <div class="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-2">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-bold text-text">{unit.jobName}</span>
+              <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-dim font-medium uppercase">{unit.point.backup_type}</span>
+              <span class="text-xs text-text-dim">({formatDate(unit.point.created_at)})</span>
+            </div>
+            <span class="text-xs font-medium {chainHealthTone(unit.point)}">{chainHealthLabel(unit.point)}</span>
+          </div>
+        {/if}
+
+        <!-- Broken chain alert -->
+        {#if isBroken}
+          <div class="bg-danger/10 border border-danger/30 rounded-xl p-4 flex items-start gap-3">
+            <svg aria-hidden="true" class="w-5 h-5 text-danger shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-7.938 4h15.876c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L2.33 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+            <div>
+              <p class="text-sm font-medium text-danger">Restore chain is broken for {unit.jobName}</p>
+              <p class="text-xs text-text-muted mt-0.5">{unit.point.chain_warning}</p>
+              <button type="button" onclick={() => { step = 2 }}
+                class="mt-2 text-xs font-semibold text-danger hover:underline cursor-pointer">
+                ← Return to Step 2 to choose a different version for {unit.jobName}
+              </button>
+            </div>
+          </div>
+        {:else if chainDependencies(unit.point) > 0}
+          <div class="bg-info/10 border border-info/30 rounded-xl p-4 flex items-start gap-3">
+            <svg aria-hidden="true" class="w-5 h-5 text-info shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+            </svg>
+            <div>
+              <p class="text-sm font-medium text-info">Restore will replay the full chain</p>
+              <p class="text-xs text-text-muted mt-0.5">This point depends on {chainDependencies(unit.point)} earlier backup{chainDependencies(unit.point) === 1 ? '' : 's'} and Vault will stage them before restoring.</p>
+              {#if unit.point?.base_full_created_at}
+                <p class="text-xs text-text-muted mt-0.5">Based on the full backup from {formatDate(unit.point.base_full_created_at)}{unit.point.base_full_size_bytes ? ` (${formatBytes(unit.point.base_full_size_bytes)})` : ''}.</p>
               {/if}
             </div>
-          {/if}
-        </details>
+          </div>
         {/if}
-      {/each}
-    </div>
+
+        {#if unit.point?.retention_preserved}
+          <div class="bg-warning/10 border border-warning/30 rounded-xl p-4 flex items-start gap-3">
+            <svg aria-hidden="true" class="w-5 h-5 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <div>
+              <p class="text-sm font-medium text-warning">Retention is preserving this restore point</p>
+              <p class="text-xs text-text-muted mt-0.5">{retentionPreservedMessage(unit.point)}</p>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Assigned items pill badges -->
+        <div>
+          <p class="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">Items to restore</p>
+          <div class="flex items-center gap-2 flex-wrap">
+            {#each unit.items as item (itemKey(item))}
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-3 text-xs text-text font-medium">
+                <svg aria-hidden="true" class="w-3.5 h-3.5 {itemTypeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={itemTypeIcon(item.type)}/></svg>
+                {itemDisplayLabel(item)}
+                <span class="text-text-dim">({item.type})</span>
+              </span>
+            {/each}
+          </div>
+        </div>
+
+        <!-- Destination options -->
+        <div>
+          <p class="text-sm font-medium text-text-muted mb-2">Restore destination</p>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
+              <input type="radio" name="rw_dest_{unit.jobId}" class="accent-vault" checked={!s.showDestOverride}
+                onchange={() => updateUnitSetting(unit.jobId, { showDestOverride: false, restoreDestination: '', acknowledgeContainerRemap: false })} />
+              Restore to original location
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
+              <input type="radio" name="rw_dest_{unit.jobId}" class="accent-vault" checked={s.showDestOverride}
+                onchange={() => updateUnitSetting(unit.jobId, { showDestOverride: true })} />
+              Custom destination
+            </label>
+          </div>
+          {#if s.showDestOverride}
+            <div class="mt-2">
+              <PathBrowser
+                bind:value={() => s.restoreDestination, (v) => updateUnitSetting(unit.jobId, { restoreDestination: v })}
+                onselect={(v) => updateUnitSetting(unit.jobId, { restoreDestination: v })}
+                label="Custom restore destination"
+              />
+              <p class="text-xs text-text-dim mt-1">Files for {unit.jobName} will be written under this path instead of their original location.</p>
+            </div>
+            {#if hasContainer}
+              <div class="mt-3 bg-warning/10 border border-warning/30 rounded-xl p-4">
+                <p class="text-sm font-medium text-warning">This also changes the live container</p>
+                <p class="text-xs text-text-muted mt-1">
+                  Restoring a container to a custom destination stops it, removes it, and recreates it with its
+                  volume mappings pointed at the new location. The Unraid template is rewritten to match.
+                </p>
+                <label class="flex items-start gap-2 cursor-pointer text-sm text-text mt-3">
+                  <input type="checkbox" class="accent-vault mt-0.5" checked={s.acknowledgeContainerRemap}
+                    onchange={(e) => updateUnitSetting(unit.jobId, { acknowledgeContainerRemap: e.target.checked })} />
+                  <span>I understand the live container will be recreated and remapped</span>
+                </label>
+              </div>
+            {/if}
+          {/if}
+        </div>
+
+        <!-- Replace vs merge -->
+        <div>
+          <p class="text-sm font-medium text-text-muted mb-2">Existing files at destination</p>
+          <label class="flex items-start gap-2 cursor-pointer text-sm text-text">
+            <input type="checkbox" class="accent-vault mt-0.5" checked={s.cleanDestination}
+              disabled={hasPartial}
+              onchange={(e) => updateUnitSetting(unit.jobId, { cleanDestination: e.target.checked })} />
+            <span>
+              Clear the destination first
+              <span class="block text-xs text-text-dim mt-0.5">
+                {#if hasPartial}
+                  Not available for a partial restore — clearing the destination would delete files you did not select.
+                {:else if s.cleanDestination}
+                  Anything at the destination not in this backup is deleted, so the restored result matches the backup exactly.
+                {:else}
+                  The backup is written over existing files. Anything not in the backup is left where it is.
+                {/if}
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <!-- Passphrase if age encrypted -->
+        {#if needsAgePassphrase}
+          <div>
+            <label for="rw_passphrase_{unit.jobId}" class="block text-sm font-medium text-text-muted mb-2">Encryption Passphrase ({unit.jobName})</label>
+            <input id="rw_passphrase_{unit.jobId}" type="password" autocomplete="off" value={s.passphrase}
+              oninput={(e) => updateUnitSetting(unit.jobId, { passphrase: e.target.value })}
+              placeholder="Enter passphrase used to encrypt this backup"
+              class="w-full sm:w-96 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            <p class="text-xs text-text-dim mt-1">This backup uses age encryption. A passphrase is required to decrypt.</p>
+          </div>
+        {/if}
+
+        <!-- Partial file picker for items in this unit -->
+        <div class="space-y-3 pt-2">
+          {#each unit.items as item (itemKey(item))}
+            {@const entry = picker.get(itemKey(item))}
+            {@const sel = entry?.selected?.size || 0}
+            {@const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)}
+            {@const emptyContents = !!entry?.contents && total === 0}
+            {#if !supportsFilePicker(item.type)}
+              <div class="bg-surface-1 border border-border rounded-xl p-3 text-sm flex items-center justify-between gap-3">
+                <span class="flex items-center gap-2 min-w-0">
+                  <span class="font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
+                  <span class="text-xs text-text-dim shrink-0">({item.type})</span>
+                </span>
+                <span class="text-xs text-text-muted shrink-0">
+                  {item.type === 'vm' ? 'Restored in full (disk images, domain XML, NVRAM)' : 'Restored in full'}
+                </span>
+              </div>
+            {:else}
+              <details class="group bg-surface-1 border border-border rounded-xl" open={entry?.open || false}>
+                <summary class="flex items-center justify-between gap-3 cursor-pointer select-none p-3 text-sm"
+                  onclick={(e) => { e.preventDefault(); togglePickerOpen(item) }}>
+                  <span class="flex items-center gap-2 min-w-0">
+                    <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    <span class="font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
+                    <span class="text-xs text-text-dim shrink-0">({item.type})</span>
+                  </span>
+                  <span class="text-xs text-text-muted">
+                    {#if total > 0}
+                      {#if sel === total}
+                        <span class="text-emerald-400 font-medium">All {total} files selected</span>
+                      {:else if sel > 0}
+                        <span class="text-amber-400 font-medium">{sel} of {total} files selected</span>
+                      {:else}
+                        <span class="text-danger font-medium">0 of {total} files selected (none)</span>
+                      {/if}
+                    {:else if entry?.error}
+                      <span class="text-danger">{entry.error}</span>
+                    {:else if entry?.loading}
+                      Loading…
+                    {:else if emptyContents}
+                      No restorable files
+                    {:else}
+                      Click to browse contents
+                    {/if}
+                  </span>
+                </summary>
+                {#if entry?.open}
+                  <div class="border-t border-border p-3 space-y-2">
+                    {#if entry.loading}
+                      <p class="text-xs text-text-muted">Loading file list…</p>
+                    {:else if entry.error}
+                      <p class="text-xs text-danger">{entry.error}</p>
+                      <p class="text-xs text-text-muted">Whole-archive extract will run instead.</p>
+                    {:else if !entry.contents}
+                      <p class="text-xs text-text-muted">No contents loaded.</p>
+                    {:else if emptyContents}
+                      <p class="text-xs text-text-muted">This backup captured no restorable files for this item.</p>
+                    {:else}
+                      <div class="flex flex-wrap items-center gap-2">
+                        <input type="text" placeholder="Filter by path…" bind:value={entry.search}
+                          class="flex-1 min-w-40 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-dim focus:outline-none focus:ring-1 focus:ring-vault" />
+                        <button type="button" onclick={() => selectAllFiles(item)}
+                          class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Select all</button>
+                        <button type="button" onclick={() => deselectAllFiles(item)}
+                          class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Deselect all</button>
+                        <button type="button" onclick={() => expandAllFolders(item)} title="Expand all folders"
+                          class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Expand all</button>
+                        <button type="button" onclick={() => collapseAllFolders(item)} title="Collapse all folders"
+                          class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Collapse all</button>
+                      </div>
+                      <div class="max-h-72 overflow-y-auto border border-border rounded-lg bg-surface-3/30 p-1">
+                        {#if entry.tree && entry.tree.length > 0}
+                          <FileTree
+                            nodes={entry.tree}
+                            selected={entry.selected}
+                            expandedPaths={entry.expandedPaths}
+                            search={entry.search}
+                            ontoggle={(node) => toggleNodePicked(item, node)}
+                            ontoggleexpand={(dirPath) => toggleFolderExpanded(item, dirPath)}
+                          />
+                        {/if}
+                      </div>
+                      {#if sel === total && total > 0}
+                        <p class="text-xs text-text-muted">All {total} files selected. Entire backup will be restored.</p>
+                      {:else if sel > 0 && sel < total}
+                        <p class="text-xs text-info">Partial restore: restoring {sel} of {total} selected files.</p>
+                      {:else if sel === 0 && total > 0}
+                        <p class="text-xs text-danger font-medium">No files selected. You must select at least one file to restore, or remove {item.name} from the restore in Step 1.</p>
+                      {/if}
+                    {/if}
+                  </div>
+                {/if}
+              </details>
+            {/if}
+          {/each}
+        </div>
+
+        {#if unitEmpty}
+          <p class="text-xs text-danger font-medium">One or more items have 0 files selected. Please select at least one file or remove the item in Step 1.</p>
+        {/if}
+
+        <!-- Preflight card per unit -->
+        <div class="bg-surface-1 border border-border rounded-xl p-4">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <p class="text-sm font-medium text-text">Pre-flight checks ({unit.jobName})</p>
+              <p class="text-xs text-text-dim mt-0.5">Confirm backup can be restored before starting.</p>
+            </div>
+            <button type="button" onclick={() => runPreflight(unit)} disabled={s.preflightRunning || (needsAgePassphrase && !s.passphrase)}
+              class="text-xs px-3 py-1.5 rounded-lg border border-border text-text-muted hover:text-text hover:border-vault/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer inline-flex items-center gap-1.5 shrink-0">
+              {#if s.preflightRunning}
+                <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Checking…
+              {:else}
+                {preflight && fresh ? 'Re-check' : 'Run checks'}
+              {/if}
+            </button>
+          </div>
+          {#if preflight && !fresh}
+            <p class="mt-3 text-xs text-text-dim">Inputs changed since the last check. Run the checks again.</p>
+          {:else if preflight}
+            <ul class="mt-3 space-y-1.5">
+              {#each preflight.checks as c (c.id)}
+                <li class="flex items-start gap-2 text-xs">
+                  <span class="mt-0.5 shrink-0 {c.status === 'ok' ? 'text-success' : c.status === 'fail' ? 'text-danger' : c.status === 'warn' ? 'text-warning' : 'text-text-dim'}">
+                    {#if c.status === 'ok'}
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="passed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                    {:else if c.status === 'fail'}
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="failed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                    {:else if c.status === 'warn'}
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="warning"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                    {:else}
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="skipped"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6"/></svg>
+                    {/if}
+                  </span>
+                  <span class="text-text">{c.label}</span>
+                  {#if c.detail}<span class="text-text-dim">· {c.detail}</span>{/if}
+                </li>
+              {/each}
+            </ul>
+            {#if !preflight.ok}
+              <p class="text-xs text-danger mt-2">Resolve the failing checks above, then re-check before restoring.</p>
+            {/if}
+          {/if}
+        </div>
+      </div>
+    {/each}
 
     <!-- Warning banner -->
     <div class="bg-warning/10 border border-warning/30 rounded-xl p-4 mb-6 flex items-start gap-3">
@@ -1280,91 +1780,31 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
       </svg>
       <div>
-        <p class="text-sm font-medium text-warning">
-          {cleanDestination && !hasPartialSelection ? 'This will delete and replace existing data' : 'This will overwrite existing data'}
-        </p>
-        <p class="text-xs text-text-muted mt-0.5">Restoring will replace current files for
-          {#if selectedCount === 1}
-            <strong class="text-text" title={itemDisplayLabel(selectedItemsArray[0])}>{itemDisplayLabel(selectedItemsArray[0])}</strong>
-          {:else}
-            <strong class="text-text">{selectedCount} selected items</strong>
-          {/if}
-          {#if restoreTargetPath?.path}
-            at <code class="text-text font-mono break-all">{restoreTargetPath.path}</code>
-          {:else if restoreTargetPath?.original}
-            at its original location
-          {/if}
-          with the backup version.
-          {#if cleanDestination && !hasPartialSelection}
-            Everything else already at that location is deleted first.
-          {:else}
-            Files that are not in the backup are left where they are.
-          {/if}
+        <p class="text-sm font-medium text-warning">This will overwrite existing data</p>
+        <p class="text-xs text-text-muted mt-0.5">
+          Restoring will replace current files for
+          <strong class="text-text">{selectedCount} selected item{selectedCount !== 1 ? 's' : ''}</strong>
+          with their backup versions. Files that are not in the backups are left where they are unless destination clearing is active.
         </p>
       </div>
     </div>
 
-    <!-- Pre-flight checks -->
-    <div class="bg-surface-2 border border-border rounded-xl p-4 mb-4">
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <p class="text-sm font-medium text-text">Pre-flight checks</p>
-          <p class="text-xs text-text-dim mt-0.5">Confirm the backup can be restored before starting.</p>
-        </div>
-        <button type="button" onclick={runPreflight} disabled={preflightRunning || (needsPassphrase && !passphrase)}
-          class="text-xs px-3 py-1.5 rounded-lg border border-border text-text-muted hover:text-text hover:border-vault/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer inline-flex items-center gap-1.5 shrink-0">
-          {#if preflightRunning}
-            <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-            Checking…
-          {:else}
-            {preflightResult && preflightFresh ? 'Re-check' : 'Run checks'}
-          {/if}
-        </button>
-      </div>
-      {#if preflightResult && !preflightFresh}
-        <p class="mt-3 text-xs text-text-dim">Inputs changed since the last check. Run the checks again.</p>
-      {:else if preflightResult}
-        <ul class="mt-3 space-y-1.5">
-          {#each preflightResult.checks as c (c.id)}
-            <li class="flex items-start gap-2 text-xs">
-              <span class="mt-0.5 shrink-0 {c.status === 'ok' ? 'text-success' : c.status === 'fail' ? 'text-danger' : c.status === 'warn' ? 'text-warning' : 'text-text-dim'}">
-                {#if c.status === 'ok'}
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="passed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
-                {:else if c.status === 'fail'}
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="failed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
-                {:else if c.status === 'warn'}
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="warning"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-                {:else}
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="skipped"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6"/></svg>
-                {/if}
-              </span>
-              <span class="text-text">{c.label}</span>
-              {#if c.detail}<span class="text-text-dim">· {c.detail}</span>{/if}
-            </li>
-          {/each}
-        </ul>
-        {#if !preflightResult.ok}
-          <p class="text-xs text-danger mt-2">Resolve the failing checks above, then re-check before restoring.</p>
-        {/if}
-      {/if}
-    </div>
-
-    <!-- Restore and Mount actions -->
+    <!-- Actions bar -->
     <div class="flex items-center gap-4 flex-wrap">
       <button type="button" onclick={doRestore}
-        disabled={isRestoreRunning || hasEmptySelection || selectedPoint?.chain_status === 'broken' || (needsPassphrase && !passphrase) || (needsRemapAcknowledgement && !acknowledgeContainerRemap) || !(preflightResult?.ok && preflightFresh)}
+        disabled={!canStartRestore}
         class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
         {#if isRestoreRunning}
           <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
           Restoring...
         {:else}
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-          Start Restore
+          Start Restore {restoreUnits.length > 1 ? `(${restoreUnits.length} Jobs)` : ''}
         {/if}
       </button>
 
-      {#if isDeduplicated}
-        <button type="button" onclick={doMount} disabled={mounting || isRestoreRunning || !!mountedSession}
+      {#if isDeduplicated && restoreUnits.length === 1}
+        <button type="button" onclick={() => doMount(restoreUnits[0])} disabled={mounting || isRestoreRunning || !!mountedSession}
           class="w-full sm:w-auto px-4 py-2.5 text-sm font-medium text-text bg-surface-3 hover:bg-surface-4 border border-border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
           {#if mounting}
             <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -1376,15 +1816,21 @@
         </button>
       {/if}
 
-      {#if preflightResult && preflightFresh && !preflightResult.ok && !isRestoreRunning && selectedPoint?.chain_status !== 'broken'}
+      {#if allUnitsPreflightFresh && !allUnitsPreflightPassing && !isRestoreRunning && !restoreUnits.some(u => u.point?.chain_status === 'broken')}
         <button type="button"
-          disabled={hasEmptySelection || (needsRemapAcknowledgement && !acknowledgeContainerRemap)}
-          onclick={() => { if (window.confirm('Pre-flight checks did not all pass. Restore anyway?')) doRestore() }}
-          class="text-xs text-text-dim hover:text-text underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline">Restore anyway</button>
-      {:else if !isRestoreRunning && !(preflightResult && preflightFresh) && selectedPoint?.chain_status !== 'broken'}
-        <p class="text-xs text-text-dim">Run the pre-flight checks above to enable Start Restore.</p>
+          disabled={!canRestoreAnyway}
+          onclick={handleRestoreAnyway}
+          class="text-xs text-text-dim hover:text-text underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline">
+          Restore anyway
+        </button>
+      {:else if !isRestoreRunning && !allUnitsPreflightFresh && !restoreUnits.some(u => u.point?.chain_status === 'broken')}
+        <button type="button" onclick={runAllPreflights} disabled={anyUnitPreflightRunning}
+          class="text-xs text-text-dim hover:text-text underline cursor-pointer">
+          Run all pre-flight checks to enable Start Restore
+        </button>
       {/if}
     </div>
+
     {#if mountedSession}
       <div class="bg-surface-2 border border-emerald-500/40 rounded-xl p-4 mt-4 flex items-start justify-between gap-3">
         <div class="flex items-start gap-3">
@@ -1407,11 +1853,8 @@
     {#if mountError}
       <p class="text-xs text-danger font-medium mt-2">{mountError}</p>
     {/if}
-    {#if hasEmptySelection}
-      <p class="text-xs text-danger font-medium mt-2">One or more items have 0 files selected. Please select at least one file to restore, or remove the item in Step 1.</p>
-    {/if}
 
-    <!-- Live Restore Progress Bar -->
+    <!-- Live Restore Progress Bar & Unit Rows -->
     {#if isRestoreRunning}
       {@const progressItems = Object.entries(progress.itemProgress)}
       {@const activeItemPct = progressItems.reduce((maxPct, [, info]) => info.status === 'running' ? Math.max(maxPct, info.percent || 0) : maxPct, 0)}
@@ -1447,6 +1890,34 @@
         {/if}
         {#if progress.phaseMessage}
           <p class="text-xs text-warning animate-pulse mt-1.5">{progress.phaseMessage}</p>
+        {/if}
+
+        <!-- Per-unit status rows -->
+        {#if restoreUnits.length > 1}
+          <div class="mt-4 pt-3 border-t border-border space-y-2">
+            {#each restoreUnits as unit (unit.jobId)}
+              {@const run = unitRuns.get(unit.jobId)}
+              <div class="flex items-center justify-between text-xs p-2.5 rounded-lg bg-surface-3">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="font-medium text-text truncate">{unit.jobName}</span>
+                  <span class="text-text-dim shrink-0">({unit.items.length} items)</span>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  {#if !run || run.state === 'queued'}
+                    <span class="px-2 py-0.5 rounded-full bg-surface-4 text-text-dim font-medium">Queued</span>
+                  {:else if run.state === 'running'}
+                    <span class="px-2 py-0.5 rounded-full bg-vault/20 text-vault font-medium animate-pulse">Running</span>
+                  {:else if run.state === 'completed'}
+                    <span class="px-2 py-0.5 rounded-full bg-success/20 text-success font-medium">Completed ({run.done}/{run.total})</span>
+                  {:else if run.state === 'partial'}
+                    <span class="px-2 py-0.5 rounded-full bg-warning/20 text-warning font-medium">Partial ({run.done}/{run.total})</span>
+                  {:else if run.state === 'failed' || run.state === 'rejected'}
+                    <span class="px-2 py-0.5 rounded-full bg-danger/20 text-danger font-medium" title={run.error || ''}>Failed</span>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}
@@ -1497,15 +1968,17 @@
     {/if}
 
     <!-- Live Restore Logs -->
-    {#if restoreLogs.length > 0}
+    {#if restoreLogs.length > 0 || Array.from(unitRuns.values()).some(u => u.runId)}
       <div class="bg-surface-2 border border-border rounded-xl p-4 mt-4">
-        <div class="flex items-center justify-between mb-2.5">
+        <div class="flex items-center justify-between mb-2.5 flex-wrap gap-2">
           <div class="flex items-center gap-2">
             <svg aria-hidden="true" class="w-4 h-4 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
             <span class="text-xs font-semibold text-text">Restore Log</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-3 text-text-dim font-medium tabular-nums">{restoreLogs.length}</span>
+            {#if restoreLogs.length > 0}
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-3 text-text-dim font-medium tabular-nums">{restoreLogs.length}</span>
+            {/if}
           </div>
           {#if isRestoreRunning}
             <span class="flex items-center gap-1.5 text-[11px] text-vault font-medium">
@@ -1514,14 +1987,31 @@
             </span>
           {/if}
         </div>
+
+        {#if restoreUnits.length > 1 && Array.from(unitRuns.values()).some(u => u.runId)}
+          <div class="flex items-center gap-1.5 mb-3 flex-wrap border-b border-border/50 pb-2">
+            <span class="text-[11px] text-text-dim mr-1">Log source:</span>
+            {#each Array.from(unitRuns.values()).filter(u => u.runId) as u (u.jobId)}
+              <button type="button" onclick={() => switchLogUnit(u)}
+                class="text-xs px-2.5 py-1 rounded-lg transition-colors cursor-pointer {selectedLogUnitJobId === u.jobId ? 'bg-vault text-white font-medium' : 'bg-surface-3 text-text-muted hover:text-text'}">
+                {u.jobName}
+              </button>
+            {/each}
+          </div>
+        {/if}
+
         <div bind:this={logContainerEl} class="max-h-56 overflow-y-auto bg-surface-1 border border-border rounded-lg p-3 font-mono text-xs space-y-1.5 select-text">
-          {#each restoreLogs as entry (entry.id)}
-            <div class="flex items-baseline gap-2">
-              <span class="text-text-dim text-[10px] shrink-0 tabular-nums">{timeOnly(entry.ts)}</span>
-              <span class="text-[10px] px-1 py-0.5 rounded uppercase font-semibold shrink-0 {entry.level === 'error' ? 'bg-danger/20 text-danger' : entry.level === 'warn' ? 'bg-warning/20 text-warning' : 'bg-surface-3 text-text-dim'}">{entry.level}</span>
-              <span class="text-text-muted break-all flex-1 {entry.level === 'error' ? 'text-danger' : ''}">{entry.message}</span>
-            </div>
-          {/each}
+          {#if restoreLogs.length === 0}
+            <p class="text-text-dim">Waiting for logs…</p>
+          {:else}
+            {#each restoreLogs as entry (entry.id)}
+              <div class="flex items-baseline gap-2">
+                <span class="text-text-dim text-[10px] shrink-0 tabular-nums">{timeOnly(entry.ts)}</span>
+                <span class="text-[10px] px-1 py-0.5 rounded uppercase font-semibold shrink-0 {entry.level === 'error' ? 'bg-danger/20 text-danger' : entry.level === 'warn' ? 'bg-warning/20 text-warning' : 'bg-surface-3 text-text-dim'}">{entry.level}</span>
+                <span class="text-text-muted break-all flex-1 {entry.level === 'error' ? 'text-danger' : ''}">{entry.message}</span>
+              </div>
+            {/each}
+          {/if}
         </div>
       </div>
     {/if}

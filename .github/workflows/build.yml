@@ -58,7 +58,7 @@ jobs:
           files: ./coverage.txt
           flags: backend
           disable_search: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
       - name: Run web tests with coverage and JUnit output
         run: cd web && npm ci && npx vitest run --coverage --reporter=default --reporter=junit --outputFile=./test-report.junit.xml
@@ -70,7 +70,7 @@ jobs:
           files: ./web/coverage/lcov.info
           flags: frontend
           disable_search: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}

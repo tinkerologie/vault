@@ -1825,6 +1825,41 @@ func TestRestore_UnknownItemInList(t *testing.T) {
 	}
 }
 
+func TestRestore_ItemNotInRestorePointMetadata(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	id := seedJob(t, d)
+
+	// Add two items to the job
+	seedJobItem(t, d, id, "folder", "item1")
+	seedJobItem(t, d, id, "folder", "item2")
+
+	// Restore point metadata records only item1
+	meta := `{"item_sizes":{"item1":1024}}`
+	runID, _ := d.CreateJobRun(db.JobRun{JobID: id, Status: "success", BackupType: "full"})
+	rpID, _ := d.CreateRestorePoint(db.RestorePoint{
+		JobRunID:   runID,
+		JobID:      id,
+		BackupType: "full",
+		Metadata:   meta,
+	})
+
+	// Request restoring both items
+	body, _ := json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"items":            []string{"item1", "item2"},
+	})
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
+	h.Restore(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "item2 is not in this restore point") {
+		t.Fatalf("expected error mentioning item2 is not in this restore point, got: %s", w.Body.String())
+	}
+}
+
 func TestRestorePreflight_RejectsUnsafeDestination(t *testing.T) {
 	h, d := newJobHandlerDB(t)
 	id := seedJob(t, d)

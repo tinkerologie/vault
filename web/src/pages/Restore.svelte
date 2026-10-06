@@ -48,12 +48,14 @@
           const total = msg.items_total || msg.items_done || 0
           const done = msg.items_done || 0
           const failed = msg.items_failed || 0
+          const job = jobs.find(j => j.id === msg.job_id)
+          const jobSuffix = job?.name ? ` for ${job.name}` : msg.job_id ? ` (Job #${msg.job_id})` : ''
           if (msg.status === 'completed') {
-            showToast(`Restore completed successfully (${done}/${total} items restored)`, 'success')
+            showToast(`Restore completed successfully${jobSuffix} (${done}/${total} items restored)`, 'success')
           } else if (msg.status === 'partial') {
-            showToast(`Restore partially completed (${done}/${total} restored, ${failed} failed)`, 'warning')
+            showToast(`Restore partially completed${jobSuffix} (${done}/${total} restored, ${failed} failed)`, 'warning')
           } else {
-            showToast(`Restore failed (${failed} items failed)`, 'error')
+            showToast(`Restore failed${jobSuffix} (${failed} items failed)`, 'error')
           }
         }
       } else if (msg.type === 'import_completed') {
@@ -74,13 +76,17 @@
   }
 
   async function handleRestore(jobId, payload) {
+    const job = jobs.find(j => j.id === jobId)
+    const jobLabel = job?.name ? ` in ${job.name}` : ` (Job #${jobId})`
     try {
       await api.restoreJob(jobId, payload)
       const count = payload.items?.length || 1
       const label = count === 1 ? (payload.items?.[0] || payload.item_name) : `${count} items`
-      showToast(`Restore started for ${label}`, 'success')
+      showToast(`Restore started for ${label}${jobLabel}`, 'success')
+      return { ok: true }
     } catch (e) {
-      showToast(`Restore failed: ${e.message}`, 'error')
+      showToast(`Restore failed${jobLabel}: ${e.message}`, 'error')
+      return { ok: false, error: e.message }
     }
   }
 

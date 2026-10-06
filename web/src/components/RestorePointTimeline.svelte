@@ -1,10 +1,12 @@
 <script>
   import { formatBytes, formatDate, relTime, itemTypeCountLabel } from '../lib/utils.js'
+  import { getPointCoverage } from '../lib/restore-plan.js'
   import Tooltip from './Tooltip.svelte'
 
   let {
     points = [],
     selectedId = null,
+    chosenPoints = null,
     recommendedId = null,
     onSelect,
     onDelete,
@@ -14,7 +16,25 @@
     sizeFor,
     /** Optional item type for type-specific nouns in count labels */
     itemType = '',
+    selectedItems = [],
   } = $props()
+
+  function isSelected(rp) {
+    if (rp.id === selectedId) return true
+    if (chosenPoints) {
+      if (chosenPoints instanceof Set) return chosenPoints.has(rp.id)
+      if (chosenPoints instanceof Map) {
+        const chosen = chosenPoints.get(rp.jobId ?? rp.job_id)
+        return chosen?.id === rp.id || chosen === rp.id
+      }
+      if (Array.isArray(chosenPoints)) return chosenPoints.includes(rp.id)
+      if (typeof chosenPoints === 'object') {
+        const chosen = chosenPoints[rp.jobId ?? rp.job_id]
+        return chosen?.id === rp.id || chosen === rp.id
+      }
+    }
+    return false
+  }
 
   function parseMeta(rp) {
     if (!rp?.metadata) return {}
@@ -138,17 +158,18 @@
       <div class="space-y-1.5 border-l border-border pl-4 ml-1">
         {#each day.points as rp (rp.id)}
           {@const meta = parseMeta(rp)}
-          {@const selected = rp.id === selectedId}
+          {@const selected = isSelected(rp)}
           {@const recommended = rp.id === recommendedId}
           {@const dsz = displaySize(rp)}
           {@const itemCount = itemCountOf(rp)}
+          {@const coverage = selectedItems.length > 0 ? getPointCoverage(rp, selectedItems) : null}
           <div
             role="button"
             tabindex="0"
             onclick={() => onSelect?.(rp)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(rp) } }}
             class="relative bg-surface-2 border rounded-lg p-3 cursor-pointer transition-all hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-vault/50
-              {selected ? 'border-vault' : recommended ? 'border-vault/40 hover:border-vault/60' : 'border-border hover:border-vault/30'}"
+              {selected ? 'border-vault ring-1 ring-vault' : recommended ? 'border-vault/40 hover:border-vault/60' : 'border-border hover:border-vault/30'}"
           >
             <!-- timeline node -->
             <span class="absolute -left-[1.30rem] top-4 w-2.5 h-2.5 rounded-full border-2 {dotClass(rp)}" aria-hidden="true"></span>
@@ -157,6 +178,12 @@
               <div class="flex items-center gap-2 min-w-0 flex-wrap">
                 <span class="text-sm font-medium text-text tabular-nums">{timeLabel(new Date(rp.created_at))}</span>
                 <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium uppercase bg-vault/10 text-vault">{rp.backup_type}</span>
+                {#if selected}
+                  <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-vault text-white font-medium">Selected</span>
+                {/if}
+                {#if rp.jobName}
+                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-3 text-text font-medium">{rp.jobName}</span>
+                {/if}
                 {#if recommended}
                   <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-success/15 text-success font-medium">Recommended</span>
                 {/if}
@@ -206,11 +233,36 @@
               {:else}
                 <span title="Backup archive size"><span class="text-text-muted">Size:</span> {formatBytes(rp.size_bytes)}</span>
               {/if}
-              {#if rp.jobName}<span class="text-text-muted truncate">{rp.jobName}</span>{/if}
               {#if itemCount != null}
                 <span>{itemTypeCountLabel(itemCount, itemType)}</span>
               {/if}
             </div>
+
+            {#if coverage}
+              <div class="mt-2 text-xs">
+                {#if coverage.isLegacy}
+                  <div class="text-text-dim flex items-center gap-1.5">
+                    <span class="px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">Item list not recorded for this backup</span>
+                  </div>
+                {:else if selectedItems.length > 0}
+                  {#if coverage.coversAll}
+                    <span class="text-emerald-400 font-medium">Contains all {coverage.coverageCount} selected items</span>
+                  {:else}
+                    <span class="text-amber-400 font-medium">Contains {coverage.coverageCount} of {coverage.totalSelected} selected items</span>
+                  {/if}
+                {/if}
+                {#if selectedItems.length > 0 && coverage.missingItems.length > 0}
+                  <div class="mt-1 space-y-0.5 text-text-dim">
+                    {#each coverage.missingItems as missing (`${missing.item?.type || missing.item?.item_type || 'item'}:${missing.name}`)}
+                      <div>
+                        <span class="text-text-muted">{missing.name}:</span>
+                        <span>{missing.reason}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
 
             {#if rp.chain_status === 'broken'}
               <p class="mt-2 text-xs text-danger">{rp.chain_warning}</p>

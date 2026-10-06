@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-job item restores in restore wizard (#438):** The restore wizard now supports restoring selected items across different backup jobs in a single restore flow. In Step 2, restore points are aggregated across all relevant jobs with visible source job badges, item coverage counts, missing item explanations, and legacy membership indicators. Users can choose one restore point per source job, view a real-time coverage plan, and use one-click recovery actions to remove uncovered items. In Step 3, restore units are reviewed with scoped destination overrides, passphrases, clean destination controls, and per-unit pre-flight checks, followed by sequential execution and live multi-unit progress tracking. Closes #438.
+
+- **Headless Playwright browser regression test suite:** Added an end-to-end browser testing suite with GitHub Actions CI workflow (`playwright.yml`) and deterministic REST/WebSocket mocks (`tests/mocks/vault-api.ts`), validating desktop shell navigation and multi-job restore wizard flows headless without requiring a live Unraid host.
+
 ## [v2026.09.01] - 2026-09-28
 
 ### Added

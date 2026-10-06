@@ -289,6 +289,27 @@ This removes both the backup files from storage and the restore point record fro
 
 ---
 
+## Restoring Across Backup Jobs
+
+The Restore wizard supports selecting items that belong to different backup jobs (for example, restoring containers from an appdata job together with a VM from a virtualisation job):
+
+1. **Step 1 (Select Items):** Select any combination of backed-up items across different jobs.
+2. **Step 2 (Choose Versions):** The timeline aggregates restore points from each backup job covering your selected items:
+   - Each restore point indicates its source job name and a coverage label (such as _"Contains 2 of 3 selected items"_ or _"Contains all 3 selected items"_).
+   - If an item is missing from a restore point, Vault explains why: whether the item is not part of that job or was not captured in that specific backup.
+   - For older legacy restore points created before per-item manifests were tracked, membership is marked as _"Item list not recorded for this backup"_ and treated permissively for items in that job.
+   - You can choose one restore point per source job. A coverage summary shows which version is assigned to each selected item, highlighting any items not yet covered.
+   - If some items cannot be covered, recovery options allow you to remove uncovered items from the selection with a single click or return to the item selector.
+3. **Step 3 (Restore Options & Pre-Flight):**
+   - Each source job is reviewed as an independent restore unit with its own destination overrides, passphrase (if age encrypted), clean destination toggle, and per-item file selection disclosures.
+   - Pre-flight checks run per unit to ensure backups can be restored before starting.
+   - Restores are submitted and executed sequentially, streaming live progress and logs per job.
+
+!!! note
+    This wizard flow restores regular backup items. To recover the Vault configuration, database, or plugin state after a system failure, see [Disaster Recovery](disaster-recovery.md#recovering-with-the-wizard).
+
+---
+
 ## Managing Stale Items
 
 If a container, VM, ZFS dataset, or folder is removed from Unraid after a job is created, Vault marks it as **"Not found"** in the job's item list. Click the **remove** button next to the flagged item to drop it from the job. The Folder picker performs an async `os.Stat` (via `GET /api/v1/path-exists`) for every custom folder on mount, so legitimately valid paths aren't falsely flagged.
