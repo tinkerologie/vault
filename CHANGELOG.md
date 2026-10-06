@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Headless Playwright browser regression test suite:** Added an end-to-end browser testing suite with GitHub Actions CI workflow (`playwright.yml`) and deterministic REST/WebSocket mocks (`tests/mocks/vault-api.ts`), validating desktop shell navigation and multi-job restore wizard flows headless without requiring a live Unraid host.
 
+- **Expanded Playwright browser test coverage across core UI workflows:** Added automated end-to-end browser specifications for Backup Jobs (creation wizard, item pickers, schedule/retention, run now, delete), Storage Management (destination creation, test connection, remote browser drawer, refresh, delete), Settings (tab navigation, dark/light theme, Discord webhook tests, diagnostics zip export), Activity Logs (search and level filters, wrap/details toggle, log purge), History (operation metrics, search, run log inspector), and Disaster Recovery (5-step cold recovery wizard).
+
 ## [v2026.09.01] - 2026-09-28
 
 ### Added
