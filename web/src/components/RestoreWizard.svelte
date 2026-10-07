@@ -232,6 +232,8 @@
         expandedPaths: new SvelteSet(),
         loading: false,
         error: '',
+        errorStatus: 0,
+        loadId: 0,
         search: '',
         open: false,
       })
@@ -249,30 +251,52 @@
     return type === 'container' || type === 'folder' || type === 'plugin'
   }
 
+  // Open or close an item's file picker, loading its listing on first open.
   async function togglePickerOpen(item) {
     const cur = ensurePickerEntry(item)
     const willOpen = !cur.open
     updateEntry(item, { open: willOpen })
-    if (willOpen && !cur.contents && !cur.loading) {
-      updateEntry(item, { loading: true, error: '' })
-      try {
-        const assignment = restorePlan.assignments.get(itemKey(item))
-        const point = assignment?.point
-        if (!point) throw new Error('No restore point found for item')
-        const contents = await api.getRestorePointContents(point.jobId, point.id, item.name)
-        const files = contents?.files || []
-        const tree = buildFileTree(files)
-        const totalFiles = tree.reduce((sum, n) => sum + (n.descendantLeafCount || 0), 0)
-        const selected = new SvelteSet()
-        for (const root of tree) {
-          for (const p of root.descendantLeafPaths) {
-            selected.add(p)
-          }
+    if (willOpen && !cur.contents) await loadPickerContents(item)
+  }
+
+  // 404 (no index / incomplete chain / item missing) and 424 (encrypted index,
+  // no passphrase) mean this point cannot be browsed. Anything else — a
+  // timeout, network error or 5xx — is transient and worth a retry (#449).
+  function isPickerUnavailable(entry) {
+    return entry?.errorStatus === 404 || entry?.errorStatus === 424
+  }
+
+  // Each load is tagged so a slow response that lands after the user changed
+  // restore point (which clears or deletes the entry) is dropped instead of
+  // filling the picker with the previous point's files.
+  let pickerLoadSeq = 0
+
+  async function loadPickerContents(item) {
+    const key = itemKey(item)
+    const cur = ensurePickerEntry(item)
+    if (cur.loading) return
+    const loadId = ++pickerLoadSeq
+    updateEntry(item, { loading: true, error: '', errorStatus: 0, wholeItem: false, loadId })
+    const isCurrent = () => picker.get(key)?.loadId === loadId
+    try {
+      const assignment = restorePlan.assignments.get(key)
+      const point = assignment?.point
+      if (!point) throw new Error('No restore point found for item')
+      const contents = await api.getRestorePointContents(point.jobId, point.id, item.name)
+      if (!isCurrent()) return
+      const files = contents?.files || []
+      const tree = buildFileTree(files)
+      const totalFiles = tree.reduce((sum, n) => sum + (n.descendantLeafCount || 0), 0)
+      const selected = new SvelteSet()
+      for (const root of tree) {
+        for (const p of root.descendantLeafPaths) {
+          selected.add(p)
         }
-        updateEntry(item, { contents, tree, totalFiles, selected, loading: false })
-      } catch (e) {
-        updateEntry(item, { error: e?.message || 'failed to load file list', loading: false })
       }
+      updateEntry(item, { contents, tree, totalFiles, selected, loading: false })
+    } catch (e) {
+      if (!isCurrent()) return
+      updateEntry(item, { error: e?.message || 'failed to load file list', errorStatus: e?.status || 0, loading: false })
     }
   }
 
@@ -901,10 +925,21 @@
     })
   }
 
+  // An item whose file list is still loading or failed transiently would
+  // submit without file_paths and restore in full. Block until the list
+  // arrives or the user explicitly chooses the whole item (#449).
+  function unitHasPendingFileList(unit) {
+    return unit.items.some(item => {
+      const entry = picker.get(itemKey(item))
+      return entry?.loading || (entry?.error && !isPickerUnavailable(entry))
+    })
+  }
 
+  // True when a restore unit is not ready to submit (empty or pending file
+  // selection, broken chain, unacknowledged remap, missing passphrase).
   function isUnitBlocked(unit) {
     if (!unit) return true
-    if (unit.items.length === 0 || unitHasEmptySelection(unit)) return true
+    if (unit.items.length === 0 || unitHasEmptySelection(unit) || unitHasPendingFileList(unit)) return true
     if (unit.point?.chain_status === 'broken') return true
     const s = getUnitSettings(unit.jobId)
     const hasContainer = unit.items.some(i => i.type === 'container')
@@ -1478,6 +1513,7 @@
       {@const hasContainer = unit.items.some(item => item.type === 'container')}
       {@const hasPartial = unitHasPartialSelection(unit)}
       {@const unitEmpty = unitHasEmptySelection(unit)}
+      {@const unitPendingList = unitHasPendingFileList(unit)}
       {@const needsAgePassphrase = unit.point?.encryption === 'age'}
       {@const isBroken = unit.point?.chain_status === 'broken'}
       {@const fresh = isUnitPreflightFresh(unit)}
@@ -1667,6 +1703,8 @@
                       Loading…
                     {:else if emptyContents}
                       No restorable files
+                    {:else if entry?.wholeItem}
+                      Whole item will be restored
                     {:else}
                       Click to browse contents
                     {/if}
@@ -1676,9 +1714,23 @@
                   <div class="border-t border-border p-3 space-y-2">
                     {#if entry.loading}
                       <p class="text-xs text-text-muted">Loading file list…</p>
-                    {:else if entry.error}
+                    {:else if entry.error && isPickerUnavailable(entry)}
                       <p class="text-xs text-danger">{entry.error}</p>
-                      <p class="text-xs text-text-muted">Whole-archive extract will run instead.</p>
+                      <p class="text-xs text-text-muted">If you continue without a file selection, the whole item is restored.</p>
+                    {:else if entry.error}
+                      <div class="bg-danger/10 border border-danger/30 rounded-lg p-2.5 flex items-center justify-between gap-3 text-xs">
+                        <span class="text-danger">Could not load the file list: {entry.error}</span>
+                        <span class="flex items-center gap-2 shrink-0">
+                          <button type="button" onclick={() => loadPickerContents(item)}
+                            class="px-2.5 py-1 rounded bg-surface-3 hover:bg-surface-4 text-text font-medium cursor-pointer">
+                            Retry
+                          </button>
+                          <button type="button" onclick={() => updateEntry(item, { error: '', errorStatus: 0, open: false, wholeItem: true })}
+                            class="px-2.5 py-1 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text cursor-pointer">
+                            Restore whole item
+                          </button>
+                        </span>
+                      </div>
                     {:else if !entry.contents}
                       <p class="text-xs text-text-muted">No contents loaded.</p>
                     {:else if emptyContents}
@@ -1725,6 +1777,9 @@
 
         {#if unitEmpty}
           <p class="text-xs text-danger font-medium">One or more items have 0 files selected. Please select at least one file or remove the item in Step 1.</p>
+        {/if}
+        {#if unitPendingList}
+          <p class="text-xs text-danger font-medium">Wait for the file list to load, retry it, or choose to restore the whole item.</p>
         {/if}
 
         <!-- Preflight card per unit -->

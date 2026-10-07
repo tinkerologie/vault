@@ -290,3 +290,72 @@ describe('mounts', () => {
   })
 })
 
+
+describe('restore-point contents timeout (issue #449)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  // fetch that never resolves on its own and rejects like the browser when
+  // the request's AbortSignal fires.
+  function stubHangingFetch() {
+    const fetch = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        reject(new DOMException('The operation was aborted.', 'AbortError'))
+      })
+    }))
+    vi.stubGlobal('fetch', fetch)
+    return fetch
+  }
+
+  it('waits past the default 15 s and aborts at 130 s', async () => {
+    vi.useFakeTimers()
+    const fetch = stubHangingFetch()
+
+    const pending = api.getRestorePointContents(1, 2, 'appdata')
+    let settled = false
+    pending.then(() => { settled = true }, () => { settled = true })
+
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(settled).toBe(false)
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(false)
+
+    const assertion = expect(pending).rejects.toThrow('Request timed out')
+    await vi.advanceTimersByTimeAsync(130000 - 15000)
+    await assertion
+  })
+
+  it('keeps the 15 s default for other requests', async () => {
+    vi.useFakeTimers()
+    stubHangingFetch()
+
+    const pending = api.listJobs()
+    const assertion = expect(pending).rejects.toThrow('Request timed out')
+    await vi.advanceTimersByTimeAsync(15000)
+    await assertion
+  })
+
+  it('exposes the HTTP status on error responses', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"vault daemon request timed out"}', {
+      status: 504,
+      headers: { 'content-type': 'application/json' },
+    })))
+
+    const err = await api.getRestorePointContents(1, 2, 'appdata').catch(e => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err.message).toBe('vault daemon request timed out')
+    expect(err.status).toBe(504)
+  })
+
+  it('exposes the status on 401 responses too', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"unauthorized"}', {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    })))
+
+    const err = await api.getRestorePointContents(1, 2, 'appdata').catch(e => e)
+    expect(err.message).toBe('Not authorized — your session or API key may have expired.')
+    expect(err.status).toBe(401)
+  })
+})

@@ -13,7 +13,16 @@ const REQUEST_TIMEOUT_MS = 15000
 // Connection tests reach an arbitrary, possibly slow remote, so they get a
 // longer ceiling than normal CRUD calls (which stay at REQUEST_TIMEOUT_MS).
 const TEST_TIMEOUT_MS = 60000
+// Restore-point contents enumerates a whole archive index, which on remote
+// storage (B2/S3) can take minutes (issue #449). Layer order: daemon 120 s
+// (handlers.RestorePointContentsWriteTimeout) < Unraid proxy 125 s
+// (VAULT_HTTP_TIMEOUT_CONTENTS in plugin/pages/include/api.php) < browser 130 s.
+export const RESTORE_POINT_CONTENTS_TIMEOUT_MS = 130000
 
+/**
+ * Send one API request with an abort timeout. Non-2xx responses throw an Error
+ * carrying the server's message and the HTTP `status`.
+ */
 async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
   const { url, options } = buildApiRequest(method, path, { body })
   const controller = new AbortController()
@@ -37,8 +46,14 @@ async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_
   if (text) {
     try { data = JSON.parse(text) } catch { /* non-JSON body */ }
   }
-  if (res.status === 401) throw new Error('Not authorized — your session or API key may have expired.')
-  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`)
+  if (!res.ok) {
+    const msg = res.status === 401
+      ? 'Not authorized — your session or API key may have expired.'
+      : (data && data.error) || `HTTP ${res.status}`
+    const err = new Error(msg)
+    err.status = res.status
+    throw err
+  }
   return data
 }
 
@@ -149,7 +164,8 @@ export const api = {
   // `file` is optional; omit to let the server pick the first index sidecar it finds
   // in the item's directory (right call for single-archive items like folders/plugins).
   getRestorePointContents: (jobId, rpId, item, file) =>
-    request('GET', `/jobs/${jobId}/restore-points/${rpId}/contents?item=${encodeURIComponent(item)}${file ? `&file=${encodeURIComponent(file)}` : ''}`),
+    request('GET', `/jobs/${jobId}/restore-points/${rpId}/contents?item=${encodeURIComponent(item)}${file ? `&file=${encodeURIComponent(file)}` : ''}`,
+      null, { timeoutMs: RESTORE_POINT_CONTENTS_TIMEOUT_MS }),
   runJob: (id) => request('POST', `/jobs/${id}/run`),
   cancelJob: (id) => request('POST', `/jobs/${id}/cancel`),
   cancelQueueEntry: (id) => request('POST', `/queue/${id}/cancel`),

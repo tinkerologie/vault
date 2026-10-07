@@ -177,7 +177,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/{id}/restore-points", jobH.GetRestorePoints)
 			r.Get("/{id}/retention-preview", jobH.RetentionPreview)
 			r.Delete("/{id}/restore-points/{rpid}", jobH.DeleteRestorePoint)
-			r.Get("/{id}/restore-points/{rpid}/contents", jobH.RestorePointContents)
+			// Listing a large remote restore point can outlast the server-wide
+			// write timeout (#449): extend this route's write deadline, and
+			// bound the handler just inside it so a timeout still gets a reply.
+			r.With(ExtendWriteDeadline(handlers.RestorePointContentsWriteTimeout)).Get("/{id}/restore-points/{rpid}/contents",
+				http.TimeoutHandler(http.HandlerFunc(jobH.RestorePointContents),
+					handlers.RestorePointContentsHandlerTimeout, handlers.RestorePointContentsTimeoutBody).ServeHTTP)
 			r.Post("/{id}/restore-points/{rpid}/preflight", jobH.RestorePointPreflight)
 			r.Post("/{id}/restore-points/{rpid}/verify", jobH.VerifyRestorePoint)
 			r.Get("/{id}/restore-points/{rpid}/verify-runs", jobH.ListRestorePointVerifyRuns)

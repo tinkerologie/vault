@@ -163,6 +163,18 @@ export const mockJob2Points = [
 ];
 
 /**
+ * Tar-index listing returned for an item's restore-point contents.
+ */
+export const mockRestorePointContents = (item: string) => ({
+  version: 1,
+  archive: `${item}.tar.zst`,
+  files: [
+    { path: 'config/settings.xml', size: 2048, mode: '0644', modtime: '2026-10-01T02:00:00Z', is_dir: false },
+    { path: 'config/database.db', size: 1048576, mode: '0644', modtime: '2026-10-01T02:00:00Z', is_dir: false },
+  ],
+});
+
+/**
  * Factory creating initial test storage targets for isolated test sessions.
  */
 export const createInitialMockStorage = (): MockStorageDestination[] => [
@@ -313,6 +325,16 @@ export async function setupVaultMockApi(page: Page) {
             { id: 'archive', label: 'Archive present', status: 'ok', detail: 'Backup archive verified' },
           ],
         }),
+      });
+    }
+
+    // Restore-point contents (partial-restore file picker). Must precede the
+    // broad /restore-points branches; tests override it with page.route().
+    if (/\/jobs\/\d+\/restore-points\/\d+\/contents$/.test(path)) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockRestorePointContents(url.searchParams.get('item') || '')),
       });
     }
 

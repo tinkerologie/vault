@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -124,6 +125,30 @@ func PrivateNetworkAccess(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// ExtendWriteDeadline returns route-scoped middleware that pushes the
+// connection's write deadline out to now+d for one request, so a legitimately
+// slow handler can outlive the server-wide WriteTimeout without raising it for
+// every route (issue #449).
+//
+// The read deadline is deliberately left alone: for a request without a body,
+// net/http clears it when the handler starts (connReader.startBackgroundRead),
+// so ReadTimeout never cuts a slow handler short, and setting one here would
+// add a context cancellation that does not otherwise exist.
+//
+// Writers that cannot set deadlines (e.g. httptest.ResponseRecorder) return
+// http.ErrNotSupported; the request is still served under the default limit.
+func ExtendWriteDeadline(d time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
+			if err != nil && !errors.Is(err, http.ErrNotSupported) {
+				log.Printf("api: extend write deadline for %s: %v", requestPath(r), err) // #nosec G706 //nolint:gosec // path only, no headers or credentials
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // BodySizeLimit returns middleware that limits the request body to maxBytes.

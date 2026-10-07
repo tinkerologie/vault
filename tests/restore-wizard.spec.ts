@@ -193,3 +193,171 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
     await expect(page.getByText(/1 item selected/i)).toBeVisible();
   });
 });
+
+test.describe('Restore Wizard partial-restore file picker (#449)', () => {
+  const contentsGlob = '**/jobs/1/restore-points/1001/contents*';
+
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  // Select plex, pick its restore point (single-job flow auto-advances to the
+  // plan step) and return the file-picker summary for plex.
+  async function openPlexPlan(page: import('@playwright/test').Page) {
+    await page.goto('/#/restore');
+    await page.getByRole('button', { name: /plex/i }).click();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: /Docker & Appdata/i }).first().click();
+    const summary = page.locator('summary', { hasText: 'plex' });
+    await expect(summary).toBeVisible();
+    return summary;
+  }
+
+  test('shows loading until a slow listing arrives, then the file tree', async ({ page }) => {
+    let release: () => void = () => {};
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route(contentsGlob, async route => {
+      await held;
+      await route.fallback();
+    });
+
+    const summary = await openPlexPlan(page);
+    await summary.click();
+    await expect(page.getByText('Loading file list…')).toBeVisible();
+
+    release();
+    await expect(page.getByLabel('Select config')).toBeVisible();
+    await expect(page.getByText('All 2 files selected').first()).toBeVisible();
+  });
+
+  test('a timed-out listing offers Retry instead of a whole-archive fallback', async ({ page }) => {
+    let calls = 0;
+    await page.route(contentsGlob, async route => {
+      calls += 1;
+      if (calls === 1) {
+        return route.fulfill({
+          status: 504,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'vault daemon request timed out' }),
+        });
+      }
+      return route.fallback();
+    });
+
+    const summary = await openPlexPlan(page);
+    await summary.click();
+    await expect(page.getByText('Could not load the file list: vault daemon request timed out')).toBeVisible();
+    await expect(page.getByText(/whole-archive|whole item is restored/i)).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect(page.getByLabel('Select config')).toBeVisible();
+    expect(calls).toBe(2);
+
+    // Deselect one file; the remaining one is submitted as a partial restore.
+    await page.getByRole('button', { name: 'Expand config' }).click();
+    await page.getByLabel('Select database.db').uncheck();
+    await expect(page.getByText('Partial restore: restoring 1 of 2 selected files.')).toBeVisible();
+
+    const restoreRequests: unknown[] = [];
+    page.on('request', req => {
+      if (req.url().endsWith('/jobs/1/restore') && req.method() === 'POST') {
+        restoreRequests.push(req.postDataJSON());
+      }
+    });
+    await page.getByRole('button', { name: /Run checks/i }).click();
+    await expect(page.getByLabel('passed').first()).toBeVisible();
+    await page.getByRole('button', { name: /^Start Restore/i }).click();
+
+    await expect.poll(() => restoreRequests.length).toBe(1);
+    expect(restoreRequests[0]).toMatchObject({
+      items: ['plex'],
+      file_paths: { plex: ['config/settings.xml'] },
+    });
+  });
+
+  test('a failed listing blocks restore until the user retries or picks the whole item', async ({ page }) => {
+    await page.route(contentsGlob, route => route.fulfill({
+      status: 504,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'vault daemon request timed out' }),
+    }));
+
+    const summary = await openPlexPlan(page);
+    await summary.click();
+    await expect(page.getByText('Could not load the file list: vault daemon request timed out')).toBeVisible();
+    await expect(page.getByText('Wait for the file list to load, retry it, or choose to restore the whole item.')).toBeVisible();
+
+    await page.getByRole('button', { name: /Run checks/i }).click();
+    await expect(page.getByLabel('passed').first()).toBeVisible();
+    const startRestoreBtn = page.getByRole('button', { name: /^Start Restore/i });
+    await expect(startRestoreBtn).toBeDisabled();
+
+    await page.getByRole('button', { name: 'Restore whole item' }).click();
+    await expect(startRestoreBtn).toBeEnabled();
+    await expect(summary).toContainText('Whole item will be restored');
+
+    const restoreRequests: Record<string, unknown>[] = [];
+    page.on('request', req => {
+      if (req.url().endsWith('/jobs/1/restore') && req.method() === 'POST') {
+        restoreRequests.push(req.postDataJSON());
+      }
+    });
+    await startRestoreBtn.click();
+    await expect.poll(() => restoreRequests.length).toBe(1);
+    expect(restoreRequests[0]).toMatchObject({ items: ['plex'] });
+    expect(restoreRequests[0]).not.toHaveProperty('file_paths');
+  });
+
+  test('a listing that lands after the restore point changed is discarded', async ({ page }) => {
+    let release: () => void = () => {};
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let calls = 0;
+    await page.route(contentsGlob, async route => {
+      calls += 1;
+      if (calls === 1) await held;
+      await route.fallback();
+    });
+
+    const summary = await openPlexPlan(page);
+    await summary.click();
+    await expect(page.getByText('Loading file list…')).toBeVisible();
+
+    // Go back and re-pick the point while the first listing is in flight;
+    // this resets the picker, so the late response must not repopulate it.
+    await page.getByRole('button', { name: /Choose Version/ }).click();
+    await page.getByRole('button', { name: /Docker & Appdata/i }).first().click();
+    await expect(summary).toContainText('Click to browse contents');
+
+    release();
+    await expect.poll(() => calls).toBe(1);
+    await page.waitForTimeout(250);
+    await expect(summary).toContainText('Click to browse contents');
+    await expect(page.getByLabel('Select config')).toHaveCount(0);
+  });
+
+  test('an unbrowsable restore point explains the whole-item fallback', async ({ page }) => {
+    await page.route(contentsGlob, route => route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'no readable tar index sidecar found for this item' }),
+    }));
+
+    const summary = await openPlexPlan(page);
+    await summary.click();
+    await expect(page.getByText('If you continue without a file selection, the whole item is restored.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+  });
+
+  test('an empty listing reports no restorable files', async ({ page }) => {
+    await page.route(contentsGlob, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ version: 1, archive: 'plex.tar.zst', files: [] }),
+    }));
+
+    const summary = await openPlexPlan(page);
+    await summary.click();
+    await expect(page.getByText('This backup captured no restorable files for this item.')).toBeVisible();
+    await expect(summary).toContainText('No restorable files');
+  });
+});

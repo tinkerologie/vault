@@ -15,6 +15,28 @@ import (
 // derived from it without an import cycle — package api imports handlers.
 const ServerWriteTimeout = 15 * time.Second
 
+// RestorePointContentsWriteTimeout is the extended per-request deadline for
+// GET /jobs/{id}/restore-points/{rpid}/contents. Enumerating a large restore
+// point on remote storage (B2/S3) can take well over ServerWriteTimeout
+// (issue #449), so only that route gets a longer budget.
+//
+// The layers are ordered so each inner one expires first and the outer one
+// can still relay its result: daemon 120 s < Unraid PHP proxy 125 s
+// (VAULT_HTTP_TIMEOUT_CONTENTS in plugin/pages/include/api.php) < browser
+// 130 s (RESTORE_POINT_CONTENTS_TIMEOUT_MS in web/src/lib/api.js). Update all
+// three together.
+const RestorePointContentsWriteTimeout = 120 * time.Second
+
+// RestorePointContentsHandlerTimeout bounds the contents handler itself, one
+// probeTimeoutHeadroom ahead of RestorePointContentsWriteTimeout, so an
+// over-long listing is answered with a clean timeout error instead of a
+// dropped connection that the proxy would report as "daemon unavailable".
+const RestorePointContentsHandlerTimeout = RestorePointContentsWriteTimeout - probeTimeoutHeadroom
+
+// RestorePointContentsTimeoutBody is the JSON error body served when
+// RestorePointContentsHandlerTimeout expires.
+const RestorePointContentsTimeoutBody = `{"error":"listing the restore point contents timed out; try again"}`
+
 // probeTimeoutHeadroom is how far every outbound connectivity probe must
 // finish ahead of ServerWriteTimeout, leaving time to serialise and flush the
 // error response.

@@ -38,8 +38,18 @@ if (!in_array($forwardMethod, ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
 
 $forwardHeaders = ['Accept: application/json'];
 
+// Keep PHP's execution limit above the contents cURL budget so a slow remote
+// listing is not killed before cURL returns (issue #449).
+if (vault_is_contents_request($forwardMethod, $path)) {
+    set_time_limit(VAULT_HTTP_TIMEOUT_CONTENTS + 10);
+}
+
 $result = vault_http_request($forwardMethod, $path, $payload, $forwardHeaders);
 if (!$result['ok']) {
+    // A timeout means the daemon is up but slow; don't report it as down.
+    if (($result['errno'] ?? 0) === VAULT_CURLE_OPERATION_TIMEDOUT) {
+        vault_proxy_error(504, 'vault daemon request timed out');
+    }
     vault_proxy_error(502, 'vault daemon unavailable');
 }
 

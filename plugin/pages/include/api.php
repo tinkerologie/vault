@@ -172,6 +172,36 @@ function vault_proxy_header() {
     return 'X-Vault-Proxy: unraid-plugin-proxy';
 }
 
+// cURL budgets for daemon requests. Restore-point contents enumerates a whole
+// archive index, which on remote storage (B2/S3) can take far longer than a
+// normal call (issue #449). Layer order: daemon 120 s
+// (handlers.RestorePointContentsWriteTimeout) < proxy 125 s < browser 130 s
+// (RESTORE_POINT_CONTENTS_TIMEOUT_MS in web/src/lib/api.js).
+const VAULT_HTTP_TIMEOUT_DEFAULT = 10;
+const VAULT_HTTP_TIMEOUT_CONTENTS = 125;
+const VAULT_HTTP_CONNECT_TIMEOUT = 5;
+// cURL error code for an expired CURLOPT_TIMEOUT.
+const VAULT_CURLE_OPERATION_TIMEDOUT = 28;
+
+// Reports whether a request is GET restore-point contents; the query string
+// is ignored and the path must match exactly.
+function vault_is_contents_request($method, $path) {
+    $route = parse_url((string) $path, PHP_URL_PATH);
+    return strtoupper((string) $method) === 'GET'
+        && is_string($route)
+        && preg_match('#^/api/v1/jobs/[^/]+/restore-points/[^/]+/contents$#', $route) === 1;
+}
+
+// Returns the cURL CURLOPT_TIMEOUT (seconds) for a daemon request.
+function vault_request_timeout($method, $path) {
+    return vault_is_contents_request($method, $path)
+        ? VAULT_HTTP_TIMEOUT_CONTENTS
+        : VAULT_HTTP_TIMEOUT_DEFAULT;
+}
+
+// Sends one request to the local daemon. Returns ok/status/body/content_type/
+// headers plus cURL error and errno, so callers can tell a timeout (errno 28)
+// from an unreachable daemon.
 function vault_http_request($method, $path, $payload = null, $extraHeaders = []) {
     $ch = curl_init(vault_target_url($path));
     $headers = array_merge([vault_proxy_header()], $extraHeaders);
@@ -179,7 +209,8 @@ function vault_http_request($method, $path, $payload = null, $extraHeaders = [])
 
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, strtoupper($method));
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, vault_request_timeout($method, $path));
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, VAULT_HTTP_CONNECT_TIMEOUT);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
     curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function($curl, $headerLine) use (&$responseHeaders) {
         $length = strlen($headerLine);
@@ -201,6 +232,7 @@ function vault_http_request($method, $path, $payload = null, $extraHeaders = [])
 
     $body = curl_exec($ch);
     $error = curl_error($ch);
+    $errno = curl_errno($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: 'application/json';
     unset($ch);
@@ -212,6 +244,7 @@ function vault_http_request($method, $path, $payload = null, $extraHeaders = [])
         'content_type' => $contentType,
         'headers' => $responseHeaders,
         'error' => $error,
+        'errno' => $errno,
     ];
 }
 
