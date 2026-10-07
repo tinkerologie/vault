@@ -542,6 +542,10 @@
         'You will need this passphrase to restore encrypted backups.',
         'If you lose this passphrase, encrypted backups cannot be recovered.',
         '',
+        'Deduplicated backups also open with this passphrase once a backup has',
+        'run with it set. Keep a copy of vault.key as well (Settings > Security >',
+        'Server key): it opens deduplicated backups with no passphrase at all.',
+        '',
       ].join('\n')
       const blob = new Blob([content], { type: 'text/plain' })
       const url = URL.createObjectURL(blob)
@@ -687,6 +691,27 @@
       showToast(e.message, 'error')
     } finally {
       retrySaving = false
+    }
+  }
+
+  let serverKeyDownloading = $state(false)
+
+  async function downloadServerKey() {
+    serverKeyDownloading = true
+    try {
+      const blob = await api.downloadServerKey()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'vault.key'
+      a.click()
+      // Deferred for the same reason as the emergency kit.
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      showToast('vault.key downloaded — store it somewhere other than this server', 'success')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      serverKeyDownloading = false
     }
   }
 
@@ -1792,6 +1817,30 @@
               {/if}
             </div>
           {/if}
+        </div>
+      </div>
+
+      <!-- Server key (vault.key), #451 -->
+      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border">
+          <h2 class="text-base font-semibold text-text">Server key <Tooltip text="vault.key seals deduplicated backups and stored credentials. It lives on this server's flash drive." /></h2>
+        </div>
+        <div class="px-5 py-4 flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium text-text">Download vault.key</p>
+            <p class="text-xs text-text-muted mt-0.5">
+              Keep a copy somewhere other than this server. If the flash drive is lost, deduplicated backups open only with
+              this file, or with the backup passphrase if one was set when they ran.
+            </p>
+            <p class="text-xs text-warning mt-1">Anyone with this file and access to your backup storage can read your deduplicated backups.</p>
+            {#if !encryptionEnabled}
+              <p class="text-xs text-danger mt-1">No backup password is set, so this file is the only way to open your deduplicated backups if this server is lost.</p>
+            {/if}
+          </div>
+          <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
+            {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>{/if}
+            Download
+          </button>
         </div>
       </div>
 

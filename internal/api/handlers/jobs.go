@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
@@ -484,6 +485,10 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		// sub-manifest it points at.
 		getManifest, closeSession, err := h.runner.OpenDedupManifests(dest)
 		if err != nil {
+			if errors.Is(err, dedup.ErrServerKeyMismatch) {
+				respondDedupKeyMismatch(w)
+				return
+			}
 			respondInternalError(w, err)
 			return
 		}
@@ -536,6 +541,19 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 	respondJSON(w, http.StatusOK, idx)
 }
 
+// dedupKeyMismatchCode is the stable error code for a dedup destination this
+// server's vault.key cannot open (#451), so clients need not match text.
+const dedupKeyMismatchCode = "dedup_key_mismatch"
+
+// respondDedupKeyMismatch answers 424 Failed Dependency: the request is fine,
+// but it depends on the original vault.key or the backup passphrase.
+func respondDedupKeyMismatch(w http.ResponseWriter) {
+	respondJSON(w, http.StatusFailedDependency, map[string]string{
+		"error": dedup.KeyMismatchHint,
+		"code":  dedupKeyMismatchCode,
+	})
+}
+
 // errIndexEncryptedNoPassphrase marks a chain-step index that cannot be read
 // because it is age-encrypted and no passphrase is configured.
 var errIndexEncryptedNoPassphrase = errors.New("index is encrypted but no passphrase is configured")
@@ -584,6 +602,10 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 		if err != nil {
 			if errors.Is(err, errIndexEncryptedNoPassphrase) {
 				respondError(w, http.StatusFailedDependency, errIndexEncryptedNoPassphrase.Error())
+				return
+			}
+			if errors.Is(err, dedup.ErrServerKeyMismatch) {
+				respondDedupKeyMismatch(w)
 				return
 			}
 			log.Printf("api: restore point %d: chain step %d index unavailable: %v", chain[len(chain)-1].ID, step.ID, err) // #nosec G706 //nolint:gosec // IDs are validated int64s, err is from an admin-configured adapter

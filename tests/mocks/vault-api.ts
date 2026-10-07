@@ -313,6 +313,26 @@ export async function setupVaultMockApi(page: Page) {
       });
     }
 
+    // Dedup key rewrap after a recovery (#451): nothing locked by default.
+    // Tests override this with page.route() to simulate locked destinations.
+    if (path.endsWith('/storage/dedup-keys/rewrap') && method === 'POST') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ destinations: [] }),
+      });
+    }
+
+    // Server key download (#451): the raw 32-byte vault.key file.
+    if (path.endsWith('/settings/server-key')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/octet-stream',
+        headers: { 'Content-Disposition': 'attachment; filename="vault.key"', 'Cache-Control': 'no-store' },
+        body: Buffer.alloc(32, 7),
+      });
+    }
+
     // Restore Preflight
     if (path.includes('/preflight')) {
       return route.fulfill({

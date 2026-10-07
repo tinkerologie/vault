@@ -168,7 +168,7 @@ func str(v any) string {
 func (p Point) lockedError() error {
 	switch p.LockedBy {
 	case "dedup":
-		return fmt.Errorf("%s is a deduplicated backup: pass --key with the vault.key from the server that made it", p.StoragePath)
+		return fmt.Errorf("%s is a deduplicated backup: pass --key with the vault.key from the server that made it, or the backup passphrase that was set when it ran", p.StoragePath)
 	case "age":
 		return fmt.Errorf("%s is encrypted: the backup passphrase is missing or wrong (--passphrase-file or $VAULT_PASSPHRASE)", p.StoragePath)
 	default:

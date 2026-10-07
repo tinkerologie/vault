@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -134,6 +135,9 @@ func openDedupContext(dbPath, keyPath string) (*dedupContext, func(), error) {
 	repo, err := dedup.OpenRepo(database, adapter, dest.ID, serverKey)
 	if err != nil {
 		database.Close()
+		if errors.Is(err, dedup.ErrServerKeyMismatch) {
+			return nil, nil, fmt.Errorf("open dedup repo: %s is not the vault.key this destination was created with; point --key at the original vault.key, or restore the database from the Recovery wizard with your backup password: %w", keyPath, err)
+		}
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
 	}
 

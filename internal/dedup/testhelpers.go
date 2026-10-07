@@ -9,8 +9,9 @@ package dedup
 import (
 	"bytes"
 	"context"
-	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,11 +39,15 @@ func (f *FakeAdapter) Write(path string, r io.Reader) error {
 	return nil
 }
 
+// errNotFound matches real adapters, which wrap fs.ErrNotExist so callers
+// can test with storage.IsNotExist.
+var errNotFound = fmt.Errorf("not found: %w", fs.ErrNotExist)
+
 // Read returns the full contents at path.
 func (f *FakeAdapter) Read(path string) (io.ReadCloser, error) {
 	b, ok := f.files[path]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, errNotFound
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
@@ -51,7 +56,7 @@ func (f *FakeAdapter) Read(path string) (io.ReadCloser, error) {
 func (f *FakeAdapter) ReadRange(path string, offset, length int64) (io.ReadCloser, error) {
 	b, ok := f.files[path]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, errNotFound
 	}
 	if offset >= int64(len(b)) {
 		return nil, io.ErrUnexpectedEOF
@@ -78,7 +83,7 @@ func (f *FakeAdapter) List(prefix string) ([]storage.FileInfo, error) {
 func (f *FakeAdapter) Stat(path string) (storage.FileInfo, error) {
 	b, ok := f.files[path]
 	if !ok {
-		return storage.FileInfo{}, errors.New("not found")
+		return storage.FileInfo{}, errNotFound
 	}
 	return storage.FileInfo{Path: path, Size: int64(len(b))}, nil
 }

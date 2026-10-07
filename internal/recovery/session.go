@@ -16,6 +16,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -115,12 +116,14 @@ func (s *Session) dedupRepo() (*dedup.Repo, error) {
 	if s.repo != nil {
 		return s.repo, nil
 	}
-	if len(s.serverKey) == 0 {
-		return nil, errors.New("this is a deduplicated backup: pass --key with the vault.key from the original server")
+	if len(s.serverKey) == 0 && s.passphrase == "" {
+		return nil, errors.New("this is a deduplicated backup: pass --key with the vault.key from the original server, or the backup passphrase")
 	}
-	repo, err := dedup.OpenRepo(s.db, s.adapter, s.destID, s.serverKey)
+	// The server key first; without it (or with another server's key) the
+	// backup passphrase opens the repository through its escrow (#451).
+	repo, err := runner.OpenDedupRepoWithFallback(s.db, s.adapter, s.destID, s.serverKey, s.passphrase)
 	if err != nil {
-		return nil, fmt.Errorf("open dedup repository (is --key the vault.key from the server that made these backups?): %w", err)
+		return nil, fmt.Errorf("open dedup repository: pass --key with the vault.key from the server that made these backups, or the backup passphrase that was set when they ran: %w", err)
 	}
 	// A repository that has never stored a pack has no index folder yet;
 	// that is an empty index, not an error.

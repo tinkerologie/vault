@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -46,18 +47,35 @@ func TestDrainTimesOut(t *testing.T) {
 	r := newDrainRunner()
 	r.markStart() // Active job never finishes.
 
-	before := runtime.NumGoroutine()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	err := r.Drain(ctx)
 	if err == nil {
 		t.Fatalf("expected timeout error")
 	}
-	// Allow a brief settle window for the inner goroutine to exit.
-	time.Sleep(100 * time.Millisecond)
-	if after := runtime.NumGoroutine(); after > before {
-		t.Errorf("goroutine leak: before=%d after=%d", before, after)
+	// Drain's own waiter goroutine must exit once it times out. Count only
+	// goroutines running inside Drain: a process-wide count also sees
+	// background work left by earlier tests and flakes.
+	deadline := time.Now().Add(time.Second)
+	for drainGoroutines() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutine leak: %d goroutine(s) still inside Runner.Drain", drainGoroutines())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// drainGoroutines counts goroutines whose stack is inside Runner.Drain.
+func drainGoroutines() int {
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	n := 0
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, "runner.(*Runner).Drain") {
+			n++
+		}
+	}
+	return n
 }
 
 func TestRunJobRefusedWhileDraining(t *testing.T) {

@@ -39,6 +39,38 @@ type StorageHandler struct {
 	restoreMu sync.Mutex
 }
 
+// RewrapDedupKeys makes this server's dedup destinations openable with its
+// own vault.key after a recovery onto a server whose key differs (#451). The
+// Recovery wizard calls it after restoring the database, with the backup
+// passphrase. A destination this server's key already opens is untouched;
+// otherwise its master key is recovered through the passphrase escrow and
+// re-sealed. With an empty passphrase nothing is written and the response
+// only reports which destinations are locked.
+func (h *StorageHandler) RewrapDedupKeys(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	if h.runner == nil {
+		respondError(w, http.StatusServiceUnavailable, "runner not configured")
+		return
+	}
+	results, err := h.runner.RewrapDedupKeys(req.Passphrase)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	if results == nil {
+		results = []runner.DedupKeyResult{}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"destinations": results})
+}
+
 // MaintenanceLock exposes the restore lifecycle lock so other handlers
 // (PathRemap) can coordinate with in-flight database restores.
 func (h *StorageHandler) MaintenanceLock() *sync.Mutex {

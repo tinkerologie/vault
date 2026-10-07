@@ -129,6 +129,14 @@ func (s *Server) setupRoutes() *chi.Mux {
 			} else {
 				r.Post("/{id}/restore-db", storageH.RestoreDB)
 			}
+			// Re-seal dedup destinations with this server's key after a
+			// recovery (#451). It rewrites repo.json, so replicas may not;
+			// scrypt per destination needs more than the default deadline.
+			rewrap := r.With(ExtendWriteDeadline(handlers.DedupRewrapWriteTimeout))
+			if s.config.ReadOnly {
+				rewrap = rewrap.With(ReadOnlyGuard)
+			}
+			rewrap.Post("/dedup-keys/rewrap", storageH.RewrapDedupKeys)
 			r.Get("/{id}/db-backups", storageH.ListDBBackups)
 			r.Get("/{id}/jobs", storageH.DependentJobs)
 			r.Get("/{id}/list", storageH.ListFiles)
@@ -228,6 +236,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/encryption", settingsH.SetEncryption)
 			r.With(httprate.LimitBy(10, time.Minute, keyByRemoteAddr)).Post("/encryption/verify", settingsH.VerifyEncryption)
 			r.Get("/encryption/passphrase", settingsH.GetEncryptionPassphrase)
+			// Recovery copy of vault.key (#451): as sensitive as the API key,
+			// so it gets the same rate limit.
+			r.With(httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Get("/server-key", settingsH.GetServerKey)
 			r.Get("/staging", settingsH.GetStagingInfo)
 			r.Put("/staging", settingsH.SetStagingOverride)
 			r.Get("/appdata", settingsH.GetAppdataPath)

@@ -40,7 +40,7 @@ $forwardHeaders = ['Accept: application/json'];
 
 // Keep PHP's execution limit above the contents cURL budget so a slow remote
 // listing is not killed before cURL returns (issue #449).
-if (vault_is_contents_request($forwardMethod, $path)) {
+if (vault_is_long_request($forwardMethod, $path)) {
     set_time_limit(VAULT_HTTP_TIMEOUT_CONTENTS + 10);
 }
 

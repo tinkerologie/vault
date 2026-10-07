@@ -13,11 +13,14 @@ const REQUEST_TIMEOUT_MS = 15000
 // Connection tests reach an arbitrary, possibly slow remote, so they get a
 // longer ceiling than normal CRUD calls (which stay at REQUEST_TIMEOUT_MS).
 const TEST_TIMEOUT_MS = 60000
-// Restore-point contents enumerates a whole archive index, which on remote
-// storage (B2/S3) can take minutes (issue #449). Layer order: daemon 120 s
-// (handlers.RestorePointContentsWriteTimeout) < Unraid proxy 125 s
+// A few requests legitimately run for minutes: restore-point contents
+// enumerates a whole archive index on remote storage (issue #449), and the
+// dedup key rewrap after a recovery derives a key per destination (#451).
+// Layer order: daemon 120 s (handlers.RestorePointContentsWriteTimeout,
+// handlers.DedupRewrapWriteTimeout) < Unraid proxy 125 s
 // (VAULT_HTTP_TIMEOUT_CONTENTS in plugin/pages/include/api.php) < browser 130 s.
-export const RESTORE_POINT_CONTENTS_TIMEOUT_MS = 130000
+export const LONG_REQUEST_TIMEOUT_MS = 130000
+export const RESTORE_POINT_CONTENTS_TIMEOUT_MS = LONG_REQUEST_TIMEOUT_MS
 
 /**
  * Send one API request with an abort timeout. Non-2xx responses throw an Error
@@ -253,6 +256,23 @@ export const api = {
 
   // Discord
   testDiscordWebhook: (webhookUrl) => request('POST', '/settings/discord/test', { webhook_url: webhookUrl }),
+
+  // Server key (vault.key) as the raw file, for an off-server copy (#451).
+  downloadServerKey: async () => {
+    const { url, options } = buildApiRequest('GET', '/settings/server-key', {})
+    const res = await fetch(url, options)
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      const err = new Error(data.error || `HTTP ${res.status}`)
+      err.status = res.status
+      throw err
+    }
+    return res.blob()
+  },
+  // After a recovery, re-seal dedup destinations with this server's key using
+  // the backup passphrase (#451). An empty passphrase only reports status.
+  rewrapDedupKeys: (passphrase = '') =>
+    request('POST', '/storage/dedup-keys/rewrap', { passphrase }, { timeoutMs: LONG_REQUEST_TIMEOUT_MS }),
 
   // Diagnostics
   downloadDiagnostics: async () => {

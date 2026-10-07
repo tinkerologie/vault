@@ -113,7 +113,6 @@ func TestRunUninstallCleanupPreservesNestedBackupRoot(t *testing.T) {
 		cfg.LogPath,
 		cfg.PIDFile,
 		filepath.Join(configDir, "vault.cfg"),
-		filepath.Join(configDir, "vault.key"),
 		dbPath,
 		dbPath + "-wal",
 		dbPath + "-shm",
@@ -132,6 +131,7 @@ func TestRunUninstallCleanupPreservesNestedBackupRoot(t *testing.T) {
 			t.Fatalf("expected %s to be removed, got stat error %v", path, statErr)
 		}
 	}
+	assertServerKeyKept(t, configDir)
 
 	if _, err := os.Stat(filepath.Join(backupRoot, "keep.tar")); err != nil {
 		t.Fatalf("expected backup payload to remain: %v", err)
@@ -183,7 +183,6 @@ func TestRunUninstallCleanupFallsBackSafelyWithoutDatabase(t *testing.T) {
 
 	for _, path := range []string{
 		filepath.Join(configDir, "vault.cfg"),
-		filepath.Join(configDir, "vault.key"),
 		filepath.Join(configDir, "vault.db"),
 		filepath.Join(configDir, "vault.db-wal"),
 		filepath.Join(configDir, "vault.db-shm"),
@@ -195,6 +194,7 @@ func TestRunUninstallCleanupFallsBackSafelyWithoutDatabase(t *testing.T) {
 			t.Fatalf("expected %s to be removed, got stat error %v", path, statErr)
 		}
 	}
+	assertServerKeyKept(t, configDir)
 
 	if _, err := os.Stat(filepath.Join(backupRoot, "keep.tar")); err != nil {
 		t.Fatalf("expected unknown backup content to remain during fallback cleanup: %v", err)
@@ -234,5 +234,15 @@ func TestRunUninstallCleanupRemovesOnlyEmptyFUSERoots(t *testing.T) {
 	}
 	if _, err := os.Stat(busyFile); err != nil {
 		t.Errorf("expected non-empty FUSE root content to remain: %v", err)
+	}
+}
+
+// assertServerKeyKept checks uninstall left vault.key in place and intact:
+// it is the only key that opens this server's dedup destinations (#451).
+func assertServerKeyKept(t *testing.T, configDir string) {
+	t.Helper()
+	got, err := os.ReadFile(filepath.Join(configDir, "vault.key"))
+	if err != nil || len(got) == 0 {
+		t.Fatalf("vault.key was not kept by uninstall: %q, %v", got, err)
 	}
 }

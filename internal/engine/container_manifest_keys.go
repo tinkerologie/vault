@@ -14,7 +14,7 @@ import (
 
 // Exported names for the synthetic container keys that carry metadata, for
 // readers (such as `vault recover`) that surface that metadata rather than
-// skip it. Use these instead of re-declaring the literals.
+// skip it. Use these instead of redeclaring the literals.
 const (
 	ContainerInspectKey   = containerInspectKey
 	ContainerImageMetaKey = containerImageMetaKey

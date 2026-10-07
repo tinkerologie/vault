@@ -172,29 +172,35 @@ function vault_proxy_header() {
     return 'X-Vault-Proxy: unraid-plugin-proxy';
 }
 
-// cURL budgets for daemon requests. Restore-point contents enumerates a whole
-// archive index, which on remote storage (B2/S3) can take far longer than a
-// normal call (issue #449). Layer order: daemon 120 s
-// (handlers.RestorePointContentsWriteTimeout) < proxy 125 s < browser 130 s
-// (RESTORE_POINT_CONTENTS_TIMEOUT_MS in web/src/lib/api.js).
+// cURL budgets for daemon requests. A few requests legitimately take far
+// longer than a normal call: restore-point contents enumerates a whole
+// archive index on remote storage (issue #449), and the dedup key rewrap
+// after a recovery derives a key per destination (issue #451). Layer order:
+// daemon 120 s (handlers.RestorePointContentsWriteTimeout,
+// handlers.DedupRewrapWriteTimeout) < proxy 125 s < browser 130 s
+// (LONG_REQUEST_TIMEOUT_MS in web/src/lib/api.js).
 const VAULT_HTTP_TIMEOUT_DEFAULT = 10;
 const VAULT_HTTP_TIMEOUT_CONTENTS = 125;
 const VAULT_HTTP_CONNECT_TIMEOUT = 5;
 // cURL error code for an expired CURLOPT_TIMEOUT.
 const VAULT_CURLE_OPERATION_TIMEDOUT = 28;
 
-// Reports whether a request is GET restore-point contents; the query string
-// is ignored and the path must match exactly.
-function vault_is_contents_request($method, $path) {
+// Reports whether a request is one of the long-running routes above: GET
+// restore-point contents or POST dedup key rewrap. The query string is
+// ignored and the path must match exactly.
+function vault_is_long_request($method, $path) {
     $route = parse_url((string) $path, PHP_URL_PATH);
-    return strtoupper((string) $method) === 'GET'
-        && is_string($route)
-        && preg_match('#^/api/v1/jobs/[^/]+/restore-points/[^/]+/contents$#', $route) === 1;
+    if (!is_string($route)) {
+        return false;
+    }
+    $method = strtoupper((string) $method);
+    return ($method === 'GET' && preg_match('#^/api/v1/jobs/[^/]+/restore-points/[^/]+/contents$#', $route) === 1)
+        || ($method === 'POST' && $route === '/api/v1/storage/dedup-keys/rewrap');
 }
 
 // Returns the cURL CURLOPT_TIMEOUT (seconds) for a daemon request.
 function vault_request_timeout($method, $path) {
-    return vault_is_contents_request($method, $path)
+    return vault_is_long_request($method, $path)
         ? VAULT_HTTP_TIMEOUT_CONTENTS
         : VAULT_HTTP_TIMEOUT_DEFAULT;
 }

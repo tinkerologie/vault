@@ -56,4 +56,49 @@ test.describe('Cold Disaster Recovery Wizard (#/recover)', () => {
     // Navigates back to dashboard
     await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
   });
+
+  test('unlocks deduplicated backups with the backup password after the restore (#451)', async ({ page }) => {
+    const passphrases: string[] = [];
+    await page.route('**/storage/dedup-keys/rewrap', async (route) => {
+      const pass = route.request().postDataJSON()?.passphrase ?? '';
+      passphrases.push(pass);
+      const status = pass === 'correct horse' ? 'rewrapped' : pass ? 'locked_wrong_passphrase' : 'locked_needs_passphrase';
+      const error = status === 'rewrapped' ? '' : status === 'locked_wrong_passphrase'
+        ? 'the backup passphrase does not open this destination\'s escrow'
+        : 'enter the backup passphrase to unlock this destination';
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ destinations: [{ storage_id: 2, name: 'Dedup Backups', status, error }] }),
+      });
+    });
+
+    await page.goto('/#/recover');
+    await page.locator('#sname').fill('Disaster Recovery Storage');
+    await page.getByRole('textbox', { name: 'Path' }).fill('/mnt/user/backups');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('button', { name: /Restore this backup/i }).click();
+    await page.getByRole('button', { name: /Yes, restore my settings/i }).click();
+
+    // The restore asks which dedup destinations are still locked.
+    await expect(page.getByRole('heading', { name: 'Deduplicated backups' })).toBeVisible();
+    await expect(page.getByText('enter the backup passphrase to unlock this destination')).toBeVisible();
+    expect(passphrases).toEqual(['']);
+
+    const unlock = page.getByRole('button', { name: 'Unlock' });
+    await expect(unlock).toBeDisabled();
+    await page.getByLabel('Backup password').fill('wrong');
+    await unlock.click();
+    await expect(page.getByText(/does not open this destination/)).toBeVisible();
+
+    await page.getByLabel('Backup password').fill('correct horse');
+    await unlock.click();
+    await expect(page.getByText('✓ Dedup Backups: unlocked with your backup password.')).toBeVisible();
+    await expect(page.getByLabel('Backup password')).toHaveCount(0);
+    expect(passphrases).toEqual(['', 'wrong', 'correct horse']);
+
+    // The rest of the wizard still works.
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page.getByRole('heading', { name: /Vault is back/i })).toBeVisible();
+  });
 });

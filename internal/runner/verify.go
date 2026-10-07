@@ -229,7 +229,7 @@ func (r *Runner) runVerifyLoopDedup(verifyID int64, rp db.RestorePoint, mode Ver
 	}
 	defer storage.CloseAdapter(adapter)
 
-	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	repo, err := r.openExistingDedupRepo(adapter, dest)
 	if err != nil {
 		r.finishVerify(verifyID, "failed", fmt.Sprintf("open dedup repo: %v", err))
 		return

@@ -169,3 +169,45 @@ func TestManager_IdleTimeoutConfiguration(t *testing.T) {
 		t.Errorf("disabled timeout = %v, want 0", to)
 	}
 }
+
+// TestManager_MiskeyedRepoUsesEscrow checks a destination sealed with another
+// server's key opens for mounting through the backup-passphrase escrow, and
+// that without a passphrase the error explains how to recover (#451).
+func TestManager_MiskeyedRepoUsesEscrow(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{
+		Name: "dedup-dest", Type: "local", Config: `{"path":"` + dir + `"}`, DedupEnabled: true,
+	})
+	jobID, _ := d.CreateJob(db.Job{Name: "dedup-job", StorageDestID: destID, BackupTypeChain: "full"})
+	runID, _ := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "completed", BackupType: "full"})
+	rpID, _ := d.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "backups/test", Metadata: `{}`})
+
+	adapter, err := storage.NewAdapter("local", `{"path":"`+dir+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := dedup.InitRepo(d, adapter, destID, bytes.Repeat([]byte{0xaa}, dedup.SecretSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.EnsurePassphraseEscrow("pw"); err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewManager(d, ws.NewHub(), bytes.Repeat([]byte{0xbb}, dedup.SecretSize))
+
+	_, err = mgr.MountRestorePoint(context.Background(), jobID, rpID)
+	if err == nil || !strings.Contains(err.Error(), dedup.KeyMismatchHint) {
+		t.Fatalf("no passphrase: %v, want the key-mismatch guidance", err)
+	}
+
+	_ = d.SetSetting("encryption_passphrase", "pw")
+	_, err = mgr.MountRestorePoint(context.Background(), jobID, rpID)
+	if err == nil || !strings.Contains(err.Error(), "no manifests found") {
+		t.Fatalf("with passphrase: %v, want to get past the key check to the empty restore point", err)
+	}
+}

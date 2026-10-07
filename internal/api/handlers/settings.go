@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -453,6 +454,25 @@ func (h *SettingsHandler) GetEncryptionStatus(w http.ResponseWriter, _ *http.Req
 	respondJSON(w, http.StatusOK, map[string]any{
 		"encryption_enabled": hash != "",
 	})
+}
+
+// GetServerKey downloads the server key (vault.key) so it can be kept off the
+// server (issue #451). Dedup destinations are sealed with it; without it, or
+// a backup passphrase that was set when their last backup ran, they cannot
+// be read after the server is lost. The raw 32-byte file is returned, the
+// same format vault.key has on disk, so it can be copied back as-is. The key
+// is never logged.
+func (h *SettingsHandler) GetServerKey(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if len(h.serverKey) != crypto.ServerKeySize {
+		respondError(w, http.StatusServiceUnavailable, "server key is not configured")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="vault.key"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(h.serverKey)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(h.serverKey)
 }
 
 // GetEncryptionPassphrase returns the recoverable encryption passphrase.

@@ -27,6 +27,11 @@ const ServerWriteTimeout = 15 * time.Second
 // three together.
 const RestorePointContentsWriteTimeout = 120 * time.Second
 
+// DedupRewrapWriteTimeout is the write deadline for the dedup key rewrap
+// after a recovery (#451): each destination costs a scrypt derivation plus
+// storage round trips, which can outlast ServerWriteTimeout.
+const DedupRewrapWriteTimeout = 120 * time.Second
+
 // RestorePointContentsHandlerTimeout bounds the contents handler itself, one
 // probeTimeoutHeadroom ahead of RestorePointContentsWriteTimeout, so an
 // over-long listing is answered with a clean timeout error instead of a

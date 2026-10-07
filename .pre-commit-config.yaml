@@ -163,7 +163,7 @@ repos:
       - id: codespell
         name: Code Spell Checker
         args:
-          - --ignore-words-list=crate,nd,sav,fo,ue,numer,unexpect,aNULL,hax,hass,BLoC,MapPin,LOD,hda,ans,unparseable,pasttime
+          - --ignore-words-list=crate,nd,sav,fo,ue,numer,unexpect,aNULL,hax,hass,BLoC,MapPin,LOD,hda,ans,unparseable,pasttime,mounth
           - "--skip=*.sum,*.lock,*.json,*.mod,coverage.html,docs/plans/*"
           - --quiet-level=2
 

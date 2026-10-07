@@ -82,6 +82,15 @@ different mount point. This step flags any path that isn't found and offers
 a remap field with suggested mounts from the current server. It's skippable
 if you'd rather fix paths later from the Jobs or Storage pages.
 
+If you use deduplicated destinations, this step also unlocks them. They are
+sealed with the old server's `vault.key`, which a rebuilt server does not
+have. When a backup ran with a backup password set, that password also opens
+them: the wizard uses the password from step 2, or asks for it here, and
+re-seals each destination with this server's key. A destination it cannot
+unlock is listed with what it needs — the backup password that was set when
+its backups ran, or the original `vault.key` (see
+[Restoring vault.key](#restoring-vaultkey)).
+
 <!-- screenshot: step-5 -->
 
 ### Step 5 — Done
@@ -98,6 +107,11 @@ the restore points that came with the database.
 - **Store your backup password off the server** — password manager, printed
   note, anywhere that survives the server. Without it, encrypted backups
   cannot be decrypted by anyone, including you.
+- **Keep a copy of `vault.key` off the server** (Settings → Security →
+  **Server key** → Download). Deduplicated destinations are sealed with this
+  file. They also open with your backup password, but only once a backup has
+  run with that password set. **If you use deduplication without a backup
+  password, `vault.key` is the only way back into those backups.**
 - **Enable database backup on at least one destination** (Storage →
   destination → **Include in DB backup**). This writes your settings
   alongside your data after every successful backup.
@@ -105,6 +119,28 @@ the restore points that came with the database.
   take your backups with it.
 - Optionally note your storage connection details (host, share, username)
   somewhere safe — recovery starts by reconnecting to storage.
+
+### Restoring vault.key
+
+`vault.key` lives beside the Vault database: on Unraid,
+`/boot/config/plugins/vault/vault.key`. To put a saved copy back:
+
+1. Stop Vault (Settings → Vault → Stop, or `/etc/rc.d/rc.vault stop`).
+2. Copy the file to `/boot/config/plugins/vault/vault.key`.
+3. Start Vault.
+
+The CLI tools take a key from anywhere with `--key`, for example
+`vault dedup repair --key /path/to/vault.key` or
+`vault recover … --key /path/to/vault.key`.
+
+Uninstalling the plugin keeps `vault.key`, so a reinstall opens the same
+destinations. To remove every trace of Vault, delete
+`/boot/config/plugins/vault/` by hand after uninstalling — only do this if you
+no longer need the backups or have a copy of the key.
+
+**Security note:** the backup password now protects deduplicated
+destinations as well. Anyone with the password and access to the backup
+storage can read them, just as with `vault.key`, so use a strong password.
 
 ---
 
@@ -150,10 +186,12 @@ Linux the `vault` binary from the plugin package works the same way.
 - **Access to the backup storage.** A local disk, a mounted network share, or
   the connection details of an SFTP, SMB, WebDAV or S3 destination. NFS
   exports are not mounted for you: mount the export and point `--path` at it.
-- **`vault.key`, for deduplicated backups.** The dedup master key is sealed
-  with the server key. Copy `/boot/config/plugins/vault/vault.key` from the
-  Unraid flash drive (or a flash backup). Without it deduplicated backups
-  cannot be read on any machine.
+- **`vault.key` or the backup password, for deduplicated backups.** The
+  dedup master key is sealed with the server key: copy
+  `/boot/config/plugins/vault/vault.key` from the Unraid flash drive (or a
+  flash backup) and pass `--key`. Without the key, the backup password opens
+  a deduplicated destination if a backup ran with it set; pass it with
+  `--passphrase-file` or `VAULT_PASSPHRASE`.
 - **The backup passphrase, for encrypted classic backups.** Put it in a file
   and pass `--passphrase-file`, or set `VAULT_PASSPHRASE`. Passphrases and
   passwords are never accepted as command-line arguments.

@@ -30,6 +30,27 @@
   let remapping = $state(false)
   let remapResults = $state(null)
   let summary = $state({ jobs: 0, storage: 0 })
+  // Dedup destinations this server's vault.key cannot open yet (#451).
+  let dedupResults = $state([])
+  let dedupPass = $state('')
+  let dedupUnlocking = $state(false)
+  const lockedDedup = $derived(dedupResults.filter((r) => r.status.startsWith('locked_') || r.status === 'error'))
+  const unlockedDedup = $derived(dedupResults.filter((r) => r.status === 'rewrapped'))
+
+  // Re-seal dedup destinations with this server's key using the backup
+  // passphrase. With no passphrase it only reports which are still locked.
+  async function unlockDedup(pass) {
+    dedupUnlocking = true
+    try {
+      const res = await api.rewrapDedupKeys(pass)
+      dedupResults = res?.destinations || []
+      if (pass && lockedDedup.length > 0) showToast('Some deduplicated backups are still locked — see below.', 'warning')
+    } catch (e) {
+      showToast(e.message || 'Checking deduplicated backups failed.', 'error')
+    } finally {
+      dedupUnlocking = false
+    }
+  }
   let toast = $state({ message: '', type: 'info', key: 0 })
   const showToast = (message, type = 'info') => (toast = { message, type, key: toast.key + 1 })
 
@@ -98,6 +119,7 @@
         api.listStorage().catch(() => []),
       ])
       summary = { jobs: jobs.length, storage: storage.length }
+      await unlockDedup(passphrase)
       audit = await api.pathAudit().catch(() => null)
       step = 4
       showToast('Your settings are back.', 'success')
@@ -292,6 +314,33 @@
     </div>
 
   {:else if step === 4}
+    {#if unlockedDedup.length > 0 || lockedDedup.length > 0}
+      <div class="bg-surface-2 border border-border rounded-xl p-5 mb-4">
+        <h2 class="text-base font-semibold text-text mb-1">Deduplicated backups</h2>
+        {#each unlockedDedup as r (r.storage_id)}
+          <p class="text-sm text-success">✓ {r.name}: unlocked with your backup password.</p>
+        {/each}
+        {#if lockedDedup.length > 0}
+          <p class="text-sm text-text-muted mt-2 mb-2">
+            These were made by a server with a different vault.key. Enter the backup password that was set when they ran,
+            or copy the original vault.key to /boot/config/plugins/vault/ and restart Vault.
+          </p>
+          <ul class="text-sm mb-3">
+            {#each lockedDedup as r (r.storage_id)}
+              <li><span class="text-text font-medium">{r.name}</span> <span class="text-text-muted">— {r.error || r.status}</span></li>
+            {/each}
+          </ul>
+          <form class="flex items-center gap-2" onsubmit={(e) => { e.preventDefault(); if (dedupPass && !dedupUnlocking) unlockDedup(dedupPass) }}>
+            <label class="sr-only" for="dedup-pass">Backup password</label>
+            <input id="dedup-pass" type="password" bind:value={dedupPass} autocomplete="off" placeholder="Backup password"
+              class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+            <button type="submit" class="btn btn-primary" disabled={!dedupPass || dedupUnlocking}>
+              {#if dedupUnlocking}<InlineSpinner />{/if} Unlock
+            </button>
+          </form>
+        {/if}
+      </div>
+    {/if}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
       <h2 class="text-base font-semibold text-text mb-1">Check your folder paths</h2>
       {#if audit === null}

@@ -77,6 +77,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/storage/{id}/import`         | Import backups discovered during scan (preserves dedup manifest IDs)                                               |
 | GET    | `/storage/{id}/db-backups`     | List Vault database backups found under `_vault/` on the destination (newest first)                                |
 | POST   | `/storage/{id}/restore-db`     | Restore the Vault database from a `_vault/` backup — see body fields below                                         |
+| POST   | `/storage/dedup-keys/rewrap`   | After a recovery, re-seal dedup destinations with this server's key using the backup passphrase — see below        |
 | GET    | `/storage/{id}/jobs`           | Returns `{ jobs: [{id, name}], job_count: N }` — dependent-job list                                                |
 | GET    | `/storage/{id}/list`           | List files under a storage path                                                                                    |
 | GET    | `/storage/{id}/files`          | Download a file from storage                                                                                       |
@@ -91,6 +92,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/settings/encryption`            | Set encryption passphrase                                                                            |
 | POST   | `/settings/encryption/verify`     | Verify encryption passphrase                                                                         |
 | GET    | `/settings/encryption/passphrase` | Read the configured passphrase (`Cache-Control: no-store`)                                           |
+| GET    | `/settings/server-key`            | Download `vault.key`, the raw 32-byte server key (`Cache-Control: no-store`, rate limited)           |
 | GET    | `/settings/staging`               | Staging directory info                                                                               |
 | PUT    | `/settings/staging`               | Override the staging directory                                                                       |
 | GET    | `/settings/database`              | Database snapshot settings                                                                           |
@@ -167,6 +169,24 @@ Replication is pull-based: a sync imports only the remote jobs whose `source_id`
 - `verify_only` — when `true`, validates the backup (and passphrase) without replacing the current database.
 
 List the available backups first with `GET /storage/{id}/db-backups`.
+
+### Unlocking dedup destinations (`dedup-keys/rewrap`)
+
+Deduplicated destinations are sealed with the server's `vault.key`. After a
+recovery onto a server with a different key, `POST /storage/dedup-keys/rewrap`
+with `{"passphrase": "…"}` opens each one through its backup-password escrow
+(written by every dedup backup that ran with a backup password set) and
+re-seals it with this server's key; the previous `_vault/repo.json` is kept
+as `_vault/repo.json.<time>.bak`. An empty passphrase changes nothing and only
+reports status. The response is
+`{"destinations": [{"storage_id", "name", "status", "error"}]}`, where
+`status` is `ok`, `rewrapped`, `not_initialised`, `locked_needs_passphrase`,
+`locked_no_escrow`, `locked_wrong_passphrase` or `error`. Blocked on
+replicas.
+
+While a destination is still sealed with another key, browsing its restore
+points (`GET /jobs/{id}/restore-points/{rpid}/contents`) returns
+**424** with `{"code": "dedup_key_mismatch", "error": "…"}`.
 
 ## MCP (Model Context Protocol)
 

@@ -37,12 +37,14 @@ const fixturePassphrase = "correct horse battery staple"
 
 // scenario is one recovery check. Paths are item-relative backup paths.
 type scenario struct {
-	Name    string            `json:"name"`
-	Storage string            `json:"storage"` // directory under the fixture root
-	Point   string            `json:"point"`   // point reference, e.g. "<job>/latest"
-	Item    string            `json:"item"`
-	Want    map[string]string `json:"want"`   // path -> content
-	Absent  []string          `json:"absent"` // paths that must not be recovered
+	Name    string `json:"name"`
+	Storage string `json:"storage"` // directory under the fixture root
+	// NoKey recovers without vault.key, relying on the passphrase escrow.
+	NoKey  bool              `json:"no_key,omitempty"`
+	Point  string            `json:"point"` // point reference, e.g. "<job>/latest"
+	Item   string            `json:"item"`
+	Want   map[string]string `json:"want"`   // path -> content
+	Absent []string          `json:"absent"` // paths that must not be recovered
 	// LinuxOnly lists Want paths that only Linux can create, which a Windows
 	// run must see renamed.
 	LinuxOnly []string `json:"linux_only,omitempty"`
@@ -118,10 +120,10 @@ func backupJob(t *testing.T, storageDir, jobName, chain, encryption string, dedu
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if encryption == "age" {
-		if err := database.SetSetting("encryption_passphrase", fixturePassphrase); err != nil {
-			t.Fatal(err)
-		}
+	// Always configured: classic jobs only use it with encryption "age",
+	// and dedup backups escrow their master key under it (#451).
+	if err := database.SetSetting("encryption_passphrase", fixturePassphrase); err != nil {
+		t.Fatal(err)
 	}
 	hub := ws.NewHub()
 	go hub.Run()
@@ -212,6 +214,8 @@ func buildFixture(t *testing.T, root string) fixture {
 			RelLinks: map[string]string{"links/rel": "../plain.txt"}, AbsLinks: []string{"links/abs"}},
 		{Name: "dedup", Storage: "dedup", Point: "Dedup Folder/latest",
 			Item: "src", Want: final, Absent: []string{"dir/nested.txt"}, LinuxOnly: linuxOnly},
+		{Name: "dedup with the backup passphrase only", Storage: "dedup", Point: "Dedup Folder/latest", NoKey: true,
+			Item: "src", Want: final, Absent: []string{"dir/nested.txt"}, LinuxOnly: linuxOnly},
 	}}
 }
 
@@ -290,8 +294,13 @@ func TestRecoverRunnerBackups(t *testing.T) {
 
 func openFixture(t *testing.T, storageDir string) *Session {
 	t.Helper()
+	return openFixtureKey(t, storageDir, fixtureServerKey())
+}
+
+func openFixtureKey(t *testing.T, storageDir string, key []byte) *Session {
+	t.Helper()
 	cfg, _ := json.Marshal(map[string]string{"path": storageDir})
-	s, err := Open(Options{StorageType: "local", StorageConfig: string(cfg), ServerKey: fixtureServerKey(), Passphrase: fixturePassphrase})
+	s, err := Open(Options{StorageType: "local", StorageConfig: string(cfg), ServerKey: key, Passphrase: fixturePassphrase})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +314,11 @@ func openFixture(t *testing.T, storageDir string) *Session {
 func checkScenario(t *testing.T, root string, sc scenario, safeNames bool) {
 	storageDir := filepath.Join(root, sc.Storage)
 	before := snapshotTree(t, storageDir)
-	s := openFixture(t, storageDir)
+	key := fixtureServerKey()
+	if sc.NoKey {
+		key = nil
+	}
+	s := openFixtureKey(t, storageDir, key)
 
 	p, err := s.FindPoint(sc.Point)
 	if err != nil {

@@ -71,9 +71,10 @@ network share such as Z:\backups or /mnt/backups) or --config-file (a JSON
 file with the same fields as the destination's settings in Vault).
 
 Deduplicated backups need --key, the vault.key file from the server that
-made them (on Unraid: /boot/config/plugins/vault/vault.key). Encrypted
-classic backups need the backup passphrase, read from --passphrase-file or
-the VAULT_PASSPHRASE environment variable.
+made them (on Unraid: /boot/config/plugins/vault/vault.key), or the backup
+passphrase if one was set when they ran. Encrypted classic backups need the
+backup passphrase. The passphrase is read from --passphrase-file or the
+VAULT_PASSPHRASE environment variable.
 
 Typical use:
   vault recover list --path Z:\backups --key vault.key

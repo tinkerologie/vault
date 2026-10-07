@@ -8,6 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,7 +30,30 @@ const RepoRoot = "_vault"
 // runner/db_backup.go), so cleanup of an orphaned repo must delete exactly
 // these subpaths and never the shared root (issue #183).
 func RepoSubpaths() []string {
-	return []string{repoConfigPath, packsRoot, indexRootPath}
+	return []string{repoConfigPath, escrowPath, packsRoot, indexRootPath}
+}
+
+// HeaderBackups lists the repo.json copies RewrapMaster keeps
+// (_vault/repo.json.<time>.bak). They hold a sealed master key, so whoever
+// removes the repository removes these too. Their names vary, hence a
+// listing rather than an entry in RepoSubpaths.
+func HeaderBackups(a storage.Adapter) ([]string, error) {
+	entries, err := a.List(RepoRoot)
+	if err != nil {
+		if storage.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	prefix := path.Base(repoConfigPath) + "."
+	for _, e := range entries {
+		base := path.Base(filepath.ToSlash(e.Path))
+		if !e.IsDir && strings.HasPrefix(base, prefix) && strings.HasSuffix(base, ".bak") {
+			out = append(out, RepoRoot+"/"+base)
+		}
+	}
+	return out, nil
 }
 
 const (
@@ -73,6 +99,10 @@ type Repo struct {
 	db        *db.DB
 	adapter   storage.Adapter
 	storageID int64
+	uuid      string // repository identity, binds the passphrase escrow
+	// viaEscrow is set when the master key came from the passphrase escrow
+	// because the server key did not match (OpenRepoFromEscrow).
+	viaEscrow bool
 
 	master       []byte
 	chunkHashKey []byte
@@ -142,44 +172,57 @@ func InitRepo(d *db.DB, a storage.Adapter, storageID int64, serverKey []byte) (*
 	if err := a.Write(repoConfigPath, bytes.NewReader(body)); err != nil {
 		return nil, fmt.Errorf("dedup: write repo.json: %w", err)
 	}
-	return buildRepo(d, a, storageID, master), nil
+	return buildRepo(d, a, storageID, master, cfg.UUID), nil
 }
 
 // OpenRepo opens an existing dedup repository at the destination. Returns
 // an error (and no Repo) on missing config, unsupported version, or
 // unsealing failure (wrong serverKey).
 func OpenRepo(d *db.DB, a storage.Adapter, storageID int64, serverKey []byte) (*Repo, error) {
+	cfg, _, err := readRepoConfig(a)
+	if err != nil {
+		return nil, err
+	}
+	master, err := UnsealMaster(serverKey, cfg.SealedMaster)
+	if err != nil {
+		// Almost always a different vault.key; a damaged header looks the
+		// same to AES-GCM, so callers present it as "restore your key".
+		return nil, fmt.Errorf("dedup: unseal master (wrong serverKey?): %w: %w", ErrServerKeyMismatch, err)
+	}
+	return buildRepo(d, a, storageID, master, cfg.UUID), nil
+}
+
+// readRepoConfig reads and validates the repository header, returning it with
+// its raw bytes (kept so a rewrite can back the original up verbatim).
+func readRepoConfig(a storage.Adapter) (repoConfig, []byte, error) {
 	rc, err := a.Read(repoConfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("dedup: read repo.json: %w", err)
+		return repoConfig{}, nil, fmt.Errorf("dedup: read repo.json: %w", err)
 	}
 	defer rc.Close()
 	body, err := io.ReadAll(rc)
 	if err != nil {
-		return nil, fmt.Errorf("dedup: read repo.json body: %w", err)
+		return repoConfig{}, nil, fmt.Errorf("dedup: read repo.json body: %w", err)
 	}
 	var cfg repoConfig
 	if err := json.Unmarshal(body, &cfg); err != nil {
-		return nil, fmt.Errorf("dedup: decode repo.json: %w", err)
+		return repoConfig{}, nil, fmt.Errorf("dedup: decode repo.json: %w", err)
 	}
 	if cfg.Version != repoVersion {
-		return nil, fmt.Errorf("dedup: unsupported repo version %d", cfg.Version)
+		return repoConfig{}, nil, fmt.Errorf("dedup: unsupported repo version %d", cfg.Version)
 	}
-	master, err := UnsealMaster(serverKey, cfg.SealedMaster)
-	if err != nil {
-		return nil, fmt.Errorf("dedup: unseal master (wrong serverKey?): %w", err)
-	}
-	return buildRepo(d, a, storageID, master), nil
+	return cfg, body, nil
 }
 
 // buildRepo wires up the in-memory Repo, Index, and Packer. Defensive copies
 // of every secret so the caller's buffers are independent.
-func buildRepo(d *db.DB, a storage.Adapter, storageID int64, master []byte) *Repo {
+func buildRepo(d *db.DB, a storage.Adapter, storageID int64, master []byte, uuid string) *Repo {
 	masterCopy := append([]byte(nil), master...)
 	r := &Repo{
 		db:           d,
 		adapter:      a,
 		storageID:    storageID,
+		uuid:         uuid,
 		master:       masterCopy,
 		chunkHashKey: DeriveChunkHashKey(masterCopy),
 		splitterKey:  DeriveSplitterSecret(masterCopy),
@@ -308,8 +351,8 @@ func (r *Repo) Get(id ID) ([]byte, error) {
 }
 
 // ReadAndVerify reads a chunk back and proves it is still the chunk it
-// claims to be: Get's AEAD tag catches tampering and bit-rot at the crypto
-// layer, and recomputing the content ID catches an index entry that points at
+// claims to be: the AEAD tag Get checks catches tampering and bit-rot at the
+// crypto layer, and recomputing the content ID catches an index entry that points at
 // the wrong bytes. It returns the plaintext so callers can account for the
 // bytes read.
 //

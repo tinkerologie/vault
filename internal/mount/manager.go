@@ -19,6 +19,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
+	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/storage"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
@@ -416,8 +417,13 @@ func (m *Manager) MountRestorePointTo(ctx context.Context, jobID, rpID int64, ta
 		}
 	}()
 
-	repo, err := dedup.OpenRepo(m.db, adapter, dest.ID, m.serverKey)
+	// Server key first; when it does not match (a recovered server), the
+	// configured backup passphrase opens the repository through its escrow.
+	repo, err := runner.OpenDedupRepoWithFallback(m.db, adapter, dest.ID, m.serverKey, runner.ResolvePassphraseFrom(m.db, m.serverKey))
 	if err != nil {
+		if errors.Is(err, dedup.ErrServerKeyMismatch) {
+			return nil, fmt.Errorf("mount: open dedup repo: %s: %w", dedup.KeyMismatchHint, err)
+		}
 		return nil, fmt.Errorf("mount: open dedup repo: %w", err)
 	}
 

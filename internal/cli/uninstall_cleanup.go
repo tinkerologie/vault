@@ -243,10 +243,17 @@ func managedSnapshotPaths(cfg uninstallCleanupConfig, state uninstallCleanupStat
 	return orderedUniquePaths(paths)
 }
 
+// serverKeyFile is the server key's name inside the config directory.
+const serverKeyFile = "vault.key"
+
 func removeConfigArtifacts(cfg uninstallCleanupConfig) error {
+	// vault.key is deliberately kept (issue #451): it is the only key that
+	// opens this server's dedup destinations, and a reinstall that generated
+	// a new one locked them out. On its own it is useless without access to
+	// the backup storage; docs/guides/disaster-recovery.md explains how to
+	// delete it by hand.
 	paths := []string{
 		filepath.Join(cfg.ConfigDir, "vault.cfg"),
-		filepath.Join(cfg.ConfigDir, "vault.key"),
 		cfg.DBPath,
 	}
 	for _, path := range paths {
@@ -283,6 +290,8 @@ func cleanupConfigDir(cfg uninstallCleanupConfig, state uninstallCleanupState) e
 	if configDir == "" {
 		return nil
 	}
+	// Keep vault.key, like any preserved backup root (see removeConfigArtifacts).
+	state.PreserveRoots = append(append([]string(nil), state.PreserveRoots...), filepath.Join(configDir, serverKeyFile))
 
 	if !state.Confident {
 		pruneEmpty(configDir)

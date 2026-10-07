@@ -359,3 +359,43 @@ describe('restore-point contents timeout (issue #449)', () => {
     expect(err.status).toBe(401)
   })
 })
+
+describe('dedup key recovery (issue #451)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('posts the passphrase to the rewrap route with the long timeout', async () => {
+    vi.useFakeTimers()
+    const fetch = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    const pending = api.rewrapDedupKeys('pw')
+    let settled = false
+    pending.then(() => { settled = true }, () => { settled = true })
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(settled).toBe(false)
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/dedup-keys/rewrap')
+    expect(fetch.mock.calls[0][1].method).toBe('POST')
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ passphrase: 'pw' })
+    const assertion = expect(pending).rejects.toThrow('Request timed out')
+    await vi.advanceTimersByTimeAsync(130000 - 15000)
+    await assertion
+  })
+
+  it('downloads the server key as a blob and surfaces errors with status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array(32), { status: 200 })))
+    const blob = await api.downloadServerKey()
+    expect(blob.size).toBe(32)
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"server key is not configured"}', {
+      status: 503, headers: { 'content-type': 'application/json' },
+    })))
+    const err = await api.downloadServerKey().catch(e => e)
+    expect(err.message).toBe('server key is not configured')
+    expect(err.status).toBe(503)
+  })
+})
