@@ -106,6 +106,13 @@ jobs:
           echo "Package created: $PACKAGE_FILE"
           ls -lh "$PACKAGE_FILE"
 
+      - name: Build Windows recovery binary
+        # The Windows build is published for `vault recover`, which reads
+        # backups straight from storage when no Vault server is available.
+        run: |
+          make build-windows
+          cd build && sha256sum vault-windows-amd64.exe > vault-windows-amd64.exe.sha256
+
       - name: Extract release notes from CHANGELOG
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -142,6 +149,8 @@ jobs:
           body_path: build/RELEASE_NOTES.md
           files: |
             build/vault-${{ steps.version.outputs.version }}.txz
+            build/vault-windows-amd64.exe
+            build/vault-windows-amd64.exe.sha256
           prerelease: ${{ steps.version.outputs.prerelease }}
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}

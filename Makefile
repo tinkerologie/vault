@@ -13,7 +13,7 @@ LDFLAGS := -s -w \
 
 ANSIBLE_CMD := cd ansible && ansible-playbook -i inventory.yml ansible.yml
 
-.PHONY: all build build-local build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push
+.PHONY: all build build-local build-windows build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push
 
 all: test build-local
 
@@ -50,6 +50,11 @@ build-web:
 
 build-local: internal/release/CHANGELOG.md build-web
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64 ./cmd/vault/
+
+# Windows build of the same binary; only `vault recover` is supported there
+# (issue #313).
+build-windows: internal/release/CHANGELOG.md build-web
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe ./cmd/vault/
 
 test: internal/release/CHANGELOG.md
 	go test ./internal/... ./cmd/... -v

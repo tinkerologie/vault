@@ -2,6 +2,7 @@ package safepath
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -48,6 +49,34 @@ func JoinUnderBase(basePath, path string, allowRoot bool) (string, error) {
 		return filepath.Clean(basePath), nil
 	}
 	return filepath.Join(filepath.Clean(basePath), rel), nil
+}
+
+// JoinRemote is JoinUnderBase for a POSIX path on a remote server (SFTP).
+// It always joins with '/', so a client running on Windows still sends the
+// server Unix paths (issue #313). As with JoinUnderBase, a backslash is a
+// separator only on Windows, where Vault's own paths may contain one; on
+// other platforms it stays a literal filename character. On Unix the result
+// is identical to JoinUnderBase.
+func JoinRemote(basePath, p string, allowRoot bool) (string, error) {
+	base := path.Clean(filepath.ToSlash(basePath))
+	trimmed := strings.TrimSpace(p)
+	if trimmed == "" {
+		if allowRoot {
+			return base, nil
+		}
+		return "", fmt.Errorf("path is required")
+	}
+	rel := path.Clean(filepath.ToSlash(trimmed))
+	if path.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("path must stay within the configured base directory")
+	}
+	if rel == "." {
+		if allowRoot {
+			return base, nil
+		}
+		return "", fmt.Errorf("path must not point to the root")
+	}
+	return path.Join(base, rel), nil
 }
 
 // NormalizeAbsoluteUnderRoots validates an absolute path against a fixed set of

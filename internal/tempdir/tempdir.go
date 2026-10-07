@@ -18,8 +18,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 
+	"github.com/ruaan-deysel/vault/internal/fsstat"
 	"github.com/ruaan-deysel/vault/internal/unraid"
 )
 
@@ -473,11 +473,9 @@ func diskSpace(path string) (free, total uint64) {
 		}
 		p = filepath.Dir(p)
 	}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(p, &stat); err != nil {
+	u, err := fsstat.Stat(p)
+	if err != nil {
 		return 0, 0
 	}
-	total = stat.Blocks * uint64(stat.Bsize)
-	free = stat.Bavail * uint64(stat.Bsize)
-	return free, total
+	return u.Free, u.Total
 }

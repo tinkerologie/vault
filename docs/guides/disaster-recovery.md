@@ -134,6 +134,114 @@ include it with `-H "X-API-Key: $VAULT_API_KEY"`.
 
 ---
 
+## Recovering files without a Vault server
+
+If you cannot run Vault at all — the server is dead and you just need files
+back — `vault recover` reads your backups straight from storage and extracts
+them into a folder. It runs on **Linux, macOS and Windows**, needs no Vault
+database, and **never writes to or deletes from the backup storage**.
+
+Download `vault-windows-amd64.exe` from the
+[releases page](https://github.com/ruaan-deysel/vault/releases) on Windows. On
+Linux the `vault` binary from the plugin package works the same way.
+
+### What you need
+
+- **Access to the backup storage.** A local disk, a mounted network share, or
+  the connection details of an SFTP, SMB, WebDAV or S3 destination. NFS
+  exports are not mounted for you: mount the export and point `--path` at it.
+- **`vault.key`, for deduplicated backups.** The dedup master key is sealed
+  with the server key. Copy `/boot/config/plugins/vault/vault.key` from the
+  Unraid flash drive (or a flash backup). Without it deduplicated backups
+  cannot be read on any machine.
+- **The backup passphrase, for encrypted classic backups.** Put it in a file
+  and pass `--passphrase-file`, or set `VAULT_PASSPHRASE`. Passphrases and
+  passwords are never accepted as command-line arguments.
+
+### Steps
+
+The examples use Windows paths; on Linux or macOS use paths like
+`/mnt/backups` and `~/vault.key`. On Windows, run them in PowerShell or
+Command Prompt as `.\vault-windows-amd64.exe recover …`.
+
+1. **List the backups.** Each line's `POINT` is what you pass to the other
+   commands; `<job>/latest` means that job's newest backup.
+
+   ```sh
+   vault recover list --path Z:\backups --key C:\keys\vault.key
+   ```
+
+2. **Look inside one item** (optional):
+
+   ```sh
+   vault recover contents --path Z:\backups --key C:\keys\vault.key --point "Daily Containers Backup/latest" --item sonarr
+   ```
+
+3. **Extract.** Each item gets its own folder under `--to`. Add `--include`
+   (repeatable) to extract only some paths, using the paths `contents` prints.
+
+   ```sh
+   vault recover extract --path Z:\backups --key C:\keys\vault.key --point "Daily Containers Backup/latest" --item sonarr --to C:\recovered
+   ```
+
+For other storage types, use `--type` with `--config-file`, a JSON file with
+the same fields as the destination's settings in Vault. For example
+`--type s3 --config-file s3.json`:
+
+```json
+{
+  "bucket": "my-backups",
+  "region": "us-east-1",
+  "endpoint": "https://s3.us-east-1.amazonaws.com",
+  "access_key": "…",
+  "secret_key": "…",
+  "base_path": "vault"
+}
+```
+
+| `--type` | Fields                                                                                          |
+| -------- | ----------------------------------------------------------------------------------------------- |
+| `s3`     | `bucket`, `region`, `endpoint`, `access_key`, `secret_key`, `base_path`, `force_path_style`     |
+| `sftp`   | `host`, `port`, `user`, `password` or `key_file`, `base_path`, `host_key` or `known_hosts_file` |
+| `smb`    | `host`, `port`, `user`, `password`, `share`, `base_path`                                        |
+| `webdav` | `url`, `username`, `password`, `base_path`                                                      |
+
+Keep that file private — it contains your storage credentials.
+
+### What you get
+
+- **Folders and plugins:** the backed-up files.
+- **Containers:** each volume's files under the volume's path inside the
+  container (for example `config/…`), plus `_vault-metadata/` with the
+  container's Unraid template, configuration, image archive and (when
+  enabled) database dump, for rebuilding the container on a new host.
+- **VMs and other items:** the stored files as-is (disk images, `domain.xml`,
+  NVRAM), decrypted and decompressed. For an incremental or differential VM
+  backup each run's files go in their own folder, oldest first, because the
+  later disk images are deltas that need the earlier ones.
+- **Incremental and differential backups** are rebuilt from their whole
+  chain, and files deleted before the chosen backup are removed again.
+- `--raw` copies a classic backup's archives out without unpacking them.
+
+Stored checksums are verified while extracting. A summary is printed and a
+`vault-recover-report-<time>.json` file is written into the `--to` folder.
+
+**On Windows**, names Windows cannot store are rewritten: each `:` `?` `*`
+`"` `<` `>` `|`, and a trailing dot or space, is replaced with `_`
+(`run:01.log` becomes `run_01.log`); a device name such as `CON` gets a
+leading `_` (`CON.txt` becomes `_CON.txt`); and names that differ only by
+case get a `(2)` suffix. Every rename is listed in the
+report. Symbolic links are not recreated on Windows. On Linux and macOS,
+relative links that stay inside the item are recreated. Absolute links,
+device files and file ownership are never recreated. `--safe-names on`
+applies the Windows naming rules on Linux and macOS too, for example before
+copying the files to a Windows share; on Windows they always apply.
+
+To put recovered data back on a new Vault server, use the [wizard](#recovering-with-the-wizard)
+instead: it restores containers, VMs and settings in place.
+
+---
+
 ## After recovery
 
 - Run the path check (wizard step 4, or review Jobs/Storage) if your array or

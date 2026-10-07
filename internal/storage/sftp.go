@@ -70,6 +70,10 @@ func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
 	if config.BasePath == "" && config.Path != "" {
 		config.BasePath = config.Path
 	}
+	// The base is a server path: keep it '/'-separated so the containment
+	// check sends the server the same base JoinRemote joins under, even when
+	// Vault runs on Windows (a no-op elsewhere).
+	config.BasePath = filepath.ToSlash(config.BasePath)
 	a := &SFTPAdapter{config: config}
 	a.pool = newSFTPPool(sftpPoolSize, func() (sftpConn, error) {
 		return a.dialConnection()
@@ -153,12 +157,21 @@ func (s *SFTPAdapter) dialConnection() (*sftpConnection, error) {
 }
 
 func (s *SFTPAdapter) fullPath(path string, allowRoot bool) (string, error) {
-	fullPath, err := safepath.JoinUnderBase(s.config.BasePath, path, allowRoot)
+	// Remote paths are POSIX; JoinRemote keeps them '/'-separated even when
+	// Vault runs on Windows (issue #313).
+	fullPath, err := safepath.JoinRemote(s.config.BasePath, path, allowRoot)
 	if err != nil {
 		return "", fmt.Errorf("invalid path %q: %w", path, err)
 	}
 	return fullPath, nil
 }
+
+// remoteDir and remoteJoin are path.Dir / path.Join for server paths. They
+// exist because several adapter methods take a parameter named path, which
+// shadows the package there.
+func remoteDir(p string) string { return path.Dir(p) }
+
+func remoteJoin(prefix, name string) string { return path.Join(filepath.ToSlash(prefix), name) }
 
 // verifyRemoteNoSymlinkEscape resolves fullPath on the server (RealPath) and
 // rejects the operation when it lands outside the resolved base — a symlink
@@ -254,7 +267,7 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, full); err != nil {
 		return err
 	}
-	if err := client.MkdirAll(filepath.Dir(full)); err != nil {
+	if err := client.MkdirAll(remoteDir(full)); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
@@ -433,7 +446,7 @@ func (s *SFTPAdapter) List(prefix string) (_ []FileInfo, retErr error) {
 	var files []FileInfo
 	for _, e := range entries {
 		files = append(files, FileInfo{
-			Path:    filepath.Join(prefix, e.Name()),
+			Path:    remoteJoin(prefix, e.Name()),
 			Size:    e.Size(),
 			ModTime: e.ModTime(),
 			IsDir:   e.IsDir(),

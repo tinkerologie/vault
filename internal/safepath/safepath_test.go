@@ -1,6 +1,9 @@
 package safepath
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestNormalizeRelative(t *testing.T) {
 	t.Parallel()
@@ -219,5 +222,49 @@ func TestNormalizeComponentRejectsBackslash(t *testing.T) {
 	}
 	if got, err := NormalizeComponent("plain-name.txt"); err != nil || got != "plain-name.txt" {
 		t.Errorf("plain component rejected: %v", err)
+	}
+}
+
+// TestJoinRemoteMatchesJoinUnderBaseOnUnix pins JoinRemote to JoinUnderBase's
+// results wherever filepath already uses '/', so switching SFTP to it cannot
+// change behaviour on the daemon's own platform.
+func TestJoinRemoteMatchesJoinUnderBaseOnUnix(t *testing.T) {
+	if filepath.Separator != '/' {
+		t.Skip("JoinUnderBase uses OS separators on this platform")
+	}
+	cases := []struct {
+		path      string
+		allowRoot bool
+	}{
+		{"a/b.txt", false}, {"a/../b", false}, {"./a//b/", false},
+		{"", true}, {"", false}, {".", true}, {".", false},
+		{"../x", false}, {"a/../../x", false}, {"/etc/passwd", false},
+		{`a\b`, false}, {"  spaced  ", false},
+	}
+	for _, tc := range cases {
+		want, wantErr := JoinUnderBase("/srv/backups", tc.path, tc.allowRoot)
+		got, gotErr := JoinRemote("/srv/backups", tc.path, tc.allowRoot)
+		if got != want || (gotErr == nil) != (wantErr == nil) {
+			t.Errorf("JoinRemote(%q, %v) = %q, %v; JoinUnderBase = %q, %v",
+				tc.path, tc.allowRoot, got, gotErr, want, wantErr)
+		}
+	}
+}
+
+// TestJoinRemoteAlwaysUsesForwardSlashes checks the result is a POSIX path on
+// every platform, including a Windows client talking to a Linux SFTP server.
+func TestJoinRemoteAlwaysUsesForwardSlashes(t *testing.T) {
+	got, err := JoinRemote("/srv/backups", "job/2026-10-07_020300/manifest.json", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/srv/backups/job/2026-10-07_020300/manifest.json"; got != want {
+		t.Fatalf("JoinRemote = %q, want %q", got, want)
+	}
+	if filepath.Separator == '\\' {
+		got, err := JoinRemote(`/srv/backups`, `job\run\manifest.json`, false)
+		if err != nil || got != "/srv/backups/job/run/manifest.json" {
+			t.Fatalf("JoinRemote with Windows separators = %q, %v", got, err)
+		}
 	}
 }

@@ -6093,6 +6093,14 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination, passphrase ...
 	}
 	defer storage.CloseAdapter(adapter)
 
+	return ScanManifests(adapter, r.db, dest.ID, r.serverKey, pass)
+}
+
+// ScanManifests is the adapter-level core of ScanStorageManifests. It needs no
+// Runner, so the standalone recovery CLI (issue #313) can scan a destination
+// through its own read-only adapter. d and destID are only used to open the
+// dedup repository that decrypts dedup manifest envelopes.
+func ScanManifests(adapter storage.Adapter, d *db.DB, destID int64, serverKey []byte, pass string) ([]map[string]any, error) {
 	// List all entries under the storage root.
 	topEntries, err := adapter.List(".")
 	if err != nil {
@@ -6136,7 +6144,7 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination, passphrase ...
 				switch env.Key {
 				case "dedup":
 					if _, statErr := adapter.Stat("_vault/repo.json"); statErr == nil {
-						repo, openErr := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+						repo, openErr := dedup.OpenRepo(d, adapter, destID, serverKey)
 						if openErr == nil {
 							if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
 								if pt, decErr2 := repo.DecryptManifest(cipherBytes); decErr2 == nil {

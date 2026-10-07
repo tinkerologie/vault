@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
+	"github.com/ruaan-deysel/vault/internal/fsstat"
 
 	"github.com/ruaan-deysel/vault/internal/safepath"
 )
@@ -250,25 +250,20 @@ func (l *LocalAdapter) TestConnection() error {
 }
 
 // GetCapacity reports the filesystem usage of the configured basePath
-// via unix.Statfs. Source is always "statfs" — local mounts always
-// expose a real quota. The context is honoured before the syscall so
-// a caller that has already cancelled its deadline does not pay for
+// via fsstat (statfs on Unix). Source is always "statfs" — local mounts
+// always expose a real quota. The context is honoured before the syscall
+// so a caller that has already cancelled its deadline does not pay for
 // the kernel call.
-//
-// The Bsize field is platform-determined and never exceeds int64 in
-// practice; the //nolint:gosec annotations match the same pattern in
-// internal/diagnostics/collector.go's probeDisk.
 func (l *LocalAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	if err := ctx.Err(); err != nil {
 		return Capacity{}, err
 	}
-	var s unix.Statfs_t
-	if err := unix.Statfs(l.basePath, &s); err != nil {
-		return Capacity{}, fmt.Errorf("local: statfs %s: %w", l.basePath, err)
+	u, err := fsstat.Stat(l.basePath)
+	if err != nil {
+		return Capacity{}, fmt.Errorf("local: %w", err)
 	}
-	bsize := int64(s.Bsize)          //nolint:gosec,unconvert // Bsize varies (uint32 on Darwin, int64 on Linux); cast is required on Darwin, redundant on Linux
-	total := int64(s.Blocks) * bsize //nolint:gosec,unconvert
-	free := int64(s.Bavail) * bsize  //nolint:gosec,unconvert
+	total := int64(u.Total) //nolint:gosec // filesystem sizes fit in int64
+	free := int64(u.Free)   //nolint:gosec // filesystem sizes fit in int64
 	used := max(total-free, 0)
 	return Capacity{
 		TotalBytes: total,

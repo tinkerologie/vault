@@ -129,19 +129,20 @@ Each restore point also shows chain health annotations so you can see the refere
 
 ## What's Next
 
-| Goal                                              | Where to look                                                  |
-| ------------------------------------------------- | -------------------------------------------------------------- |
-| Configure SFTP, SMB, NFS, WebDAV, or S3 in detail | [Storage Destinations](guides/storage-destinations.md)         |
-| Tune jobs (retention, LTR, encryption, dedup)     | [Backup Jobs](guides/backup-jobs.md)                           |
-| Set up encryption                                 | Settings → Security → Encryption                               |
-| Enable Discord notifications                      | Settings → Notifications                                       |
-| Replicate backups to a second Vault server        | Replication page (in-app guidance)                             |
-| Verify a restore point on demand                  | Restore page → restore point → _Verify_                        |
-| Run dedup maintenance from the CLI                | `vault dedup repair --dest <id>`, `vault dedup gc --dest <id>` |
-| Export a diagnostics bundle for support           | Settings → Support → _Download diagnostics_                    |
-| Automate with Home Assistant                      | [ha-vault](https://github.com/ruaan-deysel/ha-vault)           |
-| Use the REST API                                  | [API Reference](api.md)                                        |
-| Use the MCP server                                | [MCP](mcp.md)                                                  |
+| Goal                                              | Where to look                                                                            |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Configure SFTP, SMB, NFS, WebDAV, or S3 in detail | [Storage Destinations](guides/storage-destinations.md)                                   |
+| Tune jobs (retention, LTR, encryption, dedup)     | [Backup Jobs](guides/backup-jobs.md)                                                     |
+| Set up encryption                                 | Settings → Security → Encryption                                                         |
+| Enable Discord notifications                      | Settings → Notifications                                                                 |
+| Replicate backups to a second Vault server        | Replication page (in-app guidance)                                                       |
+| Verify a restore point on demand                  | Restore page → restore point → _Verify_                                                  |
+| Run dedup maintenance from the CLI                | `vault dedup repair --dest <id>`, `vault dedup gc --dest <id>`                           |
+| Get files back with no Vault server (any OS)      | [Disaster Recovery](guides/disaster-recovery.md#recovering-files-without-a-vault-server) |
+| Export a diagnostics bundle for support           | Settings → Support → _Download diagnostics_                                              |
+| Automate with Home Assistant                      | [ha-vault](https://github.com/ruaan-deysel/ha-vault)                                     |
+| Use the REST API                                  | [API Reference](api.md)                                                                  |
+| Use the MCP server                                | [MCP](mcp.md)                                                                            |
 
 > **Prepare for disaster now:** Enable **Include in DB backup** on at least one
 > storage destination so your Vault settings travel with your data, and keep

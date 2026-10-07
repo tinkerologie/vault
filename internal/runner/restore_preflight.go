@@ -3,12 +3,12 @@ package runner
 import (
 	"fmt"
 	"os"
-	"syscall"
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
+	"github.com/ruaan-deysel/vault/internal/fsstat"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
@@ -28,14 +28,12 @@ type PreflightResult struct {
 }
 
 // freeSpaceAt returns the bytes available at path. Overridable in tests.
-// syscall.Statfs is available on both Linux (the daemon's target) and macOS
-// (the dev/test platform); Bavail/Bsize exist on both.
 var freeSpaceAt = func(path string) (int64, error) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
+	u, err := fsstat.Stat(path)
+	if err != nil {
 		return 0, err
 	}
-	return int64(st.Bavail) * int64(st.Bsize), nil //nolint:unconvert,gosec // cross-platform field widths
+	return int64(u.Free), nil //nolint:gosec // filesystem sizes fit in int64
 }
 
 // PreflightRestore validates that a restore is likely to succeed before it is

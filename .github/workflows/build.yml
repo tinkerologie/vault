@@ -96,3 +96,99 @@ jobs:
         with:
           name: vault-linux-amd64
           path: build/vault-linux-amd64
+
+      - name: Cross-compile Windows binary
+        # `vault recover` reads backups without a server and is supported on
+        # Windows (issue #313); the rest of the binary must keep compiling.
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          VERSION=$(cat VERSION)
+          DATE=$(date '+%Y.%m.%d')
+          HASH=$(git rev-parse --short HEAD)
+          go build -ldflags "-s -w -X main.version=${VERSION} -X main.buildDate=${DATE} -X main.commit=${HASH}" \
+            -o build/vault-windows-amd64.exe ./cmd/vault/
+
+      - name: Lint Windows-only code paths
+        # internal/cli is linted for Linux only: its daemon wiring calls
+        # Linux-only engine stubs that staticcheck flags under GOOS=windows.
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        env:
+          GOOS: windows
+        with:
+          version: latest
+          args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./internal/recovery/... ./internal/fsstat/... ./internal/safepath/... ./internal/storage/...
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: vault-windows-amd64
+          path: build/vault-windows-amd64.exe
+
+  recovery-fixture:
+    # Builds real backups on Linux, with file names Windows cannot store, for
+    # the windows job to recover. Archived as one tar because artifact uploads
+    # reject some of the names involved.
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.1"
+
+      - name: Build recovery fixture
+        run: |
+          mkdir -p "$RUNNER_TEMP/fixture"
+          VAULT_RECOVERY_FIXTURE_OUT="$RUNNER_TEMP/fixture" \
+            go test ./internal/recovery/ -run '^TestWriteRecoveryFixture$' -count=1 -v
+          tar -C "$RUNNER_TEMP/fixture" -cf recovery-fixture.tar .
+
+      - name: Upload recovery fixture
+        uses: actions/upload-artifact@v7
+        with:
+          name: recovery-fixture
+          path: recovery-fixture.tar
+          retention-days: 3
+
+  windows:
+    # Runs the recovery code on Windows and recovers the Linux-built fixture,
+    # so Windows path, name and filesystem behaviour is tested for real.
+    needs: recovery-fixture
+    runs-on: windows-latest
+    env:
+      CGO_ENABLED: "0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.1"
+
+      - name: Download recovery fixture
+        uses: actions/download-artifact@v7
+        with:
+          name: recovery-fixture
+
+      - name: Unpack recovery fixture
+        # GNU tar reads "D:\..." as a remote host:path, so give it the
+        # POSIX form of the runner's temp directory.
+        run: |
+          FIXTURE="$(cygpath -u "$RUNNER_TEMP")/fixture"
+          mkdir -p "$FIXTURE"
+          tar -xf recovery-fixture.tar -C "$FIXTURE"
+
+      - name: Test portable packages and recover the fixture
+        run: |
+          VAULT_RECOVERY_FIXTURE="$(cygpath -w "$RUNNER_TEMP/fixture")" \
+            go test ./internal/recovery/... ./internal/fsstat/... ./internal/dedup/... ./internal/crypto/... -count=1 -v
+          # safepath's other tests describe the daemon's Unix behaviour;
+          # JoinRemote is the part a Windows client relies on.
+          go test ./internal/safepath/ -run 'JoinRemote' -count=1 -v

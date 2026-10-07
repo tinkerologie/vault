@@ -6,13 +6,13 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 	"uuid"
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/ruaan-deysel/vault/internal/fsstat"
 	"github.com/ruaan-deysel/vault/internal/logbuf"
 	"github.com/ruaan-deysel/vault/internal/unraid"
 )
@@ -534,13 +534,13 @@ func (c *Collector) collectDiskUsage() []DiskUsage {
 // reports show the discrepancy.
 func probeDisk(path string) DiskUsage {
 	d := DiskUsage{Path: path}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(path, &stat); err != nil {
+	u, err := fsstat.Stat(path)
+	if err != nil {
 		d.Error = err.Error()
 		return d
 	}
-	d.TotalBytes = stat.Blocks * uint64(stat.Bsize) //nolint:gosec // bsize is non-negative
-	d.FreeBytes = stat.Bavail * uint64(stat.Bsize)  //nolint:gosec // bsize is non-negative
+	d.TotalBytes = u.Total
+	d.FreeBytes = u.Free
 	if d.TotalBytes > 0 {
 		used := d.TotalBytes - d.FreeBytes
 		d.UsedPct = int((used * 100) / d.TotalBytes)

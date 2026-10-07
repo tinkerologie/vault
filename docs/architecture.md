@@ -10,24 +10,24 @@ Vault is a single Go binary that runs as a daemon on Unraid servers. It provides
 CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / Engine / Runner
 ```
 
-| Layer       | Package                 | Description                                                                 |
-| ----------- | ----------------------- | --------------------------------------------------------------------------- |
-| CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault dedup`              |
-| API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                            |
-| MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP                           |
-| Job Intake  | `internal/jobs/`        | Validates, persists and activates every Job write; REST and MCP adapt to it |
-| Database    | `internal/db/`          | SQLite (WAL, pure-Go driver) with hybrid snapshot + USB shadow              |
-| Storage     | `internal/storage/`     | Local, SFTP, SMB, NFS, WebDAV, and S3 adapters (factory-dispatched)         |
-| Engine      | `internal/engine/`      | Per-type backup/restore handlers (container, VM, ZFS, folder, plugin)       |
-| Runner      | `internal/runner/`      | Job orchestration, retention, verification, compression                     |
-| Dedup       | `internal/dedup/`       | Keyed-FastCDC chunker, per-destination dedup repo, GC                       |
-| Crypto      | `internal/crypto/`      | AES-256-GCM, server key, passphrase-derived data keys                       |
-| Replication | `internal/replication/` | Pull-mode replication client + syncer                                       |
-| Scheduler   | `internal/scheduler/`   | Cron-based scheduling                                                       |
-| WebSocket   | `internal/ws/`          | Real-time event hub for backup progress and config changes                  |
-| Notify      | `internal/notify/`      | Unraid notifications + Discord webhooks                                     |
-| Diagnostics | `internal/diagnostics/` | Redacted ZIP bundle (system info, schema, runs, scheduler, daemon log)      |
-| Logbuf      | `internal/logbuf/`      | In-memory ring buffer that captures every `log.*` line for diagnostics      |
+| Layer       | Package                 | Description                                                                     |
+| ----------- | ----------------------- | ------------------------------------------------------------------------------- |
+| CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault dedup`, `vault recover` |
+| API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                                |
+| MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP                               |
+| Job Intake  | `internal/jobs/`        | Validates, persists and activates every Job write; REST and MCP adapt to it     |
+| Database    | `internal/db/`          | SQLite (WAL, pure-Go driver) with hybrid snapshot + USB shadow                  |
+| Storage     | `internal/storage/`     | Local, SFTP, SMB, NFS, WebDAV, and S3 adapters (factory-dispatched)             |
+| Engine      | `internal/engine/`      | Per-type backup/restore handlers (container, VM, ZFS, folder, plugin)           |
+| Runner      | `internal/runner/`      | Job orchestration, retention, verification, compression                         |
+| Dedup       | `internal/dedup/`       | Keyed-FastCDC chunker, per-destination dedup repo, GC                           |
+| Crypto      | `internal/crypto/`      | AES-256-GCM, server key, passphrase-derived data keys                           |
+| Replication | `internal/replication/` | Pull-mode replication client + syncer                                           |
+| Scheduler   | `internal/scheduler/`   | Cron-based scheduling                                                           |
+| WebSocket   | `internal/ws/`          | Real-time event hub for backup progress and config changes                      |
+| Notify      | `internal/notify/`      | Unraid notifications + Discord webhooks                                         |
+| Diagnostics | `internal/diagnostics/` | Redacted ZIP bundle (system info, schema, runs, scheduler, daemon log)          |
+| Logbuf      | `internal/logbuf/`      | In-memory ring buffer that captures every `log.*` line for diagnostics          |
 
 ## Key Interfaces
 
@@ -115,7 +115,7 @@ Do not delete `.vault` or `.vault-stage` while Vault is running. Pool discovery 
 │   │   ├── server.go      # Server struct, StartWithContext
 │   │   ├── routes.go      # Route registration
 │   │   └── handlers/      # Job, Storage, Replication, Settings, Browse, …
-│   ├── cli/               # Cobra subcommands (daemon, replica, dedup)
+│   ├── cli/               # Cobra subcommands (daemon, replica, dedup, recover)
 │   ├── config/            # Enum constants and shared types
 │   ├── crypto/            # Server key, AES-256-GCM, passphrase derivation
 │   ├── db/                # SQLite, repos, hybrid snapshot manager
@@ -126,9 +126,11 @@ Do not delete `.vault` or `.vault-stage` while Vault is running. Pool discovery 
 │   │   ├── vm.go          # libvirt (Linux only)
 │   │   ├── vm_stub.go     # Non-Linux stub
 │   │   └── zfs.go         # zfs send/receive
+│   ├── fsstat/            # Portable filesystem capacity (statfs / GetDiskFreeSpaceEx)
 │   ├── logbuf/            # In-memory ring buffer for daemon-log capture
 │   ├── mcp/               # MCP tools over streamable HTTP
 │   ├── notify/            # Unraid notifications + Discord webhook
+│   ├── recovery/          # Server-less, read-only backup recovery (vault recover)
 │   ├── replication/       # Pull-mode client + syncer
 │   ├── runner/            # Job orchestration, compression, retention, verify
 │   ├── scheduler/         # Cron scheduler

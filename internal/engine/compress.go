@@ -163,6 +163,14 @@ var (
 	zstdMagic = []byte{0x28, 0xb5, 0x2f, 0xfd}
 )
 
+// DecompressingReader wraps r so a gzip- or zstd-compressed archive body
+// (data.tar.zst, volume_1.tar.gz, …) reads as the plain tar stream; plain
+// input passes through. Detection is content-based. The returned func
+// releases the decoder.
+func DecompressingReader(r io.Reader) (io.Reader, func() error, error) {
+	return detectingReader(r)
+}
+
 // detectingReader sniffs the first few bytes of r and returns a reader that
 // transparently decompresses gzip or zstd streams. Plain (uncompressed) inputs
 // are passed through unchanged. The returned closer must be called to release
