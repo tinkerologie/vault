@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.10.00] - 2026-10-07
+
 ### Added
 
 - **Deduplicated backups can be recovered with the backup password (#451):** Each dedup destination's master key was sealed only with the server's `vault.key`, so losing that file made every dedup backup unreadable. Dedup backups now also keep a copy of the master key sealed with the backup password, written by the first dedup backup that runs with a password set. After a flash-drive loss or reinstall, the Recovery wizard uses the backup password to unlock dedup destinations and re-seal them with the new server's key; the previous `_vault/repo.json` is kept as a `.bak` copy. Restore, browse, mounts and `vault recover` also open a destination with the password when the key does not match. Settings → Security → **Server key** downloads `vault.key` for an off-server copy, and the emergency kit mentions it. Closes #451.
