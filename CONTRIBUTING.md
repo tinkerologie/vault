@@ -1,136 +1,126 @@
 # Contributing to Vault
 
-Vault is a Go backup daemon for Unraid with a Svelte 5 web UI, shipped as an Unraid `.plg` plugin.
+Thank you for your interest in contributing to Vault. This project welcomes contributions from human developers and autonomous AI coding agents alike.
 
-> **[`AGENTS.md`](AGENTS.md) is the single source of truth** for architecture,
-> conventions, safety boundaries, and validation. Path-specific rules live in
-> [`.github/instructions/`](.github/instructions/). Files in
-> [`.github/agents/`](.github/agents/) are optional GitHub Copilot profiles.
+Go backup and replication daemon with Svelte web UI for Unraid servers.
 
-## Prerequisites
+To maintain code quality, protect maintainer capacity, and prevent maintainer burnout, all contributors must follow the standardized development and governance workflow outlined below.
 
-Before you start, install the tools used by the repo:
+---
 
-- **Go 1.27.x** (see `go.mod`) — the binary is pure Go and builds with `CGO_ENABLED=0`.
-- **Node.js + npm** — required for the Svelte UI in `web/`.
-- **Python 3 + pip** — needed for `pre-commit` and any hook tooling.
-- **Docker** — optional but useful for the repo's container build target.
-- **pre-commit** — install it once with `make pre-commit-install` or by running `scripts/setup-pre-commit.sh`.
-- **gofmt / goimports / golangci-lint / gosec / govulncheck** — the project expects these tools in your local toolchain.
+## Code of Conduct and Standards
 
-### Bootstrap a local dev environment
+- Be respectful, constructive, and collaborative.
+- Zero secrets policy: Never commit passwords, tokens, API keys, private certificates, or personal data.
+- Anti-burnout principle: Perform full due diligence locally before opening pull requests or requesting review.
 
-For a fresh machine, the repo provides a helper script that installs the common requirements and pre-commit hooks:
+---
+
+## Development Workflow
+
+All contributions—whether submitted by humans or AI agents—must adhere to this step-by-step workflow:
+
+### 1. Open a GitHub Issue First
+- Every bug fix, feature, or enhancement must start with an issue.
+- Use the appropriate GitHub Issue Form:
+  - Bug Report (`01-bug-report.yml`)
+  - Enhancement Request (`02-enhancement-request.yml`)
+- Blank or unstructured issues are disabled. Pull requests without a corresponding issue will be closed.
+
+### 2. CodeRabbit AI Plan Generation
+- Once the issue is created, CodeRabbit AI is triggered to generate an implementation plan (either automatically via the `bug` or `enhancement` label, or by commenting `@coderabbitai plan` on the issue).
+- CodeRabbit analyzes the codebase and posts a comprehensive Coding Plan containing:
+  - Codebase research and affected components
+  - Architectural design choices
+  - Phased task breakdowns
+  - Machine-readable agent prompts and verifiable acceptance criteria
+- Contributors must review, refine, and confirm the plan before writing code. Do not start implementation without an approved plan.
+
+### 3. Create a Dedicated Branch
+- Create a feature or bugfix branch off `main`:
+  - Features: `git checkout -b feat/<issue-number>-<short-description>`
+  - Fixes: `git checkout -b fix/<issue-number>-<short-description>`
+  - Documentation: `git checkout -b docs/<issue-number>-<short-description>`
+- Never commit directly to the default branch (`main`).
+
+### 4. Implementation and Local Validation
+- Implement changes following project conventions and the approved plan.
+- Update `CHANGELOG.md` under `## [Unreleased]` describing what changed and why.
+- Run all required local validation checks (tests with coverage, linters, type checkers, and formatters). Ensure all checks pass with zero errors and zero warnings.
+
+### 5. Follow the Pull Request Template
+- Open a Pull Request using `.github/PULL_REQUEST_TEMPLATE.md`.
+- Complete all sections in the template:
+  - Summary of changes
+  - Linked issue keywords (`Fixes #<issue>`, `Closes #<issue>`, `Addresses #<issue>`)
+  - Verification steps and pasted terminal output
+  - Mandatory Pre-Submission Governance checklist (every box must be checked)
+
+### 6. Open PR as DRAFT First
+- Pull requests MUST be opened in Draft mode (`gh pr create --draft` or choose "Create draft pull request" in GitHub).
+- Draft PRs allow CI workflows to run in isolation without triggering premature reviewer notifications or consuming unnecessary review capacity.
+- Verify that all CI checks pass in draft mode and confirm that everything is working as expected from your end.
+
+### 7. Mark Ready for Review
+- Only after all local and draft CI checks have succeeded, convert the pull request to "Ready for Review".
+- Pull requests marked ready for review with failing checks, incomplete templates, or unverified changes will be converted back to draft or closed.
+
+### 8. Automated Quality Gates and Merge Criteria
+Before a pull request can be merged, it must satisfy all automated quality gates:
+- CodeRabbit AI Review: All review comments and suggestions must be resolved or addressed.
+- GitHub Copilot Code Review: Must pass with no blocking feedback.
+- Codecov Coverage Reports: Must pass with zero errors, zero warnings, and no coverage regressions below the repository target.
+- Branch Ruleset Checks: All required status checks defined in the default branch ruleset must pass.
+
+---
+
+## Local Development and Verification
+
+### Prerequisites and Setup
+
+- Go 1.24 or later
+- Node.js (v20+) and npm (for Svelte UI in `web/`)
+- Pre-commit (`make pre-commit-install`)
+
+### Validation Commands
 
 ```bash
-./scripts/setup-pre-commit.sh
-```
-
-If you want to install the tooling manually instead, use the repo targets:
-
-```bash
+# Go dependencies and local build
 make deps
-make pre-commit-install
-```
-
-## Local development loop
-
-Most day-to-day work follows this loop:
-
-```bash
-make deps               # go mod download && go mod tidy
-make build-local        # builds the web UI and cross-compiles the daemon
-make test               # go test ./... -v
-make test-short         # go test ./... -short
-make lint               # golangci-lint with .golangci.yml
-make security-check     # gosec + govulncheck + go mod verify
-```
-
-### Run a single test
-
-```bash
-go test ./internal/db/... -run TestJobCreate -v
-```
-
-### Build the web UI directly
-
-```bash
-cd web && npm ci
-cd web && npm run build
-cd web && npm run lint
-cd web && npm test
-```
-
-### Run the frontend in dev mode
-
-```bash
-cd web && npm install
-cd web && npm run dev
-```
-
-The web UI is bundled into the Go binary, so changes to `web/` are normally validated by the Make targets before a commit.
-
-## Build and run the daemon locally
-
-Vault is a Linux/amd64 daemon and the repo's local build target produces:
-
-```bash
-./build/vault-linux-amd64 --help
-```
-
-For a quick compile-only smoke test:
-
-```bash
 make build-local
+
+# Run Go unit and integration tests
+make test
+
+# Run Go linter and security audit
+make lint
+make security-check
+
+# Build and test web frontend
+cd web && npm ci && npm run build && npm run lint && npm test && cd ..
+
+# Run all pre-commit hooks
+make pre-commit-run
 ```
 
-For a containerized build:
+---
 
-```bash
-make docker-build
-```
+## Commit Message Guidelines
 
-> `make deploy`, `make verify`, and `make redeploy` target a configured Unraid host and must not be run without explicit approval. `make redeploy` includes uninstall.
+We follow Conventional Commits:
 
-## Post-change workflow
+- `feat(<scope>): <description>` — New feature
+- `fix(<scope>): <description>` — Bug fix
+- `docs(<scope>): <description>` — Documentation changes
+- `test(<scope>): <description>` — Adding or updating tests
+- `refactor(<scope>): <description>` — Code restructuring without functional change
+- `chore(<scope>): <description>` — Tooling, dependencies, or repository maintenance
 
-For ordinary contributions, run the checks relevant to the change:
+---
 
-1. Targeted tests while iterating.
-2. `make test` and `make lint` for Go changes.
-3. `npm test`, `npm run lint`, and `npm run build` in `web/` for UI changes.
-4. `make pre-commit-run` before committing.
+## Pull Request Governance Summary
 
-If the change is user-facing or release-facing, the maintainer's release gate is:
-
-```bash
-make build
-make deploy
-make verify
-```
-
-That flow is for an approved Unraid deployment and is separate from local contributor testing.
-
-## Change log entry
-
-User-visible and release-facing changes add an entry under `## [Unreleased]`
-in `CHANGELOG.md` using [Keep a Changelog](https://keepachangelog.com/)
-sections: `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security`
-(any other `###` heading is silently dropped).
-
-- Explain **what** changed **and why** — entries stand alone with no PR context.
-- Reference issue numbers where applicable (for example `closes #123`).
-- Bullets start with a `-` and a space at column 0. Inline markdown that renders: `**bold**`, `` `code` ``, `*italic*` — nothing else.
-
-`CHANGELOG.md` is consumed by three systems — the in-app About/View Changelog modal (parser at `internal/release/changelog.go`), the `release.yml` GitHub-release notes extractor, and operator-facing upgrade diffs — so a malformed entry breaks all three.
-
-## Commits & pull requests
-
-- **Conventional Commits** with a scope: `feat(scope):`, `fix(scope):`, `refactor(scope):`, `docs:`, `chore:`, `deps:`. Examples from history: `fix(api):`, `feat(vm):`, `refactor(web):`, `chore(deps):`.
-- Branch per change off `main`; open a PR against `main`.
-- PRs get automated **CodeRabbit** and **Copilot** review — address their feedback before merge.
-- Run `make pre-commit-run` before committing.
-
-## Code search
-
-Both `rg` (ripgrep) and `ast-grep` are available. Default to `rg`; reach for `ast-grep` only when you need AST-aware matching. See the Code Search section in `AGENTS.md` for the gotchas (notably: `ast-grep` does not support `.svelte`).
+- No spam or back-to-back PRs: Batch related changes into a single PR.
+- AI-assisted PRs require human verification and local testing before submission.
+- All template checkboxes must be confirmed.
+- PRs must remain in Draft until verified.
