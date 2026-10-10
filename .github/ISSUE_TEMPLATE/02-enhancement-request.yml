@@ -16,7 +16,7 @@ body:
       options:
         - REST API and MCP server
         - Backup engine and runner
-        - Storage, replication and safepath
+        - Storage, replication, and safepath
         - Database and state management
         - Scheduler and anomaly detection
         - Web UI (Svelte)
@@ -73,7 +73,7 @@ body:
     attributes:
       label: Pre-submission confirmations
       options:
-        - label: I searched existing open and closed issues and discussions before opening this request.
+        - label: I searched existing open and closed issues before opening this request.
           required: true
         - label: I confirm this request targets Vault core, plugin, or web UI.
           required: true

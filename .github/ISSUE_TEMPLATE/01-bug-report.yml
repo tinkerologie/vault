@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting a bug. Use this form to describe a reproducible defect or regression. If you have setup questions or need general troubleshooting help, use GitHub Discussions instead. Once submitted, contributors or CodeRabbit AI (@coderabbitai plan) can generate an implementation plan to resolve this issue.
+        Thanks for reporting a bug. Use this form to describe a reproducible defect or regression. Once submitted, contributors or CodeRabbit AI (@coderabbitai plan) can generate an implementation plan to resolve this issue.
   - type: dropdown
     id: affected-area
     attributes:
@@ -16,7 +16,7 @@ body:
       options:
         - REST API and MCP server
         - Backup engine and runner
-        - Storage, replication and safepath
+        - Storage, replication, and safepath
         - Database and state management
         - Scheduler and anomaly detection
         - Web UI (Svelte)
@@ -37,10 +37,18 @@ body:
     id: unraid-version
     attributes:
       label: Unraid / OS version
-      description: What Unraid OS version are you running?
+      description: What Unraid OS or operating system version are you running?
       placeholder: "7.2.0"
     validations:
       required: true
+  - type: input
+    id: environment-version
+    attributes:
+      label: Environment details
+      description: Storage hardware, filesystem type (ZFS/Btrfs/XFS), or deployment mode (if applicable).
+      placeholder: "e.g. ZFS pool, Unraid 7.2.0"
+    validations:
+      required: false
   - type: textarea
     id: what-happened
     attributes:
@@ -89,7 +97,7 @@ body:
     attributes:
       label: Pre-submission confirmations
       options:
-        - label: I searched existing open and closed issues and discussions before opening this bug report.
+        - label: I searched existing open and closed issues before opening this bug report.
           required: true
         - label: I confirm this issue targets Vault core, plugin, or web UI.
           required: true
