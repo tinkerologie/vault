@@ -1,5 +1,5 @@
 name: Enhancement request
-description: Request a new capability or an improvement to an existing workflow.
+description: Request a new feature, capability, or architectural improvement.
 title: "[Enhancement]: "
 labels:
   - enhancement
@@ -7,79 +7,77 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for sharing an enhancement idea.
-
-        Use this form for concrete product improvements you want tracked. For support questions or
-        open-ended troubleshooting, please use GitHub Discussions instead.
+        Thanks for proposing an enhancement. Complete this form with clear problem context, proposed architecture, and acceptance criteria so contributors, AI agents, and CodeRabbit AI (@coderabbitai plan) can generate a concrete implementation plan.
   - type: dropdown
-    id: area
+    id: affected-area
     attributes:
       label: Affected area
-      description: Which part of Vault would this improve most directly?
+      description: Which part of the project would this improve most directly?
       options:
-        - API and WebSocket
-        - Backup engine
-        - Storage backend
-        - Database
-        - Scheduler
-        - Web UI
-        - Unraid plugin
-        - MCP
-        - Replication
+        - REST API and MCP server
+        - Backup engine and runner
+        - Storage, replication and safepath
+        - Database and state management
+        - Scheduler and anomaly detection
+        - Web UI (Svelte)
+        - Unraid plugin packaging
         - Documentation
-        - Deployment / CI / Ansible
-    validations:
-      required: true
-  - type: dropdown
-    id: backup-target
-    attributes:
-      label: Related backup target
-      description: If this enhancement is tied to a specific backup target, choose it.
-      options:
-        - Container backups
-        - VM backups
-        - Folder and file backups
-        - Plugin backups
-        - Flash backup
-        - Not specific / not sure
+        - CI and repository automation
     validations:
       required: true
   - type: textarea
-    id: problem
+    id: problem-statement
     attributes:
-      label: What problem are you trying to solve?
-      description: Describe the current limitation, friction, or missing capability.
-      placeholder: Explain the user problem first, not just the proposed fix.
+      label: Problem statement
+      description: What problem, limitation, or friction does this enhancement solve?
+      placeholder: Explain the user problem or use case first, not just the proposed fix.
     validations:
       required: true
   - type: textarea
-    id: proposal
+    id: proposed-solution
     attributes:
-      label: What would you like to see?
-      description: Describe the outcome or workflow that would solve the problem.
-      placeholder: Describe the improvement as concretely as you can.
+      label: Proposed solution and architecture
+      description: Describe the desired capability, new APIs, entities, or components. Mention specific modules or interfaces to touch.
+      placeholder: Detail the architectural approach and implementation design.
     validations:
       required: true
   - type: textarea
-    id: alternatives
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List the verifiable conditions required to consider this enhancement complete. This gives AI agents and CodeRabbit a clear plan target.
+      placeholder: |
+        - [ ] New functionality exposed with full test coverage
+        - [ ] Linter and type checks pass locally
+        - [ ] Documentation and CHANGELOG.md updated under [Unreleased]
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives-considered
     attributes:
       label: Alternatives considered
-      description: Share workarounds or other approaches you already considered.
+      description: Share workarounds, alternative APIs, or other approaches already considered.
+      placeholder: Describe alternative options and why they were not chosen.
     validations:
       required: false
   - type: textarea
     id: additional-context
     attributes:
       label: Additional context
-      description: Add examples, mockups, related issues, or operational context.
+      description: Add examples, API documentation links, mockups, or operational context.
+      placeholder: Any supporting links, design specs, or diagrams.
     validations:
       required: false
   - type: checkboxes
     id: confirmations
     attributes:
-      label: Confirmation
+      label: Pre-submission confirmations
       options:
-        - label: I searched existing issues and discussions before opening this enhancement request.
+        - label: I searched existing open and closed issues and discussions before opening this request.
           required: true
-        - label: This is a product improvement request, not a support question.
+        - label: I confirm this request targets Vault core, plugin, or web UI.
+          required: true
+        - label: I provided sufficient technical context and acceptance criteria for plan generation.
+          required: true
+        - label: I read and agree to follow repository contribution rules and guidelines.
           required: true
