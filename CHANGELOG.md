@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Logs page unresponsiveness and freeze when loading older entries (#454):** Fixed microtask starvation caused by concurrent older-page requests during initial mount and background loading loops (`loadAll` and search). Active older-load requests now share the in-flight Promise across callers, older requests are bound to the store context sequence to discard stale responses, and background loading loops terminate when no progress is made. Also added a store `dispose()` method, called from the synchronous `onMount` cleanup in `Logs.svelte`, to abort background activity on page navigation. Closes #454.
+
 ## [v2026.10.00] - 2026-10-07
 
 ### Added

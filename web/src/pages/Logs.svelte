@@ -63,25 +63,39 @@
     { value: 'info', label: 'Info' },
   ]
 
-  onMount(async () => {
-    await store.load()
-    await fillViewport()
-    // Seed the scroll flags from the real geometry. Without this, a history
-    // short enough to fit the viewport (no scrollbar at all) leaves atOldest
-    // false, so the "jump to oldest" overlay hovers over a console that is
-    // already showing its oldest line.
-    handleScroll()
-    // Background full-history load: the console spans ALL logs (uniform with
-    // the search view), so scrolling reaches the true end and the
-    // "— End of logs —" marker shows there (#328).
-    store.loadAll()
-    const unsub = store.setupWs()
-    // Poll safety net: in poll mode the timer is the primary path (10s); in
-    // live/WS mode it runs as a slower catch-up (30s) so a missed WS event
-    // (e.g. a terminal summary lost across a reconnect) is still surfaced
-    // instead of waiting for a reload (#328 r9 #5).
-    const pollTimer = setInterval(() => store.loadNewer(), liveMode === 'poll' ? 10000 : 30000)
-    return () => { unsub(); if (pollTimer) clearInterval(pollTimer) }
+  onMount(() => {
+    let destroyed = false
+    let unsub = null
+    let pollTimer = null
+
+    ;(async () => {
+      await store.load()
+      if (destroyed) return
+      await fillViewport()
+      if (destroyed) return
+      // Seed the scroll flags from the real geometry. Without this, a history
+      // short enough to fit the viewport (no scrollbar at all) leaves atOldest
+      // false, so the "jump to oldest" overlay hovers over a console that is
+      // already showing its oldest line.
+      handleScroll()
+      // Background full-history load: the console spans ALL logs (uniform with
+      // the search view), so scrolling reaches the true end and the
+      // "— End of logs —" marker shows there (#328).
+      store.loadAll()
+      unsub = store.setupWs()
+      // Poll safety net: in poll mode the timer is the primary path (10s); in
+      // live/WS mode it runs as a slower catch-up (30s) so a missed WS event
+      // (e.g. a terminal summary lost across a reconnect) is still surfaced
+      // instead of waiting for a reload (#328 r9 #5).
+      pollTimer = setInterval(() => store.loadNewer(), liveMode === 'poll' ? 10000 : 30000)
+    })()
+
+    return () => {
+      destroyed = true
+      if (unsub) unsub()
+      if (pollTimer) clearInterval(pollTimer)
+      store.dispose()
+    }
   })
 
   // Track new entries arriving while follow is off. The marker snapshots the
