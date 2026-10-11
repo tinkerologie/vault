@@ -93,3 +93,19 @@
 - name: conflicts
   color: "e99695"
   description: "Has merge conflicts with the default branch"
+
+- name: "security"
+  color: "b60205"
+  description: "Security issue; exempt from stale handling"
+
+- name: "confirmed"
+  color: "0e8a16"
+  description: "Confirmed bug or accepted request; exempt from stale handling"
+
+- name: "priority: critical"
+  color: "b60205"
+  description: "Critical priority; exempt from stale handling"
+
+- name: "priority: high"
+  color: "d93f0b"
+  description: "High priority; exempt from stale handling"
