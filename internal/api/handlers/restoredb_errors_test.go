@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/runner"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // TestRestoreDB_InMemoryDatabaseRejected drives the in-memory DB rejection

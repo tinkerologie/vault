@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/crypto"
-	"github.com/ruaan-deysel/vault/internal/format"
-	"github.com/ruaan-deysel/vault/internal/notify"
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/format"
+	"github.com/tinkerologie/vault/internal/notify"
 )
 
 func TestFmtDuration(t *testing.T) {

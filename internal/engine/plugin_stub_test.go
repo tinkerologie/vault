@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // Plugin stubs all return errors on non-Linux platforms. These tests pin

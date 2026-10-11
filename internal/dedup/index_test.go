@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 func newTestIndex(t *testing.T) (*Index, *FakeAdapter, *db.DB, int64, func()) {

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/storage"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // stubCapacityAdapter is a minimal Adapter for runner capacity tests.

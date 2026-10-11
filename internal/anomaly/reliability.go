@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // maxStreakWindow is the maximum number of recent runs considered when

@@ -4,8 +4,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
-	"github.com/ruaan-deysel/vault/internal/notify"
+	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/notify"
 )
 
 // AnomalyNotifier is the interface the Evaluator calls to dispatch anomaly

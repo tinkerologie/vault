@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/ruaan-deysel/vault/internal/release"
+	"github.com/tinkerologie/vault/internal/release"
 )
 
 // latestFetcher is the slice of *release.Cache the handler needs. Defined

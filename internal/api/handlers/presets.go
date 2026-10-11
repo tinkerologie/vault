@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/config"
-	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/config"
+	"github.com/tinkerologie/vault/internal/engine"
 )
 
 // socketDetectTimeout caps Docker inspect calls used to auto-suggest socket

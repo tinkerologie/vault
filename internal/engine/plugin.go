@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // entityDeclPattern matches DOCTYPE <!ENTITY name "value"> declarations in .plg files.

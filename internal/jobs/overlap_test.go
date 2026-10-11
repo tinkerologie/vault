@@ -3,7 +3,7 @@ package jobs
 import (
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 func TestPathsOverlap(t *testing.T) {

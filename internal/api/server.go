@@ -8,14 +8,14 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ruaan-deysel/vault/internal/anomaly"
-	"github.com/ruaan-deysel/vault/internal/api/handlers"
-	"github.com/ruaan-deysel/vault/internal/db"
-	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
-	"github.com/ruaan-deysel/vault/internal/mount"
-	"github.com/ruaan-deysel/vault/internal/replication"
-	"github.com/ruaan-deysel/vault/internal/runner"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/anomaly"
+	"github.com/tinkerologie/vault/internal/api/handlers"
+	"github.com/tinkerologie/vault/internal/db"
+	jobintake "github.com/tinkerologie/vault/internal/jobs"
+	"github.com/tinkerologie/vault/internal/mount"
+	"github.com/tinkerologie/vault/internal/replication"
+	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // ServerConfig holds configuration options for the API server.

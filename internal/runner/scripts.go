@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 const defaultScriptTimeout = 5 * time.Minute

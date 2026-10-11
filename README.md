@@ -56,7 +56,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 
 - REST API at `/api/v1` with token-based auth for non-loopback callers
 - MCP server (streamable HTTP + stdio) for Claude Desktop, Claude Code, and other AI tooling
-- Home Assistant custom integration: [`ha-vault`](https://github.com/ruaan-deysel/ha-vault)
+- Home Assistant custom integration: [`ha-vault`](https://github.com/tinkerologie/ha-vault)
 - Hybrid SQLite snapshot (RAM working DB + persistent snapshot + USB shadow) survives reboots
 - Diagnostics bundle export (redacted) for support requests
 
@@ -96,7 +96,7 @@ https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
 | [Changelog](CHANGELOG.md)                                   | Release notes by version                              |
 
 Home Assistant users: use the ready-to-use custom integration at
-[ha-vault](https://github.com/ruaan-deysel/ha-vault).
+[ha-vault](https://github.com/tinkerologie/ha-vault).
 
 ## Requirements
 

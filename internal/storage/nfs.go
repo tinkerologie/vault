@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // NFSConfig holds configuration for an NFS storage adapter.

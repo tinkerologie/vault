@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // TestPruneDBBackups pins the #184 contract: only the newest dbBackupsKept

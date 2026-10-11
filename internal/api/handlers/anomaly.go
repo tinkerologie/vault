@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/anomaly"
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/anomaly"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 const (

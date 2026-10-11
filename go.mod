@@ -1,4 +1,4 @@
-module github.com/ruaan-deysel/vault
+module github.com/tinkerologie/vault
 
 go 1.27.1
 

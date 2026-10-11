@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 type stubAdapter struct {

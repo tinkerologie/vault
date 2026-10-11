@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestRestoreDB_RenameFailure forces os.Rename(currentPath → backupPath) to
