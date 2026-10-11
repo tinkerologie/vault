@@ -9,9 +9,16 @@ on:
 permissions:
   contents: read
 
+env:
+  # OIDC is unavailable to fork and Dependabot PRs; those fall back to tokenless uploads.
+  CODECOV_OIDC: ${{ !(github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork || github.event.pull_request.user.login == 'dependabot[bot]')) }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       CGO_ENABLED: "0"
 
@@ -58,7 +65,8 @@ jobs:
           files: ./coverage.txt
           flags: backend
           disable_search: true
-          fail_ci_if_error: false
+          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
+          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
 
       - name: Run web tests with coverage and JUnit output
         run: cd web && npm ci && npx vitest run --coverage --reporter=default --reporter=junit --outputFile=./test-report.junit.xml
@@ -70,7 +78,8 @@ jobs:
           files: ./web/coverage/lcov.info
           flags: frontend
           disable_search: true
-          fail_ci_if_error: false
+          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
+          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
@@ -78,7 +87,10 @@ jobs:
         with:
           slug: ${{ github.repository }}
           files: ./web/test-report.junit.xml
-          fail_ci_if_error: false
+          report_type: test_results
+          disable_search: true
+          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
+          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
 
       - name: Cross-compile Linux binary
         env:
