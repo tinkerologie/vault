@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestChainRestoreClearsDestinationOnce is the chain half of issue #321. The

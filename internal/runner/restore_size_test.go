@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // latestRestoreRun returns the most recent restore run recorded for a job.

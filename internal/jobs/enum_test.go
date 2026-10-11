@@ -3,7 +3,7 @@ package jobs
 import (
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/config"
+	"github.com/tinkerologie/vault/internal/config"
 )
 
 // TestValidateJobEnumContainerMode pins the container_mode allow-list to the

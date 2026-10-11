@@ -13,7 +13,7 @@ import (
 	mounttypes "github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // classicUnchangedItem builds the differential item used by the tests below:

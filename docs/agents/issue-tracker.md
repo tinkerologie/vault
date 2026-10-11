@@ -1,7 +1,7 @@
 # Issue tracker
 
 Issues for this repo live in **GitHub Issues** on
-[`ruaan-deysel/vault`](https://github.com/ruaan-deysel/vault/issues).
+[`tinkerologie/vault`](https://github.com/tinkerologie/vault/issues).
 
 Skills such as `to-tickets`, `triage`, and `to-spec` read from and write to
 this tracker using the [`gh` CLI](https://cli.github.com/).

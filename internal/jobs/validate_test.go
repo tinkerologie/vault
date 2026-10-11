@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // The secondary schedules are validated and normalised like the primary one:

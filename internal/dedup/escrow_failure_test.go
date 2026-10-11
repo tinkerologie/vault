@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/crypto"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // faultyAdapter injects failures into a FakeAdapter by path.

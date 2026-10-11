@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/logx"
+	"github.com/tinkerologie/vault/internal/logx"
 )
 
 func TestSetLevelString(t *testing.T) {

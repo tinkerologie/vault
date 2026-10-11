@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/replication"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/replication"
 )
 
 // ServerWriteTimeout is the http.Server WriteTimeout used by the API server.

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // callToolRaw returns the result without failing the test on IsError,

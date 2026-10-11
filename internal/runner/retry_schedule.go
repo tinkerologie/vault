@@ -3,8 +3,8 @@ package runner
 import (
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/docsmeta"
 )
 
 // scheduleRetryIfDue sets run.RetryNextAt if the run is eligible for a

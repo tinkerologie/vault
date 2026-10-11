@@ -23,8 +23,8 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // maxExtractSize is the maximum size for a single file extracted from a tar

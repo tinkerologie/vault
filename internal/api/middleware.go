@@ -11,9 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/ruaan-deysel/vault/internal/crypto"
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/docsmeta"
 )
 
 const (

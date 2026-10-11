@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // dedupDestForGC returns a dedup-enabled local destination. The repo is never

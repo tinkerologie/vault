@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // ScanStorageOrphans walks a storage destination and returns every regular

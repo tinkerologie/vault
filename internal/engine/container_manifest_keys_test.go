@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // The picker's correctness rests entirely on this helper agreeing with what

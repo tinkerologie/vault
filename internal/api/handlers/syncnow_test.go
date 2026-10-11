@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/replication"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/replication"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // TestReplicationSyncNow_Accepted drives the 202 happy-path where a real

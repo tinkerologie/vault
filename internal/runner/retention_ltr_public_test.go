@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestLTRDirectlyKeptPublic exercises the exported wrapper used by the

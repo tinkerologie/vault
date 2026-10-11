@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestScanStorageOrphansHappyPath drives ScanStorageOrphans against a real

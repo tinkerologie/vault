@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/ruaan-deysel/vault/internal/cli"
+	"github.com/tinkerologie/vault/internal/cli"
 )
 
 // version is set at build time via -ldflags.

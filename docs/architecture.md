@@ -191,7 +191,7 @@ The production binary is built with `CGO_ENABLED=0` using `modernc.org/sqlite`, 
 Install via the Unraid Community Applications store, or paste the plugin URL into Plugins > Install Plugin:
 
 ```text
-https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
+https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
 ```
 
 The daemon runs at `/usr/local/sbin/vault` with the database at `/boot/config/plugins/vault/vault.db`.

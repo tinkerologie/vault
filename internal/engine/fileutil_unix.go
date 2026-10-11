@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"golang.org/x/sys/unix"
 )
 

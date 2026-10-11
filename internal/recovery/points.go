@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/runner"
 )
 
 // Item is one backed-up item (folder, container, VM, …) in a restore point.

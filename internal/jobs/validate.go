@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/scheduler"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/scheduler"
 )
 
 // MaxJobNameLen bounds the job name so a pathological value cannot bloat the

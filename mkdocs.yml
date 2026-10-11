@@ -1,8 +1,8 @@
 site_name: Vault
 site_description: Backup and restore daemon for Unraid servers
-site_url: https://ruaan-deysel.github.io/vault/
-repo_url: https://github.com/ruaan-deysel/vault
-repo_name: ruaan-deysel/vault
+site_url: https://tinkerologie.github.io/vault/
+repo_url: https://github.com/tinkerologie/vault
+repo_name: tinkerologie/vault
 docs_dir: docs
 # Internal planning/spec docs live under docs/superpowers/ and are not part of
 # the published site.
@@ -44,7 +44,7 @@ extra:
       link: https://github.com/sponsors/ruaan-deysel
       name: Sponsor Vault on GitHub
     - icon: fontawesome/brands/github
-      link: https://github.com/ruaan-deysel/vault
+      link: https://github.com/tinkerologie/vault
       name: Vault on GitHub
 markdown_extensions:
   - admonition

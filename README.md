@@ -1,13 +1,13 @@
 # Vault
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ruaan-deysel/vault)
-[![Build & Test](https://github.com/ruaan-deysel/vault/actions/workflows/build.yml/badge.svg)](https://github.com/ruaan-deysel/vault/actions/workflows/build.yml)
-[![Latest Release](https://img.shields.io/github/v/release/ruaan-deysel/vault?sort=date&label=release)](https://github.com/ruaan-deysel/vault/releases/latest)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/tinkerologie/vault)
+[![Build & Test](https://github.com/tinkerologie/vault/actions/workflows/build.yml/badge.svg)](https://github.com/tinkerologie/vault/actions/workflows/build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/tinkerologie/vault?sort=date&label=release)](https://github.com/tinkerologie/vault/releases/latest)
 [![Go Version](https://img.shields.io/badge/go-1.27-00ADD8?logo=go)](https://go.dev/)
 [![Svelte](https://img.shields.io/badge/svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
-[![codecov](https://codecov.io/gh/ruaan-deysel/vault/graph/badge.svg?token=agzVe2CQxE)](https://codecov.io/gh/ruaan-deysel/vault)
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/ruaan-deysel/vault?utm_source=oss&utm_medium=github&utm_campaign=ruaan-deysel%2Fvault&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
-[![License](https://img.shields.io/github/license/ruaan-deysel/vault)](https://github.com/ruaan-deysel/vault/blob/main/LICENSE)
+[![codecov](https://codecov.io/gh/tinkerologie/vault/graph/badge.svg?token=agzVe2CQxE)](https://codecov.io/gh/tinkerologie/vault)
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/tinkerologie/vault?utm_source=oss&utm_medium=github&utm_campaign=tinkerologie%2Fvault&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+[![License](https://img.shields.io/github/license/tinkerologie/vault)](https://github.com/tinkerologie/vault/blob/main/LICENSE)
 
 Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. It protects Docker containers, libvirt VMs, ZFS datasets, folders, and plugins by backing them up to pluggable storage destinations — local disk, SFTP, SMB, NFS, WebDAV, or S3-compatible object storage. Vault ships with a REST API, an MCP server for AI assistants, WebSocket progress streaming, and an integrated web UI built with Svelte 5.
 
@@ -56,7 +56,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 
 - REST API at `/api/v1` with token-based auth for non-loopback callers
 - MCP server (streamable HTTP + stdio) for Claude Desktop, Claude Code, and other AI tooling
-- Home Assistant custom integration: [`ha-vault`](https://github.com/ruaan-deysel/ha-vault)
+- Home Assistant custom integration: [`ha-vault`](https://github.com/tinkerologie/ha-vault)
 - Hybrid SQLite snapshot (RAM working DB + persistent snapshot + USB shadow) survives reboots
 - Diagnostics bundle export (redacted) for support requests
 
@@ -71,7 +71,7 @@ Search for **Vault** in the Unraid Community Applications store and click Instal
 Paste this URL into **Plugins > Install Plugin** in the Unraid web UI:
 
 ```text
-https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
+https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
 ```
 
 ## Quick Start
@@ -96,7 +96,7 @@ https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
 | [Changelog](CHANGELOG.md)                                   | Release notes by version                              |
 
 Home Assistant users: use the ready-to-use custom integration at
-[ha-vault](https://github.com/ruaan-deysel/ha-vault).
+[ha-vault](https://github.com/tinkerologie/ha-vault).
 
 ## Requirements
 
@@ -104,8 +104,8 @@ Home Assistant users: use the ready-to-use custom integration at
 
 ## Support and Feedback
 
-- Bug reports: [open a bug report](https://github.com/ruaan-deysel/vault/issues/new?template=01-bug-report.yml)
-- Enhancement requests: [request an improvement](https://github.com/ruaan-deysel/vault/issues/new?template=02-enhancement-request.yml)
+- Bug reports: [open a bug report](https://github.com/tinkerologie/vault/issues/new?template=01-bug-report.yml)
+- Enhancement requests: [request an improvement](https://github.com/tinkerologie/vault/issues/new?template=02-enhancement-request.yml)
 - Questions and support: [use the Unraid forum support thread](https://forums.unraid.net/topic/197786-plugin-vault-backup-manager)
 
 ## License

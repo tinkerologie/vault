@@ -17,7 +17,7 @@ Until Vault is listed in the Community Applications store, install it manually:
 2. Paste the following URL and click **Install**:
 
    ```
-   https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
+   https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
    ```
 
 3. Once installed, Vault appears under **Settings** → **Vault** in the Unraid menu.
@@ -140,7 +140,7 @@ Each restore point also shows chain health annotations so you can see the refere
 | Run dedup maintenance from the CLI                | `vault dedup repair --dest <id>`, `vault dedup gc --dest <id>`                           |
 | Get files back with no Vault server (any OS)      | [Disaster Recovery](guides/disaster-recovery.md#recovering-files-without-a-vault-server) |
 | Export a diagnostics bundle for support           | Settings → Support → _Download diagnostics_                                              |
-| Automate with Home Assistant                      | [ha-vault](https://github.com/ruaan-deysel/ha-vault)                                     |
+| Automate with Home Assistant                      | [ha-vault](https://github.com/tinkerologie/ha-vault)                                     |
 | Use the REST API                                  | [API Reference](api.md)                                                                  |
 | Use the MCP server                                | [MCP](mcp.md)                                                                            |
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 func TestNewHealthHandler(t *testing.T) {

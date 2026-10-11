@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // findRepoRoot walks up from the test's package directory until it finds go.mod.

@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
-	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )

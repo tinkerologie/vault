@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/docsmeta"
 )
 
 // JobRunner is called when a backup job is due.

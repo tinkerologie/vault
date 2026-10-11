@@ -3,7 +3,7 @@ package runner
 import (
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 func TestBreakerOpensOnThirdFailure(t *testing.T) {

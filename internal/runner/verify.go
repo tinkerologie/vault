@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/engine"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // VerifyMode selects the verification strategy.

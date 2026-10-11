@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // RunAutoThrottleLoop is the adaptive upload-throttle controller (issue

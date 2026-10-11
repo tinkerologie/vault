@@ -25,7 +25,7 @@ See [How Backup Works](how-backup-works.md) for the concepts behind these featur
 
 ## Integrations
 
-- **Home Assistant** — monitor jobs and trigger backups from your dashboard with the ready-to-use custom integration [`ha-vault`](https://github.com/ruaan-deysel/ha-vault).
+- **Home Assistant** — monitor jobs and trigger backups from your dashboard with the ready-to-use custom integration [`ha-vault`](https://github.com/tinkerologie/ha-vault).
 - **AI assistants (MCP)** — drive Vault from Claude and other MCP clients via the built-in [MCP server](mcp.md).
 - **Scripting & automation** — the full [REST API](api.md) exposes jobs, storage, runs, and restore points.
 
@@ -36,7 +36,7 @@ something you care about, [sponsoring on GitHub](https://github.com/sponsors/rua
 helps keep it maintained — new features, Unraid compatibility as it evolves, and
 support for the people using it.
 
-Not in a position to sponsor? Starring the [repository](https://github.com/ruaan-deysel/vault),
+Not in a position to sponsor? Starring the [repository](https://github.com/tinkerologie/vault),
 reporting bugs, and sharing Vault with other Unraid users all help just as much.
 
 ## Explore the UI

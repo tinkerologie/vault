@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/format"
+	"github.com/tinkerologie/vault/internal/format"
 )
 
 type Importance string

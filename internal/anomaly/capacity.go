@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // minCapacitySamples is the minimum number of samples required before the

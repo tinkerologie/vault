@@ -11,14 +11,14 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/ruaan-deysel/vault/internal/api"
-	"github.com/ruaan-deysel/vault/internal/crypto"
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/discovery"
-	"github.com/ruaan-deysel/vault/internal/logx"
-	"github.com/ruaan-deysel/vault/internal/replication"
-	"github.com/ruaan-deysel/vault/internal/scheduler"
 	"github.com/spf13/cobra"
+	"github.com/tinkerologie/vault/internal/api"
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/discovery"
+	"github.com/tinkerologie/vault/internal/logx"
+	"github.com/tinkerologie/vault/internal/replication"
+	"github.com/tinkerologie/vault/internal/scheduler"
 )
 
 var replicaCmd = &cobra.Command{

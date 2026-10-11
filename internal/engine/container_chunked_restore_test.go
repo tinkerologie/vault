@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // backupTestVolume backs up a small source tree as a folder chunked backup

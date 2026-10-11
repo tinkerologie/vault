@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/engine"
 )
 
 func createTestLocalDest(t *testing.T, d *db.DB) int64 {
