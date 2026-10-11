@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Containers>
     <Plugin>True</Plugin>
-    <PluginURL>https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg</PluginURL>
+    <PluginURL>https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg</PluginURL>
     <PluginAuthor>Ruaan Deysel</PluginAuthor>
     <Beta>False</Beta>
     <Category>Tools:System:</Category>
@@ -13,8 +13,8 @@
         No external plugin dependencies. Vault runs as a self-contained Go daemon with a built-in web UI.
     </Requires>
     <MinVer>7.0</MinVer>
-    <Project>https://github.com/ruaan-deysel/vault</Project>
+    <Project>https://github.com/tinkerologie/vault</Project>
     <Support>https://forums.unraid.net/topic/197786-plugin-vault-backup-manager</Support>
-    <Icon>https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/icon.png</Icon>
+    <Icon>https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/icon.png</Icon>
     <License>MIT License - Copyright 2026 Ruaan Deysel</License>
 </Containers>

@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ## [Unreleased]
 
 ### Changed
+- Updated repository, plugin template, documentation and docs-site URLs to `tinkerologie` organization (Go module path unchanged; GitHub redirects keep it working)
 - Configured Codecov GitHub Actions workflow for tokenless coverage uploads
 
 ### Fixed

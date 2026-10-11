@@ -36,7 +36,7 @@ something you care about, [sponsoring on GitHub](https://github.com/sponsors/rua
 helps keep it maintained — new features, Unraid compatibility as it evolves, and
 support for the people using it.
 
-Not in a position to sponsor? Starring the [repository](https://github.com/ruaan-deysel/vault),
+Not in a position to sponsor? Starring the [repository](https://github.com/tinkerologie/vault),
 reporting bugs, and sharing Vault with other Unraid users all help just as much.
 
 ## Explore the UI

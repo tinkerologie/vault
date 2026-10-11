@@ -17,7 +17,7 @@ Until Vault is listed in the Community Applications store, install it manually:
 2. Paste the following URL and click **Install**:
 
    ```
-   https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
+   https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
    ```
 
 3. Once installed, Vault appears under **Settings** → **Vault** in the Unraid menu.
