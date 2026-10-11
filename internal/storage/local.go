@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/fsstat"
+	"github.com/tinkerologie/vault/internal/fsstat"
 
-	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 type LocalAdapter struct {

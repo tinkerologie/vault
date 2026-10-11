@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // Dropping the run ID from the run folder (issue #319) removed the only thing

@@ -16,8 +16,8 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 type fuseRoot struct {

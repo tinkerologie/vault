@@ -178,7 +178,7 @@ them into a folder. It runs on **Linux, macOS and Windows**, needs no Vault
 database, and **never writes to or deletes from the backup storage**.
 
 Download `vault-windows-amd64.exe` from the
-[releases page](https://github.com/ruaan-deysel/vault/releases) on Windows. On
+[releases page](https://github.com/tinkerologie/vault/releases) on Windows. On
 Linux the `vault` binary from the plugin package works the same way.
 
 ### What you need

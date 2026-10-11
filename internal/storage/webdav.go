@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/safepath"
 	"github.com/studio-b12/gowebdav"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // WebDAVConfig holds configuration for a WebDAV storage adapter.

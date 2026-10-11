@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // Breaker is a per-destination circuit breaker.

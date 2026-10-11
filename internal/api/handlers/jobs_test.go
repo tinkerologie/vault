@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/engine"
-	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
-	"github.com/ruaan-deysel/vault/internal/runner"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/engine"
+	jobintake "github.com/tinkerologie/vault/internal/jobs"
+	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // uniqueSeq provides monotonically increasing IDs for unique name generation.

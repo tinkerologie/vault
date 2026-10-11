@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/crypto"
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/runner"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 type StorageHandler struct {

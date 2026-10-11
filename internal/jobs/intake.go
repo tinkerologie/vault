@@ -23,8 +23,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/runner"
 )
 
 // ScheduleReloader reloads the cron scheduler so a changed Job takes effect

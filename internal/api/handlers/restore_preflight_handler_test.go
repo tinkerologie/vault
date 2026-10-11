@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestRestorePointPreflight_Handler exercises the preflight endpoint end-to-end

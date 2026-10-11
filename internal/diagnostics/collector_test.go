@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/logbuf"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/logbuf"
 )
 
 // openTestDB returns a freshly opened DB rooted in t.TempDir().

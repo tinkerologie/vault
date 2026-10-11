@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 var _ = normalizeVMRestorePlan

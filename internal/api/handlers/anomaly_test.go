@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/anomaly"
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/anomaly"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // ---------------------------------------------------------------------------

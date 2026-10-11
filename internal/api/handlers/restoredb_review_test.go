@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // writePlaintextDBFixture builds a valid vault DB and copies it to

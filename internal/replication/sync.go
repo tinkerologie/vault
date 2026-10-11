@@ -6,9 +6,9 @@ import (
 	"log"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/storage"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // ProgressFunc reports sync progress on a scale of 0.0 to 1.0.

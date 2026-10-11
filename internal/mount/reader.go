@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // DefaultCacheSizeBytes is the default maximum memory limit for the chunk cache (64 MiB).

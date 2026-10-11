@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestTerminalDetails_RunLogFlag: terminalDetails always stamps the run_log

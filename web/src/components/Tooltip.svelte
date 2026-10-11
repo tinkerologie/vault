@@ -28,7 +28,7 @@
   // only available in secure contexts (HTTPS or localhost). Unraid serves the
   // plugin over plain HTTP, so calling crypto.randomUUID() throws in Firefox
   // and breaks any view that mounts new tooltips (e.g. job wizard steps).
-  // See: https://github.com/ruaan-deysel/vault/issues/67
+  // See: https://github.com/tinkerologie/vault/issues/67
   function generateTooltipId() {
     const rand =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 func TestPathDepth(t *testing.T) {

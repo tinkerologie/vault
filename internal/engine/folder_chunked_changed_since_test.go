@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // TestFolderBackupChunked_ChangedSince verifies that BackupChunked

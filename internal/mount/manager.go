@@ -16,12 +16,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
-	"github.com/ruaan-deysel/vault/internal/runner"
-	"github.com/ruaan-deysel/vault/internal/storage"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // DefaultIdleTimeout is the default duration after which an inactive mount is auto-unmounted (30 minutes).

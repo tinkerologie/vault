@@ -3,7 +3,7 @@ package anomaly
 import (
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestRefreshBaselineFailureRate pins the #181 fix: the runner writes

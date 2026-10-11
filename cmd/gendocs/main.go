@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // outSubdir is the reference directory relative to the repository root.

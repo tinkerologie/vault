@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // HealthHandler serves aggregated health metrics for the dashboard.

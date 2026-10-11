@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cloudsoda/go-smb2"
-	"github.com/ruaan-deysel/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 type SMBConfig struct {

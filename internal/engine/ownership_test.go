@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // modeOf returns a path's permission bits, failing the test if it cannot be

@@ -4,8 +4,8 @@
     <!ENTITY author    "Ruaan Deysel">
     <!ENTITY version   "2026.10.00">
     <!ENTITY launch    "Settings/Vault">
-    <!ENTITY gitURL    "https://github.com/ruaan-deysel/&name;">
-    <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaan-deysel/&name;/main/plugin/vault.plg">
+    <!ENTITY gitURL    "https://github.com/tinkerologie/&name;">
+    <!ENTITY pluginURL "https://raw.githubusercontent.com/tinkerologie/&name;/main/plugin/vault.plg">
     <!ENTITY bundle    "&name;-&version;.txz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
     <!ENTITY sha256      "ead73c4fcee217576e5fefd19aad651b583e50bd389b33a1a6266a641ce54e4a">
@@ -19,7 +19,7 @@
 
 <CHANGES><![CDATA[
 See full changelog at:
-https://github.com/ruaan-deysel/vault/blob/main/CHANGELOG.md
+https://github.com/tinkerologie/vault/blob/main/CHANGELOG.md
 ]]></CHANGES>
 
 <!-- Prepare persistent plugin storage and prune stale cached bundles -->

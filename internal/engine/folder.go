@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/safepath"
-	"github.com/ruaan-deysel/vault/internal/tempdir"
-	"github.com/ruaan-deysel/vault/internal/unraid"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/tempdir"
+	"github.com/tinkerologie/vault/internal/unraid"
 )
 
 // FolderHandler implements Handler for arbitrary filesystem directories.

@@ -14,13 +14,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/config"
-	"github.com/ruaan-deysel/vault/internal/crypto"
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/diagnostics"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
-	"github.com/ruaan-deysel/vault/internal/notify"
-	"github.com/ruaan-deysel/vault/internal/tempdir"
+	"github.com/tinkerologie/vault/internal/config"
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/diagnostics"
+	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/notify"
+	"github.com/tinkerologie/vault/internal/tempdir"
 )
 
 // SettingsHandler handles global application settings.

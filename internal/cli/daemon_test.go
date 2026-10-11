@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/anomaly"
-	"github.com/ruaan-deysel/vault/internal/api"
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/logx"
-	"github.com/ruaan-deysel/vault/internal/unraid"
 	"github.com/spf13/cobra"
+	"github.com/tinkerologie/vault/internal/anomaly"
+	"github.com/tinkerologie/vault/internal/api"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/logx"
+	"github.com/tinkerologie/vault/internal/unraid"
 )
 
 // openTestDB opens a fresh SQLite database in a temp directory.

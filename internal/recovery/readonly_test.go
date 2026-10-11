@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // TestReadOnlyAdapterRefusesMutations checks writes and deletes never reach

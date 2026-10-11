@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/safepath"
-	"github.com/ruaan-deysel/vault/internal/unraid"
+	"github.com/tinkerologie/vault/internal/safepath"
+	"github.com/tinkerologie/vault/internal/unraid"
 )
 
 // BrowseHandler serves filesystem directory listings for the path browser UI.

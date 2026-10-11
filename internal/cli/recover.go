@@ -17,8 +17,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ruaan-deysel/vault/internal/format"
-	"github.com/ruaan-deysel/vault/internal/recovery"
+	"github.com/tinkerologie/vault/internal/format"
+	"github.com/tinkerologie/vault/internal/recovery"
 )
 
 // recoverReportName is the pattern of the report written into the extraction

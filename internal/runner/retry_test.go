@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/ws"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 // ptrInt64 / ptrStr are small test helpers that mirror the model's

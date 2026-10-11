@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // TestPluginChunkedRoundTrip backs up a synthetic plugin directory (using the

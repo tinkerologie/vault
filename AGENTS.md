@@ -32,7 +32,7 @@ documentation in the same change.
 - **UI:** Svelte 5 single-page application embedded in the Go binary
 - **API:** Chi v5 REST API, WebSocket events, and MCP endpoint
 - **Database:** SQLite via `modernc.org/sqlite`
-- **Repository:** `github.com/ruaan-deysel/vault`
+- **Repository:** `github.com/tinkerologie/vault`
 
 Vault runs with privileged access to Docker, libvirt, filesystems, and storage
 credentials. Treat restore, deletion, deployment, database replacement, and
@@ -250,7 +250,7 @@ metadata is injected with linker flags defined in the `Makefile`.
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues on `ruaan-deysel/vault` via the `gh` CLI.
+Issues are tracked in GitHub Issues on `tinkerologie/vault` via the `gh` CLI.
 See `docs/agents/issue-tracker.md`.
 
 ### Triage labels

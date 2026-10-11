@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/format"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/format"
 )
 
 // Run-log levels. Stored as TEXT in run_log_entries.

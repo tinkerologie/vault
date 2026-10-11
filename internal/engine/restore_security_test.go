@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 func TestRestoreSecurity_UntarGuards(t *testing.T) {

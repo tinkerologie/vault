@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
+	"github.com/tinkerologie/vault/internal/db"
+	jobintake "github.com/tinkerologie/vault/internal/jobs"
 )
 
 // postJob issues POST /api/v1/jobs with the given raw JSON body and returns the

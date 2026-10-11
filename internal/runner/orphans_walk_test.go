@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // TestWalkStorageRecursivelyEnumeratesFiles drives the walkStorage helper

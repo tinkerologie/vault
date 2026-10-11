@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // createRestorePointWithAge inserts a job_run + restore_point and back-dates

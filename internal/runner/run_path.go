@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // maxRunPathAttempts bounds the disambiguation search. Reaching it means

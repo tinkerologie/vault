@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/runner"
 )
 
 // fakeRunner records what Job Intake asked the runner to do, and reports

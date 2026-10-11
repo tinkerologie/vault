@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // DatabaseKind identifies a database server Vault knows how to dump.

@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // RepoRoot is the top-level directory of a dedup repository on a storage

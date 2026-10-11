@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/api/handlers"
+	"github.com/tinkerologie/vault/internal/api/handlers"
 )
 
 // deadlineRecorder is a ResponseWriter that records the deadlines an

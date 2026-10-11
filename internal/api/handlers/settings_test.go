@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/diagnostics"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/diagnostics"
 )
 
 // newTestSettingsHandler creates a SettingsHandler backed by an in-memory DB

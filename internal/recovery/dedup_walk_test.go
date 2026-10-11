@@ -6,9 +6,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // TestWalkDedupContainer checks a container manifest's synthetic keys and

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // TestContainerBackup_ProgressMilestones: container backups narrate every

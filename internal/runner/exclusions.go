@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/docsmeta"
 )
 
 // globalExcludePaths reads the global_exclude_paths setting.

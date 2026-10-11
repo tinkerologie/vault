@@ -15,24 +15,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/anomaly"
-	"github.com/ruaan-deysel/vault/internal/api"
-	"github.com/ruaan-deysel/vault/internal/api/handlers"
-	"github.com/ruaan-deysel/vault/internal/config"
-	"github.com/ruaan-deysel/vault/internal/crypto"
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/diagnostics"
-	"github.com/ruaan-deysel/vault/internal/discovery"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
-	"github.com/ruaan-deysel/vault/internal/engine"
-	"github.com/ruaan-deysel/vault/internal/logbuf"
-	"github.com/ruaan-deysel/vault/internal/logx"
-	"github.com/ruaan-deysel/vault/internal/replication"
-	"github.com/ruaan-deysel/vault/internal/runner"
-	"github.com/ruaan-deysel/vault/internal/scheduler"
-	"github.com/ruaan-deysel/vault/internal/tempdir"
-	"github.com/ruaan-deysel/vault/internal/unraid"
 	"github.com/spf13/cobra"
+	"github.com/tinkerologie/vault/internal/anomaly"
+	"github.com/tinkerologie/vault/internal/api"
+	"github.com/tinkerologie/vault/internal/api/handlers"
+	"github.com/tinkerologie/vault/internal/config"
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/diagnostics"
+	"github.com/tinkerologie/vault/internal/discovery"
+	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/logbuf"
+	"github.com/tinkerologie/vault/internal/logx"
+	"github.com/tinkerologie/vault/internal/replication"
+	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/scheduler"
+	"github.com/tinkerologie/vault/internal/tempdir"
+	"github.com/tinkerologie/vault/internal/unraid"
 )
 
 // daemonLogBufferBytes caps the in-memory log ring used by the
@@ -314,7 +314,7 @@ var daemonCmd = &cobra.Command{
 				log.Printf("Database configuration validated: %d jobs, %d storage destinations, %d settings",
 					summary.Jobs, summary.StorageDests, summary.Settings)
 			} else {
-				log.Printf("WARNING: database contains no jobs or storage destinations — this is normal for a fresh install, but unexpected after an upgrade/restart. Fallback paths attempted: snapshot=%q, usb_backup=%s. If you expected your previous configuration, see https://github.com/ruaan-deysel/vault/issues/108",
+				log.Printf("WARNING: database contains no jobs or storage destinations — this is normal for a fresh install, but unexpected after an upgrade/restart. Fallback paths attempted: snapshot=%q, usb_backup=%s. If you expected your previous configuration, see https://github.com/tinkerologie/vault/issues/108",
 					snapshotPath, usbBackupPath)
 			}
 		}

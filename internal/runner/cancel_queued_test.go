@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestCancelQueuedJob verifies that CancelJob removes a job that is queued

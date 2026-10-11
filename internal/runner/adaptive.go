@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
-	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/engine"
 )
 
 // Adaptive backups (issue #240): jobs with AdaptiveEnabled defer their runs

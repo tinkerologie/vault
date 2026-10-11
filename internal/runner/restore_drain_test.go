@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // TestRunRestore_RefusesWhileDraining pins the #172 contract: a draining

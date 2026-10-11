@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/release"
+	"github.com/tinkerologie/vault/internal/release"
 )
 
 // fakeLatest implements latestFetcher for tests.

@@ -19,8 +19,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ruaan-deysel/vault/internal/fsstat"
-	"github.com/ruaan-deysel/vault/internal/unraid"
+	"github.com/tinkerologie/vault/internal/fsstat"
+	"github.com/tinkerologie/vault/internal/unraid"
 )
 
 // StageDirName is the hidden directory name used for staging.

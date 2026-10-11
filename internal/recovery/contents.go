@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/engine"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // Entry is one path in an item's backup, relative to the item root and

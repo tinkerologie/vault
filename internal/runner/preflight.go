@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // preflightTimeout caps how long TestConnection is allowed to take during

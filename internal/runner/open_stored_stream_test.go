@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/crypto"
 )
 
 // TestOpenStoredStream checks each storage wrapping is undone and that an

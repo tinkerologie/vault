@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // openRunLogRunnerDB opens a fresh DB and a Runner wired to it with a nil

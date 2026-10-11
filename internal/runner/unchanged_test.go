@@ -3,9 +3,9 @@ package runner
 import (
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
-	"github.com/ruaan-deysel/vault/internal/engine"
-	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // TestMarkUnchanged covers the run-log side of issue #326. The flag is

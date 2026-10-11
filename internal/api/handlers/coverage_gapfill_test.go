@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // ============================================================================

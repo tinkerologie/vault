@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/engine"
 )
 
 // writeContentsSidecar writes a tar-index sidecar for one restore point's item

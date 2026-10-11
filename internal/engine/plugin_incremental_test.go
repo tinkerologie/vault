@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 // newPluginFixture points pluginsDir at a temp directory holding a .plg

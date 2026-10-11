@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
-	"github.com/ruaan-deysel/vault/internal/unraid"
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/unraid"
 )
 
 // RecoveryHandler serves the disaster recovery plan.

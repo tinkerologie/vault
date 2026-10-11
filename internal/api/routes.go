@@ -16,12 +16,12 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/go-chi/httprate"
 
-	"github.com/ruaan-deysel/vault/internal/api/handlers"
-	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
-	"github.com/ruaan-deysel/vault/internal/logx"
-	mcpserver "github.com/ruaan-deysel/vault/internal/mcp"
-	"github.com/ruaan-deysel/vault/internal/release"
-	"github.com/ruaan-deysel/vault/web"
+	"github.com/tinkerologie/vault/internal/api/handlers"
+	jobintake "github.com/tinkerologie/vault/internal/jobs"
+	"github.com/tinkerologie/vault/internal/logx"
+	mcpserver "github.com/tinkerologie/vault/internal/mcp"
+	"github.com/tinkerologie/vault/internal/release"
+	"github.com/tinkerologie/vault/web"
 )
 
 // keyByRemoteAddr rate-limits by the TCP peer address (r.RemoteAddr) — the
@@ -88,7 +88,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		// Release / About card endpoints. Always accessible (also in replica mode):
 		// these are purely informational metadata, no DB writes.
-		releaseCache := release.NewCache("", "ruaan-deysel/vault", time.Hour)
+		releaseCache := release.NewCache("", "tinkerologie/vault", time.Hour)
 		releaseH := handlers.NewReleaseHandler(release.Raw(), releaseCache)
 		r.Route("/release", func(r chi.Router) {
 			r.Get("/changelog", releaseH.Changelog)

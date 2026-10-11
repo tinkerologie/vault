@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 // buildSizeEC constructs a minimal EvalContext for SizeDriftDetector tests.

@@ -12,8 +12,8 @@ import (
 
 	"github.com/go-chi/cors"
 
-	"github.com/ruaan-deysel/vault/internal/crypto"
-	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/db"
 )
 
 func TestQuietRequestLogger(t *testing.T) {

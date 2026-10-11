@@ -10,7 +10,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
-	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/crypto"
 )
 
 // gzipMagic and zstdMagic are the leading bytes of each codec's container
