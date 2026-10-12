@@ -11,14 +11,15 @@ on:
         required: true
         type: string
 
-permissions: {}
+permissions:
+  contents: read # jobs request only what they need
 
 jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # create the GitHub release and tag
     env:
       CGO_ENABLED: '0'
 
@@ -29,16 +30,19 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.1
 
+          cache: false
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
 
+          package-manager-cache: false
       - name: Extract version from tag
         id: version
         env:
@@ -92,11 +96,13 @@ jobs:
         run: make test
 
       - name: Build release package
+        env:
+          VERSION_VERSION: ${{ steps.version.outputs.version }}
         run: |
           echo "Building release package..."
           make package
 
-          PACKAGE_FILE="build/vault-${{ steps.version.outputs.version }}.txz"
+          PACKAGE_FILE="build/vault-${VERSION_VERSION}.txz"
           if [ ! -f "$PACKAGE_FILE" ]; then
             echo "ERROR: Package file not found: $PACKAGE_FILE"
             ls -la build/
@@ -114,8 +120,10 @@ jobs:
           cd build && sha256sum vault-windows-amd64.exe > vault-windows-amd64.exe.sha256
 
       - name: Extract release notes from CHANGELOG
+        env:
+          VERSION_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${VERSION_VERSION}"
           NOTES_FILE="build/RELEASE_NOTES_BASE.md"
 
           if grep -qE "^## \[v?$VERSION\]" CHANGELOG.md; then
@@ -129,11 +137,11 @@ jobs:
 
             if [ ! -s "$NOTES_FILE" ]; then
               echo "No release notes content found for $VERSION in CHANGELOG.md"
-              printf "See [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md) for details.\n" "${{ github.repository }}" > "$NOTES_FILE"
+              printf "See [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md) for details.\n" "${GITHUB_REPOSITORY}" > "$NOTES_FILE"
             fi
           else
             echo "Version $VERSION not found in CHANGELOG.md"
-            printf "See [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md) for details.\n" "${{ github.repository }}" > "$NOTES_FILE"
+            printf "See [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md) for details.\n" "${GITHUB_REPOSITORY}" > "$NOTES_FILE"
           fi
 
           cp "$NOTES_FILE" build/RELEASE_NOTES.md
@@ -159,16 +167,18 @@ jobs:
         id: checksum
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_TAG: ${{ steps.version.outputs.tag }}
+          VERSION_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${VERSION_TAG}"
+          VERSION="${VERSION_VERSION}"
           ASSET="vault-${VERSION}.txz"
           PACKAGE_FILE="/tmp/${ASSET}"
 
           rm -f "$PACKAGE_FILE"
 
           for attempt in 1 2 3 4 5; do
-            if gh release download "$TAG" --repo "${{ github.repository }}" --pattern "$ASSET" --dir /tmp; then
+            if gh release download "$TAG" --repo "${GITHUB_REPOSITORY}" --pattern "$ASSET" --dir /tmp; then
               break
             fi
 
@@ -191,14 +201,18 @@ jobs:
       - name: Upload SHA256 checksum asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release upload "${{ steps.version.outputs.tag }}" build/SHA256SUM --clobber --repo "${{ github.repository }}"
+          gh release upload "${VERSION_TAG}" build/SHA256SUM --clobber --repo "${GITHUB_REPOSITORY}"
 
       - name: Refresh release body with GitHub-hosted SHA256
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_VERSION: ${{ steps.version.outputs.version }}
+          CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
+          VERSION_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${VERSION_VERSION}"
 
           {
             cat build/RELEASE_NOTES_BASE.md
@@ -207,17 +221,19 @@ jobs:
             echo
             echo "**SHA256 Checksum:**"
             echo '```'
-            echo "${{ steps.checksum.outputs.sha256 }}  vault-${VERSION}.txz"
+            echo "${CHECKSUM_SHA256}  vault-${VERSION}.txz"
             echo '```'
           } > build/RELEASE_NOTES.md
 
-          gh release edit "${{ steps.version.outputs.tag }}" \
-            --repo "${{ github.repository }}" \
+          gh release edit "${VERSION_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --notes-file build/RELEASE_NOTES.md
 
       - name: Update PLG file for txz and SHA256
+        env:
+          CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
         run: |
-          SHA256="${{ steps.checksum.outputs.sha256 }}"
+          SHA256="${CHECKSUM_SHA256}"
           export SHA256
 
           echo "Updating PLG file with SHA256: $SHA256"
@@ -243,6 +259,10 @@ jobs:
           grep "ENTITY sha256" plugin/vault.plg
 
       - name: Commit and push PLG updates
+        env:
+          CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
+          VERSION_VERSION: ${{ steps.version.outputs.version }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -254,7 +274,7 @@ jobs:
             git checkout main
             git pull origin main
 
-            SHA256="${{ steps.checksum.outputs.sha256 }}"
+            SHA256="${CHECKSUM_SHA256}"
             export SHA256
           python3 <<'PY'
           from pathlib import Path
@@ -274,15 +294,18 @@ jobs:
           PY
 
             git add plugin/vault.plg
-            git commit -m "chore: update PLG SHA256 hash for v${{ steps.version.outputs.version }} [skip ci]"
-            git push origin main
+            git commit -m "chore: update PLG SHA256 hash for v${VERSION_VERSION} [skip ci]"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
             echo "Committed and pushed PLG updates"
           fi
 
       - name: Release Summary
+        env:
+          VERSION_VERSION: ${{ steps.version.outputs.version }}
+          CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
         run: |
-          echo "## v${{ steps.version.outputs.version }} Released!" >> $GITHUB_STEP_SUMMARY
+          echo "## v${VERSION_VERSION} Released!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Package:** vault-${{ steps.version.outputs.version }}.txz" >> $GITHUB_STEP_SUMMARY
-          echo "**GitHub-hosted SHA256:** ${{ steps.checksum.outputs.sha256 }}" >> $GITHUB_STEP_SUMMARY
-          echo "**URL:** https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** vault-${VERSION_VERSION}.txz" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub-hosted SHA256:** ${CHECKSUM_SHA256}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION_VERSION}" >> $GITHUB_STEP_SUMMARY
