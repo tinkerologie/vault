@@ -1,27 +1,19 @@
-name: Close Stale Issues
+name: Stale Issues And Pull Requests
 
+# Stale after 14 days without activity, closed 30 days after that.
 on:
   schedule:
-    - cron: "0 0 * * *" # Runs daily at midnight UTC
-  workflow_dispatch: # Allows manual triggering of the workflow
+    - cron: '41 1 * * *'
+  workflow_dispatch:
 
-permissions:
-  issues: write
+permissions: {}
 
 jobs:
   stale:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Close stale issues
-        uses: actions/stale@v11
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          stale-issue-label: "stale"
-          stale-issue-message: "This issue has been marked as stale due to inactivity. If no further activity occurs, it will be closed in 15 days (45 days total inactivity)."
-          days-before-issue-stale: 30 # Number of days before an issue becomes stale
-          days-before-issue-close: 15 # Number of days to wait after marking as stale before closing
-          days-before-pr-stale: -1 # Disable stale handling for pull requests
-          days-before-pr-close: -1 # Disable auto-closing pull requests
-          exempt-issue-labels: "pinned,enhancement,status: blocked" # Do not mark issues with these labels as stale
-          operations-per-run: 30 # Number of actions to perform per run
+    permissions:
+      actions: write # actions/stale saves its progress in the Actions cache between capped runs
+      issues: write # label, comment on, and close stale issues
+      pull-requests: write # label, comment on, and close stale pull requests
+    uses: tinkerologie/.github/.github/workflows/stale.yml@d656cb424398f328446d036df4724e3f89b5b5ec # v1.1.0
+    with:
+      exempt-issue-labels: "pinned,security,confirmed,work-in-progress,priority: critical,priority: high,status: blocked"

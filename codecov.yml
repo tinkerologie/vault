@@ -27,8 +27,9 @@ coverage:
         informational: true
     patch:
       default:
-        target: 80%
-        threshold: 1%
+        # At least 90% of added or changed lines must be covered by tests.
+        target: 90%
+        threshold: 0%
         informational: false
     changes: false
 
