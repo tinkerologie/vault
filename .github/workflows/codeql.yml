@@ -16,7 +16,8 @@ on:
     branches: [main]
   schedule:
     # Weekly, so new queries are applied to code that has not changed.
-    - cron: "0 3 * * 1"
+    - cron: 0 3 * * 1
+      timezone: Australia/Brisbane
   # Lets the first run be triggered by hand right after switching setup type,
   # instead of waiting for the next push.
   workflow_dispatch:
@@ -52,15 +53,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: matrix.language == 'go'
         with:
-          go-version: "1.27.1"
+          go-version: 1.27.1
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: matrix.language == 'go'
         with:
-          node-version: "22"
+          node-version: '22'
 
       # web/embed.go embeds dist/* , so the bundle must exist before autobuild
       # compiles the package — otherwise the build dies with
@@ -86,4 +89,4 @@ jobs:
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
-          category: "/language:${{ matrix.language }}"
+          category: /language:${{ matrix.language }}
