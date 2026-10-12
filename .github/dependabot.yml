@@ -54,3 +54,41 @@ updates:
         update-types:
           - minor
           - patch
+
+  # Playwright end-to-end tests (root package.json and package-lock.json).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      npm-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+
+  # Docker base images in the root Dockerfile (golang, alpine).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      docker-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
