@@ -24,10 +24,10 @@
   description: "This issue will not be worked on"
 - name: "pinned"
   color: "1d76db"
-  description: "Important issue that should not go stale"
+  description: "Pinned; exempt from stale handling"
 - name: "work-in-progress"
   color: "fbca04"
-  description: "Active work is already in progress"
+  description: "Actively being worked on; exempt from stale handling"
 - name: "status: needs-info"
   color: "fef2c0"
   description: "More information is needed before work can continue"
@@ -100,12 +100,12 @@
 
 - name: "confirmed"
   color: "0e8a16"
-  description: "Confirmed bug or accepted request; exempt from stale handling"
+  description: "Confirmed bug or accepted request; exempts issues from stale handling"
 
 - name: "priority: critical"
   color: "b60205"
-  description: "Critical priority; exempt from stale handling"
+  description: "Critical priority; exempts issues (not PRs) from stale handling"
 
 - name: "priority: high"
   color: "d93f0b"
-  description: "High priority; exempt from stale handling"
+  description: "High priority; exempts issues (not PRs) from stale handling"

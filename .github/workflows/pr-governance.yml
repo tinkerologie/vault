@@ -185,6 +185,35 @@ jobs:
             const isExplicitNone =
               /^(?:none|n\/a|not applicable|no issue|standalone)\b/i.test(relatedIssuesClean);
 
+            // "None" is reserved for maintainer housekeeping (CI, docs, dependency
+            // updates). Only authors with write access or higher may use it; everyone
+            // else must link an existing issue.
+            let isMaintainer = false;
+            let permissionLookupError = null;
+            if (isExplicitNone) {
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner,
+                  repo,
+                  username: context.payload.pull_request.user.login,
+                });
+                // `permission` is the base level: maintain maps to write, and custom
+                // roles report the base role they extend.
+                isMaintainer = ["admin", "write"].includes(data.permission);
+              } catch (error) {
+                permissionLookupError = error;
+              }
+            }
+            if (isExplicitNone && permissionLookupError) {
+              errors.push(
+                `Could not confirm that the author may use "None" (GitHub API error: ${permissionLookupError.message}). Re-run this check, or link an issue in "Related Issues".`,
+              );
+            } else if (isExplicitNone && !isMaintainer) {
+              errors.push(
+                'Contributor PRs must link an issue in "Related Issues", for example `Closes #123` or `Part of #123`. "None" is reserved for maintainers with write access, for housekeeping; open an issue with the bug or enhancement template first.',
+              );
+            }
+
             if (!isExplicitNone && relatedIssuesClean) {
               const issueRefRegex =
                 /\b(?:part of|fix(?:e[sd])?|close[sd]?|resolve[sd]?|related to|addresses?|implements?)[:]??\s+(?:https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/issues\/(\d+)|([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#(\d+))/gi;
@@ -193,7 +222,7 @@ jobs:
 
               if (issueMatches.length === 0) {
                 errors.push(
-                  'Add at least one linked issue in "Related Issues" using Fixes/Closes/Resolves/Related to/Part of #<number> (or issue URL), or state "None" if this change is self-contained.',
+                  'Add at least one linked issue in "Related Issues" using Fixes/Closes/Resolves/Related to/Part of #<number> (or issue URL), or open one with the bug or enhancement template first. Maintainers may state "None" for housekeeping.',
                 );
               } else {
                 const repoSlug = `${owner}/${repo}`.toLowerCase();
@@ -219,9 +248,7 @@ jobs:
 
                   const targetSlug = `${refOwner}/${refRepo}`.toLowerCase();
                   if (targetSlug !== repoSlug) {
-                    core.info(`Referenced external issue: ${targetSlug}#${issueNumber}`);
-                    hasValidReference = true;
-                    continue;
+                    core.info(`Verifying cross-repository issue ${targetSlug}#${issueNumber}`);
                   }
 
                   if (!Number.isNaN(issueNumber)) {
@@ -237,20 +264,34 @@ jobs:
                         break;
                       }
                     } catch (error) {
-                      core.info(`Skipping issue verification for #${issueNumber}: ${error.message}`);
-                      hasValidReference = true;
+                      // GitHub also answers 403 for primary/secondary rate limits; treat those
+                      // like an outage instead of a missing issue.
+                      const headers = (error.response && error.response.headers) || {};
+                      const rateLimited =
+                        error.status === 429 ||
+                        (error.status === 403 &&
+                          (headers["x-ratelimit-remaining"] === "0" ||
+                            headers["retry-after"] !== undefined ||
+                            /rate limit/i.test(error.message)));
+                      if (!rateLimited && [403, 404, 410].includes(error.status)) {
+                        core.warning(`Issue ${refOwner}/${refRepo}#${issueNumber} could not be found (HTTP ${error.status}).`);
+                      } else {
+                        // Server error, rate limit or network failure: do not block the PR on GitHub outages.
+                        core.warning(`Could not verify issue #${issueNumber}: ${error.message}`);
+                        hasValidReference = true;
+                      }
                     }
                   }
                 }
 
                 if (!hasValidReference) {
                   errors.push(
-                    `Could not verify an existing linked issue in ${repoSlug} in "Related Issues". If no issue exists, specify "None".`,
+                    `Could not find the linked issue. Link an existing issue in "Related Issues"; open one with the bug or enhancement template first.`,
                   );
                 }
               }
             } else if (!isExplicitNone && !relatedIssuesClean) {
-              errors.push('Section "Related Issues" must reference an issue or state "None".');
+              errors.push('Section "Related Issues" must reference an issue (maintainers may state "None" for housekeeping).');
             }
 
             if (errors.length > 0) {
