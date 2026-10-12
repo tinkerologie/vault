@@ -18,7 +18,7 @@ jobs:
     name: Docker
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: read # check out the repository
       packages: write
 
     steps:
@@ -27,6 +27,7 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+          persist-credentials: false
       - name: Extract version
         id: version
         env:

@@ -22,8 +22,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write
+      contents: read # check out the repository
+      id-token: write # trusted publishing (OIDC) to the package registry
     env:
       CGO_ENABLED: '0'
 
