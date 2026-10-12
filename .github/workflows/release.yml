@@ -29,20 +29,22 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
-
           persist-credentials: false
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.1
 
           cache: false
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
 
           package-manager-cache: false
+
       - name: Extract version from tag
         id: version
         env:
