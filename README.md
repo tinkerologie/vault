@@ -1,7 +1,7 @@
 # Vault
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/tinkerologie/vault)
-[![Build & Test](https://github.com/tinkerologie/vault/actions/workflows/build.yml/badge.svg)](https://github.com/tinkerologie/vault/actions/workflows/build.yml)
+[![Build & Test](https://github.com/tinkerologie/vault/actions/workflows/ci.yml/badge.svg)](https://github.com/tinkerologie/vault/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/tinkerologie/vault?sort=date&label=release)](https://github.com/tinkerologie/vault/releases/latest)
 [![Go Version](https://img.shields.io/badge/go-1.27-00ADD8?logo=go)](https://go.dev/)
 [![Svelte](https://img.shields.io/badge/svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
