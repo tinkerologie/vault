@@ -35,8 +35,8 @@
 
 ## Related Issues
 
-<!-- Link to related issues, or specify "None" for self-contained changes -->
-<!-- Examples: Fixes #123, Closes https://github.com/..., Related to #456, Part of #789, or None -->
+<!-- Link the issue this PR resolves (Closes #123) or contributes to (Part of #123). "None" is only for maintainers with write access, for housekeeping. -->
+<!-- Examples: Fixes #123, Closes https://github.com/..., Related to #456, Part of #789, or None (maintainers only) -->
 
 Fixes #
 
@@ -117,7 +117,7 @@ Fixes #
 
 - [ ] I have updated CHANGELOG.md under [Unreleased] with details of this change
 - [ ] PR title follows Conventional Commits (e.g., `feat(ui): ...`, `fix(engine): ...`, `docs: ...`)
-- [ ] Linked relevant GitHub issue(s) above or noted "None"
+- [ ] Linked the relevant GitHub issue above (only maintainers may note "None", for housekeeping)
 - [ ] Pure Go maintained (`CGO_ENABLED=0`) with SQLite WAL mode and connection pragmas respected
 - [ ] I have performed a self-review of my own code
 - [ ] My changes generate no new warnings
