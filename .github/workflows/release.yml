@@ -260,11 +260,23 @@ jobs:
           grep "ENTITY bundle" plugin/vault.plg
           grep "ENTITY sha256" plugin/vault.plg
 
+      # main requires pull requests; the Unraid plugin manager and Community Applications read
+      # the .plg from main, so its new hash is pushed with the Tinkerologie-Release app, the
+      # only actor the ruleset lets bypass that rule (GITHUB_TOKEN cannot be a bypass actor).
+      - name: Mint Tinkerologie-Release token
+        id: release-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TINKER_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.TINKER_RELEASE_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write # push the PLG hash commit to main
+
       - name: Commit and push PLG updates
         env:
           CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
           VERSION_VERSION: ${{ steps.version.outputs.version }}
-          GITHUB_TOKEN: ${{ github.token }}
+          PLG_PUSH_TOKEN: ${{ steps.release-token.outputs.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -297,7 +309,7 @@ jobs:
 
             git add plugin/vault.plg
             git commit -m "chore: update PLG SHA256 hash for v${VERSION_VERSION} [skip ci]"
-            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+            git push "https://x-access-token:${PLG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
             echo "Committed and pushed PLG updates"
           fi
 
