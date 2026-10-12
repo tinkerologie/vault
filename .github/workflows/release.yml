@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - v*
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v2026.03.00)"
+        description: Tag to release (e.g., v2026.03.00)
         required: true
         type: string
 
@@ -15,29 +15,29 @@ permissions: {}
 
 jobs:
   release:
-    name: Build and Release
+    name: Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
-      CGO_ENABLED: "0"
+      CGO_ENABLED: '0'
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.1"
+          go-version: 1.27.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: '22'
 
       - name: Extract version from tag
         id: version
