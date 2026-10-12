@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.8
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.13
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.2
-	github.com/aws/smithy-go v1.28.4
+	github.com/aws/smithy-go v1.28.5
 	github.com/cloudsoda/go-smb2 v0.0.0-20260918041005-0c5d69b69701
 	github.com/coder/websocket v1.8.15
 	github.com/digitalocean/go-libvirt v0.0.0-20260814190004-1a83157e1858
@@ -19,7 +19,7 @@ require (
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.16.1
 	github.com/grandcat/zeroconf v1.0.0
-	github.com/hanwen/go-fuse/v2 v2.11.0
+	github.com/hanwen/go-fuse/v2 v2.12.0
 	github.com/klauspost/compress v1.20.1
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
@@ -28,8 +28,8 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/studio-b12/gowebdav v0.13.0
-	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.60.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/time v0.16.0
 	modernc.org/sqlite v1.60.1
