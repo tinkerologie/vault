@@ -49,7 +49,7 @@ All contributions—whether submitted by humans or AI agents—must adhere to th
 - Run all required local validation checks (tests with coverage, linters, type checkers, and formatters). Ensure all checks pass with zero errors and zero warnings.
 
 ### 5. Follow the Pull Request Template
-- Open a Pull Request using `.github/PULL_REQUEST_TEMPLATE.md`.
+- Open a Pull Request using `.github/pull_request_template.md`.
 - Complete all sections in the template:
   - Summary of changes
   - Linked issue keywords (`Fixes #<issue>`, `Closes #<issue>`, `Addresses #<issue>`)
@@ -139,8 +139,8 @@ These rules apply to every contributor, including AI coding agents. The full org
 2. **Link the issue.** In the PR's **Related Issues** section, write `Closes #<number>` (or `Fixes`
    or `Resolves`) when the PR completely resolves the issue; these keywords close it on merge. Use
    `Part of #<number>` or `Related to #<number>` for partial work. The linked issue must exist; an
-   issue in another repository (`owner/repo#123`) is fine. Only maintainers with write access may
-   write `None`, for housekeeping such as CI,
+   issue in another public repository (`owner/repo#123`) is fine. Only authors with write access or
+   higher (maintainers) may write `None`, for housekeeping such as CI,
    documentation, or dependency updates; PR governance rejects `None` from everyone else.
 3. **One change at a time.** Contributors without write access can have at most 2 open, non-draft
    pull requests here. GitHub enforces this limit, and draft pull requests do not count toward it.
