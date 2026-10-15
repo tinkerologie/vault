@@ -29,8 +29,9 @@ var parallelDownloadPolicy = RetryPolicy{MaxAttempts: 5, BaseDelay: time.Second,
 //
 // onBytes is called as bytes are written, to drive progress and the stall
 // watchdog heartbeat. A transient per-part failure restarts that part from its
-// offset (WriteAt is idempotent at fixed offsets); onBytes may therefore
-// slightly over-count on a retried part, which is acceptable for progress.
+// offset (WriteAt is idempotent at fixed offsets); onBytes first receives the
+// negative byte count of the failed attempt, so the running sum of its deltas
+// is always the object's bytes actually in place.
 func ParallelRangeDownload(ctx context.Context, adapter Adapter, path string, out io.WriterAt, size, partSize int64, concurrency int, onBytes func(int64)) error {
 	if size <= 0 {
 		return nil
@@ -110,6 +111,7 @@ func ParallelRangeDownload(ctx context.Context, adapter Adapter, path string, ou
 // downloadPart fetches [off, off+length) and writes it at off, retrying the
 // whole part from its offset on a transient error (bounded).
 func downloadPart(ctx context.Context, adapter Adapter, path string, out io.WriterAt, off, length int64, onBytes func(int64)) error {
+	diag := DiagStatsFrom(ctx)
 	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -125,12 +127,19 @@ func downloadPart(ctx context.Context, adapter Adapter, path string, out io.Writ
 			return fmt.Errorf("range %d-%d: %w", off, off+length, err)
 		}
 		w := io.MultiWriter(&offsetWriter{out: out, off: off}, &countingWriter{onBytes: onBytes})
-		_, copyErr := io.Copy(w, rc)
+		written, copyErr := io.Copy(w, rc)
 		_ = rc.Close()
 		if copyErr == nil {
+			diag.AddBytesRead(written)
 			return nil
 		}
 		if classify(copyErr) && attempt < parallelDownloadPolicy.MaxAttempts {
+			// The failed attempt's bytes will be fetched again; count them
+			// apart so "bytes read" is not inflated by the retry.
+			diag.recordPartRestart(path, attempt, parallelDownloadPolicy.MaxAttempts, copyErr, written)
+			if onBytes != nil && written > 0 {
+				onBytes(-written)
+			}
 			log.Printf("storage: parallel download part %d-%d failed (attempt %d/%d), retrying: %v",
 				off, off+length, attempt, parallelDownloadPolicy.MaxAttempts, copyErr)
 			time.Sleep(jitteredBackoff(parallelDownloadPolicy, attempt))

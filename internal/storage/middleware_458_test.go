@@ -119,7 +119,7 @@ func TestMiddleware458_PassThroughSuccessAndError(t *testing.T) {
 		"logging-on":  func(a Adapter) Adapter { return withLogging(a, "dest", true) },
 		"logging-off": func(a Adapter) Adapter { return withLogging(a, "dest", false) },
 		"metrics":     func(a Adapter) Adapter { return withMetrics(a, "dest") },
-		"retry":       func(a Adapter) Adapter { return withRetry(a, RetryPolicy{MaxAttempts: 0}) },
+		"retry":       func(a Adapter) Adapter { return withRetry(a, RetryPolicy{MaxAttempts: 0}, nil) },
 		"throttle":    func(a Adapter) Adapter { return WrapThrottled(a, 1000) },
 		"auto":        wrapAutoThrottled,
 	}
@@ -171,7 +171,7 @@ func TestMiddleware458_CloseOnNonCloserInner(t *testing.T) {
 	for _, a := range []Adapter{
 		withLogging(mockAdapter{}, "d", true),
 		withMetrics(mockAdapter{}, "d"),
-		withRetry(mockAdapter{}, RetryPolicy{}),
+		withRetry(mockAdapter{}, RetryPolicy{}, nil),
 		WrapThrottled(mockAdapter{}, 1),
 	} {
 		if err := a.(io.Closer).Close(); err != nil {
@@ -185,7 +185,7 @@ func TestMiddleware458_RetryRetriesTransientReads(t *testing.T) {
 	inner := newRec458()
 	transient := &httpStatusError{code: http.StatusServiceUnavailable}
 	var slept []time.Duration
-	r := withRetry(inner, RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond, MaxDelay: 2 * time.Millisecond}).(*retryAdapter)
+	r := withRetry(inner, RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond, MaxDelay: 2 * time.Millisecond}, nil).(*retryAdapter)
 	r.sleep = func(d time.Duration) { slept = append(slept, d) }
 	for _, op := range []string{"readrange", "delete", "list", "stat"} {
 		inner.errs[op] = transient

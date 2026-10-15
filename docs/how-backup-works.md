@@ -63,3 +63,7 @@ Staged archives are automatically cleaned up when the run finishes or upon daemo
 ## Verification
 
 Every run produces a **SHA-256 verification** of what was written, and you can trigger an on-demand verify of any restore point. Verification confirms that stored backup data matches what Vault expects, so you find integrity problems before you need to restore.
+
+## Progress
+
+While a job runs, the dashboard shows what the current item is actually doing: its phase (scanning, preparing, processing, transferring, verifying, or finalizing) and the real work done in that phase, for example `Uploading 84.2 GB / 225 GB — 37%` with the transfer rate and, once enough of the phase has passed, an estimate of the time left. A phase whose total is not known yet shows the phase and its counters without a percentage. Folder backups scan the source first, so archiving and chunking have a real total; container volumes, whose combined size is only known once they have been read, show live bytes and files instead. If nothing moves for two minutes, the card says how long it has been quiet, so a slow but healthy upload can be told apart from a stalled one. The same information is available from `GET /api/v1/runner/status` and the MCP `get_runner_status` tool (see [Progress](api.md#progress)).

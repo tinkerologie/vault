@@ -64,7 +64,7 @@ func TestUploadOneStagedErrorsC458(t *testing.T) {
 	noop := func(int, string) {}
 
 	// Staged file vanished: reopen fails.
-	if _, _, err := r.uploadOneStaged(context.Background(), c458WriteFromAdapter{}, t.TempDir(), "missing", "rp", "", "none", "folder", "i", noop); err == nil || !strings.Contains(err.Error(), "writing") {
+	if _, _, _, err := r.uploadOneStaged(context.Background(), c458WriteFromAdapter{}, t.TempDir(), "missing", "rp", "", "none", "folder", "i", noop, nil); err == nil || !strings.Contains(err.Error(), "writing") {
 		t.Fatalf("missing staged file: %v", err)
 	}
 
@@ -72,7 +72,7 @@ func TestUploadOneStagedErrorsC458(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	dir := c458StagedDir(t)
-	if _, _, err := r.uploadOneStaged(ctx, c458WriteFromAdapter{fail: errors.New("closed")}, dir, "data.tar", "rp", "pw", "gzip", "vm", "i", noop); err == nil || !strings.Contains(err.Error(), "upload cancelled") {
+	if _, _, _, err := r.uploadOneStaged(ctx, c458WriteFromAdapter{fail: errors.New("closed")}, dir, "data.tar", "rp", "pw", "gzip", "vm", "i", noop, nil); err == nil || !strings.Contains(err.Error(), "upload cancelled") {
 		t.Fatalf("cancelled: %v", err)
 	}
 }

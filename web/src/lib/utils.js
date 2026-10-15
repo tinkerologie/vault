@@ -256,6 +256,8 @@ export function getFailureReason(run) {
 /** Format seconds into human-readable duration (e.g. "11m 4s", "2h 15m") */
 export function formatDuration(seconds) {
   if (seconds == null || seconds < 0) return '–'
+  // Sub-second work is real work: "<1s" rather than a misleading "0s" (#455).
+  if (seconds < 1) return '<1s'
   const sec = Math.round(seconds)
   if (sec < 60) return `${sec}s`
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
@@ -289,12 +291,33 @@ export function formatDurationFromDates(startedAt, completedAt) {
   return formatDuration((end - start) / 1000)
 }
 
+/**
+ * Shortest duration, in seconds, a transfer rate is shown for. Below it,
+ * timer resolution dominates and a tiny restore reads as thousands of GB/s
+ * (#455). Matches the daemon's format.MinThroughputDuration.
+ */
+export const MIN_THROUGHPUT_SECONDS = 1
+
 /** Format bytes/seconds into human-readable speed (e.g. "31.2 MB/s") */
 export function formatSpeed(bytes, seconds) {
-  if (!bytes || !seconds || seconds === 0) return null;
+  if (!(bytes > 0) || !Number.isFinite(bytes) || !Number.isFinite(seconds) || seconds < MIN_THROUGHPUT_SECONDS) return null;
   // Derived from the shared byte contract so speed units and rounding match
   // formatBytes (and the daemon) instead of diverging near unit boundaries.
   return formatBytes(bytes / seconds) + '/s';
+}
+
+/**
+ * Speed for a finished run. Prefers the precise started/completed timestamps
+ * over the API's whole-second duration_seconds, which turns a 1.4s run into
+ * 1s and inflates the rate. Returns null when no meaningful rate exists.
+ */
+export function runSpeed(run) {
+  if (!run) return null
+  let seconds = run.duration_seconds
+  const start = Date.parse(run.started_at)
+  const end = Date.parse(run.completed_at)
+  if (Number.isFinite(start) && Number.isFinite(end) && end >= start) seconds = (end - start) / 1000
+  return formatSpeed(run.size_bytes, seconds)
 }
 
 /**

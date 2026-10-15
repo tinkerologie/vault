@@ -261,3 +261,51 @@ func TestRepoOpenAfterInit(t *testing.T) {
 		t.Fatal("data not readable after re-Open")
 	}
 }
+
+// TestRepoSessionStats covers the #455 session counters: logical bytes for
+// every Put, uploaded bytes only once a pack flushes, duplicate skips for
+// chunks the index already holds, and bytes read through Get.
+func TestRepoSessionStats(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+
+	a := bytes.Repeat([]byte("a"), 4096)
+	b := bytes.Repeat([]byte("b"), 2048)
+	idA, err := r.Put(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Put(b); err != nil {
+		t.Fatal(err)
+	}
+	if s := r.SessionStats(); s.UploadedBytes != 0 || s.LogicalBytes != 6144 {
+		t.Fatalf("before flush = %+v, want 6144 logical and nothing uploaded yet", s)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	afterFlush := r.SessionStats()
+	if afterFlush.UploadedBytes <= 0 {
+		t.Fatalf("after flush UploadedBytes = %d, want > 0", afterFlush.UploadedBytes)
+	}
+
+	// Re-putting an indexed chunk counts as a duplicate, adds logical bytes,
+	// and uploads nothing more.
+	if _, err := r.Put(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	s := r.SessionStats()
+	if s.DuplicateChunks != 1 || s.LogicalBytes != 6144+4096 || s.UploadedBytes != afterFlush.UploadedBytes {
+		t.Fatalf("after duplicate Put = %+v, want 1 duplicate, %d logical, uploaded unchanged at %d", s, 6144+4096, afterFlush.UploadedBytes)
+	}
+
+	if _, err := r.Get(idA); err != nil {
+		t.Fatal(err)
+	}
+	if s := r.SessionStats(); s.ReadBytes <= int64(len(a)) {
+		t.Fatalf("ReadBytes = %d, want > %d (ciphertext plus flags byte)", s.ReadBytes, len(a))
+	}
+}

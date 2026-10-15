@@ -1288,6 +1288,10 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 
 		// Step 4: Tar bind mounts and named volumes, skipping large shared data paths.
 		progress(item.Name, 60, "backing up volumes")
+		// One counter for every volume, under the container's name (#456).
+		// The volumes' combined size is not known up front, so progress shows
+		// live bytes and files without a percentage.
+		ctx, _ = ensureItemProgress(ctx, item.Name, PhaseProcessing, nil)
 		// A container whose every eligible mount is excluded would otherwise
 		// produce a "successful" backup holding only config and image — the
 		// same silent data-loss trap the VM handler guards against when a
@@ -1776,6 +1780,8 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		}
 	}
 
+	// One counter for every volume extracted (#456).
+	ctx, _ = ensureItemProgress(ctx, item.Name, PhaseProcessing, nil)
 	for i, mount := range inspect.Mounts {
 		if !backupableMount(mount.Type) {
 			continue
@@ -2589,6 +2595,10 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	}
 	if progress != nil {
 		progress(item.Name, 60, "backing up volumes")
+		// One counter for every volume, under the container's name (#456).
+		// The volumes' combined size is not known up front, so progress shows
+		// live bytes and files without a percentage.
+		ctx, _ = ensureItemProgress(ctx, item.Name, PhaseProcessing, nil)
 	}
 
 	err = runWithRestart(needsStop, item.Name, progress, func() error {
@@ -2670,6 +2680,9 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				if fErr != nil {
 					return fmt.Errorf("chunking volume file %s: %w", mnt.Source, fErr)
 				}
+				fileCounter := itemProgressFrom(ctx)
+				fileCounter.addBytes(srcInfo.Size())
+				fileCounter.addFile()
 				entry.Mode = uint32(srcInfo.Mode().Perm())
 				entry.ModTime = srcInfo.ModTime().UTC().Format(time.RFC3339)
 				if uid, gid := fileOwner(srcInfo); uid >= 0 && gid >= 0 {
@@ -2899,6 +2912,8 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 // The function needs no Docker client — it delegates file extraction to
 // FolderHandler.RestoreChunked — making it testable without a Docker mock.
 func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, selection []string, clean bool, progress ProgressFunc) error {
+	// One counter for every volume, under the container's name (#456).
+	ctx, _ = ensureItemProgress(ctx, m.Item, PhaseProcessing, nil)
 	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
 		return err
 	}
@@ -3022,6 +3037,9 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err := restoreChunkedVolumeFile(repo, v, target); err != nil {
 			return fmt.Errorf("restore volume file %s: %w", dest, err)
 		}
+		fileCounter := itemProgressFrom(ctx)
+		fileCounter.addBytes(v.Size)
+		fileCounter.addFile()
 		if progress != nil {
 			progress(dest, -1, "restored file mount")
 		}
@@ -3174,6 +3192,7 @@ func writeChunkedEntryToFile(repo *dedup.Repo, entry dedup.ManifestEntry, path s
 func contextCopy(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
 	buf := make([]byte, 32*1024)
 	var written int64
+	counter := itemProgressFrom(ctx) // archive/extract progress, if counting (#456)
 	for {
 		if err := ctx.Err(); err != nil {
 			return written, err
@@ -3183,6 +3202,7 @@ func contextCopy(ctx context.Context, dst io.Writer, src io.Reader) (int64, erro
 			nw, writeErr := dst.Write(buf[:nr])
 			if nw > 0 {
 				written += int64(nw)
+				counter.addBytes(int64(nw))
 			}
 			if writeErr != nil {
 				return written, writeErr
@@ -3262,6 +3282,7 @@ func tarFile(ctx context.Context, srcPath, destPath, compression string) (err er
 		return fmt.Errorf("writing file to tar: %w", err)
 	}
 
+	itemProgressFrom(ctx).addFile()
 	return nil
 }
 
@@ -3332,6 +3353,7 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 		applyMode(destPath, safeFileMode(header.Mode))
 		applyOwner(destPath, header.Uid, header.Gid)
 		applyModTimeFromTime(destPath, header.ModTime)
+		itemProgressFrom(ctx).addFile()
 		return nil
 	}
 }
@@ -3587,6 +3609,7 @@ func tarDirectoryReporting(ctx context.Context, srcDir, destPath string, exclusi
 		if fileSkipped {
 			skipped = append(skipped, rel)
 		}
+		itemProgressFrom(ctx).addFile()
 		return nil
 	})
 	return skipped, err
@@ -3731,6 +3754,7 @@ func tarDirectoryFilteredReporting(ctx context.Context, srcDir, destPath string,
 		if fileSkipped {
 			skipped = append(skipped, rel)
 		}
+		itemProgressFrom(ctx).addFile()
 		return nil
 	})
 	return skipped, err
@@ -3866,6 +3890,8 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := f.Close(); err != nil {
 				return fmt.Errorf("closing file %s: %w", target, err)
 			}
+			RestoreTallyFrom(ctx).Add(n)
+			itemProgressFrom(ctx).addFile()
 			// OpenFile only applies its mode when it creates the file, and
 			// even then the daemon's umask masks it, so a restore over an
 			// existing tree would otherwise keep the old permissions.

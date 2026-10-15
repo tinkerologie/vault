@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -104,6 +105,17 @@ func backupProgressPercent(params []libvirt.TypedParam) int {
 	percent := min(max(int((processed*100)/total), 0), 100)
 
 	return 35 + (percent * 50 / 100)
+}
+
+// backupProgressBytes returns libvirt's processed and total byte counters,
+// or ok=false when the job stats carry no usable totals.
+func backupProgressBytes(params []libvirt.TypedParam) (processed, total int64, ok bool) {
+	p, okProcessed := typedParamUint64(params, "fileprocessed", "diskprocessed", "dataprocessed")
+	t, okTotal := typedParamUint64(params, "filetotal", "disktotal", "datatotal")
+	if !okProcessed || !okTotal || t == 0 || t > math.MaxInt64 || p > math.MaxInt64 {
+		return 0, 0, false
+	}
+	return int64(p), int64(t), true // #nosec G115 -- bounded by the MaxInt64 checks above
 }
 
 func backupProgressMessage(params []libvirt.TypedParam) string {

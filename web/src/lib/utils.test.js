@@ -8,6 +8,8 @@ import {
   formatBytes,
   formatDuration,
   formatSpeed,
+  MIN_THROUGHPUT_SECONDS,
+  runSpeed,
   largestBackupsByJob,
   statusColor,
   statusBadge,
@@ -73,6 +75,12 @@ describe('formatDuration', () => {
     expect(formatDuration(90)).toBe('1m 30s')
     expect(formatDuration(3661)).toBe('1h 1m')
   })
+  it('shows sub-second work as <1s instead of 0s (#455)', () => {
+    expect(formatDuration(0)).toBe('<1s')
+    expect(formatDuration(0.004)).toBe('<1s')
+    expect(formatDuration(0.999)).toBe('<1s')
+    expect(formatDuration(1)).toBe('1s')
+  })
 })
 
 describe('formatSpeed', () => {
@@ -82,6 +90,18 @@ describe('formatSpeed', () => {
   })
   it('formats bytes/sec', () => {
     expect(formatSpeed(1048576, 1)).toBe('1 MB/s')
+  })
+  it('refuses a rate below the 1-second minimum (#455)', () => {
+    expect(MIN_THROUGHPUT_SECONDS).toBe(1)
+    expect(formatSpeed(10 * 1024 ** 4, 0.004)).toBeNull()
+    expect(formatSpeed(1024, 0.999)).toBeNull()
+    expect(formatSpeed(-1024, 5)).toBeNull()
+    expect(formatSpeed(1024, -5)).toBeNull()
+    expect(formatSpeed(1024, Infinity)).toBeNull()
+    expect(formatSpeed(NaN, 5)).toBeNull()
+  })
+  it('divides by fractional seconds', () => {
+    expect(formatSpeed(3 * 1024 ** 2, 1.5)).toBe('2 MB/s')
   })
   it('inherits the shared contract above GB and at boundaries', () => {
     // Old implementation capped units at GB/s (1 TB/s printed "1024 GB/s")
@@ -613,5 +633,23 @@ describe('itemTypeCountLabel with itemType', () => {
     expect(itemTypeCountLabel(2, 'flash')).toBe('2 flash drives')
     expect(itemTypeCountLabel(5, 'plugin')).toBe('5 plugins')
     expect(itemTypeCountLabel(4, '')).toBe('4 items')
+  })
+})
+
+describe('runSpeed', () => {
+  it('uses precise timestamps over whole-second duration_seconds (#455)', () => {
+    const run = { size_bytes: 3 * 1024 ** 2, duration_seconds: 1, started_at: '2026-10-15T00:00:00.000Z', completed_at: '2026-10-15T00:00:01.500Z' }
+    expect(runSpeed(run)).toBe('2 MB/s')
+  })
+  it('hides the rate for a sub-second run', () => {
+    expect(runSpeed({ size_bytes: 10 * 1024 ** 4, duration_seconds: 0, started_at: '2026-10-15T00:00:00.000Z', completed_at: '2026-10-15T00:00:00.004Z' })).toBeNull()
+  })
+  it('falls back to duration_seconds without timestamps', () => {
+    expect(runSpeed({ size_bytes: 1024 ** 2, duration_seconds: 1 })).toBe('1 MB/s')
+    expect(runSpeed({ size_bytes: 1024 ** 2, duration_seconds: 2, started_at: 'bad', completed_at: null })).toBe('512 KB/s')
+  })
+  it('handles missing runs and sizes', () => {
+    expect(runSpeed(null)).toBeNull()
+    expect(runSpeed({ duration_seconds: 10 })).toBeNull()
   })
 })

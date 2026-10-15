@@ -110,19 +110,29 @@ func runSummaryMessage(kind, jobName, status string, done, failed, total int, si
 	}
 	// Include the job name on the summary line so the terminal "finished" log
 	// carries the same job identity as the "started" line (#328 r9). Restore
-	// summaries pass an empty jobName and keep the job-less wording.
+	// summaries pass the job name too (#455); an empty jobName keeps the
+	// job-less wording.
 	if jobName != "" {
 		message = fmt.Sprintf(
 			"%s finished, job=%q, status=%s, items=%d/%d, failed=%d, size=%s, duration=%s",
 			kind, jobName, status, done, total, failed,
-			format.Bytes(float64(sizeBytes)), duration.Truncate(time.Second),
+			format.Bytes(float64(sizeBytes)), format.Duration(duration),
 		)
 	} else {
 		message = fmt.Sprintf(
 			"%s finished, status=%s, items=%d/%d, failed=%d, size=%s, duration=%s",
 			kind, status, done, total, failed,
-			format.Bytes(float64(sizeBytes)), duration.Truncate(time.Second),
+			format.Bytes(float64(sizeBytes)), format.Duration(duration),
 		)
+	}
+	// A rate over a sub-second run is noise (#455): say so instead of
+	// printing thousands of GB/s.
+	speed, rated := format.Throughput(sizeBytes, duration)
+	switch {
+	case rated:
+		message += ", throughput=" + speed
+	case sizeBytes > 0:
+		message += ", throughput not calculated: duration below " + format.Duration(format.MinThroughputDuration)
 	}
 	data = map[string]any{
 		"status":           status,
@@ -131,7 +141,13 @@ func runSummaryMessage(kind, jobName, status string, done, failed, total int, si
 		"items_total":      total,
 		"size_bytes":       sizeBytes,
 		"duration_seconds": int(duration.Seconds()),
+		"duration_ms":      duration.Milliseconds(),
 		"percent_success":  pct,
+	}
+	if rated {
+		data["throughput_bytes_per_sec"] = float64(sizeBytes) / duration.Seconds()
+	} else if sizeBytes > 0 {
+		data["throughput_not_calculated"] = "duration_below_minimum"
 	}
 	if jobName != "" {
 		data["job_name"] = jobName

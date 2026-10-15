@@ -64,7 +64,7 @@ func TestRemoveEmptyDirUnsupportedProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain := withLogging(withMetrics(withRetry(WrapThrottled(provider, 0), DefaultRetryPolicy), "t"), "t", false)
+	chain := withLogging(withMetrics(withRetry(WrapThrottled(provider, 0), DefaultRetryPolicy, nil), "t"), "t", false)
 
 	dr, ok := chain.(interface{ RemoveEmptyDir(string) error })
 	if !ok {

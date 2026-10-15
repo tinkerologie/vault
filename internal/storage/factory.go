@@ -10,6 +10,9 @@ import (
 type Options struct {
 	VerboseLogging bool
 	DestLabel      string // human destination name for logs/metrics
+	// Diag, when set, receives retry and transient-error counts from the
+	// retry middleware so a run log can report them (#455).
+	Diag *DiagStats
 }
 
 // NewAdapter constructs a storage adapter of the requested type from the JSON
@@ -66,7 +69,7 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 		a = wrapAutoThrottled(a)
 	}
 	// retry wraps throttle so a throttled-then-failed attempt is re-issued.
-	a = withRetry(a, DefaultRetryPolicy)
+	a = withRetry(a, DefaultRetryPolicy, opts.Diag)
 	// metrics + logging outermost record the logical op and final outcome.
 	label := opts.DestLabel
 	if label == "" {

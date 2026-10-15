@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/crypto"
@@ -67,6 +68,21 @@ type RunStatus struct {
 	CurrentItemMessage string       `json:"current_item_message,omitempty"`
 	Cancelling         bool         `json:"cancelling,omitempty"`
 	Queue              []QueueEntry `json:"queue,omitempty"`
+
+	// Structured progress for the current item (#456). A zero total means
+	// unknown: ProgressDeterminate is false and the UI shows the phase
+	// without a percentage. ETASeconds is 0 until an estimate is meaningful.
+	Phase               string  `json:"phase,omitempty"`
+	PhaseStartedAt      string  `json:"phase_started_at,omitempty"`
+	BytesDone           int64   `json:"bytes_done,omitempty"`
+	BytesTotal          int64   `json:"bytes_total,omitempty"`
+	FilesDone           int64   `json:"files_done,omitempty"`
+	FilesTotal          int64   `json:"files_total,omitempty"`
+	RateBytesPerSec     float64 `json:"rate_bytes_per_sec,omitempty"`
+	RateFilesPerSec     float64 `json:"rate_files_per_sec,omitempty"`
+	ETASeconds          int64   `json:"eta_seconds,omitempty"`
+	ProgressDeterminate bool    `json:"progress_determinate,omitempty"`
+	LastProgressAt      string  `json:"last_progress_at,omitempty"`
 }
 
 // Queue operation kinds and statuses.
@@ -180,6 +196,9 @@ type Runner struct {
 	lastProgressMu sync.Mutex
 	lastProgress   time.Time
 
+	// progress tracks structured progress for the current item (#456).
+	progress *progressTracker
+
 	// queueMu protects the pending job queue and the cancelled-while-queued
 	// set. Queued runs are goroutines blocked on r.mu; a cancelled entry is
 	// removed from the display queue and its entry ID recorded here so the
@@ -228,6 +247,7 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 		hub:               hub,
 		serverKey:         serverKey,
 		queueCancelledIDs: make(map[string]struct{}),
+		progress:          newProgressTracker(nil),
 	}
 	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", docsmeta.DefaultInt("breaker_fail_threshold"))
 	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", docsmeta.DefaultInt("breaker_close_successes"))
@@ -470,6 +490,7 @@ func (r *Runner) setRunStatus(s *RunStatus) {
 	r.statusMu.Lock()
 	r.currentRun = s
 	r.statusMu.Unlock()
+	r.progress.reset()
 }
 
 func (r *Runner) updateRunProgress(done, failed int, currentItem string) {
@@ -477,6 +498,12 @@ func (r *Runner) updateRunProgress(done, failed int, currentItem string) {
 	if r.currentRun != nil {
 		r.currentRun.ItemsDone = done
 		r.currentRun.ItemsFailed = failed
+		if r.currentRun.CurrentItem != currentItem {
+			// Progress detail belongs to one item; never let it leak into
+			// the next (#456).
+			r.progress.reset()
+			clearProgressDetail(r.currentRun)
+		}
 		r.currentRun.CurrentItem = currentItem
 		if currentItem == "" {
 			r.currentRun.CurrentItemType = ""
@@ -491,8 +518,12 @@ func (r *Runner) updateCurrentItemProgress(itemType string, percent int, message
 	r.statusMu.Lock()
 	if r.currentRun != nil {
 		r.currentRun.CurrentItemType = itemType
-		r.currentRun.CurrentItemPercent = percent
 		r.currentRun.CurrentItemMessage = message
+		// A determinate phase owns the percentage; milestone percentages
+		// only apply while the phase total is unknown (#456).
+		if !r.currentRun.ProgressDeterminate {
+			r.currentRun.CurrentItemPercent = percent
+		}
 	}
 	r.statusMu.Unlock()
 }
@@ -1024,6 +1055,11 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// demand — per-request stall detection rather than a total-job deadline.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Per-run storage diagnostics (#455): retries, resumes, and bytes read
+	// are collected for the run log and its summary.
+	runDiag := r.newRunDiag(runID)
+	ctx = storage.WithDiagStats(ctx, runDiag)
+	ctx = r.withProgressReporter(ctx)
 
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
@@ -1115,6 +1151,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	}
 	r.logActivity("info", "backup", fmt.Sprintf("Backup started, job=%q", job.Name),
 		structuredDetails(startedDetails))
+	startedDetails["storage_type"] = dest.Type
+	r.runLog(runID, runLogLevelInfo,
+		// Identifiers for troubleshooting (#455). Named "Run details", not
+		// "Backup started": the activity feed already narrates the start and
+		// the run log must not duplicate it (#328).
+		fmt.Sprintf("Run details: job=%q, job_id=%d, run_id=%d, destination=%q (%s), items=%d, backup_type=%s",
+			job.Name, jobID, runID, dest.Name, dest.Type, len(items), btResult.BackupType),
+		startedDetails)
 
 	// <job name>/<timestamp>. The run ID used to lead the folder name, which
 	// made every run of a job sort apart from its siblings and buried the one
@@ -1625,15 +1669,18 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			// would read as a duplicate (issue #328 QA). Only narrate per-item
 			// completion when there are 2+ items, where each line is distinct.
 			if len(items) > 1 {
+				itemElapsed := time.Since(itemStart)
 				r.runLog(runID, runLogLevelInfo,
 					fmt.Sprintf("Backed up %s (%s), size=%s, duration=%s, item=%d/%d",
-						item.ItemName, item.ItemType, format.Bytes(float64(itemSize)), time.Since(itemStart).Truncate(time.Second), itemsProcessed, len(items)),
+						item.ItemName, item.ItemType, format.Bytes(float64(itemSize)), format.Duration(itemElapsed), itemsProcessed, len(items)),
 					map[string]any{
-						"item_name":   item.ItemName,
-						"item_type":   item.ItemType,
-						"size_bytes":  itemSize,
-						"items_total": len(items),
-						"items_done":  itemsDone,
+						"item_name":        item.ItemName,
+						"item_type":        item.ItemType,
+						"size_bytes":       itemSize,
+						"items_total":      len(items),
+						"items_done":       itemsDone,
+						"duration_seconds": int(itemElapsed.Seconds()),
+						"duration_ms":      itemElapsed.Milliseconds(),
 					})
 			}
 
@@ -1786,6 +1833,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				log.Printf("runner: job %d cancelled before uploading %s", jobID, s.dbItem.ItemName)
 				break
 			}
+			// Name the item being uploaded so its progress detail is shown
+			// (#456); staging cleared the current item when it finished.
+			r.updateRunProgress(itemsDone, itemsFailed, s.dbItem.ItemName)
 			r.broadcast(map[string]any{
 				"type":      "item_upload_start",
 				"job_id":    jobID,
@@ -1888,14 +1938,16 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 					"size_bytes":  itemSize,
 					"verified":    job.VerifyBackup,
 				})
+				uploadElapsed := time.Since(uploadStart)
 				r.runLog(runID, runLogLevelInfo,
 					fmt.Sprintf("Uploaded %s (%s), size=%s, duration=%s, item=%d/%d",
-						s.dbItem.ItemName, s.dbItem.ItemType, format.Bytes(float64(itemSize)), time.Since(uploadStart).Truncate(time.Second), itemsDone, len(items)),
+						s.dbItem.ItemName, s.dbItem.ItemType, format.Bytes(float64(itemSize)), format.Duration(uploadElapsed), itemsDone, len(items)),
 					map[string]any{
 						"item_name":        s.dbItem.ItemName,
 						"item_type":        s.dbItem.ItemType,
 						"size_bytes":       itemSize,
-						"duration_seconds": int(time.Since(uploadStart).Seconds()),
+						"duration_seconds": int(uploadElapsed.Seconds()),
+						"duration_ms":      uploadElapsed.Milliseconds(),
 					})
 			}
 			_ = r.db.UpdateJobRunProgress(runID, itemsDone, itemsFailed, totalSize)
@@ -2172,6 +2224,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// (#328 r3). The summary is ALSO written to the run log below so it
 	// streams live during the run; the two do not double-display (the UI
 	// dedupes the activity row once run-log lines exist).
+	// One elapsed duration for the activity entry, the run summary, and the
+	// notification, so they agree on whether a rate is shown (#455).
+	runElapsed := time.Since(jobStart)
 	r.logActivity(logLevelForStatus(status), "backup",
 		fmt.Sprintf("Backup %s: %s", status, job.Name),
 		terminalDetails(map[string]any{
@@ -2179,11 +2234,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			"run_id": runID, "backup_type": btResult.BackupType,
 			"destination": dest.Name,
 			"items_done":  itemsDone, "items_failed": itemsFailed,
-			"size_bytes": totalSize, "duration_seconds": int(time.Since(jobStart).Seconds()),
+			"size_bytes": totalSize, "duration_seconds": int(runElapsed.Seconds()),
 			"failed_items": failedNames,
 		}))
 
-	level, msg, summaryData := runSummaryMessage("Backup", job.Name, status, itemsDone, itemsFailed, run.ItemsTotal, totalSize, time.Since(jobStart))
+	level, msg, summaryData := runSummaryMessage("Backup", job.Name, status, itemsDone, itemsFailed, run.ItemsTotal, totalSize, runElapsed)
+	msg = addDiagTotals(msg, summaryData, runDiag.Snapshot())
 	summaryData["job_id"] = jobID
 	summaryData["backup_type"] = btResult.BackupType
 	summaryData["destination"] = dest.Name
@@ -2201,12 +2257,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	localDone := itemsDone
 	localFailed := itemsFailed
 	localSize := totalSize
-	localDurationSec := int(time.Since(jobStart).Seconds())
+	localDuration := runElapsed
 	localFailedNames := failedNames
 	// notify.Send is already bounded internally (30s exec timeout), so the
 	// step context is unused here.
 	r.runFinalizationStep("notify", jobID, runID, finalizeNotifyTimeout, func(context.Context) {
-		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDurationSec, localFailedNames)
+		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDuration, localFailedNames)
 	})
 }
 
@@ -2933,7 +2989,12 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 		// Fall through to classic tar for non-chunked handlers (VM, ZFS).
 	}
 
+	// The engine stages the item (stop, archive, snapshot). Until it reports
+	// its own counters the phase is shown without a percentage (#456).
+	engine.ReportDetail(ctx, item.Name, engine.ProgressDetail{Phase: engine.PhaseProcessing})
+	stage := r.beginPhase(runID, item.Name, "stage")
 	tmpDir, result, cleanup, err := r.stageItemLocally(ctx, runID, item, dest)
+	stage.end(err, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2943,6 +3004,7 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 	if err != nil {
 		return nil, nil, err
 	}
+	engine.ReportDetail(ctx, item.Name, engine.ProgressDetail{Phase: engine.PhaseFinalizing})
 	return result, checksums, nil
 }
 
@@ -2956,7 +3018,7 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 // are read back and re-hashed before the item is reported successful, which
 // is the dedup equivalent of the classic path's post-upload checksum pass (issue #382).
 func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler, verify bool) (*engine.BackupResult, map[string]string, error) {
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("adapter: %w", err)
 	}
@@ -3029,17 +3091,34 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 		})
 	}
 
+	engine.ReportDetail(ctx, item.Name, engine.ProgressDetail{Phase: engine.PhaseProcessing})
+	store := r.beginPhase(runID, item.Name, "dedup store")
 	manifestID, err := handler.BackupChunked(ctx, item, repo, parent, progress)
-	if err != nil {
-		return nil, nil, fmt.Errorf("backup chunked: %w", err)
+	if err == nil {
+		if flushErr := repo.Flush(); flushErr != nil {
+			err = fmt.Errorf("repo flush: %w", flushErr)
+		}
+	} else {
+		err = fmt.Errorf("backup chunked: %w", err)
 	}
-	if err := repo.Flush(); err != nil {
-		return nil, nil, fmt.Errorf("repo flush: %w", err)
+	session := repo.SessionStats()
+	store.end(err, map[string]any{
+		"logical_bytes":    session.LogicalBytes,
+		"bytes_uploaded":   session.UploadedBytes,
+		"duplicate_chunks": session.DuplicateChunks,
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 
 	verified := false
 	if verify {
-		if err := r.verifyChunkedItem(ctx, runID, item, repo, manifestID); err != nil {
+		engine.ReportDetail(ctx, item.Name, engine.ProgressDetail{Phase: engine.PhaseVerifying})
+		verifyPhase := r.beginPhase(runID, item.Name, "verify")
+		readBefore := repo.SessionStats().ReadBytes
+		err := r.verifyChunkedItem(ctx, runID, item, repo, manifestID)
+		verifyPhase.end(err, map[string]any{"bytes_read": repo.SessionStats().ReadBytes - readBefore})
+		if err != nil {
 			return nil, nil, err
 		}
 		verified = true
@@ -3277,6 +3356,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	adapter, err := storage.NewAdapterWithOptions(dest.Type, dest.Config, storage.Options{
 		VerboseLogging: verbose,
 		DestLabel:      dest.Name,
+		Diag:           storage.DiagStatsFrom(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating storage adapter: %w", err)
@@ -3298,6 +3378,39 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	r.runLog(runID, runLogLevelInfo,
 		fmt.Sprintf("Uploading %s (%s): %d file(s)", itemName, itemType, len(entries)),
 		map[string]any{"item_name": itemName, "item_type": itemType, "files": len(entries)})
+	uploadPhase := r.beginPhase(runID, itemName, "upload")
+	// storedBytes is what landed on the destination; sentBytes also counts
+	// attempts the storage layer retried, so the difference is retry cost.
+	var storedBytes, sentBytes atomic.Int64
+
+	// Item-level transfer progress (#456): bytes across every staged file
+	// against their combined size, so "Uploading 84.2 GB / 225 GB" replaces a
+	// per-file percentage that restarted at 0 for each file.
+	var itemTotal, filesTotal int64
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil {
+			itemTotal += fi.Size()
+		}
+		filesTotal++
+	}
+	var transferred, filesDone atomic.Int64
+	reportTransfer := func() {
+		engine.ReportDetail(ctx, itemName, engine.ProgressDetail{
+			Phase: engine.PhaseTransferring, BytesDone: transferred.Load(), BytesTotal: itemTotal,
+			FilesDone: filesDone.Load(), FilesTotal: filesTotal,
+		})
+	}
+	onBytes := func(n int64) {
+		transferred.Add(n)
+		reportTransfer()
+	}
+	reportTransfer()
+	uploadTotals := func() map[string]any {
+		return map[string]any{"stored_bytes": storedBytes.Load(), "bytes_uploaded": sentBytes.Load()}
+	}
 	var (
 		mu        sync.Mutex
 		checksums = make(map[string]string)
@@ -3334,17 +3447,24 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 				fileSize = fi.Size()
 			}
 			upStart := time.Now()
-			storageName, checksum, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName, progress)
+			storageName, checksum, sent, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName, progress, onBytes)
+			sentBytes.Add(sent.total)
 			if upErr == nil {
+				storedBytes.Add(sent.stored)
+				filesDone.Add(1)
+				reportTransfer()
 				dur := time.Since(upStart)
 				r.runLog(runID, runLogLevelInfo,
 					fmt.Sprintf("Uploaded %s, file=%s, size=%s, duration=%s",
-						itemName, storageName, format.Bytes(float64(fileSize)), dur.Truncate(time.Second)),
+						itemName, storageName, format.Bytes(float64(fileSize)), format.Duration(dur)),
 					map[string]any{
 						"item_name":        itemName,
 						"file":             storageName,
 						"size_bytes":       fileSize,
+						"stored_bytes":     sent.stored,
+						"bytes_uploaded":   sent.total,
 						"duration_seconds": int(dur.Seconds()),
+						"duration_ms":      dur.Milliseconds(),
 					})
 			}
 			if storageName != "" {
@@ -3360,25 +3480,44 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	}
 	wg.Wait()
 	if firstErr != nil {
+		uploadPhase.end(firstErr, uploadTotals())
 		r.cleanupPartialUploads(adapter, storagePath, checksums)
 		return nil, firstErr
 	}
 	if ctx.Err() != nil {
+		uploadPhase.end(ctx.Err(), uploadTotals())
 		r.cleanupPartialUploads(adapter, storagePath, checksums)
 		return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
 	}
+
+	uploadPhase.end(nil, uploadTotals())
 
 	// Verify: read files back from storage and re-compute SHA-256.
 	if verify {
 		r.runLog(runID, runLogLevelInfo,
 			fmt.Sprintf("Verifying %s (%s): %d file(s)", itemName, itemType, len(checksums)),
 			map[string]any{"item_name": itemName, "item_type": itemType, "files": len(checksums)})
+		verifyStart := time.Now()
+		verifyPhase := r.beginPhase(runID, itemName, "verify")
+		var verifiedBytes, verifiedFiles int64
+		verifyTotal := storedBytes.Load()
+		reportVerify := func() {
+			engine.ReportDetail(ctx, itemName, engine.ProgressDetail{
+				Phase: engine.PhaseVerifying, BytesDone: verifiedBytes, BytesTotal: verifyTotal,
+				FilesDone: verifiedFiles, FilesTotal: int64(len(checksums)),
+			})
+		}
+		reportVerify()
+		failVerify := func(err error) error {
+			verifyPhase.end(err, map[string]any{"bytes_read": verifiedBytes})
+			r.cleanupPartialUploads(adapter, storagePath, checksums)
+			return err
+		}
 		for fileName, expectedHash := range checksums {
 			destPath := filepath.Join(storagePath, fileName)
 			reader, err := adapter.Read(destPath)
 			if err != nil {
-				r.cleanupPartialUploads(adapter, storagePath, checksums)
-				return nil, fmt.Errorf("verification read %s: %w", fileName, err)
+				return nil, failVerify(fmt.Errorf("verification read %s: %w", fileName, err))
 			}
 			verifyHasher := sha256.New()
 			// Heartbeat the stall watchdog while reading the file back — a
@@ -3387,7 +3526,9 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 			var verifyBroadcast time.Time
 			verifyReader := &countingReader{
 				reader: reader,
-				onRead: func(int64) {
+				onRead: func(n int64) {
+					verifiedBytes += n
+					reportVerify()
 					r.lastProgressMu.Lock()
 					r.lastProgress = time.Now()
 					r.lastProgressMu.Unlock()
@@ -3399,22 +3540,40 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 			}
 			if _, err := io.Copy(verifyHasher, verifyReader); err != nil {
 				_ = reader.Close()
-				r.cleanupPartialUploads(adapter, storagePath, checksums)
-				return nil, fmt.Errorf("verification hash %s: %w", fileName, err)
+				return nil, failVerify(fmt.Errorf("verification hash %s: %w", fileName, err))
 			}
 			_ = reader.Close()
 			actualHash := hex.EncodeToString(verifyHasher.Sum(nil))
 			if actualHash != expectedHash {
-				r.cleanupPartialUploads(adapter, storagePath, checksums)
-				return nil, fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash)
+				return nil, failVerify(fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash))
 			}
+			verifiedFiles++
+			reportVerify()
 		}
+		verifyElapsed := time.Since(verifyStart)
 		r.runLog(runID, runLogLevelInfo,
-			fmt.Sprintf("Verified %s (%s): %d file(s) checksum OK", itemName, itemType, len(checksums)),
-			map[string]any{"item_name": itemName, "item_type": itemType, "files": len(checksums)})
+			fmt.Sprintf("Verified %s (%s): %d file(s) checksum OK, read=%s in %s",
+				itemName, itemType, len(checksums), format.Bytes(float64(verifiedBytes)), format.Duration(verifyElapsed)),
+			map[string]any{
+				"item_name":   itemName,
+				"item_type":   itemType,
+				"files":       len(checksums),
+				"outcome":     "ok",
+				"bytes_read":  verifiedBytes,
+				"duration_ms": verifyElapsed.Milliseconds(),
+			})
+		verifyPhase.end(nil, map[string]any{"bytes_read": verifiedBytes})
 	}
 
 	return checksums, nil
+}
+
+// uploadBytes is what one staged-file upload moved: stored is the size of
+// the attempt that succeeded, total also counts attempts the storage layer
+// retried.
+type uploadBytes struct {
+	stored int64
+	total  int64
 }
 
 // uploadOneStaged uploads one staged file via the adapter's retry-aware
@@ -3422,10 +3581,14 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 // attempt; the sha256 hasher is reset at the start of every attempt and tees
 // the bytes actually sent, so after a successful WriteFrom it holds the digest
 // of the bytes that were stored — correct even if the storage layer retried.
-// It returns (storageName, checksumHex, err). All per-attempt state (hasher,
-// uploaded counter, broadcast timer) is local so concurrent calls never share
-// mutable state.
-func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName string, progress func(int, string)) (string, string, error) {
+// It returns (storageName, checksumHex, bytes moved, err). All per-attempt
+// state (hasher, uploaded counter, broadcast timer) is local so concurrent
+// calls never share mutable state.
+//
+// onBytes (optional) receives byte deltas for item-level progress; a retried
+// attempt first takes back the bytes of the attempt it replaces, so the sum
+// tracks bytes of the current attempts only.
+func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName string, progress func(int, string), onBytes func(int64)) (string, string, uploadBytes, error) {
 	_ = itemType
 	_ = itemName
 
@@ -3455,17 +3618,32 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 	// reopen yields a fresh source stream for each WriteFrom attempt. It resets
 	// the hasher and byte counter first so a replayed attempt re-hashes from the
 	// start and the digest matches exactly the bytes of the successful attempt.
+	var sent uploadBytes
+	// sourceRead counts staged-file bytes consumed by the current attempt,
+	// before compression and encryption, so item progress is measured in the
+	// same units as the staged sizes it is compared against.
+	var sourceRead int64
 	reopen := func() (io.ReadCloser, error) {
 		hasher.Reset()
+		if onBytes != nil && sourceRead > 0 {
+			onBytes(-sourceRead)
+		}
+		sourceRead = 0
 		uploaded = 0
 		f, err := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entryName from os.ReadDir
 		if err != nil {
 			return nil, err
 		}
 		var src io.Reader = f
+		if onBytes != nil {
+			src = &countingReader{reader: f, onRead: func(n int64) {
+				sourceRead += n
+				onBytes(n)
+			}}
+		}
 		closers := []io.Closer{f}
 		if compressSuffix != "" {
-			comp, compErr := transportCompressReader(transportCompression, f)
+			comp, compErr := transportCompressReader(transportCompression, src)
 			if compErr != nil {
 				_ = f.Close()
 				return nil, fmt.Errorf("compressing %s: %w", entryName, compErr)
@@ -3492,6 +3670,7 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 			reader: tee,
 			onRead: func(n int64) {
 				uploaded += n
+				sent.total += n
 				r.lastProgressMu.Lock()
 				r.lastProgress = time.Now()
 				r.lastProgressMu.Unlock()
@@ -3510,11 +3689,12 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 
 	if err := adapter.WriteFrom(destPath, reopen); err != nil {
 		if ctx.Err() != nil {
-			return storageName, "", fmt.Errorf("upload cancelled: %w", ctx.Err())
+			return storageName, "", sent, fmt.Errorf("upload cancelled: %w", ctx.Err())
 		}
-		return storageName, "", fmt.Errorf("writing %s to storage: %w", storageName, err)
+		return storageName, "", sent, fmt.Errorf("writing %s to storage: %w", storageName, err)
 	}
-	return storageName, hex.EncodeToString(hasher.Sum(nil)), nil
+	sent.stored = uploaded
+	return storageName, hex.EncodeToString(hasher.Sum(nil)), sent, nil
 }
 
 // cleanupPartialUploads best-effort deletes the files named in checksums under
@@ -3741,6 +3921,9 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	// automatic canceller. CancelJob() triggers the stored cancel func on demand.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	runDiag := r.newRunDiag(runID)
+	ctx = storage.WithDiagStats(ctx, runDiag)
+	ctx = r.withProgressReporter(ctx)
 
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
@@ -3795,6 +3978,25 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			"items":            len(targets),
 			"items_list":       targetNames,
 		}))
+	destName, destType := "", ""
+	if job, jErr := r.db.GetJob(restorePoint.JobID); jErr == nil {
+		if d, dErr := r.db.GetStorageDestination(job.StorageDestID); dErr == nil {
+			destName, destType = d.Name, d.Type
+		}
+	}
+	r.runLog(runID, runLogLevelInfo,
+		fmt.Sprintf("Run details: job=%q, job_id=%d, run_id=%d, restore_point_id=%d, destination=%q (%s), items=%d",
+			jobName, restorePoint.JobID, runID, restorePoint.ID, destName, destType, len(targets)),
+		map[string]any{
+			"job_id":           restorePoint.JobID,
+			"job_name":         jobName,
+			"run_id":           runID,
+			"restore_point_id": restorePoint.ID,
+			"destination":      destName,
+			"storage_type":     destType,
+			"items":            len(targets),
+			"items_list":       targetNames,
+		})
 
 	// Recover from panics so the run is marked failed.
 	defer func() {
@@ -3859,8 +4061,13 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			map[string]any{"item_name": t.Name, "item_type": t.Type})
 
 		start := time.Now()
-		restoreErr := r.restoreItemWithReporter(ctx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
+		// The tally counts what the engine actually wrote, so a selective
+		// restore reports its own size instead of the whole item's (#455).
+		tally := &engine.RestoreTally{}
+		diagBefore := runDiag.Snapshot()
+		restoreErr := r.restoreItemWithReporter(engine.WithRestoreTally(ctx, tally), restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
 		elapsed := time.Since(start)
+		itemDiag := diagDelta(diagBefore, runDiag.Snapshot())
 
 		result := map[string]any{
 			"name":     t.Name,
@@ -3899,16 +4106,31 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 				"items_failed": itemsFailed,
 				"items_total":  len(targets),
 			})
-			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds())}
-			if size, known := itemSizes[t.Name]; known {
+			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds()), "duration_ms": elapsed.Milliseconds()}
+			size, sizeLabel, known := restoredItemSize(t, tally, itemSizes)
+			msg := fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, format.Duration(elapsed))
+			if known {
 				restoredBytes += size
 				restoredSizesKnown++
 				result["size_bytes"] = size
 				okDetails["size_bytes"] = size
+				okDetails["size_source"] = sizeLabel
+				msg += fmt.Sprintf(", %s=%s", sizeLabel, format.Bytes(float64(size)))
 			}
-			r.runLog(runID, runLogLevelInfo,
-				fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, elapsed.Truncate(time.Second)),
-				okDetails)
+			if files := tally.Files(); files > 0 {
+				okDetails["files_restored"] = files
+				msg += fmt.Sprintf(" (%d file(s))", files)
+			}
+			if itemDiag.BytesRead > 0 {
+				okDetails["bytes_read"] = itemDiag.BytesRead
+				msg += ", read=" + format.Bytes(float64(itemDiag.BytesRead))
+			}
+			if n := itemDiag.Retries + itemDiag.Resumes + itemDiag.PartRestarts; n > 0 {
+				okDetails["retries"] = itemDiag.Retries
+				okDetails["resumes"] = itemDiag.Resumes
+				msg += fmt.Sprintf(", retries=%d", n)
+			}
+			r.runLog(runID, runLogLevelInfo, msg, okDetails)
 		}
 
 		itemResults = append(itemResults, result)
@@ -3975,8 +4197,14 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			"size_bytes":       restoredSize,
 		}))
 
-	sumLevel, sumMsg, sumData := runSummaryMessage("Restore", "", status, itemsDone, itemsFailed, len(targets), restoredSize, time.Since(restoreStart))
+	sumLevel, sumMsg, sumData := runSummaryMessage("Restore", jobName, status, itemsDone, itemsFailed, len(targets), restoredSize, time.Since(restoreStart))
 	sumData["restore_point_id"] = restorePoint.ID
+	sumData["job_id"] = restorePoint.JobID
+	if destName != "" {
+		sumMsg += fmt.Sprintf(", destination=%q", destName)
+		sumData["destination"] = destName
+	}
+	sumMsg = addDiagTotals(sumMsg, sumData, runDiag.Snapshot())
 	r.runLog(runID, sumLevel, sumMsg, sumData)
 }
 
@@ -4882,11 +5110,20 @@ func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.Restore
 	}
 	defer cleanup()
 
-	if err := r.stageRestorePointItem(ctx, restorePoint, itemName, tmpDir, passphrase, 0, 40, reporter); err != nil {
+	download := r.beginPhase(reporter.RunID, itemName, "download")
+	readBefore := storage.DiagStatsFrom(ctx).Snapshot().BytesRead
+	err = r.stageRestorePointItem(ctx, restorePoint, itemName, tmpDir, passphrase, 0, 40, reporter)
+	download.end(err, map[string]any{"bytes_read": storage.DiagStatsFrom(ctx).Snapshot().BytesRead - readBefore})
+	if err != nil {
 		return err
 	}
 
-	return r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, cleanDestination, reporter, 40, 100)
+	engine.ReportDetail(ctx, itemName, engine.ProgressDetail{Phase: engine.PhaseProcessing})
+	extract := r.beginPhase(reporter.RunID, itemName, "extract")
+	err = r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, cleanDestination, reporter, 40, 100)
+	tally := engine.RestoreTallyFrom(ctx)
+	extract.end(err, map[string]any{"files_restored": tally.Files(), "bytes_restored": tally.Bytes()})
+	return err
 }
 
 // resolveManifestID returns the dedup manifest ID for itemName from a
@@ -4932,19 +5169,24 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 	if err != nil {
 		return fmt.Errorf("getting storage destination: %w", err)
 	}
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
 	defer storage.CloseAdapter(adapter)
 
+	openRepo := r.beginPhase(reporter.RunID, itemName, "open repository")
 	repo, err := r.openDedupRepo(adapter, dest)
 	if err != nil {
 		if errors.Is(err, dedup.ErrServerKeyMismatch) {
-			return fmt.Errorf("open dedup repo: %s: %w", dedup.KeyMismatchHint, err)
+			err = fmt.Errorf("open dedup repo: %s: %w", dedup.KeyMismatchHint, err)
+		} else {
+			err = fmt.Errorf("open dedup repo: %w", err)
 		}
-		return fmt.Errorf("open dedup repo: %w", err)
+		openRepo.end(err, nil)
+		return err
 	}
+	openRepo.end(nil, nil)
 
 	handler, err := newHandler(itemType)
 	if err != nil {
@@ -5009,7 +5251,14 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 		r.reportRestoreProgress(reporter, pct, msg)
 	}
 
-	return chunked.RestoreChunked(ctx, item, repo, manifestID, destPath, progress)
+	engine.ReportDetail(ctx, itemName, engine.ProgressDetail{Phase: engine.PhaseProcessing})
+	restorePhase := r.beginPhase(reporter.RunID, itemName, "restore")
+	err = chunked.RestoreChunked(ctx, item, repo, manifestID, destPath, progress)
+	readBytes := repo.SessionStats().ReadBytes
+	storage.DiagStatsFrom(ctx).AddBytesRead(readBytes)
+	tally := engine.RestoreTallyFrom(ctx)
+	restorePhase.end(err, map[string]any{"bytes_read": readBytes, "files_restored": tally.Files(), "bytes_restored": tally.Bytes()})
+	return err
 }
 
 func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter) error {
@@ -5023,7 +5272,7 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		return fmt.Errorf("getting storage destination: %w", err)
 	}
 
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
@@ -5097,6 +5346,11 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 			dlLast = time.Now()
 		}
 		dlMu.Unlock()
+		// A retried download part re-reads bytes, so clamp to the total; the
+		// tracker keeps the reported value monotonic (#456).
+		engine.ReportDetail(ctx, itemName, engine.ProgressDetail{
+			Phase: engine.PhaseTransferring, BytesDone: min(cur, totalBytes), BytesTotal: totalBytes,
+		})
 		if totalBytes > 0 && emit {
 			r.reportRestoreProgress(reporter, scaleRestorePhaseProgress(phaseStart, phaseEnd, cur, totalBytes), "Downloading")
 		}
@@ -5126,10 +5380,17 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 			// downloads are few per item (archive + sidecars); the chunked
 			// restore path narrates per-file via its own -1 heartbeats,
 			// which mirrorEngineMilestone drops.
+			dlElapsed := time.Since(dlStart)
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Downloaded %s, file=%s, size=%s, duration=%s",
-					itemName, filepath.Base(fi.Path), format.Bytes(float64(fi.Size)), time.Since(dlStart).Truncate(time.Second)),
-				map[string]any{"item_name": itemName, "file": filepath.Base(fi.Path), "size_bytes": fi.Size})
+					itemName, filepath.Base(fi.Path), format.Bytes(float64(fi.Size)), format.Duration(dlElapsed)),
+				map[string]any{
+					"item_name":        itemName,
+					"file":             filepath.Base(fi.Path),
+					"size_bytes":       fi.Size,
+					"duration_seconds": int(dlElapsed.Seconds()),
+					"duration_ms":      dlElapsed.Milliseconds(),
+				})
 		}(fi)
 	}
 	wg.Wait()
@@ -5378,6 +5639,7 @@ func (r *Runner) broadcastProgress(data map[string]any) {
 	if r.hub == nil {
 		return
 	}
+	r.mergeProgressDetail(data)
 	msg, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("runner: failed to marshal progress broadcast: %v", err)
@@ -5435,7 +5697,7 @@ func (r *Runner) logActivity(level, category, message, details string) {
 // sendNotification dispatches Unraid notifications based on job outcome and the
 // job's notify_on preference ("always", "failure", "never").
 // It also respects the global notifications_enabled setting.
-func (r *Runner) sendNotification(job db.Job, status string, done, failed int, sizeBytes int64, durationSec int, failedNames []string) {
+func (r *Runner) sendNotification(job db.Job, status string, done, failed int, sizeBytes int64, duration time.Duration, failedNames []string) {
 	// Check global notification switch first.
 	globalEnabled, _ := r.db.GetSetting("notifications_enabled", docsmeta.DefaultFor("notifications_enabled"))
 	if globalEnabled != "true" {
@@ -5474,7 +5736,7 @@ func (r *Runner) sendNotification(job db.Job, status string, done, failed int, s
 	if webhookURL != "" && discordPref != "never" {
 		shouldSend := discordPref == "always" || (discordPref == "failure" && status != "completed")
 		if shouldSend {
-			embed := r.buildDiscordEmbed(job.Name, status, done, failed, sizeBytes, durationSec, failedNames)
+			embed := r.buildDiscordEmbed(job.Name, status, done, failed, sizeBytes, duration, failedNames)
 			opts := r.discordOptions(status)
 			go func() {
 				if err := notify.SendDiscord(webhookURL, embed, opts); err != nil {
@@ -5516,7 +5778,7 @@ func shouldMentionDiscord(mentionOn, status string) bool {
 	}
 }
 
-func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, sizeBytes int64, durationSec int, failedNames []string) notify.DiscordEmbed {
+func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, sizeBytes int64, duration time.Duration, failedNames []string) notify.DiscordEmbed {
 	var title string
 	var color int
 	switch status {
@@ -5532,11 +5794,11 @@ func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, siz
 	}
 
 	fields := []notify.DiscordField{
-		{Name: "Duration", Value: fmtDuration(durationSec), Inline: true},
+		{Name: "Duration", Value: discordDuration(duration), Inline: true},
 		{Name: "Size", Value: format.Bytes(float64(sizeBytes)), Inline: true},
 	}
-	if durationSec > 0 {
-		fields = append(fields, notify.DiscordField{Name: "Speed", Value: format.Bytes(float64(sizeBytes)/float64(durationSec)) + "/s", Inline: true})
+	if speed, ok := format.Throughput(sizeBytes, duration); ok {
+		fields = append(fields, notify.DiscordField{Name: "Speed", Value: speed, Inline: true})
 	}
 	fields = append(fields, notify.DiscordField{
 		Name:   "Items",
@@ -5557,6 +5819,15 @@ func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, siz
 		Color:       color,
 		Fields:      fields,
 	}
+}
+
+// discordDuration renders a run's duration for notifications: "<1s" for
+// sub-second work (#455), otherwise fmtDuration's "Xm Ys" style.
+func discordDuration(d time.Duration) string {
+	if d >= 0 && d < time.Second {
+		return "<1s"
+	}
+	return fmtDuration(int(d.Round(time.Second).Seconds()))
 }
 
 func fmtDuration(seconds int) string {

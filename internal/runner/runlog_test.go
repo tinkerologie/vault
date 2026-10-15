@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,4 +185,43 @@ func stringsContains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestRunSummaryMessage_Throughput guards #455: precise durations, and no
+// rate for runs shorter than format.MinThroughputDuration.
+func TestRunSummaryMessage_Throughput(t *testing.T) {
+	tests := []struct {
+		name       string
+		size       int64
+		duration   time.Duration
+		wantInMsg  []string
+		wantRated  bool
+		wantMarker bool
+	}{
+		{"sub-second restore", 1024, 4 * time.Millisecond, []string{"duration=<1s", "throughput not calculated: duration below 1.0s"}, false, true},
+		{"fractional seconds", 3 << 20, 1500 * time.Millisecond, []string{"duration=1.5s", "throughput=2 MB/s"}, true, false},
+		{"nothing transferred", 0, time.Minute, []string{"duration=1m0s"}, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, msg, data := runSummaryMessage("Restore", "", "completed", 1, 0, 1, tt.size, tt.duration)
+			for _, want := range tt.wantInMsg {
+				if !strings.Contains(msg, want) {
+					t.Errorf("message %q missing %q", msg, want)
+				}
+			}
+			if tt.size == 0 && strings.Contains(msg, "throughput") {
+				t.Errorf("message %q mentions throughput for zero bytes", msg)
+			}
+			if got := data["duration_ms"]; got != tt.duration.Milliseconds() {
+				t.Errorf("duration_ms = %v, want %d", got, tt.duration.Milliseconds())
+			}
+			if _, ok := data["throughput_bytes_per_sec"]; ok != tt.wantRated {
+				t.Errorf("throughput_bytes_per_sec present = %v, want %v", ok, tt.wantRated)
+			}
+			if _, ok := data["throughput_not_calculated"]; ok != tt.wantMarker {
+				t.Errorf("throughput_not_calculated present = %v, want %v", ok, tt.wantMarker)
+			}
+		})
+	}
 }

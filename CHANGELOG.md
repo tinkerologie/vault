@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Real-time progress (#456):** the dashboard and restore wizard show the current item's phase and the work actually done, such as "Uploading 84.2 GB / 225 GB — 37%", with the transfer rate, an estimated time left, and a "No progress for Xm" hint when an operation goes quiet. Remote uploads, verification read-back, and restore downloads report real byte counts across all of an item's files, instead of 0% for hours followed by a jump to 99%. Folder backups first scan the source ("Scanning… 12,340 files") and then report archiving and chunking against its size; incremental runs count unchanged files as done. Deduplicated restores report against the files being restored, VM backups report libvirt's byte counters, VM restores report disk copies, ZFS reports send and receive bytes, and container volumes show live bytes and files. A phase whose total is unknown shows its counters without a percentage. `GET /runner/status`, the `backup_progress` / `restore_progress` WebSocket events, and the MCP `get_runner_status` tool carry the new fields.
+- **Troubleshooting detail in run logs (#455):** backup and restore run logs now start with a "Run details" line (job, run, destination and storage type, restore point), time each stage of each item ("Phase upload completed for appdata in 4m12s"), and name the stage that failed. Retried storage requests, resumed streams, and restarted download parts each get a redacted warning line, capped at 20 per run. Item and summary lines report bytes stored, uploaded (including retries), read back, and restored, plus retry counts. Verification lines include bytes read and the time taken.
+
 ### Changed
 
+- **Selective restore size (#455):** restoring a few files from a backup item reports the bytes actually restored instead of the whole item's recorded size, in History, the run log, and the restore summary. Restore summaries also name the job and destination.
 - Formatting hooks no longer fail on a clean checkout: files merged without pre-commit were reformatted (no content changes), workflow YAML keeps the organization's single-quote style through `.prettierrc.json`, and a new CI **Format** job runs the same pinned formatting hooks on every pull request.
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.
 - Dependabot also updates the Playwright end-to-end test dependencies (root `package.json`) and the Docker base images in the root `Dockerfile`.
@@ -24,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Configured Codecov GitHub Actions workflow for tokenless coverage uploads
 
 ### Fixed
+
+- **Unrealistic transfer rates for short operations (#455):** a backup or restore that finishes in under a second no longer reports rates like "10000 GB/s". Run logs, Discord notifications, History and the Activity timeline only show a rate for operations of at least one second, and divide by precise elapsed time rather than whole seconds. Run logs show sub-second durations as `<1s` (or `2.4s`) instead of `0s`, and their data includes `duration_ms`.
 
 - **Logs page unresponsiveness and freeze when loading older entries (#454):** Fixed microtask starvation caused by concurrent older-page requests during initial mount and background loading loops (`loadAll` and search). Active older-load requests now share the in-flight Promise across callers, older requests are bound to the store context sequence to discard stale responses, and background loading loops terminate when no progress is made. Also added a store `dispose()` method, called from the synchronous `onMount` cleanup in `Logs.svelte`, to abort background activity on page navigation. Closes #454.
 
