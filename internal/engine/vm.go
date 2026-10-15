@@ -20,9 +20,55 @@ import (
 	"github.com/digitalocean/go-libvirt/socket/dialers"
 )
 
+// libvirtClient lists exactly the go-libvirt RPCs the VM engine issues. The
+// real *libvirt.Libvirt satisfies it (asserted below); the interface exists
+// only so tests can substitute an in-memory fake for the hypervisor.
+type libvirtClient interface {
+	Disconnect() error
+	ConnectListAllDomains(needResults int32, flags libvirt.ConnectListAllDomainsFlags) ([]libvirt.Domain, uint32, error)
+	DomainLookupByName(name string) (libvirt.Domain, error)
+	DomainGetState(dom libvirt.Domain, flags uint32) (int32, int32, error)
+	DomainGetXMLDesc(dom libvirt.Domain, flags libvirt.DomainXMLFlags) (string, error)
+	DomainGetInfo(dom libvirt.Domain) (uint8, uint64, uint64, uint16, uint64, error)
+	DomainDefineXMLFlags(xml string, flags libvirt.DomainDefineFlags) (libvirt.Domain, error)
+	DomainCreate(dom libvirt.Domain) error
+	DomainCreateWithFlags(dom libvirt.Domain, flags uint32) (libvirt.Domain, error)
+	DomainResume(dom libvirt.Domain) error
+	DomainShutdownFlags(dom libvirt.Domain, flags libvirt.DomainShutdownFlagValues) error
+	DomainDestroy(dom libvirt.Domain) error
+	DomainUndefine(dom libvirt.Domain) error
+	DomainUndefineFlags(dom libvirt.Domain, flags libvirt.DomainUndefineFlagsValues) error
+	DomainHasManagedSaveImage(dom libvirt.Domain, flags uint32) (int32, error)
+	DomainManagedSaveRemove(dom libvirt.Domain, flags uint32) error
+	DomainCheckpointLookupByName(dom libvirt.Domain, name string, flags uint32) (libvirt.DomainCheckpoint, error)
+	DomainCheckpointCreateXML(dom libvirt.Domain, xmlDesc string, flags uint32) (libvirt.DomainCheckpoint, error)
+	DomainCheckpointDelete(cp libvirt.DomainCheckpoint, flags libvirt.DomainCheckpointDeleteFlags) error
+	DomainBackupBegin(dom libvirt.Domain, backupXML string, checkpointXML libvirt.OptString, flags libvirt.DomainBackupBeginFlags) error
+	DomainGetJobStats(dom libvirt.Domain, flags libvirt.DomainGetJobStatsFlags) (int32, []libvirt.TypedParam, error)
+	DomainAbortJob(dom libvirt.Domain) error
+	DomainGetBlockJobInfo(dom libvirt.Domain, path string, flags uint32) (int32, int32, uint64, uint64, uint64, error)
+	DomainBlockJobAbort(dom libvirt.Domain, path string, flags libvirt.DomainBlockJobAbortFlags) error
+	DomainBlockCommit(dom libvirt.Domain, disk string, base, top libvirt.OptString, bandwidth uint64, flags libvirt.DomainBlockCommitFlags) error
+	QEMUDomainAgentCommand(dom libvirt.Domain, cmd string, timeout int32, flags uint32) (libvirt.OptString, error)
+	DomainInterfaceAddresses(dom libvirt.Domain, source uint32, flags uint32) ([]libvirt.DomainInterface, error)
+}
+
+var _ libvirtClient = (*libvirt.Libvirt)(nil)
+
+// connectLibvirt is the constructor NewVMHandler and reconnectIfAborted use to
+// reach the hypervisor. Production always calls dialLibvirt; it is a variable
+// only so tests can return a fake client instead of touching a real libvirtd.
+var connectLibvirt = func(uri *url.URL) (net.Conn, libvirtClient, error) {
+	sock, conn, err := dialLibvirt(uri)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sock, conn, nil
+}
+
 // VMHandler implements Handler for libvirt-managed virtual machines.
 type VMHandler struct {
-	conn *libvirt.Libvirt
+	conn libvirtClient
 	// sock is the socket conn backs. libvirt.Libvirt keeps its own copy
 	// private and only exposes Disconnect, which is a *graceful* close: it
 	// sends a ConnectClose RPC and waits for the reply. That is useless when
@@ -76,7 +122,7 @@ func NewVMHandler() (*VMHandler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing libvirt URI: %w", err)
 	}
-	sock, conn, err := dialLibvirt(uri)
+	sock, conn, err := connectLibvirt(uri)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to libvirt: %w", err)
 	}
@@ -1035,7 +1081,7 @@ func (h *VMHandler) reconnectIfAborted() (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("parsing libvirt URI: %w", err)
 	}
-	sock, conn, err := dialLibvirt(uri)
+	sock, conn, err := connectLibvirt(uri)
 	if err != nil {
 		return true, fmt.Errorf("reconnecting to libvirt after abort: %w", err)
 	}
@@ -1372,6 +1418,10 @@ func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Dom
 // still-running job would keep writing into the path being removed (#171).
 // Abort can fail transiently while the job is mid-transition, so retry a few
 // times and verify the job actually reached a terminal state.
+// vmAbortJobRetryDelay spaces abortBackupJobWithRetry attempts. A variable
+// only so tests can shorten it; production never reassigns it.
+var vmAbortJobRetryDelay = 2 * time.Second
+
 func (h *VMHandler) abortBackupJobWithRetry(dom libvirt.Domain, name string) {
 	for attempt := 1; attempt <= 3; attempt++ {
 		aerr := h.conn.DomainAbortJob(dom)
@@ -1387,7 +1437,7 @@ func (h *VMHandler) abortBackupJobWithRetry(dom libvirt.Domain, name string) {
 			return
 		}
 		log.Printf("engine/vm: aborting backup job for %s (attempt %d/3): %v", name, attempt, aerr)
-		time.Sleep(2 * time.Second)
+		time.Sleep(vmAbortJobRetryDelay)
 	}
 	log.Printf("engine/vm: WARNING: could not abort backup job for %s after 3 attempts — hypervisor may still be writing into the staging dir", name)
 }
@@ -1653,6 +1703,10 @@ func checkStagingSpaceForDisks(destDir, vmName string, disks []domainDisk) error
 // are not sampled in this first cut (CPU is a strong busy proxy for VMs and
 // needs no XML interface parsing). Failures return an unknown sample
 // (fail-open).
+// vmActivitySampleInterval is the CPU sampling window for ProbeActivity. A
+// variable only so tests can shorten it; production never reassigns it.
+var vmActivitySampleInterval = 1 * time.Second
+
 func (h *VMHandler) ProbeActivity(ctx context.Context, name string) ActivitySample {
 	dom, err := h.conn.DomainLookupByName(name)
 	if err != nil {
@@ -1673,7 +1727,7 @@ func (h *VMHandler) ProbeActivity(ctx context.Context, name string) ActivitySamp
 	select {
 	case <-ctx.Done():
 		return ActivitySample{}
-	case <-time.After(1 * time.Second):
+	case <-time.After(vmActivitySampleInterval):
 	}
 	_, _, _, _, cpu2, err := h.conn.DomainGetInfo(dom)
 	if err != nil {
