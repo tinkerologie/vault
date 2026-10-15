@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { setupVaultMockApi } from './mocks/vault-api';
 
 test.describe('Jobs Management & Creation Wizard', () => {
@@ -122,6 +122,96 @@ test.describe('Jobs Management & Creation Wizard', () => {
     // Modal closes and new job appears in the list
     await expect(page.getByText('Job created successfully')).toBeVisible();
     await expect(page.locator('main').getByText('Daily Media Containers')).toBeVisible();
+  });
+
+  test.describe('per-backup verification cost warning (#457)', () => {
+    const warningTitle = 'Verification can read a large amount of data from this destination';
+    // Full user-visible copy, so an accidental wording change fails the test.
+    const providerChargesNote = 'S3 and S3-compatible providers can also charge for requests, retrieval, or egress.';
+    const dedupScopeNote =
+      'After each backup, Vault reads the backup back from this remote destination to check it. For deduplicated backups this includes every chunk the backup references, including chunks reused from earlier backups, not only new data.';
+    // Accessible descriptions concatenate the help text and the warning, so
+    // they are checked by substring.
+    const describedBy = (text: string) => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+    // Opens the wizard, picks a container, selects the destination and
+    // advances to step 3 where the verification toggle lives.
+    async function openVerificationStep(page: Page, storageLabel: string) {
+      await page.goto('/#/jobs');
+      await page.getByRole('button', { name: /new job/i }).click();
+      await page.getByRole('button', { name: /Containers/i }).first().click();
+      await page.getByRole('button', { name: /plex/i }).first().click();
+      const nextBtn = page.getByRole('button', { name: 'Next', exact: true });
+      await nextBtn.click();
+      await page.locator('#storage').selectOption({ label: storageLabel });
+      await nextBtn.click();
+      const toggle = page.getByRole('checkbox', { name: 'Verify backups after writing' });
+      await expect(toggle).toBeAttached();
+      return toggle;
+    }
+
+    test('warns with provider cost note for S3 when verification is on', async ({ page }) => {
+      const toggle = await openVerificationStep(page, 'Offsite S3 (s3)');
+      await expect(toggle).toBeChecked();
+
+      await expect(page.getByText(warningTitle)).toBeVisible();
+      await expect(page.getByText(providerChargesNote, { exact: true })).toBeVisible();
+      await expect(page.getByText(dedupScopeNote, { exact: true })).toBeVisible();
+      await expect(toggle).toHaveAccessibleDescription(describedBy(warningTitle));
+    });
+
+    test('warns without the provider-charges note for a non-S3 remote destination', async ({ page }) => {
+      const toggle = await openVerificationStep(page, 'Backup NAS (sftp)');
+      await expect(toggle).toBeChecked();
+      await expect(page.getByText(warningTitle)).toBeVisible();
+      await expect(page.getByText(dedupScopeNote, { exact: true })).toBeVisible();
+      await expect(page.getByText(providerChargesNote, { exact: true })).toHaveCount(0);
+    });
+
+    test('hides the warning when verification is turned off', async ({ page }) => {
+      const toggle = await openVerificationStep(page, 'Offsite S3 (s3)');
+      await expect(page.getByText(warningTitle)).toBeVisible();
+
+      await toggle.uncheck({ force: true });
+      await expect(toggle).not.toBeChecked();
+      await expect(page.getByText(warningTitle)).toHaveCount(0);
+      await expect(toggle).not.toHaveAccessibleDescription(describedBy(warningTitle));
+    });
+
+    test('warns in the express full form, where there is no toggle', async ({ page }) => {
+      await page.goto('/#/jobs');
+      await page.getByRole('button', { name: /new job/i }).click();
+      await page.getByRole('button', { name: 'Switch to full form' }).click();
+
+      const storage = page.locator('#ex_storage');
+      await storage.selectOption({ label: 'Local Array Backup (local)' });
+      await expect(page.getByText(warningTitle)).toHaveCount(0);
+
+      await storage.selectOption({ label: 'Offsite S3 (s3)' });
+      await expect(page.getByText(warningTitle)).toBeVisible();
+      await expect(page.getByText('(under Backup Verification in the step-by-step form)', { exact: false })).toBeVisible();
+      await expect(storage).toHaveAccessibleDescription(describedBy(warningTitle));
+    });
+
+    test('repeats the warning on the review step', async ({ page }) => {
+      await openVerificationStep(page, 'Offsite S3 (s3)');
+      await page.getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(page.getByLabel(/job name/i)).toBeVisible();
+      await expect(page.getByText(warningTitle)).toBeVisible();
+      await expect(page.getByText('(under Backup Verification in step 3)', { exact: false })).toBeVisible();
+    });
+
+    test('does not warn for a local destination', async ({ page }) => {
+      const toggle = await openVerificationStep(page, 'Local Array Backup (local)');
+      await expect(toggle).toBeChecked();
+      await expect(page.getByText(warningTitle)).toHaveCount(0);
+      await expect(toggle).toHaveAccessibleDescription(
+        describedBy('Reads each file back from storage and validates SHA-256 checksums. Adds a small amount of time but ensures backup integrity.'),
+      );
+      await page.getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(page.getByLabel(/job name/i)).toBeVisible();
+      await expect(page.getByText(warningTitle)).toHaveCount(0);
+    });
   });
 
   test('supports deleting a job with confirmation modal', async ({ page }) => {
