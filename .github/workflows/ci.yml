@@ -147,6 +147,26 @@ jobs:
           name: vault-windows-amd64
           path: build/vault-windows-amd64.exe
 
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same hooks and pinned versions as `make pre-commit-run`, so files merged
+      # without running pre-commit locally cannot leave it failing for everyone.
+      - name: Check formatting with the pre-commit hooks
+        run: |
+          status=0
+          for hook in trailing-whitespace end-of-file-fixer mixed-line-ending prettier markdownlint; do
+            pipx run pre-commit run "$hook" --all-files --show-diff-on-failure || status=1
+          done
+          exit "$status"
+
   recovery-fixture:
     # Builds real backups on Linux, with file names Windows cannot store, for
     # the windows job to recover. Archived as one tar because artifact uploads

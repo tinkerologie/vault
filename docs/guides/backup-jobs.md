@@ -305,6 +305,7 @@ The Restore wizard supports selecting items that belong to different backup jobs
    - Pre-flight checks run per unit to ensure backups can be restored before starting.
    - Restores are submitted and executed sequentially, streaming live progress and logs per job.
 
+<!-- prettier-ignore -->
 !!! note
     This wizard flow restores regular backup items. To recover the Vault configuration, database, or plugin state after a system failure, see [Disaster Recovery](disaster-recovery.md#recovering-with-the-wizard).
 
@@ -363,7 +364,7 @@ Imported backups (Storage → _Scan_ + _Import_) carry per-item dedup manifest I
 
 Vault executes one mutating backup or restore operation at a time under its runner mutex. When multiple backup jobs or restores are triggered concurrently (either by schedule or manually via _Run Now_), subsequent operations enter the in-memory runner queue.
 
-- **Queue Visibility**: Active and pending operations are surfaced at the top of the **History** tab in the *Active & Queued Operations* card, showing the operation kind (`Backup`, `Restore`, `Cleanup`), status (`Queued` or `Running`), job name, and queued timestamp with live WebSocket updates.
+- **Queue Visibility**: Active and pending operations are surfaced at the top of the **History** tab in the _Active & Queued Operations_ card, showing the operation kind (`Backup`, `Restore`, `Cleanup`), status (`Queued` or `Running`), job name, and queued timestamp with live WebSocket updates.
 - **Cancelling Queued Operations**: Operators can cancel queued backup and restore operations directly from the History tab before execution begins by clicking **Cancel** and confirming the prompt.
 - **Cleanup Operations**: Background storage deletion and remote orphan cleanup operations (`Cleanup`) run to completion to prevent leaving orphaned remote files, and cannot be cancelled from the queue.
 
