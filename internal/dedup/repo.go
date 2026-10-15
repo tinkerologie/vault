@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
@@ -125,6 +126,23 @@ type Repo struct {
 	// statsMu guards the LogicalBytes session counter — written in Put(), read by SessionLogicalBytes().
 	statsMu sync.RWMutex
 	stats   Stats
+
+	// Session counters for run-log diagnostics (#455), read through
+	// SessionStats. Unlike Stats(), which reports index-wide aggregates,
+	// these cover only this Repo instance (one backup or restore pass).
+	sessionWritten    atomic.Int64 // pack bytes durably flushed
+	sessionDuplicates atomic.Int64 // chunks skipped because the index had them
+	sessionRead       atomic.Int64 // chunk bytes read through Get
+}
+
+// SessionStats is what one Repo instance moved: the bytes it actually
+// uploaded and read, and how many chunks deduplication spared it, beside
+// the logical bytes Put through it.
+type SessionStats struct {
+	LogicalBytes    int64
+	UploadedBytes   int64
+	ReadBytes       int64
+	DuplicateChunks int64
 }
 
 // Stats is a snapshot of per-destination dedup metrics. Returned by Stats().
@@ -263,6 +281,7 @@ func buildRepo(d *db.DB, a storage.Adapter, storageID int64, master []byte, uuid
 		r.stats.TotalChunks += int64(info.ChunkCount)
 		r.stats.PhysicalBytes += info.SizeBytes
 		r.statsMu.Unlock()
+		r.sessionWritten.Add(info.SizeBytes)
 	})
 	return r
 }
@@ -298,12 +317,14 @@ func (r *Repo) Put(plaintext []byte) (ID, error) {
 	r.stats.LogicalBytes += int64(len(plaintext))
 	r.statsMu.Unlock()
 	if r.idx.Has(id) {
+		r.sessionDuplicates.Add(1)
 		return id, nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Re-check under lock — another goroutine may have just put it.
 	if r.idx.Has(id) {
+		r.sessionDuplicates.Add(1)
 		return id, nil
 	}
 	// Skip if this chunk is already buffered in the current pack — avoids
@@ -343,6 +364,7 @@ func (r *Repo) Get(id ID) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dedup: read chunk body: %w", err)
 	}
+	r.sessionRead.Add(int64(len(raw)))
 	if len(raw) < 1 {
 		return nil, errors.New("dedup: chunk too short (missing flags byte)")
 	}
@@ -506,6 +528,17 @@ func (r *Repo) SessionLogicalBytes() int64 {
 	r.statsMu.RLock()
 	defer r.statsMu.RUnlock()
 	return r.stats.LogicalBytes
+}
+
+// SessionStats returns what this Repo instance has moved since it was
+// opened. UploadedBytes counts only packs that flushed successfully.
+func (r *Repo) SessionStats() SessionStats {
+	return SessionStats{
+		LogicalBytes:    r.SessionLogicalBytes(),
+		UploadedBytes:   r.sessionWritten.Load(),
+		ReadBytes:       r.sessionRead.Load(),
+		DuplicateChunks: r.sessionDuplicates.Load(),
+	}
 }
 
 // EncryptManifest encrypts manifest plaintext with the repo's master key.

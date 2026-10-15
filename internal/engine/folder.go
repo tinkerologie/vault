@@ -593,6 +593,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 			}
 			return err
 		}
+		var written int64
 		for _, cid := range e.Chunks {
 			body, err := repo.Get(cid)
 			if err != nil {
@@ -603,10 +604,12 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 				_ = out.Close()
 				return err
 			}
+			written += int64(len(body))
 		}
 		if err := out.Close(); err != nil {
 			return err
 		}
+		RestoreTallyFrom(ctx).Add(written)
 		// O_CREATE only applies the mode when it creates the file, so a
 		// restore over an existing tree needs the mode set explicitly.
 		applyMode(full, mode)

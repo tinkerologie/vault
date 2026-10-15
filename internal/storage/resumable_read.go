@@ -30,6 +30,7 @@ type resumableReader struct {
 	size    int64
 	policy  RetryPolicy
 	sleep   func(time.Duration)
+	diag    *DiagStats // from ctx; nil records nothing
 
 	offset   int64         // bytes successfully delivered to the caller
 	inner    io.ReadCloser // current underlying stream, nil until (re)opened
@@ -43,7 +44,7 @@ func NewResumableReader(ctx context.Context, adapter Adapter, path string, size 
 	if policy.MaxAttempts < 1 {
 		policy.MaxAttempts = 1
 	}
-	return &resumableReader{ctx: ctx, adapter: adapter, path: path, size: size, policy: policy, sleep: time.Sleep}
+	return &resumableReader{ctx: ctx, adapter: adapter, path: path, size: size, policy: policy, sleep: time.Sleep, diag: DiagStatsFrom(ctx)}
 }
 
 func (r *resumableReader) Read(p []byte) (int, error) {
@@ -71,6 +72,7 @@ func (r *resumableReader) Read(p []byte) (int, error) {
 		if n > 0 {
 			r.offset += int64(n)
 			r.failures = 0
+			r.diag.AddBytesRead(int64(n))
 		}
 		if err == nil {
 			return n, nil
@@ -90,6 +92,7 @@ func (r *resumableReader) Read(p []byte) (int, error) {
 		if !classify(err) || r.failures+1 >= r.policy.MaxAttempts {
 			return n, err
 		}
+		r.diag.recordResume(r.path, r.failures+1, r.policy.MaxAttempts, err)
 		// Any bytes read this call are valid; deliver them, resume next call.
 		if n > 0 {
 			return n, nil
