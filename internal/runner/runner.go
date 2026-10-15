@@ -5323,15 +5323,15 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 	concurrency := max(job.EffectiveUploadConcurrency(), 1)
 
 	var (
-		dlMu     sync.Mutex
-		dl       int64     // bytes downloaded across all files (for progress)
+		dlMu sync.Mutex
+		dl   int64 // bytes downloaded across all files (for progress)
 		// filesDone counts completed downloads for file-level progress (#456).
 		filesDone atomic.Int64
-		dlLast   time.Time // last broadcast, guarded by dlMu (rate limit, issue #256)
-		sem      = make(chan struct{}, concurrency)
-		wg       sync.WaitGroup
-		firstErr error
-		errOnce  sync.Once
+		dlLast    time.Time // last broadcast, guarded by dlMu (rate limit, issue #256)
+		sem       = make(chan struct{}, concurrency)
+		wg        sync.WaitGroup
+		firstErr  error
+		errOnce   sync.Once
 	)
 	heartbeat := func(n int64) {
 		r.lastProgressMu.Lock()
