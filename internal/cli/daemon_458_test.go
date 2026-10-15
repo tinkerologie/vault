@@ -55,8 +55,11 @@ func newDaemonEnv458(t *testing.T) *daemonEnv458 {
 	t.Cleanup(unraid.SetMntBaseForTest(e.mntDir, e.mountInfo))
 	t.Cleanup(tempdir.SetCachePathsForTest([]string{filepath.Join(dir, "stagecache")}))
 
-	prevWD, prevUSB, prevSleep, prevNotify := hybridWorkingDir, daemonUSBBackupPath, poolDetectionSleep, shutdownNotifyContext
+	prevWD, prevUSB, prevSleep, prevNotify, prevBootKind := hybridWorkingDir, daemonUSBBackupPath, poolDetectionSleep, shutdownNotifyContext, bootKindMountInfo
 	hybridWorkingDir = filepath.Join(dir, "hybrid")
+	// Every daemon.go seam is isolated here, so no test reads the host's
+	// /proc/self/mountinfo through detectBootKind.
+	bootKindMountInfo = e.mountInfo
 	daemonUSBBackupPath = e.usbBackup
 	poolDetectionSleep = func(time.Duration) {
 		e.sleeps++
@@ -65,7 +68,7 @@ func newDaemonEnv458(t *testing.T) *daemonEnv458 {
 		}
 	}
 	t.Cleanup(func() {
-		hybridWorkingDir, daemonUSBBackupPath, poolDetectionSleep, shutdownNotifyContext = prevWD, prevUSB, prevSleep, prevNotify
+		hybridWorkingDir, daemonUSBBackupPath, poolDetectionSleep, shutdownNotifyContext, bootKindMountInfo = prevWD, prevUSB, prevSleep, prevNotify, prevBootKind
 		logx.SetLevelString("info")
 	})
 	return e

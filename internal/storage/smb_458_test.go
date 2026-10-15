@@ -315,7 +315,8 @@ func TestSMB458_ReadFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	share.file.close = errSMBBoom
+	// Open copied the template into a new fakeSMBFile, so inject the close
+	// error on the file this reader actually holds.
 	rc.(*smbReadCloser).file.(*fakeSMBFile).errs.close = errSMBBoom
 	share.errs["umount"] = errors.New("umount failed")
 	rc.(*smbReadCloser).session.(*fakeSMBSession).err = errors.New("logoff failed")

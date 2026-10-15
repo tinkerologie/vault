@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -171,17 +172,22 @@ func TestValidateHasConfiguration_458(t *testing.T) {
 		t.Fatalf("configured summary = %+v", s)
 	}
 
-	// Missing tables surface each COUNT error in turn.
+	// Each missing table reaches its own COUNT error branch: a fresh database
+	// per table, so an earlier drop cannot cause the failure.
 	for _, tbl := range []string{"settings", "storage_destinations", "jobs"} {
-		if _, err := d.Exec("PRAGMA foreign_keys=OFF"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := d.Exec("DROP TABLE IF EXISTS " + tbl); err != nil {
-			t.Fatalf("drop %s: %v", tbl, err)
-		}
-		if _, err := d.ValidateHasConfiguration(ctx); err == nil {
-			t.Fatalf("expected error after dropping %s", tbl)
-		}
+		t.Run(tbl, func(t *testing.T) {
+			fresh := setupTestDB(t)
+			if _, err := fresh.Exec("PRAGMA foreign_keys=OFF"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fresh.Exec("DROP TABLE " + tbl); err != nil {
+				t.Fatalf("drop %s: %v", tbl, err)
+			}
+			_, err := fresh.ValidateHasConfiguration(ctx)
+			if err == nil || !strings.Contains(err.Error(), "counting "+tbl) {
+				t.Fatalf("err = %v, want the counting %s error", err, tbl)
+			}
+		})
 	}
 }
 

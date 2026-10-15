@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -49,11 +50,22 @@ func TestGenerate_ReadOnlyDir(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses directory permissions")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce directory write permissions via chmod")
+	}
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	// Some filesystems ignore directory modes; only assert when a probe
+	// write is really refused.
+	probe := filepath.Join(dir, ".probe")
+	if f, err := os.Create(probe); err == nil {
+		_ = f.Close()
+		_ = os.Remove(probe)
+		t.Skip("filesystem ignores directory write permissions")
+	}
 	err := generate(dir, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "write ") {
 		t.Fatalf("expected write error, got %v", err)
