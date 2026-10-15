@@ -152,6 +152,13 @@ func TestAdaptivePostponeClosedDBA458(t *testing.T) {
 		}
 		time.Sleep(24 * time.Hour)
 		synctest.Wait()
+		// The re-check cannot load the job, so it must close the window.
+		r.postponeMu.Lock()
+		_, open := r.postponedSince[5]
+		r.postponeMu.Unlock()
+		if open {
+			t.Fatal("closed-DB re-check left the postpone window open")
+		}
 	})
 }
 
