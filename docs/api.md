@@ -234,7 +234,7 @@ Connect to `/api/v1/ws` for real-time event streaming. Events include:
 | `eta_seconds`                               | Estimated seconds left in the phase; `0` until 30 s of the phase and 1% of its work have elapsed            |
 | `last_progress_at`                          | When work last moved; a stale value suggests the operation is stalled                                       |
 
-Counters never move backward: a retried upload holds its previous high-water mark. Work beyond the expected total raises the total, and a phase reads at most 99% until the next phase starts. When no total is known (for example while scanning), `progress_determinate` is `false` and clients should show the phase and counters without a percentage. The fields are omitted when the daemon has no structured progress for the item.
+Counters never move backward: a retried upload holds its previous high-water mark. Work beyond the expected total raises the total, and a phase reads at most 99% until the next phase starts. When no total is known (for example while scanning), `progress_determinate` is `false` and clients should show the phase and counters without a percentage. Zero and `false` values are omitted from the JSON, so an absent `progress_determinate` means `false` and an absent counter means `0`; all of the fields are absent when the daemon has no structured progress for the item.
 
 Origin patterns cover `localhost`, `127.0.0.1`, `*.local`, `192.168.*.*`, `10.*.*.*`, and the full RFC 1918 `172.16.0.0/12` range (including Docker's default `172.17.0.0/16`).
 
