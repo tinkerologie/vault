@@ -38,7 +38,8 @@ configured to listen on a LAN-reachable address (Settings → Vault on the Unrai
 webgui — the default bind is `127.0.0.1`, which is not reachable from another
 machine). Traffic, including the API key header, travels unencrypted over HTTP,
 so only use this on a trusted LAN. No TLS or public exposure is required; you
-just need Node.js installed on the same machine as Claude Desktop.
+just need Node.js installed on the same machine as Claude Desktop. A LAN bind also turns on
+mDNS discovery; see [Network discovery](getting-started.md#network-discovery-mdns).
 
 ```json
 {

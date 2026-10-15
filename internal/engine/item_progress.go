@@ -99,10 +99,11 @@ func (p *itemProgress) report() {
 // scanTotals walks root with the archive walker's rules — the same
 // exclusions, regular files only, symlinks and special files skipped — and
 // returns the number and total size of the files a backup would read. With
-// a non-zero changedSince only files modified after it — or missing from
-// prevPaths — count, the incremental archive walk's rule. It reports a growing file count in the
-// scanning phase and honours ctx cancellation. A scan error leaves progress
-// indeterminate but never fails the backup, so callers ignore it.
+// a non-zero changedSince, only files modified after it or missing from
+// prevPaths count, matching the incremental archive walk's rule. It reports
+// a growing file count in the scanning phase and honours ctx cancellation.
+// A scan error leaves progress indeterminate but never fails the backup, so
+// callers ignore it.
 func scanTotals(ctx context.Context, item, root string, exclusions []string, changedSince time.Time, prevPaths map[string]struct{}) (files, bytes int64, err error) {
 	ReportDetail(ctx, item, ProgressDetail{Phase: PhaseScanning})
 	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {

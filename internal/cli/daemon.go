@@ -61,6 +61,7 @@ var daemonCmd = &cobra.Command{
 		addr, _ := cmd.Flags().GetString("addr")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
+		mdns, _ := cmd.Flags().GetBool("mdns")
 
 		// Tee the standard logger into an in-memory ring buffer so the
 		// diagnostics bundle can include the last ~1 MiB of daemon log
@@ -657,9 +658,10 @@ var daemonCmd = &cobra.Command{
 		// Zeroconf/mDNS discovery (#137). Advertises the daemon on the LAN so
 		// integrations (e.g. the Home Assistant Vault integration) can
 		// auto-discover it. Automatically no-ops when bound to loopback — the
-		// local-only default — so a 127.0.0.1 bind is never advertised. Shuts
-		// down with ctx; no explicit cleanup required.
-		discovery.New(addr, version, tlsCert != "" && tlsKey != "").Start(ctx)
+		// local-only default — so a 127.0.0.1 bind is never advertised, and
+		// can be turned off with --mdns=false (#468). Shuts down with ctx; no
+		// explicit cleanup required.
+		startDiscovery(ctx, mdns, addr, tlsCert != "" && tlsKey != "")
 
 		err = srv.StartWithContext(ctx)
 		if errors.Is(err, http.ErrServerClosed) {
@@ -693,7 +695,22 @@ func init() {
 	daemonCmd.Flags().String("addr", ":24085", "API listen address")
 	daemonCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	daemonCmd.Flags().String("tls-key", "", "Path to TLS private key file")
+	daemonCmd.Flags().Bool("mdns", true, mdnsFlagUsage)
 	rootCmd.AddCommand(daemonCmd)
+}
+
+// mdnsFlagUsage is shared by the daemon and replica --mdns flags.
+const mdnsFlagUsage = "Advertise the API over mDNS (_vault._tcp) for LAN discovery; requires a non-loopback --addr"
+
+// startDiscovery starts mDNS advertisement unless it was disabled with
+// --mdns=false. Both daemon and replica start discovery through this helper so
+// the opt-out behaves identically.
+func startDiscovery(ctx context.Context, enabled bool, addr string, tlsEnabled bool) {
+	if !enabled {
+		log.Println("discovery: mDNS advertisement disabled by configuration (--mdns=false)")
+		return
+	}
+	discovery.New(addr, version, tlsEnabled).Start(ctx)
 }
 
 // detectBootKind classifies the /boot mount on Unraid as "flash"

@@ -161,12 +161,34 @@ class PasswordHandlingTests(unittest.TestCase):
         self.assertTrue(written["files"][0]["password_matches"])
         self.assertEqual(self.task(tasks, "Remove SSH password file")["status"], "ok")
 
+    def test_deploy_probes_the_daemons_actual_bind(self):
+        # The health check and bind report must use the address rc.vault
+        # passed to the daemon, not re-parse vault.cfg with other defaults.
+        tasks = yaml.safe_load((ANSIBLE / "roles" / "deploy" / "tasks" / "main.yml").read_text())
+
+        def find(items, name):
+            for item in items or []:
+                if item.get("name") == name:
+                    return item
+                found = find(item.get("block"), name) or find(item.get("rescue"), name) or find(item.get("always"), name)
+                if found:
+                    return found
+            return None
+
+        for name in ("Wait for API to be ready", "Read effective daemon bind"):
+            task = find(tasks, name)
+            self.assertIsNotNone(task, name)
+            script = task["ansible.builtin.raw"]
+            self.assertTrue("/proc/$PID/cmdline" in script, name)
+            self.assertTrue("--addr=" in script, name)
+            self.assertFalse("vault.cfg" in script, name)
+
     def test_deploy_all_scp_paths(self):
         rc, output, commands, tasks, _ = self.run_role("deploy")
         self.assertEqual(rc, 0, output)
         self.assert_password_written(tasks)
         uploads = [event for event in commands if event["program"] == "sshpass"]
-        self.assertEqual(len(uploads), 11)
+        self.assertEqual(len(uploads), 12)  # 11 plugin files + rc.vault (#468)
         self.assertEqual(len({event["path"] for event in uploads}), 1)
         self.assertTrue(all(event["args"][2] == "scp" for event in uploads))
         destinations = [event["args"][-1].split(":", 1)[1] for event in uploads]
@@ -175,11 +197,13 @@ class PasswordHandlingTests(unittest.TestCase):
             "/usr/local/sbin/vault", plugin + "Vault.page", plugin + "Backups.page",
             plugin + "README.md", plugin + "include/api.php", plugin + "include/control.php",
             plugin + "include/app.php", plugin + "include/proxy.php", plugin + "include/apply.sh",
-            plugin + "event/", plugin + "ui/",
+            plugin + "event/", plugin + "ui/", "/etc/rc.d/rc.vault",
         ])
-        self.assertEqual(uploads[-1]["args"][3], "-r")
-        self.assertTrue(uploads[-2]["args"][-3].endswith("/plugin/event/started"))
-        self.assertTrue(uploads[-2]["args"][-2].endswith("/plugin/event/stopping_svcs"))
+        # rc.vault ships from plugin/rc.vault, the script the .plg installs (#468).
+        self.assertTrue(uploads[-1]["args"][-2].endswith("/plugin/rc.vault"))
+        self.assertEqual(uploads[-2]["args"][3], "-r")
+        self.assertTrue(uploads[-3]["args"][-3].endswith("/plugin/event/started"))
+        self.assertTrue(uploads[-3]["args"][-2].endswith("/plugin/event/stopping_svcs"))
 
     def test_verify_tunnel_and_included_tasks(self):
         rc, output, commands, tasks, port = self.run_role("verify")
