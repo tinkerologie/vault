@@ -7,6 +7,8 @@
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getProgress, handleProgressMessage, restoreFromStatus, markJobActiveOptimistically } from '../lib/progress.svelte.js'
   import { isJobRunningOrQueued } from '../lib/job-active.js'
+  import { verifyCostWarning } from '../lib/verify-cost.js'
+  import VerifyCostWarning from '../components/VerifyCostWarning.svelte'
   import { describeSchedule, relTimeUntil, itemDisplayLabel } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
@@ -201,6 +203,10 @@
   // string in form.verify_schedule (empty = disabled). The checkbox below
   // toggles between empty (off) and a sensible default (Sunday 04:00).
   let verifyEnabled = $derived((form.verify_schedule || '').trim() !== '')
+
+  // Per-backup verification reads the backup back from the destination, which
+  // is costly over the network (#457).
+  let verifyCost = $derived(verifyCostWarning(storageList, form.storage_dest_id, form.verify_backup))
   function toggleVerifyEnabled(e) {
     if (e.currentTarget.checked) {
       form.verify_schedule = form.verify_schedule || '0 4 * * 0'
@@ -1479,12 +1485,16 @@
         <div>
           <label for="ex_storage" class="block text-sm font-medium text-text-muted mb-1.5">Storage Destination</label>
           <select id="ex_storage" bind:value={form.storage_dest_id}
+            aria-describedby={verifyCost ? 'ex-verify-backup-warning' : undefined}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
             <option value={0}>– Select –</option>
             {#each storageList as s (s.id)}
               <option value={s.id}>{s.name} ({s.type})</option>
             {/each}
           </select>
+          {#if verifyCost}
+            <VerifyCostWarning id="ex-verify-backup-warning" providerCharges={verifyCost.providerCharges} toggleLocation="under Backup Verification in the step-by-step form" />
+          {/if}
         </div>
         <div>
           <span class="block text-sm font-medium text-text-muted mb-1.5">Backup Mode</span>
@@ -1882,14 +1892,23 @@
           <div class="mt-3 pl-6">
             <div class="flex items-start gap-3">
               <label class="relative inline-flex items-center cursor-pointer mt-0.5">
-                <input type="checkbox" bind:checked={form.verify_backup} class="sr-only peer" />
+                <input
+                  type="checkbox"
+                  bind:checked={form.verify_backup}
+                  class="sr-only peer"
+                  aria-labelledby="verify-backup-label"
+                  aria-describedby={verifyCost ? 'verify-backup-help verify-backup-warning' : 'verify-backup-help'}
+                />
                 <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
               </label>
               <div>
-                <p class="text-sm text-text">Verify backups after writing</p>
-                <p class="text-xs text-text-dim mt-0.5">Reads each file back from storage and validates SHA-256 checksums. Adds a small amount of time but ensures backup integrity.</p>
+                <p id="verify-backup-label" class="text-sm text-text">Verify backups after writing</p>
+                <p id="verify-backup-help" class="text-xs text-text-dim mt-0.5">Reads each file back from storage and validates SHA-256 checksums. Adds a small amount of time but ensures backup integrity.</p>
               </div>
             </div>
+            {#if verifyCost}
+              <VerifyCostWarning id="verify-backup-warning" providerCharges={verifyCost.providerCharges} />
+            {/if}
           </div>
         </details>
 
@@ -2369,6 +2388,11 @@
             </div>
           {/if}
         </div>
+
+        <!-- The stepper can skip step 3, so repeat the disclosure here (#457). -->
+        {#if verifyCost}
+          <VerifyCostWarning id="review-verify-backup-warning" providerCharges={verifyCost.providerCharges} toggleLocation="under Backup Verification in step 3" />
+        {/if}
 
         <!-- Enabled toggle -->
         <div class="flex items-center gap-3">

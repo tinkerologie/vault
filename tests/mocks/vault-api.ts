@@ -192,6 +192,34 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
     stage_beside_destination: false,
     capacity: { free_bytes: 1000000000000, total_bytes: 4000000000000 },
   },
+  {
+    id: 2,
+    name: 'Offsite S3',
+    type: 's3',
+    path: 'vault-backups',
+    config: JSON.stringify({ bucket: 'vault-backups', region: 'us-east-1', endpoint: 'https://s3.example.com' }),
+    free_space_bytes: 0,
+    total_space_bytes: 0,
+    is_connected: true,
+    dedup_enabled: true,
+    backup_database_enabled: false,
+    stage_beside_destination: false,
+    capacity: { free_bytes: 0, total_bytes: 0 },
+  },
+  {
+    id: 3,
+    name: 'Backup NAS',
+    type: 'sftp',
+    path: '/backups',
+    config: JSON.stringify({ host: 'nas.example.com', port: 22, path: '/backups' }),
+    free_space_bytes: 0,
+    total_space_bytes: 0,
+    is_connected: true,
+    dedup_enabled: false,
+    backup_database_enabled: false,
+    stage_beside_destination: false,
+    capacity: { free_bytes: 0, total_bytes: 0 },
+  },
 ];
 
 /**
@@ -202,7 +230,7 @@ export async function setupVaultMockApi(page: Page) {
   let jobsList = createInitialMockJobs();
   let storageList = createInitialMockStorage();
   let nextJobId = 3;
-  let nextStorageId = 2;
+  let nextStorageId = 4;
 
   let activityLogs = [
     { id: 1, timestamp: '2026-10-06T12:00:00Z', level: 'info', category: 'backup', message: 'Job "Docker & Appdata" completed successfully', details: 'duration=15m bytes=10GB' },
