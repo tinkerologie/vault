@@ -749,4 +749,3 @@ export function buildFileTree(files) {
 
   return rootNodes
 }
-

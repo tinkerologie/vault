@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Selective restore size (#455):** restoring a few files from a backup item reports the bytes actually restored instead of the whole item's recorded size, in History, the run log, and the restore summary. Restore summaries also name the job and destination.
+- Formatting hooks no longer fail on a clean checkout: files merged without pre-commit were reformatted (no content changes), workflow YAML keeps the organization's single-quote style through `.prettierrc.json`, and a new CI **Format** job runs the same pinned formatting hooks on every pull request.
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.
 - Dependabot also updates the Playwright end-to-end test dependencies (root `package.json`) and the Docker base images in the root `Dockerfile`.
 - Release workflows hardened (least-privilege job permissions, no expressions in shell scripts, no persisted checkout credentials, no dependency caches); scheduled workflows run on Australia/Brisbane time.
