@@ -1,6 +1,26 @@
 ---
 - name: Verify Vault deployment
   block:
+    # sshpass reads the password from a private 0600 file, so it never appears
+    # on a command line, in an environment prefix, in the process list, or in
+    # task output at any verbosity. The file is removed in the always section.
+    - name: Create private SSH password file
+      delegate_to: localhost
+      ansible.builtin.tempfile:
+        state: file
+        prefix: vault-sshpass-
+      register: sshpass_file
+      changed_when: false
+
+    - name: Store SSH password in the private file
+      delegate_to: localhost
+      ansible.builtin.copy:
+        content: "{{ ansible_password }}"
+        dest: "{{ sshpass_file.path }}"
+        mode: "0600"
+      no_log: true
+      changed_when: false
+
     - name: Read effective daemon bind for verification
       ansible.builtin.raw: |
         if [ -f {{ config_dir }}/vault.cfg ]; then
@@ -15,7 +35,14 @@
         fi
         printf '%s\n%s\n' "${BIND_VALUE}:${PORT_VALUE}" "$TARGET_VALUE"
       register: verify_bind_info
+      ignore_unreachable: true
       changed_when: false
+
+    - name: Fail when server is unreachable
+      delegate_to: localhost
+      ansible.builtin.fail:
+        msg: "{{ verify_bind_info.msg }}"
+      when: verify_bind_info is unreachable
 
     - name: Set verification bind facts
       ansible.builtin.set_fact:
@@ -32,7 +59,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           ssh -M -S /tmp/vault-verify-{{ inventory_hostname }}.sock -f -N
           -L 127.0.0.1:{{ verify_local_port }}:{% if ':' in verify_target_host and not verify_target_host.startswith('[') %}[{{ verify_target_host }}]{% else %}{{ verify_target_host }}{% endif %}:{{ api_port }}
           -o ExitOnForwardFailure=yes
@@ -52,6 +79,14 @@
     - name: Test Web UI with Playwright CLI
       ansible.builtin.include_tasks: ui.yml
   always:
+    - name: Remove SSH password file
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ sshpass_file.path }}"
+        state: absent
+      when: sshpass_file.path is defined
+      changed_when: false
+
     - name: Stop SSH tunnel to local-only Vault daemon
       delegate_to: localhost
       ansible.builtin.command:
