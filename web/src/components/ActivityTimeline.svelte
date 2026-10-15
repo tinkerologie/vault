@@ -1,5 +1,5 @@
 <script>
-  import { statusBadge, relTime, formatBytes, formatSpeed, formatDurationFromDates, getFailureReason, formatDate } from '../lib/utils.js'
+  import { statusBadge, relTime, formatBytes, runSpeed, formatDurationFromDates, getFailureReason, formatDate } from '../lib/utils.js'
 
   let { runs = [], maxItems = 8 } = $props()
 
@@ -77,6 +77,7 @@
           </div>
           {#each groupRuns as run (run.id)}
             {@const items = getRunItems(run)}
+            {@const speed = runSpeed(run)}
             <div class="px-5 py-3 flex items-start gap-3">
               <!-- Timeline dot -->
               <div class="mt-1.5 shrink-0">
@@ -125,8 +126,8 @@
                   {#if run.size_bytes}
                     <span>{formatBytes(run.size_bytes)}</span>
                   {/if}
-                  {#if run.duration_seconds && run.size_bytes}
-                    <span>{formatSpeed(run.size_bytes, run.duration_seconds)}</span>
+                  {#if speed}
+                    <span>{speed}</span>
                   {/if}
                   {#if run.items_total}
                     <span>{run.items_done || 0}/{run.items_total} items</span>

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet, SvelteMap } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
-  import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel, itemTypeNoun, commonItemType, unchangedItemCount } from '../lib/utils.js'
+  import { relTime, formatBytes, runSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel, itemTypeNoun, commonItemType, unchangedItemCount } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
@@ -504,6 +504,7 @@
               {#each runs as run (run.id)}
                 {@const icon = statusIcon(run.status)}
                 {@const anomalyCounts = runAnomalyCounts(run.id)}
+                {@const speed = runSpeed(run)}
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                 <div
                   class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all {hasLogDetails(run) ? 'cursor-pointer' : ''}"
@@ -568,8 +569,8 @@
                           {#if run.size_bytes}
                             <span>{formatBytes(run.size_bytes)}</span>
                           {/if}
-                          {#if run.duration_seconds && run.size_bytes}
-                            <span>{formatSpeed(run.size_bytes, run.duration_seconds)}</span>
+                          {#if speed}
+                            <span>{speed}</span>
                           {/if}
                         </div>
                         {#if getFailureReason(run)}

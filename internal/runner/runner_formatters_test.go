@@ -3,6 +3,7 @@ package runner
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/format"
@@ -57,7 +58,7 @@ func TestDiscordEmbedSizesUseSharedFormatter(t *testing.T) {
 func TestBuildDiscordEmbedCompleted(t *testing.T) {
 	t.Parallel()
 	r, _, _ := setupTestRunner(t)
-	embed := r.buildDiscordEmbed("nightly", "completed", 3, 0, 1024*1024, 60, nil)
+	embed := r.buildDiscordEmbed("nightly", "completed", 3, 0, 1024*1024, 60*time.Second, nil)
 	if !strings.Contains(embed.Title, "Backup Completed") {
 		t.Errorf("Title = %q, want it to mention 'Backup Completed'", embed.Title)
 	}
@@ -76,7 +77,7 @@ func TestBuildDiscordEmbedCompleted(t *testing.T) {
 func TestBuildDiscordEmbedPartial(t *testing.T) {
 	t.Parallel()
 	r, _, _ := setupTestRunner(t)
-	embed := r.buildDiscordEmbed("partial-job", "partial", 2, 1, 0, 0, []string{"failed-item"})
+	embed := r.buildDiscordEmbed("partial-job", "partial", 2, 1, 0, 0*time.Second, []string{"failed-item"})
 	if !strings.Contains(embed.Title, "Partially Completed") {
 		t.Errorf("Title = %q, want 'Partially Completed'", embed.Title)
 	}
@@ -101,7 +102,7 @@ func TestBuildDiscordEmbedFailedTruncatesLongNames(t *testing.T) {
 	t.Parallel()
 	r, _, _ := setupTestRunner(t)
 	long := strings.Repeat("an-extremely-long-failed-item-name,", 20) // ~700 chars
-	embed := r.buildDiscordEmbed("nightly", "failed", 0, 5, 0, 30, []string{long})
+	embed := r.buildDiscordEmbed("nightly", "failed", 0, 5, 0, 30*time.Second, []string{long})
 	if !strings.Contains(embed.Title, "Failed") {
 		t.Errorf("Title = %q, want it to mention 'Failed'", embed.Title)
 	}
@@ -274,3 +275,42 @@ func TestSendRestoreNotificationFailure(t *testing.T) {
 type errExampleRestore struct{}
 
 func (errExampleRestore) Error() string { return "example restore failure" }
+
+// TestBuildDiscordEmbed_SubSecondRunHasNoSpeed guards #455: a run that
+// finishes in under a second must not report a rate like "10000 GB/s".
+func TestBuildDiscordEmbed_SubSecondRunHasNoSpeed(t *testing.T) {
+	r := &Runner{}
+	embed := r.buildDiscordEmbed("tiny", "completed", 1, 0, 10<<40, 300*time.Millisecond, nil)
+	for _, f := range embed.Fields {
+		if f.Name == "Speed" {
+			t.Fatalf("sub-second run reported Speed %q", f.Value)
+		}
+	}
+	embed = r.buildDiscordEmbed("slow", "completed", 1, 0, 3<<20, 1500*time.Millisecond, nil)
+	found := false
+	for _, f := range embed.Fields {
+		if f.Name == "Speed" {
+			found = true
+			if f.Value != "2 MB/s" {
+				t.Errorf("Speed = %q, want 2 MB/s (fractional seconds)", f.Value)
+			}
+		}
+	}
+	if !found {
+		t.Error("1.5s run is missing its Speed field")
+	}
+}
+
+func TestDiscordDuration(t *testing.T) {
+	cases := map[time.Duration]string{
+		400 * time.Millisecond:  "<1s",
+		0:                       "<1s",
+		1600 * time.Millisecond: "2s",
+		90 * time.Second:        "1m 30s",
+	}
+	for d, want := range cases {
+		if got := discordDuration(d); got != want {
+			t.Errorf("discordDuration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
