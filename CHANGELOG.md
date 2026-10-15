@@ -6,8 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **mDNS advertisement control (#468):** new **Network Discovery (mDNS)** setting (`MDNS_ADVERTISE` in `vault.cfg`) and `--mdns` flag on `vault daemon` and `vault replica` turn LAN discovery off without changing the bind address. Both default to on.
+
 ### Changed
 
+- Ansible deploys install the real `plugin/rc.vault` instead of an outdated inline copy, so live verification runs the same service script the plugin package ships (#468).
 - **Verification cost warning (#457):** the job form now warns when **Verify backups after writing** is on and the destination is remote: under the toggle, beside the destination in the express form, and on the review step. After every backup, Vault reads all the data that backup references back from that destination, including chunks reused from earlier backups, so a large backup can mean significant bandwidth and a long wait near 100%. S3 and S3-compatible destinations also note possible request, retrieval, or egress charges. The warning suggests scheduled verification for large backups.
 - Formatting hooks no longer fail on a clean checkout: files merged without pre-commit were reformatted (no content changes), workflow YAML keeps the organization's single-quote style through `.prettierrc.json`, and a new CI **Format** job runs the same pinned formatting hooks on every pull request.
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.
@@ -26,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Unraid host renamed after binding Vault to a LAN address (#468):** a non-loopback bind no longer makes `avahi-daemon` report a host name conflict and rename the server (for example `TheVault.local` to `TheVault-2.local`). Vault now advertises `_vault._tcp` under its own host name, `vault-<hostname>.local`, answers address lookups for that name, and publishes on each interface only the addresses the API listens on there (the mDNS responder moved from `grandcat/zeroconf` to `brutella/dnssd`). The service name and TXT records are unchanged, so Home Assistant discovery keeps working.
 - Deployment and verification remove temporary SSH password files when the server is unreachable, while keeping connection errors visible.
 
 - **Ansible no longer prints the Unraid password (#495):** the deploy and verify roles passed it on the command line (`sshpass -p`), so a failed upload or SSH tunnel printed it in the task output, and it showed in the local process list while a deploy ran. `sshpass` now reads it from a private temporary file that is deleted when the run ends, and error messages stay visible.
