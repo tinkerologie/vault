@@ -27,7 +27,7 @@
 {#if view}
   <div class="mt-1.5">
     <div class="flex items-baseline justify-between gap-2 {textSize}">
-      <span class="text-text-muted truncate"><span class="text-text font-medium">{view.label}</span>{#if view.text}{' '}<span class="tabular-nums">{view.text}</span>{/if}</span>
+      <span class="text-text-muted truncate"><span class="text-text font-medium">{view.label}</span>{#if view.text}<span class="tabular-nums">{` ${view.text}`}</span>{/if}</span>
       {#if view.rate || view.eta}
         <span class="text-text-dim tabular-nums shrink-0">{[view.rate, view.eta].filter(Boolean).join(' · ')}</span>
       {/if}
