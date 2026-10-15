@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -931,6 +932,126 @@ func TestWebDAVWriteToleratesMkdir403OnExistingDir(t *testing.T) {
 	}
 }
 
+// TestWebDAVWriteToleratesMkcol423OnExistingDir: gowebdav re-sends MKCOL for
+// every parent before each PUT. When a concurrent upload's MKCOL holds the
+// server's temporary lock on the same path (golang.org/x/net/webdav does this),
+// the server answers 423 Locked even though the directory exists. That must
+// not fail the upload.
+func TestWebDAVWriteToleratesMkcol423OnExistingDir(t *testing.T) {
+	shortenMkcolLockedRetries(t)
+	root := t.TempDir()
+	real := testWebDAVHandler(root)
+	var mkcol423s int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" {
+			p := filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(r.URL.Path, "/")))
+			if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+				atomic.AddInt32(&mkcol423s, 1)
+				w.WriteHeader(http.StatusLocked)
+				return
+			}
+		}
+		real.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Write("job/run1/data.tar", strings.NewReader("data")); err != nil {
+		t.Fatalf("Write should tolerate MKCOL 423 on an existing dir, got: %v", err)
+	}
+	if err := a.Write("job/run1/meta.json", strings.NewReader("{}")); err != nil {
+		t.Fatalf("second Write should tolerate MKCOL 423 on an existing dir, got: %v", err)
+	}
+	if atomic.LoadInt32(&mkcol423s) == 0 {
+		t.Error("test server never returned a 423 MKCOL; scenario not exercised")
+	}
+}
+
+// TestWebDAVMkcol423WithoutDirStaysRetriable: a 423 on a directory that does
+// not exist is a real lock, so it must not be rewritten to "already exists".
+func TestWebDAVMkcol423WithoutDirStaysRetriable(t *testing.T) {
+	shortenMkcolLockedRetries(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" {
+			w.WriteHeader(http.StatusLocked)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	tr := &mkcolExistsTransport{base: http.DefaultTransport}
+	req, _ := http.NewRequest("MKCOL", server.URL+"/locked/", nil)
+	resp, err := tr.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusLocked {
+		t.Fatalf("status = %d, want 423 kept for a missing dir", resp.StatusCode)
+	}
+}
+
+// TestWebDAVDigestWriteRetriesMkcol423: Digest servers skip the PROPFIND
+// probe (a Digest header signed for MKCOL cannot authorize PROPFIND), so a
+// transient 423 must be cleared by re-sending the MKCOL itself.
+func TestWebDAVDigestWriteRetriesMkcol423(t *testing.T) {
+	shortenMkcolLockedRetries(t)
+	root := t.TempDir()
+	real := testWebDAVHandler(root)
+	var mu sync.Mutex
+	locked := map[string]bool{} // paths that already answered 423 once
+	var mkcol423s int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Digest ") {
+			w.Header().Set("WWW-Authenticate", `Digest realm="vault-test", nonce="abc123", qop="auth", algorithm=MD5`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method == "MKCOL" {
+			p := filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(r.URL.Path, "/")))
+			if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+				mu.Lock()
+				first := !locked[r.URL.Path]
+				locked[r.URL.Path] = true
+				mu.Unlock()
+				if first {
+					// A competing MKCOL holds the lock for this one request.
+					atomic.AddInt32(&mkcol423s, 1)
+					w.WriteHeader(http.StatusLocked)
+					return
+				}
+			}
+		}
+		real.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL, Username: "u", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Write("job/run1/data.tar", strings.NewReader("data")); err != nil {
+		t.Fatalf("Digest Write should retry past a transient MKCOL 423, got: %v", err)
+	}
+	if err := a.Write("job/run1/meta.json", strings.NewReader("{}")); err != nil {
+		t.Fatalf("second Digest Write should retry past a transient MKCOL 423, got: %v", err)
+	}
+	if atomic.LoadInt32(&mkcol423s) == 0 {
+		t.Error("test server never returned a 423 MKCOL; scenario not exercised")
+	}
+}
+
+// shortenMkcolLockedRetries keeps 423 retry tests fast.
+func shortenMkcolLockedRetries(t *testing.T) {
+	t.Helper()
+	prev := mkcolLockedRetryDelays
+	mkcolLockedRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { mkcolLockedRetryDelays = prev })
+}
+
 // TestWebDAVMkdir403WithoutDirStaysFatal: a genuine 403 (permission denied,
 // directory does NOT exist) must not be converted to success by the
 // existence probe — the write has to fail with the real error.
@@ -954,4 +1075,95 @@ func TestWebDAVMkdir403WithoutDirStaysFatal(t *testing.T) {
 	if err := a.Write("denied/dir/file.txt", strings.NewReader("x")); err == nil {
 		t.Fatal("Write should fail when MKCOL 403 targets a directory that does not exist")
 	}
+}
+
+// lockedRT answers MKCOL from a scripted list of statuses (or errors).
+type lockedRT struct {
+	statuses []int
+	errs     []error
+	calls    int
+}
+
+func (l *lockedRT) RoundTrip(*http.Request) (*http.Response, error) {
+	i := l.calls
+	l.calls++
+	if i < len(l.errs) && l.errs[i] != nil {
+		return nil, l.errs[i]
+	}
+	code := http.StatusLocked
+	if i < len(l.statuses) {
+		code = l.statuses[i]
+	}
+	return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+func TestMkcolLockedRetryEdges(t *testing.T) {
+	shortenMkcolLockedRetries(t)
+	locked := func() *http.Response {
+		return &http.Response{StatusCode: http.StatusLocked, Body: io.NopCloser(strings.NewReader(""))}
+	}
+	newReq := func(ctx context.Context, body io.Reader) *http.Request {
+		r, err := http.NewRequestWithContext(ctx, "MKCOL", "http://example.invalid/d/", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	t.Run("retry clears the lock", func(t *testing.T) {
+		rt := &lockedRT{statuses: []int{http.StatusMethodNotAllowed}}
+		resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(newReq(t.Context(), nil), locked())
+		if resp.StatusCode != http.StatusMethodNotAllowed || rt.calls != 1 {
+			t.Fatalf("status %d after %d calls, want 405 after 1", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("replayable body is re-sent", func(t *testing.T) {
+		rt := &lockedRT{statuses: []int{http.StatusLocked, http.StatusCreated}}
+		req := newReq(t.Context(), strings.NewReader("x")) // strings.Reader sets GetBody
+		resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(req, locked())
+		if resp.StatusCode != http.StatusCreated || rt.calls != 2 {
+			t.Fatalf("status %d after %d calls, want 201 after 2", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("non-replayable body is not retried", func(t *testing.T) {
+		rt := &lockedRT{}
+		req := newReq(t.Context(), nil)
+		req.Body = io.NopCloser(strings.NewReader("x"))
+		req.GetBody = nil
+		if resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(req, locked()); resp.StatusCode != http.StatusLocked || rt.calls != 0 {
+			t.Fatalf("status %d after %d calls, want 423 untouched", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("GetBody failure keeps the 423", func(t *testing.T) {
+		rt := &lockedRT{}
+		req := newReq(t.Context(), strings.NewReader("x"))
+		req.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("no replay") }
+		if resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(req, locked()); resp.StatusCode != http.StatusLocked || rt.calls != 0 {
+			t.Fatalf("status %d after %d calls, want 423 untouched", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("transport error keeps the 423", func(t *testing.T) {
+		rt := &lockedRT{errs: []error{errors.New("connection reset")}}
+		if resp, err := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(newReq(t.Context(), nil), locked()); err != nil || resp.StatusCode != http.StatusLocked {
+			t.Fatalf("got %v / %v, want the original 423 and no error", resp, err)
+		}
+	})
+	t.Run("cancelled context stops retrying", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		rt := &lockedRT{}
+		prev := mkcolLockedRetryDelays
+		mkcolLockedRetryDelays = []time.Duration{time.Hour}
+		defer func() { mkcolLockedRetryDelays = prev }()
+		if resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(newReq(ctx, nil), locked()); resp.StatusCode != http.StatusLocked || rt.calls != 0 {
+			t.Fatalf("status %d after %d calls, want 423 with no retry", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("lock that never clears returns 423", func(t *testing.T) {
+		rt := &lockedRT{}
+		resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(newReq(t.Context(), nil), locked())
+		if resp.StatusCode != http.StatusLocked || rt.calls != len(mkcolLockedRetryDelays) {
+			t.Fatalf("status %d after %d calls, want 423 after %d", resp.StatusCode, rt.calls, len(mkcolLockedRetryDelays))
+		}
+	})
 }
