@@ -173,3 +173,35 @@ func (m *memWriterAt) WriteAt(p []byte, off int64) (int, error) {
 	copy(m.buf[off:], p)
 	return len(p), nil
 }
+
+// openFailAdapter fails the first ReadRange open with a transient error.
+type openFailAdapter struct {
+	mockAdapter
+	data  []byte
+	calls int
+}
+
+func (a *openFailAdapter) ReadRange(_ string, offset, length int64) (io.ReadCloser, error) {
+	a.calls++
+	if a.calls == 1 {
+		return nil, &retryableError{err: errors.New("connection refused")}
+	}
+	return io.NopCloser(bytes.NewReader(a.data[offset : offset+length])), nil
+}
+
+func TestResumableReaderRecordsFailedOpen(t *testing.T) {
+	want := []byte("payload")
+	var events []DiagEvent
+	d := NewDiagStats(func(e DiagEvent) { events = append(events, e) }, 0)
+	rr := NewResumableReader(WithDiagStats(t.Context(), d), &openFailAdapter{data: want}, "dir/obj", int64(len(want)), RetryPolicy{MaxAttempts: 3})
+	got, err := io.ReadAll(rr)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("ReadAll = %q, %v", got, err)
+	}
+	if s := d.Snapshot(); s.Retries != 1 || s.TransientByOp["ReadRange"] != 1 {
+		t.Fatalf("snapshot = %+v, want one recorded ReadRange retry", s)
+	}
+	if len(events) != 1 || events[0].Op != "ReadRange" || events[0].Object != "obj" || events[0].Attempt != 1 {
+		t.Fatalf("events = %+v, want one ReadRange retry of obj", events)
+	}
+}

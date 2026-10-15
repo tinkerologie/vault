@@ -5172,7 +5172,7 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		return fmt.Errorf("getting storage destination: %w", err)
 	}
 
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
