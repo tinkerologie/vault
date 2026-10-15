@@ -5,6 +5,7 @@
 # password from a private temp file (sshpass -f), never the command line
 
 - name: Deploy Vault plugin
+  ignore_unreachable: true
   block:
     # sshpass reads the password from a private 0600 file, so it never appears
     # on a command line, in an environment prefix, in the process list, or in

@@ -35,7 +35,14 @@
         fi
         printf '%s\n%s\n' "${BIND_VALUE}:${PORT_VALUE}" "$TARGET_VALUE"
       register: verify_bind_info
+      ignore_unreachable: true
       changed_when: false
+
+    - name: Fail when server is unreachable
+      delegate_to: localhost
+      ansible.builtin.fail:
+        msg: "{{ verify_bind_info.msg }}"
+      when: verify_bind_info is unreachable
 
     - name: Set verification bind facts
       ansible.builtin.set_fact:
