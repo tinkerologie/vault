@@ -44,6 +44,15 @@ const daemonLogBufferBytes = 1 << 20
 
 var hybridWorkingDir = "/var/local/vault"
 
+// Test seams. Production values are fixed; tests override them to exercise
+// daemon startup without real Unraid paths, wall-clock waits, or OS signals.
+var (
+	daemonUSBBackupPath   = "/boot/config/plugins/vault/vault.db.backup"
+	poolDetectionSleep    = time.Sleep
+	shutdownNotifyContext = signal.NotifyContext
+	bootKindMountInfo     = "/proc/self/mountinfo"
+)
+
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
 	Short: "Start the Vault daemon (API server + scheduler)",
@@ -66,7 +75,7 @@ var daemonCmd = &cobra.Command{
 		// Hybrid mode detection: if a pool drive is mounted, use a RAM-backed
 		// working database with periodic snapshots to the pool drive. This
 		// avoids USB flash wear from SQLite WAL writes.
-		const usbBackupPath = "/boot/config/plugins/vault/vault.db.backup"
+		usbBackupPath := daemonUSBBackupPath
 
 		var (
 			hybridMode      bool
@@ -109,7 +118,7 @@ var daemonCmd = &cobra.Command{
 					time.Duration(poolDetectionMaxAttempts)*poolDetectionInterval)
 			}
 			if attempt < poolDetectionMaxAttempts {
-				time.Sleep(poolDetectionInterval)
+				poolDetectionSleep(poolDetectionInterval)
 			}
 		}
 		poolRetryWait := time.Since(poolRetryStart)
@@ -592,14 +601,14 @@ var daemonCmd = &cobra.Command{
 		// below so it stops cleanly on SIGTERM.
 		var hbDir string
 		if hybridMode {
-			hbDir = "/var/local/vault"
+			hbDir = hybridWorkingDir
 		} else {
 			hbDir = filepath.Dir(dbPath)
 		}
 		hb := runner.NewHeartbeat(filepath.Join(hbDir, "heartbeat"), version, 30*time.Second)
 
 		// Listen for OS signals for graceful shutdown.
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		ctx, stop := shutdownNotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
 		hb.Start(ctx)
@@ -695,7 +704,7 @@ func init() {
 // vault.db.backup path is /boot/config/plugins/vault/vault.db.backup
 // on both kinds, so persistence behaviour is identical either way.
 func detectBootKind() string {
-	mi, err := os.ReadFile("/proc/self/mountinfo")
+	mi, err := os.ReadFile(bootKindMountInfo)
 	if err != nil {
 		return "unknown"
 	}
