@@ -3,6 +3,7 @@ package format
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 // TestBytes pins the single project-wide rendering contract. The values here
@@ -60,5 +61,58 @@ func TestBytesNonFinite(t *testing.T) {
 		if got := Bytes(v); got != "—" {
 			t.Errorf("Bytes(%v) = %q, want %q", v, got, "—")
 		}
+	}
+}
+
+func TestDuration(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{-time.Second, "—"},
+		{0, "<1s"},
+		{3 * time.Millisecond, "<1s"},
+		{999 * time.Millisecond, "<1s"},
+		{time.Second, "1.0s"},
+		{1049 * time.Millisecond, "1.0s"},
+		{1050 * time.Millisecond, "1.1s"},
+		{2400 * time.Millisecond, "2.4s"},
+		{59940 * time.Millisecond, "59.9s"},
+		{59960 * time.Millisecond, "1m0s"},
+		{time.Minute, "1m0s"},
+		{65*time.Second + 700*time.Millisecond, "1m6s"},
+		{11*time.Hour + 3*time.Minute, "11h3m0s"},
+	}
+	for _, tc := range cases {
+		if got := Duration(tc.d); got != tc.want {
+			t.Errorf("Duration(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestThroughput(t *testing.T) {
+	cases := []struct {
+		name   string
+		bytes  int64
+		d      time.Duration
+		want   string
+		wantOK bool
+	}{
+		{"sub-second restore is not rated", 1024, 3 * time.Millisecond, "", false},
+		{"just below the minimum", 10 << 30, 999 * time.Millisecond, "", false},
+		{"exactly the minimum", 10 << 20, time.Second, "10 MB/s", true},
+		{"fractional seconds divide precisely", 3 << 20, 1500 * time.Millisecond, "2 MB/s", true},
+		{"zero bytes", 0, time.Minute, "", false},
+		{"negative bytes", -5, time.Minute, "", false},
+		{"long transfer", 225 << 30, 11 * time.Hour, "5.8 MB/s", true},
+		{"very low rate", 10, 10 * time.Second, "1 B/s", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := Throughput(tc.bytes, tc.d)
+			if got != tc.want || ok != tc.wantOK {
+				t.Errorf("Throughput(%d, %v) = (%q, %v), want (%q, %v)", tc.bytes, tc.d, got, ok, tc.want, tc.wantOK)
+			}
+		})
 	}
 }

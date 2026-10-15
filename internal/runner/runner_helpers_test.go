@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
 )
@@ -445,7 +446,7 @@ func TestSendNotificationDisabled(t *testing.T) {
 		t.Fatalf("SetSetting: %v", err)
 	}
 	job := db.Job{Name: "off-job", NotifyOn: "always"}
-	r.sendNotification(job, "completed", 5, 0, 1024, 60, nil)
+	r.sendNotification(job, "completed", 5, 0, 1024, 60*time.Second, nil)
 }
 
 // TestSendNotificationNeverSuppresses covers the per-job "never" branch.
@@ -456,7 +457,7 @@ func TestSendNotificationNeverSuppresses(t *testing.T) {
 		t.Fatalf("SetSetting: %v", err)
 	}
 	job := db.Job{Name: "never-job", NotifyOn: "never"}
-	r.sendNotification(job, "failed", 0, 5, 0, 30, []string{"f1"})
+	r.sendNotification(job, "failed", 0, 5, 0, 30*time.Second, []string{"f1"})
 }
 
 // TestSendNotificationFailureBranch covers the "completed" + always-pref
@@ -469,9 +470,9 @@ func TestSendNotificationFailureBranch(t *testing.T) {
 		t.Fatalf("SetSetting: %v", err)
 	}
 	job := db.Job{Name: "alert-job", NotifyOn: "always"}
-	r.sendNotification(job, "completed", 3, 0, 4096, 12, nil)
-	r.sendNotification(job, "failed", 0, 3, 0, 1, []string{"x"})
-	r.sendNotification(job, "partial", 2, 1, 1024, 5, []string{"y"})
+	r.sendNotification(job, "completed", 3, 0, 4096, 12*time.Second, nil)
+	r.sendNotification(job, "failed", 0, 3, 0, 1*time.Second, []string{"x"})
+	r.sendNotification(job, "partial", 2, 1, 1024, 5*time.Second, []string{"y"})
 }
 
 // TestParseItemChecksumsValid covers the happy path of parseItemChecksums.

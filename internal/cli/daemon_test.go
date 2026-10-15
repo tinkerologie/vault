@@ -291,7 +291,7 @@ func TestApplyLogLevel(t *testing.T) {
 }
 
 func TestDaemonCmd_RunE_LogLevelApplied(t *testing.T) {
-	dir := t.TempDir()
+	dir := daemonTestDir(t)
 
 	prevWorkingDir := hybridWorkingDir
 	hybridWorkingDir = filepath.Join(dir, "hybrid")
@@ -336,6 +336,7 @@ func TestDaemonCmd_RunE_LogLevelApplied(t *testing.T) {
 	cmd.Flags().String("addr", "127.0.0.1:0", "Listen address")
 	cmd.Flags().String("tls-cert", filepath.Join(dir, "nonexistent.crt"), "TLS cert")
 	cmd.Flags().String("tls-key", filepath.Join(dir, "nonexistent.key"), "TLS key")
+	cmd.Flags().Bool("mdns", true, mdnsFlagUsage)
 
 	logx.SetLevelString("info")
 	_ = daemonCmd.RunE(cmd, nil)
@@ -344,4 +345,30 @@ func TestDaemonCmd_RunE_LogLevelApplied(t *testing.T) {
 		t.Errorf("expected logx level to be warn, got %q", logx.LevelString())
 	}
 	logx.SetLevelString("info")
+}
+
+// daemonTestDir returns a temporary directory for tests that run daemonCmd's
+// RunE. RunE can return while goroutines it started are still writing
+// snapshots into the tree, so t.TempDir's cleanup intermittently failed with
+// "directory not empty". Removal is retried briefly until those writers stop.
+func daemonTestDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "vault-daemon-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			err := os.RemoveAll(dir)
+			if err == nil || time.Now().After(deadline) {
+				if err != nil {
+					t.Errorf("removing %s after retries: %v", dir, err)
+				}
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+	return dir
 }
