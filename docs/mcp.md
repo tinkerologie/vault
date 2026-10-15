@@ -148,13 +148,13 @@ The MCP surface is intentionally curated rather than a 1:1 mirror of every REST 
 
 ### Status
 
-| Tool                 | Description                   |
-| -------------------- | ----------------------------- |
-| `get_health`         | Basic health check            |
-| `get_health_summary` | Dashboard health metrics      |
+| Tool                 | Description                                                                     |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `get_health`         | Basic health check                                                              |
+| `get_health_summary` | Dashboard health metrics                                                        |
 | `get_runner_status`  | Current backup/restore state, with phase, byte and file counters, rate, and ETA |
-| `get_activity_log`   | Recent activity log           |
-| `get_run_logs`       | Per-run streaming log entries |
+| `get_activity_log`   | Recent activity log                                                             |
+| `get_run_logs`       | Per-run streaming log entries                                                   |
 
 ### Restore
 

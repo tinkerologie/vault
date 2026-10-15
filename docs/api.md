@@ -223,16 +223,16 @@ Connect to `/api/v1/ws` for real-time event streaming. Events include:
 
 `GET /runner/status` and every `backup_progress` / `restore_progress` event describe the current item's work in its current phase:
 
-| Field                                       | Meaning                                                                                                    |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `phase`                                     | `scanning`, `preparing`, `processing`, `transferring`, `verifying`, or `finalizing`                        |
-| `phase_started_at`                          | When the phase began (RFC 3339)                                                                            |
-| `bytes_done` / `bytes_total`                | Bytes processed in this phase. A total of `0` means unknown                                                |
-| `files_done` / `files_total`                | Files processed in this phase. A total of `0` means unknown                                                |
+| Field                                       | Meaning                                                                                                     |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `phase`                                     | `scanning`, `preparing`, `processing`, `transferring`, `verifying`, or `finalizing`                         |
+| `phase_started_at`                          | When the phase began (RFC 3339)                                                                             |
+| `bytes_done` / `bytes_total`                | Bytes processed in this phase. A total of `0` means unknown                                                 |
+| `files_done` / `files_total`                | Files processed in this phase. A total of `0` means unknown                                                 |
 | `progress_determinate`                      | `true` when a total is known; `percent` (`current_item_percent` in the status) is then the phase percentage |
-| `rate_bytes_per_sec` / `rate_files_per_sec` | Smoothed rate, sampled at most once a second                                                               |
-| `eta_seconds`                               | Estimated seconds left in the phase; `0` until 30 s of the phase and 1% of its work have elapsed           |
-| `last_progress_at`                          | When work last moved; a stale value suggests the operation is stalled                                      |
+| `rate_bytes_per_sec` / `rate_files_per_sec` | Smoothed rate, sampled at most once a second                                                                |
+| `eta_seconds`                               | Estimated seconds left in the phase; `0` until 30 s of the phase and 1% of its work have elapsed            |
+| `last_progress_at`                          | When work last moved; a stale value suggests the operation is stalled                                       |
 
 Counters never move backward: a retried upload holds its previous high-water mark. Work beyond the expected total raises the total, and a phase reads at most 99% until the next phase starts. When no total is known (for example while scanning), `progress_determinate` is `false` and clients should show the phase and counters without a percentage. The fields are omitted when the daemon has no structured progress for the item.
 
