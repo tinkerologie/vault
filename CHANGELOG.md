@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ## [Unreleased]
 
 ### Changed
+
+- **Verification cost warning (#457):** the job form now warns when **Verify backups after writing** is on and the destination is remote: under the toggle, beside the destination in the express form, and on the review step. After every backup, Vault reads all the data that backup references back from that destination, including chunks reused from earlier backups, so a large backup can mean significant bandwidth and a long wait near 100%. S3 and S3-compatible destinations also note possible request, retrieval, or egress charges. The warning suggests scheduled verification for large backups.
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.
 - Dependabot also updates the Playwright end-to-end test dependencies (root `package.json`) and the Docker base images in the root `Dockerfile`.
 - Release workflows hardened (least-privilege job permissions, no expressions in shell scripts, no persisted checkout credentials, no dependency caches); scheduled workflows run on Australia/Brisbane time.

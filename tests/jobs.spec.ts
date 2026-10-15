@@ -124,6 +124,79 @@ test.describe('Jobs Management & Creation Wizard', () => {
     await expect(page.locator('main').getByText('Daily Media Containers')).toBeVisible();
   });
 
+  test.describe('per-backup verification cost warning (#457)', () => {
+    const warningTitle = 'Verification can read a large amount of data from this destination';
+
+    // Opens the wizard, picks a container, selects the destination and
+    // advances to step 3 where the verification toggle lives.
+    async function openVerificationStep(page, storageLabel: string) {
+      await page.goto('/#/jobs');
+      await page.getByRole('button', { name: /new job/i }).click();
+      await page.getByRole('button', { name: /Containers/i }).first().click();
+      await page.getByRole('button', { name: /plex/i }).first().click();
+      const nextBtn = page.getByRole('button', { name: 'Next', exact: true });
+      await nextBtn.click();
+      await page.locator('#storage').selectOption({ label: storageLabel });
+      await nextBtn.click();
+      const toggle = page.getByRole('checkbox', { name: 'Verify backups after writing' });
+      await expect(toggle).toBeAttached();
+      return toggle;
+    }
+
+    test('warns with provider cost note for S3 when verification is on', async ({ page }) => {
+      const toggle = await openVerificationStep(page, 'Offsite S3 (s3)');
+      await expect(toggle).toBeChecked();
+
+      await expect(page.getByText(warningTitle)).toBeVisible();
+      await expect(page.getByText(/charge for requests, retrieval, or egress/)).toBeVisible();
+      await expect(page.getByText(/including chunks reused from earlier backups/)).toBeVisible();
+      await expect(toggle).toHaveAccessibleDescription(new RegExp(warningTitle));
+    });
+
+    test('hides the warning when verification is turned off', async ({ page }) => {
+      const toggle = await openVerificationStep(page, 'Offsite S3 (s3)');
+      await expect(page.getByText(warningTitle)).toBeVisible();
+
+      await toggle.uncheck({ force: true });
+      await expect(toggle).not.toBeChecked();
+      await expect(page.getByText(warningTitle)).toHaveCount(0);
+      await expect(toggle).not.toHaveAccessibleDescription(new RegExp(warningTitle));
+    });
+
+    test('warns in the express full form, where there is no toggle', async ({ page }) => {
+      await page.goto('/#/jobs');
+      await page.getByRole('button', { name: /new job/i }).click();
+      await page.getByRole('button', { name: 'Switch to full form' }).click();
+
+      const storage = page.locator('#ex_storage');
+      await storage.selectOption({ label: 'Local Array Backup (local)' });
+      await expect(page.getByText(warningTitle)).toHaveCount(0);
+
+      await storage.selectOption({ label: 'Offsite S3 (s3)' });
+      await expect(page.getByText(warningTitle)).toBeVisible();
+      await expect(page.getByText(/under Backup Verification in the step-by-step form/)).toBeVisible();
+      await expect(storage).toHaveAccessibleDescription(new RegExp(warningTitle));
+    });
+
+    test('repeats the warning on the review step', async ({ page }) => {
+      await openVerificationStep(page, 'Offsite S3 (s3)');
+      await page.getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(page.getByLabel(/job name/i)).toBeVisible();
+      await expect(page.getByText(warningTitle)).toBeVisible();
+      await expect(page.getByText(/under Backup Verification in step 3/)).toBeVisible();
+    });
+
+    test('does not warn for a local destination', async ({ page }) => {
+      const toggle = await openVerificationStep(page, 'Local Array Backup (local)');
+      await expect(toggle).toBeChecked();
+      await expect(page.getByText(warningTitle)).toHaveCount(0);
+      await expect(toggle).toHaveAccessibleDescription(/validates SHA-256 checksums/);
+      await page.getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(page.getByLabel(/job name/i)).toBeVisible();
+      await expect(page.getByText(warningTitle)).toHaveCount(0);
+    });
+  });
+
   test('supports deleting a job with confirmation modal', async ({ page }) => {
     await page.goto('/#/jobs');
 
