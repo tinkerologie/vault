@@ -166,7 +166,7 @@ class PasswordHandlingTests(unittest.TestCase):
         self.assertEqual(rc, 0, output)
         self.assert_password_written(tasks)
         uploads = [event for event in commands if event["program"] == "sshpass"]
-        self.assertEqual(len(uploads), 11)
+        self.assertEqual(len(uploads), 12)  # 11 plugin files + rc.vault (#468)
         self.assertEqual(len({event["path"] for event in uploads}), 1)
         self.assertTrue(all(event["args"][2] == "scp" for event in uploads))
         destinations = [event["args"][-1].split(":", 1)[1] for event in uploads]
@@ -175,11 +175,13 @@ class PasswordHandlingTests(unittest.TestCase):
             "/usr/local/sbin/vault", plugin + "Vault.page", plugin + "Backups.page",
             plugin + "README.md", plugin + "include/api.php", plugin + "include/control.php",
             plugin + "include/app.php", plugin + "include/proxy.php", plugin + "include/apply.sh",
-            plugin + "event/", plugin + "ui/",
+            plugin + "event/", plugin + "ui/", "/etc/rc.d/rc.vault",
         ])
-        self.assertEqual(uploads[-1]["args"][3], "-r")
-        self.assertTrue(uploads[-2]["args"][-3].endswith("/plugin/event/started"))
-        self.assertTrue(uploads[-2]["args"][-2].endswith("/plugin/event/stopping_svcs"))
+        # rc.vault ships from plugin/rc.vault, the script the .plg installs (#468).
+        self.assertTrue(uploads[-1]["args"][-2].endswith("/plugin/rc.vault"))
+        self.assertEqual(uploads[-2]["args"][3], "-r")
+        self.assertTrue(uploads[-3]["args"][-3].endswith("/plugin/event/started"))
+        self.assertTrue(uploads[-3]["args"][-2].endswith("/plugin/event/stopping_svcs"))
 
     def test_verify_tunnel_and_included_tasks(self):
         rc, output, commands, tasks, port = self.run_role("verify")

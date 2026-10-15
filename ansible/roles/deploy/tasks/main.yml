@@ -308,7 +308,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/rc.vault
           {{ ansible_user }}@{{ ansible_host }}:{{ rc_script }}
