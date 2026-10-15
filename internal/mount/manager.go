@@ -357,21 +357,26 @@ func (m *Manager) runIdleSweeper(ctx context.Context) {
 		case <-m.stopSweeper:
 			return
 		case <-ticker.C:
-			timeout := m.getIdleTimeout()
-			if timeout <= 0 {
-				continue
-			}
-			active, err := m.ListActive()
-			if err != nil {
-				continue
-			}
-			now := time.Now()
-			for _, s := range active {
-				if now.Sub(s.LastActivityAt) > timeout {
-					log.Printf("INFO mount: session %d (%s) inactive for %v; unmounting", s.ID, s.MountPath, timeout)
-					_ = m.Unmount(ctx, s.ID)
-				}
-			}
+			m.sweepIdle(ctx, time.Now())
+		}
+	}
+}
+
+// sweepIdle unmounts every active session inactive for longer than the
+// configured idle timeout as of now. A timeout of 0 disables the sweep.
+func (m *Manager) sweepIdle(ctx context.Context, now time.Time) {
+	timeout := m.getIdleTimeout()
+	if timeout <= 0 {
+		return
+	}
+	active, err := m.ListActive()
+	if err != nil {
+		return
+	}
+	for _, s := range active {
+		if now.Sub(s.LastActivityAt) > timeout {
+			log.Printf("INFO mount: session %d (%s) inactive for %v; unmounting", s.ID, s.MountPath, timeout)
+			_ = m.Unmount(ctx, s.ID)
 		}
 	}
 }
@@ -515,7 +520,7 @@ func (m *Manager) MountRestorePointTo(ctx context.Context, jobID, rpID int64, ta
 		_ = m.db.UpdateMountSessionActivity(sessID)
 	}
 
-	handle, err := MountManifests(ctx, repo, manifests, mountDir, activityCallback)
+	handle, err := mountManifests(ctx, repo, manifests, mountDir, activityCallback)
 	if err != nil {
 		_ = m.db.UpdateMountSessionStatus(sessID, "failed", err.Error())
 		_ = os.Remove(mountDir)
@@ -633,3 +638,7 @@ func (m *Manager) Get(sessionID int64) (db.MountSession, error) {
 // platform outcome: unprivileged Linux reports EPERM even for a plain,
 // unmounted directory.
 var unmountPath = unmountPlatform
+
+// mountManifests starts the platform FUSE mount. A variable so tests can
+// exercise the manager's session lifecycle without a FUSE device.
+var mountManifests = MountManifests
