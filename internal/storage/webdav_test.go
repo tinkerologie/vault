@@ -1076,3 +1076,94 @@ func TestWebDAVMkdir403WithoutDirStaysFatal(t *testing.T) {
 		t.Fatal("Write should fail when MKCOL 403 targets a directory that does not exist")
 	}
 }
+
+// lockedRT answers MKCOL from a scripted list of statuses (or errors).
+type lockedRT struct {
+	statuses []int
+	errs     []error
+	calls    int
+}
+
+func (l *lockedRT) RoundTrip(*http.Request) (*http.Response, error) {
+	i := l.calls
+	l.calls++
+	if i < len(l.errs) && l.errs[i] != nil {
+		return nil, l.errs[i]
+	}
+	code := http.StatusLocked
+	if i < len(l.statuses) {
+		code = l.statuses[i]
+	}
+	return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+func TestMkcolLockedRetryEdges(t *testing.T) {
+	shortenMkcolLockedRetries(t)
+	locked := func() *http.Response {
+		return &http.Response{StatusCode: http.StatusLocked, Body: io.NopCloser(strings.NewReader(""))}
+	}
+	newReq := func(ctx context.Context, body io.Reader) *http.Request {
+		r, err := http.NewRequestWithContext(ctx, "MKCOL", "http://example.invalid/d/", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	t.Run("retry clears the lock", func(t *testing.T) {
+		rt := &lockedRT{statuses: []int{http.StatusMethodNotAllowed}}
+		resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(newReq(t.Context(), nil), locked())
+		if resp.StatusCode != http.StatusMethodNotAllowed || rt.calls != 1 {
+			t.Fatalf("status %d after %d calls, want 405 after 1", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("replayable body is re-sent", func(t *testing.T) {
+		rt := &lockedRT{statuses: []int{http.StatusLocked, http.StatusCreated}}
+		req := newReq(t.Context(), strings.NewReader("x")) // strings.Reader sets GetBody
+		resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(req, locked())
+		if resp.StatusCode != http.StatusCreated || rt.calls != 2 {
+			t.Fatalf("status %d after %d calls, want 201 after 2", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("non-replayable body is not retried", func(t *testing.T) {
+		rt := &lockedRT{}
+		req := newReq(t.Context(), nil)
+		req.Body = io.NopCloser(strings.NewReader("x"))
+		req.GetBody = nil
+		if resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(req, locked()); resp.StatusCode != http.StatusLocked || rt.calls != 0 {
+			t.Fatalf("status %d after %d calls, want 423 untouched", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("GetBody failure keeps the 423", func(t *testing.T) {
+		rt := &lockedRT{}
+		req := newReq(t.Context(), strings.NewReader("x"))
+		req.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("no replay") }
+		if resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(req, locked()); resp.StatusCode != http.StatusLocked || rt.calls != 0 {
+			t.Fatalf("status %d after %d calls, want 423 untouched", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("transport error keeps the 423", func(t *testing.T) {
+		rt := &lockedRT{errs: []error{errors.New("connection reset")}}
+		if resp, err := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(newReq(t.Context(), nil), locked()); err != nil || resp.StatusCode != http.StatusLocked {
+			t.Fatalf("got %v / %v, want the original 423 and no error", resp, err)
+		}
+	})
+	t.Run("cancelled context stops retrying", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		rt := &lockedRT{}
+		prev := mkcolLockedRetryDelays
+		mkcolLockedRetryDelays = []time.Duration{time.Hour}
+		defer func() { mkcolLockedRetryDelays = prev }()
+		if resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(newReq(ctx, nil), locked()); resp.StatusCode != http.StatusLocked || rt.calls != 0 {
+			t.Fatalf("status %d after %d calls, want 423 with no retry", resp.StatusCode, rt.calls)
+		}
+	})
+	t.Run("lock that never clears returns 423", func(t *testing.T) {
+		rt := &lockedRT{}
+		resp, _ := (&mkcolExistsTransport{base: rt}).retryLockedMkcol(newReq(t.Context(), nil), locked())
+		if resp.StatusCode != http.StatusLocked || rt.calls != len(mkcolLockedRetryDelays) {
+			t.Fatalf("status %d after %d calls, want 423 after %d", resp.StatusCode, rt.calls, len(mkcolLockedRetryDelays))
+		}
+	})
+}
