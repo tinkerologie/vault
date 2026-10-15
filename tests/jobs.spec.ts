@@ -160,6 +160,14 @@ test.describe('Jobs Management & Creation Wizard', () => {
       await expect(toggle).toHaveAccessibleDescription(describedBy(warningTitle));
     });
 
+    test('warns without the provider-charges note for a non-S3 remote destination', async ({ page }) => {
+      const toggle = await openVerificationStep(page, 'Backup NAS (sftp)');
+      await expect(toggle).toBeChecked();
+      await expect(page.getByText(warningTitle)).toBeVisible();
+      await expect(page.getByText(dedupScopeNote, { exact: true })).toBeVisible();
+      await expect(page.getByText(providerChargesNote, { exact: true })).toHaveCount(0);
+    });
+
     test('hides the warning when verification is turned off', async ({ page }) => {
       const toggle = await openVerificationStep(page, 'Offsite S3 (s3)');
       await expect(page.getByText(warningTitle)).toBeVisible();
