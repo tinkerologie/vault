@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Real-time progress (#456):** the dashboard and restore wizard show the current item's phase and the work actually done, such as "Uploading 84.2 GB / 225 GB — 37%", with the transfer rate, an estimated time left, and a "No progress for Xm" hint when an operation goes quiet. Remote uploads, verification read-back, and restore downloads report real byte counts across all of an item's files, instead of 0% for hours followed by a jump to 99%. A phase whose total is unknown shows its counters without a percentage. `GET /runner/status`, the `backup_progress` / `restore_progress` WebSocket events, and the MCP `get_runner_status` tool carry the new fields.
 - **Troubleshooting detail in run logs (#455):** backup and restore run logs now start with a "Run details" line (job, run, destination and storage type, restore point), time each stage of each item ("Phase upload completed for appdata in 4m12s"), and name the stage that failed. Retried storage requests, resumed streams, and restarted download parts each get a redacted warning line, capped at 20 per run. Item and summary lines report bytes stored, uploaded (including retries), read back, and restored, plus retry counts. Verification lines include bytes read and the time taken.
 
 ### Changed

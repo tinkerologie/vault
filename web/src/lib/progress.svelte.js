@@ -2,6 +2,7 @@
 
 import { formatBytes } from './utils.js'
 import { buildApiRequest } from './runtime-config.js'
+import { detailFrom } from './item-progress.js'
 
 // Global progress state – survives component mount/unmount cycles.
 let activeRun = $state(null) // { job_id, run_id, job_name, started_at, run_type }
@@ -12,7 +13,7 @@ let activeRun = $state(null) // { job_id, run_id, job_name, started_at, run_type
 // handleProgressMessage (item-message synthesis + job_run_started); cleared
 // only in job_run_completed.
 let running = $state(false)
-let currentItem = $state(null) // { name, item_type, percent, message }
+let currentItem = $state(null) // { name, item_type, percent, message, detail } — detail: see detailFrom (#456)
 let itemProgress = $state({}) // { item_name: { percent, message, item_type, status } }
 let overallDone = $state(0)
 let overallFailed = $state(0)
@@ -23,6 +24,12 @@ let jobQueue = $state([])
 let cancelling = $state(false)
 let _elapsedInterval = null
 let _completionTimer = null
+
+/** Spreads `{ detail }` only when there is one, so items without structured
+ *  progress keep their original shape. */
+function withDetail(detail) {
+  return detail ? { detail } : {}
+}
 
 function defaultProgressMessage(runType) {
   return runType === 'restore' ? 'Preparing restore...' : 'In progress...'
@@ -75,6 +82,7 @@ export function restoreFromStatus(status) {
       item_type: status.current_item_type || '',
       percent: status.current_item_percent || 0,
       message: status.current_item_message || defaultProgressMessage(status.run_type),
+      ...withDetail(detailFrom(status)),
     }
     itemProgress = {
       [status.current_item]: {
@@ -130,6 +138,9 @@ export function syncFromStatus(status) {
       item_type: status.current_item_type || existing.item_type || (isSameItem ? currentItem?.item_type : '') || '',
       percent: status.current_item_percent ?? existing.percent ?? (isSameItem ? currentItem?.percent : 0) ?? 0,
       message: status.current_item_message || existing.message || (isSameItem ? currentItem?.message : '') || defaultProgressMessage(status.run_type),
+      // The daemon clears detail when the item changes, so the snapshot is
+      // authoritative; a detail from the previous item never carries over.
+      ...withDetail(detailFrom(status)),
     }
     itemProgress = {
       ...itemProgress,
@@ -438,6 +449,8 @@ export function handleProgressMessage(msg, jobNameResolver) {
           percent: msg.percent,
           message: msg.message,
           item_type: msg.item_type || currentItem.item_type,
+          // Older daemons send no phase: keep what we had rather than blank it.
+          ...withDetail(detailFrom(msg) ?? currentItem.detail),
         }
       } else if (!currentItem && msg.item) {
         currentItem = {
@@ -445,6 +458,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
           item_type: msg.item_type || '',
           percent: msg.percent,
           message: msg.message,
+          ...withDetail(detailFrom(msg)),
         }
       }
       return true
