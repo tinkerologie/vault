@@ -615,4 +615,3 @@ describe('itemTypeCountLabel with itemType', () => {
     expect(itemTypeCountLabel(4, '')).toBe('4 items')
   })
 })
-
