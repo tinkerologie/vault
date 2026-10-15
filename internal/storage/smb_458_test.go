@@ -376,3 +376,15 @@ func TestSMB458_ConnectFnErrorPropagates(t *testing.T) {
 		t.Errorf("RemoveEmptyDir err = %v", err)
 	}
 }
+
+func TestAsSMBFile458(t *testing.T) {
+	// An error must yield a nil interface, so callers' f != nil checks hold.
+	if f, err := asSMBFile(nil, errSMBBoom); f != nil || !errors.Is(err, errSMBBoom) {
+		t.Fatalf("error case = (%v, %v), want (nil, boom)", f, err)
+	}
+	real := &smb2.File{}
+	f, err := asSMBFile(real, nil)
+	if err != nil || f != smbFile(real) {
+		t.Fatalf("success case = (%v, %v), want the same file", f, err)
+	}
+}

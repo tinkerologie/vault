@@ -346,8 +346,12 @@ func (m *Manager) getIdleTimeout() time.Duration {
 	return time.Duration(mins) * time.Minute
 }
 
+// idleSweepInterval is how often the idle sweeper runs. A variable only so
+// tests can shorten it.
+var idleSweepInterval = time.Minute
+
 func (m *Manager) runIdleSweeper(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(idleSweepInterval)
 	defer ticker.Stop()
 
 	for {

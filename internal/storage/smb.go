@@ -63,16 +63,13 @@ type smbSession interface {
 // wrapping because they return the concrete *smb2.File.
 type smb2Share struct{ *smb2.Share }
 
-func (s smb2Share) Create(name string) (smbFile, error) {
-	f, err := s.Share.Create(name)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
-}
+func (s smb2Share) Create(name string) (smbFile, error) { return asSMBFile(s.Share.Create(name)) }
 
-func (s smb2Share) Open(name string) (smbFile, error) {
-	f, err := s.Share.Open(name)
+func (s smb2Share) Open(name string) (smbFile, error) { return asSMBFile(s.Share.Open(name)) }
+
+// asSMBFile converts go-smb2's concrete result to smbFile. On error it
+// returns a nil interface, never a non-nil interface holding a nil *smb2.File.
+func asSMBFile(f *smb2.File, err error) (smbFile, error) {
 	if err != nil {
 		return nil, err
 	}

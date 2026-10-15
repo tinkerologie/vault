@@ -395,3 +395,65 @@ func TestManager458_BroadcastUnmarshalableIsDropped(t *testing.T) {
 	mgr.broadcast("x", make(chan int)) // json.Marshal fails; must not panic or send
 	mgr.broadcast("y", map[string]any{"ok": true})
 }
+
+// The sweeper goroutine itself runs sweepIdle on every tick.
+func TestManager458_IdleSweeperTicks(t *testing.T) {
+	_, _, _ = redirectRoots(t)
+	f := newMount458Fixture(t)
+	mid := f.putManifest(t, "")
+	rpID := f.restorePoint(t, db.RestorePoint{ManifestID: mid[:]})
+	stubMountManifests(t, func(_ context.Context, _ *dedup.Repo, _ map[string]dedup.Manifest, p string, _ func()) (MountHandle, error) {
+		return &fakeHandle{path: p}, nil
+	})
+	stubUnmount(t, func(string) error { return nil })
+	prev := idleSweepInterval
+	idleSweepInterval = 5 * time.Millisecond
+	t.Cleanup(func() { idleSweepInterval = prev })
+
+	mgr := NewManager(f.d, nil, f.serverKey)
+	mgr.SetBaseMountDir(filepath.Join(f.dir, "mnt"))
+	sess, err := mgr.MountRestorePoint(context.Background(), f.jobID, rpID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.d.SetSetting("fuse_mount_idle_minutes", "5")
+	if _, err := f.d.Exec(`UPDATE mount_sessions SET last_activity_at = ? WHERE id = ?`, time.Now().UTC().Add(-time.Hour), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { mgr.runIdleSweeper(ctx); close(done) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		active, err := mgr.ListActive()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(active) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("idle session still active after the sweeper ran")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+}
+
+// A database error while listing sessions skips the sweep.
+func TestManager458_SweepIdleListError(t *testing.T) {
+	_, _, _ = redirectRoots(t)
+	d, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewManager(d, nil, nil)
+	_ = d.Close()
+	stubUnmount(t, func(string) error {
+		t.Error("unmount called despite the list error")
+		return nil
+	})
+	mgr.sweepIdle(context.Background(), time.Now().Add(time.Hour))
+}

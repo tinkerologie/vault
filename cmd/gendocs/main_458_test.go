@@ -91,3 +91,25 @@ func TestRepoRoot(t *testing.T) {
 		t.Fatalf("repoRoot %q has no go.mod: %v", root, err)
 	}
 }
+
+// main writes the pages under the repository root's outSubdir; pointing that
+// at a temp dir (as a path relative to the root) exercises the real entrypoint.
+func TestMain_WritesToOutSubdir(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		t.Skipf("temp dir not reachable from the repo root: %v", err)
+	}
+	prev := outSubdir
+	outSubdir = rel
+	t.Cleanup(func() { outSubdir = prev })
+	main()
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("main wrote %d entries (%v), want the reference pages", len(entries), err)
+	}
+}
