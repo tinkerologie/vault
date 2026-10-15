@@ -207,12 +207,8 @@ func (s *Service) Start(ctx context.Context) {
 
 // String describes the advertisement for logs.
 func (a advertisement) String() string {
-	switch {
-	case a.ip != nil && len(a.ifaces) > 0:
+	if a.ip != nil {
 		return fmt.Sprintf("address %s on %v", a.ip, a.ifaces)
-	case a.ip != nil:
-		return fmt.Sprintf("address %s on all multicast interfaces", a.ip)
-	default:
-		return fmt.Sprintf("interface addresses on %v", a.ifaces)
 	}
+	return fmt.Sprintf("interface addresses on %v", a.ifaces)
 }

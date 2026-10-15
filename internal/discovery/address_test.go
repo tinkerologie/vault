@@ -148,7 +148,7 @@ func TestAdvertisedAddrs(t *testing.T) {
 		{"specific lan ip", "192.0.2.10", true, "192.0.2.10", []string{"br0"}},
 		{"specific ipv6", "2001:db8::10", true, "2001:db8::10", []string{"br0"}},
 		{"specific ip on vpn", "100.64.0.5", true, "100.64.0.5", []string{"tailscale1"}},
-		{"ip no interface owns", "192.0.2.99", true, "192.0.2.99", nil},
+		{"ip no interface owns", "192.0.2.99", false, "", nil},
 		{"wildcard empty", "", true, "", wildcard},
 		{"wildcard ipv4", "0.0.0.0", true, "", wildcard},
 		{"wildcard ipv6", "::", true, "", wildcard},

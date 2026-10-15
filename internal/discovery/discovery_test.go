@@ -153,7 +153,6 @@ func TestAdvertisementString(t *testing.T) {
 		want string
 	}{
 		{advertisement{ip: ip, ifaces: []string{"br0"}}, "address 192.0.2.10 on [br0]"},
-		{advertisement{ip: ip}, "address 192.0.2.10 on all multicast interfaces"},
 		{advertisement{ifaces: []string{"br0", "eth1"}}, "interface addresses on [br0 eth1]"},
 	}
 	for _, tc := range cases {

@@ -162,10 +162,10 @@ func listenerIP(ips []net.IP) net.IP {
 // advertisement is where and what Vault publishes for its bind address.
 type advertisement struct {
 	// ip, when set, is the only address published (specific-IP or resolved
-	// host-name binds). When nil, each interface publishes its own addresses.
+	// host-name binds), on the one interface that owns it. When nil, each
+	// interface publishes its own addresses.
 	ip net.IP
-	// ifaces restricts publication to these interface names. Empty means
-	// every multicast-capable interface.
+	// ifaces restricts publication to these interface names.
 	ifaces []string
 }
 
@@ -173,8 +173,8 @@ type advertisement struct {
 // advertised records match where the API actually listens and every
 // interface only carries addresses reachable on its own link:
 //
-//   - Specific IP: only that IP, on the interface that owns it. When no
-//     interface owns the IP it is published on every multicast interface.
+//   - Specific IP: only that IP, on the interface that owns it. An IP no
+//     local interface owns cannot be listened on, so nothing is published.
 //   - Host name: resolved the way the listener resolves it, then treated as
 //     a specific IP. A name that resolves to loopback publishes nothing.
 //   - Wildcard ("", 0.0.0.0, ::): every up, multicast-capable, non-loopback
@@ -212,7 +212,7 @@ func advertisedAddrs(ctx context.Context, bindHost string, list interfaceLister,
 				}
 			}
 		}
-		return advertisement{ip: ip}, true, nil
+		return advertisement{}, false, nil
 	}
 
 	for _, e := range entries {
