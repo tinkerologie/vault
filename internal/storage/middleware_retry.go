@@ -57,6 +57,9 @@ func (r *retryAdapter) do(name, object string, fn func() error) error {
 		retrying := attempt < r.policy.MaxAttempts
 		r.diag.recordTransient(name, object, attempt, r.policy.MaxAttempts, err, retrying)
 		if !retrying {
+			if r.diag != nil {
+				return &recordedError{err}
+			}
 			return err
 		}
 		d := r.backoff(attempt)

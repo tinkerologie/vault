@@ -147,7 +147,9 @@ func transportCompressReader(compression string, src io.Reader) (io.ReadCloser, 
 		return nil, fmt.Errorf("unsupported transport compression %q", compression)
 	}
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		// A compressor panic must surface as a read error on the pipe, not
 		// kill the daemon (issue #239).
 		defer func() {
@@ -163,5 +165,20 @@ func transportCompressReader(compression string, src io.Reader) (io.ReadCloser, 
 		_ = pw.CloseWithError(copyErr)
 	}()
 
-	return pr, nil
+	return &joinedPipeReader{PipeReader: pr, done: done}, nil
+}
+
+// joinedPipeReader closes the compressed stream and waits for the compressor
+// goroutine to stop. Closing the pipe alone returns while that goroutine may
+// still be reading the source, so a retried upload could otherwise reopen the
+// file while the previous attempt is still counting its bytes (#456).
+type joinedPipeReader struct {
+	*io.PipeReader
+	done chan struct{}
+}
+
+func (r *joinedPipeReader) Close() error {
+	err := r.PipeReader.Close()
+	<-r.done
+	return err
 }

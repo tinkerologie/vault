@@ -205,3 +205,40 @@ func TestResumableReaderRecordsFailedOpen(t *testing.T) {
 		t.Fatalf("events = %+v, want one ReadRange retry of obj", events)
 	}
 }
+
+// TestNestedRetryCountsExhaustedFailureOnce guards Copilot's review on #491:
+// when the retry middleware exhausts its attempts on a ReadRange open and the
+// resumable reader retries, the failure must not be counted twice.
+func TestNestedRetryCountsExhaustedFailureOnce(t *testing.T) {
+	want := []byte("payload")
+	inner := &failingOpens{remaining: 2, data: want} // both middleware attempts fail once
+	d := NewDiagStats(nil, 0)
+	chain := withRetry(inner, RetryPolicy{MaxAttempts: 2}, d)
+	rr := NewResumableReader(WithDiagStats(t.Context(), d), chain, "obj", int64(len(want)), RetryPolicy{MaxAttempts: 3})
+	got, err := io.ReadAll(rr)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("ReadAll = %q, %v", got, err)
+	}
+	s := d.Snapshot()
+	// Middleware: 2 transient failures, 1 retry. Reader: 1 retry, no new transient.
+	if s.TransientErrors != 2 || s.Retries != 2 {
+		t.Fatalf("snapshot = %+v, want 2 transient errors and 2 retries (no double count)", s)
+	}
+	if err := (&recordedError{io.ErrUnexpectedEOF}); !errors.Is(err, io.ErrUnexpectedEOF) || err.Error() != io.ErrUnexpectedEOF.Error() || !classify(err) {
+		t.Fatal("recordedError must stay transparent to errors.Is, Error and classify")
+	}
+}
+
+type failingOpens struct {
+	mockAdapter
+	remaining int
+	data      []byte
+}
+
+func (f *failingOpens) ReadRange(_ string, offset, length int64) (io.ReadCloser, error) {
+	if f.remaining > 0 {
+		f.remaining--
+		return nil, &retryableError{err: errors.New("connection refused")}
+	}
+	return io.NopCloser(bytes.NewReader(f.data[offset : offset+length])), nil
+}
