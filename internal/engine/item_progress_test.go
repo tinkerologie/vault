@@ -191,3 +191,27 @@ func TestFolderClassicBackupReportsArchiveProgress(t *testing.T) {
 		t.Fatalf("archive report = %+v ok=%v, want 100000/100000 bytes and 2 files", d, ok)
 	}
 }
+
+// Byte reports from tight copy loops are coalesced at the source; file
+// completions and the final byte count always go through.
+func TestItemProgressCoalescesByteReports(t *testing.T) {
+	var reports int
+	ctx := WithDetailReporter(t.Context(), func(string, ProgressDetail) { reports++ })
+	_, p := withItemProgress(ctx, "x", PhaseProcessing, 1<<30, 0) // phase start: 1 report
+	for range 1000 {
+		p.addBytes(32 << 10)
+	}
+	if reports > 3 {
+		t.Fatalf("%d reports for 1000 back-to-back chunks, want them coalesced", reports)
+	}
+	before := reports
+	p.addFile()
+	if reports != before+1 {
+		t.Fatal("file completion was not reported immediately")
+	}
+	before = reports
+	p.addBytes(1<<30 - p.bytes.Load()) // reaches the total
+	if reports != before+1 {
+		t.Fatal("final byte report was coalesced away")
+	}
+}
