@@ -24,27 +24,42 @@ type retryAdapter struct {
 	inner  Adapter
 	policy RetryPolicy
 	sleep  func(time.Duration)
+	diag   *DiagStats // optional; nil records nothing
 }
 
 // withRetry wraps inner with a retrying adapter that uses the given policy.
 // Transient errors (as determined by classify) are retried with jittered
-// exponential backoff; fatal errors fail immediately.
-func withRetry(inner Adapter, p RetryPolicy) Adapter {
+// exponential backoff; fatal errors fail immediately. Transient failures and
+// retry attempts are recorded into diag, which may be nil.
+func withRetry(inner Adapter, p RetryPolicy, diag *DiagStats) Adapter {
 	if p.MaxAttempts <= 1 {
 		p.MaxAttempts = 1
 	}
-	return &retryAdapter{inner: inner, policy: p, sleep: time.Sleep}
+	return &retryAdapter{inner: inner, policy: p, sleep: time.Sleep, diag: diag}
 }
 
-// do executes op, retrying on transient errors up to policy.MaxAttempts times.
-func (r *retryAdapter) do(label string, op func() error) error {
+// do executes fn, retrying on transient errors up to policy.MaxAttempts
+// times. name is the operation ("Read") and object its path ("" for none).
+func (r *retryAdapter) do(name, object string, fn func() error) error {
+	label := name
+	if object != "" {
+		label += " " + object
+	}
 	var err error
 	for attempt := 1; attempt <= r.policy.MaxAttempts; attempt++ {
-		err = op()
+		err = fn()
 		if err == nil {
 			return nil
 		}
-		if !classify(err) || attempt == r.policy.MaxAttempts {
+		if !classify(err) {
+			return err
+		}
+		retrying := attempt < r.policy.MaxAttempts
+		r.diag.recordTransient(name, object, attempt, r.policy.MaxAttempts, err, retrying)
+		if !retrying {
+			if r.diag != nil {
+				return &recordedError{err}
+			}
 			return err
 		}
 		d := r.backoff(attempt)
@@ -90,18 +105,18 @@ func (r *retryAdapter) Write(p string, reader io.Reader) error {
 // WriteFrom retries the write on transient failures. open() is invoked once
 // per attempt so each attempt starts with a fresh stream from the beginning.
 func (r *retryAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) error {
-	return r.do("WriteFrom "+p, func() error { return r.inner.WriteFrom(p, open) })
+	return r.do("WriteFrom", p, func() error { return r.inner.WriteFrom(p, open) })
 }
 
 func (r *retryAdapter) Read(p string) (io.ReadCloser, error) {
 	var rc io.ReadCloser
-	err := r.do("Read "+p, func() error { var e error; rc, e = r.inner.Read(p); return e })
+	err := r.do("Read", p, func() error { var e error; rc, e = r.inner.Read(p); return e })
 	return rc, err
 }
 
 func (r *retryAdapter) ReadRange(p string, off, length int64) (io.ReadCloser, error) {
 	var rc io.ReadCloser
-	err := r.do("ReadRange "+p, func() error {
+	err := r.do("ReadRange", p, func() error {
 		var e error
 		rc, e = r.inner.ReadRange(p, off, length)
 		return e
@@ -110,23 +125,23 @@ func (r *retryAdapter) ReadRange(p string, off, length int64) (io.ReadCloser, er
 }
 
 func (r *retryAdapter) Delete(p string) error {
-	return r.do("Delete "+p, func() error { return r.inner.Delete(p) })
+	return r.do("Delete", p, func() error { return r.inner.Delete(p) })
 }
 
 func (r *retryAdapter) List(prefix string) ([]FileInfo, error) {
 	var out []FileInfo
-	err := r.do("List "+prefix, func() error { var e error; out, e = r.inner.List(prefix); return e })
+	err := r.do("List", prefix, func() error { var e error; out, e = r.inner.List(prefix); return e })
 	return out, err
 }
 
 func (r *retryAdapter) Stat(p string) (FileInfo, error) {
 	var fi FileInfo
-	err := r.do("Stat "+p, func() error { var e error; fi, e = r.inner.Stat(p); return e })
+	err := r.do("Stat", p, func() error { var e error; fi, e = r.inner.Stat(p); return e })
 	return fi, err
 }
 
 func (r *retryAdapter) TestConnection() error {
-	return r.do("TestConnection", func() error { return r.inner.TestConnection() })
+	return r.do("TestConnection", "", func() error { return r.inner.TestConnection() })
 }
 
 // GetCapacity passes through without retry; callers control deadline via ctx.

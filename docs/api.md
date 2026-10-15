@@ -128,6 +128,16 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 
 Run log durations keep sub-second precision: messages show `<1s`, `2.4s`, or `1m5s`, and the structured `data` carries `duration_ms` beside the existing `duration_seconds`. A transfer rate is only reported for operations that take at least one second. A rate also needs a positive `size_bytes`. A run of at least one second that moved data sets `data.throughput_bytes_per_sec`. A shorter run that moved data says `throughput not calculated: duration below 1.0s` and sets `data.throughput_not_calculated`. A zero-byte run omits both fields. The web UI and Discord notifications apply the same one-second rule.
 
+Each backup and restore run log also records:
+
+- **Run details**: one line with the job name and ID, run ID, destination name and storage type, item count, and (restores) the restore point ID.
+- **Phase lines**: one line per stage per item, for example `Phase upload completed for appdata in 4m12s`, with `data.phase`, `data.item_name`, `data.duration_ms`, and byte fields where measured. Backup stages are `stage`, `upload`, `dedup store`, and `verify`; restore stages are `download` and `extract` (classic) or `open repository` and `restore` (deduplicated). A failed stage logs `Phase <name> failed for <item> after <duration>` at error level, which shows where the operation stopped.
+- **Retries**: each recovered storage failure (a retried request, a resumed stream, or a restarted download part) is a warning line naming the operation, the object's file name, and the attempt, for example `Transient storage error on ReadRange data.tar.zst (attempt 2/5), retrying: connection reset`. Error text is redacted: credentials are masked and URLs are cut to scheme and host. After 20 such lines a single "further storage retry events suppressed" notice is written; the totals are still counted.
+- **Measured bytes**, each under its own field: `stored_bytes` (what landed on the destination), `bytes_uploaded` (including retried attempts), `logical_bytes` and `duplicate_chunks` (deduplicated backups), `bytes_read` (read back from storage), `files_restored`, `retries`, and `resumes`. Verification lines include the bytes read and the time taken.
+- **Summary totals**: `read=`, `retries=`, and `transient_errors=` are appended to the final line when storage was read or retried. Restore summaries also name the job and destination.
+
+A restore of selected files reports the size it actually wrote (`size_source: "restored"`). A whole-item restore keeps reporting the size recorded at backup time (`size_source: "recorded item size"`).
+
 ## History
 
 | Method | Endpoint   | Description                                      |

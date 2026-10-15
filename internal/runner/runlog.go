@@ -110,7 +110,8 @@ func runSummaryMessage(kind, jobName, status string, done, failed, total int, si
 	}
 	// Include the job name on the summary line so the terminal "finished" log
 	// carries the same job identity as the "started" line (#328 r9). Restore
-	// summaries pass an empty jobName and keep the job-less wording.
+	// summaries pass the job name too (#455); an empty jobName keeps the
+	// job-less wording.
 	if jobName != "" {
 		message = fmt.Sprintf(
 			"%s finished, job=%q, status=%s, items=%d/%d, failed=%d, size=%s, duration=%s",
