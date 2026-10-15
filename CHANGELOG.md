@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Unrealistic transfer rates for short operations (#455):** a backup or restore that finishes in under a second no longer reports rates like "10000 GB/s". Run logs, Discord notifications, History and the Activity timeline only show a rate for operations of at least one second, and divide by precise elapsed time rather than whole seconds. Run logs show sub-second durations as `<1s` (or `2.4s`) instead of `0s`, and their data includes `duration_ms`.
+
 - **Logs page unresponsiveness and freeze when loading older entries (#454):** Fixed microtask starvation caused by concurrent older-page requests during initial mount and background loading loops (`loadAll` and search). Active older-load requests now share the in-flight Promise across callers, older requests are bound to the store context sequence to discard stale responses, and background loading loops terminate when no progress is made. Also added a store `dispose()` method, called from the synchronous `onMount` cleanup in `Logs.svelte`, to abort background activity on page navigation. Closes #454.
 
 ## [v2026.10.00] - 2026-10-07

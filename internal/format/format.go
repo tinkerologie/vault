@@ -1,5 +1,5 @@
 // Package format holds the project's single rendering contract for values
-// that reach an operator — currently byte counts.
+// that reach an operator — byte counts, durations, and transfer rates.
 //
 // It exists because the same number was being rendered three different ways:
 // notifications divided by 1024 twice and printed "%.1f MB" (so a 2 TB backup
@@ -14,7 +14,42 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// MinThroughputDuration is the shortest operation a transfer rate is shown
+// for. Below it, timer resolution and fixed overheads dominate and a rate is
+// meaningless (a tiny restore finishing in a few milliseconds would report
+// thousands of GB/s, #455). The web UI's formatSpeed applies the same limit.
+const MinThroughputDuration = time.Second
+
+// Duration renders an elapsed time for run logs without hiding sub-second
+// work: "<1s" below one second, one decimal place below a minute ("2.4s"),
+// and whole seconds above that ("1m5s", Go duration style). Values round to
+// the nearest step, like the web UI's formatDuration; the web UI shows whole
+// seconds and a space ("1m 5s") because it has less room.
+func Duration(d time.Duration) string {
+	switch {
+	case d < 0:
+		return "—"
+	case d < time.Second:
+		return "<1s"
+	}
+	if tenths := math.Round(d.Seconds() * 10); tenths < 600 {
+		return strconv.FormatFloat(tenths/10, 'f', 1, 64) + "s"
+	}
+	return d.Round(time.Second).String()
+}
+
+// Throughput renders bytes moved over d as a rate such as "31.2 MB/s",
+// dividing by fractional seconds. ok is false — and no rate should be shown —
+// when nothing moved or d is shorter than MinThroughputDuration.
+func Throughput(bytes int64, d time.Duration) (rate string, ok bool) {
+	if bytes <= 0 || d < MinThroughputDuration {
+		return "", false
+	}
+	return Bytes(float64(bytes)/d.Seconds()) + "/s", true
+}
 
 // Bytes renders a byte count as an adaptive, human-friendly string
 // (B / KB / MB / GB / TB / PB), matching the web UI's formatBytes helper:

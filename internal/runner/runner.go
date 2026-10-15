@@ -1625,15 +1625,18 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			// would read as a duplicate (issue #328 QA). Only narrate per-item
 			// completion when there are 2+ items, where each line is distinct.
 			if len(items) > 1 {
+				itemElapsed := time.Since(itemStart)
 				r.runLog(runID, runLogLevelInfo,
 					fmt.Sprintf("Backed up %s (%s), size=%s, duration=%s, item=%d/%d",
-						item.ItemName, item.ItemType, format.Bytes(float64(itemSize)), time.Since(itemStart).Truncate(time.Second), itemsProcessed, len(items)),
+						item.ItemName, item.ItemType, format.Bytes(float64(itemSize)), format.Duration(itemElapsed), itemsProcessed, len(items)),
 					map[string]any{
-						"item_name":   item.ItemName,
-						"item_type":   item.ItemType,
-						"size_bytes":  itemSize,
-						"items_total": len(items),
-						"items_done":  itemsDone,
+						"item_name":        item.ItemName,
+						"item_type":        item.ItemType,
+						"size_bytes":       itemSize,
+						"items_total":      len(items),
+						"items_done":       itemsDone,
+						"duration_seconds": int(itemElapsed.Seconds()),
+						"duration_ms":      itemElapsed.Milliseconds(),
 					})
 			}
 
@@ -1888,14 +1891,16 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 					"size_bytes":  itemSize,
 					"verified":    job.VerifyBackup,
 				})
+				uploadElapsed := time.Since(uploadStart)
 				r.runLog(runID, runLogLevelInfo,
 					fmt.Sprintf("Uploaded %s (%s), size=%s, duration=%s, item=%d/%d",
-						s.dbItem.ItemName, s.dbItem.ItemType, format.Bytes(float64(itemSize)), time.Since(uploadStart).Truncate(time.Second), itemsDone, len(items)),
+						s.dbItem.ItemName, s.dbItem.ItemType, format.Bytes(float64(itemSize)), format.Duration(uploadElapsed), itemsDone, len(items)),
 					map[string]any{
 						"item_name":        s.dbItem.ItemName,
 						"item_type":        s.dbItem.ItemType,
 						"size_bytes":       itemSize,
-						"duration_seconds": int(time.Since(uploadStart).Seconds()),
+						"duration_seconds": int(uploadElapsed.Seconds()),
+						"duration_ms":      uploadElapsed.Milliseconds(),
 					})
 			}
 			_ = r.db.UpdateJobRunProgress(runID, itemsDone, itemsFailed, totalSize)
@@ -2201,12 +2206,12 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	localDone := itemsDone
 	localFailed := itemsFailed
 	localSize := totalSize
-	localDurationSec := int(time.Since(jobStart).Seconds())
+	localDuration := time.Since(jobStart)
 	localFailedNames := failedNames
 	// notify.Send is already bounded internally (30s exec timeout), so the
 	// step context is unused here.
 	r.runFinalizationStep("notify", jobID, runID, finalizeNotifyTimeout, func(context.Context) {
-		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDurationSec, localFailedNames)
+		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDuration, localFailedNames)
 	})
 }
 
@@ -3339,12 +3344,13 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 				dur := time.Since(upStart)
 				r.runLog(runID, runLogLevelInfo,
 					fmt.Sprintf("Uploaded %s, file=%s, size=%s, duration=%s",
-						itemName, storageName, format.Bytes(float64(fileSize)), dur.Truncate(time.Second)),
+						itemName, storageName, format.Bytes(float64(fileSize)), format.Duration(dur)),
 					map[string]any{
 						"item_name":        itemName,
 						"file":             storageName,
 						"size_bytes":       fileSize,
 						"duration_seconds": int(dur.Seconds()),
+						"duration_ms":      dur.Milliseconds(),
 					})
 			}
 			if storageName != "" {
@@ -3899,7 +3905,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 				"items_failed": itemsFailed,
 				"items_total":  len(targets),
 			})
-			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds())}
+			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds()), "duration_ms": elapsed.Milliseconds()}
 			if size, known := itemSizes[t.Name]; known {
 				restoredBytes += size
 				restoredSizesKnown++
@@ -3907,7 +3913,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 				okDetails["size_bytes"] = size
 			}
 			r.runLog(runID, runLogLevelInfo,
-				fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, elapsed.Truncate(time.Second)),
+				fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, format.Duration(elapsed)),
 				okDetails)
 		}
 
@@ -5126,10 +5132,17 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 			// downloads are few per item (archive + sidecars); the chunked
 			// restore path narrates per-file via its own -1 heartbeats,
 			// which mirrorEngineMilestone drops.
+			dlElapsed := time.Since(dlStart)
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Downloaded %s, file=%s, size=%s, duration=%s",
-					itemName, filepath.Base(fi.Path), format.Bytes(float64(fi.Size)), time.Since(dlStart).Truncate(time.Second)),
-				map[string]any{"item_name": itemName, "file": filepath.Base(fi.Path), "size_bytes": fi.Size})
+					itemName, filepath.Base(fi.Path), format.Bytes(float64(fi.Size)), format.Duration(dlElapsed)),
+				map[string]any{
+					"item_name":        itemName,
+					"file":             filepath.Base(fi.Path),
+					"size_bytes":       fi.Size,
+					"duration_seconds": int(dlElapsed.Seconds()),
+					"duration_ms":      dlElapsed.Milliseconds(),
+				})
 		}(fi)
 	}
 	wg.Wait()
@@ -5435,7 +5448,7 @@ func (r *Runner) logActivity(level, category, message, details string) {
 // sendNotification dispatches Unraid notifications based on job outcome and the
 // job's notify_on preference ("always", "failure", "never").
 // It also respects the global notifications_enabled setting.
-func (r *Runner) sendNotification(job db.Job, status string, done, failed int, sizeBytes int64, durationSec int, failedNames []string) {
+func (r *Runner) sendNotification(job db.Job, status string, done, failed int, sizeBytes int64, duration time.Duration, failedNames []string) {
 	// Check global notification switch first.
 	globalEnabled, _ := r.db.GetSetting("notifications_enabled", docsmeta.DefaultFor("notifications_enabled"))
 	if globalEnabled != "true" {
@@ -5474,7 +5487,7 @@ func (r *Runner) sendNotification(job db.Job, status string, done, failed int, s
 	if webhookURL != "" && discordPref != "never" {
 		shouldSend := discordPref == "always" || (discordPref == "failure" && status != "completed")
 		if shouldSend {
-			embed := r.buildDiscordEmbed(job.Name, status, done, failed, sizeBytes, durationSec, failedNames)
+			embed := r.buildDiscordEmbed(job.Name, status, done, failed, sizeBytes, duration, failedNames)
 			opts := r.discordOptions(status)
 			go func() {
 				if err := notify.SendDiscord(webhookURL, embed, opts); err != nil {
@@ -5516,7 +5529,7 @@ func shouldMentionDiscord(mentionOn, status string) bool {
 	}
 }
 
-func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, sizeBytes int64, durationSec int, failedNames []string) notify.DiscordEmbed {
+func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, sizeBytes int64, duration time.Duration, failedNames []string) notify.DiscordEmbed {
 	var title string
 	var color int
 	switch status {
@@ -5532,11 +5545,11 @@ func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, siz
 	}
 
 	fields := []notify.DiscordField{
-		{Name: "Duration", Value: fmtDuration(durationSec), Inline: true},
+		{Name: "Duration", Value: discordDuration(duration), Inline: true},
 		{Name: "Size", Value: format.Bytes(float64(sizeBytes)), Inline: true},
 	}
-	if durationSec > 0 {
-		fields = append(fields, notify.DiscordField{Name: "Speed", Value: format.Bytes(float64(sizeBytes)/float64(durationSec)) + "/s", Inline: true})
+	if speed, ok := format.Throughput(sizeBytes, duration); ok {
+		fields = append(fields, notify.DiscordField{Name: "Speed", Value: speed, Inline: true})
 	}
 	fields = append(fields, notify.DiscordField{
 		Name:   "Items",
@@ -5557,6 +5570,15 @@ func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, siz
 		Color:       color,
 		Fields:      fields,
 	}
+}
+
+// discordDuration renders a run's duration for notifications: "<1s" for
+// sub-second work (#455), otherwise fmtDuration's "Xm Ys" style.
+func discordDuration(d time.Duration) string {
+	if d >= 0 && d < time.Second {
+		return "<1s"
+	}
+	return fmtDuration(int(d.Round(time.Second).Seconds()))
 }
 
 func fmtDuration(seconds int) string {

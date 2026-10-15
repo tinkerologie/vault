@@ -126,6 +126,8 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | DELETE | `/activity`                             | Purge all activity log entries (irreversible)                                                                                                                                                                             |
 | GET    | `/runs/{runId}/logs?after=<id>&limit=N` | Streaming log entries for one backup/restore run, oldest-first. `?after=<id>` tails only newer lines; `?limit=N` clamped to [1, 1000]. Unknown run → 404; invalid run id or negative `after` / non-positive `limit` → 400 |
 
+Run log durations keep sub-second precision: messages show `<1s`, `2.4s`, or `1m5s`, and the structured `data` carries `duration_ms` beside the existing `duration_seconds`. A transfer rate is only reported for operations that take at least one second. A shorter run's summary says `throughput not calculated: duration below 1.0s` and sets `data.throughput_not_calculated`; otherwise `data.throughput_bytes_per_sec` holds the rate. The web UI and Discord notifications apply the same one-second rule.
+
 ## History
 
 | Method | Endpoint   | Description                                      |
