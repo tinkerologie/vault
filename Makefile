@@ -13,7 +13,7 @@ LDFLAGS := -s -w \
 
 ANSIBLE_CMD := cd ansible && ansible-playbook -i inventory.yml ansible.yml
 
-.PHONY: all build build-local build-windows build-web test test-short test-coverage clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push
+.PHONY: all build build-local build-windows build-web test test-short test-coverage test-ansible clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push
 
 all: test build-local
 
@@ -61,6 +61,9 @@ test: internal/release/CHANGELOG.md
 
 test-short: internal/release/CHANGELOG.md
 	go test ./internal/... ./cmd/... -short
+
+test-ansible:
+	python3 -m unittest discover -s ansible/tests -v
 
 test-coverage: internal/release/CHANGELOG.md
 	go test ./internal/... ./cmd/... -coverprofile=coverage.out -covermode=atomic -coverpkg=./internal/...,./cmd/...

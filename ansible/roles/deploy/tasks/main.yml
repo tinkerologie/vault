@@ -1,12 +1,67 @@
 ---
 # Deploy Vault plugin to Unraid
 # Uses 'raw' module for remote tasks — Unraid has no Python interpreter
-# File transfers use sshpass+scp delegated to localhost
+# File transfers use sshpass+scp delegated to localhost; sshpass reads the
+# password from a private temp file (sshpass -f), never the command line
 
 - name: Deploy Vault plugin
   block:
+    # Check reachability before the password file exists. Ansible runs
+    # neither rescue nor always for an unreachable host, so failing here, as
+    # an ordinary task failure, is what keeps a down host from leaking the
+    # file and still fails fast with the connection error.
     - name: Check server connectivity
       ansible.builtin.raw: echo "ok"
+      register: connectivity
+      ignore_unreachable: true
+      changed_when: false
+
+    - name: Fail when server is unreachable
+      delegate_to: localhost
+      ansible.builtin.fail:
+        msg: "{{ connectivity.msg }}"
+      when: connectivity is unreachable
+
+    # A host that drops mid-deploy also skips always, so clear password files
+    # left by such an interrupted run (older than an hour, so a concurrent run
+    # against another host keeps its own).
+    - name: Remove stale SSH password files from interrupted runs
+      delegate_to: localhost
+      ansible.builtin.find:
+        paths: "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}"
+        patterns: "vault-sshpass-*"
+        age: 1h
+      register: stale_sshpass_files
+      changed_when: false
+
+    - name: Delete stale SSH password files
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ stale_sshpass_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      changed_when: false
+
+    # sshpass reads the password from a private 0600 file, so it never appears
+    # on a command line, in an environment prefix, in the process list, or in
+    # task output at any verbosity. The file is removed in the always section.
+    - name: Create private SSH password file
+      delegate_to: localhost
+      ansible.builtin.tempfile:
+        state: file
+        prefix: vault-sshpass-
+      register: sshpass_file
+      changed_when: false
+
+    - name: Store SSH password in the private file
+      delegate_to: localhost
+      ansible.builtin.copy:
+        content: "{{ ansible_password }}"
+        dest: "{{ sshpass_file.path }}"
+        mode: "0600"
+      no_log: true
       changed_when: false
 
     - name: Stop existing service
@@ -51,7 +106,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ plugin_binary }}
           {{ ansible_user }}@{{ ansible_host }}:{{ binary_path }}
@@ -69,7 +124,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/Vault.page
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/Vault.page
@@ -83,7 +138,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/Backups.page
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/Backups.page
@@ -97,7 +152,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/README.md
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/README.md
@@ -122,7 +177,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/api.php
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/api.php
@@ -136,7 +191,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/control.php
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/control.php
@@ -150,7 +205,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/app.php
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/app.php
@@ -164,7 +219,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/proxy.php
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/proxy.php
@@ -178,7 +233,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/pages/include/apply.sh
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/apply.sh
@@ -200,7 +255,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp {{ scp_common_opts }}
           {{ playbook_dir }}/../plugin/event/started
           {{ playbook_dir }}/../plugin/event/stopping_svcs
@@ -223,7 +278,7 @@
       delegate_to: localhost
       ansible.builtin.command:
         cmd: >
-          sshpass -p '{{ ansible_password }}'
+          sshpass -f '{{ sshpass_file.path }}'
           scp -r {{ scp_common_opts }}
           {{ playbook_dir }}/../web/dist/.
           {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/ui/
@@ -468,3 +523,12 @@
     - name: Fail with deployment error
       ansible.builtin.fail:
         msg: "Vault deployment failed. Check logs above."
+
+  always:
+    - name: Remove SSH password file
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ sshpass_file.path }}"
+        state: absent
+      when: sshpass_file.path is defined
+      changed_when: false
