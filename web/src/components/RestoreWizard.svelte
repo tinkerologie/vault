@@ -8,6 +8,7 @@
   import { getPointCoverage, assignItemsToChosenPoints } from '../lib/restore-plan.js'
   import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType, commonItemType, buildFileTree } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
+  import ItemProgress from './ItemProgress.svelte'
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
   import Tooltip from './Tooltip.svelte'
@@ -1942,6 +1943,7 @@
             Restoring: <span class="text-text font-medium">{progress.currentItem.name}</span>
             {#if progress.currentItem.item_type} <span class="text-text-muted">({progress.currentItem.item_type})</span>{/if}
           </p>
+          <ItemProgress item={progress.currentItem} runType="restore" size="md" />
         {/if}
         {#if progress.phaseMessage}
           <p class="text-xs text-warning animate-pulse mt-1.5">{progress.phaseMessage}</p>

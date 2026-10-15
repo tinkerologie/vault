@@ -68,6 +68,21 @@ type RunStatus struct {
 	CurrentItemMessage string       `json:"current_item_message,omitempty"`
 	Cancelling         bool         `json:"cancelling,omitempty"`
 	Queue              []QueueEntry `json:"queue,omitempty"`
+
+	// Structured progress for the current item (#456). A zero total means
+	// unknown: ProgressDeterminate is false and the UI shows the phase
+	// without a percentage. ETASeconds is 0 until an estimate is meaningful.
+	Phase               string  `json:"phase,omitempty"`
+	PhaseStartedAt      string  `json:"phase_started_at,omitempty"`
+	BytesDone           int64   `json:"bytes_done,omitempty"`
+	BytesTotal          int64   `json:"bytes_total,omitempty"`
+	FilesDone           int64   `json:"files_done,omitempty"`
+	FilesTotal          int64   `json:"files_total,omitempty"`
+	RateBytesPerSec     float64 `json:"rate_bytes_per_sec,omitempty"`
+	RateFilesPerSec     float64 `json:"rate_files_per_sec,omitempty"`
+	ETASeconds          int64   `json:"eta_seconds,omitempty"`
+	ProgressDeterminate bool    `json:"progress_determinate,omitempty"`
+	LastProgressAt      string  `json:"last_progress_at,omitempty"`
 }
 
 // Queue operation kinds and statuses.
@@ -181,6 +196,9 @@ type Runner struct {
 	lastProgressMu sync.Mutex
 	lastProgress   time.Time
 
+	// progress tracks structured progress for the current item (#456).
+	progress *progressTracker
+
 	// queueMu protects the pending job queue and the cancelled-while-queued
 	// set. Queued runs are goroutines blocked on r.mu; a cancelled entry is
 	// removed from the display queue and its entry ID recorded here so the
@@ -229,6 +247,7 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 		hub:               hub,
 		serverKey:         serverKey,
 		queueCancelledIDs: make(map[string]struct{}),
+		progress:          newProgressTracker(nil),
 	}
 	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", docsmeta.DefaultInt("breaker_fail_threshold"))
 	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", docsmeta.DefaultInt("breaker_close_successes"))
@@ -471,6 +490,7 @@ func (r *Runner) setRunStatus(s *RunStatus) {
 	r.statusMu.Lock()
 	r.currentRun = s
 	r.statusMu.Unlock()
+	r.progress.reset()
 }
 
 func (r *Runner) updateRunProgress(done, failed int, currentItem string) {
@@ -478,6 +498,12 @@ func (r *Runner) updateRunProgress(done, failed int, currentItem string) {
 	if r.currentRun != nil {
 		r.currentRun.ItemsDone = done
 		r.currentRun.ItemsFailed = failed
+		if r.currentRun.CurrentItem != currentItem {
+			// Progress detail belongs to one item; never let it leak into
+			// the next (#456).
+			r.progress.reset()
+			clearProgressDetail(r.currentRun)
+		}
 		r.currentRun.CurrentItem = currentItem
 		if currentItem == "" {
 			r.currentRun.CurrentItemType = ""
@@ -492,8 +518,12 @@ func (r *Runner) updateCurrentItemProgress(itemType string, percent int, message
 	r.statusMu.Lock()
 	if r.currentRun != nil {
 		r.currentRun.CurrentItemType = itemType
-		r.currentRun.CurrentItemPercent = percent
 		r.currentRun.CurrentItemMessage = message
+		// A determinate phase owns the percentage; milestone percentages
+		// only apply while the phase total is unknown (#456).
+		if !r.currentRun.ProgressDeterminate {
+			r.currentRun.CurrentItemPercent = percent
+		}
 	}
 	r.statusMu.Unlock()
 }
@@ -1029,6 +1059,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// are collected for the run log and its summary.
 	runDiag := r.newRunDiag(runID)
 	ctx = storage.WithDiagStats(ctx, runDiag)
+	ctx = r.withProgressReporter(ctx)
 
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
@@ -1802,6 +1833,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				log.Printf("runner: job %d cancelled before uploading %s", jobID, s.dbItem.ItemName)
 				break
 			}
+			// Name the item being uploaded so its progress detail is shown
+			// (#456); staging cleared the current item when it finished.
+			r.updateRunProgress(itemsDone, itemsFailed, s.dbItem.ItemName)
 			r.broadcast(map[string]any{
 				"type":      "item_upload_start",
 				"job_id":    jobID,
@@ -2955,6 +2989,9 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 		// Fall through to classic tar for non-chunked handlers (VM, ZFS).
 	}
 
+	// The engine stages the item (stop, archive, snapshot). Until it reports
+	// its own counters the phase is shown without a percentage (#456).
+	engine.ReportDetail(ctx, item.Name, engine.ProgressDetail{Phase: engine.PhaseProcessing})
 	stage := r.beginPhase(runID, item.Name, "stage")
 	tmpDir, result, cleanup, err := r.stageItemLocally(ctx, runID, item, dest)
 	stage.end(err, nil)
@@ -2967,6 +3004,7 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 	if err != nil {
 		return nil, nil, err
 	}
+	engine.ReportDetail(ctx, item.Name, engine.ProgressDetail{Phase: engine.PhaseFinalizing})
 	return result, checksums, nil
 }
 
@@ -3053,6 +3091,7 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 		})
 	}
 
+	engine.ReportDetail(ctx, item.Name, engine.ProgressDetail{Phase: engine.PhaseProcessing})
 	store := r.beginPhase(runID, item.Name, "dedup store")
 	manifestID, err := handler.BackupChunked(ctx, item, repo, parent, progress)
 	if err == nil {
@@ -3074,6 +3113,7 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 
 	verified := false
 	if verify {
+		engine.ReportDetail(ctx, item.Name, engine.ProgressDetail{Phase: engine.PhaseVerifying})
 		verifyPhase := r.beginPhase(runID, item.Name, "verify")
 		readBefore := repo.SessionStats().ReadBytes
 		err := r.verifyChunkedItem(ctx, runID, item, repo, manifestID)
@@ -3342,6 +3382,32 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	// storedBytes is what landed on the destination; sentBytes also counts
 	// attempts the storage layer retried, so the difference is retry cost.
 	var storedBytes, sentBytes atomic.Int64
+
+	// Item-level transfer progress (#456): bytes across every staged file
+	// against their combined size, so "Uploading 84.2 GB / 225 GB" replaces a
+	// per-file percentage that restarted at 0 for each file.
+	var itemTotal, filesTotal int64
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil {
+			itemTotal += fi.Size()
+		}
+		filesTotal++
+	}
+	var transferred, filesDone atomic.Int64
+	reportTransfer := func() {
+		engine.ReportDetail(ctx, itemName, engine.ProgressDetail{
+			Phase: engine.PhaseTransferring, BytesDone: transferred.Load(), BytesTotal: itemTotal,
+			FilesDone: filesDone.Load(), FilesTotal: filesTotal,
+		})
+	}
+	onBytes := func(n int64) {
+		transferred.Add(n)
+		reportTransfer()
+	}
+	reportTransfer()
 	uploadTotals := func() map[string]any {
 		return map[string]any{"stored_bytes": storedBytes.Load(), "bytes_uploaded": sentBytes.Load()}
 	}
@@ -3381,10 +3447,12 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 				fileSize = fi.Size()
 			}
 			upStart := time.Now()
-			storageName, checksum, sent, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName, progress)
+			storageName, checksum, sent, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName, progress, onBytes)
 			sentBytes.Add(sent.total)
 			if upErr == nil {
 				storedBytes.Add(sent.stored)
+				filesDone.Add(1)
+				reportTransfer()
 				dur := time.Since(upStart)
 				r.runLog(runID, runLogLevelInfo,
 					fmt.Sprintf("Uploaded %s, file=%s, size=%s, duration=%s",
@@ -3431,7 +3499,15 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 			map[string]any{"item_name": itemName, "item_type": itemType, "files": len(checksums)})
 		verifyStart := time.Now()
 		verifyPhase := r.beginPhase(runID, itemName, "verify")
-		var verifiedBytes int64
+		var verifiedBytes, verifiedFiles int64
+		verifyTotal := storedBytes.Load()
+		reportVerify := func() {
+			engine.ReportDetail(ctx, itemName, engine.ProgressDetail{
+				Phase: engine.PhaseVerifying, BytesDone: verifiedBytes, BytesTotal: verifyTotal,
+				FilesDone: verifiedFiles, FilesTotal: int64(len(checksums)),
+			})
+		}
+		reportVerify()
 		failVerify := func(err error) error {
 			verifyPhase.end(err, map[string]any{"bytes_read": verifiedBytes})
 			r.cleanupPartialUploads(adapter, storagePath, checksums)
@@ -3452,6 +3528,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 				reader: reader,
 				onRead: func(n int64) {
 					verifiedBytes += n
+					reportVerify()
 					r.lastProgressMu.Lock()
 					r.lastProgress = time.Now()
 					r.lastProgressMu.Unlock()
@@ -3470,6 +3547,8 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 			if actualHash != expectedHash {
 				return nil, failVerify(fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash))
 			}
+			verifiedFiles++
+			reportVerify()
 		}
 		verifyElapsed := time.Since(verifyStart)
 		r.runLog(runID, runLogLevelInfo,
@@ -3489,14 +3568,6 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	return checksums, nil
 }
 
-// uploadOneStaged uploads one staged file via the adapter's retry-aware
-// WriteFrom. The reopen closure yields a fresh (re-encrypted) stream each
-// attempt; the sha256 hasher is reset at the start of every attempt and tees
-// the bytes actually sent, so after a successful WriteFrom it holds the digest
-// of the bytes that were stored — correct even if the storage layer retried.
-// It returns (storageName, checksumHex, err). All per-attempt state (hasher,
-// uploaded counter, broadcast timer) is local so concurrent calls never share
-// mutable state.
 // uploadBytes is what one staged-file upload moved: stored is the size of
 // the attempt that succeeded, total also counts attempts the storage layer
 // retried.
@@ -3505,7 +3576,19 @@ type uploadBytes struct {
 	total  int64
 }
 
-func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName string, progress func(int, string)) (string, string, uploadBytes, error) {
+// uploadOneStaged uploads one staged file via the adapter's retry-aware
+// WriteFrom. The reopen closure yields a fresh (re-encrypted) stream each
+// attempt; the sha256 hasher is reset at the start of every attempt and tees
+// the bytes actually sent, so after a successful WriteFrom it holds the digest
+// of the bytes that were stored — correct even if the storage layer retried.
+// It returns (storageName, checksumHex, bytes moved, err). All per-attempt
+// state (hasher, uploaded counter, broadcast timer) is local so concurrent
+// calls never share mutable state.
+//
+// onBytes (optional) receives byte deltas for item-level progress; a retried
+// attempt first takes back the bytes of the attempt it replaces, so the sum
+// tracks bytes of the current attempts only.
+func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName string, progress func(int, string), onBytes func(int64)) (string, string, uploadBytes, error) {
 	_ = itemType
 	_ = itemName
 
@@ -3536,17 +3619,31 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 	// the hasher and byte counter first so a replayed attempt re-hashes from the
 	// start and the digest matches exactly the bytes of the successful attempt.
 	var sent uploadBytes
+	// sourceRead counts staged-file bytes consumed by the current attempt,
+	// before compression and encryption, so item progress is measured in the
+	// same units as the staged sizes it is compared against.
+	var sourceRead int64
 	reopen := func() (io.ReadCloser, error) {
 		hasher.Reset()
+		if onBytes != nil && sourceRead > 0 {
+			onBytes(-sourceRead)
+		}
+		sourceRead = 0
 		uploaded = 0
 		f, err := os.Open(filePath) // #nosec G304 — tmpDir is a vault-controlled temp directory; entryName from os.ReadDir
 		if err != nil {
 			return nil, err
 		}
 		var src io.Reader = f
+		if onBytes != nil {
+			src = &countingReader{reader: f, onRead: func(n int64) {
+				sourceRead += n
+				onBytes(n)
+			}}
+		}
 		closers := []io.Closer{f}
 		if compressSuffix != "" {
-			comp, compErr := transportCompressReader(transportCompression, f)
+			comp, compErr := transportCompressReader(transportCompression, src)
 			if compErr != nil {
 				_ = f.Close()
 				return nil, fmt.Errorf("compressing %s: %w", entryName, compErr)
@@ -3826,6 +3923,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	defer cancel()
 	runDiag := r.newRunDiag(runID)
 	ctx = storage.WithDiagStats(ctx, runDiag)
+	ctx = r.withProgressReporter(ctx)
 
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
@@ -5020,6 +5118,7 @@ func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.Restore
 		return err
 	}
 
+	engine.ReportDetail(ctx, itemName, engine.ProgressDetail{Phase: engine.PhaseProcessing})
 	extract := r.beginPhase(reporter.RunID, itemName, "extract")
 	err = r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, cleanDestination, reporter, 40, 100)
 	tally := engine.RestoreTallyFrom(ctx)
@@ -5152,6 +5251,7 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 		r.reportRestoreProgress(reporter, pct, msg)
 	}
 
+	engine.ReportDetail(ctx, itemName, engine.ProgressDetail{Phase: engine.PhaseProcessing})
 	restorePhase := r.beginPhase(reporter.RunID, itemName, "restore")
 	err = chunked.RestoreChunked(ctx, item, repo, manifestID, destPath, progress)
 	readBytes := repo.SessionStats().ReadBytes
@@ -5246,6 +5346,11 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 			dlLast = time.Now()
 		}
 		dlMu.Unlock()
+		// A retried download part re-reads bytes, so clamp to the total; the
+		// tracker keeps the reported value monotonic (#456).
+		engine.ReportDetail(ctx, itemName, engine.ProgressDetail{
+			Phase: engine.PhaseTransferring, BytesDone: min(cur, totalBytes), BytesTotal: totalBytes,
+		})
 		if totalBytes > 0 && emit {
 			r.reportRestoreProgress(reporter, scaleRestorePhaseProgress(phaseStart, phaseEnd, cur, totalBytes), "Downloading")
 		}
@@ -5534,6 +5639,7 @@ func (r *Runner) broadcastProgress(data map[string]any) {
 	if r.hub == nil {
 		return
 	}
+	r.mergeProgressDetail(data)
 	msg, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("runner: failed to marshal progress broadcast: %v", err)
