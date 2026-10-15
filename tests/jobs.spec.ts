@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { setupVaultMockApi } from './mocks/vault-api';
 
 test.describe('Jobs Management & Creation Wizard', () => {
@@ -136,7 +136,7 @@ test.describe('Jobs Management & Creation Wizard', () => {
 
     // Opens the wizard, picks a container, selects the destination and
     // advances to step 3 where the verification toggle lives.
-    async function openVerificationStep(page, storageLabel: string) {
+    async function openVerificationStep(page: Page, storageLabel: string) {
       await page.goto('/#/jobs');
       await page.getByRole('button', { name: /new job/i }).click();
       await page.getByRole('button', { name: /Containers/i }).first().click();
