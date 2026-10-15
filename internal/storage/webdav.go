@@ -273,21 +273,26 @@ func (w *WebDAVAdapter) client() *gowebdav.Client {
 // maps to success — but Hetzner storage boxes answer 403 instead. gowebdav
 // calls MkdirAll internally before every PUT (createParentCollection), so on
 // such servers every upload into an existing directory fails, which killed
-// multi-hour VM backups on the final metadata write (issue #242). When an
-// MKCOL comes back 403, probe the target with PROPFIND Depth:0; if it exists,
-// rewrite the status to 405 so gowebdav treats it as "already exists".
+// multi-hour VM backups on the final metadata write (issue #242). The same
+// re-sent MKCOL can also get 423 Locked when a concurrent upload's MKCOL holds
+// the server's temporary lock on that path (golang.org/x/net/webdav does
+// this), failing an upload into a directory that exists. When an MKCOL comes
+// back 403 or 423, probe the target with PROPFIND Depth:0; if it exists,
+// rewrite the status to 405 so gowebdav treats it as "already exists". A 423
+// on a missing directory stays 423, which isWebDAVRetriable retries.
 type mkcolExistsTransport struct {
 	base http.RoundTripper
 }
 
 func (t *mkcolExistsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
-	if err != nil || req.Method != "MKCOL" || resp.StatusCode != http.StatusForbidden {
+	if err != nil || req.Method != "MKCOL" ||
+		(resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusLocked) {
 		return resp, err
 	}
 	// Digest authorization is method-bound — a header minted for MKCOL cannot
 	// authorize a PROPFIND — so the probe would always 401 and just waste a
-	// round-trip. Leave the original 403 in place for Digest servers.
+	// round-trip. Leave the original status in place for Digest servers.
 	if strings.HasPrefix(req.Header.Get("Authorization"), "Digest ") {
 		return resp, nil
 	}

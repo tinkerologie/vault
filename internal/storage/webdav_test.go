@@ -931,6 +931,66 @@ func TestWebDAVWriteToleratesMkdir403OnExistingDir(t *testing.T) {
 	}
 }
 
+// TestWebDAVWriteToleratesMkcol423OnExistingDir: gowebdav re-sends MKCOL for
+// every parent before each PUT. When a concurrent upload's MKCOL holds the
+// server's temporary lock on the same path (golang.org/x/net/webdav does this),
+// the server answers 423 Locked even though the directory exists. That must
+// not fail the upload.
+func TestWebDAVWriteToleratesMkcol423OnExistingDir(t *testing.T) {
+	root := t.TempDir()
+	real := testWebDAVHandler(root)
+	var mkcol423s int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" {
+			p := filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(r.URL.Path, "/")))
+			if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+				atomic.AddInt32(&mkcol423s, 1)
+				w.WriteHeader(http.StatusLocked)
+				return
+			}
+		}
+		real.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Write("job/run1/data.tar", strings.NewReader("data")); err != nil {
+		t.Fatalf("Write should tolerate MKCOL 423 on an existing dir, got: %v", err)
+	}
+	if err := a.Write("job/run1/meta.json", strings.NewReader("{}")); err != nil {
+		t.Fatalf("second Write should tolerate MKCOL 423 on an existing dir, got: %v", err)
+	}
+	if atomic.LoadInt32(&mkcol423s) == 0 {
+		t.Error("test server never returned a 423 MKCOL; scenario not exercised")
+	}
+}
+
+// TestWebDAVMkcol423WithoutDirStaysRetriable: a 423 on a directory that does
+// not exist is a real lock, so it must not be rewritten to "already exists".
+func TestWebDAVMkcol423WithoutDirStaysRetriable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" {
+			w.WriteHeader(http.StatusLocked)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	tr := &mkcolExistsTransport{base: http.DefaultTransport}
+	req, _ := http.NewRequest("MKCOL", server.URL+"/locked/", nil)
+	resp, err := tr.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusLocked {
+		t.Fatalf("status = %d, want 423 kept for a missing dir", resp.StatusCode)
+	}
+}
+
 // TestWebDAVMkdir403WithoutDirStaysFatal: a genuine 403 (permission denied,
 // directory does NOT exist) must not be converted to success by the
 // existence probe — the write has to fail with the real error.
