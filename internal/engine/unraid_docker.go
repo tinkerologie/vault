@@ -23,7 +23,11 @@ import (
 // (which is what `docker load` produces for restored images, since RepoDigests
 // is empty), the Unraid UI shows "not available" and "Check for Updates"
 // cannot resolve the local digest.
-const unraidUpdateStatusPath = "/var/lib/docker/unraid-update-status.json"
+//
+// A var, not a const, only so tests can point it at a temporary file instead
+// of the real Unraid path; production never reassigns it. Mirrors
+// dockerTemplatesDir in container.go.
+var unraidUpdateStatusPath = "/var/lib/docker/unraid-update-status.json"
 
 // imageMeta is the on-disk shape of `image_meta.json` placed alongside
 // `image.tar` in each container backup. It captures the image's

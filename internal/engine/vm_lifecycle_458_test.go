@@ -764,7 +764,7 @@ func TestDestroyDomainWithRetryGivesUp458(t *testing.T) {
 	}
 }
 
-func TestProbeActivity458(t *testing.T) {
+func TestVMProbeActivity458(t *testing.T) {
 	fastVMPolling(t, time.Minute)
 	boom := errors.New("boom")
 

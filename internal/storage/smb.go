@@ -28,6 +28,52 @@ type SMBConfig struct {
 
 type SMBAdapter struct {
 	config SMBConfig
+	// connectFn, when non-nil, replaces the go-smb2 dial in connect. It is a
+	// test seam only; production adapters leave it nil.
+	connectFn func() (smbShare, smbSession, error)
+}
+
+// smbShare is the subset of *smb2.Share the adapter uses. It exists so the
+// adapter's success and error paths can be exercised without a live SMB
+// server; smb2Share adapts the real client to it.
+type smbShare interface {
+	MkdirAll(path string, perm os.FileMode) error
+	Create(name string) (smbFile, error)
+	Open(name string) (smbFile, error)
+	Remove(name string) error
+	ReadDir(dirname string) ([]os.FileInfo, error)
+	Stat(name string) (os.FileInfo, error)
+	Statfs(name string) (smb2.FileFsInfo, error)
+	Umount() error
+}
+
+// smbFile is the subset of *smb2.File the adapter uses.
+type smbFile interface {
+	io.ReadWriteSeeker
+	io.Closer
+	Sync() error
+}
+
+// smbSession is the subset of *smb2.Session the adapter uses.
+type smbSession interface {
+	Logoff() error
+}
+
+// smb2Share adapts *smb2.Share to smbShare; only Create and Open need
+// wrapping because they return the concrete *smb2.File.
+type smb2Share struct{ *smb2.Share }
+
+func (s smb2Share) Create(name string) (smbFile, error) { return asSMBFile(s.Share.Create(name)) }
+
+func (s smb2Share) Open(name string) (smbFile, error) { return asSMBFile(s.Share.Open(name)) }
+
+// asSMBFile converts go-smb2's concrete result to smbFile. On error it
+// returns a nil interface, never a non-nil interface holding a nil *smb2.File.
+func asSMBFile(f *smb2.File, err error) (smbFile, error) {
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
 }
 
 func NewSMBAdapter(config SMBConfig) (*SMBAdapter, error) {
@@ -44,7 +90,14 @@ func NewSMBAdapter(config SMBConfig) (*SMBAdapter, error) {
 // smbDialTimeout is the maximum time allowed for dialling the SMB session.
 const smbDialTimeout = 30 * time.Second
 
-func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, error) {
+func (s *SMBAdapter) connect() (smbShare, smbSession, error) {
+	if s.connectFn != nil {
+		return s.connectFn()
+	}
+	return s.dialSMB()
+}
+
+func (s *SMBAdapter) dialSMB() (smbShare, smbSession, error) {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 
 	d := &smb2.Dialer{
@@ -68,7 +121,7 @@ func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, error) {
 		return nil, nil, fmt.Errorf("mount share: %w", err)
 	}
 
-	return share, session, nil
+	return smb2Share{share}, session, nil
 }
 
 func (s *SMBAdapter) fullPath(path string, allowRoot bool) (string, error) {
@@ -145,9 +198,9 @@ func (s *SMBAdapter) Read(path string) (io.ReadCloser, error) {
 }
 
 type smbReadCloser struct {
-	file    *smb2.File
-	share   *smb2.Share
-	session *smb2.Session
+	file    smbFile
+	share   smbShare
+	session smbSession
 }
 
 func (r *smbReadCloser) Read(p []byte) (int, error) { return r.file.Read(p) }

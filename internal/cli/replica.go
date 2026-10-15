@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"syscall"
 
@@ -108,7 +107,7 @@ disaster recovery.`,
 		srv.SetScheduleReloader(sched.Reload)
 
 		// Listen for OS signals for graceful shutdown.
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		ctx, stop := shutdownNotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
 		// Zeroconf/mDNS discovery (#137). Replica instances are also

@@ -13,6 +13,10 @@ import (
 	"github.com/tinkerologie/vault/internal/engine"
 )
 
+// minAdaptiveRecheck is the shortest re-check interval for a postponed job.
+// A variable only so tests can shorten it; production never reassigns it.
+var minAdaptiveRecheck = 30 * time.Second
+
 // Adaptive backups (issue #240): jobs with AdaptiveEnabled defer their runs
 // while any of their workloads are actively in use, re-checking on a short
 // interval until idle or until the max-postpone window elapses (then the
@@ -97,7 +101,7 @@ type postponeState struct {
 // the max-postpone window has elapsed (run anyway).
 func (r *Runner) adaptivePostpone(jobID int64, jobName, reason string) bool {
 	maxPostpone := time.Duration(r.adaptiveSettingInt("adaptive_max_postpone_minutes")) * time.Minute
-	recheck := max(time.Duration(r.adaptiveSettingInt("adaptive_recheck_minutes"))*time.Minute, 30*time.Second)
+	recheck := max(time.Duration(r.adaptiveSettingInt("adaptive_recheck_minutes"))*time.Minute, minAdaptiveRecheck)
 
 	r.postponeMu.Lock()
 	st := r.postponedSince[jobID]

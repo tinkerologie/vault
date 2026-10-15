@@ -14,6 +14,13 @@ import (
 	"github.com/tinkerologie/vault/internal/storage"
 )
 
+// procNetDevPath and setAutoThrottleLimit are test seams; production uses the
+// real kernel counters and the process-wide storage limiter.
+var (
+	procNetDevPath       = "/proc/net/dev"
+	setAutoThrottleLimit = storage.SetAutoThrottleLimit
+)
+
 // RunAutoThrottleLoop is the adaptive upload-throttle controller (issue
 // #237): every tick it estimates EXTERNAL upstream traffic on the busiest
 // NIC (total tx minus Vault's own uploads) and retunes the process-wide
@@ -34,7 +41,7 @@ func (r *Runner) RunAutoThrottleLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			storage.SetAutoThrottleLimit(0)
+			setAutoThrottleLimit(0)
 			return
 		case <-t.C:
 		}
@@ -49,7 +56,7 @@ func (r *Runner) RunAutoThrottleLoop(ctx context.Context) {
 			if wasEnabled {
 				log.Printf("runner: adaptive upload throttle disabled")
 			}
-			storage.SetAutoThrottleLimit(0)
+			setAutoThrottleLimit(0)
 			havePrev, wasEnabled = false, false
 			continue
 		}
@@ -60,7 +67,7 @@ func (r *Runner) RunAutoThrottleLoop(ctx context.Context) {
 
 		iface, totalTx, err := busiestInterfaceTxBytes()
 		if err != nil {
-			storage.SetAutoThrottleLimit(0)
+			setAutoThrottleLimit(0)
 			havePrev = false
 			continue
 		}
@@ -80,7 +87,7 @@ func (r *Runner) RunAutoThrottleLoop(ctx context.Context) {
 			// source-reader byte counting and actual NIC transmission
 			// (buffered uploads), preventing floor/capacity oscillation.
 			smoothedExt = 0.5*smoothedExt + 0.5*externalBps
-			storage.SetAutoThrottleLimit(autoThrottleTarget(linkMbps, floorMbps, smoothedExt))
+			setAutoThrottleLimit(autoThrottleTarget(linkMbps, floorMbps, smoothedExt))
 		} else {
 			smoothedExt = 0
 		}
@@ -118,7 +125,7 @@ func autoThrottleTarget(linkMbps, floorMbps int, externalBytesPerSec float64) fl
 // the uplink NIC or its bridge. Loopback and virtual container/VM interfaces
 // are skipped so container-to-container chatter doesn't count as uplink use.
 func busiestInterfaceTxBytes() (string, int64, error) {
-	f, err := os.Open("/proc/net/dev")
+	f, err := os.Open(procNetDevPath)
 	if err != nil {
 		return "", 0, err
 	}

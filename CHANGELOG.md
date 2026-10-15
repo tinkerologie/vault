@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Test coverage (#458):** backend statement coverage rises from about 79% to about 93%, and web library line coverage from 65% to 98%. The new tests cover the libvirt VM, ZFS, FUSE mount, container, runner, storage (SFTP, SMB, WebDAV), API, CLI and database paths. Narrow, unexported test seams were added where code talked to libvirt, ZFS, FUSE, SMB or the kernel directly; production behaviour is unchanged.
 - **Selective restore size (#455):** restoring a few files from a backup item reports the bytes actually restored instead of the whole item's recorded size, in History, the run log, and the restore summary. Restore summaries also name the job and destination.
 - **mDNS advertisement control (#468):** new **Network Discovery (mDNS)** setting (`MDNS_ADVERTISE` in `vault.cfg`) and `--mdns` flag on `vault daemon` and `vault replica` turn LAN discovery off without changing the bind address. Both default to on.
 
