@@ -126,6 +126,13 @@ test.describe('Jobs Management & Creation Wizard', () => {
 
   test.describe('per-backup verification cost warning (#457)', () => {
     const warningTitle = 'Verification can read a large amount of data from this destination';
+    // Full user-visible copy, so an accidental wording change fails the test.
+    const providerChargesNote = 'S3 and S3-compatible providers can also charge for requests, retrieval, or egress.';
+    const dedupScopeNote =
+      'After each backup, Vault reads the backup back from this remote destination to check it. For deduplicated backups this includes every chunk the backup references, including chunks reused from earlier backups, not only new data.';
+    // Accessible descriptions concatenate the help text and the warning, so
+    // they are checked by substring.
+    const describedBy = (text: string) => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
     // Opens the wizard, picks a container, selects the destination and
     // advances to step 3 where the verification toggle lives.
@@ -148,9 +155,9 @@ test.describe('Jobs Management & Creation Wizard', () => {
       await expect(toggle).toBeChecked();
 
       await expect(page.getByText(warningTitle)).toBeVisible();
-      await expect(page.getByText(/charge for requests, retrieval, or egress/)).toBeVisible();
-      await expect(page.getByText(/including chunks reused from earlier backups/)).toBeVisible();
-      await expect(toggle).toHaveAccessibleDescription(new RegExp(warningTitle));
+      await expect(page.getByText(providerChargesNote, { exact: true })).toBeVisible();
+      await expect(page.getByText(dedupScopeNote, { exact: true })).toBeVisible();
+      await expect(toggle).toHaveAccessibleDescription(describedBy(warningTitle));
     });
 
     test('hides the warning when verification is turned off', async ({ page }) => {
@@ -160,7 +167,7 @@ test.describe('Jobs Management & Creation Wizard', () => {
       await toggle.uncheck({ force: true });
       await expect(toggle).not.toBeChecked();
       await expect(page.getByText(warningTitle)).toHaveCount(0);
-      await expect(toggle).not.toHaveAccessibleDescription(new RegExp(warningTitle));
+      await expect(toggle).not.toHaveAccessibleDescription(describedBy(warningTitle));
     });
 
     test('warns in the express full form, where there is no toggle', async ({ page }) => {
@@ -174,8 +181,8 @@ test.describe('Jobs Management & Creation Wizard', () => {
 
       await storage.selectOption({ label: 'Offsite S3 (s3)' });
       await expect(page.getByText(warningTitle)).toBeVisible();
-      await expect(page.getByText(/under Backup Verification in the step-by-step form/)).toBeVisible();
-      await expect(storage).toHaveAccessibleDescription(new RegExp(warningTitle));
+      await expect(page.getByText('(under Backup Verification in the step-by-step form)', { exact: false })).toBeVisible();
+      await expect(storage).toHaveAccessibleDescription(describedBy(warningTitle));
     });
 
     test('repeats the warning on the review step', async ({ page }) => {
@@ -183,14 +190,16 @@ test.describe('Jobs Management & Creation Wizard', () => {
       await page.getByRole('button', { name: 'Next', exact: true }).click();
       await expect(page.getByLabel(/job name/i)).toBeVisible();
       await expect(page.getByText(warningTitle)).toBeVisible();
-      await expect(page.getByText(/under Backup Verification in step 3/)).toBeVisible();
+      await expect(page.getByText('(under Backup Verification in step 3)', { exact: false })).toBeVisible();
     });
 
     test('does not warn for a local destination', async ({ page }) => {
       const toggle = await openVerificationStep(page, 'Local Array Backup (local)');
       await expect(toggle).toBeChecked();
       await expect(page.getByText(warningTitle)).toHaveCount(0);
-      await expect(toggle).toHaveAccessibleDescription(/validates SHA-256 checksums/);
+      await expect(toggle).toHaveAccessibleDescription(
+        describedBy('Reads each file back from storage and validates SHA-256 checksums. Adds a small amount of time but ensures backup integrity.'),
+      );
       await page.getByRole('button', { name: 'Next', exact: true }).click();
       await expect(page.getByLabel(/job name/i)).toBeVisible();
       await expect(page.getByText(warningTitle)).toHaveCount(0);
