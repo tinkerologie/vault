@@ -79,19 +79,40 @@ func TestAdaptivePostponeRecheckA458(t *testing.T) {
 	// The folder is idle immediately, so the re-check run backs up.
 	a458SetSetting(t, d, "adaptive_folder_idle_minutes", "0")
 
-	synctest.Test(t, func(t *testing.T) {
-		if !r.adaptivePostpone(disabledID, "a458-disabled", "busy") {
-			t.Fatal("first postpone should defer")
+	// Real time with a millisecond re-check floor. A synctest bubble cannot
+	// be used here: the re-check runs a real backup against a database whose
+	// connection pool lives outside the bubble, so the bubble never sees its
+	// goroutines as durably blocked and fake time never advances on Linux.
+	shortenAdaptiveRecheckA458(t)
+	a458SetSetting(t, d, "adaptive_recheck_minutes", "0")
+	if !r.adaptivePostpone(disabledID, "a458-disabled", "busy") {
+		t.Fatal("first postpone should defer")
+	}
+	// Second call in the same window: no new row, no second timer.
+	if !r.adaptivePostpone(disabledID, "a458-disabled", "busy") {
+		t.Fatal("second postpone should defer")
+	}
+	if !r.adaptivePostpone(enabledID, "a458-enabled", "busy") {
+		t.Fatal("enabled job postpone should defer")
+	}
+	waitForA458(t, func() bool {
+		r.postponeMu.Lock()
+		defer r.postponeMu.Unlock()
+		_, d1 := r.postponedSince[disabledID]
+		_, d2 := r.postponedSince[enabledID]
+		if d1 || d2 {
+			return false
 		}
-		// Second call in the same window: no new row, no second timer.
-		if !r.adaptivePostpone(disabledID, "a458-disabled", "busy") {
-			t.Fatal("second postpone should defer")
+		runs, err := d.GetJobRuns(enabledID, 10)
+		if err != nil {
+			return false
 		}
-		if !r.adaptivePostpone(enabledID, "a458-enabled", "busy") {
-			t.Fatal("enabled job postpone should defer")
+		for _, run := range runs {
+			if run.Status == "completed" {
+				return true
+			}
 		}
-		time.Sleep(24 * time.Hour)
-		synctest.Wait()
+		return false
 	})
 
 	r.postponeMu.Lock()
@@ -121,6 +142,8 @@ func TestAdaptivePostponeRecheckA458(t *testing.T) {
 func TestAdaptivePostponeClosedDBA458(t *testing.T) {
 	r, d := a458Runner(t)
 	_ = d.Close()
+	// Fake time is safe here: with the database closed every query fails at
+	// once, so nothing inside the bubble blocks on the connection pool.
 	synctest.Test(t, func(t *testing.T) {
 		// Settings fall back to defaults; the postponed-row insert fails
 		// and is logged; the re-check then finds no job and clears.
@@ -130,6 +153,28 @@ func TestAdaptivePostponeClosedDBA458(t *testing.T) {
 		time.Sleep(24 * time.Hour)
 		synctest.Wait()
 	})
+}
+
+// shortenAdaptiveRecheckA458 lowers the re-check floor for one test. The
+// default adaptive_recheck_minutes setting (2) still applies unless a test
+// sets it to 0.
+func shortenAdaptiveRecheckA458(t *testing.T) {
+	t.Helper()
+	prev := minAdaptiveRecheck
+	minAdaptiveRecheck = 10 * time.Millisecond
+	t.Cleanup(func() { minAdaptiveRecheck = prev })
+}
+
+// waitForA458 polls cond until it holds or 30s pass.
+func waitForA458(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not met within 30s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestFreeSpaceAtRealA458(t *testing.T) {
