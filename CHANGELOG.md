@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Test coverage (#458):** backend statement coverage rises from about 79% to about 93%, and web library line coverage from 65% to 98%. The new tests cover the libvirt VM, ZFS, FUSE mount, container, runner, storage (SFTP, SMB, WebDAV), API, CLI and database paths. Narrow, unexported test seams were added where code talked to libvirt, ZFS, FUSE, SMB or the kernel directly; production behaviour is unchanged.
 - **Selective restore size (#455):** restoring a few files from a backup item reports the bytes actually restored instead of the whole item's recorded size, in History, the run log, and the restore summary. Restore summaries also name the job and destination.
 - Formatting hooks no longer fail on a clean checkout: files merged without pre-commit were reformatted (no content changes), workflow YAML keeps the organization's single-quote style through `.prettierrc.json`, and a new CI **Format** job runs the same pinned formatting hooks on every pull request.
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.
