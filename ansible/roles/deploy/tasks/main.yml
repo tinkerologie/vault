@@ -327,20 +327,19 @@
       changed_when: true
 
     - name: Wait for API to be ready
+      # Probe the address rc.vault actually passed to the daemon (--addr),
+      # so vault.cfg parsing, defaults and the non-local fallback never
+      # have to be duplicated here.
       ansible.builtin.raw: |
-        if [ -f {{ config_dir }}/vault.cfg ]; then
-          # shellcheck source=/dev/null
-          . {{ config_dir }}/vault.cfg
-        fi
-        TARGET="${BIND_ADDRESS:-{{ bind_address }}}"
-        PORT_VALUE="${PORT:-{{ api_port }}}"
-        if [ "$TARGET" = "0.0.0.0" ] || [ "$TARGET" = "::" ]; then
-          TARGET="127.0.0.1"
-        fi
-        URL_HOST="$TARGET"
-        if [[ "$URL_HOST" == *:* && "$URL_HOST" != \[* ]]; then
-          URL_HOST="[$URL_HOST]"
-        fi
+        PID="$(pidof -s vault)"
+        [ -n "$PID" ] || exit 1
+        ADDR="$(tr '\0' '\n' < "/proc/$PID/cmdline" | sed -n 's/^--addr=//p' | head -1)"
+        [ -n "$ADDR" ] || exit 1
+        URL_HOST="${ADDR%:*}"
+        PORT_VALUE="${ADDR##*:}"
+        case "$URL_HOST" in
+          0.0.0.0|"[::]") URL_HOST="127.0.0.1" ;;
+        esac
         curl -fsS "http://${URL_HOST}:${PORT_VALUE}/api/v1/health" >/dev/null
       register: health_check
       retries: 10
@@ -350,13 +349,12 @@
 
     - name: Read effective daemon bind
       ansible.builtin.raw: |
-        if [ -f {{ config_dir }}/vault.cfg ]; then
-          # shellcheck source=/dev/null
-          . {{ config_dir }}/vault.cfg
+        PID="$(pidof -s vault)"
+        BIND_VALUE=""
+        if [ -n "$PID" ]; then
+          BIND_VALUE="$(tr '\0' '\n' < "/proc/$PID/cmdline" | sed -n 's/^--addr=//p' | head -1)"
         fi
-        BIND_VALUE="${BIND_ADDRESS:-{{ bind_address }}}"
-        PORT_VALUE="${PORT:-{{ api_port }}}"
-        echo "${BIND_VALUE}:${PORT_VALUE}"
+        echo "${BIND_VALUE:-unknown}"
       register: daemon_bind_info
       changed_when: false
 

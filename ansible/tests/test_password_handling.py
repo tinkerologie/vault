@@ -161,6 +161,28 @@ class PasswordHandlingTests(unittest.TestCase):
         self.assertTrue(written["files"][0]["password_matches"])
         self.assertEqual(self.task(tasks, "Remove SSH password file")["status"], "ok")
 
+    def test_deploy_probes_the_daemons_actual_bind(self):
+        # The health check and bind report must use the address rc.vault
+        # passed to the daemon, not re-parse vault.cfg with other defaults.
+        tasks = yaml.safe_load((ANSIBLE / "roles" / "deploy" / "tasks" / "main.yml").read_text())
+
+        def find(items, name):
+            for item in items or []:
+                if item.get("name") == name:
+                    return item
+                found = find(item.get("block"), name) or find(item.get("rescue"), name) or find(item.get("always"), name)
+                if found:
+                    return found
+            return None
+
+        for name in ("Wait for API to be ready", "Read effective daemon bind"):
+            task = find(tasks, name)
+            self.assertIsNotNone(task, name)
+            script = task["ansible.builtin.raw"]
+            self.assertIn("/proc/$PID/cmdline", script, name)
+            self.assertIn("--addr=", script, name)
+            self.assertNotIn("vault.cfg", script, name)
+
     def test_deploy_all_scp_paths(self):
         rc, output, commands, tasks, _ = self.run_role("deploy")
         self.assertEqual(rc, 0, output)
