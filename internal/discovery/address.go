@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -158,67 +159,78 @@ func listenerIP(ips []net.IP) net.IP {
 	return ips[0]
 }
 
-// advertisedAddrs selects the IP addresses (and, for a specific-IP bind, the
-// owning interface) to publish for the given bind host, so the advertised
-// records match where the API actually listens:
+// advertisement is where and what Vault publishes for its bind address.
+type advertisement struct {
+	// ip, when set, is the only address published (specific-IP or resolved
+	// host-name binds). When nil, each interface publishes its own addresses.
+	ip net.IP
+	// ifaces restricts publication to these interface names. Empty means
+	// every multicast-capable interface.
+	ifaces []string
+}
+
+// advertisedAddrs decides what to publish for the given bind host, so the
+// advertised records match where the API actually listens and every
+// interface only carries addresses reachable on its own link:
 //
 //   - Specific IP: only that IP, on the interface that owns it. When no
-//     interface owns the IP, the IP is returned with no interface and the
-//     registrar falls back to every multicast-capable interface.
+//     interface owns the IP it is published on every multicast interface.
 //   - Host name: resolved the way the listener resolves it, then treated as
-//     a specific IP. A name that resolves to loopback advertises nothing.
-//   - Wildcard ("", 0.0.0.0, ::): every non-loopback, non-link-local unicast
-//     address on up, multicast-capable interfaces, with no interface
-//     restriction. Both families are included because Go serves a wildcard
+//     a specific IP. A name that resolves to loopback publishes nothing.
+//   - Wildcard ("", 0.0.0.0, ::): every up, multicast-capable, non-loopback
+//     interface with a routable unicast address, each publishing its own
+//     addresses. Both families are included because Go serves a wildcard
 //     "tcp" listen from a dual-stack socket.
 //
-// An empty IP list means there is nothing reachable to advertise.
-func advertisedAddrs(ctx context.Context, bindHost string, list interfaceLister, resolve hostResolver) ([]string, []net.Interface, error) {
+// ok is false when there is nothing reachable to advertise.
+func advertisedAddrs(ctx context.Context, bindHost string, list interfaceLister, resolve hostResolver) (adv advertisement, ok bool, err error) {
 	ip := net.ParseIP(bindHost)
 	if ip == nil && bindHost != "" {
 		resolved, err := resolve(ctx, bindHost)
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolve bind host %q: %w", bindHost, err)
+			return advertisement{}, false, fmt.Errorf("resolve bind host %q: %w", bindHost, err)
 		}
 		if len(resolved) == 0 {
-			return nil, nil, nil
+			return advertisement{}, false, nil
 		}
 		ip = listenerIP(resolved)
 		if ip.IsLoopback() {
-			return nil, nil, nil
+			return advertisement{}, false, nil
 		}
 	}
 
 	entries, err := list()
 	if err != nil {
-		return nil, nil, err
+		return advertisement{}, false, err
 	}
 
 	if ip != nil && !ip.IsUnspecified() {
 		for _, e := range entries {
 			for _, a := range e.addrs {
 				if addrIP(a).Equal(ip) {
-					return []string{ip.String()}, []net.Interface{e.iface}, nil
+					return advertisement{ip: ip, ifaces: []string{e.iface.Name}}, true, nil
 				}
 			}
 		}
-		return []string{ip.String()}, nil, nil
+		return advertisement{ip: ip}, true, nil
 	}
 
-	var ips []string
 	for _, e := range entries {
 		if e.iface.Flags&net.FlagUp == 0 || e.iface.Flags&net.FlagMulticast == 0 || e.iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-		for _, a := range e.addrs {
-			ip := addrIP(a)
-			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || !ip.IsGlobalUnicast() {
-				continue
-			}
-			ips = append(ips, ip.String())
+		if slices.ContainsFunc(e.addrs, routable) {
+			adv.ifaces = append(adv.ifaces, e.iface.Name)
 		}
 	}
-	return ips, nil, nil
+	return adv, len(adv.ifaces) > 0, nil
+}
+
+// routable reports whether a is a non-loopback, non-link-local unicast
+// address worth advertising an interface for.
+func routable(a net.Addr) bool {
+	ip := addrIP(a)
+	return ip != nil && ip.IsGlobalUnicast() && !ip.IsLinkLocalUnicast()
 }
 
 // addrIP extracts the IP from the net.Addr implementations returned by

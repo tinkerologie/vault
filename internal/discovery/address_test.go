@@ -134,41 +134,48 @@ func fakeInterfaces() ([]interfaceAddrs, error) {
 }
 
 func TestAdvertisedAddrs(t *testing.T) {
-	wildcard := []string{"192.0.2.10", "2001:db8::10", "100.64.0.5"}
+	// br0 has routable addresses; tailscale1 has a CGNAT address that is
+	// routable too. lo, the down eth9, the non-multicast tun0, and "odd"
+	// (no IP addresses) are excluded.
+	wildcard := []string{"br0", "tailscale1"}
 	cases := []struct {
 		name       string
 		bindHost   string
-		wantIPs    []string
+		wantOK     bool
+		wantIP     string
 		wantIfaces []string
 	}{
-		{"specific lan ip", "192.0.2.10", []string{"192.0.2.10"}, []string{"br0"}},
-		{"specific ipv6", "2001:db8::10", []string{"2001:db8::10"}, []string{"br0"}},
-		{"specific ip on vpn", "100.64.0.5", []string{"100.64.0.5"}, []string{"tailscale1"}},
-		{"ip no interface owns", "192.0.2.99", []string{"192.0.2.99"}, nil},
-		{"wildcard empty", "", wildcard, nil},
-		{"wildcard ipv4", "0.0.0.0", wildcard, nil},
-		{"wildcard ipv6", "::", wildcard, nil},
-		{"hostname resolves to lan ip", "tower", []string{"192.0.2.10"}, []string{"br0"}},
-		{"hostname prefers ipv4 like the listener", "dual", []string{"192.0.2.10"}, []string{"br0"}},
-		{"hostname with only ipv6", "v6only", []string{"2001:db8::10"}, []string{"br0"}},
-		{"hostname resolves to loopback", "loopy", nil, nil},
-		{"hostname resolves to nothing", "empty", nil, nil},
+		{"specific lan ip", "192.0.2.10", true, "192.0.2.10", []string{"br0"}},
+		{"specific ipv6", "2001:db8::10", true, "2001:db8::10", []string{"br0"}},
+		{"specific ip on vpn", "100.64.0.5", true, "100.64.0.5", []string{"tailscale1"}},
+		{"ip no interface owns", "192.0.2.99", true, "192.0.2.99", nil},
+		{"wildcard empty", "", true, "", wildcard},
+		{"wildcard ipv4", "0.0.0.0", true, "", wildcard},
+		{"wildcard ipv6", "::", true, "", wildcard},
+		{"hostname resolves to lan ip", "tower", true, "192.0.2.10", []string{"br0"}},
+		{"hostname prefers ipv4 like the listener", "dual", true, "192.0.2.10", []string{"br0"}},
+		{"hostname with only ipv6", "v6only", true, "2001:db8::10", []string{"br0"}},
+		{"hostname resolves to loopback", "loopy", false, "", nil},
+		{"hostname resolves to nothing", "empty", false, "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ips, ifaces, err := advertisedAddrs(t.Context(), tc.bindHost, fakeInterfaces, fakeResolver)
+			adv, ok, err := advertisedAddrs(t.Context(), tc.bindHost, fakeInterfaces, fakeResolver)
 			if err != nil {
 				t.Fatalf("advertisedAddrs: %v", err)
 			}
-			if !slices.Equal(ips, tc.wantIPs) {
-				t.Errorf("ips = %v, want %v", ips, tc.wantIPs)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}
-			var names []string
-			for _, i := range ifaces {
-				names = append(names, i.Name)
+			gotIP := ""
+			if adv.ip != nil {
+				gotIP = adv.ip.String()
 			}
-			if !slices.Equal(names, tc.wantIfaces) {
-				t.Errorf("ifaces = %v, want %v", names, tc.wantIfaces)
+			if gotIP != tc.wantIP {
+				t.Errorf("ip = %q, want %q", gotIP, tc.wantIP)
+			}
+			if !slices.Equal(adv.ifaces, tc.wantIfaces) {
+				t.Errorf("ifaces = %v, want %v", adv.ifaces, tc.wantIfaces)
 			}
 		})
 	}
@@ -220,11 +227,14 @@ func TestSystemResolver(t *testing.T) {
 
 func TestAdvertisedAddrsNoneEligible(t *testing.T) {
 	onlyLoopback := func() ([]interfaceAddrs, error) {
-		return []interfaceAddrs{{iface: net.Interface{Name: "lo", Flags: net.FlagUp | net.FlagLoopback | net.FlagMulticast}, addrs: []net.Addr{ipNet("127.0.0.1/8")}}}, nil
+		return []interfaceAddrs{
+			{iface: net.Interface{Name: "lo", Flags: net.FlagUp | net.FlagLoopback | net.FlagMulticast}, addrs: []net.Addr{ipNet("127.0.0.1/8")}},
+			{iface: net.Interface{Name: "eth0", Flags: net.FlagUp | net.FlagMulticast}, addrs: []net.Addr{ipNet("fe80::2/64")}},
+		}, nil
 	}
-	ips, ifaces, err := advertisedAddrs(t.Context(), "", onlyLoopback, fakeResolver)
-	if err != nil || len(ips) != 0 || ifaces != nil {
-		t.Fatalf("advertisedAddrs = (%v, %v, %v), want empty", ips, ifaces, err)
+	adv, ok, err := advertisedAddrs(t.Context(), "", onlyLoopback, fakeResolver)
+	if err != nil || ok || adv.ifaces != nil {
+		t.Fatalf("advertisedAddrs = (%+v, %v, %v), want nothing to advertise", adv, ok, err)
 	}
 }
 

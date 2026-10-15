@@ -39,8 +39,8 @@ http://<your-unraid-ip>:24085
 When Vault is bound to a non-loopback address it advertises the `_vault._tcp` service over mDNS so Home Assistant can discover it automatically.
 
 - Loopback binds (`127.0.0.1`, `::1`) are never advertised.
-- A specific LAN IP (for example `192.0.2.10`) is advertised only on the interface that owns it. All-interface binds (`0.0.0.0`, `::`) advertise every non-loopback LAN address.
-- Vault publishes the service under its own host name, `vault-<hostname>.local`. It never claims the Unraid host name, so it does not conflict with Unraid's `avahi-daemon` (`<hostname>.local` stays unchanged).
+- A specific LAN IP (for example `192.0.2.10`) is advertised only on the interface that owns it. All-interface binds (`0.0.0.0`, `::`) advertise on every LAN interface, and each interface carries only its own addresses.
+- Vault publishes the service under its own host name, `vault-<hostname>.local`, and answers address lookups for that name. It never claims the Unraid host name, so it does not conflict with Unraid's `avahi-daemon` (`<hostname>.local` stays unchanged). If another device already uses `vault-<hostname>.local`, Vault picks the next free name (for example `vault-<hostname>-2.local`).
 - To stop advertising, set **Network Discovery (mDNS)** to **No** under **Settings → Vault**, or start the daemon with `--mdns=false`. The API remains reachable at the bind address.
 
 The Dashboard shows a three-step welcome guide: add storage → create job → run backup.

@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **Unraid host renamed after binding Vault to a LAN address (#468):** a non-loopback bind no longer makes `avahi-daemon` report a host name conflict and rename the server (for example `TheVault.local` to `TheVault-2.local`). Vault now advertises `_vault._tcp` under its own host name, `vault-<hostname>.local`, with only the addresses it listens on. The service name and TXT records are unchanged, so Home Assistant discovery keeps working.
+- **Unraid host renamed after binding Vault to a LAN address (#468):** a non-loopback bind no longer makes `avahi-daemon` report a host name conflict and rename the server (for example `TheVault.local` to `TheVault-2.local`). Vault now advertises `_vault._tcp` under its own host name, `vault-<hostname>.local`, answers address lookups for that name, and publishes on each interface only the addresses the API listens on there (the mDNS responder moved from `grandcat/zeroconf` to `brutella/dnssd`). The service name and TXT records are unchanged, so Home Assistant discovery keeps working.
 - **Logs page unresponsiveness and freeze when loading older entries (#454):** Fixed microtask starvation caused by concurrent older-page requests during initial mount and background loading loops (`loadAll` and search). Active older-load requests now share the in-flight Promise across callers, older requests are bound to the store context sequence to discard stale responses, and background loading loops terminate when no progress is made. Also added a store `dispose()` method, called from the synchronous `onMount` cleanup in `Logs.svelte`, to abort background activity on page navigation. Closes #454.
 
 ## [v2026.10.00] - 2026-10-07
