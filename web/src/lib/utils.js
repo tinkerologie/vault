@@ -258,8 +258,11 @@ export function formatDuration(seconds) {
   if (seconds == null || seconds < 0) return '–'
   // Sub-second work is real work: "<1s" rather than a misleading "0s" (#455).
   if (seconds < 1) return '<1s'
+  // Under a minute, keep a fractional second ("2.4s", like the daemon's run
+  // logs); whole-second values such as the API's duration_seconds stay "45s".
+  const tenths = Math.round(seconds * 10)
+  if (tenths < 600) return tenths % 10 ? `${(tenths / 10).toFixed(1)}s` : `${tenths / 10}s`
   const sec = Math.round(seconds)
-  if (sec < 60) return `${sec}s`
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
 }

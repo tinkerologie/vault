@@ -26,10 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **Unrealistic transfer rates for short operations (#455):** a backup or restore that finishes in under a second no longer reports rates like "10000 GB/s". Run logs, Discord notifications, History and the Activity timeline only show a rate for operations of at least one second, and divide by precise elapsed time rather than whole seconds. Run logs show sub-second durations as `<1s` (or `2.4s`) instead of `0s`, and their data includes `duration_ms`.
-
+- **Unrealistic transfer rates for short operations (#455):** a backup or restore that finishes in under a second no longer reports rates like "10000 GB/s". Run logs, Discord notifications, History and the Activity timeline only show a rate for operations of at least one second, and divide by precise elapsed time rather than whole seconds. Run logs and the web UI show sub-second durations as `<1s` instead of `0s` and keep a fractional second under a minute (`2.4s`); run log data includes `duration_ms`.
 - Deployment and verification remove temporary SSH password files when the server is unreachable, while keeping connection errors visible.
-
 - **Ansible no longer prints the Unraid password (#495):** the deploy and verify roles passed it on the command line (`sshpass -p`), so a failed upload or SSH tunnel printed it in the task output, and it showed in the local process list while a deploy ran. `sshpass` now reads it from a private temporary file that is deleted when the run ends, and error messages stay visible.
 - **Logs page unresponsiveness and freeze when loading older entries (#454):** Fixed microtask starvation caused by concurrent older-page requests during initial mount and background loading loops (`loadAll` and search). Active older-load requests now share the in-flight Promise across callers, older requests are bound to the store context sequence to discard stale responses, and background loading loops terminate when no progress is made. Also added a store `dispose()` method, called from the synchronous `onMount` cleanup in `Logs.svelte`, to abort background activity on page navigation. Closes #454.
 
