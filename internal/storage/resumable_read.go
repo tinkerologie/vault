@@ -58,7 +58,14 @@ func (r *resumableReader) Read(p []byte) (int, error) {
 		if r.inner == nil {
 			rc, err := r.adapter.ReadRange(r.path, r.offset, r.size-r.offset)
 			if err != nil {
-				if !classify(err) || r.failures+1 >= r.policy.MaxAttempts {
+				if !classify(err) {
+					return 0, err
+				}
+				retrying := r.failures+1 < r.policy.MaxAttempts
+				// A failed (re)open is a transient storage error even when no
+				// retry middleware sits below this reader (#455).
+				r.diag.recordTransient("ReadRange", r.path, r.failures+1, r.policy.MaxAttempts, err, retrying)
+				if !retrying {
 					return 0, err
 				}
 				r.failures++
