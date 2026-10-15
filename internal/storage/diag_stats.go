@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"path"
 	"sync"
 	"sync/atomic"
@@ -121,6 +122,16 @@ func (d *DiagStats) recordTransient(op, object string, attempt, maxAttempts int,
 	}
 }
 
+// recordRetry counts a retry of a failure an inner layer already counted as
+// transient, and forwards the event subject to the cap.
+func (d *DiagStats) recordRetry(op, object string, attempt, maxAttempts int, err error) {
+	if d == nil {
+		return
+	}
+	d.retries.Add(1)
+	d.emit(DiagEvent{Op: op, Object: path.Base(object), Attempt: attempt, MaxAttempts: maxAttempts, Err: errText(err)})
+}
+
 // recordResume counts a mid-stream resume of object.
 func (d *DiagStats) recordResume(object string, attempt, maxAttempts int, err error) {
 	if d == nil {
@@ -169,6 +180,20 @@ func (d *DiagStats) emit(ev DiagEvent) {
 	if fn != nil {
 		fn(ev)
 	}
+}
+
+// recordedError marks a transient error the retry middleware already counted
+// after exhausting its attempts, so an outer retrier (the resumable reader)
+// counts its own retry without counting the same failure twice (#455). It is
+// transparent to errors.Is/As and keeps the original message.
+type recordedError struct{ error }
+
+func (e *recordedError) Unwrap() error { return e.error }
+
+// alreadyRecorded reports whether err was counted by an inner retry layer.
+func alreadyRecorded(err error) bool {
+	_, ok := errors.AsType[*recordedError](err)
+	return ok
 }
 
 func errText(err error) string {

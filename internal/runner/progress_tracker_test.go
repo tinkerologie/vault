@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -303,5 +304,27 @@ func TestReportItemDetailLateWorkerKeepsTracker(t *testing.T) {
 	r.reportItemDetail("a", transferring(99, 100)) // previous item's straggler
 	if snap, ok := r.progress.snapshot("b"); !ok || snap.BytesDone != 10 {
 		t.Fatalf("tracker = %+v ok=%v, want item b untouched", snap, ok)
+	}
+}
+
+// TestStageRestorePointItemReportsFiles guards #456: classic restore downloads
+// report files done/total next to bytes.
+func TestStageRestorePointItemReportsFiles(t *testing.T) {
+	raw := bytes.Repeat([]byte("compressed-content"), 100)
+	compressed := writeZstd(t, raw)
+	meta := buildChecksumsMetadata(t, "myitem", "archive.tar.zst", sha256hexBytes(compressed))
+	r, rp := setupStagingTest(t, map[string][]byte{"staging-test-job/run1/myitem/archive.tar.zst": compressed}, meta)
+
+	var last engine.ProgressDetail
+	ctx := engine.WithDetailReporter(context.Background(), func(_ string, d engine.ProgressDetail) {
+		if d.Phase == engine.PhaseTransferring {
+			last = d
+		}
+	})
+	if err := r.stageRestorePointItem(ctx, rp, "myitem", t.TempDir(), "", 0, 100, restoreProgressReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	if last.FilesTotal != 1 || last.FilesDone != 1 || last.BytesDone != int64(len(compressed)) {
+		t.Fatalf("final download report = %+v, want 1/1 files and %d bytes", last, len(compressed))
 	}
 }
