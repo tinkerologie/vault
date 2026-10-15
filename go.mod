@@ -12,13 +12,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.13
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.2
 	github.com/aws/smithy-go v1.28.5
+	github.com/brutella/dnssd v1.2.14
 	github.com/cloudsoda/go-smb2 v0.0.0-20260918041005-0c5d69b69701
 	github.com/coder/websocket v1.8.15
 	github.com/digitalocean/go-libvirt v0.0.0-20260814190004-1a83157e1858
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.16.1
-	github.com/grandcat/zeroconf v1.0.0
 	github.com/hanwen/go-fuse/v2 v2.12.0
 	github.com/klauspost/compress v1.20.1
 	github.com/moby/moby/api v1.56.1
@@ -51,7 +51,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.3 // indirect
-	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudsoda/sddl v0.0.0-20250224235906-926454e91efc // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
@@ -86,6 +85,8 @@ require (
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/vishvananda/netlink v1.2.1-beta.2 // indirect
+	github.com/vishvananda/netns v0.0.0-20200728191858-db3c7e526aae // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
