@@ -5325,6 +5325,8 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 	var (
 		dlMu     sync.Mutex
 		dl       int64     // bytes downloaded across all files (for progress)
+		// filesDone counts completed downloads for file-level progress (#456).
+		filesDone atomic.Int64
 		dlLast   time.Time // last broadcast, guarded by dlMu (rate limit, issue #256)
 		sem      = make(chan struct{}, concurrency)
 		wg       sync.WaitGroup
@@ -5350,6 +5352,7 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		// tracker keeps the reported value monotonic (#456).
 		engine.ReportDetail(ctx, itemName, engine.ProgressDetail{
 			Phase: engine.PhaseTransferring, BytesDone: min(cur, totalBytes), BytesTotal: totalBytes,
+			FilesDone: filesDone.Load(), FilesTotal: int64(len(restoreFiles)),
 		})
 		if totalBytes > 0 && emit {
 			r.reportRestoreProgress(reporter, scaleRestorePhaseProgress(phaseStart, phaseEnd, cur, totalBytes), "Downloading")
@@ -5376,6 +5379,8 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 				errOnce.Do(func() { firstErr = err })
 				return
 			}
+			filesDone.Add(1)
+			heartbeat(0) // reports the completed file count
 			// Per-file run-log narration (issue #328 QA). Classic restore
 			// downloads are few per item (archive + sidecars); the chunked
 			// restore path narrates per-file via its own -1 heartbeats,
