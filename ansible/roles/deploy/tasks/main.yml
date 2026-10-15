@@ -300,162 +300,26 @@
         fi
       changed_when: true
 
-    - name: Write RC script
-      ansible.builtin.raw: |
-        cat > {{ rc_script }} << 'RCEOF'
-        #!/bin/bash
-        DAEMON={{ binary_path }}
-        PIDFILE={{ pid_file }}
-        DB={{ db_path }}
-        CONFIG={{ config_dir }}/vault.cfg
-        LOG={{ log_path }}
-        MAX_LOG_SIZE=$((256 * 1024))
+    # Ship the real plugin/rc.vault rather than an inline copy, so deploys
+    # exercise exactly the service script users get from the .plg package
+    # (the inline copy had drifted: it sourced vault.cfg and ignored
+    # MDNS_ADVERTISE, #468).
+    - name: Upload RC script via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -f '{{ sshpass_file.path }}'
+          scp {{ scp_common_opts }}
+          {{ playbook_dir }}/../plugin/rc.vault
+          {{ ansible_user }}@{{ ansible_host }}:{{ rc_script }}
+      register: scp_rc_script
+      retries: 3
+      delay: 3
+      until: scp_rc_script.rc == 0
+      changed_when: true
 
-        # Read config (PORT, BIND_ADDRESS, SERVICE).
-        BIND_ADDRESS={{ bind_address }}
-        PORT={{ api_port }}
-        SERVICE=yes
-        if [ -f "$CONFIG" ]; then
-            source "$CONFIG"
-        fi
-
-        BIND_ADDRESS="${BIND_ADDRESS:-{{ bind_address }}}"
-        PORT="${PORT:-{{ api_port }}}"
-        LISTEN_HOST="$BIND_ADDRESS"
-        if [[ "$LISTEN_HOST" == *:* && "$LISTEN_HOST" != \[* ]]; then
-          LISTEN_HOST="[$LISTEN_HOST]"
-        fi
-        ADDR="${LISTEN_HOST}:$PORT"
-
-        trim_log() {
-          if [ ! -f "$LOG" ]; then
-            return
-          fi
-
-          local size
-          size=$(wc -c < "$LOG" 2>/dev/null || echo 0)
-          if [ "$size" -le "$MAX_LOG_SIZE" ]; then
-            return
-          fi
-
-          local tmp="${LOG}.tmp"
-          if tail -c "$MAX_LOG_SIZE" "$LOG" > "$tmp" 2>/dev/null; then
-            mv "$tmp" "$LOG"
-            echo "Trimmed Vault log to ${MAX_LOG_SIZE} bytes"
-            return
-          fi
-
-          rm -f "$tmp"
-        }
-
-        resolve_pid() {
-            local pid=""
-            if [ -f "$PIDFILE" ]; then
-                pid=$(cat "$PIDFILE" 2>/dev/null || true)
-                if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                    printf '%s\n' "$pid"
-                    return 0
-                fi
-            fi
-            pid=$(pidof vault 2>/dev/null | sed 's/ .*//')
-            if [ -n "$pid" ]; then
-                printf '%s\n' "$pid"
-                return 0
-            fi
-            return 1
-        }
-
-        wait_for_stop() {
-            local pid="$1"
-            local attempts="${2:-45}"
-            while [ "$attempts" -gt 0 ]; do
-                if ! kill -0 "$pid" 2>/dev/null; then
-                    return 0
-                fi
-                sleep 1
-                attempts=$((attempts - 1))
-            done
-            return 1
-        }
-
-        start() {
-            if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
-                echo "Vault daemon is already running"
-                return 1
-            fi
-
-            # Boot-time only: wait 8 s for array/pool mounts before
-            # launching the daemon. Skipped for manual restarts so
-            # the deploy loop stays fast (issue #108).
-            if [ -r /proc/uptime ]; then
-                read -r UPTIME_RAW _ < /proc/uptime
-                UPTIME_SECS=${UPTIME_RAW%%.*}
-                if [ -n "$UPTIME_SECS" ] && [ "$UPTIME_SECS" -lt 120 ] 2>/dev/null; then
-                    echo "Boot-time start (uptime ${UPTIME_SECS}s); waiting 8 s for array/pool mount..."
-                    sleep 8
-                fi
-            fi
-
-          echo "Starting Vault daemon on $ADDR..."
-          mkdir -p "$(dirname "$LOG")"
-          touch "$LOG"
-          trim_log
-          nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
-            echo $! > "$PIDFILE"
-          sleep 1
-          if ! kill -0 $(cat "$PIDFILE") 2>/dev/null; then
-            echo "Vault daemon failed to start. Check $LOG"
-            rm -f "$PIDFILE"
-            return 1
-          fi
-            echo "Vault daemon started (PID: $(cat $PIDFILE))"
-        }
-
-        stop() {
-            local pid=""
-            if ! pid=$(resolve_pid); then
-                rm -f "$PIDFILE"
-                echo "Vault daemon is not running"
-                return 0
-            fi
-            # Graceful stop: SIGTERM, wait up to 45 s for the daemon.
-            # Config is on flash from the pre-drain flush so even a
-            # SIGKILL escalation preserves user settings (issue #108).
-            echo "Stopping Vault daemon..."
-            kill -TERM "$pid" 2>/dev/null || true
-            if ! wait_for_stop "$pid" 45; then
-                echo "Vault daemon did not stop within 45 s of SIGTERM, sending SIGINT..."
-                kill -INT "$pid" 2>/dev/null || true
-                if ! wait_for_stop "$pid" 5; then
-                    echo "Vault daemon still running, escalating to SIGKILL..."
-                    kill -9 "$pid" 2>/dev/null || true
-                    if ! wait_for_stop "$pid" 5; then
-                        echo "Vault daemon could not be stopped"
-                        return 1
-                    fi
-                fi
-            fi
-            rm -f "$PIDFILE"
-            echo "Vault daemon stopped"
-        }
-
-        status() {
-            if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
-            echo "Vault daemon is running (PID: $(cat $PIDFILE)) on $ADDR"
-            else
-                echo "Vault daemon is not running"
-            fi
-        }
-
-        case "$1" in
-            start)   start ;;
-            stop)    stop ;;
-            restart) stop; sleep 1; start ;;
-            status)  status ;;
-            *)       echo "Usage: $0 {start|stop|restart|status}" ;;
-        esac
-        RCEOF
-        chmod 0755 {{ rc_script }}
+    - name: Set RC script permissions
+      ansible.builtin.raw: "chmod 0755 {{ rc_script }}"
       changed_when: true
 
     - name: Start Vault daemon
@@ -463,20 +327,19 @@
       changed_when: true
 
     - name: Wait for API to be ready
+      # Probe the address rc.vault actually passed to the daemon (--addr),
+      # so vault.cfg parsing, defaults and the non-local fallback never
+      # have to be duplicated here.
       ansible.builtin.raw: |
-        if [ -f {{ config_dir }}/vault.cfg ]; then
-          # shellcheck source=/dev/null
-          . {{ config_dir }}/vault.cfg
-        fi
-        TARGET="${BIND_ADDRESS:-{{ bind_address }}}"
-        PORT_VALUE="${PORT:-{{ api_port }}}"
-        if [ "$TARGET" = "0.0.0.0" ] || [ "$TARGET" = "::" ]; then
-          TARGET="127.0.0.1"
-        fi
-        URL_HOST="$TARGET"
-        if [[ "$URL_HOST" == *:* && "$URL_HOST" != \[* ]]; then
-          URL_HOST="[$URL_HOST]"
-        fi
+        PID="$(pidof -s vault)"
+        [ -n "$PID" ] || exit 1
+        ADDR="$(tr '\0' '\n' < "/proc/$PID/cmdline" | sed -n 's/^--addr=//p' | head -1)"
+        [ -n "$ADDR" ] || exit 1
+        URL_HOST="${ADDR%:*}"
+        PORT_VALUE="${ADDR##*:}"
+        case "$URL_HOST" in
+          0.0.0.0|"[::]") URL_HOST="127.0.0.1" ;;
+        esac
         curl -fsS "http://${URL_HOST}:${PORT_VALUE}/api/v1/health" >/dev/null
       register: health_check
       retries: 10
@@ -486,13 +349,12 @@
 
     - name: Read effective daemon bind
       ansible.builtin.raw: |
-        if [ -f {{ config_dir }}/vault.cfg ]; then
-          # shellcheck source=/dev/null
-          . {{ config_dir }}/vault.cfg
+        PID="$(pidof -s vault)"
+        BIND_VALUE=""
+        if [ -n "$PID" ]; then
+          BIND_VALUE="$(tr '\0' '\n' < "/proc/$PID/cmdline" | sed -n 's/^--addr=//p' | head -1)"
         fi
-        BIND_VALUE="${BIND_ADDRESS:-{{ bind_address }}}"
-        PORT_VALUE="${PORT:-{{ api_port }}}"
-        echo "${BIND_VALUE}:${PORT_VALUE}"
+        echo "${BIND_VALUE:-unknown}"
       register: daemon_bind_info
       changed_when: false
 

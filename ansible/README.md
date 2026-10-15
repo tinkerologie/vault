@@ -72,7 +72,7 @@ synthetic credentials. A test connection replaces all remote commands; local
 SSH, SCP, curl, Go, and Playwright commands use fakes, and endpoint requests go
 to a temporary loopback HTTP server. No inventory or Unraid host is needed.
 
-Coverage includes all 11 SCP paths, the SSH tunnel, private file permissions
+Coverage includes all 12 SCP paths (including `rc.vault`), the SSH tunnel, private file permissions
 and contents, password suppression in output and process arguments, authentication
 and filesystem failures, an unreachable host (which must fail fast without
 leaving a password file), removal of stale password files from interrupted
