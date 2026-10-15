@@ -1,7 +1,11 @@
 {
   "overrides": [
     {
-      "files": [".github/workflows/*.yml", ".github/dependabot.yml", ".github/labeler.yml"],
+      "files": [
+        ".github/workflows/*.yml",
+        ".github/dependabot.yml",
+        ".github/labeler.yml"
+      ],
       "options": { "singleQuote": true }
     }
   ]
