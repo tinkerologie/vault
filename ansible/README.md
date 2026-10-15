@@ -56,6 +56,34 @@ ansible-playbook -i inventory.yml ansible.yml --tags deploy --skip-tags tests
 ansible-playbook -i inventory.yml ansible.yml --tags uninstall -e create_backup=true
 ```
 
+## Local Regression Tests
+
+Use Python 3.11 or newer and a virtual environment. From the repository root:
+
+```bash
+python3 -m venv /tmp/vault-ansible-tests
+source /tmp/vault-ansible-tests/bin/activate
+python -m pip install -r ansible/tests/requirements.txt
+make test-ansible
+```
+
+The tests execute the real deploy and verify roles at `-vvv --diff` using
+synthetic credentials. A test connection replaces all remote commands; local
+SSH, SCP, curl, Go, and Playwright commands use fakes, and endpoint requests go
+to a temporary loopback HTTP server. No inventory or Unraid host is needed.
+
+Coverage includes all 11 SCP paths, the SSH tunnel, private file permissions
+and contents, password suppression in output and process arguments, authentication
+and filesystem failures, an unreachable host (which must fail fast without
+leaving a password file), removal of stale password files from interrupted
+runs, included verification failures, and both cleanup conditions. Endpoint errors are checked according to the role's existing behavior:
+they are reported and ignored. Test callbacks inject filesystem failures and
+remove retry delays without changing the production roles.
+
+CI runs `make test-ansible` in the **Ansible password handling** job. The existing
+Codecov configuration excludes `ansible/**`, so Codecov's patch percentage does
+not measure these role tests.
+
 Standard uninstall removes Vault-managed traces, including the binary, UI assets,
 service script, database, config, logs, hybrid database artifacts, and stale
 staging directories. Backup data stored in configured storage destinations is
