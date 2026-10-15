@@ -603,6 +603,13 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 	// Copy disk files back.
 	progress(item.Name, 20, "restoring disk images")
 	totalDisks := len(plan.Disks)
+	// Disk-copy progress across every disk against their combined size (#456).
+	var disksTotal, disksDone int64
+	for _, disk := range plan.Disks {
+		if fi, err := os.Stat(filepath.Join(sourceDir, disk.BackupFile)); err == nil {
+			disksTotal += fi.Size()
+		}
+	}
 	for i, disk := range plan.Disks {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -625,11 +632,22 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 		if err := mkdirRestored(filepath.Dir(targetPath), 0755); err != nil {
 			return fmt.Errorf("creating dir for disk %s: %w", targetPath, err)
 		}
+		var copiedThisDisk int64
 		if err := copyFileWithProgress(ctx, srcFile, targetPath, func(copied int64) {
+			copiedThisDisk = copied
+			ReportDetail(ctx, item.Name, ProgressDetail{
+				Phase: PhaseProcessing, BytesDone: disksDone + copied, BytesTotal: disksTotal,
+				FilesDone: int64(i), FilesTotal: int64(totalDisks),
+			})
 			progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d: %s", i+1, totalDisks, humanizeBytes(float64(copied))))
 		}); err != nil {
 			return fmt.Errorf("restoring disk %s: %w", targetPath, err)
 		}
+		disksDone += copiedThisDisk
+		ReportDetail(ctx, item.Name, ProgressDetail{
+			Phase: PhaseProcessing, BytesDone: disksDone, BytesTotal: disksTotal,
+			FilesDone: int64(i + 1), FilesTotal: int64(totalDisks),
+		})
 	}
 
 	// Restore NVRAM if present.
@@ -1320,6 +1338,9 @@ func (h *VMHandler) waitForBackupCompletion(ctx context.Context, dom libvirt.Dom
 				vanishedPolls = 0
 				pct := backupProgressPercent(params)
 				msg := backupProgressMessage(params)
+				if done, total, ok := backupProgressBytes(params); ok {
+					ReportDetail(ctx, name, ProgressDetail{Phase: PhaseProcessing, BytesDone: done, BytesTotal: total})
+				}
 				if sig := fmt.Sprintf("%d|%s", pct, msg); sig != lastProgressSig {
 					lastProgressSig = sig
 					lastActivity = time.Now()
