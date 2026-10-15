@@ -179,9 +179,9 @@ class PasswordHandlingTests(unittest.TestCase):
             task = find(tasks, name)
             self.assertIsNotNone(task, name)
             script = task["ansible.builtin.raw"]
-            self.assertIn("/proc/$PID/cmdline", script, name)
-            self.assertIn("--addr=", script, name)
-            self.assertNotIn("vault.cfg", script, name)
+            self.assertTrue("/proc/$PID/cmdline" in script, name)
+            self.assertTrue("--addr=" in script, name)
+            self.assertFalse("vault.cfg" in script, name)
 
     def test_deploy_all_scp_paths(self):
         rc, output, commands, tasks, _ = self.run_role("deploy")
