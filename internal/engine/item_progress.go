@@ -22,7 +22,13 @@ type itemProgress struct {
 	filesTotal int64
 	bytes      atomic.Int64
 	files      atomic.Int64
+	lastReport atomic.Int64 // unix nanos of the last byte-driven report
 }
+
+// byteReportInterval coalesces byte reports from tight copy loops (every
+// 32 KiB) before they reach the runner. File completions, the phase start,
+// and the final report always go through.
+const byteReportInterval = 250 * time.Millisecond
 
 type itemProgressKey struct{}
 
@@ -62,7 +68,13 @@ func (p *itemProgress) addBytes(n int64) {
 	if p == nil || n <= 0 {
 		return
 	}
-	p.bytes.Add(n)
+	done := p.bytes.Add(n)
+	now := time.Now().UnixNano()
+	final := p.bytesTotal > 0 && done >= p.bytesTotal
+	if !final && now-p.lastReport.Load() < int64(byteReportInterval) {
+		return
+	}
+	p.lastReport.Store(now)
 	p.report()
 }
 

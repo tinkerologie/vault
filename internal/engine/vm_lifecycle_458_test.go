@@ -814,13 +814,16 @@ func TestVMProbeActivity458(t *testing.T) {
 	})
 
 	t.Run("cancelled while sampling", func(t *testing.T) {
+		prev := vmActivitySampleInterval
 		vmActivitySampleInterval = time.Hour
+		// Restore even if the assertion fails, so later subtests never sample
+		// for an hour.
+		t.Cleanup(func() { vmActivitySampleInterval = prev })
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		if got := (&VMHandler{conn: &fakeLibvirt{}}).ProbeActivity(ctx, "vm1"); got.Known {
 			t.Fatalf("sample = %+v, want unknown", got)
 		}
-		vmActivitySampleInterval = 10 * time.Millisecond
 	})
 
 	t.Run("busy", func(t *testing.T) {
