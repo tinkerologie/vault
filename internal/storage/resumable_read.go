@@ -62,9 +62,17 @@ func (r *resumableReader) Read(p []byte) (int, error) {
 					return 0, err
 				}
 				retrying := r.failures+1 < r.policy.MaxAttempts
-				// A failed (re)open is a transient storage error even when no
-				// retry middleware sits below this reader (#455).
-				r.diag.recordTransient("ReadRange", r.path, r.failures+1, r.policy.MaxAttempts, err, retrying)
+				// A failed (re)open is a transient storage error. When retry
+				// middleware below already counted it after exhausting its own
+				// attempts, count only this reader's retry, not the failure
+				// again (#455).
+				if alreadyRecorded(err) {
+					if retrying {
+						r.diag.recordRetry("ReadRange", r.path, r.failures+1, r.policy.MaxAttempts, err)
+					}
+				} else {
+					r.diag.recordTransient("ReadRange", r.path, r.failures+1, r.policy.MaxAttempts, err, retrying)
+				}
 				if !retrying {
 					return 0, err
 				}
