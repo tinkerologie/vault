@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Troubleshooting detail in run logs (#455):** backup and restore run logs now start with a "Run details" line (job, run, destination and storage type, restore point), time each stage of each item ("Phase upload completed for appdata in 4m12s"), and name the stage that failed. Retried storage requests, resumed streams, and restarted download parts each get a redacted warning line, capped at 20 per run. Item and summary lines report bytes stored, uploaded (including retries), read back, and restored, plus retry counts. Verification lines include bytes read and the time taken.
+
+### Changed
+
+- **Selective restore size (#455):** restoring a few files from a backup item reports the bytes actually restored instead of the whole item's recorded size, in History, the run log, and the restore summary. Restore summaries also name the job and destination.
 - **mDNS advertisement control (#468):** new **Network Discovery (mDNS)** setting (`MDNS_ADVERTISE` in `vault.cfg`) and `--mdns` flag on `vault daemon` and `vault replica` turn LAN discovery off without changing the bind address. Both default to on.
 
 ### Changed

@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/crypto"
@@ -1024,6 +1025,10 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// demand — per-request stall detection rather than a total-job deadline.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Per-run storage diagnostics (#455): retries, resumes, and bytes read
+	// are collected for the run log and its summary.
+	runDiag := r.newRunDiag(runID)
+	ctx = storage.WithDiagStats(ctx, runDiag)
 
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
@@ -1115,6 +1120,14 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	}
 	r.logActivity("info", "backup", fmt.Sprintf("Backup started, job=%q", job.Name),
 		structuredDetails(startedDetails))
+	startedDetails["storage_type"] = dest.Type
+	r.runLog(runID, runLogLevelInfo,
+		// Identifiers for troubleshooting (#455). Named "Run details", not
+		// "Backup started": the activity feed already narrates the start and
+		// the run log must not duplicate it (#328).
+		fmt.Sprintf("Run details: job=%q, job_id=%d, run_id=%d, destination=%q (%s), items=%d, backup_type=%s",
+			job.Name, jobID, runID, dest.Name, dest.Type, len(items), btResult.BackupType),
+		startedDetails)
 
 	// <job name>/<timestamp>. The run ID used to lead the folder name, which
 	// made every run of a job sort apart from its siblings and buried the one
@@ -2192,6 +2205,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		}))
 
 	level, msg, summaryData := runSummaryMessage("Backup", job.Name, status, itemsDone, itemsFailed, run.ItemsTotal, totalSize, runElapsed)
+	msg = addDiagTotals(msg, summaryData, runDiag.Snapshot())
 	summaryData["job_id"] = jobID
 	summaryData["backup_type"] = btResult.BackupType
 	summaryData["destination"] = dest.Name
@@ -2941,7 +2955,9 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 		// Fall through to classic tar for non-chunked handlers (VM, ZFS).
 	}
 
+	stage := r.beginPhase(runID, item.Name, "stage")
 	tmpDir, result, cleanup, err := r.stageItemLocally(ctx, runID, item, dest)
+	stage.end(err, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2964,7 +2980,7 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 // are read back and re-hashed before the item is reported successful, which
 // is the dedup equivalent of the classic path's post-upload checksum pass (issue #382).
 func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler, verify bool) (*engine.BackupResult, map[string]string, error) {
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("adapter: %w", err)
 	}
@@ -3037,17 +3053,32 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 		})
 	}
 
+	store := r.beginPhase(runID, item.Name, "dedup store")
 	manifestID, err := handler.BackupChunked(ctx, item, repo, parent, progress)
-	if err != nil {
-		return nil, nil, fmt.Errorf("backup chunked: %w", err)
+	if err == nil {
+		if flushErr := repo.Flush(); flushErr != nil {
+			err = fmt.Errorf("repo flush: %w", flushErr)
+		}
+	} else {
+		err = fmt.Errorf("backup chunked: %w", err)
 	}
-	if err := repo.Flush(); err != nil {
-		return nil, nil, fmt.Errorf("repo flush: %w", err)
+	session := repo.SessionStats()
+	store.end(err, map[string]any{
+		"logical_bytes":    session.LogicalBytes,
+		"bytes_uploaded":   session.UploadedBytes,
+		"duplicate_chunks": session.DuplicateChunks,
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 
 	verified := false
 	if verify {
-		if err := r.verifyChunkedItem(ctx, runID, item, repo, manifestID); err != nil {
+		verifyPhase := r.beginPhase(runID, item.Name, "verify")
+		readBefore := repo.SessionStats().ReadBytes
+		err := r.verifyChunkedItem(ctx, runID, item, repo, manifestID)
+		verifyPhase.end(err, map[string]any{"bytes_read": repo.SessionStats().ReadBytes - readBefore})
+		if err != nil {
 			return nil, nil, err
 		}
 		verified = true
@@ -3285,6 +3316,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	adapter, err := storage.NewAdapterWithOptions(dest.Type, dest.Config, storage.Options{
 		VerboseLogging: verbose,
 		DestLabel:      dest.Name,
+		Diag:           storage.DiagStatsFrom(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating storage adapter: %w", err)
@@ -3306,6 +3338,13 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	r.runLog(runID, runLogLevelInfo,
 		fmt.Sprintf("Uploading %s (%s): %d file(s)", itemName, itemType, len(entries)),
 		map[string]any{"item_name": itemName, "item_type": itemType, "files": len(entries)})
+	uploadPhase := r.beginPhase(runID, itemName, "upload")
+	// storedBytes is what landed on the destination; sentBytes also counts
+	// attempts the storage layer retried, so the difference is retry cost.
+	var storedBytes, sentBytes atomic.Int64
+	uploadTotals := func() map[string]any {
+		return map[string]any{"stored_bytes": storedBytes.Load(), "bytes_uploaded": sentBytes.Load()}
+	}
 	var (
 		mu        sync.Mutex
 		checksums = make(map[string]string)
@@ -3342,8 +3381,10 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 				fileSize = fi.Size()
 			}
 			upStart := time.Now()
-			storageName, checksum, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName, progress)
+			storageName, checksum, sent, upErr := r.uploadOneStaged(ctx, adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName, progress)
+			sentBytes.Add(sent.total)
 			if upErr == nil {
+				storedBytes.Add(sent.stored)
 				dur := time.Since(upStart)
 				r.runLog(runID, runLogLevelInfo,
 					fmt.Sprintf("Uploaded %s, file=%s, size=%s, duration=%s",
@@ -3352,6 +3393,8 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 						"item_name":        itemName,
 						"file":             storageName,
 						"size_bytes":       fileSize,
+						"stored_bytes":     sent.stored,
+						"bytes_uploaded":   sent.total,
 						"duration_seconds": int(dur.Seconds()),
 						"duration_ms":      dur.Milliseconds(),
 					})
@@ -3369,25 +3412,36 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	}
 	wg.Wait()
 	if firstErr != nil {
+		uploadPhase.end(firstErr, uploadTotals())
 		r.cleanupPartialUploads(adapter, storagePath, checksums)
 		return nil, firstErr
 	}
 	if ctx.Err() != nil {
+		uploadPhase.end(ctx.Err(), uploadTotals())
 		r.cleanupPartialUploads(adapter, storagePath, checksums)
 		return nil, fmt.Errorf("upload cancelled: %w", ctx.Err())
 	}
+
+	uploadPhase.end(nil, uploadTotals())
 
 	// Verify: read files back from storage and re-compute SHA-256.
 	if verify {
 		r.runLog(runID, runLogLevelInfo,
 			fmt.Sprintf("Verifying %s (%s): %d file(s)", itemName, itemType, len(checksums)),
 			map[string]any{"item_name": itemName, "item_type": itemType, "files": len(checksums)})
+		verifyStart := time.Now()
+		verifyPhase := r.beginPhase(runID, itemName, "verify")
+		var verifiedBytes int64
+		failVerify := func(err error) error {
+			verifyPhase.end(err, map[string]any{"bytes_read": verifiedBytes})
+			r.cleanupPartialUploads(adapter, storagePath, checksums)
+			return err
+		}
 		for fileName, expectedHash := range checksums {
 			destPath := filepath.Join(storagePath, fileName)
 			reader, err := adapter.Read(destPath)
 			if err != nil {
-				r.cleanupPartialUploads(adapter, storagePath, checksums)
-				return nil, fmt.Errorf("verification read %s: %w", fileName, err)
+				return nil, failVerify(fmt.Errorf("verification read %s: %w", fileName, err))
 			}
 			verifyHasher := sha256.New()
 			// Heartbeat the stall watchdog while reading the file back — a
@@ -3396,7 +3450,8 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 			var verifyBroadcast time.Time
 			verifyReader := &countingReader{
 				reader: reader,
-				onRead: func(int64) {
+				onRead: func(n int64) {
+					verifiedBytes += n
 					r.lastProgressMu.Lock()
 					r.lastProgress = time.Now()
 					r.lastProgressMu.Unlock()
@@ -3408,19 +3463,27 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 			}
 			if _, err := io.Copy(verifyHasher, verifyReader); err != nil {
 				_ = reader.Close()
-				r.cleanupPartialUploads(adapter, storagePath, checksums)
-				return nil, fmt.Errorf("verification hash %s: %w", fileName, err)
+				return nil, failVerify(fmt.Errorf("verification hash %s: %w", fileName, err))
 			}
 			_ = reader.Close()
 			actualHash := hex.EncodeToString(verifyHasher.Sum(nil))
 			if actualHash != expectedHash {
-				r.cleanupPartialUploads(adapter, storagePath, checksums)
-				return nil, fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash)
+				return nil, failVerify(fmt.Errorf("verification failed for %s: expected %s, got %s", fileName, expectedHash, actualHash))
 			}
 		}
+		verifyElapsed := time.Since(verifyStart)
 		r.runLog(runID, runLogLevelInfo,
-			fmt.Sprintf("Verified %s (%s): %d file(s) checksum OK", itemName, itemType, len(checksums)),
-			map[string]any{"item_name": itemName, "item_type": itemType, "files": len(checksums)})
+			fmt.Sprintf("Verified %s (%s): %d file(s) checksum OK, read=%s in %s",
+				itemName, itemType, len(checksums), format.Bytes(float64(verifiedBytes)), format.Duration(verifyElapsed)),
+			map[string]any{
+				"item_name":   itemName,
+				"item_type":   itemType,
+				"files":       len(checksums),
+				"outcome":     "ok",
+				"bytes_read":  verifiedBytes,
+				"duration_ms": verifyElapsed.Milliseconds(),
+			})
+		verifyPhase.end(nil, map[string]any{"bytes_read": verifiedBytes})
 	}
 
 	return checksums, nil
@@ -3434,7 +3497,15 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 // It returns (storageName, checksumHex, err). All per-attempt state (hasher,
 // uploaded counter, broadcast timer) is local so concurrent calls never share
 // mutable state.
-func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName string, progress func(int, string)) (string, string, error) {
+// uploadBytes is what one staged-file upload moved: stored is the size of
+// the attempt that succeeded, total also counts attempts the storage layer
+// retried.
+type uploadBytes struct {
+	stored int64
+	total  int64
+}
+
+func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, tmpDir, entryName, storagePath, passphrase, transportCompression, itemType, itemName string, progress func(int, string)) (string, string, uploadBytes, error) {
 	_ = itemType
 	_ = itemName
 
@@ -3464,6 +3535,7 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 	// reopen yields a fresh source stream for each WriteFrom attempt. It resets
 	// the hasher and byte counter first so a replayed attempt re-hashes from the
 	// start and the digest matches exactly the bytes of the successful attempt.
+	var sent uploadBytes
 	reopen := func() (io.ReadCloser, error) {
 		hasher.Reset()
 		uploaded = 0
@@ -3501,6 +3573,7 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 			reader: tee,
 			onRead: func(n int64) {
 				uploaded += n
+				sent.total += n
 				r.lastProgressMu.Lock()
 				r.lastProgress = time.Now()
 				r.lastProgressMu.Unlock()
@@ -3519,11 +3592,12 @@ func (r *Runner) uploadOneStaged(ctx context.Context, adapter storage.Adapter, t
 
 	if err := adapter.WriteFrom(destPath, reopen); err != nil {
 		if ctx.Err() != nil {
-			return storageName, "", fmt.Errorf("upload cancelled: %w", ctx.Err())
+			return storageName, "", sent, fmt.Errorf("upload cancelled: %w", ctx.Err())
 		}
-		return storageName, "", fmt.Errorf("writing %s to storage: %w", storageName, err)
+		return storageName, "", sent, fmt.Errorf("writing %s to storage: %w", storageName, err)
 	}
-	return storageName, hex.EncodeToString(hasher.Sum(nil)), nil
+	sent.stored = uploaded
+	return storageName, hex.EncodeToString(hasher.Sum(nil)), sent, nil
 }
 
 // cleanupPartialUploads best-effort deletes the files named in checksums under
@@ -3750,6 +3824,8 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	// automatic canceller. CancelJob() triggers the stored cancel func on demand.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	runDiag := r.newRunDiag(runID)
+	ctx = storage.WithDiagStats(ctx, runDiag)
 
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
@@ -3804,6 +3880,25 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			"items":            len(targets),
 			"items_list":       targetNames,
 		}))
+	destName, destType := "", ""
+	if job, jErr := r.db.GetJob(restorePoint.JobID); jErr == nil {
+		if d, dErr := r.db.GetStorageDestination(job.StorageDestID); dErr == nil {
+			destName, destType = d.Name, d.Type
+		}
+	}
+	r.runLog(runID, runLogLevelInfo,
+		fmt.Sprintf("Run details: job=%q, job_id=%d, run_id=%d, restore_point_id=%d, destination=%q (%s), items=%d",
+			jobName, restorePoint.JobID, runID, restorePoint.ID, destName, destType, len(targets)),
+		map[string]any{
+			"job_id":           restorePoint.JobID,
+			"job_name":         jobName,
+			"run_id":           runID,
+			"restore_point_id": restorePoint.ID,
+			"destination":      destName,
+			"storage_type":     destType,
+			"items":            len(targets),
+			"items_list":       targetNames,
+		})
 
 	// Recover from panics so the run is marked failed.
 	defer func() {
@@ -3868,8 +3963,13 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			map[string]any{"item_name": t.Name, "item_type": t.Type})
 
 		start := time.Now()
-		restoreErr := r.restoreItemWithReporter(ctx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
+		// The tally counts what the engine actually wrote, so a selective
+		// restore reports its own size instead of the whole item's (#455).
+		tally := &engine.RestoreTally{}
+		diagBefore := runDiag.Snapshot()
+		restoreErr := r.restoreItemWithReporter(engine.WithRestoreTally(ctx, tally), restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
 		elapsed := time.Since(start)
+		itemDiag := diagDelta(diagBefore, runDiag.Snapshot())
 
 		result := map[string]any{
 			"name":     t.Name,
@@ -3909,15 +4009,30 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 				"items_total":  len(targets),
 			})
 			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds()), "duration_ms": elapsed.Milliseconds()}
-			if size, known := itemSizes[t.Name]; known {
+			size, sizeLabel, known := restoredItemSize(t, tally, itemSizes)
+			msg := fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, format.Duration(elapsed))
+			if known {
 				restoredBytes += size
 				restoredSizesKnown++
 				result["size_bytes"] = size
 				okDetails["size_bytes"] = size
+				okDetails["size_source"] = sizeLabel
+				msg += fmt.Sprintf(", %s=%s", sizeLabel, format.Bytes(float64(size)))
 			}
-			r.runLog(runID, runLogLevelInfo,
-				fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, format.Duration(elapsed)),
-				okDetails)
+			if files := tally.Files(); files > 0 {
+				okDetails["files_restored"] = files
+				msg += fmt.Sprintf(" (%d file(s))", files)
+			}
+			if itemDiag.BytesRead > 0 {
+				okDetails["bytes_read"] = itemDiag.BytesRead
+				msg += ", read=" + format.Bytes(float64(itemDiag.BytesRead))
+			}
+			if n := itemDiag.Retries + itemDiag.Resumes + itemDiag.PartRestarts; n > 0 {
+				okDetails["retries"] = itemDiag.Retries
+				okDetails["resumes"] = itemDiag.Resumes
+				msg += fmt.Sprintf(", retries=%d", n)
+			}
+			r.runLog(runID, runLogLevelInfo, msg, okDetails)
 		}
 
 		itemResults = append(itemResults, result)
@@ -3984,8 +4099,14 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			"size_bytes":       restoredSize,
 		}))
 
-	sumLevel, sumMsg, sumData := runSummaryMessage("Restore", "", status, itemsDone, itemsFailed, len(targets), restoredSize, time.Since(restoreStart))
+	sumLevel, sumMsg, sumData := runSummaryMessage("Restore", jobName, status, itemsDone, itemsFailed, len(targets), restoredSize, time.Since(restoreStart))
 	sumData["restore_point_id"] = restorePoint.ID
+	sumData["job_id"] = restorePoint.JobID
+	if destName != "" {
+		sumMsg += fmt.Sprintf(", destination=%q", destName)
+		sumData["destination"] = destName
+	}
+	sumMsg = addDiagTotals(sumMsg, sumData, runDiag.Snapshot())
 	r.runLog(runID, sumLevel, sumMsg, sumData)
 }
 
@@ -4891,11 +5012,19 @@ func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.Restore
 	}
 	defer cleanup()
 
-	if err := r.stageRestorePointItem(ctx, restorePoint, itemName, tmpDir, passphrase, 0, 40, reporter); err != nil {
+	download := r.beginPhase(reporter.RunID, itemName, "download")
+	readBefore := storage.DiagStatsFrom(ctx).Snapshot().BytesRead
+	err = r.stageRestorePointItem(ctx, restorePoint, itemName, tmpDir, passphrase, 0, 40, reporter)
+	download.end(err, map[string]any{"bytes_read": storage.DiagStatsFrom(ctx).Snapshot().BytesRead - readBefore})
+	if err != nil {
 		return err
 	}
 
-	return r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, cleanDestination, reporter, 40, 100)
+	extract := r.beginPhase(reporter.RunID, itemName, "extract")
+	err = r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, cleanDestination, reporter, 40, 100)
+	tally := engine.RestoreTallyFrom(ctx)
+	extract.end(err, map[string]any{"files_restored": tally.Files(), "bytes_restored": tally.Bytes()})
+	return err
 }
 
 // resolveManifestID returns the dedup manifest ID for itemName from a
@@ -4941,19 +5070,24 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 	if err != nil {
 		return fmt.Errorf("getting storage destination: %w", err)
 	}
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
 	defer storage.CloseAdapter(adapter)
 
+	openRepo := r.beginPhase(reporter.RunID, itemName, "open repository")
 	repo, err := r.openDedupRepo(adapter, dest)
 	if err != nil {
 		if errors.Is(err, dedup.ErrServerKeyMismatch) {
-			return fmt.Errorf("open dedup repo: %s: %w", dedup.KeyMismatchHint, err)
+			err = fmt.Errorf("open dedup repo: %s: %w", dedup.KeyMismatchHint, err)
+		} else {
+			err = fmt.Errorf("open dedup repo: %w", err)
 		}
-		return fmt.Errorf("open dedup repo: %w", err)
+		openRepo.end(err, nil)
+		return err
 	}
+	openRepo.end(nil, nil)
 
 	handler, err := newHandler(itemType)
 	if err != nil {
@@ -5018,7 +5152,13 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 		r.reportRestoreProgress(reporter, pct, msg)
 	}
 
-	return chunked.RestoreChunked(ctx, item, repo, manifestID, destPath, progress)
+	restorePhase := r.beginPhase(reporter.RunID, itemName, "restore")
+	err = chunked.RestoreChunked(ctx, item, repo, manifestID, destPath, progress)
+	readBytes := repo.SessionStats().ReadBytes
+	storage.DiagStatsFrom(ctx).AddBytesRead(readBytes)
+	tally := engine.RestoreTallyFrom(ctx)
+	restorePhase.end(err, map[string]any{"bytes_read": readBytes, "files_restored": tally.Files(), "bytes_restored": tally.Bytes()})
+	return err
 }
 
 func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter) error {
@@ -5032,7 +5172,7 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		return fmt.Errorf("getting storage destination: %w", err)
 	}
 
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}

@@ -3866,6 +3866,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := f.Close(); err != nil {
 				return fmt.Errorf("closing file %s: %w", target, err)
 			}
+			RestoreTallyFrom(ctx).Add(n)
 			// OpenFile only applies its mode when it creates the file, and
 			// even then the daemon's umask masks it, so a restore over an
 			// existing tree would otherwise keep the old permissions.

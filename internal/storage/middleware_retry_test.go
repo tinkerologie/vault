@@ -36,7 +36,7 @@ func (f *fakeAdapter) WriteFrom(p string, open func() (io.ReadCloser, error)) er
 
 func TestRetryWriteFromSucceedsAfterTransient(t *testing.T) {
 	f := &fakeAdapter{writeErrs: []error{io.ErrUnexpectedEOF, io.ErrUnexpectedEOF}}
-	a := withRetry(f, RetryPolicy{MaxAttempts: 5})
+	a := withRetry(f, RetryPolicy{MaxAttempts: 5}, nil)
 	err := a.WriteFrom("p", func() (io.ReadCloser, error) {
 		atomic.AddInt32(&f.opens, 1)
 		return io.NopCloser(bytes.NewReader([]byte("data"))), nil
@@ -55,7 +55,7 @@ func TestRetryWriteFromSucceedsAfterTransient(t *testing.T) {
 func TestRetryStopsOnFatal(t *testing.T) {
 	fatal := errors.New("403 forbidden")
 	f := &fakeAdapter{writeErrs: []error{fatal}}
-	a := withRetry(f, RetryPolicy{MaxAttempts: 5})
+	a := withRetry(f, RetryPolicy{MaxAttempts: 5}, nil)
 	err := a.WriteFrom("p", func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(nil)), nil
 	})
@@ -70,7 +70,7 @@ func TestRetryStopsOnFatal(t *testing.T) {
 func TestRetryWriteIsOneShot(t *testing.T) {
 	// Plain Write must not be retried even for transient errors.
 	f := &fakeAdapter{writeErrs: []error{io.ErrUnexpectedEOF}}
-	a := withRetry(f, RetryPolicy{MaxAttempts: 5})
+	a := withRetry(f, RetryPolicy{MaxAttempts: 5}, nil)
 	err := a.Write("p", bytes.NewReader([]byte("data")))
 	if err == nil {
 		t.Fatal("Write should return the error, not retry")
@@ -84,7 +84,7 @@ func TestRetryMaxAttemptsExhausted(t *testing.T) {
 	// All attempts fail with a transient error — last error must be returned.
 	transient := io.ErrUnexpectedEOF
 	f := &fakeAdapter{writeErrs: []error{transient, transient, transient}}
-	a := withRetry(f, RetryPolicy{MaxAttempts: 3})
+	a := withRetry(f, RetryPolicy{MaxAttempts: 3}, nil)
 	err := a.WriteFrom("p", func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(nil)), nil
 	})
@@ -121,7 +121,7 @@ func TestRetryZeroBaseDelayIsInstant(t *testing.T) {
 	// BaseDelay=0 means no sleep; the test completes in < 100 ms even with
 	// multiple retries.
 	f := &fakeAdapter{writeErrs: []error{io.ErrUnexpectedEOF, io.ErrUnexpectedEOF}}
-	a := withRetry(f, RetryPolicy{MaxAttempts: 5}) // BaseDelay defaults to 0
+	a := withRetry(f, RetryPolicy{MaxAttempts: 5}, nil) // BaseDelay defaults to 0
 	start := time.Now()
 	err := a.WriteFrom("p", func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader([]byte("data"))), nil
