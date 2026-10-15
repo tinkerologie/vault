@@ -6,6 +6,7 @@ $VAULT_CFG = '/boot/config/plugins/vault/vault.cfg';
 $VAULT_DEFAULTS = [
     'PORT' => '24085',
     'BIND_ADDRESS' => '127.0.0.1',
+    'MDNS_ADVERTISE' => 'yes',
 ];
 
 function vault_load_config() {

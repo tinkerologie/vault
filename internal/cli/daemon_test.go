@@ -336,6 +336,7 @@ func TestDaemonCmd_RunE_LogLevelApplied(t *testing.T) {
 	cmd.Flags().String("addr", "127.0.0.1:0", "Listen address")
 	cmd.Flags().String("tls-cert", filepath.Join(dir, "nonexistent.crt"), "TLS cert")
 	cmd.Flags().String("tls-key", filepath.Join(dir, "nonexistent.key"), "TLS key")
+	cmd.Flags().Bool("mdns", true, mdnsFlagUsage)
 
 	logx.SetLevelString("info")
 	_ = daemonCmd.RunE(cmd, nil)

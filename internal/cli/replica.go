@@ -15,7 +15,6 @@ import (
 	"github.com/tinkerologie/vault/internal/api"
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
-	"github.com/tinkerologie/vault/internal/discovery"
 	"github.com/tinkerologie/vault/internal/logx"
 	"github.com/tinkerologie/vault/internal/replication"
 	"github.com/tinkerologie/vault/internal/scheduler"
@@ -37,6 +36,7 @@ disaster recovery.`,
 		addr, _ := cmd.Flags().GetString("addr")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
+		mdns, _ := cmd.Flags().GetBool("mdns")
 
 		// Ensure the database directory exists.
 		if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
@@ -112,8 +112,9 @@ disaster recovery.`,
 		defer stop()
 
 		// Zeroconf/mDNS discovery (#137). Replica instances are also
-		// discoverable on the LAN unless bound to loopback. Shuts down with ctx.
-		discovery.New(addr, version, tlsCert != "" && tlsKey != "").Start(ctx)
+		// discoverable on the LAN unless bound to loopback or started with
+		// --mdns=false. Shuts down with ctx.
+		startDiscovery(ctx, mdns, addr, tlsCert != "" && tlsKey != "")
 
 		err = srv.StartWithContext(ctx)
 		if errors.Is(err, http.ErrServerClosed) {
@@ -129,5 +130,6 @@ func init() {
 	replicaCmd.Flags().String("addr", ":24085", "API listen address")
 	replicaCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	replicaCmd.Flags().String("tls-key", "", "Path to TLS private key file")
+	replicaCmd.Flags().Bool("mdns", true, mdnsFlagUsage)
 	rootCmd.AddCommand(replicaCmd)
 }

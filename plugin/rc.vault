@@ -10,6 +10,7 @@ MAX_LOG_SIZE=$((256 * 1024))
 # Read bind address and port from config without sourcing (prevents code injection).
 BIND_ADDRESS=127.0.0.1
 PORT=24085
+MDNS_ADVERTISE=yes
 if [ -f "$CONFIG" ]; then
     _val="$(grep -E '^BIND_ADDRESS=' "$CONFIG" | head -1 | sed "s/^BIND_ADDRESS=//; s/^[\"']//; s/[\"'].*//")"
     [ -n "$_val" ] && BIND_ADDRESS="$_val"
@@ -18,6 +19,9 @@ if [ -f "$CONFIG" ]; then
     if [ -n "$_val" ] && echo "$_val" | grep -Eq '^[0-9]+$'; then
         PORT="$_val"
     fi
+    # mDNS advertisement (#468): only an explicit "no" disables it.
+    _val="$(grep -E '^MDNS_ADVERTISE=' "$CONFIG" | head -1 | sed "s/^MDNS_ADVERTISE=//; s/^[\"']//; s/[\"'].*//")"
+    [ "$_val" = "no" ] && MDNS_ADVERTISE=no
     unset _val
 fi
 
@@ -159,7 +163,11 @@ start() {
     mkdir -p "$(dirname "$LOG")"
     touch "$LOG"
     trim_log
-    nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
+    if [ "$MDNS_ADVERTISE" = "no" ]; then
+        nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" --mdns=false >> "$LOG" 2>&1 &
+    else
+        nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
+    fi
     echo $! > "$PIDFILE"
 
     # Verify the daemon stayed up. An un-bindable port (already in use, or

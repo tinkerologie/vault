@@ -16,6 +16,7 @@ $cfg     = vault_load_config();
 $port    = $cfg['PORT'] ?? '24085';
 $bind    = vault_get_bind_address();
 $bind_esc = htmlspecialchars($bind, ENT_QUOTES, 'UTF-8');
+$mdns    = trim((string) ($cfg['MDNS_ADVERTISE'] ?? 'yes'), " \t\n\r\0\x0B\"'") === 'no' ? 'no' : 'yes';
 $local_ips = vault_get_local_ips();
 
 // Check if daemon is actually running via health endpoint.
@@ -196,6 +197,19 @@ Use <strong>127.0.0.1</strong> to keep the daemon local-only (recommended). Sele
 Warning: the Vault API is accessible from your local network. Only use this if you need external access (e.g. Home Assistant).
 </blockquote>
 <?php endif; ?>
+
+<dl>
+    <dt>Network Discovery (mDNS):</dt>
+    <dd>
+        <select name="MDNS_ADVERTISE">
+            <option value="yes" <?= $mdns === 'yes' ? 'selected' : '' ?>>Yes</option>
+            <option value="no" <?= $mdns === 'no' ? 'selected' : '' ?>>No</option>
+        </select>
+    </dd>
+</dl>
+<blockquote class="inline_help">
+When the API is bound to a non-loopback address, Vault advertises the <code>_vault._tcp</code> service so Home Assistant can discover it automatically. Vault advertises under its own host name (<code>vault-&lt;hostname&gt;.local</code>) and never claims the Unraid host name. Choose <strong>No</strong> to stop advertising; the API stays reachable at the bind address either way. Loopback binds are never advertised.
+</blockquote>
 
 <dl>
     <dt><input type="button" value="Default" onclick="resetDefaults()"></dt>

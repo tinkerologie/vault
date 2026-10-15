@@ -71,6 +71,23 @@ if [ -f "$CONFIG" ]; then
     fi
 fi
 
+# Normalise MDNS_ADVERTISE (#468). The form only submits yes/no; anything else
+# (hand edits, corruption) is rewritten to the default "yes". A missing key is
+# left alone – rc.vault treats it as "yes".
+if [ -f "$CONFIG" ] && grep -Eq '^MDNS_ADVERTISE=' "$CONFIG"; then
+    MDNS_RAW="$(grep -E '^MDNS_ADVERTISE=' "$CONFIG" | head -1 | sed "s/^MDNS_ADVERTISE=//; s/^[\"']//; s/[\"'].*//")"
+    case "$MDNS_RAW" in
+        yes|no) ;;
+        *)
+            echo "Warning: MDNS_ADVERTISE '${MDNS_RAW}' is invalid (must be yes or no); resetting to yes"
+            if ! sed -i 's/^MDNS_ADVERTISE=.*/MDNS_ADVERTISE=yes/' "$CONFIG"; then
+                echo "Error: failed to update MDNS_ADVERTISE in $CONFIG" >&2
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
 # Probe host for the post-restart health check. The probe must target the
 # address the daemon actually binds to – a hardcoded loopback probe fails when
 # a specific NIC address is selected (issue #130). Wildcards are reachable via
