@@ -276,16 +276,27 @@ func (w *WebDAVAdapter) client() *gowebdav.Client {
 // multi-hour VM backups on the final metadata write (issue #242). The same
 // re-sent MKCOL can also get 423 Locked when a concurrent upload's MKCOL holds
 // the server's temporary lock on that path (golang.org/x/net/webdav does
-// this), failing an upload into a directory that exists. When an MKCOL comes
-// back 403 or 423, probe the target with PROPFIND Depth:0; if it exists,
-// rewrite the status to 405 so gowebdav treats it as "already exists". A 423
-// on a missing directory stays 423, which isWebDAVRetriable retries.
+// this), failing an upload into a directory that exists. That lock lasts only
+// as long as the other MKCOL, so a 423 is first retried with the same
+// request, which works for every auth scheme, Digest included: once the
+// competing MKCOL finishes, the retry gets the standard 405. When an MKCOL
+// still comes back 403 or 423, probe the target with PROPFIND Depth:0; if it
+// exists, rewrite the status to 405 so gowebdav treats it as "already
+// exists". A 423 on a missing directory stays 423, which isWebDAVRetriable
+// retries.
 type mkcolExistsTransport struct {
 	base http.RoundTripper
 }
 
+// mkcolLockedRetryDelays spaces the retries of an MKCOL answered 423 Locked.
+// A variable so tests can shorten it.
+var mkcolLockedRetryDelays = []time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond}
+
 func (t *mkcolExistsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
+	if err == nil && req.Method == "MKCOL" && resp.StatusCode == http.StatusLocked {
+		resp, err = t.retryLockedMkcol(req, resp)
+	}
 	if err != nil || req.Method != "MKCOL" ||
 		(resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusLocked) {
 		return resp, err
@@ -313,6 +324,42 @@ func (t *mkcolExistsTransport) RoundTrip(req *http.Request) (*http.Response, err
 	if pr.StatusCode == http.StatusMultiStatus || pr.StatusCode == http.StatusOK {
 		resp.StatusCode = http.StatusMethodNotAllowed
 		resp.Status = "405 Method Not Allowed"
+	}
+	return resp, nil
+}
+
+// retryLockedMkcol re-sends an MKCOL that got 423 Locked until the answer
+// changes or the delays run out, returning the last response. Only bodiless
+// requests (or ones whose body can be replayed) are retried.
+func (t *mkcolExistsTransport) retryLockedMkcol(req *http.Request, resp *http.Response) (*http.Response, error) {
+	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return resp, nil
+	}
+	for _, d := range mkcolLockedRetryDelays {
+		timer := time.NewTimer(d)
+		select {
+		case <-req.Context().Done():
+			timer.Stop()
+			return resp, nil
+		case <-timer.C:
+		}
+		retry := req.Clone(req.Context())
+		if req.GetBody != nil {
+			body, berr := req.GetBody()
+			if berr != nil {
+				return resp, nil
+			}
+			retry.Body = body
+		}
+		next, err := t.base.RoundTrip(retry)
+		if err != nil {
+			return resp, nil // keep the 423; the caller's retry policy applies
+		}
+		_ = resp.Body.Close()
+		resp = next
+		if resp.StatusCode != http.StatusLocked {
+			break
+		}
 	}
 	return resp, nil
 }

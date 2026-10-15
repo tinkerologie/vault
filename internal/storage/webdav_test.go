@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -937,6 +938,7 @@ func TestWebDAVWriteToleratesMkdir403OnExistingDir(t *testing.T) {
 // the server answers 423 Locked even though the directory exists. That must
 // not fail the upload.
 func TestWebDAVWriteToleratesMkcol423OnExistingDir(t *testing.T) {
+	shortenMkcolLockedRetries(t)
 	root := t.TempDir()
 	real := testWebDAVHandler(root)
 	var mkcol423s int32
@@ -971,6 +973,7 @@ func TestWebDAVWriteToleratesMkcol423OnExistingDir(t *testing.T) {
 // TestWebDAVMkcol423WithoutDirStaysRetriable: a 423 on a directory that does
 // not exist is a real lock, so it must not be rewritten to "already exists".
 func TestWebDAVMkcol423WithoutDirStaysRetriable(t *testing.T) {
+	shortenMkcolLockedRetries(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "MKCOL" {
 			w.WriteHeader(http.StatusLocked)
@@ -989,6 +992,64 @@ func TestWebDAVMkcol423WithoutDirStaysRetriable(t *testing.T) {
 	if resp.StatusCode != http.StatusLocked {
 		t.Fatalf("status = %d, want 423 kept for a missing dir", resp.StatusCode)
 	}
+}
+
+// TestWebDAVDigestWriteRetriesMkcol423: Digest servers skip the PROPFIND
+// probe (a Digest header signed for MKCOL cannot authorize PROPFIND), so a
+// transient 423 must be cleared by re-sending the MKCOL itself.
+func TestWebDAVDigestWriteRetriesMkcol423(t *testing.T) {
+	shortenMkcolLockedRetries(t)
+	root := t.TempDir()
+	real := testWebDAVHandler(root)
+	var mu sync.Mutex
+	locked := map[string]bool{} // paths that already answered 423 once
+	var mkcol423s int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Digest ") {
+			w.Header().Set("WWW-Authenticate", `Digest realm="vault-test", nonce="abc123", qop="auth", algorithm=MD5`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method == "MKCOL" {
+			p := filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(r.URL.Path, "/")))
+			if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+				mu.Lock()
+				first := !locked[r.URL.Path]
+				locked[r.URL.Path] = true
+				mu.Unlock()
+				if first {
+					// A competing MKCOL holds the lock for this one request.
+					atomic.AddInt32(&mkcol423s, 1)
+					w.WriteHeader(http.StatusLocked)
+					return
+				}
+			}
+		}
+		real.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	a, err := NewWebDAVAdapter(WebDAVConfig{URL: server.URL, Username: "u", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Write("job/run1/data.tar", strings.NewReader("data")); err != nil {
+		t.Fatalf("Digest Write should retry past a transient MKCOL 423, got: %v", err)
+	}
+	if err := a.Write("job/run1/meta.json", strings.NewReader("{}")); err != nil {
+		t.Fatalf("second Digest Write should retry past a transient MKCOL 423, got: %v", err)
+	}
+	if atomic.LoadInt32(&mkcol423s) == 0 {
+		t.Error("test server never returned a 423 MKCOL; scenario not exercised")
+	}
+}
+
+// shortenMkcolLockedRetries keeps 423 retry tests fast.
+func shortenMkcolLockedRetries(t *testing.T) {
+	t.Helper()
+	prev := mkcolLockedRetryDelays
+	mkcolLockedRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { mkcolLockedRetryDelays = prev })
 }
 
 // TestWebDAVMkdir403WithoutDirStaysFatal: a genuine 403 (permission denied,

@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **WebDAV uploads failing with "423 Locked" during parallel uploads:** gowebdav re-creates every parent directory before each upload. When two uploads into the same backup folder overlapped, a server that locks a directory while creating it (such as Go's `x/net/webdav`) answered 423, and one upload failed even though the folder existed. An MKCOL that returns 423 for a directory that exists is now treated as "already exists", like the 403 case from #242. A 423 for a missing directory is still retried.
+- **WebDAV uploads failing with "423 Locked" during parallel uploads:** gowebdav re-creates every parent directory before each upload. When two uploads into the same backup folder overlapped, a server that locks a directory while creating it (such as Go's `x/net/webdav`) answered 423, and one upload failed even though the folder existed. An MKCOL answered 423 is now re-sent briefly (which also works for Digest-authenticated servers), and one that still returns 423 for a directory that exists is treated as "already exists", like the 403 case from #242. A 423 for a missing directory is still retried.
 - Deployment and verification remove temporary SSH password files when the server is unreachable, while keeping connection errors visible.
 
 - **Ansible no longer prints the Unraid password (#495):** the deploy and verify roles passed it on the command line (`sshpass -p`), so a failed upload or SSH tunnel printed it in the task output, and it showed in the local process list while a deploy ran. `sshpass` now reads it from a private temporary file that is deleted when the run ends, and error messages stay visible.
