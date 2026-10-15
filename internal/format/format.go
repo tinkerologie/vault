@@ -26,8 +26,9 @@ const MinThroughputDuration = time.Second
 // Duration renders an elapsed time for run logs without hiding sub-second
 // work: "<1s" below one second, one decimal place below a minute ("2.4s"),
 // and whole seconds above that ("1m5s", Go duration style). Values round to
-// the nearest step, like the web UI's formatDuration; the web UI shows whole
-// seconds and a space ("1m 5s") because it has less room.
+// the nearest step, like the web UI's formatDuration, which also keeps the
+// decimal under a minute but drops a trailing ".0" ("45s") and writes
+// "1m 5s" with a space.
 func Duration(d time.Duration) string {
 	switch {
 	case d < 0:

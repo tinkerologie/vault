@@ -7,6 +7,7 @@ vi.mock('./runtime-config.js', () => ({ getHour12: () => false }))
 import {
   formatBytes,
   formatDuration,
+  formatDurationFromDates,
   formatSpeed,
   MIN_THROUGHPUT_SECONDS,
   runSpeed,
@@ -79,6 +80,14 @@ describe('formatDuration', () => {
     expect(formatDuration(0)).toBe('<1s')
     expect(formatDuration(0.004)).toBe('<1s')
     expect(formatDuration(0.999)).toBe('<1s')
+  })
+
+  it('keeps a fractional second under a minute (#455)', () => {
+    expect(formatDuration(2.4)).toBe('2.4s')
+    expect(formatDuration(1.04)).toBe('1s')
+    expect(formatDuration(59.94)).toBe('59.9s')
+    expect(formatDuration(59.96)).toBe('1m 0s')
+    expect(formatDurationFromDates('2026-10-15T00:00:00.000Z', '2026-10-15T00:00:02.400Z')).toBe('2.4s')
     expect(formatDuration(1)).toBe('1s')
   })
 })
