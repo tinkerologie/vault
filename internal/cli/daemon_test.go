@@ -362,7 +362,7 @@ func daemonTestDir(t *testing.T) string {
 			err := os.RemoveAll(dir)
 			if err == nil || time.Now().After(deadline) {
 				if err != nil {
-					t.Logf("removing %s: %v", dir, err)
+					t.Errorf("removing %s after retries: %v", dir, err)
 				}
 				return
 			}
