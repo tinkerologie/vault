@@ -66,9 +66,11 @@ func newProgressTracker(now func() time.Time) *progressTracker {
 // update applies a detail report for item and returns the new snapshot,
 // whether the phase (or item) changed — the caller broadcasts phase changes
 // immediately so they are never throttled away — and whether the report was
-// applied at all. Same-phase reports within reportInterval of the last one
-// are dropped unless they complete the phase; counters are cumulative, so
-// the next report carries everything a dropped one would have.
+// applied at all. A same-phase report within reportInterval of the last one
+// is throttled unless it completes the phase: its counters still fold into
+// the snapshot (Runner.Status reads it), but rate, ETA and the throttle clock
+// wait for the next applied report. An indeterminate phase's last file count
+// is therefore never lost.
 func (t *progressTracker) update(item string, d engine.ProgressDetail) (snap progressSnapshot, changed, applied bool) {
 	if t == nil {
 		return progressSnapshot{Phase: d.Phase, LastProgressAt: time.Now()}, false, false
@@ -80,6 +82,7 @@ func (t *progressTracker) update(item string, d engine.ProgressDetail) (snap pro
 	changed = item != t.item || d.Phase != t.snap.Phase
 	final := (d.BytesTotal > 0 && d.BytesDone >= d.BytesTotal) || (d.FilesTotal > 0 && d.FilesDone >= d.FilesTotal)
 	if !changed && !final && now.Sub(t.snap.LastProgressAt) < reportInterval {
+		t.foldCounts(d)
 		return t.snap, false, false
 	}
 	if changed {
@@ -91,6 +94,22 @@ func (t *progressTracker) update(item string, d engine.ProgressDetail) (snap pro
 		t.rateOnFiles = false
 	}
 
+	done, total := t.foldCounts(d)
+	s := &t.snap
+	s.LastProgressAt = now
+	t.sampleRate(now, done)
+	s.ETASeconds = 0
+	if s.Determinate && s.Rate > 0 && now.Sub(s.PhaseStartedAt) >= etaMinElapsed &&
+		float64(done) >= etaMinFraction*float64(total) && done < total {
+		s.ETASeconds = int64(float64(total-done)/s.Rate + 0.5)
+	}
+	return t.snap, changed, true
+}
+
+// foldCounts merges d's counters into the snapshot and recomputes the
+// percentage, returning the done and total values in the rate's unit.
+// The caller holds t.mu.
+func (t *progressTracker) foldCounts(d engine.ProgressDetail) (done, total int64) {
 	s := &t.snap
 	// High-water marks: a retried upload restarts its byte count from zero,
 	// but the displayed progress must never move backward.
@@ -106,7 +125,6 @@ func (t *progressTracker) update(item string, d engine.ProgressDetail) (snap pro
 	if s.FilesTotal > 0 {
 		s.FilesTotal = max(s.FilesTotal, s.FilesDone)
 	}
-	s.LastProgressAt = now
 
 	// Measure in bytes once byte work is known, otherwise in files. A phase
 	// can learn its file total late, so the unit is chosen per report; a
@@ -117,7 +135,7 @@ func (t *progressTracker) update(item string, d engine.ProgressDetail) (snap pro
 		t.sampleAt = time.Time{}
 		s.Rate = 0
 	}
-	done, total := s.BytesDone, s.BytesTotal
+	done, total = s.BytesDone, s.BytesTotal
 	if t.rateOnFiles {
 		done, total = s.FilesDone, s.FilesTotal
 	}
@@ -132,14 +150,7 @@ func (t *progressTracker) update(item string, d engine.ProgressDetail) (snap pro
 			s.Percent = min(int(done*100/total), 99)
 		}
 	}
-
-	t.sampleRate(now, done)
-	s.ETASeconds = 0
-	if s.Determinate && s.Rate > 0 && now.Sub(s.PhaseStartedAt) >= etaMinElapsed &&
-		float64(done) >= etaMinFraction*float64(total) && done < total {
-		s.ETASeconds = int64(float64(total-done)/s.Rate + 0.5)
-	}
-	return *s, changed, true
+	return done, total
 }
 
 // sampleRate folds a new (time, value) point into the EWMA rate.
