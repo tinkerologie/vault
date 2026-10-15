@@ -38,9 +38,15 @@ type ZFSHandler struct {
 	cmd    gzfs.Cmd
 }
 
+// zfsRunner executes the zfs/zpool binaries for handlers built by
+// NewZFSHandler. Production leaves it nil, which selects gzfs's default
+// LocalRunner (os/exec) exactly as before; tests substitute a fake so no real
+// ZFS command ever runs.
+var zfsRunner gzfs.Runner
+
 // NewZFSHandler creates a new ZFSHandler after verifying ZFS availability.
 func NewZFSHandler() (*ZFSHandler, error) {
-	client := gzfs.NewClient(gzfs.Options{})
+	client := gzfs.NewClient(gzfs.Options{Runner: zfsRunner})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -51,7 +57,7 @@ func NewZFSHandler() (*ZFSHandler, error) {
 
 	return &ZFSHandler{
 		client: client,
-		cmd:    gzfs.Cmd{Bin: "zfs"},
+		cmd:    gzfs.Cmd{Bin: "zfs", Runner: zfsRunner},
 	}, nil
 }
 
