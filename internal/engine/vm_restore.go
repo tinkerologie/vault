@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-const (
+// vmShutdownTimeout and vmShutdownPollInterval are variables, not constants,
+// only so the linux VM engine tests can shrink them; production never
+// reassigns them.
+var (
 	vmShutdownTimeout      = 5 * time.Minute
 	vmShutdownPollInterval = 2 * time.Second
 )

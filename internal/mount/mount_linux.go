@@ -244,8 +244,36 @@ func populateManifestTree(ctx context.Context, repo *dedup.Repo, cache *ChunkCac
 	return nil
 }
 
+// fuseServer is the subset of *fuse.Server this package drives. It exists only
+// so tests can stand in for a kernel FUSE mount.
+type fuseServer interface {
+	Unmount() error
+	WaitMount() error
+	Wait()
+}
+
+var _ fuseServer = (*fuse.Server)(nil)
+
+// fuseMount, runFusermount and sysUnmount are the package's only contact with
+// the kernel and external binaries. Production always uses the real
+// implementations below; they are variables solely so tests can substitute
+// fakes and never mount, unmount or exec anything.
+var (
+	fuseMount = func(dir string, root fs.InodeEmbedder, opts *fs.Options) (fuseServer, error) {
+		server, err := fs.Mount(dir, root, opts)
+		if err != nil {
+			return nil, err
+		}
+		return server, nil
+	}
+	runFusermount = func(bin, path string) error {
+		return exec.Command(bin, "-u", path).Run()
+	}
+	sysUnmount = syscall.Unmount
+)
+
 type linuxMountHandle struct {
-	server    *fuse.Server
+	server    fuseServer
 	mountPath string
 	done      chan struct{}
 	once      sync.Once
@@ -262,9 +290,9 @@ func (h *linuxMountHandle) Unmount() error {
 			err = h.server.Unmount()
 			if err != nil {
 				// Best effort fallback via fusermount
-				if uerr := exec.Command("fusermount3", "-u", h.mountPath).Run(); uerr == nil {
+				if uerr := runFusermount("fusermount3", h.mountPath); uerr == nil {
 					err = nil
-				} else if uerr := exec.Command("fusermount", "-u", h.mountPath).Run(); uerr == nil {
+				} else if uerr := runFusermount("fusermount", h.mountPath); uerr == nil {
 					err = nil
 				}
 			}
@@ -337,12 +365,12 @@ func MountManifests(ctx context.Context, repo *dedup.Repo, manifests map[string]
 		},
 	}
 
-	server, err := fs.Mount(mountPath, rootNode, fsOpts)
+	server, err := fuseMount(mountPath, rootNode, fsOpts)
 	if err != nil {
 		// If AllowOther fails (e.g. non-root without user_allow_other in /etc/fuse.conf), retry without AllowOther
 		mountOpts.AllowOther = false
 		fsOpts.MountOptions = mountOpts
-		server, err = fs.Mount(mountPath, rootNode, fsOpts)
+		server, err = fuseMount(mountPath, rootNode, fsOpts)
 		if err != nil {
 			return nil, fmt.Errorf("mount: fs.Mount on %s failed: %w", mountPath, err)
 		}
@@ -383,13 +411,13 @@ func unmountPlatform(path string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
 	}
-	if uerr := exec.Command("fusermount3", "-u", path).Run(); uerr == nil {
+	if uerr := runFusermount("fusermount3", path); uerr == nil {
 		return nil
 	}
-	if uerr := exec.Command("fusermount", "-u", path).Run(); uerr == nil {
+	if uerr := runFusermount("fusermount", path); uerr == nil {
 		return nil
 	}
-	err := syscall.Unmount(path, 0)
+	err := sysUnmount(path, 0)
 	if err == nil || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
 		return nil
 	}

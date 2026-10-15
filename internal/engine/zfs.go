@@ -38,9 +38,15 @@ type ZFSHandler struct {
 	cmd    gzfs.Cmd
 }
 
+// zfsRunner executes the zfs/zpool binaries for handlers built by
+// NewZFSHandler. Production leaves it nil, which selects gzfs's default
+// LocalRunner (os/exec) exactly as before; tests substitute a fake so no real
+// ZFS command ever runs.
+var zfsRunner gzfs.Runner
+
 // NewZFSHandler creates a new ZFSHandler after verifying ZFS availability.
 func NewZFSHandler() (*ZFSHandler, error) {
-	client := gzfs.NewClient(gzfs.Options{})
+	client := gzfs.NewClient(gzfs.Options{Runner: zfsRunner})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -51,7 +57,7 @@ func NewZFSHandler() (*ZFSHandler, error) {
 
 	return &ZFSHandler{
 		client: client,
-		cmd:    gzfs.Cmd{Bin: "zfs"},
+		cmd:    gzfs.Cmd{Bin: "zfs", Runner: zfsRunner},
 	}, nil
 }
 
@@ -182,6 +188,7 @@ func (h *ZFSHandler) Backup(ctx context.Context, item BackupItem, destDir string
 	}
 
 	cw := &countingWriter{
+		ctx:      ctx,
 		w:        f,
 		total:    int64(usedBytes),
 		name:     item.Name,
@@ -196,6 +203,9 @@ func (h *ZFSHandler) Backup(ctx context.Context, item BackupItem, destDir string
 	} else {
 		backupType = "full"
 		sendArgs = []string{"send", fullSnapName}
+		// A full stream is roughly the dataset's used size; an incremental
+		// one is not, so its progress stays without a total.
+		cw.detailTotal = cw.total
 	}
 
 	if err := h.cmd.RunStream(ctx, nil, cw, &stderr, sendArgs...); err != nil {
@@ -315,6 +325,7 @@ func (h *ZFSHandler) Restore(ctx context.Context, item BackupItem, sourceDir str
 	}
 
 	cr := &countingReader{
+		ctx:      ctx,
 		r:        f,
 		total:    fi.Size(),
 		name:     item.Name,
@@ -382,16 +393,24 @@ func (h *ZFSHandler) cleanupOldSnapshots(ctx context.Context, dataset string, ke
 
 // countingWriter wraps an io.Writer and reports progress.
 type countingWriter struct {
-	w        io.Writer
-	written  int64
-	total    int64
-	name     string
-	progress ProgressFunc
+	ctx     context.Context // carries the detail reporter (#456); may be nil
+	w       io.Writer
+	written int64
+	total   int64
+	// detailTotal is the stream size reported as progress detail; 0 when
+	// unknown. total is only a dataset-usage estimate, which an incremental
+	// send can be far below, so it is not presented as a real total.
+	detailTotal int64
+	name        string
+	progress    ProgressFunc
 }
 
 func (cw *countingWriter) Write(p []byte) (int, error) {
 	n, err := cw.w.Write(p)
 	cw.written += int64(n)
+	if cw.ctx != nil {
+		ReportDetail(cw.ctx, cw.name, ProgressDetail{Phase: PhaseProcessing, BytesDone: cw.written, BytesTotal: cw.detailTotal})
+	}
 	if cw.total > 0 && cw.progress != nil {
 		pct := int(float64(cw.written) / float64(cw.total) * 80)
 		pct = min(pct+10, 90) // Scale to 10-90%
@@ -403,6 +422,7 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 
 // countingReader wraps an io.Reader and reports progress.
 type countingReader struct {
+	ctx      context.Context // carries the detail reporter (#456); may be nil
 	r        io.Reader
 	read     int64
 	total    int64
@@ -413,6 +433,9 @@ type countingReader struct {
 func (cr *countingReader) Read(p []byte) (int, error) {
 	n, err := cr.r.Read(p)
 	cr.read += int64(n)
+	if cr.ctx != nil {
+		ReportDetail(cr.ctx, cr.name, ProgressDetail{Phase: PhaseProcessing, BytesDone: cr.read, BytesTotal: cr.total})
+	}
 	if cr.total > 0 && cr.progress != nil {
 		pct := int(float64(cr.read) / float64(cr.total) * 80)
 		pct = min(pct+10, 90) // Scale to 10-90%

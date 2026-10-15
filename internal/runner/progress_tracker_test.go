@@ -256,9 +256,12 @@ func TestProgressTracker_ThrottlesSamePhase(t *testing.T) {
 	if _, _, applied := tr.update("x", transferring(10, 1000)); !applied {
 		t.Fatal("first report not applied")
 	}
+	first := clk.now()
 	clk.advance(100 * time.Millisecond)
-	if snap, _, applied := tr.update("x", transferring(20, 1000)); applied || snap.BytesDone != 10 {
-		t.Fatalf("report within %v applied=%v bytes=%d, want dropped", reportInterval, applied, snap.BytesDone)
+	// Throttled: not applied to the run status, but its counts fold into
+	// the snapshot without moving the throttle clock.
+	if snap, _, applied := tr.update("x", transferring(20, 1000)); applied || snap.BytesDone != 20 || snap.Percent != 2 || !snap.LastProgressAt.Equal(first) {
+		t.Fatalf("report within %v: applied=%v snap=%+v, want throttled with counts folded", reportInterval, applied, snap)
 	}
 	if _, changed, applied := tr.update("x", engine.ProgressDetail{Phase: engine.PhaseVerifying}); !applied || !changed {
 		t.Fatal("phase change was throttled")
@@ -269,6 +272,19 @@ func TestProgressTracker_ThrottlesSamePhase(t *testing.T) {
 	clk.advance(reportInterval)
 	if _, _, applied := tr.update("x", engine.ProgressDetail{Phase: engine.PhaseVerifying, FilesDone: 1}); !applied {
 		t.Fatal("report after the interval was dropped")
+	}
+}
+
+// The last file of an indeterminate phase usually lands inside the throttle
+// window; Status must still show it rather than the previous applied count.
+func TestStatusShowsThrottledFileCount(t *testing.T) {
+	r, _ := newTestRunner(t)
+	r.setRunStatus(&RunStatus{Active: true, JobID: 1, RunID: 2, RunType: "backup", CurrentItem: "appdata"})
+	r.reportItemDetail("appdata", engine.ProgressDetail{Phase: engine.PhaseProcessing, FilesDone: 1})
+	r.reportItemDetail("appdata", engine.ProgressDetail{Phase: engine.PhaseProcessing, FilesDone: 2})
+	r.reportItemDetail("appdata", engine.ProgressDetail{Phase: engine.PhaseProcessing, FilesDone: 3})
+	if st := r.Status(); st.FilesDone != 3 || st.ProgressDeterminate {
+		t.Fatalf("status = %+v, want 3 files in an indeterminate phase", st)
 	}
 }
 

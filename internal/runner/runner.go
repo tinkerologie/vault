@@ -332,6 +332,11 @@ func (r *Runner) Status() RunStatus {
 		s = *r.currentRun
 	}
 	r.statusMu.RUnlock()
+	// Throttled detail reports fold into the tracker without touching
+	// currentRun, so overlay the tracker's latest counts.
+	if snap, ok := r.progress.snapshot(s.CurrentItem); ok && s.CurrentItem != "" {
+		applyProgressSnapshot(&s, snap)
+	}
 
 	r.queueMu.Lock()
 	if len(r.queue) > 0 {

@@ -207,3 +207,24 @@ func TestBackupArtifactsExist(t *testing.T) {
 		t.Fatal("expected empty artifact list to fail the check")
 	}
 }
+
+func TestBackupProgressBytes(t *testing.T) {
+	t.Parallel()
+	params := []libvirt.TypedParam{
+		{Field: "file_processed", Value: libvirt.TypedParamValue{I: uint64(250)}},
+		{Field: "file_total", Value: libvirt.TypedParamValue{I: uint64(1000)}},
+	}
+	if done, total, ok := backupProgressBytes(params); !ok || done != 250 || total != 1000 {
+		t.Fatalf("backupProgressBytes = %d/%d %v, want 250/1000", done, total, ok)
+	}
+	if _, _, ok := backupProgressBytes(nil); ok {
+		t.Fatal("no counters reported ok")
+	}
+	zeroTotal := []libvirt.TypedParam{
+		{Field: "file_processed", Value: libvirt.TypedParamValue{I: uint64(1)}},
+		{Field: "file_total", Value: libvirt.TypedParamValue{I: uint64(0)}},
+	}
+	if _, _, ok := backupProgressBytes(zeroTotal); ok {
+		t.Fatal("zero total reported ok")
+	}
+}
