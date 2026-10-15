@@ -153,8 +153,8 @@ func TestParallelDownloadRecordsRestartsAndNetBytes(t *testing.T) {
 	if s.BytesRead != int64(len(data)) {
 		t.Errorf("BytesRead = %d, want %d (net of the retried part)", s.BytesRead, len(data))
 	}
-	if progress != int64(len(data))+5000 {
-		t.Errorf("onBytes total = %d, want unchanged over-count %d", progress, len(data)+5000)
+	if progress != int64(len(data)) {
+		t.Errorf("onBytes total = %d, want %d (failed attempt taken back)", progress, len(data))
 	}
 }
 

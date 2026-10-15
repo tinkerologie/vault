@@ -56,10 +56,10 @@ func downloadToTemp(t *testing.T, a Adapter, size, partSize int64, conc int) []b
 		func(n int64) { atomic.AddInt64(&got, n) }); err != nil {
 		t.Fatalf("ParallelRangeDownload: %v", err)
 	}
-	// onBytes must report at least the full object; a retried part may push it
-	// slightly over (documented over-count), so assert >=.
-	if atomic.LoadInt64(&got) < size {
-		t.Errorf("onBytes total = %d, want >= %d", got, size)
+	// A retried part takes its failed attempt back, so the deltas sum to
+	// exactly the object size.
+	if atomic.LoadInt64(&got) != size {
+		t.Errorf("onBytes total = %d, want %d", got, size)
 	}
 	out, err := os.ReadFile(filepath.Clean(f.Name()))
 	if err != nil {
