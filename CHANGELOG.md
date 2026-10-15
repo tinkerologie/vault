@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **mDNS advertisement control (#468):** new **Network Discovery (mDNS)** setting (`MDNS_ADVERTISE` in `vault.cfg`) and `--mdns` flag on `vault daemon` and `vault replica` turn LAN discovery off without changing the bind address. Both default to on.
+
 ### Changed
+
+- Ansible deploys install the real `plugin/rc.vault` instead of an outdated inline copy, so live verification runs the same service script the plugin package ships (#468).
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.
 - Dependabot also updates the Playwright end-to-end test dependencies (root `package.json`) and the Docker base images in the root `Dockerfile`.
 - Release workflows hardened (least-privilege job permissions, no expressions in shell scripts, no persisted checkout credentials, no dependency caches); scheduled workflows run on Australia/Brisbane time.
@@ -23,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Unraid host renamed after binding Vault to a LAN address (#468):** a non-loopback bind no longer makes `avahi-daemon` report a host name conflict and rename the server (for example `TheVault.local` to `TheVault-2.local`). Vault now advertises `_vault._tcp` under its own host name, `vault-<hostname>.local`, with only the addresses it listens on. The service name and TXT records are unchanged, so Home Assistant discovery keeps working.
 - **Logs page unresponsiveness and freeze when loading older entries (#454):** Fixed microtask starvation caused by concurrent older-page requests during initial mount and background loading loops (`loadAll` and search). Active older-load requests now share the in-flight Promise across callers, older requests are bound to the store context sequence to discard stale responses, and background loading loops terminate when no progress is made. Also added a store `dispose()` method, called from the synchronous `onMount` cleanup in `Logs.svelte`, to abort background activity on page navigation. Closes #454.
 
 ## [v2026.10.00] - 2026-10-07

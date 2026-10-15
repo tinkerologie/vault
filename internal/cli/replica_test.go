@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,6 +28,7 @@ func runReplicaWithFlags(t *testing.T, dbPath string) error {
 	cmd.Flags().String("addr", "127.0.0.1:0", "API listen address")
 	cmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	cmd.Flags().String("tls-key", "", "Path to TLS private key file")
+	cmd.Flags().Bool("mdns", true, mdnsFlagUsage)
 
 	// Auto-shutdown: spawn a goroutine that sends SIGTERM to ourselves
 	// shortly after the daemon starts. The replica's signal handler will
@@ -61,24 +64,30 @@ func runReplicaWithFlags(t *testing.T, dbPath string) error {
 // with parallel test execution.
 func TestReplicaCmd_FlagsRegistered(t *testing.T) {
 	t.Parallel()
-	flags := []string{"db", "addr", "tls-cert", "tls-key"}
+	flags := []string{"db", "addr", "tls-cert", "tls-key", "mdns"}
 	for _, name := range flags {
 		f := replicaCmd.Flags().Lookup(name)
 		if f == nil {
 			t.Errorf("flag %q missing from replicaCmd", name)
 		}
 	}
+	if f := replicaCmd.Flags().Lookup("mdns"); f != nil && f.DefValue != "true" {
+		t.Errorf("replica --mdns default = %q, want true", f.DefValue)
+	}
 }
 
 // TestDaemonCmd_FlagsRegistered confirms daemonCmd has its expected flags.
 func TestDaemonCmd_FlagsRegistered(t *testing.T) {
 	t.Parallel()
-	flags := []string{"db", "addr", "tls-cert", "tls-key"}
+	flags := []string{"db", "addr", "tls-cert", "tls-key", "mdns"}
 	for _, name := range flags {
 		f := daemonCmd.Flags().Lookup(name)
 		if f == nil {
 			t.Errorf("flag %q missing from daemonCmd", name)
 		}
+	}
+	if f := daemonCmd.Flags().Lookup("mdns"); f != nil && f.DefValue != "true" {
+		t.Errorf("daemon --mdns default = %q, want true", f.DefValue)
 	}
 }
 
@@ -135,6 +144,7 @@ func TestReplicaCmd_RunE_LogLevelApplied(t *testing.T) {
 	cmd.Flags().String("addr", "127.0.0.1:0", "Listen address")
 	cmd.Flags().String("tls-cert", filepath.Join(dir, "nonexistent.crt"), "TLS cert")
 	cmd.Flags().String("tls-key", filepath.Join(dir, "nonexistent.key"), "TLS key")
+	cmd.Flags().Bool("mdns", true, mdnsFlagUsage)
 
 	logx.SetLevelString("info")
 	_ = replicaCmd.RunE(cmd, nil)
@@ -147,3 +157,23 @@ func TestReplicaCmd_RunE_LogLevelApplied(t *testing.T) {
 
 // Ensure context import is used.
 var _ context.Context = context.Background()
+
+// TestStartDiscovery_Disabled verifies --mdns=false logs the opt-out and
+// never starts discovery.
+func TestStartDiscovery_Disabled(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(orig) })
+
+	startDiscovery(t.Context(), false, "192.0.2.10:24085", false)
+	if !strings.Contains(buf.String(), "disabled by configuration") {
+		t.Errorf("log = %q, want opt-out message", buf.String())
+	}
+
+	buf.Reset()
+	startDiscovery(t.Context(), true, "127.0.0.1:24085", false)
+	if !strings.Contains(buf.String(), "local-only") {
+		t.Errorf("log = %q, want loopback skip message", buf.String())
+	}
+}

@@ -34,6 +34,15 @@ http://<your-unraid-ip>:24085
 
 > **Accessing directly on port 24085:** By default Vault binds to `127.0.0.1`, so it is reachable only through the Unraid plugin proxy. To access it directly (e.g. from Home Assistant or the CLI), change `BIND_ADDRESS` to `0.0.0.0` or your server's LAN IP under **Settings → Vault** in Unraid and restart the daemon.
 
+### Network discovery (mDNS)
+
+When Vault is bound to a non-loopback address it advertises the `_vault._tcp` service over mDNS so Home Assistant can discover it automatically.
+
+- Loopback binds (`127.0.0.1`, `::1`) are never advertised.
+- A specific LAN IP (for example `192.0.2.10`) is advertised only on the interface that owns it. All-interface binds (`0.0.0.0`, `::`) advertise every non-loopback LAN address.
+- Vault publishes the service under its own host name, `vault-<hostname>.local`. It never claims the Unraid host name, so it does not conflict with Unraid's `avahi-daemon` (`<hostname>.local` stays unchanged).
+- To stop advertising, set **Network Discovery (mDNS)** to **No** under **Settings → Vault**, or start the daemon with `--mdns=false`. The API remains reachable at the bind address.
+
 The Dashboard shows a three-step welcome guide: add storage → create job → run backup.
 
 ![Dashboard welcome screen](screenshots/01-dashboard.png)
