@@ -6,9 +6,9 @@ import "errors"
 // graceful shutdown request in time — as opposed to a libvirt RPC failure or a
 // cancelled context.
 //
-// Lives here, untagged, alongside the decision it drives: vm.go is linux-only
-// and its libvirt handle has no seam for a fake, so keeping the policy pure
-// and free of libvirt types is the only way to test it on any host.
+// Lives here, untagged, alongside the decision it drives: vm.go is linux-only,
+// so keeping the policy pure and free of libvirt types lets it be tested on
+// any host, not just Linux.
 var errShutdownTimeout = errors.New("domain did not shut down within the timeout")
 
 // escalateToForceStop decides what to do after asking a domain to shut down

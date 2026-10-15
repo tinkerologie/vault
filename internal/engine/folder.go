@@ -146,6 +146,12 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// Files the archiver could not read intact are reported rather than
 	// aborting the run — a single bad block used to fail every flash backup
 	// until the offending file was deleted (issue #393).
+	// Size the work first so archiving reports real progress (#456).
+	ctx, _ = ensureItemProgress(ctx, item.Name, PhaseProcessing, func() (int64, int64) {
+		files, bytes, _ := scanTotals(ctx, item.Name, srcPath, exclusions, changedSince, prevPaths)
+		return files, bytes
+	})
+
 	var skippedFiles []string
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
@@ -259,6 +265,7 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return err
 	}
 
+	ctx, _ = ensureItemProgress(ctx, item.Name, PhaseProcessing, nil)
 	if err := untarDirectoryFiltered(ctx, archivePath, destPath, include); err != nil {
 		return fmt.Errorf("extracting to %s: %w", destPath, err)
 	}
@@ -334,6 +341,13 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 	}
 	defer root.Close()
 
+	// Size the tree first so chunking reports real progress (#456). Files
+	// carried forward from the parent count as done when they are reached.
+	ctx, counter := ensureItemProgress(ctx, item.Name, PhaseProcessing, func() (int64, int64) {
+		files, bytes, _ := scanTotals(ctx, item.Name, srcPath, exclusions, time.Time{}, nil)
+		return files, bytes
+	})
+
 	m := dedup.Manifest{Version: dedup.ManifestVersion, Item: item.Name, Files: map[string]dedup.ManifestEntry{}}
 	var totalBytes int64
 	var skipped int
@@ -402,6 +416,8 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 		if parent != nil && hasChangedSince && !info.ModTime().After(changedSince) {
 			if pe, ok := parent.Files[rel]; ok {
 				m.Files[rel] = pe
+				counter.addBytes(info.Size())
+				counter.addFile()
 				return nil
 			}
 			// Not in the parent manifest: a NEW file whose mtime predates the
@@ -425,6 +441,7 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 				return err
 			}
 			ids = append(ids, id)
+			counter.addBytes(int64(len(chunk)))
 			return nil
 		}); err != nil {
 			return fmt.Errorf("folder: chunk %s: %w", rel, err)
@@ -432,6 +449,7 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 		entry.Chunks = ids
 		m.Files[rel] = entry
 		totalBytes += info.Size()
+		counter.addFile()
 		if progress != nil {
 			progress(item.Name, -1, fmt.Sprintf("chunked %s", rel))
 		}
@@ -564,6 +582,15 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	}
 
 	sort.Strings(files)
+	// The manifest knows exactly what will be written, so restore progress
+	// is determinate from the start (#456).
+	var restoreBytes int64
+	for _, fp := range files {
+		restoreBytes += m.Files[fp].Size
+	}
+	ctx, counter := ensureItemProgress(ctx, item.Name, PhaseProcessing, func() (int64, int64) {
+		return int64(len(files)), restoreBytes
+	})
 	for _, fp := range files {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -605,11 +632,13 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 				return err
 			}
 			written += int64(len(body))
+			counter.addBytes(int64(len(body)))
 		}
 		if err := out.Close(); err != nil {
 			return err
 		}
 		RestoreTallyFrom(ctx).Add(written)
+		counter.addFile()
 		// O_CREATE only applies the mode when it creates the file, so a
 		// restore over an existing tree needs the mode set explicitly.
 		applyMode(full, mode)
