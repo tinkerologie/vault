@@ -5,8 +5,45 @@
 # password from a private temp file (sshpass -f), never the command line
 
 - name: Deploy Vault plugin
-  ignore_unreachable: true
   block:
+    # Check reachability before the password file exists. Ansible runs
+    # neither rescue nor always for an unreachable host, so failing here, as
+    # an ordinary task failure, is what keeps a down host from leaking the
+    # file and still fails fast with the connection error.
+    - name: Check server connectivity
+      ansible.builtin.raw: echo "ok"
+      register: connectivity
+      ignore_unreachable: true
+      changed_when: false
+
+    - name: Fail when server is unreachable
+      delegate_to: localhost
+      ansible.builtin.fail:
+        msg: "{{ connectivity.msg }}"
+      when: connectivity is unreachable
+
+    # A host that drops mid-deploy also skips always, so clear password files
+    # left by such an interrupted run (older than an hour, so a concurrent run
+    # against another host keeps its own).
+    - name: Remove stale SSH password files from interrupted runs
+      delegate_to: localhost
+      ansible.builtin.find:
+        paths: "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}"
+        patterns: "vault-sshpass-*"
+        age: 1h
+      register: stale_sshpass_files
+      changed_when: false
+
+    - name: Delete stale SSH password files
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ stale_sshpass_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      changed_when: false
+
     # sshpass reads the password from a private 0600 file, so it never appears
     # on a command line, in an environment prefix, in the process list, or in
     # task output at any verbosity. The file is removed in the always section.
@@ -25,10 +62,6 @@
         dest: "{{ sshpass_file.path }}"
         mode: "0600"
       no_log: true
-      changed_when: false
-
-    - name: Check server connectivity
-      ansible.builtin.raw: echo "ok"
       changed_when: false
 
     - name: Stop existing service

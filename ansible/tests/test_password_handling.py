@@ -21,11 +21,17 @@ FIXTURES = TESTS / "fixtures"
 
 
 class PasswordHandlingTests(unittest.TestCase):
-    def run_role(self, role, scenario="success"):
+    def run_role(self, role, scenario="success", stale_password_file=False):
         with tempfile.TemporaryDirectory(prefix="vault-ansible-test-") as directory:
             root = Path(directory)
             (root / "tmp").mkdir()
             (root / "bin").mkdir()
+            if stale_password_file:
+                # Left behind by a run whose host dropped mid-deploy.
+                stale = root / "tmp" / "vault-sshpass-stale"
+                stale.write_text("old")
+                two_hours_ago = stale.stat().st_mtime - 7200
+                os.utime(stale, (two_hours_ago, two_hours_ago))
             password = "synthetic-password-" + uuid.uuid4().hex + " ' $ ;"
             (root / "expected-password").write_text(password)
             (root / "expected-password").chmod(0o600)
@@ -240,6 +246,28 @@ class PasswordHandlingTests(unittest.TestCase):
         self.assert_password_written(tasks)
         self.assertTrue("Endpoints: 0/3 passed, Ping: 503" in output, output)
         self.assertTrue("FAILED: Health, Jobs, Storage" in output, output)
+
+
+    def test_unreachable_server_fails_fast_without_leaking(self):
+        for role in ("deploy", "verify"):
+            with self.subTest(role=role):
+                rc, output, commands, tasks, _ = self.run_role(role, "unreachable")
+                self.assertNotEqual(rc, 0, output)
+                self.assertTrue("fixture host unreachable" in output, output)
+                self.assertFalse(any(event["program"] == "sshpass" for event in commands))
+                if role == "deploy":
+                    # Fails before the password file exists, and before any
+                    # other remote task.
+                    self.assertFalse(any(e["name"].endswith("Create private SSH password file") for e in tasks))
+                    self.assertFalse(any(e["name"].endswith("Stop existing service") for e in tasks))
+                else:
+                    self.assertEqual(self.task(tasks, "Remove SSH password file")["status"], "ok")
+
+    def test_deploy_removes_stale_password_files(self):
+        rc, output, _, tasks, _ = self.run_role("deploy", stale_password_file=True)
+        self.assertEqual(rc, 0, output)
+        # run_role also asserts no vault-sshpass-* file survives.
+        self.assertEqual(self.task(tasks, "Delete stale SSH password files")["status"], "ok")
 
 
 if __name__ == "__main__":

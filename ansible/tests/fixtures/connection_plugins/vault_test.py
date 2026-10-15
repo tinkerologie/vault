@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+from ansible.errors import AnsibleConnectionFailure
 from ansible.plugins.connection import ConnectionBase
 
 
@@ -16,6 +17,8 @@ class Connection(ConnectionBase):
         return self
 
     def exec_command(self, cmd, in_data=None, sudoable=True):
+        if os.environ.get("VAULT_TEST_SCENARIO") == "unreachable":
+            raise AnsibleConnectionFailure("fixture host unreachable")
         root = Path(os.environ["VAULT_TEST_ROOT"])
         with (root / "remote.jsonl").open("a") as stream:
             stream.write(json.dumps({"cmd": cmd}) + "\n")

@@ -58,13 +58,13 @@ ansible-playbook -i inventory.yml ansible.yml --tags uninstall -e create_backup=
 
 ## Local Regression Tests
 
-Use Python 3.11 or newer and a virtual environment:
+Use Python 3.11 or newer and a virtual environment. From the repository root:
 
 ```bash
 python3 -m venv /tmp/vault-ansible-tests
 source /tmp/vault-ansible-tests/bin/activate
 python -m pip install -r ansible/tests/requirements.txt
-make -C .. test-ansible # from ansible/
+make test-ansible
 ```
 
 The tests execute the real deploy and verify roles at `-vvv --diff` using
@@ -74,8 +74,9 @@ to a temporary loopback HTTP server. No inventory or Unraid host is needed.
 
 Coverage includes all 11 SCP paths, the SSH tunnel, private file permissions
 and contents, password suppression in output and process arguments, authentication
-and filesystem failures, included verification failures, and both cleanup
-conditions. Endpoint errors are checked according to the role's existing behavior:
+and filesystem failures, an unreachable host (which must fail fast without
+leaving a password file), removal of stale password files from interrupted
+runs, included verification failures, and both cleanup conditions. Endpoint errors are checked according to the role's existing behavior:
 they are reported and ignored. Test callbacks inject filesystem failures and
 remove retry delays without changing the production roles.
 
