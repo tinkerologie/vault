@@ -2224,6 +2224,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// (#328 r3). The summary is ALSO written to the run log below so it
 	// streams live during the run; the two do not double-display (the UI
 	// dedupes the activity row once run-log lines exist).
+	// One elapsed duration for the activity entry, the run summary, and the
+	// notification, so they agree on whether a rate is shown (#455).
+	runElapsed := time.Since(jobStart)
 	r.logActivity(logLevelForStatus(status), "backup",
 		fmt.Sprintf("Backup %s: %s", status, job.Name),
 		terminalDetails(map[string]any{
@@ -2231,11 +2234,11 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			"run_id": runID, "backup_type": btResult.BackupType,
 			"destination": dest.Name,
 			"items_done":  itemsDone, "items_failed": itemsFailed,
-			"size_bytes": totalSize, "duration_seconds": int(time.Since(jobStart).Seconds()),
+			"size_bytes": totalSize, "duration_seconds": int(runElapsed.Seconds()),
 			"failed_items": failedNames,
 		}))
 
-	level, msg, summaryData := runSummaryMessage("Backup", job.Name, status, itemsDone, itemsFailed, run.ItemsTotal, totalSize, time.Since(jobStart))
+	level, msg, summaryData := runSummaryMessage("Backup", job.Name, status, itemsDone, itemsFailed, run.ItemsTotal, totalSize, runElapsed)
 	msg = addDiagTotals(msg, summaryData, runDiag.Snapshot())
 	summaryData["job_id"] = jobID
 	summaryData["backup_type"] = btResult.BackupType
@@ -2254,7 +2257,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	localDone := itemsDone
 	localFailed := itemsFailed
 	localSize := totalSize
-	localDuration := time.Since(jobStart)
+	localDuration := runElapsed
 	localFailedNames := failedNames
 	// notify.Send is already bounded internally (30s exec timeout), so the
 	// step context is unused here.
@@ -5269,7 +5272,7 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		return fmt.Errorf("getting storage destination: %w", err)
 	}
 
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
 	}
