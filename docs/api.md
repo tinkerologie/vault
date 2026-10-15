@@ -23,7 +23,7 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 | GET    | `/health`            | Basic health, version, and mode                                         |
 | GET    | `/health/summary`    | Aggregated dashboard health metrics                                     |
 | GET    | `/ws`                | WebSocket event stream                                                  |
-| GET    | `/runner/status`     | Current backup or restore state, including queued jobs                  |
+| GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress) |
 | GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal) |
 | GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)    |
 
@@ -213,11 +213,28 @@ See [MCP Integration](mcp.md) for the available tools and client configuration.
 
 Connect to `/api/v1/ws` for real-time event streaming. Events include:
 
-- `progress` — per-item backup/restore progress with bytes-done and rate
+- `backup_progress` / `restore_progress` — progress of the item currently running: `item`, `item_type`, `percent`, `message`, plus the [progress fields](#progress) below
 - `job_state` — backup or restore lifecycle transitions
 - `runner_queue` — current and queued jobs
 - `config_changed` — emitted after any CRUD mutation (jobs, storage, settings, replication) so dashboards refresh derived state
 - `import_completed` — emitted after a successful Storage → Import run
+
+### Progress
+
+`GET /runner/status` and every `backup_progress` / `restore_progress` event describe the current item's work in its current phase:
+
+| Field                                       | Meaning                                                                                                    |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `phase`                                     | `scanning`, `preparing`, `processing`, `transferring`, `verifying`, or `finalizing`                        |
+| `phase_started_at`                          | When the phase began (RFC 3339)                                                                            |
+| `bytes_done` / `bytes_total`                | Bytes processed in this phase. A total of `0` means unknown                                                |
+| `files_done` / `files_total`                | Files processed in this phase. A total of `0` means unknown                                                |
+| `progress_determinate`                      | `true` when a total is known; `percent` (`current_item_percent` in the status) is then the phase percentage |
+| `rate_bytes_per_sec` / `rate_files_per_sec` | Smoothed rate, sampled at most once a second                                                               |
+| `eta_seconds`                               | Estimated seconds left in the phase; `0` until 30 s of the phase and 1% of its work have elapsed           |
+| `last_progress_at`                          | When work last moved; a stale value suggests the operation is stalled                                      |
+
+Counters never move backward: a retried upload holds its previous high-water mark. Work beyond the expected total raises the total, and a phase reads at most 99% until the next phase starts. When no total is known (for example while scanning), `progress_determinate` is `false` and clients should show the phase and counters without a percentage. The fields are omitted when the daemon has no structured progress for the item.
 
 Origin patterns cover `localhost`, `127.0.0.1`, `*.local`, `192.168.*.*`, `10.*.*.*`, and the full RFC 1918 `172.16.0.0/12` range (including Docker's default `172.17.0.0/16`).
 

@@ -454,3 +454,38 @@ describe('currentItem tracking', () => {
     vi.useRealTimers()
   })
 })
+
+describe('structured progress detail (#456)', () => {
+  it('populates detail from backup_progress and keeps it when an older daemon omits it', () => {
+    handleProgressMessage({ type: 'job_run_started', job_id: 1, run_id: 10, job_name: 'j', items_total: 1 })
+    handleProgressMessage({ type: 'item_backup_start', job_id: 1, run_id: 10, item_name: 'appdata', item_type: 'folder' })
+    handleProgressMessage({ type: 'backup_progress', item: 'appdata', percent: 37, message: 'Uploading', phase: 'transferring', bytes_done: 84, bytes_total: 225, progress_determinate: true })
+    let d = getProgress().currentItem.detail
+    expect(d).toMatchObject({ phase: 'transferring', bytesDone: 84, bytesTotal: 225, determinate: true, percent: 37 })
+
+    handleProgressMessage({ type: 'backup_progress', item: 'appdata', percent: 38, message: 'Uploading' })
+    d = getProgress().currentItem.detail
+    expect(d.bytesDone).toBe(84)
+  })
+
+  it('drops detail when the next item starts', () => {
+    handleProgressMessage({ type: 'job_run_started', job_id: 1, run_id: 11, job_name: 'j', items_total: 2 })
+    handleProgressMessage({ type: 'item_backup_start', job_id: 1, run_id: 11, item_name: 'a', item_type: 'folder' })
+    handleProgressMessage({ type: 'backup_progress', item: 'a', percent: 50, message: 'x', phase: 'transferring', bytes_done: 1, bytes_total: 2, progress_determinate: true })
+    handleProgressMessage({ type: 'item_backup_start', job_id: 1, run_id: 11, item_name: 'b', item_type: 'folder' })
+    expect(getProgress().currentItem.name).toBe('b')
+    expect(getProgress().currentItem.detail ?? null).toBeNull()
+  })
+
+  it('reads detail from status snapshots and respects the indeterminate flag', () => {
+    const status = { active: true, job_id: 2, run_id: 20, run_type: 'restore', current_item: 'vm', current_item_percent: 12, phase: 'scanning', files_done: 5 }
+    restoreFromStatus(status)
+    expect(getProgress().currentItem.detail).toMatchObject({ phase: 'scanning', filesDone: 5, determinate: false, percent: null })
+
+    syncFromStatus({ ...status, phase: 'transferring', bytes_done: 10, bytes_total: 40, progress_determinate: true, current_item_percent: 25 })
+    expect(getProgress().currentItem.detail).toMatchObject({ phase: 'transferring', determinate: true, percent: 25 })
+
+    syncFromStatus({ ...status, current_item: 'next', phase: undefined })
+    expect(getProgress().currentItem.detail ?? null).toBeNull()
+  })
+})

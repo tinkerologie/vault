@@ -197,7 +197,12 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
 /**
  * Intercepts Vault API endpoints to provide deterministic, hermetic responses for Playwright tests.
  */
-export async function setupVaultMockApi(page: Page) {
+export interface VaultMockOptions {
+  /** Body served for GET /runner/status; defaults to an idle runner. */
+  runnerStatus?: Record<string, unknown>;
+}
+
+export async function setupVaultMockApi(page: Page, options: VaultMockOptions = {}) {
   // Local state per page session
   let jobsList = createInitialMockJobs();
   let storageList = createInitialMockStorage();
@@ -309,7 +314,7 @@ export async function setupVaultMockApi(page: Page) {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ active: false, queue: [] }),
+        body: JSON.stringify(options.runnerStatus ?? { active: false, queue: [] }),
       });
     }
 
@@ -861,10 +866,14 @@ export async function setupVaultMockApi(page: Page) {
           body: JSON.stringify({ message: 'history purged' }),
         });
       }
+      // Per-job history returns only that job's runs, like the daemon; the
+      // dashboard merges several jobs' histories and keys rows by run id.
+      const jobHistory = path.match(/\/jobs\/(\d+)\/history/);
+      const runs = jobHistory ? historyRuns.filter((run) => run.job_id === Number(jobHistory[1])) : historyRuns;
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(historyRuns),
+        body: JSON.stringify(runs),
       });
     }
 

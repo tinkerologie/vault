@@ -380,7 +380,7 @@ type getRunnerStatusInput struct{}
 func (s *MCPServer) addGetRunnerStatusTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "get_runner_status",
-		Description: "Get the current backup or restore runner status, including queued jobs",
+		Description: "Get the current backup or restore runner status: the item running, its phase (scanning, preparing, processing, transferring, verifying, finalizing), bytes and files done and total (0 total means unknown), transfer rate, ETA, last progress time, and queued jobs",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ getRunnerStatusInput) (*mcp.CallToolResult, any, error) {
 		r, _ := textResult(s.runner.Status())
 		return r, nil, nil
