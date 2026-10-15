@@ -636,6 +636,7 @@ describe('itemTypeCountLabel with itemType', () => {
   })
 })
 
+
 describe('runSpeed', () => {
   it('uses precise timestamps over whole-second duration_seconds (#455)', () => {
     const run = { size_bytes: 3 * 1024 ** 2, duration_seconds: 1, started_at: '2026-10-15T00:00:00.000Z', completed_at: '2026-10-15T00:00:01.500Z' }
