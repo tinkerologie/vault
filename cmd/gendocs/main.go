@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -38,9 +39,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("gendocs: %v", err)
 	}
-	outDir := filepath.Join(root, outSubdir)
+	if err := generate(filepath.Join(root, outSubdir), os.Stdout); err != nil {
+		log.Fatalf("gendocs: %v", err)
+	}
+}
+
+// generate renders every reference page into outDir, creating it if needed,
+// and reports the page count on out.
+func generate(outDir string, out io.Writer) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		log.Fatalf("gendocs: create %s: %v", outDir, err)
+		return fmt.Errorf("create %s: %w", outDir, err)
 	}
 
 	pages := map[string]string{
@@ -57,10 +65,11 @@ func main() {
 
 	for name, content := range pages {
 		if err := writePage(outDir, name, content); err != nil {
-			log.Fatalf("gendocs: %v", err)
+			return err
 		}
 	}
-	fmt.Printf("gendocs: wrote %d pages to %s\n", len(pages), outDir)
+	_, err := fmt.Fprintf(out, "gendocs: wrote %d pages to %s\n", len(pages), outDir)
+	return err
 }
 
 func writePage(outDir, name, content string) error {
