@@ -391,7 +391,7 @@ const chunkScratchSize = 1 + ChunkMax + chunkTagSize
 // caller owns, and the scratch is cleared before reuse.
 var chunkScratch = bufpool.New(chunkScratchSize)
 
-// getPooled is Get's read path for normal-sized chunks. It reads up to
+// getPooled is the read path Get uses for normal-sized chunks. It reads up to
 // length bytes into pooled scratch, accepting a short read at EOF the way
 // io.ReadAll did, then decrypts.
 func (r *Repo) getPooled(id ID, rc io.Reader, length int) ([]byte, error) {
