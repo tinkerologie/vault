@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.10.01] - 2026-10-16
+
 ### Added
 
 - **Memory statistics and a memory limit (#500):** Settings → General has a new **Memory** card. It shows the daemon's heap in use, total Go memory, resident and peak RSS, the share of CPU spent in garbage collection, GC cycles, goroutines, and the effective memory limit. The same figures are in `GET /api/v1/settings/runtime` and the diagnostics bundle. The new **Memory limit (MiB)** setting (`memory_limit_mb`, default 0 = off) applies a soft limit immediately, with no restart. A `GOMEMLIMIT` environment variable still takes precedence. The card lists S3 jobs whose upload buffers (part size × 5 × parallel uploads) could exceed the limit, the run log warns when such an upload starts, and the S3 form shows the per-stream buffer size under **Part size**.
@@ -20,8 +22,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Test coverage (#458):** backend statement coverage rises from about 79% to about 93%, and web library line coverage from 65% to 98%. The new tests cover the libvirt VM, ZFS, FUSE mount, container, runner, storage (SFTP, SMB, WebDAV), API, CLI and database paths. Narrow, unexported test seams were added where code talked to libvirt, ZFS, FUSE, SMB or the kernel directly; production behaviour is unchanged.
 - **Selective restore size (#455):** restoring a few files from a backup item reports the bytes actually restored instead of the whole item's recorded size, in History, the run log, and the restore summary. Restore summaries also name the job and destination.
 - **mDNS advertisement control (#468):** new **Network Discovery (mDNS)** setting (`MDNS_ADVERTISE` in `vault.cfg`) and `--mdns` flag on `vault daemon` and `vault replica` turn LAN discovery off without changing the bind address. Both default to on.
-
-### Changed
 
 - Ansible deploys install the real `plugin/rc.vault` instead of an outdated inline copy, so live verification runs the same service script the plugin package ships (#468).
 - **Verification cost warning (#457):** the job form now warns when **Verify backups after writing** is on and the destination is remote: under the toggle, beside the destination in the express form, and on the review step. After every backup, Vault reads all the data that backup references back from that destination, including chunks reused from earlier backups, so a large backup can mean significant bandwidth and a long wait near 100%. S3 and S3-compatible destinations also note possible request, retrieval, or egress charges. The warning suggests scheduled verification for large backups.
