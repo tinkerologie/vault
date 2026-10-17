@@ -8,7 +8,8 @@
   import { nearBottom, nearOldestEdge, atTop as isAtTop } from '../lib/scrollflags.js'
   import { getLiveMode } from '../lib/runtime-config.js'
   import { rowTime } from '../lib/tsformat.js'
-  import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice } from '../lib/logrows.js'
+  import { buildRows, rowEntries } from '../lib/logrows.js'
+  import { createLogWindow, scrollAction } from '../lib/logwindow.svelte.js'
   import { levelStyle, levelLabel } from '../lib/loglevel.js'
   import { formatLine, logLine } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
@@ -34,7 +35,6 @@
   let wrap = $state(false) // console-wide line wrapping for message text (#328 round 2)
   let focusedId = $state(null) // row highlighted to mark the user's focus (#328 r3 #7)
   let copiedAll = $state(false) // transient confirmation for copy-all (#328 r3 #14)
-  let suppressNextScroll = false // one-shot: swallow the anchor write's own scroll event (#328 r8 #4)
   let appendingOlder = false // an older batch is landing BELOW the viewport; leave scrollTop alone
 
   // Display rows: newest-first, with date separators and consecutive
@@ -46,85 +46,13 @@
   // the wrong trade.
   const rows = $derived(buildRows(store.filtered, { collapse: collapse && !showMeta }))
 
-  // Only the newest part of `rows` is on the page (#507): rendering all of
-  // them (~8,600 rows, ~78,000 DOM nodes with the full history loaded) made
-  // leaving the Logs page freeze the UI. The window grows as the reader
-  // scrolls towards older lines; see logrows.js for the anchor rules.
-  let windowAnchor = $state(null) // bottom edge
-  let windowTop = $state(null) // top edge; set only after "Jump to oldest"
-  let moving = false // the window is being grown or trimmed; ignore re-entry
-  const shownCount = $derived(renderedCount(rows, windowAnchor))
-  const shownStart = $derived(Math.min(renderedStart(rows, windowTop), shownCount))
-  const shownRows = $derived(windowSlice(rows, shownStart, shownCount))
-  const hiddenRows = $derived(shownCount < rows.length) // older rows not rendered
-  const hiddenAbove = $derived(shownStart > 0) // newer rows not rendered
-
-  // A programmatic scrollTop write whose own scroll event handleScroll must
-  // ignore. Browsers fire no event when the position does not change, so the
-  // one-shot suppress flag is armed only for a write that actually moves;
-  // otherwise it would swallow the reader's next real scroll.
-  function writeScrollTop(top) {
-    if (!box) return
-    const target = Math.max(0, Math.min(top, box.scrollHeight - box.clientHeight))
-    if (Math.abs(target - box.scrollTop) < 1) return
-    suppressNextScroll = true
-    box.scrollTop = target
-  }
-
-  // Back to the default window, e.g. when the reader returns to the live
-  // edge or the filters change.
-  function resetWindow() {
-    windowAnchor = null
-    windowTop = null
-  }
-
-  // After "Jump to oldest", reaching the top of the window renders the next
-  // newer rows ABOVE the viewport, so scrollTop is moved down by exactly the
-  // height they add and the line being read stays put.
-  async function raiseWindowAbove() {
-    if (!box || moving) return
-    moving = true
-    try {
-      const prevHeight = box.scrollHeight
-      const prevTop = box.scrollTop
-      // Reaching the newest row pins the top edge to it rather than
-      // clearing it: the compensation below leaves the reader just short of
-      // the live edge, and an unpinned top would let every new line render
-      // above them, past the cap. The live edge takes over (and resets the
-      // window) once they actually scroll to the top.
-      windowTop = raiseWindow(rows, shownStart) ?? (rows.length ? { key: rows[0].key, index: 0 } : null)
-      await tick()
-      writeScrollTop(prevTop + (box.scrollHeight - prevHeight))
-      // Keep the window bounded: drop rows past the cap from the bottom,
-      // which is below the viewport and needs no compensation.
-      windowAnchor = trimBottom(rows, windowAnchor, shownStart, shownCount)
-    } finally {
-      moving = false
-    }
-  }
-
-  // Render the next slice of older rows below the viewport. Content added
-  // below needs no scroll compensation (see the follow effect), but rows
-  // dropped from the top to keep the window bounded do: scrollTop moves up
-  // by exactly the height they took, so the line being read stays put.
-  async function growWindow() {
-    if (!box || moving) return
-    moving = true
-    try {
-      windowAnchor = extendWindow(rows, shownCount)
-      await tick()
-      const top = trimTop(rows, windowTop, shownStart, shownCount)
-      if (top !== windowTop) {
-        const prevHeight = box.scrollHeight
-        const prevTop = box.scrollTop
-        windowTop = top
-        await tick()
-        writeScrollTop(prevTop - (prevHeight - box.scrollHeight))
-      }
-    } finally {
-      moving = false
-    }
-  }
+  // Only a window of `rows` is on the page (#507): rendering all of them
+  // (~8,600 rows, ~78,000 DOM nodes with the full history loaded) made leaving
+  // the Logs page freeze the UI. logwindow.svelte.js moves the window as the
+  // reader scrolls and owns every programmatic scrollTop write, so its own
+  // scroll events can be told apart from the reader's (#328 r8 #4).
+  const win = createLogWindow({ rows: () => rows, box: () => box, tick })
+  const shownRows = $derived(win.rows)
 
   const liveMode = getLiveMode()
 
@@ -231,7 +159,7 @@
     if (appendingOlder) return
     const grew = box.scrollHeight - preScrollHeight
     if (grew > 0 && preScrollTop > 0) {
-      writeScrollTop(preScrollTop + grew)
+      win.write(preScrollTop + grew)
     }
   })
 
@@ -244,36 +172,35 @@
     if (!box) return
     // Swallow the programmatic anchor write's own scroll event so it can't
     // re-trigger loadOlder or toggle follow (#328 r8 #4).
-    if (suppressNextScroll) {
-      suppressNextScroll = false
-      return
-    }
-    atOldest = !hiddenRows && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
+    if (win.consumeSuppressed()) return
+    atOldest = !win.hiddenBelow && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
     if (store.loadingOlder) return
-    // Live edge is the top now: being there means following — unless newer
-    // rows are hidden above the window, which then grows upwards instead.
-    if (isAtTop(box.scrollTop) && hiddenAbove) {
-      raiseWindowAbove()
+    // The live edge is the top now: being there means following, unless
+    // newer rows are hidden above the window, which then grows upwards.
+    const action = scrollAction({
+      atTop: isAtTop(box.scrollTop),
+      nearOldest: nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight),
+      follow,
+      hiddenAbove: win.hiddenAbove,
+      hiddenBelow: win.hiddenBelow,
+      hasMore: store.hasMore,
+      loadingOlder: store.loadingOlder,
+    })
+    if (action.raise) {
+      win.raise()
       return
     }
-    const atLiveEdge = isAtTop(box.scrollTop)
-
-    if (atLiveEdge && !follow) {
+    if (action.enterLive) {
       follow = true
       newCount = 0
       followOffMarker = null
       // Back at the live edge: drop the rows rendered on the way down.
-      resetWindow()
-    } else if (!atLiveEdge && follow) {
+      win.reset()
+    } else if (action.leaveLive) {
       follow = false
-      // Leaving the live edge: pin both window edges to the rows rendered
-      // now. Lines arriving at the top then stay hidden above (the new-entry
-      // count on "Jump to present" reports them) instead of pushing the rows
-      // being read out of the window or growing it past the cap.
-      if (shownRows.length) {
-        if (!windowAnchor) windowAnchor = extendWindow(rows, shownCount, 0)
-        if (!windowTop) windowTop = { key: rows[shownStart].key, index: shownStart }
-      }
+      // Pin the window so lines arriving at the top stay hidden above (the
+      // new-entry count on "Jump to present" reports them).
+      win.pin()
     }
 
     // Auto-load older entries as the user approaches the BOTTOM (not only at
@@ -283,13 +210,8 @@
     // matches surface as older batches arrive (#328 r9 #4).
     // Rows already loaded but not yet rendered come first; only once every
     // loaded row is on the page does the store fetch further back.
-    if (nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight)) {
-      if (hiddenRows) {
-        growWindow()
-      } else if (store.hasMore && !store.loadingOlder) {
-        loadOlderRows()
-      }
-    }
+    if (action.grow) win.grow()
+    else if (action.loadOlder) loadOlderRows()
   }
 
   // Older-batch load. With the console inverted, older entries append BELOW
@@ -310,16 +232,14 @@
     }
     // The fetched batch lands beyond the window; a reader still parked at
     // the bottom would otherwise see nothing until they scroll again.
-    if (box && hiddenRows && nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight)) {
-      growWindow()
-    }
+    if (box) await win.afterOlderFetch(nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight))
   }
 
   function jumpToPresent() {
     follow = true
     newCount = 0
     followOffMarker = null
-    resetWindow()
+    win.reset()
     if (!box) return
     // The auto-follow effect pins scrollTop instantly on every entries
     // change — it would snap the viewport to the bottom and cancel the
@@ -340,13 +260,8 @@
   // rows are rendered for that (#507); scrolling up renders newer ones.
   async function jumpToOldest() {
     if (!box) return
-    if (hiddenRows) {
-      follow = false
-      const w = oldestWindow(rows)
-      windowTop = w.top
-      windowAnchor = w.bottom
-      await tick()
-      writeScrollTop(box.scrollHeight)
+    follow = false
+    if (await win.jumpToOldest()) {
       atOldest = true // the suppressed scroll event would have set this
       return
     }
@@ -359,7 +274,7 @@
     follow = true
     newCount = 0
     followOffMarker = null
-    resetWindow()
+    win.reset()
     await tick()
     if (box) box.scrollTop = 0
   }
@@ -406,7 +321,7 @@
     if (anchorId && elTopBefore != null) {
       const elTopAfter = entryTopOffset(anchorId)
       if (elTopAfter != null) {
-        writeScrollTop(anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter))
+        win.write(anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter))
       }
     }
   }
@@ -741,7 +656,7 @@
         </button>
       {/if}
 
-      {#if !atOldest || hiddenRows}
+      {#if !atOldest || win.hiddenBelow}
         <button onclick={jumpToOldest}
           class="absolute top-3 right-3 z-10 p-2 bg-surface-3 border border-border rounded-lg text-text-muted hover:text-text shadow-lg transition-colors"
           title="Jump to oldest log" aria-label="Jump to oldest log">
@@ -805,7 +720,7 @@
         {/each}
         <!-- End-of-history marker now sits at the BOTTOM: with newest first,
              the oldest log is the last row on the page. -->
-        {#if !hiddenRows && !store.hasMore && !store.pruned}
+        {#if !win.hiddenBelow && !store.hasMore && !store.pruned}
           <div data-end-marker class="h-8 flex items-center justify-center text-center text-[11px] text-text-dim select-none" aria-live="polite">
             — End of logs —
           </div>
