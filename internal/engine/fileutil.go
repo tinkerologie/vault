@@ -15,10 +15,10 @@ func copyFile(ctx context.Context, src, dst string) error {
 }
 
 // copyFileWithProgress copies a file from src to dst, calling onProgress with
-// the number of bytes copied so far after each chunk. ctx is checked before
-// every chunk so a cancelled run aborts a multi-GB copy within one 1 MiB
-// chunk instead of running to completion (issue #171). A partial destination
-// file is left for the caller's cleanup to handle.
+// the number of bytes copied so far after each slice. ctx is checked before
+// every slice so a cancelled run aborts a multi-GB copy within one slice
+// instead of running to completion (issue #171). A partial destination file
+// is left for the caller's cleanup to handle.
 func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(bytesCopied int64)) error {
 	in, err := os.Open(src) // #nosec G304 — src paths come from libvirt domain XML (trusted system data)
 	if err != nil {
@@ -53,29 +53,42 @@ func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(
 		}
 	}()
 
-	buf := make([]byte, 1024*1024) // 1 MiB buffer
+	if err := copySlices(ctx, out, in, onProgress); err != nil {
+		return fmt.Errorf("copying %s to %s: %w", src, normalizedDst, err)
+	}
+
+	return nil
+}
+
+// copySliceSize is how much copySlices hands the kernel per call. It bounds
+// how long a cancelled copy keeps running; tests shrink it.
+var copySliceSize int64 = 64 << 20
+
+// copySlices copies src to dst in copySliceSize slices, checking ctx before
+// each one and reporting the cumulative byte count after each slice that
+// moved data. Each slice is an io.CopyN, which hands dst.ReadFrom an
+// io.LimitedReader over src: with both ends a bare *os.File that is
+// copy_file_range or sendfile on Linux, and a block clone on ZFS 2.2+. A
+// hand-written read/write loop, or wrapping either file, forces a user-space
+// copy instead (issue #500).
+func copySlices(ctx context.Context, dst io.Writer, src io.Reader, onProgress func(bytesCopied int64)) error {
 	var copied int64
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		n, readErr := in.Read(buf)
+		n, err := io.CopyN(dst, src, copySliceSize)
 		if n > 0 {
-			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
-				return fmt.Errorf("writing to %s: %w", normalizedDst, writeErr)
-			}
-			copied += int64(n)
+			copied += n
 			if onProgress != nil {
 				onProgress(copied)
 			}
 		}
-		if readErr == io.EOF {
-			break
+		if err == io.EOF {
+			return nil
 		}
-		if readErr != nil {
-			return fmt.Errorf("reading from %s: %w", src, readErr)
+		if err != nil {
+			return err
 		}
 	}
-
-	return nil
 }

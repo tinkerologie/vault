@@ -98,6 +98,20 @@ jobs:
           use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
           fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
 
+      - name: Check file restores use copy_file_range
+        # A ReadFrom spy test proves dispatch; this proves the syscall on the
+        # runner's kernel and filesystem (issue #500).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq strace
+          go test -c -o engine.test ./internal/engine/
+          strace -f -e trace=copy_file_range -o strace.log ./engine.test -test.run '^TestCopyFileKernelPath$' -test.count=1 -test.v
+          if ! grep -E 'copy_file_range\(.*\) = [1-9]' strace.log; then
+            echo "::error::TestCopyFileKernelPath made no successful copy_file_range call"
+            cat strace.log
+            exit 1
+          fi
+
       - name: Run web tests with coverage and JUnit output
         run: cd web && npm ci && npx vitest run --coverage --reporter=default --reporter=junit --outputFile=./test-report.junit.xml
 
