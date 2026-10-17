@@ -79,6 +79,19 @@ test.describe('Storage Management & Target Setup Wizard', () => {
     await expect(page.locator('main').getByText('Cloud S3 Primary')).toBeVisible();
   });
 
+  test('shows the per-stream S3 upload buffer for the part size (#500)', async ({ page }) => {
+    await page.goto('/#/storage');
+    await page.getByRole('button', { name: /add storage/i }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'S3 / S3-Compatible' }).click();
+    await dialog.locator('summary', { hasText: 'Advanced' }).click();
+
+    const hint = dialog.getByTestId('s3-part-memory-hint');
+    await expect(hint).toContainText('320 MiB'); // default 64 MiB × 5
+    await dialog.locator('#s3_part_size').fill('128');
+    await expect(hint).toContainText('640 MiB');
+  });
+
   test('opens remote storage browser drawer and lists backup archives', async ({ page }) => {
     await page.goto('/#/storage');
 

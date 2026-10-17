@@ -3,6 +3,8 @@ package diagnostics
 import (
 	"archive/zip"
 	"path/filepath"
+	"runtime"
+	"runtime/metrics"
 	"testing"
 	"time"
 
@@ -590,4 +592,38 @@ type zipBuf struct {
 func (zb *zipBuf) Write(p []byte) (int, error) {
 	zb.b = append(zb.b, p...)
 	return len(p), nil
+}
+
+func TestRuntimeSnapshotMetrics(t *testing.T) {
+	runtime.GC() // the /cpu/classes metrics are only updated by GC cycles
+	c := &Collector{startTime: time.Now()}
+	info := c.Runtime()
+	if info.HeapLiveBytes == 0 || info.GoTotalBytes == 0 {
+		t.Fatalf("heap live %d, go total %d: want non-zero", info.HeapLiveBytes, info.GoTotalBytes)
+	}
+	if info.TotalCPUSeconds <= 0 || info.UserCPUSeconds <= 0 || info.GCCPUFraction < 0 || info.GCCPUFraction > 1 {
+		t.Fatalf("cpu total %f, gc fraction %f", info.TotalCPUSeconds, info.GCCPUFraction)
+	}
+	if info.GOGCPercent == 0 {
+		t.Fatal("GOGCPercent = 0")
+	}
+	if info.MemoryLimitSource == "" {
+		t.Fatal("MemoryLimitSource empty")
+	}
+}
+
+func TestSampleKindMismatch(t *testing.T) {
+	var s metrics.Sample // KindBad
+	if sampleUint(s) != 0 || sampleFloat(s) != 0 {
+		t.Fatal("bad samples should read as zero")
+	}
+}
+
+func TestCPUFraction(t *testing.T) {
+	if got := cpuFraction(1, 0); got != 0 {
+		t.Fatalf("cpuFraction(1, 0) = %v, want 0", got)
+	}
+	if got := cpuFraction(1, 4); got != 0.25 {
+		t.Fatalf("cpuFraction(1, 4) = %v, want 0.25", got)
+	}
 }

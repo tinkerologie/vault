@@ -11,9 +11,10 @@ import (
 // TestCopyFileWithProgress_Cancelled pins the #171 contract: a cancelled run
 // context aborts a file copy promptly instead of running to completion.
 func TestCopyFileWithProgress_Cancelled(t *testing.T) {
+	setCopySliceSize(t, 1<<20)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.img")
-	// 4 MiB source → four 1 MiB chunks; cancel fires after the first chunk.
+	// 4 MiB source → four 1 MiB slices; cancel fires after the first slice.
 	if err := os.WriteFile(src, make([]byte, 4<<20), 0o644); err != nil {
 		t.Fatal(err)
 	}

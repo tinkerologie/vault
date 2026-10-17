@@ -1044,6 +1044,42 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       });
     }
 
+    if (path.endsWith('/settings/runtime')) {
+      // Mirrors GET /api/v1/settings/runtime (#500): the limit follows the
+      // saved memory_limit_mb, and a limit below the mock S3 job's 960 MiB
+      // upload estimate produces one warning.
+      const limitMb = Number(settingsState.memory_limit_mb || '0');
+      const limitBytes = limitMb * 1024 * 1024;
+      const estimate = 960 * 1024 * 1024;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          runtime: {
+            num_goroutine: 42,
+            num_gc: 1234,
+            heap_live_bytes: 48 * 1024 * 1024,
+            go_total_bytes: 96 * 1024 * 1024,
+            rss_bytes: 120 * 1024 * 1024,
+            peak_rss_bytes: 410 * 1024 * 1024,
+            gc_cpu_fraction: 0.012,
+            host_mem_total_bytes: 32 * 1024 * 1024 * 1024,
+          },
+          memory_limit: {
+            limit_bytes: limitBytes,
+            source: limitMb > 0 ? 'setting' : 'off',
+            setting_mb: limitMb,
+            environment_override: false,
+          },
+          suggested_limit_mb: 3904,
+          upload_warnings:
+            limitBytes > 0 && limitBytes < estimate
+              ? [{ job_id: 9, job_name: 'Photos to B2', destination: 'Backblaze', estimate_bytes: estimate, limit_bytes: limitBytes }]
+              : [],
+        }),
+      });
+    }
+
     if (path.endsWith('/settings/diagnostics')) {
       return route.fulfill({
         status: 200,

@@ -50,6 +50,7 @@ disaster recovery.`,
 
 		// Apply configured log level from database settings.
 		applyLogLevel(database)
+		applyMemoryLimit(database)
 
 		// Prune old activity logs.
 		if err := database.DeleteOldActivityLogs(90); err != nil {

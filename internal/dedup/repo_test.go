@@ -13,7 +13,7 @@ import (
 
 // newTestRepo spins up a fresh DB + fakeAdapter + InitRepo'd Repo. Returns
 // the Repo, the serverKey used, and a cleanup callback.
-func newTestRepo(t *testing.T) (*Repo, []byte, func()) {
+func newTestRepo(t testing.TB) (*Repo, []byte, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	d, err := db.Open(filepath.Join(dir, "vault.db"))

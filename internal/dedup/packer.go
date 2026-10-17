@@ -73,16 +73,21 @@ func NewPacker(a storage.Adapter, master []byte, rootPath string, onFlush func(P
 // this for the SQLite index in Task 5. If adding this chunk pushes the
 // buffer past PackTargetSize, the pack is flushed before returning.
 func (p *Packer) Add(chunkID ID, plaintext []byte) (PackEntry, error) {
-	ct, err := EncryptChunk(p.master, chunkID, plaintext)
-	if err != nil {
-		return PackEntry{}, err
-	}
 	// flags byte: bit0 = compressed (reserved; always 0 in v1).
 	var flags byte = 0
 	offset := int64(p.buf.Len())
-	onDiskLen := int64(1 + len(ct))
-	p.buf.WriteByte(flags)
-	p.buf.Write(ct)
+	// Seal straight into the pack buffer's spare capacity (the AvailableBuffer
+	// pattern) instead of allocating a ciphertext per chunk (#500). Nothing
+	// reaches p.buf until encryption succeeds, so an error leaves no partial
+	// entry behind.
+	p.buf.Grow(1 + len(plaintext) + chunkTagSize)
+	rec := append(p.buf.AvailableBuffer(), flags)
+	rec, err := appendEncryptChunk(rec, p.master, chunkID, plaintext)
+	if err != nil {
+		return PackEntry{}, err
+	}
+	onDiskLen := int64(len(rec))
+	p.buf.Write(rec)
 	e := PackEntry{ID: chunkID, Offset: offset, Length: onDiskLen, Flags: flags}
 	p.entries = append(p.entries, e)
 	if p.buf.Len() >= PackTargetSize {
@@ -153,15 +158,20 @@ func (p *Packer) Flush() error {
 		return fmt.Errorf("dedup: pack size %d bytes exceeds safety bound %d", totalSize, maxPackBytes)
 	}
 
-	body := bytes.NewBuffer(make([]byte, 0, totalSize))
-	body.Write(p.buf.Bytes())
-	body.Write(footer)
-	lenBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lenBuf, uint32(len(footer))) // #nosec G115 — len(footer) bounded by maxPackBytes above, safe for uint32
-	body.Write(lenBuf)
+	// The footer and its length are appended to the pack buffer itself and
+	// the adapter reads the buffer in place, rather than copying the whole
+	// payload into a second buffer first (#500). On failure the buffer is
+	// truncated back to the payload, so the pending chunks are kept exactly
+	// as they were for a retry.
+	payloadLen := p.buf.Len()
+	p.buf.Write(footer)
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(footer))) // #nosec G115 — len(footer) bounded by maxPackBytes above, safe for uint32
+	p.buf.Write(lenBuf[:])
 
-	size := int64(body.Len())
-	if err := p.adapter.Write(packPath, body); err != nil {
+	size := int64(p.buf.Len())
+	if err := p.adapter.Write(packPath, bytes.NewReader(p.buf.Bytes())); err != nil {
+		p.buf.Truncate(payloadLen)
 		return fmt.Errorf("dedup: write pack %s: %w", packPath, err)
 	}
 

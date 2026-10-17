@@ -67,6 +67,9 @@ func deriveKey(master []byte, info string, n int) []byte {
 	return out
 }
 
+// chunkTagSize is the AES-GCM tag EncryptChunk appends to every chunk.
+const chunkTagSize = 16
+
 // EncryptChunk encrypts plaintext under a per-chunk key derived from master +
 // chunkID. Returns ciphertext || tag. Nonce is fixed-zero; safe because the
 // per-chunk key is only ever used for this exact chunkID.
@@ -74,6 +77,14 @@ func deriveKey(master []byte, info string, n int) []byte {
 // chunkID is also bound into the AEAD's additional-data so a tamperer can't
 // swap ciphertexts between chunks even if they could re-key.
 func EncryptChunk(master []byte, chunkID ID, plaintext []byte) ([]byte, error) {
+	return appendEncryptChunk(nil, master, chunkID, plaintext)
+}
+
+// appendEncryptChunk is EncryptChunk that appends ciphertext || tag to dst
+// and returns the extended slice, so the packer can seal straight into the
+// spare capacity of its pack buffer instead of allocating per chunk (#500).
+// The bytes appended are identical to EncryptChunk's output.
+func appendEncryptChunk(dst, master []byte, chunkID ID, plaintext []byte) ([]byte, error) {
 	key := deriveChunkEncKey(master, chunkID)
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -85,7 +96,7 @@ func EncryptChunk(master []byte, chunkID ID, plaintext []byte) ([]byte, error) {
 	}
 	nonce := make([]byte, aead.NonceSize()) // 12 zero bytes — safe because of per-chunk key
 	// #nosec G407 -- per-chunk AES-GCM key is HKDF-derived from master ‖ chunkID, so the (key, nonce) pair is unique per chunk; nonce-reuse-with-same-key is impossible by construction.
-	return aead.Seal(nil, nonce, plaintext, chunkID[:]), nil
+	return aead.Seal(dst, nonce, plaintext, chunkID[:]), nil
 }
 
 // DecryptChunk inverts EncryptChunk. Authentication failure (wrong key,

@@ -19,6 +19,7 @@ import (
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/diagnostics"
 	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/notify"
 	"github.com/tinkerologie/vault/internal/tempdir"
 )
@@ -38,6 +39,7 @@ type SettingsHandler struct {
 	onConfigChange       ConfigChangeHook
 	onScheduleReload     ScheduleReloader
 	onLogLevelChange     func(string)
+	onMemoryLimitChange  func(int64)
 	logLevelMu           sync.Mutex
 }
 
@@ -79,6 +81,12 @@ func (h *SettingsHandler) notifyConfigChange() {
 	if h.onConfigChange != nil {
 		h.onConfigChange()
 	}
+}
+
+// SetMemoryLimitChangeHook registers a function called with the new value
+// in MiB (0 = off) when the memory_limit_mb setting changes (issue #500).
+func (h *SettingsHandler) SetMemoryLimitChangeHook(fn func(int64)) {
+	h.onMemoryLimitChange = fn
 }
 
 // SetDiagnosticsCollector sets the diagnostics collector for the handler.
@@ -262,6 +270,7 @@ func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 		"vm_backup_enabled":        "true",
 		"folder_backup_enabled":    "true",
 		"flash_backup_enabled":     "true",
+		"memory_limit_mb":          docsmeta.DefaultFor("memory_limit_mb"),
 	}
 	for k, v := range defaults {
 		if _, ok := settings[k]; !ok {
@@ -324,6 +333,17 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var memLimitMB int64
+	if v, ok := incoming["memory_limit_mb"]; ok {
+		n, err := memlimit.ParseMB(v)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		memLimitMB = n
+		incoming["memory_limit_mb"] = strconv.FormatInt(n, 10)
+	}
+
 	h.logLevelMu.Lock()
 	for k, v := range incoming {
 		if err := h.db.SetSetting(k, v); err != nil {
@@ -341,6 +361,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if v, ok := incoming["log_level"]; ok && h.onLogLevelChange != nil {
 		h.onLogLevelChange(v)
+	}
+	if _, ok := incoming["memory_limit_mb"]; ok && h.onMemoryLimitChange != nil {
+		h.onMemoryLimitChange(memLimitMB)
 	}
 	h.logLevelMu.Unlock()
 

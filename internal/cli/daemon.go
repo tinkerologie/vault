@@ -28,6 +28,7 @@ import (
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/logbuf"
 	"github.com/tinkerologie/vault/internal/logx"
+	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/replication"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/scheduler"
@@ -310,6 +311,7 @@ var daemonCmd = &cobra.Command{
 
 		// Apply configured log level from database settings.
 		applyLogLevel(database)
+		applyMemoryLimit(database)
 
 		// Validate that the database contains operator configuration
 		// (≥1 job or ≥1 storage destination). If not, log a prominent
@@ -972,6 +974,24 @@ func (a *zfsBrowseAdapter) ListZFSMountpoints() ([]handlers.ZFSMountInfo, error)
 		result[i] = handlers.ZFSMountInfo{Name: p.Name, Mountpoint: p.Mountpoint}
 	}
 	return result, nil
+}
+
+// applyMemoryLimit applies the memory_limit_mb setting at start-up (issue
+// #500). An invalid stored value is logged and treated as off.
+func applyMemoryLimit(database *db.DB) {
+	if database == nil {
+		return
+	}
+	v, err := database.GetSetting("memory_limit_mb", docsmeta.DefaultFor("memory_limit_mb"))
+	if err != nil {
+		log.Printf("Warning: reading memory_limit_mb: %v", err)
+		return
+	}
+	mb, err := memlimit.ParseMB(v)
+	if err != nil {
+		log.Printf("Warning: %v; memory limit stays off", err)
+	}
+	memlimit.Apply(mb)
 }
 
 // applyLogLevel loads the configured log level from database settings and
