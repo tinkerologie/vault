@@ -59,6 +59,18 @@
   const hiddenRows = $derived(shownCount < rows.length) // older rows not rendered
   const hiddenAbove = $derived(shownStart > 0) // newer rows not rendered
 
+  // A programmatic scrollTop write whose own scroll event handleScroll must
+  // ignore. Browsers fire no event when the position does not change, so the
+  // one-shot suppress flag is armed only for a write that actually moves;
+  // otherwise it would swallow the reader's next real scroll.
+  function writeScrollTop(top) {
+    if (!box) return
+    const target = Math.max(0, Math.min(top, box.scrollHeight - box.clientHeight))
+    if (Math.abs(target - box.scrollTop) < 1) return
+    suppressNextScroll = true
+    box.scrollTop = target
+  }
+
   // Back to the default window, e.g. when the reader returns to the live
   // edge or the filters change.
   function resetWindow() {
@@ -82,8 +94,7 @@
       // window) once they actually scroll to the top.
       windowTop = raiseWindow(rows, shownStart) ?? (rows.length ? { key: rows[0].key, index: 0 } : null)
       await tick()
-      suppressNextScroll = true
-      box.scrollTop = prevTop + (box.scrollHeight - prevHeight)
+      writeScrollTop(prevTop + (box.scrollHeight - prevHeight))
       // Keep the window bounded: drop rows past the cap from the bottom,
       // which is below the viewport and needs no compensation.
       windowAnchor = trimBottom(rows, windowAnchor, shownStart, shownCount)
@@ -108,8 +119,7 @@
         const prevTop = box.scrollTop
         windowTop = top
         await tick()
-        suppressNextScroll = true
-        box.scrollTop = prevTop - (prevHeight - box.scrollHeight)
+        writeScrollTop(prevTop - (prevHeight - box.scrollHeight))
       }
     } finally {
       moving = false
@@ -221,8 +231,7 @@
     if (appendingOlder) return
     const grew = box.scrollHeight - preScrollHeight
     if (grew > 0 && preScrollTop > 0) {
-      suppressNextScroll = true
-      box.scrollTop = preScrollTop + grew
+      writeScrollTop(preScrollTop + grew)
     }
   })
 
@@ -337,8 +346,7 @@
       windowTop = w.top
       windowAnchor = w.bottom
       await tick()
-      suppressNextScroll = true
-      box.scrollTop = box.scrollHeight
+      writeScrollTop(box.scrollHeight)
       atOldest = true // the suppressed scroll event would have set this
       return
     }
@@ -398,8 +406,7 @@
     if (anchorId && elTopBefore != null) {
       const elTopAfter = entryTopOffset(anchorId)
       if (elTopAfter != null) {
-        suppressNextScroll = true
-        box.scrollTop = anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter)
+        writeScrollTop(anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter))
       }
     }
   }

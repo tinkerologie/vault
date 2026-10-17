@@ -205,13 +205,15 @@ test.describe('Logs render window (#507)', () => {
         el.dispatchEvent(new Event('scroll'));
         return { id: row.dataset.entryId, top };
       });
-      await page.waitForTimeout(150);
-      const after = await consoleBox.evaluate((el, id) => {
-        const row = el.querySelector(`[data-entry-id="${id}"]`) as HTMLElement;
-        return row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null;
-      }, before.id);
-      expect(after).not.toBeNull();
-      expect(Math.abs((after as number) - before.top)).toBeLessThan(2);
+      // Poll until the slide and its compensation settle, then hold the
+      // reading position to within 2 px.
+      await expect.poll(async () => {
+        const after = await consoleBox.evaluate((el, id) => {
+          const row = el.querySelector(`[data-entry-id="${id}"]`) as HTMLElement;
+          return row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null;
+        }, before.id);
+        return after === null ? Infinity : Math.abs(after - before.top);
+      }).toBeLessThan(2);
       expect(await rendered()).toBeLessThanOrEqual(600);
     }
     await expect(consoleBox.locator('[data-entry-id="1500"]')).toHaveCount(0);
