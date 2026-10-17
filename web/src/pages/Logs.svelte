@@ -75,7 +75,12 @@
     try {
       const prevHeight = box.scrollHeight
       const prevTop = box.scrollTop
-      windowTop = raiseWindow(rows, shownStart)
+      // Reaching the newest row pins the top edge to it rather than
+      // clearing it: the compensation below leaves the reader just short of
+      // the live edge, and an unpinned top would let every new line render
+      // above them, past the cap. The live edge takes over (and resets the
+      // window) once they actually scroll to the top.
+      windowTop = raiseWindow(rows, shownStart) ?? (rows.length ? { key: rows[0].key, index: 0 } : null)
       await tick()
       suppressNextScroll = true
       box.scrollTop = prevTop + (box.scrollHeight - prevHeight)
