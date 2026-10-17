@@ -599,7 +599,7 @@ func TestRuntimeSnapshotMetrics(t *testing.T) {
 	if info.HeapLiveBytes == 0 || info.GoTotalBytes == 0 {
 		t.Fatalf("heap live %d, go total %d: want non-zero", info.HeapLiveBytes, info.GoTotalBytes)
 	}
-	if info.TotalCPUSeconds <= 0 || info.GCCPUFraction < 0 || info.GCCPUFraction > 1 {
+	if info.TotalCPUSeconds <= 0 || info.UserCPUSeconds <= 0 || info.GCCPUFraction < 0 || info.GCCPUFraction > 1 {
 		t.Fatalf("cpu total %f, gc fraction %f", info.TotalCPUSeconds, info.GCCPUFraction)
 	}
 	if info.GOGCPercent == 0 {

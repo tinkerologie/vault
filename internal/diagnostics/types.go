@@ -105,11 +105,15 @@ type RuntimeInfo struct {
 	// GoTotalBytes is all memory mapped by the Go runtime
 	// (/memory/classes/total:bytes).
 	GoTotalBytes uint64 `json:"go_total_bytes"`
-	// GCCPUSeconds and TotalCPUSeconds are the runtime's estimates of CPU
-	// time spent in the garbage collector and in total.
+	// GCCPUSeconds and UserCPUSeconds are the runtime's estimates of CPU
+	// time spent in the garbage collector and in Vault's own Go code.
+	// TotalCPUSeconds is the CPU time available to the process
+	// (GOMAXPROCS × wall time), not the time it used.
 	GCCPUSeconds    float64 `json:"gc_cpu_seconds"`
+	UserCPUSeconds  float64 `json:"user_cpu_seconds"`
 	TotalCPUSeconds float64 `json:"total_cpu_seconds"`
-	// GCCPUFraction is GCCPUSeconds / TotalCPUSeconds since start (0 to 1).
+	// GCCPUFraction is GCCPUSeconds / TotalCPUSeconds since start: the share
+	// of available CPU spent in GC, as in runtime.MemStats.GCCPUFraction.
 	GCCPUFraction float64 `json:"gc_cpu_fraction"`
 	// MemoryLimitBytes is the effective soft limit; 0 means unlimited.
 	MemoryLimitBytes int64 `json:"memory_limit_bytes"`

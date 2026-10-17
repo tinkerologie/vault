@@ -299,12 +299,14 @@ func (c *Collector) collectRuntime() RuntimeInfo {
 		{Name: "/cpu/classes/gc/total:cpu-seconds"},
 		{Name: "/cpu/classes/total:cpu-seconds"},
 		{Name: "/gc/gogc:percent"},
+		{Name: "/cpu/classes/user:cpu-seconds"},
 	}
 	metrics.Read(samples)
 	info.HeapLiveBytes = sampleUint(samples[0])
 	info.GoTotalBytes = sampleUint(samples[1])
 	info.GCCPUSeconds = sampleFloat(samples[2])
 	info.TotalCPUSeconds = sampleFloat(samples[3])
+	info.UserCPUSeconds = sampleFloat(samples[5])
 	if info.TotalCPUSeconds > 0 {
 		info.GCCPUFraction = info.GCCPUSeconds / info.TotalCPUSeconds
 	}
