@@ -187,22 +187,41 @@ test.describe('Logs render window (#507)', () => {
     // the newest 200 rows however much is loaded. All lines fall on one day,
     // so that is one date separator plus 199 log lines.
     await expect.poll(rendered, { timeout: 15000 }).toBe(199);
-    await page.waitForTimeout(1000);
-    expect(await rendered()).toBe(199);
     await expect(page.getByText('— End of logs —')).toHaveCount(0);
 
     // Scrolling to the bottom of the rendered rows renders the next slice.
     await consoleBox.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
     await expect.poll(rendered).toBe(399);
 
-    // "Jump to oldest" renders the rest and reaches the end marker.
+    // "Jump to oldest" renders only the oldest rows, ending at the marker.
     await page.getByRole('button', { name: 'Jump to oldest log' }).click();
     await expect(consoleBox.locator('[data-entry-id="1"]')).toBeAttached();
     await expect(page.getByText('— End of logs —')).toBeVisible();
-    expect(await rendered()).toBe(1500);
+    expect(await rendered()).toBe(200);
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toHaveCount(0);
 
-    // Back at the live edge, the window trims to the default again.
-    await consoleBox.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    // Scrolling up from there renders newer rows above, keeping the reader's
+    // line in place, and does not count as reaching the live edge.
+    // Note the topmost rendered row and its position at the top of the
+    // console, then trigger the upward growth.
+    const before = await consoleBox.evaluate((el) => {
+      el.scrollTop = 0;
+      const row = el.querySelector('[data-entry-id]') as HTMLElement;
+      const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      el.dispatchEvent(new Event('scroll'));
+      return { id: row.dataset.entryId, top };
+    });
+    await expect.poll(rendered).toBe(400);
+    const after = await consoleBox.evaluate((el, id) => {
+      const row = el.querySelector(`[data-entry-id="${id}"]`) as HTMLElement;
+      return row.getBoundingClientRect().top - el.getBoundingClientRect().top;
+    }, before.id);
+    expect(Math.abs(after - before.top)).toBeLessThan(2);
+    await expect(page.getByRole('button', { name: 'Jump to present' })).toBeVisible();
+
+    // "Jump to present" returns to the newest 200 rows.
+    await page.getByRole('button', { name: 'Jump to present' }).click();
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
     await expect.poll(rendered).toBe(199);
   });
 });

@@ -8,7 +8,7 @@
   import { nearBottom, nearOldestEdge, atTop as isAtTop } from '../lib/scrollflags.js'
   import { getLiveMode } from '../lib/runtime-config.js'
   import { rowTime } from '../lib/tsformat.js'
-  import { buildRows, rowEntries, renderedCount, extendWindow } from '../lib/logrows.js'
+  import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow } from '../lib/logrows.js'
   import { levelStyle, levelLabel } from '../lib/loglevel.js'
   import { formatLine, logLine } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
@@ -50,15 +50,38 @@
   // them (~8,600 rows, ~78,000 DOM nodes with the full history loaded) made
   // leaving the Logs page freeze the UI. The window grows as the reader
   // scrolls towards older lines; see logrows.js for the anchor rules.
-  let windowAnchor = $state(null)
+  let windowAnchor = $state(null) // bottom edge
+  let windowTop = $state(null) // top edge; set only after "Jump to oldest"
+  let raising = false // newer rows are being rendered above the viewport
   const shownCount = $derived(renderedCount(rows, windowAnchor))
-  const shownRows = $derived(rows.slice(0, shownCount))
-  const hiddenRows = $derived(shownCount < rows.length)
+  const shownStart = $derived(Math.min(renderedStart(rows, windowTop), shownCount))
+  const shownRows = $derived(rows.slice(shownStart, shownCount))
+  const hiddenRows = $derived(shownCount < rows.length) // older rows not rendered
+  const hiddenAbove = $derived(shownStart > 0) // newer rows not rendered
 
   // Back to the default window, e.g. when the reader returns to the live
   // edge or the filters change.
   function resetWindow() {
     windowAnchor = null
+    windowTop = null
+  }
+
+  // After "Jump to oldest", reaching the top of the window renders the next
+  // newer rows ABOVE the viewport, so scrollTop is moved down by exactly the
+  // height they add and the line being read stays put.
+  async function raiseWindowAbove() {
+    if (!box || raising) return
+    raising = true
+    try {
+      const prevHeight = box.scrollHeight
+      const prevTop = box.scrollTop
+      windowTop = raiseWindow(rows, shownStart)
+      await tick()
+      suppressNextScroll = true
+      box.scrollTop = prevTop + (box.scrollHeight - prevHeight)
+    } finally {
+      raising = false
+    }
   }
 
   // Render the next slice of older rows below the viewport. Content added
@@ -192,7 +215,12 @@
     }
     atOldest = !hiddenRows && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
     if (store.loadingOlder) return
-    // Live edge is the top now: being there means following.
+    // Live edge is the top now: being there means following — unless newer
+    // rows are hidden above the window, which then grows upwards instead.
+    if (isAtTop(box.scrollTop) && hiddenAbove) {
+      raiseWindowAbove()
+      return
+    }
     const atLiveEdge = isAtTop(box.scrollTop)
 
     if (atLiveEdge && !follow) {
@@ -241,6 +269,11 @@
     } finally {
       appendingOlder = false
     }
+    // The fetched batch lands beyond the window; a reader still parked at
+    // the bottom would otherwise see nothing until they scroll again.
+    if (box && hiddenRows && nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight)) {
+      growWindow()
+    }
   }
 
   function jumpToPresent() {
@@ -264,13 +297,20 @@
   }
 
   // With the full history loaded, jump straight to the oldest log — now the
-  // BOTTOM edge, where the "— End of logs —" marker sits. The oldest rows
-  // have to be on the page for that, so this one action renders them all.
+  // BOTTOM edge, where the "— End of logs —" marker sits. Only the oldest
+  // rows are rendered for that (#507); scrolling up renders newer ones.
   async function jumpToOldest() {
     if (!box) return
     if (hiddenRows) {
-      windowAnchor = extendWindow(rows, rows.length, 0)
+      follow = false
+      const w = oldestWindow(rows)
+      windowTop = w.top
+      windowAnchor = w.bottom
       await tick()
+      suppressNextScroll = true
+      box.scrollTop = box.scrollHeight
+      atOldest = true // the suppressed scroll event would have set this
+      return
     }
     box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRows, rowEntries, renderedCount, extendWindow } from './logrows.js'
+import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow } from './logrows.js'
 
 const NOW = new Date('2026-08-25T12:00:00')
 
@@ -222,5 +222,41 @@ describe('render window (#507)', () => {
     expect(renderedCount(rows, { key: 'gone', count: 600 }, 200)).toBe(600)
     expect(renderedCount(rows, { key: 'gone', count: 5000 }, 200)).toBe(1000)
     expect(renderedCount(rows, { key: 'gone', count: 10 }, 200)).toBe(200)
+  })
+})
+
+describe('render window top edge (#507)', () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ kind: 'entry', key: `k${i}` }))
+
+  it('starts at the newest row by default', () => {
+    expect(renderedStart(mk(10), null)).toBe(0)
+  })
+
+  it('jumps to the oldest base rows only', () => {
+    const rows = mk(1000)
+    const w = oldestWindow(rows, 200)
+    expect(w.top).toEqual({ key: 'k800', index: 800 })
+    expect(w.bottom).toEqual({ key: 'k999', count: 1000 })
+    expect(renderedStart(rows, w.top)).toBe(800)
+    expect(renderedCount(rows, w.bottom, 200)).toBe(1000)
+    expect(oldestWindow(mk(50), 200)).toEqual({ top: null, bottom: { key: 'k49', count: 50 } })
+    expect(oldestWindow([], 200)).toEqual({ top: null, bottom: null })
+  })
+
+  it('raises the top edge by a step and returns to the live edge at zero', () => {
+    const rows = mk(1000)
+    expect(raiseWindow(rows, 800, 200)).toEqual({ key: 'k600', index: 600 })
+    expect(raiseWindow(rows, 150, 200)).toBeNull()
+    expect(raiseWindow(rows, 200, 200)).toBeNull()
+    expect(raiseWindow([], 5, 1)).toBeNull()
+  })
+
+  it('keeps the top edge on its row when newer lines arrive', () => {
+    const rows = mk(1000)
+    const top = { key: 'k800', index: 800 }
+    const grown = [{ kind: 'entry', key: 'new' }, ...rows]
+    expect(renderedStart(grown, top)).toBe(801)
+    expect(renderedStart(rows, { key: 'gone', index: 700 })).toBe(700)
+    expect(renderedStart(mk(10), { key: 'gone', index: 700 })).toBe(10)
   })
 })

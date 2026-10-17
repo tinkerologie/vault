@@ -122,3 +122,33 @@ export function extendWindow(rows, count, step = RENDER_WINDOW_STEP) {
   const end = Math.min(rows.length, Math.max(count, 0) + step)
   return { key: rows[end - 1].key, count: end }
 }
+
+// The window's TOP edge, for "Jump to oldest" (#507): rendering everything
+// down to the oldest line would put the whole history back on the page, so
+// the jump renders only the oldest `base` rows and the reader scrolls back up
+// through newer ones. `top` is `{ key, index }` for the newest rendered row,
+// or null when the window starts at the newest row (the live edge). Like the
+// bottom anchor, it is keyed so lines arriving at the top do not move it.
+export function renderedStart(rows, top) {
+  if (!top) return 0
+  const idx = rows.findIndex((r) => r.key === top.key)
+  return Math.max(0, idx >= 0 ? idx : Math.min(top.index, rows.length))
+}
+
+// The top anchor `step` rows newer than `start`; null once that reaches the
+// newest row, i.e. the window is back at the live edge.
+export function raiseWindow(rows, start, step = RENDER_WINDOW_STEP) {
+  const next = Math.max(0, start - step)
+  return next === 0 || rows.length === 0 ? null : { key: rows[next].key, index: next }
+}
+
+// The window for "Jump to oldest": the oldest `base` rows, as `{ top, bottom }`
+// anchors (top null when that already covers every row).
+export function oldestWindow(rows, base = RENDER_WINDOW_BASE) {
+  if (rows.length === 0) return { top: null, bottom: null }
+  const start = Math.max(0, rows.length - base)
+  return {
+    top: start === 0 ? null : { key: rows[start].key, index: start },
+    bottom: { key: rows[rows.length - 1].key, count: rows.length },
+  }
+}
