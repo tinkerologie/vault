@@ -294,4 +294,37 @@ test.describe('Logs render window (#507)', () => {
     await expect(page.getByRole('button', { name: 'Jump to present' })).toHaveCount(0);
     expect(await rendered()).toBe(120);
   });
+
+  test('grows over loaded rows while an older page is still loading', async ({ page }) => {
+    const all = Array.from({ length: 3000 }, (_, i) => {
+      const id = 3000 - i;
+      return { id, level: 'info', category: 'backup', message: `Held entry ${id}`, details: null,
+        created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + id * 1000).toISOString() };
+    });
+    // The first background history page (a full 1,000 lines, so the store
+    // knows there is more) is served; the next one is held open, keeping
+    // store.loadingOlder set while ~1,000 loaded lines sit outside the window.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let backgroundPages = 0;
+    await page.route('**/api/v1/activity*', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const url = new URL(route.request().url());
+      const beforeId = parseInt(url.searchParams.get('before_id') || '0', 10);
+      const limit = parseInt(url.searchParams.get('limit') || '30', 10);
+      if (limit >= 1000 && ++backgroundPages > 1) await held;
+      const rows = all.filter((r) => !beforeId || r.id < beforeId).slice(0, limit);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
+    });
+    await page.goto('/#/logs');
+    const consoleBox = page.getByRole('log');
+    const rendered = () => consoleBox.locator('[data-entry-id]').count();
+    await expect.poll(rendered, { timeout: 15000 }).toBe(199);
+
+    await consoleBox.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+    // Grew over the loaded rows although the next page is still pending.
+    await expect.poll(() => backgroundPages).toBe(2);
+    await expect.poll(rendered).toBe(399);
+    release();
+  });
 });

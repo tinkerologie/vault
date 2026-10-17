@@ -185,12 +185,20 @@
     // re-trigger loadOlder or toggle follow (#328 r8 #4).
     if (win.consumeSuppressed()) return
     atOldest = !win.hiddenBelow && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
-    if (store.loadingOlder) return
+    // Rendering rows that are already loaded needs no fetch, so it must not
+    // wait for one: the background full-history load keeps loadingOlder set
+    // for long stretches, and a reader reaching the bottom of the window then
+    // would otherwise stall there until they scrolled again.
+    const nearOldest = nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight)
+    if (store.loadingOlder) {
+      if (nearOldest && win.hiddenBelow) win.grow()
+      return
+    }
     // The live edge is the top now: being there means following, unless
     // newer rows are hidden above the window, which then grows upwards.
     const action = scrollAction({
       atTop: isAtTop(box.scrollTop),
-      nearOldest: nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight),
+      nearOldest,
       follow,
       hiddenAbove: win.hiddenAbove,
       hiddenBelow: win.hiddenBelow,
