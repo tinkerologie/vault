@@ -3313,27 +3313,6 @@ func (r *Runner) stageItemLocally(ctx context.Context, runID int64, item engine.
 	return tmpDir, result, cleanup, nil
 }
 
-// uploadStagedFilesN streams every regular file in tmpDir through the
-// encryption pipeline to the storage adapter, computes SHA-256 checksums during
-// upload, and (optionally) verifies by re-reading. Files are uploaded through a
-// bounded worker pool of size concurrency (clamped to >=1).
-//
-// Transient remote-storage failures are retried inside the storage layer via
-// adapter.WriteFrom: the per-file reopen closure re-opens the staged file and
-// re-applies encryption each attempt, so the retry layer can replay the upload
-// from a fresh stream. The runner no longer runs its own per-file backoff loop.
-//
-// Compression for archive-producing item types (container, folder, plugin)
-// is applied by the engine when it produces the archive, so the runner does
-// not wrap those uploads — historically the engine always emitted .tar.gz and
-// the runner added a second transport-layer compression on top, which yielded
-// double-compressed files and ignored the user's "None" selection entirely.
-// VM and ZFS backups are the exception: their engines stage raw artifacts
-// (disk images, domain.xml, vm_meta.json, NVRAM, zfs send streams) with no
-// codec of their own, so the job's compression is applied here as a transport
-// wrap. The restore path peels it off content-based via
-// decompressStoredReader, the same mechanism used for legacy double-wrapped
-// backups.
 // warnUploadBudget logs a run warning when an S3 upload's multipart
 // buffers (part size × part concurrency × upload workers) can exceed the
 // daemon's memory limit, which would make the garbage collector thrash
@@ -3356,6 +3335,27 @@ func (r *Runner) warnUploadBudget(runID int64, dest db.StorageDestination, concu
 		map[string]any{"estimate_bytes": est, "limit_bytes": limit, "upload_workers": concurrency})
 }
 
+// uploadStagedFilesN streams every regular file in tmpDir through the
+// encryption pipeline to the storage adapter, computes SHA-256 checksums during
+// upload, and (optionally) verifies by re-reading. Files are uploaded through a
+// bounded worker pool of size concurrency (clamped to >=1).
+//
+// Transient remote-storage failures are retried inside the storage layer via
+// adapter.WriteFrom: the per-file reopen closure re-opens the staged file and
+// re-applies encryption each attempt, so the retry layer can replay the upload
+// from a fresh stream. The runner no longer runs its own per-file backoff loop.
+//
+// Compression for archive-producing item types (container, folder, plugin)
+// is applied by the engine when it produces the archive, so the runner does
+// not wrap those uploads — historically the engine always emitted .tar.gz and
+// the runner added a second transport-layer compression on top, which yielded
+// double-compressed files and ignored the user's "None" selection entirely.
+// VM and ZFS backups are the exception: their engines stage raw artifacts
+// (disk images, domain.xml, vm_meta.json, NVRAM, zfs send streams) with no
+// codec of their own, so the job's compression is applied here as a transport
+// wrap. The restore path peels it off content-based via
+// decompressStoredReader, the same mechanism used for legacy double-wrapped
+// backups.
 func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir string, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, itemType string, itemName string, concurrency int) (map[string]string, error) {
 	transportCompression := "none"
 	if itemType == "vm" || itemType == "zfs" {

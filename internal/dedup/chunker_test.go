@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"runtime"
+	"strings"
 	"testing"
 	"testing/iotest"
 )
@@ -118,9 +119,13 @@ func collectBoundaries(t *testing.T, secret, data []byte) []int {
 }
 
 // TestChunkerSplitReusesScanBuffer covers issue #500: Split borrows its
-// 8 MiB scan buffer from a pool instead of allocating one per call, and
-// leaves no file content behind in it.
+// 8 MiB scan buffer from a pool instead of allocating one per call.
 func TestChunkerSplitReusesScanBuffer(t *testing.T) {
+	if raceEnabled {
+		// sync.Pool drops a random share of Puts under -race, so pooled
+		// buffers are reallocated and the per-call figure is meaningless.
+		t.Skip("allocation counts are not stable under -race")
+	}
 	c, err := NewChunker(make([]byte, SecretSize))
 	if err != nil {
 		t.Fatal(err)
@@ -139,35 +144,43 @@ func TestChunkerSplitReusesScanBuffer(t *testing.T) {
 		split()
 	}
 	runtime.ReadMemStats(&after)
-	// Without the pool each call allocates 2×ChunkMax (8 MiB). sync.Pool may
-	// drop a buffer at a GC, so allow the odd re-allocation.
+	// Without the pool each call allocates 2×ChunkMax (8 MiB). A GC may still
+	// drop a pooled buffer, so allow the odd re-allocation.
 	if perCall := (after.TotalAlloc - before.TotalAlloc) / calls; perCall > 1<<20 {
 		t.Fatalf("Split allocated %d bytes per call; the scan buffer should be pooled", perCall)
 	}
+}
 
-	buf := scanBuffers.Get()
-	defer scanBuffers.Put(buf)
-	for i, b := range *buf {
-		if b != 0 {
-			t.Fatalf("scan buffer byte %d = %#x after Split, want 0", i, b)
+// TestReleaseScanBufferClearsWhatWasRead checks the clearing rule Split
+// relies on, on a buffer the test holds, so it does not depend on which
+// buffer the pool hands out next.
+func TestReleaseScanBufferClearsWhatWasRead(t *testing.T) {
+	for _, read := range []int64{0, 1, 64 << 10, 2 * ChunkMax, 3 * ChunkMax} {
+		buf := scanBuffers.Get()
+		fill := min(read, int64(len(*buf)))
+		for i := range fill {
+			(*buf)[i] = 0xcd
+		}
+		releaseScanBuffer(buf, read)
+		for i, b := range *buf {
+			if b != 0 {
+				t.Fatalf("read=%d: byte %d = %#x after release, want 0", read, i, b)
+			}
 		}
 	}
 }
 
-func TestChunkerSplitClearsBufferOnReadError(t *testing.T) {
+func TestChunkerSplitCountsBytesOnReadError(t *testing.T) {
 	c, err := NewChunker(make([]byte, SecretSize))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := io.MultiReader(bytes.NewReader(bytes.Repeat([]byte{0xcd}, 64<<10)), iotest.ErrReader(errors.New("disk gone")))
-	if err := c.Split(r, func([]byte) error { return nil }); err == nil {
-		t.Fatal("want the read error")
+	if err := c.Split(r, func([]byte) error { return nil }); err == nil || !strings.Contains(err.Error(), "disk gone") {
+		t.Fatalf("want the read error, got %v", err)
 	}
-	buf := scanBuffers.Get()
-	defer scanBuffers.Put(buf)
-	for i, b := range (*buf)[:128<<10] {
-		if b != 0 {
-			t.Fatalf("scan buffer byte %d = %#x after failed Split, want 0", i, b)
-		}
+	cr := &countingReader{r: bytes.NewReader(make([]byte, 100))}
+	if n, _ := io.Copy(io.Discard, cr); n != 100 || cr.n != 100 {
+		t.Fatalf("countingReader counted %d of %d bytes", cr.n, n)
 	}
 }

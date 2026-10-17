@@ -61,8 +61,10 @@ func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(
 }
 
 // copySliceSize is how much copySlices hands the kernel per call. It bounds
-// how long a cancelled copy keeps running; tests shrink it.
-var copySliceSize int64 = 64 << 20
+// how long a cancelled copy keeps running and how often progress is reported:
+// 4 MiB is a few seconds even on a 1 MiB/s destination, and still one
+// copy_file_range call per slice. Tests shrink it.
+var copySliceSize int64 = 4 << 20
 
 // copySlices copies src to dst in copySliceSize slices, checking ctx before
 // each one and reporting the cumulative byte count after each slice that

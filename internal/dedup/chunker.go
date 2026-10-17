@@ -72,7 +72,7 @@ func (c *Chunker) Split(r io.Reader, cb func(chunk []byte) error) error {
 	// on return wipes all file content from it.
 	buf := scanBuffers.Get()
 	src := &countingReader{r: r}
-	defer func() { scanBuffers.PutUsed(buf, int(min(src.n, int64(len(*buf))))) }()
+	defer func() { releaseScanBuffer(buf, src.n) }() // src.n read at return, not now
 	ch, err := chunkers.NewChunkerBuffer(algorithm, src, opts, *buf)
 	if err != nil {
 		return fmt.Errorf("dedup: new %s chunker: %w", algorithm, err)
@@ -96,6 +96,12 @@ func (c *Chunker) Split(r io.Reader, cb func(chunk []byte) error) error {
 // scanBuffers pools Split's scan buffers, sized like the library's own
 // default (2 × ChunkMax) to keep its read stride.
 var scanBuffers = bufpool.New(2 * ChunkMax)
+
+// releaseScanBuffer returns buf to the pool after clearing the prefix a
+// reader that consumed read bytes can have written into it.
+func releaseScanBuffer(buf *[]byte, read int64) {
+	scanBuffers.PutUsed(buf, int(min(read, int64(len(*buf)))))
+}
 
 // countingReader counts the bytes read through it.
 type countingReader struct {
