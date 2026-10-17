@@ -114,6 +114,12 @@ func TestAdaptivePostponeRecheckA458(t *testing.T) {
 		}
 		return false
 	})
+	// A run reads "completed" before RunJob finishes finalizing (the DB
+	// backup still writes into the destination temp dir). RunJob holds r.mu
+	// until it returns, so taking it here waits for that work; otherwise
+	// TempDir cleanup races it and fails with "directory not empty".
+	r.mu.Lock()
+	r.mu.Unlock() //nolint:staticcheck // SA2001: empty critical section is the point: wait for RunJob to return
 
 	r.postponeMu.Lock()
 	_, disabledOpen := r.postponedSince[disabledID]
