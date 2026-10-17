@@ -39,4 +39,11 @@ func TestApplyMemoryLimit(t *testing.T) {
 	if st := memlimit.Current(); st.SettingMB != 0 {
 		t.Fatalf("invalid: %+v, want off", st)
 	}
+
+	// An unreadable database leaves the current limit alone.
+	_ = d.Close()
+	applyMemoryLimit(d)
+	if st := memlimit.Current(); st.SettingMB != 0 {
+		t.Fatalf("closed db: %+v", st)
+	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/diagnostics"
+	"github.com/tinkerologie/vault/internal/memlimit"
 )
 
 func TestGetRuntime(t *testing.T) {
@@ -146,5 +147,39 @@ func TestList_MemoryLimitDefault(t *testing.T) {
 	}
 	if resp["memory_limit_mb"] != "0" {
 		t.Fatalf("memory_limit_mb default = %q, want 0", resp["memory_limit_mb"])
+	}
+}
+
+// TestRuntimeDatabaseErrors covers the paths where the budget check cannot
+// read jobs or destinations. Not parallel: it applies a real memory limit.
+func TestRuntimeDatabaseErrors(t *testing.T) {
+	h := newTestSettingsHandler(t)
+	if _, err := h.db.CreateStorageDestination(db.StorageDestination{Name: "b2", Type: "s3", Config: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	h.SetDiagnosticsCollector(diagnostics.NewCollector(h.db, func() diagnostics.RunnerStatus { return diagnostics.RunnerStatus{} }, "test", nil))
+	memlimit.Apply(1 << 20)
+	t.Cleanup(func() { memlimit.Apply(0) })
+
+	// Jobs table gone: ListJobs fails after destinations load.
+	if _, err := h.db.Exec(`DROP TABLE job_items`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.Exec(`DROP TABLE jobs`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.uploadBudgetWarnings(512 << 20); err == nil || !strings.Contains(err.Error(), "listing jobs") {
+		t.Fatalf("want a listing jobs error, got %v", err)
+	}
+
+	// Database closed: destinations fail too, and the endpoint reports 500.
+	_ = h.db.Close()
+	if _, err := h.uploadBudgetWarnings(512 << 20); err == nil || !strings.Contains(err.Error(), "listing storage destinations") {
+		t.Fatalf("want a listing destinations error, got %v", err)
+	}
+	w := httptest.NewRecorder()
+	h.GetRuntime(w, httptest.NewRequest(http.MethodGet, "/api/v1/settings/runtime", nil))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
 	}
 }
