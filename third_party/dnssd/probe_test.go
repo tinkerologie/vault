@@ -81,6 +81,10 @@ func (c *testConn) start(ctx context.Context) {
 // is announced, the probing for the second service should give
 func TestProbing(t *testing.T) {
 	// log.Debug.Enable()
+	// Vault patch (tinkerologie/vault#498): restore the shared testIface,
+	// or later tests receive requests on "lo" instead of "lo0" on Linux.
+	prevIface := testIface
+	t.Cleanup(func() { testIface = prevIface })
 	testIface, _ = net.InterfaceByName("lo0")
 	if testIface == nil {
 		testIface, _ = net.InterfaceByName("lo")

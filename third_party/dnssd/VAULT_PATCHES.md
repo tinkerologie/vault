@@ -35,6 +35,19 @@ when `!srv.IsVisibleAtInterface(req.IfaceName())`. A service with an empty
 
 Run the tests with `make test-third-party`. CI runs them as well.
 
+## Patch 2 (test only): restore `testIface` after `TestProbing`
+
+- **File:** `probe_test.go`, `TestProbing`, marked `Vault patch`
+
+`TestProbing` replaces the package-level `testIface` (named `lo0`) with the
+machine's real loopback interface and never puts it back. On macOS that
+interface is also called `lo0`, but on Linux it is `lo`, so every later test
+that uses `newTestConn` receives requests on `lo`. `TestRegisterServiceWithExplicitIP`
+publishes its service on `lo0` only, so on Linux it timed out with
+`context deadline exceeded` whenever it ran after `TestProbing`. This
+happens with unmodified upstream v1.2.14 too. The test now restores the
+original value when it finishes.
+
 ## Adding a patch
 
 Keep each patch small, mark it with a `Vault patch` comment, add a test in a
