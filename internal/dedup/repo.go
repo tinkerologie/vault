@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/bufpool"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/storage"
 )
@@ -360,6 +361,9 @@ func (r *Repo) Get(id ID) ([]byte, error) {
 		return nil, fmt.Errorf("dedup: read chunk: %w", err)
 	}
 	defer rc.Close()
+	if length >= minStoredChunkLen && length <= chunkScratchSize {
+		return r.getPooled(id, rc, int(length))
+	}
 	raw, err := io.ReadAll(rc)
 	if err != nil {
 		return nil, fmt.Errorf("dedup: read chunk body: %w", err)
@@ -370,6 +374,39 @@ func (r *Repo) Get(id ID) ([]byte, error) {
 	}
 	// flags := raw[0] — bit0 reserved for compression; ignored in v1.
 	return DecryptChunk(r.master, id, raw[1:])
+}
+
+// minStoredChunkLen is the smallest valid on-disk chunk: the flags byte plus
+// the AEAD tag of an empty plaintext.
+const minStoredChunkLen = 1 + chunkTagSize
+
+// chunkScratchSize fits the on-disk form of the largest chunk the chunker
+// emits (and of a manifest segment, also ChunkMax): flags + ChunkMax +
+// tag. Larger records (oversized Put calls up to PackTargetSize) are rare
+// and keep the io.ReadAll path.
+const chunkScratchSize = 1 + ChunkMax + chunkTagSize
+
+// chunkScratch pools ciphertext read buffers for Get (#500). Only the
+// ciphertext is pooled: DecryptChunk returns a fresh plaintext slice that the
+// caller owns, and Put clears the scratch before reuse.
+var chunkScratch = bufpool.New(chunkScratchSize)
+
+// getPooled is Get's read path for normal-sized chunks. It reads up to
+// length bytes into pooled scratch, accepting a short read at EOF the way
+// io.ReadAll did, then decrypts.
+func (r *Repo) getPooled(id ID, rc io.Reader, length int) ([]byte, error) {
+	buf := chunkScratch.Get()
+	defer chunkScratch.Put(buf)
+	n, err := io.ReadFull(rc, (*buf)[:length])
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("dedup: read chunk body: %w", err)
+	}
+	r.sessionRead.Add(int64(n))
+	if n < 1 {
+		return nil, errors.New("dedup: chunk too short (missing flags byte)")
+	}
+	// flags := raw[0] — bit0 reserved for compression; ignored in v1.
+	return DecryptChunk(r.master, id, (*buf)[1:n])
 }
 
 // ReadAndVerify reads a chunk back and proves it is still the chunk it
