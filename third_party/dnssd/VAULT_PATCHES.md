@@ -1,8 +1,10 @@
 # Vault patches to brutella/dnssd
 
 This directory is `github.com/brutella/dnssd` **v1.2.14**, copied verbatim
-from the module cache (MIT licence, see `LICENSE`). The root `go.mod` selects
-it with:
+from the module cache (MIT licence, see `LICENSE`), plus the Vault patches
+listed below. Vault maintains this copy itself: upstream has merged nothing
+since February 2026 and its later pull requests are unreviewed, so no
+upstream pull request is planned. The root `go.mod` selects it with:
 
 ```text
 replace github.com/brutella/dnssd => ./third_party/dnssd
@@ -15,7 +17,7 @@ stays easy to diff and re-sync.
 ## Patch 1: scope query answers to the service's interfaces
 
 - **Vault issue:** tinkerologie/vault#498
-- **Upstream pull request:** not opened yet
+- **Upstream pull request:** none (upstream inactive, see above)
 - **File:** `responder.go`, `handleQuery`, marked `Vault patch`
 - **Test:** `responder_iface_test.go`
   (`TestQueryOnExcludedInterfaceIsNotAnswered`,
@@ -33,9 +35,16 @@ when `!srv.IsVisibleAtInterface(req.IfaceName())`. A service with an empty
 
 Run the tests with `make test-third-party`. CI runs them as well.
 
+## Adding a patch
+
+Keep each patch small, mark it with a `Vault patch` comment, add a test in a
+new `*_test.go` file rather than editing upstream tests, and list it here.
+Open upstream pull requests worth considering include brutella/dnssd#66
+(unbounded growth of `Service.IPs` in `addIP`).
+
 ## Removing this copy
 
-When an upstream release contains the fix:
+If upstream becomes active again and releases these fixes:
 
 1. Bump `github.com/brutella/dnssd` in the root `go.mod`.
 2. Remove the `replace` directive and run `go mod tidy`.
