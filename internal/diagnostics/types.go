@@ -112,6 +112,10 @@ type RuntimeInfo struct {
 	GCCPUSeconds    float64 `json:"gc_cpu_seconds"`
 	UserCPUSeconds  float64 `json:"user_cpu_seconds"`
 	TotalCPUSeconds float64 `json:"total_cpu_seconds"`
+	// ProcessCPUSeconds is the CPU time the process actually used (user +
+	// system, from /proc/self/stat). Linux only; 0 elsewhere. Compare
+	// GCCPUSeconds against it to see how much of Vault's own CPU went to GC.
+	ProcessCPUSeconds float64 `json:"process_cpu_seconds"`
 	// GCCPUFraction is GCCPUSeconds / TotalCPUSeconds since start: the share
 	// of available CPU spent in GC, as in runtime.MemStats.GCCPUFraction.
 	GCCPUFraction float64 `json:"gc_cpu_fraction"`

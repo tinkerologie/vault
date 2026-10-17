@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"archive/zip"
 	"path/filepath"
+	"runtime"
 	"runtime/metrics"
 	"testing"
 	"time"
@@ -594,6 +595,7 @@ func (zb *zipBuf) Write(p []byte) (int, error) {
 }
 
 func TestRuntimeSnapshotMetrics(t *testing.T) {
+	runtime.GC() // the /cpu/classes metrics are only updated by GC cycles
 	c := &Collector{startTime: time.Now()}
 	info := c.Runtime()
 	if info.HeapLiveBytes == 0 || info.GoTotalBytes == 0 {

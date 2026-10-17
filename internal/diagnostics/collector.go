@@ -315,6 +315,7 @@ func (c *Collector) collectRuntime() RuntimeInfo {
 	info.MemoryLimitBytes = lim.LimitBytes
 	info.MemoryLimitSource = lim.Source
 	info.RSSBytes, info.PeakRSSBytes = readProcRSS()
+	info.ProcessCPUSeconds = readProcCPU()
 	info.HostMemTotalBytes = readHostMemTotal()
 	return info
 }
