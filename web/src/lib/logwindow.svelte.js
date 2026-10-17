@@ -87,6 +87,15 @@ export function createLogWindow({ rows, box, tick }) {
   // compensation, which needs the overflow to be on the page in between.
   const count = () => (moving ? anchoredEnd() : Math.min(anchoredEnd(), start() + RENDER_WINDOW_MAX))
 
+  // Pull a bottom anchor that sits past the capped end back to that end.
+  // grow() and raise() call this before lifting the cap, so a window whose
+  // anchors drifted apart (rows multiplied between them) moves on from what
+  // is actually on the page instead of rendering everything in between.
+  const settleBottom = () => {
+    const c = count()
+    if (anchoredEnd() > c) bottom = extendWindow(rows(), c, 0)
+  }
+
   // A programmatic scrollTop write whose own scroll event must be ignored.
   // Browsers fire no event when the position does not change, so the
   // suppress flag is armed only for a write that actually moves; otherwise it
@@ -152,6 +161,7 @@ export function createLogWindow({ rows, box, tick }) {
     async grow() {
       const el = box()
       if (!el || moving) return
+      settleBottom()
       moving = true
       try {
         bottom = extendWindow(rows(), count())
@@ -180,6 +190,7 @@ export function createLogWindow({ rows, box, tick }) {
     async raise() {
       const el = box()
       if (!el || moving) return
+      settleBottom()
       moving = true
       try {
         const all = rows()

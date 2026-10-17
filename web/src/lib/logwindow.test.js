@@ -29,7 +29,7 @@ function setup(n, { withBox = true } = {}) {
   win = createLogWindow({
     rows: () => state.all,
     box: () => (withBox ? el : null),
-    tick: async () => { state.ticks++ },
+    tick: async () => { state.ticks++; state.onTick?.() },
   })
   return { state, el, win }
 }
@@ -186,9 +186,29 @@ describe('createLogWindow', () => {
     expect(win.rows).toHaveLength(600)
     expect(win.rows[0].key).toBe('k0')
     expect(win.hiddenBelow).toBe(true)
-    // Growing continues from the clamped edge.
+    // Growing continues from the clamped edge, without a spike or a jump.
+    const edge = win.rows[win.rows.length - 1].key
+    const seen = []
+    const origTickRows = () => seen.push(win.rows.length)
+    state.onTick = origTickRows
     await win.grow()
     expect(win.rows.length).toBeLessThanOrEqual(600)
+    expect(win.rows.map((r) => r.key)).toContain(edge)
+    expect(Math.max(...seen)).toBeLessThanOrEqual(800) // never thousands mid-move
+  })
+
+  it('raises without a spike when rows between the anchors multiplied', async () => {
+    const { state, el, win } = setup(2000)
+    await win.jumpToOldest() // k1800 .. k1999
+    state.all = [...state.all.slice(0, 1801), ...mk(3000, 'x'), ...state.all.slice(1801)]
+    expect(win.rows).toHaveLength(600)
+    const seen = []
+    state.onTick = () => seen.push(win.rows.length)
+    el.st = 0
+    await win.raise()
+    expect(Math.max(...seen)).toBeLessThanOrEqual(800)
+    expect(win.rows.length).toBeLessThanOrEqual(600)
+    expect(win.rows[0].key).toBe('k1600')
   })
 
   describe('jumpToOldest', () => {
