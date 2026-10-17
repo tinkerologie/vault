@@ -265,6 +265,10 @@
       atOldest = true // the suppressed scroll event would have set this
       return
     }
+    // Everything is already rendered: scroll there, but pin the window first.
+    // Follow is now off, so handleScroll will not pin it on the way down, and
+    // an unpinned window would let new lines push the oldest rows out.
+    win.pin()
     box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
   }
 
