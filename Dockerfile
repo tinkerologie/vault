@@ -7,6 +7,9 @@ RUN apk add --no-cache nodejs npm git
 
 WORKDIR /app
 COPY go.mod go.sum ./
+# go.mod replaces brutella/dnssd with this patched copy (issue #498); it must
+# exist before go mod download resolves the module graph.
+COPY third_party/dnssd/ third_party/dnssd/
 RUN go mod download
 
 COPY . .

@@ -86,6 +86,9 @@ func dnssdRegister(reg registration) (shutdowner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build mDNS service: %w", err)
 	}
+	// The responder joins every multicast interface. Keeping query answers
+	// to cfg.Ifaces relies on the handleQuery patch in third_party/dnssd
+	// (issue #498); upstream v1.2.14 only scopes announcements.
 	rp, err := newResponder()
 	if err != nil {
 		return nil, fmt.Errorf("open mDNS responder: %w", err)

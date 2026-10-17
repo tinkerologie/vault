@@ -83,6 +83,11 @@ jobs:
       - name: Run Go tests with coverage
         run: go test ./internal/... ./cmd/... -v -coverprofile=coverage.txt -covermode=atomic -coverpkg=./internal/...,./cmd/...
 
+      - name: Run patched third_party module tests
+        # Nested modules are outside the root ./... patterns (issue #498).
+        working-directory: third_party/dnssd
+        run: go test ./... -count=1 -v
+
       - name: Upload Go coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:

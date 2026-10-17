@@ -13,7 +13,7 @@ LDFLAGS := -s -w \
 
 ANSIBLE_CMD := cd ansible && ansible-playbook -i inventory.yml ansible.yml
 
-.PHONY: all build build-local build-windows build-web test test-short test-coverage test-ansible clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push
+.PHONY: all build build-local build-windows build-web test test-third-party test-short test-coverage test-ansible clean lint security-check deploy verify redeploy deps pre-commit-install pre-commit-run package docker-build docker-push
 
 all: test build-local
 
@@ -56,8 +56,13 @@ build-local: internal/release/CHANGELOG.md build-web
 build-windows: internal/release/CHANGELOG.md build-web
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe ./cmd/vault/
 
-test: internal/release/CHANGELOG.md
+test: internal/release/CHANGELOG.md test-third-party
 	go test ./internal/... ./cmd/... -v
+
+# Patched upstream modules under third_party/ are separate Go modules, so the
+# root ./... patterns never reach their tests (issue #498).
+test-third-party:
+	cd third_party/dnssd && go test ./... -count=1
 
 test-short: internal/release/CHANGELOG.md
 	go test ./internal/... ./cmd/... -short
@@ -107,7 +112,7 @@ lint-web:
 	cd web && npm run lint
 
 security-check:
-	gosec -fmt=text -exclude-dir=vendor -exclude-dir=build -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703 -severity=medium -confidence=medium ./...
+	gosec -fmt=text -exclude-dir=vendor -exclude-dir=build -exclude-dir=third_party -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703 -severity=medium -confidence=medium ./...
 	@command -v govulncheck >/dev/null 2>&1 || { echo "Installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
 	$(shell go env GOPATH)/bin/govulncheck ./...
 	go mod verify
