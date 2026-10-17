@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRows, rowEntries } from './logrows.js'
+import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice } from './logrows.js'
 
 const NOW = new Date('2026-08-25T12:00:00')
 
@@ -185,5 +185,119 @@ describe('row keys', () => {
   it('stringify numeric and run-log ids alike', () => {
     const rows = buildRows([entry('rl-7', '2026-08-25T09:00:00')], opts)
     expect(rows.find(r => r.kind === 'entry').key).toBe('rl-7')
+  })
+})
+
+describe('render window (#507)', () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ kind: 'entry', key: `k${i}` }))
+
+  it('renders the base window by default, or every row when there are fewer', () => {
+    expect(renderedCount(mk(1000), null, 200)).toBe(200)
+    expect(renderedCount(mk(50), null, 200)).toBe(50)
+    expect(renderedCount([], null, 200)).toBe(0)
+  })
+
+  it('extends by a step and clamps at the last row', () => {
+    const rows = mk(450)
+    let a = extendWindow(rows, 200, 200)
+    expect(a).toEqual({ key: 'k399', count: 400 })
+    expect(renderedCount(rows, a, 200)).toBe(400)
+    a = extendWindow(rows, 400, 200)
+    expect(a).toEqual({ key: 'k449', count: 450 })
+    expect(renderedCount(rows, a, 200)).toBe(450)
+    expect(extendWindow([], 0, 200)).toBeNull()
+    expect(extendWindow(rows, -5, 10)).toEqual({ key: 'k9', count: 10 })
+  })
+
+  it('keeps the anchored row rendered when newer rows arrive at the top', () => {
+    const rows = mk(1000)
+    const anchor = extendWindow(rows, 200, 200) // k399, 400 rows
+    const grown = [...Array.from({ length: 30 }, (_, i) => ({ kind: 'entry', key: `new${i}` })), ...rows]
+    expect(renderedCount(grown, anchor, 200)).toBe(430)
+    expect(grown[429].key).toBe('k399')
+  })
+
+  it('falls back to the anchored depth when the key is gone, never below base', () => {
+    const rows = mk(1000)
+    expect(renderedCount(rows, { key: 'gone', count: 600 }, 200)).toBe(600)
+    expect(renderedCount(rows, { key: 'gone', count: 5000 }, 200)).toBe(1000)
+    expect(renderedCount(rows, { key: 'gone', count: 10 }, 200)).toBe(200)
+  })
+})
+
+describe('render window top edge (#507)', () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ kind: 'entry', key: `k${i}` }))
+
+  it('starts at the newest row by default', () => {
+    expect(renderedStart(mk(10), null)).toBe(0)
+  })
+
+  it('jumps to the oldest base rows only', () => {
+    const rows = mk(1000)
+    const w = oldestWindow(rows, 200)
+    expect(w.top).toEqual({ key: 'k800', index: 800 })
+    expect(w.bottom).toEqual({ key: 'k999', count: 1000 })
+    expect(renderedStart(rows, w.top)).toBe(800)
+    expect(renderedCount(rows, w.bottom, 200)).toBe(1000)
+    expect(oldestWindow(mk(50), 200)).toEqual({ top: null, bottom: { key: 'k49', count: 50 } })
+    expect(oldestWindow([], 200)).toEqual({ top: null, bottom: null })
+  })
+
+  it('raises the top edge by a step and returns to the live edge at zero', () => {
+    const rows = mk(1000)
+    expect(raiseWindow(rows, 800, 200)).toEqual({ key: 'k600', index: 600 })
+    expect(raiseWindow(rows, 150, 200)).toBeNull()
+    expect(raiseWindow(rows, 200, 200)).toBeNull()
+    expect(raiseWindow([], 5, 1)).toBeNull()
+  })
+
+  it('keeps the top edge on its row when newer lines arrive', () => {
+    const rows = mk(1000)
+    const top = { key: 'k800', index: 800 }
+    const grown = [{ kind: 'entry', key: 'new' }, ...rows]
+    expect(renderedStart(grown, top)).toBe(801)
+    expect(renderedStart(rows, { key: 'gone', index: 700 })).toBe(700)
+    // Never past the start of the oldest base window, so rows stay visible.
+    expect(renderedStart(mk(10), { key: 'gone', index: 700 })).toBe(0)
+    expect(renderedStart(mk(1000), { key: 'gone', index: 950 })).toBe(800)
+  })
+})
+
+describe('render window cap (#507)', () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ kind: 'entry', key: `k${i}` }))
+
+  it('drops the oldest-above rows when growing down past the cap', () => {
+    const rows = mk(2000)
+    expect(trimTop(rows, null, 0, 600, 600)).toBeNull()
+    expect(trimTop(rows, null, 0, 800, 600)).toEqual({ key: 'k200', index: 200 })
+    const keep = { key: 'k10', index: 10 }
+    expect(trimTop(rows, keep, 10, 400, 600)).toBe(keep)
+  })
+
+  it('drops the rows below when growing up past the cap', () => {
+    const rows = mk(2000)
+    const bottom = { key: 'k1999', count: 2000 }
+    expect(trimBottom(rows, bottom, 1400, 2000, 600)).toBe(bottom)
+    expect(trimBottom(rows, bottom, 1200, 2000, 600)).toEqual({ key: 'k1799', count: 1800 })
+  })
+})
+
+describe('window slice date header (#507)', () => {
+  const rows = [
+    { kind: 'date', key: 'day-2' }, { kind: 'entry', key: 'a' }, { kind: 'entry', key: 'b' },
+    { kind: 'date', key: 'day-1' }, { kind: 'entry', key: 'c' }, { kind: 'entry', key: 'd' },
+  ]
+  const keys = (r) => r.map((x) => x.key)
+
+  it('leads a mid-day slice with that day\'s separator', () => {
+    expect(keys(windowSlice(rows, 2, 6))).toEqual(['day-2', 'b', 'day-1', 'c', 'd'])
+    expect(keys(windowSlice(rows, 5, 6))).toEqual(['day-1', 'd'])
+  })
+
+  it('leaves a slice that starts on a separator, or is empty, alone', () => {
+    expect(keys(windowSlice(rows, 0, 3))).toEqual(['day-2', 'a', 'b'])
+    expect(keys(windowSlice(rows, 3, 5))).toEqual(['day-1', 'c'])
+    expect(windowSlice(rows, 6, 6)).toEqual([])
+    expect(keys(windowSlice([{ kind: 'entry', key: 'x' }], 0, 1))).toEqual(['x'])
   })
 })

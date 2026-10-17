@@ -9,6 +9,7 @@
   import { getLiveMode } from '../lib/runtime-config.js'
   import { rowTime } from '../lib/tsformat.js'
   import { buildRows, rowEntries } from '../lib/logrows.js'
+  import { createLogWindow, scrollAction } from '../lib/logwindow.svelte.js'
   import { levelStyle, levelLabel } from '../lib/loglevel.js'
   import { formatLine, logLine } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
@@ -34,7 +35,6 @@
   let wrap = $state(false) // console-wide line wrapping for message text (#328 round 2)
   let focusedId = $state(null) // row highlighted to mark the user's focus (#328 r3 #7)
   let copiedAll = $state(false) // transient confirmation for copy-all (#328 r3 #14)
-  let suppressNextScroll = false // one-shot: swallow the anchor write's own scroll event (#328 r8 #4)
   let appendingOlder = false // an older batch is landing BELOW the viewport; leave scrollTop alone
 
   // Display rows: newest-first, with date separators and consecutive
@@ -45,6 +45,25 @@
   // and hiding it behind a count while the user has asked to see it would be
   // the wrong trade.
   const rows = $derived(buildRows(store.filtered, { collapse: collapse && !showMeta }))
+
+  // Only a window of `rows` is on the page (#507): rendering all of them
+  // (~8,600 rows, ~78,000 DOM nodes with the full history loaded) made leaving
+  // the Logs page freeze the UI. logwindow.svelte.js moves the window as the
+  // reader scrolls and owns every programmatic scrollTop write, so its own
+  // scroll events can be told apart from the reader's (#328 r8 #4).
+  const win = createLogWindow({ rows: () => rows, box: () => box, tick })
+  const shownRows = $derived(win.rows)
+
+  // atOldest is otherwise only refreshed by scroll events, but rows also
+  // arrive without one: the background full-history load can turn a console
+  // that fitted (or nearly fitted) the viewport into a long one, and a
+  // stale atOldest would hide "Jump to oldest" until the reader scrolled.
+  $effect(() => {
+    shownRows
+    tick().then(() => {
+      if (box) atOldest = !win.hiddenBelow && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
+    })
+  })
 
   const liveMode = getLiveMode()
 
@@ -151,8 +170,7 @@
     if (appendingOlder) return
     const grew = box.scrollHeight - preScrollHeight
     if (grew > 0 && preScrollTop > 0) {
-      suppressNextScroll = true
-      box.scrollTop = preScrollTop + grew
+      win.write(preScrollTop + grew)
     }
   })
 
@@ -165,21 +183,44 @@
     if (!box) return
     // Swallow the programmatic anchor write's own scroll event so it can't
     // re-trigger loadOlder or toggle follow (#328 r8 #4).
-    if (suppressNextScroll) {
-      suppressNextScroll = false
+    if (win.consumeSuppressed()) return
+    atOldest = !win.hiddenBelow && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
+    // Rendering rows that are already loaded needs no fetch, so it must not
+    // wait for one: the background full-history load keeps loadingOlder set
+    // for long stretches, and a reader reaching either edge of the window
+    // would otherwise stall there until the load finished.
+    const nearOldest = nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight)
+    if (store.loadingOlder) {
+      if (isAtTop(box.scrollTop) && win.hiddenAbove) win.raise()
+      else if (nearOldest && win.hiddenBelow) win.grow()
       return
     }
-    atOldest = nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
-    if (store.loadingOlder) return
-    // Live edge is the top now: being there means following.
-    const atLiveEdge = isAtTop(box.scrollTop)
-
-    if (atLiveEdge && !follow) {
+    // The live edge is the top now: being there means following, unless
+    // newer rows are hidden above the window, which then grows upwards.
+    const action = scrollAction({
+      atTop: isAtTop(box.scrollTop),
+      nearOldest,
+      follow,
+      hiddenAbove: win.hiddenAbove,
+      hiddenBelow: win.hiddenBelow,
+      hasMore: store.hasMore,
+      loadingOlder: store.loadingOlder,
+    })
+    if (action.raise) {
+      win.raise()
+      return
+    }
+    if (action.enterLive) {
       follow = true
       newCount = 0
       followOffMarker = null
-    } else if (!atLiveEdge && follow) {
+      // Back at the live edge: drop the rows rendered on the way down.
+      win.reset()
+    } else if (action.leaveLive) {
       follow = false
+      // Pin the window so lines arriving at the top stay hidden above (the
+      // new-entry count on "Jump to present" reports them).
+      win.pin()
     }
 
     // Auto-load older entries as the user approaches the BOTTOM (not only at
@@ -187,9 +228,10 @@
     // they reach it. Loading older during a search is allowed: the
     // client-side filter re-applies to newly loaded entries, so deeper
     // matches surface as older batches arrive (#328 r9 #4).
-    if (nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight) && store.hasMore && !store.loadingOlder) {
-      loadOlderRows()
-    }
+    // Rows already loaded but not yet rendered come first; only once every
+    // loaded row is on the page does the store fetch further back.
+    if (action.grow) win.grow()
+    else if (action.loadOlder) loadOlderRows()
   }
 
   // Older-batch load. With the console inverted, older entries append BELOW
@@ -208,12 +250,16 @@
     } finally {
       appendingOlder = false
     }
+    // The fetched batch lands beyond the window; a reader still parked at
+    // the bottom would otherwise see nothing until they scroll again.
+    if (box) await win.afterOlderFetch(nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight))
   }
 
   function jumpToPresent() {
     follow = true
     newCount = 0
     followOffMarker = null
+    win.reset()
     if (!box) return
     // The auto-follow effect pins scrollTop instantly on every entries
     // change — it would snap the viewport to the bottom and cancel the
@@ -230,10 +276,23 @@
   }
 
   // With the full history loaded, jump straight to the oldest log — now the
-  // BOTTOM edge, where the "— End of logs —" marker sits.
-  function jumpToOldest() {
-    if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
+  // BOTTOM edge, where the "— End of logs —" marker sits. Only the oldest
+  // rows are rendered for that (#507); scrolling up renders newer ones.
+  async function jumpToOldest() {
+    if (!box) return
+    if (await win.jumpToOldest()) {
+      follow = false
+      atOldest = true // the suppressed scroll event would have set this
+      return
+    }
+    // Everything is already rendered: just scroll there. Follow is left on
+    // deliberately: the smooth scroll's first events are still inside the
+    // live-edge band, and with follow off they would read as a return to the
+    // live edge, snapping the console back to the top. The scroll leaving
+    // the band turns follow off and pins the window (scrollAction leaveLive).
+    box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
   }
+
 
   // Filter switches reset the view to live-tail: follow back on, new-entry
   // marker cleared, viewport pinned to the newest line — the top.
@@ -241,6 +300,7 @@
     follow = true
     newCount = 0
     followOffMarker = null
+    win.reset()
     await tick()
     if (box) box.scrollTop = 0
   }
@@ -287,8 +347,7 @@
     if (anchorId && elTopBefore != null) {
       const elTopAfter = entryTopOffset(anchorId)
       if (elTopAfter != null) {
-        suppressNextScroll = true
-        box.scrollTop = anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter)
+        win.write(anchoredScrollTop(prevScrollTop, elTopBefore, elTopAfter))
       }
     }
   }
@@ -572,7 +631,7 @@
         <input
           type="text"
           value={store.search}
-          oninput={(e) => { store.setSearchFilter(e.target.value); if (!e.target.value) snapToPresent() }}
+          oninput={(e) => { store.setSearchFilter(e.target.value); snapToPresent() }}
           placeholder="Filter logs…"
           class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-dim/50 {store.search ? 'border-vault text-text' : ''}"
         />
@@ -623,7 +682,7 @@
         </button>
       {/if}
 
-      {#if !atOldest}
+      {#if !atOldest || win.hiddenBelow}
         <button onclick={jumpToOldest}
           class="absolute top-3 right-3 z-10 p-2 bg-surface-3 border border-border rounded-lg text-text-muted hover:text-text shadow-lg transition-colors"
           title="Jump to oldest log" aria-label="Jump to oldest log">
@@ -643,7 +702,7 @@
         style="overflow-anchor: none;"
         role="log"
       >
-        {#each rows as row (row.key)}
+        {#each shownRows as row (row.key)}
           {#if row.kind === 'date'}
             <!-- Day separator. Sticky, so the day you are reading stays named
                  while you scroll through it; every row below can then drop the
@@ -687,7 +746,7 @@
         {/each}
         <!-- End-of-history marker now sits at the BOTTOM: with newest first,
              the oldest log is the last row on the page. -->
-        {#if !store.hasMore && !store.pruned}
+        {#if !win.hiddenBelow && !store.hasMore && !store.pruned}
           <div data-end-marker class="h-8 flex items-center justify-center text-center text-[11px] text-text-dim select-none" aria-live="polite">
             — End of logs —
           </div>

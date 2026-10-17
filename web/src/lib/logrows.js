@@ -88,3 +88,104 @@ export function buildRows(entries, { collapse = true, now = new Date() } = {}) {
 export function rowEntries(row) {
   return row.kind === 'entry' ? row.entries : []
 }
+
+// Render window (#507). The console used to put every loaded row on the page;
+// with the full history loaded that was ~8,600 rows and ~78,000 DOM nodes,
+// and leaving the Logs page (or anything else that walks the document, such
+// as Chrome's accessibility tree) stalled the UI for seconds. Only the newest
+// part of `rows` is rendered; the window grows as the user scrolls towards
+// older lines.
+//
+// The window's bottom edge is an anchor `{ key, count }`: the key of the
+// oldest rendered row, plus how many rows were rendered when it was set. New
+// lines arrive at the TOP, so anchoring on a key means they never push rows
+// out from under a reader. The count is the fallback when the key vanishes
+// (a collapse toggle re-keys rows) so the reader keeps roughly their depth.
+// A null anchor is the default window of `base` rows.
+export const RENDER_WINDOW_BASE = 200
+export const RENDER_WINDOW_STEP = 200
+
+// How many of `rows` to render for `anchor`. Never fewer than `base` (or all
+// rows, when there are fewer).
+export function renderedCount(rows, anchor, base = RENDER_WINDOW_BASE) {
+  const floor = Math.min(rows.length, base)
+  if (!anchor) return floor
+  const idx = rows.findIndex((r) => r.key === anchor.key)
+  const end = idx >= 0 ? idx + 1 : Math.min(rows.length, anchor.count)
+  return Math.max(floor, end)
+}
+
+// The anchor for a window `step` rows deeper than `count`, or null when there
+// are no rows. Extending past the end clamps to the last row.
+export function extendWindow(rows, count, step = RENDER_WINDOW_STEP) {
+  if (rows.length === 0) return null
+  const end = Math.min(rows.length, Math.max(count, 0) + step)
+  return { key: rows[end - 1].key, count: end }
+}
+
+// The window's TOP edge, for "Jump to oldest" (#507): rendering everything
+// down to the oldest line would put the whole history back on the page, so
+// the jump renders only the oldest `base` rows and the reader scrolls back up
+// through newer ones. `top` is `{ key, index }` for the newest rendered row,
+// or null when the window starts at the newest row (the live edge). Like the
+// bottom anchor, it is keyed so lines arriving at the top do not move it.
+export function renderedStart(rows, top) {
+  if (!top) return 0
+  const idx = rows.findIndex((r) => r.key === top.key)
+  if (idx >= 0) return idx
+  // The key is gone (a collapse toggle re-keys rows): keep roughly the same
+  // depth, but never past the start of the oldest base window, or the
+  // window would be empty.
+  return Math.max(0, Math.min(top.index, rows.length - RENDER_WINDOW_BASE))
+}
+
+// The top anchor `step` rows newer than `start`; null once that reaches the
+// newest row, i.e. the window is back at the live edge.
+export function raiseWindow(rows, start, step = RENDER_WINDOW_STEP) {
+  const next = Math.max(0, start - step)
+  return next === 0 || rows.length === 0 ? null : { key: rows[next].key, index: next }
+}
+
+// The window for "Jump to oldest": the oldest `base` rows, as `{ top, bottom }`
+// anchors (top null when that already covers every row).
+export function oldestWindow(rows, base = RENDER_WINDOW_BASE) {
+  if (rows.length === 0) return { top: null, bottom: null }
+  const start = Math.max(0, rows.length - base)
+  return {
+    top: start === 0 ? null : { key: rows[start].key, index: start },
+    bottom: { key: rows[rows.length - 1].key, count: rows.length },
+  }
+}
+
+// The most rows the window holds while the reader scrolls through history
+// (#507): growing at one edge drops rows past this from the other, so a long
+// traversal never rebuilds the whole history on the page.
+export const RENDER_WINDOW_MAX = 600
+
+// After growing DOWN to `count`: the top anchor that keeps at most `max` rows,
+// or `top` unchanged when the window is within bounds.
+export function trimTop(rows, top, start, count, max = RENDER_WINDOW_MAX) {
+  if (count - start <= max) return top
+  const next = count - max
+  return { key: rows[next].key, index: next }
+}
+
+// After growing UP to `start`: the bottom anchor that keeps at most `max`
+// rows, or `bottom` unchanged when the window is within bounds.
+export function trimBottom(rows, bottom, start, count, max = RENDER_WINDOW_MAX) {
+  if (count - start <= max) return bottom
+  const end = start + max
+  return { key: rows[end - 1].key, count: end }
+}
+
+// rows[start, end), led by the date separator of the day the slice starts
+// in when the window begins mid-day (#507), so the first rows on screen are
+// never left with a bare time and no date.
+export function windowSlice(rows, start, end) {
+  const slice = rows.slice(start, end)
+  if (slice.length === 0 || slice[0].kind === 'date') return slice
+  for (let i = start - 1; i >= 0; i--) {
+    if (rows[i].kind === 'date') return [rows[i], ...slice]
+  }
+  return slice
+}
