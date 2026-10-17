@@ -151,3 +151,188 @@ test.describe('Activity Logs & Run Log Viewer', () => {
     expect(olderCalls).toBeLessThanOrEqual(5);
   });
 });
+
+test.describe('Logs render window (#507)', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  test('renders only the newest rows and grows the window on scroll', async ({ page }) => {
+    // 1,500 distinct lines, so nothing collapses into one row.
+    const all = Array.from({ length: 1500 }, (_, i) => {
+      const id = 1500 - i;
+      return {
+        id,
+        level: 'info',
+        category: 'backup',
+        message: `Window entry ${id}`,
+        details: null,
+        created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + id * 1000).toISOString(),
+      };
+    });
+    await page.route('**/api/v1/activity*', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const url = new URL(route.request().url());
+      const beforeId = parseInt(url.searchParams.get('before_id') || '0', 10);
+      const limit = parseInt(url.searchParams.get('limit') || '30', 10);
+      const rows = all.filter((r) => !beforeId || r.id < beforeId).slice(0, limit);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
+    });
+
+    await page.goto('/#/logs');
+    const consoleBox = page.getByRole('log');
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
+    const rendered = () => consoleBox.locator('[data-entry-id]').count();
+    // The background full-history load fills the store; the window stays at
+    // the newest 200 rows however much is loaded. All lines fall on one day,
+    // so that is one date separator plus 199 log lines.
+    await expect.poll(rendered, { timeout: 15000 }).toBe(199);
+    await expect(page.getByText('— End of logs —')).toHaveCount(0);
+
+    // Scrolling to the bottom of the rendered rows renders the next slice.
+    await consoleBox.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+    await expect.poll(rendered).toBe(399);
+
+    // Further down, the window slides instead of growing: it stays capped at
+    // 600 rows, drops the newest rows above the viewport, and keeps the line
+    // being read in place while it does.
+    for (let i = 0; i < 3; i++) {
+      const before = await consoleBox.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+        const box = el.getBoundingClientRect();
+        const row = [...el.querySelectorAll('[data-entry-id]')].find((r) => r.getBoundingClientRect().top >= box.top) as HTMLElement;
+        const top = row.getBoundingClientRect().top - box.top;
+        el.dispatchEvent(new Event('scroll'));
+        return { id: row.dataset.entryId, top };
+      });
+      // Poll until the slide and its compensation settle, then hold the
+      // reading position to within 2 px.
+      await expect.poll(async () => {
+        const after = await consoleBox.evaluate((el, id) => {
+          const row = el.querySelector(`[data-entry-id="${id}"]`) as HTMLElement;
+          return row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null;
+        }, before.id);
+        return after === null ? Infinity : Math.abs(after - before.top);
+      }).toBeLessThan(2);
+      expect(await rendered()).toBeLessThanOrEqual(600);
+    }
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toHaveCount(0);
+
+    // "Jump to oldest" renders only the oldest rows, ending at the marker.
+    await page.getByRole('button', { name: 'Jump to oldest log' }).click();
+    await expect(consoleBox.locator('[data-entry-id="1"]')).toBeAttached();
+    await expect(page.getByText('— End of logs —')).toBeVisible();
+    expect(await rendered()).toBe(200);
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toHaveCount(0);
+
+    // Scrolling up from there renders newer rows above, keeping the reader's
+    // line in place, and does not count as reaching the live edge.
+    // Note the topmost rendered row and its position at the top of the
+    // console, then trigger the upward growth.
+    const before = await consoleBox.evaluate((el) => {
+      el.scrollTop = 0;
+      const row = el.querySelector('[data-entry-id]') as HTMLElement;
+      const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      el.dispatchEvent(new Event('scroll'));
+      return { id: row.dataset.entryId, top };
+    });
+    await expect.poll(rendered).toBe(400);
+    const after = await consoleBox.evaluate((el, id) => {
+      const row = el.querySelector(`[data-entry-id="${id}"]`) as HTMLElement;
+      return row.getBoundingClientRect().top - el.getBoundingClientRect().top;
+    }, before.id);
+    expect(Math.abs(after - before.top)).toBeLessThan(2);
+    await expect(page.getByRole('button', { name: 'Jump to present' })).toBeVisible();
+
+    // "Jump to present" returns to the newest 200 rows.
+    await page.getByRole('button', { name: 'Jump to present' }).click();
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
+    await expect.poll(rendered).toBe(199);
+
+    // Searching from deep in the history lands on the newest matches with a
+    // fresh window, not at the old scroll depth.
+    for (let i = 0; i < 2; i++) {
+      await consoleBox.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+      await page.waitForTimeout(150);
+    }
+    expect(await consoleBox.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    await expect.poll(rendered).toBeGreaterThan(200); // the window really grew
+    await page.getByPlaceholder(/filter logs/i).fill('Window entry');
+    await expect.poll(() => consoleBox.evaluate((el) => el.scrollTop)).toBe(0);
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
+    expect(await rendered()).toBeLessThanOrEqual(200);
+  });
+
+  test('short history: Jump to oldest only scrolls, and the top returns to the live edge', async ({ page }) => {
+    const all = Array.from({ length: 120 }, (_, i) => {
+      const id = 120 - i;
+      return { id, level: 'info', category: 'backup', message: `Short entry ${id}`, details: null,
+        created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + id * 1000).toISOString() };
+    });
+    await page.route('**/api/v1/activity*', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const url = new URL(route.request().url());
+      const beforeId = parseInt(url.searchParams.get('before_id') || '0', 10);
+      const limit = parseInt(url.searchParams.get('limit') || '30', 10);
+      const rows = all.filter((r) => !beforeId || r.id < beforeId).slice(0, limit);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
+    });
+    await page.goto('/#/logs');
+    const consoleBox = page.getByRole('log');
+    const rendered = () => consoleBox.locator('[data-entry-id]').count();
+    await expect.poll(rendered, { timeout: 15000 }).toBe(120); // all fit in the window
+
+    // Everything is rendered, so Jump to oldest just scrolls to the end.
+    await page.getByRole('button', { name: 'Jump to oldest log' }).click();
+    await expect.poll(() => consoleBox.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 2)).toBe(true);
+    await expect(page.getByText('— End of logs —')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Jump to present' })).toBeVisible();
+    expect(await rendered()).toBe(120);
+
+    // Scrolling back to the top is the live edge again: follow resumes.
+    await consoleBox.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await expect(page.getByRole('button', { name: 'Jump to present' })).toHaveCount(0);
+    expect(await rendered()).toBe(120);
+  });
+
+  test('grows over loaded rows while an older page is still loading', async ({ page }) => {
+    const all = Array.from({ length: 3000 }, (_, i) => {
+      const id = 3000 - i;
+      return { id, level: 'info', category: 'backup', message: `Held entry ${id}`, details: null,
+        created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + id * 1000).toISOString() };
+    });
+    // The first background history page (a full 1,000 lines, so the store
+    // knows there is more) is served; the next one is held open, keeping
+    // store.loadingOlder set while ~1,000 loaded lines sit outside the window.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let backgroundPages = 0;
+    await page.route('**/api/v1/activity*', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const url = new URL(route.request().url());
+      const beforeId = parseInt(url.searchParams.get('before_id') || '0', 10);
+      const limit = parseInt(url.searchParams.get('limit') || '30', 10);
+      if (limit >= 1000 && ++backgroundPages > 1) await held;
+      const rows = all.filter((r) => !beforeId || r.id < beforeId).slice(0, limit);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
+    });
+    await page.goto('/#/logs');
+    const consoleBox = page.getByRole('log');
+    const rendered = () => consoleBox.locator('[data-entry-id]').count();
+    await expect.poll(rendered, { timeout: 15000 }).toBe(199);
+
+    await consoleBox.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+    // Grew over the loaded rows although the next page is still pending.
+    await expect.poll(() => backgroundPages).toBe(2);
+    await expect.poll(rendered).toBe(399);
+
+    // Upwards too: Jump to oldest (of what is loaded), then the top of that
+    // window renders newer rows while the page is still pending.
+    await page.getByRole('button', { name: 'Jump to oldest log' }).click();
+    await expect.poll(rendered).toBe(200);
+    await consoleBox.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await expect.poll(rendered).toBe(400);
+    expect(backgroundPages).toBe(2); // still held
+    release();
+  });
+});
