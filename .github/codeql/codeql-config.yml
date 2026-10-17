@@ -14,6 +14,7 @@ paths-ignore:
   - "web/node_modules/**"
   - "web/dist/**"
   - "vendor/**"
+  - "third_party/**"
 
   # Test fixtures and golden files — synthetic inputs that don't reflect
   # production code paths. Real test source (_test.go, *.test.ts, etc.)

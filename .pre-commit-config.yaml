@@ -6,6 +6,9 @@
 default_language_version:
   python: python3
 
+# Upstream code kept verbatim so it can be re-synced and diffed (issue #498).
+exclude: "^third_party/"
+
 repos:
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
