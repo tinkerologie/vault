@@ -8,7 +8,7 @@
   import { nearBottom, nearOldestEdge, atTop as isAtTop } from '../lib/scrollflags.js'
   import { getLiveMode } from '../lib/runtime-config.js'
   import { rowTime } from '../lib/tsformat.js'
-  import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom } from '../lib/logrows.js'
+  import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice } from '../lib/logrows.js'
   import { levelStyle, levelLabel } from '../lib/loglevel.js'
   import { formatLine, logLine } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
@@ -55,7 +55,7 @@
   let moving = false // the window is being grown or trimmed; ignore re-entry
   const shownCount = $derived(renderedCount(rows, windowAnchor))
   const shownStart = $derived(Math.min(renderedStart(rows, windowTop), shownCount))
-  const shownRows = $derived(rows.slice(shownStart, shownCount))
+  const shownRows = $derived(windowSlice(rows, shownStart, shownCount))
   const hiddenRows = $derived(shownCount < rows.length) // older rows not rendered
   const hiddenAbove = $derived(shownStart > 0) // newer rows not rendered
 

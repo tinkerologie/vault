@@ -177,3 +177,15 @@ export function trimBottom(rows, bottom, start, count, max = RENDER_WINDOW_MAX) 
   const end = start + max
   return { key: rows[end - 1].key, count: end }
 }
+
+// rows[start, end), led by the date separator of the day the slice starts
+// in when the window begins mid-day (#507), so the first rows on screen are
+// never left with a bare time and no date.
+export function windowSlice(rows, start, end) {
+  const slice = rows.slice(start, end)
+  if (slice.length === 0 || slice[0].kind === 'date') return slice
+  for (let i = start - 1; i >= 0; i--) {
+    if (rows[i].kind === 'date') return [rows[i], ...slice]
+  }
+  return slice
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom } from './logrows.js'
+import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice } from './logrows.js'
 
 const NOW = new Date('2026-08-25T12:00:00')
 
@@ -279,5 +279,25 @@ describe('render window cap (#507)', () => {
     const bottom = { key: 'k1999', count: 2000 }
     expect(trimBottom(rows, bottom, 1400, 2000, 600)).toBe(bottom)
     expect(trimBottom(rows, bottom, 1200, 2000, 600)).toEqual({ key: 'k1799', count: 1800 })
+  })
+})
+
+describe('window slice date header (#507)', () => {
+  const rows = [
+    { kind: 'date', key: 'day-2' }, { kind: 'entry', key: 'a' }, { kind: 'entry', key: 'b' },
+    { kind: 'date', key: 'day-1' }, { kind: 'entry', key: 'c' }, { kind: 'entry', key: 'd' },
+  ]
+  const keys = (r) => r.map((x) => x.key)
+
+  it('leads a mid-day slice with that day\'s separator', () => {
+    expect(keys(windowSlice(rows, 2, 6))).toEqual(['day-2', 'b', 'day-1', 'c', 'd'])
+    expect(keys(windowSlice(rows, 5, 6))).toEqual(['day-1', 'd'])
+  })
+
+  it('leaves a slice that starts on a separator, or is empty, alone', () => {
+    expect(keys(windowSlice(rows, 0, 3))).toEqual(['day-2', 'a', 'b'])
+    expect(keys(windowSlice(rows, 3, 5))).toEqual(['day-1', 'c'])
+    expect(windowSlice(rows, 6, 6)).toEqual([])
+    expect(keys(windowSlice([{ kind: 'entry', key: 'x' }], 0, 1))).toEqual(['x'])
   })
 })
