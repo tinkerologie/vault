@@ -31,7 +31,10 @@ for every service, whichever interface the query arrived on. A host on another
 local link that queried `_vault._tcp` was therefore told about a service that
 was meant for one interface only. The patch skips a service in `handleQuery`
 when `!srv.IsVisibleAtInterface(req.IfaceName())`. A service with an empty
-`Ifaces` list is still visible on every interface.
+`Ifaces` list is still visible on every interface. Vault always sets `Ifaces`
+(see `internal/discovery/address.go`): a wildcard bind lists every interface
+with a routable address, so an interface with only a link-local address gets
+no answers. It never got A/AAAA records or announcements there either.
 
 Run the tests with `make test-third-party`. CI runs them as well.
 
