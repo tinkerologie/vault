@@ -187,11 +187,12 @@
     atOldest = !win.hiddenBelow && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
     // Rendering rows that are already loaded needs no fetch, so it must not
     // wait for one: the background full-history load keeps loadingOlder set
-    // for long stretches, and a reader reaching the bottom of the window then
-    // would otherwise stall there until they scrolled again.
+    // for long stretches, and a reader reaching either edge of the window
+    // would otherwise stall there until the load finished.
     const nearOldest = nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight)
     if (store.loadingOlder) {
-      if (nearOldest && win.hiddenBelow) win.grow()
+      if (isAtTop(box.scrollTop) && win.hiddenAbove) win.raise()
+      else if (nearOldest && win.hiddenBelow) win.grow()
       return
     }
     // The live edge is the top now: being there means following, unless

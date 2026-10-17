@@ -325,6 +325,14 @@ test.describe('Logs render window (#507)', () => {
     // Grew over the loaded rows although the next page is still pending.
     await expect.poll(() => backgroundPages).toBe(2);
     await expect.poll(rendered).toBe(399);
+
+    // Upwards too: Jump to oldest (of what is loaded), then the top of that
+    // window renders newer rows while the page is still pending.
+    await page.getByRole('button', { name: 'Jump to oldest log' }).click();
+    await expect.poll(rendered).toBe(200);
+    await consoleBox.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await expect.poll(rendered).toBe(400);
+    expect(backgroundPages).toBe(2); // still held
     release();
   });
 });
