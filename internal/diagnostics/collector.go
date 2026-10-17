@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/metrics"
 	"strings"
 	"time"
 	"uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/fsstat"
 	"github.com/tinkerologie/vault/internal/logbuf"
+	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/unraid"
 )
 
@@ -280,7 +282,7 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 func (c *Collector) collectRuntime() RuntimeInfo {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
-	return RuntimeInfo{
+	info := RuntimeInfo{
 		NumGoroutine:    runtime.NumGoroutine(),
 		NumCPU:          runtime.NumCPU(),
 		NumGC:           ms.NumGC,
@@ -290,6 +292,47 @@ func (c *Collector) collectRuntime() RuntimeInfo {
 		StackInUseBytes: ms.StackInuse,
 		UptimeSeconds:   int64(time.Since(c.startTime).Seconds()),
 	}
+
+	samples := []metrics.Sample{
+		{Name: "/memory/classes/heap/objects:bytes"},
+		{Name: "/memory/classes/total:bytes"},
+		{Name: "/cpu/classes/gc/total:cpu-seconds"},
+		{Name: "/cpu/classes/total:cpu-seconds"},
+		{Name: "/gc/gogc:percent"},
+	}
+	metrics.Read(samples)
+	info.HeapLiveBytes = sampleUint(samples[0])
+	info.GoTotalBytes = sampleUint(samples[1])
+	info.GCCPUSeconds = sampleFloat(samples[2])
+	info.TotalCPUSeconds = sampleFloat(samples[3])
+	if info.TotalCPUSeconds > 0 {
+		info.GCCPUFraction = info.GCCPUSeconds / info.TotalCPUSeconds
+	}
+	info.GOGCPercent = int64(sampleUint(samples[4])) //nolint:gosec // G115: GOGC percent fits int64; -1 wraps back
+	lim := memlimit.Current()
+	info.MemoryLimitBytes = lim.LimitBytes
+	info.MemoryLimitSource = lim.Source
+	info.RSSBytes, info.PeakRSSBytes = readProcRSS()
+	info.HostMemTotalBytes = readHostMemTotal()
+	return info
+}
+
+// Runtime returns the live runtime snapshot that diagnostics bundles carry,
+// for the settings runtime endpoint (issue #500).
+func (c *Collector) Runtime() RuntimeInfo { return c.collectRuntime() }
+
+func sampleUint(s metrics.Sample) uint64 {
+	if s.Value.Kind() == metrics.KindUint64 {
+		return s.Value.Uint64()
+	}
+	return 0
+}
+
+func sampleFloat(s metrics.Sample) float64 {
+	if s.Value.Kind() == metrics.KindFloat64 {
+		return s.Value.Float64()
+	}
+	return 0
 }
 
 // collectPools enumerates Unraid pools and their mount state. Targets

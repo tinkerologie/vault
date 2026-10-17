@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"archive/zip"
 	"path/filepath"
+	"runtime/metrics"
 	"testing"
 	"time"
 
@@ -590,4 +591,28 @@ type zipBuf struct {
 func (zb *zipBuf) Write(p []byte) (int, error) {
 	zb.b = append(zb.b, p...)
 	return len(p), nil
+}
+
+func TestRuntimeSnapshotMetrics(t *testing.T) {
+	c := &Collector{startTime: time.Now()}
+	info := c.Runtime()
+	if info.HeapLiveBytes == 0 || info.GoTotalBytes == 0 {
+		t.Fatalf("heap live %d, go total %d: want non-zero", info.HeapLiveBytes, info.GoTotalBytes)
+	}
+	if info.TotalCPUSeconds <= 0 || info.GCCPUFraction < 0 || info.GCCPUFraction > 1 {
+		t.Fatalf("cpu total %f, gc fraction %f", info.TotalCPUSeconds, info.GCCPUFraction)
+	}
+	if info.GOGCPercent == 0 {
+		t.Fatal("GOGCPercent = 0")
+	}
+	if info.MemoryLimitSource == "" {
+		t.Fatal("MemoryLimitSource empty")
+	}
+}
+
+func TestSampleKindMismatch(t *testing.T) {
+	var s metrics.Sample // KindBad
+	if sampleUint(s) != 0 || sampleFloat(s) != 0 {
+		t.Fatal("bad samples should read as zero")
+	}
 }

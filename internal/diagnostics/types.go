@@ -94,6 +94,36 @@ type RuntimeInfo struct {
 	HeapObjects     uint64 `json:"heap_objects"`
 	StackInUseBytes uint64 `json:"stack_in_use_bytes"`
 	UptimeSeconds   int64  `json:"uptime_seconds"`
+
+	// The fields below come from runtime/metrics and /proc (issue #500).
+	// Byte and object counts are instantaneous; CPU seconds are cumulative
+	// since the process started.
+
+	// HeapLiveBytes is memory occupied by live and not-yet-swept heap
+	// objects (/memory/classes/heap/objects:bytes).
+	HeapLiveBytes uint64 `json:"heap_live_bytes"`
+	// GoTotalBytes is all memory mapped by the Go runtime
+	// (/memory/classes/total:bytes).
+	GoTotalBytes uint64 `json:"go_total_bytes"`
+	// GCCPUSeconds and TotalCPUSeconds are the runtime's estimates of CPU
+	// time spent in the garbage collector and in total.
+	GCCPUSeconds    float64 `json:"gc_cpu_seconds"`
+	TotalCPUSeconds float64 `json:"total_cpu_seconds"`
+	// GCCPUFraction is GCCPUSeconds / TotalCPUSeconds since start (0 to 1).
+	GCCPUFraction float64 `json:"gc_cpu_fraction"`
+	// MemoryLimitBytes is the effective soft limit; 0 means unlimited.
+	MemoryLimitBytes int64 `json:"memory_limit_bytes"`
+	// MemoryLimitSource is "off", "setting" or "environment".
+	MemoryLimitSource string `json:"memory_limit_source"`
+	// GOGCPercent is the GC target percentage; -1 means GOGC=off.
+	GOGCPercent int64 `json:"gogc_percent"`
+	// RSSBytes and PeakRSSBytes are VmRSS and VmHWM from
+	// /proc/self/status. Linux only; 0 elsewhere.
+	RSSBytes     uint64 `json:"rss_bytes"`
+	PeakRSSBytes uint64 `json:"peak_rss_bytes"`
+	// HostMemTotalBytes is MemTotal from /proc/meminfo. Linux only; 0
+	// elsewhere.
+	HostMemTotalBytes uint64 `json:"host_mem_total_bytes"`
 }
 
 // PoolInfo reports one Unraid pool discovery result with its mount

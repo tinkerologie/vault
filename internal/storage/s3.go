@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -85,6 +86,29 @@ const (
 	maxS3PartSizeMB     = 5120 // 5 GiB upper bound
 	defaultS3PartSizeMB = 64
 )
+
+// S3UploadPartConcurrency is the multipart uploader's part concurrency per
+// object. Vault keeps the SDK default (feature/s3/manager
+// DefaultUploadConcurrency), and each in-flight part of a streamed upload
+// holds one part-size buffer.
+const S3UploadPartConcurrency = 5
+
+// S3UploadBufferBytes estimates the multipart buffer memory of streams
+// concurrent uploads to the S3 destination described by configJSON:
+// part size (default 64 MiB) × S3UploadPartConcurrency × streams. It is an
+// upper bound for one job's uploads (issue #500); seekable bodies such as
+// dedup packs need less.
+func S3UploadBufferBytes(configJSON string, streams int) (int64, error) {
+	var cfg S3Config
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		return 0, fmt.Errorf("parse s3 config: %w", err)
+	}
+	partMB := cfg.PartSizeMB
+	if partMB <= 0 {
+		partMB = defaultS3PartSizeMB
+	}
+	return int64(partMB) << 20 * S3UploadPartConcurrency * int64(max(streams, 1)), nil
+}
 
 // S3Adapter implements Adapter against an S3 bucket. Unlike SFTP/SMB, the
 // underlying client is HTTP-based and pools connections internally, so we

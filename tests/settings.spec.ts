@@ -85,6 +85,35 @@ test.describe('Settings Configuration & Management', () => {
     expect(download.suggestedFilename()).toContain('diagnostics');
   });
 
+  test('shows memory statistics and saves the memory limit (#500)', async ({ page }) => {
+    await page.goto('/#/settings');
+
+    const stats = page.getByTestId('runtime-stats');
+    await expect(stats).toContainText('Heap in use');
+    await expect(stats).toContainText('48');
+    await expect(stats).toContainText('1.2%');
+    await expect(page.getByTestId('runtime-limit')).toContainText('None');
+    await expect(page.getByText('3,904 MiB')).toBeVisible();
+
+    const input = page.locator('#memory-limit-mb');
+    const save = page.getByRole('button', { name: 'Save Memory Limit' });
+
+    await input.fill('100');
+    await save.click();
+    await expect(page.getByText('Memory limit must be 0 (off) or 512–1048576 MiB')).toBeVisible();
+
+    await input.fill('512');
+    await save.click();
+    await expect(page.getByText('Memory limit saved')).toBeVisible();
+    await expect(page.getByTestId('runtime-limit')).toContainText('this setting');
+    await expect(page.getByTestId('memory-upload-warnings')).toContainText('Photos to B2');
+
+    await input.fill('0');
+    await save.click();
+    await expect(page.getByText('Memory limit turned off')).toBeVisible();
+    await expect(page.getByTestId('memory-upload-warnings')).toHaveCount(0);
+  });
+
   test('downloads the server key for an off-server copy (#451)', async ({ page }) => {
     await page.goto('/#/settings');
     await page.getByRole('button', { name: 'Security', exact: true }).click();

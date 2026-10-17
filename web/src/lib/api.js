@@ -274,6 +274,9 @@ export const api = {
   rewrapDedupKeys: (passphrase = '') =>
     request('POST', '/storage/dedup-keys/rewrap', { passphrase }, { timeoutMs: LONG_REQUEST_TIMEOUT_MS }),
 
+  // Live heap, GC and RSS statistics plus memory-limit state (#500)
+  getRuntime: () => request('GET', '/settings/runtime'),
+
   // Diagnostics
   downloadDiagnostics: async () => {
     const { url, options } = buildApiRequest('GET', '/settings/diagnostics', {})

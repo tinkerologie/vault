@@ -20,6 +20,7 @@ import (
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
 	"github.com/tinkerologie/vault/internal/logx"
 	mcpserver "github.com/tinkerologie/vault/internal/mcp"
+	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/release"
 	"github.com/tinkerologie/vault/web"
 )
@@ -76,6 +77,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		settingsH.SetLogLevelChangeHook(func(level string) {
 			logx.SetLevelString(level)
 		})
+		settingsH.SetMemoryLimitChangeHook(memlimit.Apply)
 
 		// Public endpoints.
 		r.Get("/health", s.handleHealth)
@@ -247,6 +249,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/database", settingsH.GetDatabaseInfo)
 			r.Put("/database", settingsH.SetSnapshotPath)
 			r.Get("/diagnostics", settingsH.GetDiagnostics)
+			r.Get("/runtime", settingsH.GetRuntime)
 
 			// API key management.
 			r.Get("/api-key", settingsH.GetAPIKeyStatus)

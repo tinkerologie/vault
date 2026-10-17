@@ -34,6 +34,7 @@ import (
 	"github.com/tinkerologie/vault/internal/docsmeta"
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/format"
+	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/notify"
 	"github.com/tinkerologie/vault/internal/storage"
 	"github.com/tinkerologie/vault/internal/tempdir"
@@ -3333,6 +3334,28 @@ func (r *Runner) stageItemLocally(ctx context.Context, runID int64, item engine.
 // wrap. The restore path peels it off content-based via
 // decompressStoredReader, the same mechanism used for legacy double-wrapped
 // backups.
+// warnUploadBudget logs a run warning when an S3 upload's multipart
+// buffers (part size × part concurrency × upload workers) can exceed the
+// daemon's memory limit, which would make the garbage collector thrash
+// (issue #500). It only warns; upload concurrency is unchanged.
+func (r *Runner) warnUploadBudget(runID int64, dest db.StorageDestination, concurrency int) {
+	if dest.Type != "s3" {
+		return
+	}
+	limit := memlimit.Current().LimitBytes
+	if limit <= 0 {
+		return
+	}
+	est, err := storage.S3UploadBufferBytes(dest.Config, concurrency)
+	if err != nil || est <= limit {
+		return
+	}
+	r.runLog(runID, runLogLevelWarn,
+		fmt.Sprintf("S3 upload buffers for %s may need %s, above the %s memory limit; expect heavy garbage collection. Raise memory_limit_mb, lower the part size, or reduce parallel uploads.",
+			dest.Name, format.Bytes(float64(est)), format.Bytes(float64(limit))),
+		map[string]any{"estimate_bytes": est, "limit_bytes": limit, "upload_workers": concurrency})
+}
+
 func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir string, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, itemType string, itemName string, concurrency int) (map[string]string, error) {
 	transportCompression := "none"
 	if itemType == "vm" || itemType == "zfs" {
@@ -3380,6 +3403,7 @@ func (r *Runner) uploadStagedFilesN(ctx context.Context, runID int64, tmpDir str
 	if concurrency < 1 {
 		concurrency = 1
 	}
+	r.warnUploadBudget(runID, dest, concurrency)
 	r.runLog(runID, runLogLevelInfo,
 		fmt.Sprintf("Uploading %s (%s): %d file(s)", itemName, itemType, len(entries)),
 		map[string]any{"item_name": itemName, "item_type": itemType, "files": len(entries)})
