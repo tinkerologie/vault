@@ -248,5 +248,17 @@ test.describe('Logs render window (#507)', () => {
     await page.getByRole('button', { name: 'Jump to present' }).click();
     await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
     await expect.poll(rendered).toBe(199);
+
+    // Searching from deep in the history lands on the newest matches with a
+    // fresh window, not at the old scroll depth.
+    for (let i = 0; i < 2; i++) {
+      await consoleBox.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+      await page.waitForTimeout(150);
+    }
+    expect(await consoleBox.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    await page.getByPlaceholder(/filter logs/i).fill('Window entry');
+    await expect.poll(() => consoleBox.evaluate((el) => el.scrollTop)).toBe(0);
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
+    expect(await rendered()).toBeLessThanOrEqual(200);
   });
 });

@@ -690,7 +690,7 @@
         <input
           type="text"
           value={store.search}
-          oninput={(e) => { store.setSearchFilter(e.target.value); resetWindow(); if (!e.target.value) snapToPresent() }}
+          oninput={(e) => { store.setSearchFilter(e.target.value); snapToPresent() }}
           placeholder="Filter logs…"
           class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-dim/50 {store.search ? 'border-vault text-text' : ''}"
         />
