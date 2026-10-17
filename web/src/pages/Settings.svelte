@@ -740,7 +740,8 @@
 
   async function saveMemoryLimit() {
     if (readOnly) return
-    const raw = String(memoryLimitMb).trim()
+    // An emptied number input binds as null, not ''.
+    const raw = memoryLimitMb == null ? '' : String(memoryLimitMb).trim()
     if (raw === '') {
       showToast('Nothing to save', 'info')
       return

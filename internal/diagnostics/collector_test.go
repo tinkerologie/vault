@@ -618,3 +618,12 @@ func TestSampleKindMismatch(t *testing.T) {
 		t.Fatal("bad samples should read as zero")
 	}
 }
+
+func TestCPUFraction(t *testing.T) {
+	if got := cpuFraction(1, 0); got != 0 {
+		t.Fatalf("cpuFraction(1, 0) = %v, want 0", got)
+	}
+	if got := cpuFraction(1, 4); got != 0.25 {
+		t.Fatalf("cpuFraction(1, 4) = %v, want 0.25", got)
+	}
+}

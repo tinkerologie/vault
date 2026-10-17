@@ -2,6 +2,7 @@ package dedup
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"io"
 	"testing"
@@ -273,5 +274,31 @@ func TestGetPooledReadErrorAndEmpty(t *testing.T) {
 	}
 	if _, err := r.getPooled(benchID(1), bytes.NewReader(nil), 64); err == nil || !bytes.Contains([]byte(err.Error()), []byte("missing flags byte")) {
 		t.Fatalf("want too-short error, got %v", err)
+	}
+}
+
+// TestGetLargeChunkUsesReadAllPath covers records bigger than the pooled
+// scratch (a Put of up to PackTargetSize): they keep the io.ReadAll path and
+// still round-trip.
+func TestGetLargeChunkUsesReadAllPath(t *testing.T) {
+	r, _, cleanup := newTestRepo(t)
+	defer cleanup()
+	big := make([]byte, chunkScratchSize+1<<20)
+	if _, err := rand.Read(big); err != nil {
+		t.Fatal(err)
+	}
+	id, err := r.Put(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, big) {
+		t.Fatal("large chunk did not round-trip")
 	}
 }

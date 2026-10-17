@@ -307,9 +307,7 @@ func (c *Collector) collectRuntime() RuntimeInfo {
 	info.GCCPUSeconds = sampleFloat(samples[2])
 	info.TotalCPUSeconds = sampleFloat(samples[3])
 	info.UserCPUSeconds = sampleFloat(samples[5])
-	if info.TotalCPUSeconds > 0 {
-		info.GCCPUFraction = info.GCCPUSeconds / info.TotalCPUSeconds
-	}
+	info.GCCPUFraction = cpuFraction(info.GCCPUSeconds, info.TotalCPUSeconds)
 	info.GOGCPercent = int64(sampleUint(samples[4])) //nolint:gosec // G115: GOGC percent fits int64; -1 wraps back
 	lim := memlimit.Current()
 	info.MemoryLimitBytes = lim.LimitBytes
@@ -323,6 +321,15 @@ func (c *Collector) collectRuntime() RuntimeInfo {
 // Runtime returns the live runtime snapshot that diagnostics bundles carry,
 // for the settings runtime endpoint (issue #500).
 func (c *Collector) Runtime() RuntimeInfo { return c.collectRuntime() }
+
+// cpuFraction returns part/total, or 0 before the runtime has accounted any
+// CPU time (the /cpu/classes metrics only advance at GC cycles).
+func cpuFraction(part, total float64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return part / total
+}
 
 // sampleUint returns a uint64 metric value, or 0 if the runtime reports a
 // different kind (an unsupported or renamed metric).
