@@ -252,10 +252,14 @@
       resetWindow()
     } else if (!atLiveEdge && follow) {
       follow = false
-      // Leaving the live edge: pin the window's bottom to the row rendered
-      // there now, so lines arriving at the top cannot push the rows being
-      // read out of the window.
-      if (!windowAnchor && shownRows.length) windowAnchor = extendWindow(rows, shownCount, 0)
+      // Leaving the live edge: pin both window edges to the rows rendered
+      // now. Lines arriving at the top then stay hidden above (the new-entry
+      // count on "Jump to present" reports them) instead of pushing the rows
+      // being read out of the window or growing it past the cap.
+      if (shownRows.length) {
+        if (!windowAnchor) windowAnchor = extendWindow(rows, shownCount, 0)
+        if (!windowTop) windowTop = { key: rows[shownStart].key, index: shownStart }
+      }
     }
 
     // Auto-load older entries as the user approaches the BOTTOM (not only at
@@ -725,7 +729,7 @@
         </button>
       {/if}
 
-      {#if !atOldest}
+      {#if !atOldest || hiddenRows}
         <button onclick={jumpToOldest}
           class="absolute top-3 right-3 z-10 p-2 bg-surface-3 border border-border rounded-lg text-text-muted hover:text-text shadow-lg transition-colors"
           title="Jump to oldest log" aria-label="Jump to oldest log">
