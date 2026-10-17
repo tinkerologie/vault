@@ -168,6 +168,22 @@ test.describe('Settings Configuration & Management', () => {
     await expect(page.getByText('invalid memory_limit_mb')).toBeVisible();
   });
 
+  test('makes the memory limit read-only on a replica (#500)', async ({ page }) => {
+    await page.route('**/api/v1/health', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'ok', version: '2026.09.01', mode: 'replica' }) }),
+    );
+    const puts: string[] = [];
+    page.on('request', (req) => {
+      if (req.method() === 'PUT' && req.url().includes('/api/v1/settings')) puts.push(req.url());
+    });
+    await page.goto('/#/settings');
+
+    await expect(page.getByTestId('runtime-stats')).toBeVisible();
+    await expect(page.locator('#memory-limit-mb')).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Save Memory Limit' })).toHaveCount(0);
+    expect(puts).toEqual([]);
+  });
+
   test('downloads the server key for an off-server copy (#451)', async ({ page }) => {
     await page.goto('/#/settings');
     await page.getByRole('button', { name: 'Security', exact: true }).click();
