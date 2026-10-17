@@ -388,7 +388,7 @@ const chunkScratchSize = 1 + ChunkMax + chunkTagSize
 
 // chunkScratch pools ciphertext read buffers for Get (#500). Only the
 // ciphertext is pooled: DecryptChunk returns a fresh plaintext slice that the
-// caller owns, and Put clears the scratch before reuse.
+// caller owns, and the scratch is cleared before reuse.
 var chunkScratch = bufpool.New(chunkScratchSize)
 
 // getPooled is Get's read path for normal-sized chunks. It reads up to
@@ -396,7 +396,10 @@ var chunkScratch = bufpool.New(chunkScratchSize)
 // io.ReadAll did, then decrypts.
 func (r *Repo) getPooled(id ID, rc io.Reader, length int) ([]byte, error) {
 	buf := chunkScratch.Get()
-	defer chunkScratch.Put(buf)
+	// ReadFull writes at most length bytes, so clearing that prefix is
+	// enough; clearing the whole 4 MiB scratch for every small chunk cost
+	// more than the read.
+	defer chunkScratch.PutUsed(buf, length)
 	n, err := io.ReadFull(rc, (*buf)[:length])
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("dedup: read chunk body: %w", err)

@@ -40,11 +40,17 @@ func (p *Pool) Get() *[]byte {
 
 // Put clears b and returns it to the pool. Buffers of a different capacity,
 // and nil, are dropped so the pool never hands out a short buffer.
-func (p *Pool) Put(b *[]byte) {
+func (p *Pool) Put(b *[]byte) { p.PutUsed(b, p.size) }
+
+// PutUsed is Put for a borrower that wrote only the first used bytes of b:
+// it clears just that prefix, which matters for large buffers that are
+// mostly unused. Writing past used is the borrower's bug and would leave
+// data behind for the next Get.
+func (p *Pool) PutUsed(b *[]byte, used int) {
 	if b == nil || cap(*b) != p.size {
 		return
 	}
 	*b = (*b)[:p.size]
-	clear(*b)
+	clear((*b)[:min(max(used, 0), p.size)])
 	p.pool.Put(b)
 }

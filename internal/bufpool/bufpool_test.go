@@ -40,6 +40,29 @@ func TestPutClearsContent(t *testing.T) {
 	}
 }
 
+func TestPutUsedClearsOnlyThePrefix(t *testing.T) {
+	p := New(64)
+	b := p.Get()
+	for i := range 16 {
+		(*b)[i] = 0xff
+	}
+	p.PutUsed(b, 16)
+	for i, v := range *b {
+		if v != 0 {
+			t.Fatalf("byte %d = %#x after PutUsed, want 0", i, v)
+		}
+	}
+	// Out-of-range counts are clamped rather than panicking.
+	b = p.Get()
+	(*b)[63] = 0xff
+	p.PutUsed(b, 1000)
+	if (*b)[63] != 0 {
+		t.Fatal("PutUsed(1000) did not clear the whole buffer")
+	}
+	p.PutUsed(p.Get(), -5)
+	p.PutUsed(nil, 1)
+}
+
 func TestPutDropsWrongSizeAndNil(t *testing.T) {
 	p := New(64)
 	p.Put(nil)
