@@ -53,10 +53,27 @@ export function createLogWindow({ rows, box, tick }) {
   let suppress = false // one-shot: swallow the scroll event of our own write
 
   const count = () => renderedCount(rows(), bottom)
-  // The top edge never starts within RENDER_WINDOW_BASE rows of the bottom
-  // edge: when a collapse toggle re-keys rows, the two anchors' fallbacks can
-  // otherwise cross and leave an empty window.
-  const start = () => Math.min(renderedStart(rows(), top), Math.max(0, count() - RENDER_WINDOW_BASE))
+
+  // A top anchor on the first ENTRY row at or after index i. Anchoring on a
+  // date header would not hold: today's header stays at index 0 while new
+  // lines for today are inserted below it, inside the window.
+  const topAt = (all, i) => {
+    let j = i
+    while (j < all.length && all[j].kind !== 'entry') j++
+    return j < all.length ? { key: all[j].key, index: j } : null
+  }
+  // Where the window starts. A top anchor whose row is still above the
+  // bottom edge is used exactly. When a collapse toggle re-keys rows, the
+  // anchor's fallback can cross the bottom edge; the window then keeps at
+  // least RENDER_WINDOW_BASE rows instead of going empty.
+  const start = () => {
+    if (!top) return 0
+    const all = rows()
+    const c = count()
+    const idx = all.findIndex((r) => r.key === top.key)
+    if (idx >= 0 && idx < c) return idx
+    return Math.min(renderedStart(all, top), Math.max(0, c - RENDER_WINDOW_BASE))
+  }
 
   // A programmatic scrollTop write whose own scroll event must be ignored.
   // Browsers fire no event when the position does not change, so the
@@ -80,9 +97,13 @@ export function createLogWindow({ rows, box, tick }) {
     get hiddenBelow() {
       return count() < rows().length
     },
-    // Newer rows are loaded but not rendered.
+    // Newer entries are loaded but not rendered. A date header above the
+    // window is not hidden content: windowSlice shows it as context.
     get hiddenAbove() {
-      return start() > 0
+      const all = rows()
+      const s = start()
+      for (let i = 0; i < s; i++) if (all[i].kind === 'entry') return true
+      return false
     },
 
     write,
@@ -110,7 +131,7 @@ export function createLogWindow({ rows, box, tick }) {
       const c = count()
       if (c - s <= 0) return
       if (!bottom) bottom = extendWindow(all, c, 0)
-      if (!top) top = { key: all[s].key, index: s }
+      if (!top) top = topAt(all, s)
     },
 
     // Render the next slice of older rows below the viewport. Content added
@@ -150,7 +171,7 @@ export function createLogWindow({ rows, box, tick }) {
         const all = rows()
         const prevHeight = el.scrollHeight
         const prevTop = el.scrollTop
-        top = raiseWindow(all, start()) ?? (all.length ? { key: all[0].key, index: 0 } : null)
+        top = raiseWindow(all, start()) ?? topAt(all, 0)
         await tick()
         write(prevTop + (el.scrollHeight - prevHeight))
         bottom = trimBottom(rows(), bottom, start(), count())

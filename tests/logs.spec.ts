@@ -262,4 +262,36 @@ test.describe('Logs render window (#507)', () => {
     await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
     expect(await rendered()).toBeLessThanOrEqual(200);
   });
+
+  test('short history: Jump to oldest only scrolls, and the top returns to the live edge', async ({ page }) => {
+    const all = Array.from({ length: 120 }, (_, i) => {
+      const id = 120 - i;
+      return { id, level: 'info', category: 'backup', message: `Short entry ${id}`, details: null,
+        created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + id * 1000).toISOString() };
+    });
+    await page.route('**/api/v1/activity*', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const url = new URL(route.request().url());
+      const beforeId = parseInt(url.searchParams.get('before_id') || '0', 10);
+      const limit = parseInt(url.searchParams.get('limit') || '30', 10);
+      const rows = all.filter((r) => !beforeId || r.id < beforeId).slice(0, limit);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
+    });
+    await page.goto('/#/logs');
+    const consoleBox = page.getByRole('log');
+    const rendered = () => consoleBox.locator('[data-entry-id]').count();
+    await expect.poll(rendered, { timeout: 15000 }).toBe(120); // all fit in the window
+
+    // Everything is rendered, so Jump to oldest just scrolls to the end.
+    await page.getByRole('button', { name: 'Jump to oldest log' }).click();
+    await expect.poll(() => consoleBox.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 2)).toBe(true);
+    await expect(page.getByText('— End of logs —')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Jump to present' })).toBeVisible();
+    expect(await rendered()).toBe(120);
+
+    // Scrolling back to the top is the live edge again: follow resumes.
+    await consoleBox.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await expect(page.getByRole('button', { name: 'Jump to present' })).toHaveCount(0);
+    expect(await rendered()).toBe(120);
+  });
 });

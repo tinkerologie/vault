@@ -54,6 +54,17 @@
   const win = createLogWindow({ rows: () => rows, box: () => box, tick })
   const shownRows = $derived(win.rows)
 
+  // atOldest is otherwise only refreshed by scroll events, but rows also
+  // arrive without one: the background full-history load can turn a console
+  // that fitted (or nearly fitted) the viewport into a long one, and a
+  // stale atOldest would hide "Jump to oldest" until the reader scrolled.
+  $effect(() => {
+    shownRows
+    tick().then(() => {
+      if (box) atOldest = !win.hiddenBelow && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
+    })
+  })
+
   const liveMode = getLiveMode()
 
   const categories = [
@@ -260,17 +271,19 @@
   // rows are rendered for that (#507); scrolling up renders newer ones.
   async function jumpToOldest() {
     if (!box) return
-    follow = false
     if (await win.jumpToOldest()) {
+      follow = false
       atOldest = true // the suppressed scroll event would have set this
       return
     }
-    // Everything is already rendered: scroll there, but pin the window first.
-    // Follow is now off, so handleScroll will not pin it on the way down, and
-    // an unpinned window would let new lines push the oldest rows out.
-    win.pin()
+    // Everything is already rendered: just scroll there. Follow is left on
+    // deliberately: the smooth scroll's first events are still inside the
+    // live-edge band, and with follow off they would read as a return to the
+    // live edge, snapping the console back to the top. The scroll leaving
+    // the band turns follow off and pins the window (scrollAction leaveLive).
     box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
   }
+
 
   // Filter switches reset the view to live-tail: follow back on, new-entry
   // marker cleared, viewport pinned to the newest line — the top.

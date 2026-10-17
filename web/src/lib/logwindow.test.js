@@ -222,6 +222,43 @@ describe('createLogWindow', () => {
     })
   })
 
+  describe('date rows (#507)', () => {
+    // Newest-first like buildRows: today's header, then today's entries.
+    const day = (n) => [{ kind: 'date', key: 'day-today' }, ...mk(n)]
+
+    it('anchors the pinned top on an entry, so same-day lines stay above', () => {
+      const { state, win } = setup(0)
+      state.all = day(500)
+      win.pin()
+      // A new line for today lands under the header, at index 1.
+      state.all = [state.all[0], { kind: 'entry', key: 'new' }, ...state.all.slice(1)]
+      expect(win.rows.map((r) => r.key)).not.toContain('new')
+      expect(win.rows[0].key).toBe('day-today') // header still shown as context
+      expect(win.hiddenAbove).toBe(true)
+    })
+
+    it('does not count a context date header as hidden newer rows', async () => {
+      const { state, el, win } = setup(0)
+      state.all = day(300)
+      await win.jumpToOldest()
+      el.st = 0
+      await win.raise() // back to the first entry, under today's header
+      expect(win.rows[0].key).toBe('day-today')
+      expect(win.rows[1].key).toBe('k0')
+      expect(win.hiddenAbove).toBe(false)
+    })
+
+    it('keeps an existing top anchor when pinning again', async () => {
+      const { state, win } = setup(0)
+      state.all = day(500)
+      win.pin()
+      const first = win.rows.map((r) => r.key)
+      state.all = [state.all[0], { kind: 'entry', key: 'new' }, ...state.all.slice(1)]
+      win.pin() // top already set: unchanged, "new" still hidden
+      expect(win.rows.map((r) => r.key)).toEqual(first)
+    })
+  })
+
   describe('afterOlderFetch', () => {
     it('grows only when the reader is at the edge and rows are hidden', async () => {
       const { win } = setup(1000)
