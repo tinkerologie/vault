@@ -45,6 +45,11 @@ func TestWarnUploadBudget(t *testing.T) {
 		t.Fatalf("warned within budget or for a non-S3 destination: %d", n)
 	}
 
+	r.warnUploadBudget(runID, db.StorageDestination{Name: "broken", Type: "s3", Config: `{`}, 16)
+	if n := warnings(); n != 0 {
+		t.Fatalf("warned for an unparseable S3 config: %d", n)
+	}
+
 	r.warnUploadBudget(runID, s3, 3) // 960 MiB > 512 MiB
 	if n := warnings(); n != 1 {
 		t.Fatalf("warnings = %d, want 1", n)

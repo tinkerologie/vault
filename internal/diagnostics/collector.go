@@ -324,6 +324,8 @@ func (c *Collector) collectRuntime() RuntimeInfo {
 // for the settings runtime endpoint (issue #500).
 func (c *Collector) Runtime() RuntimeInfo { return c.collectRuntime() }
 
+// sampleUint returns a uint64 metric value, or 0 if the runtime reports a
+// different kind (an unsupported or renamed metric).
 func sampleUint(s metrics.Sample) uint64 {
 	if s.Value.Kind() == metrics.KindUint64 {
 		return s.Value.Uint64()
@@ -331,6 +333,7 @@ func sampleUint(s metrics.Sample) uint64 {
 	return 0
 }
 
+// sampleFloat returns a float64 metric value, or 0 for any other kind.
 func sampleFloat(s metrics.Sample) float64 {
 	if s.Value.Kind() == metrics.KindFloat64 {
 		return s.Value.Float64()

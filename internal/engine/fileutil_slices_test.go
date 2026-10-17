@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/iotest"
 )
 
 // setCopySliceSize shrinks copySlices' slice for one test so slice-level
@@ -107,5 +108,20 @@ func TestCopySlicesReturnsWriteError(t *testing.T) {
 	err := copySlices(context.Background(), failingWriter{}, bytes.NewReader([]byte("x")), nil)
 	if err == nil || err.Error() != "disk on fire" {
 		t.Fatalf("want write error, got %v", err)
+	}
+}
+
+// A read error after some data still reports the bytes that landed and
+// returns the error, so a failing source disk ends the restore with a cause.
+func TestCopySlicesReturnsReadErrorAfterData(t *testing.T) {
+	src := io.MultiReader(bytes.NewReader(make([]byte, 1000)), iotest.ErrReader(errors.New("bad sector")))
+	var progress []int64
+	var dst bytes.Buffer
+	err := copySlices(context.Background(), &dst, src, func(n int64) { progress = append(progress, n) })
+	if err == nil || err.Error() != "bad sector" {
+		t.Fatalf("want the read error, got %v", err)
+	}
+	if dst.Len() != 1000 || len(progress) != 1 || progress[0] != 1000 {
+		t.Fatalf("copied %d bytes, progress %v; want 1000 and [1000]", dst.Len(), progress)
 	}
 }

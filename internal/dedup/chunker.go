@@ -109,6 +109,7 @@ type countingReader struct {
 	n int64
 }
 
+// Read reads from the wrapped reader and adds the byte count to n.
 func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
 	c.n += int64(n)

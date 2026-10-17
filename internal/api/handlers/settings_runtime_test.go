@@ -75,6 +75,16 @@ func TestUploadBudgetWarnings(t *testing.T) {
 		}
 	}
 
+	// An S3 destination whose stored config no longer parses is skipped
+	// rather than failing the whole endpoint.
+	badID, err := h.db.CreateStorageDestination(db.StorageDestination{Name: "broken", Type: "s3", Config: `{`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.CreateJob(db.Job{Name: "broken-job", Enabled: true, StorageDestID: badID, MaxParallelUploads: 16}); err != nil {
+		t.Fatal(err)
+	}
+
 	if got, _ := h.uploadBudgetWarnings(0); len(got) != 0 {
 		t.Fatalf("limit off: got %v", got)
 	}
