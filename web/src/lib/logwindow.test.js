@@ -168,6 +168,16 @@ describe('createLogWindow', () => {
     })
   })
 
+  it('never collapses to an empty window when anchors are re-keyed', async () => {
+    const { state, win } = setup(2000)
+    await win.jumpToOldest() // top k1800, bottom k1999
+    // A collapse toggle folds the top anchor away and moves the bottom
+    // anchor's row far up the list.
+    state.all = [...mk(900, 'x'), { kind: 'entry', key: 'k1999' }, ...mk(299, 'y')]
+    expect(win.rows).toHaveLength(200)
+    expect(win.rows[win.rows.length - 1].key).toBe('k1999')
+  })
+
   describe('jumpToOldest', () => {
     it('renders only the oldest rows and scrolls to the bottom', async () => {
       const { el, win } = setup(2000)

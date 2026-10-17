@@ -11,6 +11,7 @@
 // box and tick so it is unit-tested without a DOM.
 
 import {
+  RENDER_WINDOW_BASE,
   renderedCount,
   extendWindow,
   renderedStart,
@@ -52,7 +53,10 @@ export function createLogWindow({ rows, box, tick }) {
   let suppress = false // one-shot: swallow the scroll event of our own write
 
   const count = () => renderedCount(rows(), bottom)
-  const start = () => Math.min(renderedStart(rows(), top), count())
+  // The top edge never starts within RENDER_WINDOW_BASE rows of the bottom
+  // edge: when a collapse toggle re-keys rows, the two anchors' fallbacks can
+  // otherwise cross and leave an empty window.
+  const start = () => Math.min(renderedStart(rows(), top), Math.max(0, count() - RENDER_WINDOW_BASE))
 
   // A programmatic scrollTop write whose own scroll event must be ignored.
   // Browsers fire no event when the position does not change, so the
