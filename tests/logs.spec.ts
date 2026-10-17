@@ -151,3 +151,58 @@ test.describe('Activity Logs & Run Log Viewer', () => {
     expect(olderCalls).toBeLessThanOrEqual(5);
   });
 });
+
+test.describe('Logs render window (#507)', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  test('renders only the newest rows and grows the window on scroll', async ({ page }) => {
+    // 1,500 distinct lines, so nothing collapses into one row.
+    const all = Array.from({ length: 1500 }, (_, i) => {
+      const id = 1500 - i;
+      return {
+        id,
+        level: 'info',
+        category: 'backup',
+        message: `Window entry ${id}`,
+        details: null,
+        created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + id * 1000).toISOString(),
+      };
+    });
+    await page.route('**/api/v1/activity*', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const url = new URL(route.request().url());
+      const beforeId = parseInt(url.searchParams.get('before_id') || '0', 10);
+      const limit = parseInt(url.searchParams.get('limit') || '30', 10);
+      const rows = all.filter((r) => !beforeId || r.id < beforeId).slice(0, limit);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
+    });
+
+    await page.goto('/#/logs');
+    const consoleBox = page.getByRole('log');
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
+    const rendered = () => consoleBox.locator('[data-entry-id]').count();
+    // The background full-history load fills the store; the window stays at
+    // the newest 200 rows however much is loaded. All lines fall on one day,
+    // so that is one date separator plus 199 log lines.
+    await expect.poll(rendered, { timeout: 15000 }).toBe(199);
+    await page.waitForTimeout(1000);
+    expect(await rendered()).toBe(199);
+    await expect(page.getByText('— End of logs —')).toHaveCount(0);
+
+    // Scrolling to the bottom of the rendered rows renders the next slice.
+    await consoleBox.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+    await expect.poll(rendered).toBe(399);
+
+    // "Jump to oldest" renders the rest and reaches the end marker.
+    await page.getByRole('button', { name: 'Jump to oldest log' }).click();
+    await expect(consoleBox.locator('[data-entry-id="1"]')).toBeAttached();
+    await expect(page.getByText('— End of logs —')).toBeVisible();
+    expect(await rendered()).toBe(1500);
+
+    // Back at the live edge, the window trims to the default again.
+    await consoleBox.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await expect.poll(rendered).toBe(199);
+  });
+});

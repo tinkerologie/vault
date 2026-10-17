@@ -88,3 +88,37 @@ export function buildRows(entries, { collapse = true, now = new Date() } = {}) {
 export function rowEntries(row) {
   return row.kind === 'entry' ? row.entries : []
 }
+
+// Render window (#507). The console used to put every loaded row on the page;
+// with the full history loaded that was ~8,600 rows and ~78,000 DOM nodes,
+// and leaving the Logs page (or anything else that walks the document, such
+// as Chrome's accessibility tree) stalled the UI for seconds. Only the newest
+// part of `rows` is rendered; the window grows as the user scrolls towards
+// older lines.
+//
+// The window's bottom edge is an anchor `{ key, count }`: the key of the
+// oldest rendered row, plus how many rows were rendered when it was set. New
+// lines arrive at the TOP, so anchoring on a key means they never push rows
+// out from under a reader. The count is the fallback when the key vanishes
+// (a collapse toggle re-keys rows) so the reader keeps roughly their depth.
+// A null anchor is the default window of `base` rows.
+export const RENDER_WINDOW_BASE = 200
+export const RENDER_WINDOW_STEP = 200
+
+// How many of `rows` to render for `anchor`. Never fewer than `base` (or all
+// rows, when there are fewer).
+export function renderedCount(rows, anchor, base = RENDER_WINDOW_BASE) {
+  const floor = Math.min(rows.length, base)
+  if (!anchor) return floor
+  const idx = rows.findIndex((r) => r.key === anchor.key)
+  const end = idx >= 0 ? idx + 1 : Math.min(rows.length, anchor.count)
+  return Math.max(floor, end)
+}
+
+// The anchor for a window `step` rows deeper than `count`, or null when there
+// are no rows. Extending past the end clamps to the last row.
+export function extendWindow(rows, count, step = RENDER_WINDOW_STEP) {
+  if (rows.length === 0) return null
+  const end = Math.min(rows.length, Math.max(count, 0) + step)
+  return { key: rows[end - 1].key, count: end }
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRows, rowEntries } from './logrows.js'
+import { buildRows, rowEntries, renderedCount, extendWindow } from './logrows.js'
 
 const NOW = new Date('2026-08-25T12:00:00')
 
@@ -185,5 +185,42 @@ describe('row keys', () => {
   it('stringify numeric and run-log ids alike', () => {
     const rows = buildRows([entry('rl-7', '2026-08-25T09:00:00')], opts)
     expect(rows.find(r => r.kind === 'entry').key).toBe('rl-7')
+  })
+})
+
+describe('render window (#507)', () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ kind: 'entry', key: `k${i}` }))
+
+  it('renders the base window by default, or every row when there are fewer', () => {
+    expect(renderedCount(mk(1000), null, 200)).toBe(200)
+    expect(renderedCount(mk(50), null, 200)).toBe(50)
+    expect(renderedCount([], null, 200)).toBe(0)
+  })
+
+  it('extends by a step and clamps at the last row', () => {
+    const rows = mk(450)
+    let a = extendWindow(rows, 200, 200)
+    expect(a).toEqual({ key: 'k399', count: 400 })
+    expect(renderedCount(rows, a, 200)).toBe(400)
+    a = extendWindow(rows, 400, 200)
+    expect(a).toEqual({ key: 'k449', count: 450 })
+    expect(renderedCount(rows, a, 200)).toBe(450)
+    expect(extendWindow([], 0, 200)).toBeNull()
+    expect(extendWindow(rows, -5, 10)).toEqual({ key: 'k9', count: 10 })
+  })
+
+  it('keeps the anchored row rendered when newer rows arrive at the top', () => {
+    const rows = mk(1000)
+    const anchor = extendWindow(rows, 200, 200) // k399, 400 rows
+    const grown = [...Array.from({ length: 30 }, (_, i) => ({ kind: 'entry', key: `new${i}` })), ...rows]
+    expect(renderedCount(grown, anchor, 200)).toBe(430)
+    expect(grown[429].key).toBe('k399')
+  })
+
+  it('falls back to the anchored depth when the key is gone, never below base', () => {
+    const rows = mk(1000)
+    expect(renderedCount(rows, { key: 'gone', count: 600 }, 200)).toBe(600)
+    expect(renderedCount(rows, { key: 'gone', count: 5000 }, 200)).toBe(1000)
+    expect(renderedCount(rows, { key: 'gone', count: 10 }, 200)).toBe(200)
   })
 })
