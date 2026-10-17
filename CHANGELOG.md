@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.10.02] - 2026-10-17
+
+### Fixed
+
+- Leaving the Logs page freezes the UI (console renders every log line) (#507)
+
 ## [v2026.10.01] - 2026-10-16
 
 ### Added
