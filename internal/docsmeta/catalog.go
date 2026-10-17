@@ -55,6 +55,7 @@ var AppSettings = []SettingDoc{
 	{"replication_enabled", "string", "", "Master toggle for the replication subsystem. Empty/false disables replication scheduling; \"true\" enables it.", GroupGeneral},
 	{"fuse_mount_base_dir", "string", "", "Base directory on the host where read-only FUSE backup mounts are attached. Empty uses /mnt/addons/vault-fuse, or a temporary directory when /mnt/addons does not exist.", GroupGeneral},
 	{"fuse_mount_idle_minutes", "int", "30", "Idle timeout in minutes after which inactive FUSE backup mounts are automatically unmounted.", GroupGeneral},
+	{"memory_limit_mb", "int", "0", "Soft memory limit for the daemon in MiB, applied live with the Go runtime's memory limit. 0 turns it off; otherwise 512 to 1048576. It is a soft limit: set it above the backup working set (S3 uploads hold part size × 5 per upload stream), or the garbage collector runs almost continuously. A GOMEMLIMIT environment variable overrides it.", GroupGeneral},
 
 	// Backup engine
 	{"adaptive_idle_cpu_percent", "int", "20", "Adaptive backups: a container or VM is considered busy above this CPU percentage (single-core units).", GroupBackup},

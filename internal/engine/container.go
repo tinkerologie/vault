@@ -23,6 +23,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
+	"github.com/tinkerologie/vault/internal/bufpool"
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/safepath"
 )
@@ -3188,9 +3189,12 @@ func writeChunkedEntryToFile(repo *dedup.Repo, entry dedup.ManifestEntry, path s
 
 // contextCopy copies from src to dst, checking for context cancellation
 // periodically (every 32 KiB). This prevents a single large file from
-// blocking cancellation indefinitely.
+// blocking cancellation indefinitely. The buffer comes from a pool because
+// folder and volume archives call this once per file (issue #500).
 func contextCopy(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
-	buf := make([]byte, 32*1024)
+	bp := bufpool.Copy32K.Get()
+	defer bufpool.Copy32K.Put(bp)
+	buf := *bp
 	var written int64
 	counter := itemProgressFrom(ctx) // archive/extract progress, if counting (#456)
 	for {
@@ -3367,12 +3371,16 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 // too high a price to pay on every healthy backup.
 const maxStagedFileSize = 32 << 20 // 32 MiB
 
+// zeroBlock is the source for zeroPad. It is never written, so every caller
+// can share it.
+var zeroBlock [32 << 10]byte
+
 // zeroPad writes n zero bytes to w. It completes a tar entry whose source went
 // unreadable after the header was already committed: tar demands exactly
 // header.Size content bytes, so without the padding every entry after it is
 // unreadable too.
 func zeroPad(w io.Writer, n int64) error {
-	buf := make([]byte, 32*1024)
+	buf := zeroBlock[:]
 	for n > 0 {
 		chunk := min(n, int64(len(buf)))
 		written, err := w.Write(buf[:chunk])

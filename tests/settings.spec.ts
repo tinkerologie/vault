@@ -85,6 +85,105 @@ test.describe('Settings Configuration & Management', () => {
     expect(download.suggestedFilename()).toContain('diagnostics');
   });
 
+  test('shows memory statistics and saves the memory limit (#500)', async ({ page }) => {
+    await page.goto('/#/settings');
+
+    const stats = page.getByTestId('runtime-stats');
+    await expect(stats).toContainText('Heap in use');
+    await expect(stats).toContainText('48');
+    await expect(stats).toContainText('1.2%');
+    await expect(page.getByTestId('runtime-limit')).toContainText('None');
+    await expect(page.getByText('3,904 MiB')).toBeVisible();
+
+    const input = page.locator('#memory-limit-mb');
+    const save = page.getByRole('button', { name: 'Save Memory Limit' });
+
+    await input.fill('100');
+    await save.click();
+    await expect(page.getByText('Memory limit must be 0 (off) or 512–1048576 MiB')).toBeVisible();
+
+    await input.fill('512');
+    await save.click();
+    await expect(page.getByText('Memory limit saved')).toBeVisible();
+    await expect(page.getByTestId('runtime-limit')).toContainText('this setting');
+    await expect(page.getByTestId('memory-upload-warnings')).toContainText('Photos to B2');
+
+    await input.fill('0');
+    await save.click();
+    await expect(page.getByText('Memory limit turned off')).toBeVisible();
+    await expect(page.getByTestId('memory-upload-warnings')).toHaveCount(0);
+  });
+
+  test('shows the GOMEMLIMIT override and an unknown RSS (#500)', async ({ page }) => {
+    await page.route('**/api/v1/settings/runtime', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          runtime: { heap_live_bytes: 1 << 20, go_total_bytes: 2 << 20, rss_bytes: 0, peak_rss_bytes: 0, gc_cpu_fraction: 0, num_gc: 1, num_goroutine: 5 },
+          memory_limit: { limit_bytes: 2 << 30, source: 'environment', setting_mb: 0, environment_override: true },
+          suggested_limit_mb: 0,
+          upload_warnings: [],
+        }),
+      }),
+    );
+    await page.goto('/#/settings');
+
+    await expect(page.getByTestId('runtime-limit')).toContainText('GOMEMLIMIT environment variable');
+    await expect(page.getByTestId('memory-env-override')).toBeVisible();
+    await expect(page.getByTestId('runtime-stats')).toContainText('—');
+    await expect(page.getByTestId('memory-upload-warnings')).toHaveCount(0);
+  });
+
+  test('handles an unavailable runtime snapshot and memory-limit errors (#500)', async ({ page }) => {
+    await page.route('**/api/v1/settings/runtime', (route) =>
+      route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'diagnostics not configured' }) }),
+    );
+    await page.goto('/#/settings');
+
+    await expect(page.getByText('Memory statistics are unavailable.')).toBeVisible();
+    await page.locator('#set-memory').getByRole('button', { name: 'Refresh' }).click();
+    await expect(page.getByText('diagnostics not configured')).toBeVisible();
+
+    const input = page.locator('#memory-limit-mb');
+    const save = page.getByRole('button', { name: 'Save Memory Limit' });
+
+    await input.fill('');
+    await save.click();
+    await expect(page.getByText('Nothing to save')).toBeVisible();
+
+    for (const bad of ['1048577', '600.5']) {
+      await input.fill(bad);
+      await save.click();
+      await expect(page.getByText('Memory limit must be 0 (off) or 512–1048576 MiB').last()).toBeVisible();
+    }
+
+    await page.route('**/api/v1/settings', (route) =>
+      route.request().method() === 'PUT'
+        ? route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'invalid memory_limit_mb' }) })
+        : route.fallback(),
+    );
+    await input.fill('1024');
+    await save.click();
+    await expect(page.getByText('invalid memory_limit_mb')).toBeVisible();
+  });
+
+  test('makes the memory limit read-only on a replica (#500)', async ({ page }) => {
+    await page.route('**/api/v1/health', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'ok', version: '2026.09.01', mode: 'replica' }) }),
+    );
+    const puts: string[] = [];
+    page.on('request', (req) => {
+      if (req.method() === 'PUT' && req.url().includes('/api/v1/settings')) puts.push(req.url());
+    });
+    await page.goto('/#/settings');
+
+    await expect(page.getByTestId('runtime-stats')).toBeVisible();
+    await expect(page.locator('#memory-limit-mb')).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Save Memory Limit' })).toHaveCount(0);
+    expect(puts).toEqual([]);
+  });
+
   test('downloads the server key for an off-server copy (#451)', async ({ page }) => {
     await page.goto('/#/settings');
     await page.getByRole('button', { name: 'Security', exact: true }).click();

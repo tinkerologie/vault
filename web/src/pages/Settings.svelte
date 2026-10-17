@@ -48,6 +48,7 @@
     { id: 'set-history', label: 'History Retention' },
     { id: 'set-server', label: 'Server Info' },
     { id: 'set-database', label: 'Database' },
+    { id: 'set-memory', label: 'Memory' },
     { id: 'set-diagnostics', label: 'Diagnostics' },
     { id: 'set-about', label: 'About' },
   ]
@@ -120,6 +121,13 @@
 
   // Diagnostics state
   let diagnosticsDownloading = $state(false)
+
+  // Memory card (issue #500): a snapshot from GET /settings/runtime, loaded
+  // on demand (no polling) plus the memory_limit_mb setting.
+  let runtimeInfo = $state(null)
+  let runtimeLoading = $state(false)
+  let memoryLimitMb = $state('')
+  let memoryLimitSaving = $state(false)
 
   // Retry policy state (Task 11 – resilience hardening). Backend stores the
   // delays as a JSON-encoded array string in the settings table. The
@@ -255,6 +263,7 @@
       snapshotPathInput = dbInfo?.snapshot_path_override || ''
       historyRetention = String(s.history_retention_days ?? '365')
       retryMax = s?.retry_max_default ?? ''
+      memoryLimitMb = s?.memory_limit_mb ?? '0'
       retryDelays = s?.retry_delays_default ?? ''
       autoThrottleEnabled = s?.auto_throttle_enabled === 'true'
       autoThrottleLink = s?.auto_throttle_link_mbps ?? ''
@@ -289,6 +298,9 @@
       currentVersion = (h && h.version) || 'dev'
       releases = changelog
       latest = latestRelease
+      // Not awaited: the memory card fills in when the snapshot arrives,
+      // and a daemon without a diagnostics collector simply leaves it empty.
+      api.getRuntime().then((r) => { runtimeInfo = r }).catch(() => {})
     } catch (e) {
       console.error('Settings load error:', e)
     } finally {
@@ -713,6 +725,49 @@
     } finally {
       serverKeyDownloading = false
     }
+  }
+
+  async function refreshRuntime() {
+    runtimeLoading = true
+    try {
+      runtimeInfo = await api.getRuntime()
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      runtimeLoading = false
+    }
+  }
+
+  async function saveMemoryLimit() {
+    if (readOnly) return
+    // An emptied number input binds as null, not ''.
+    const raw = memoryLimitMb == null ? '' : String(memoryLimitMb).trim()
+    if (raw === '') {
+      showToast('Nothing to save', 'info')
+      return
+    }
+    const n = Number(raw)
+    if (!Number.isInteger(n) || (n !== 0 && (n < 512 || n > 1048576))) {
+      showToast('Memory limit must be 0 (off) or 512–1048576 MiB', 'error')
+      return
+    }
+    memoryLimitSaving = true
+    try {
+      settings = await api.updateSettings({ memory_limit_mb: String(n) })
+      memoryLimitMb = settings?.memory_limit_mb ?? String(n)
+      showToast(n === 0 ? 'Memory limit turned off' : 'Memory limit saved', 'success')
+      await refreshRuntime()
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      memoryLimitSaving = false
+    }
+  }
+
+  function formatLimitSource(src) {
+    if (src === 'environment') return 'GOMEMLIMIT environment variable'
+    if (src === 'setting') return 'this setting'
+    return 'off'
   }
 
   async function downloadDiagnostics() {
@@ -2313,6 +2368,101 @@
         {/if}
       </div>
       {/if}
+
+      <!-- Memory (issue #500) -->
+      <div id="set-memory" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-border flex items-start justify-between gap-3">
+          <div>
+            <h2 class="text-base font-semibold text-text">Memory <Tooltip text="Live memory and garbage-collector figures for the Vault daemon. Use them to size the memory limit and to spot regressions." /></h2>
+            <p class="text-xs text-text-muted mt-0.5">The daemon's memory use and an optional soft limit.</p>
+          </div>
+          <button
+            onclick={refreshRuntime}
+            disabled={runtimeLoading}
+            class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {#if runtimeLoading}<InlineSpinner />{/if}
+            Refresh
+          </button>
+        </div>
+        <div class="p-5 space-y-4">
+          {#if runtimeInfo}
+          {@const rt = runtimeInfo.runtime}
+          <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 text-sm" data-testid="runtime-stats">
+            <div><dt class="text-xs text-text-muted">Heap in use</dt><dd class="text-text">{formatBytes(rt.heap_live_bytes)}</dd></div>
+            <div><dt class="text-xs text-text-muted">Go memory total</dt><dd class="text-text">{formatBytes(rt.go_total_bytes)}</dd></div>
+            <div><dt class="text-xs text-text-muted">Resident (RSS)</dt><dd class="text-text">{rt.rss_bytes ? formatBytes(rt.rss_bytes) : '—'}</dd></div>
+            <div><dt class="text-xs text-text-muted">Peak RSS</dt><dd class="text-text">{rt.peak_rss_bytes ? formatBytes(rt.peak_rss_bytes) : '—'}</dd></div>
+            <div><dt class="text-xs text-text-muted">GC CPU share</dt><dd class="text-text">{((rt.gc_cpu_fraction || 0) * 100).toFixed(1)}%</dd></div>
+            <div><dt class="text-xs text-text-muted">GC cycles</dt><dd class="text-text">{(rt.num_gc ?? 0).toLocaleString()}</dd></div>
+            <div><dt class="text-xs text-text-muted">Goroutines</dt><dd class="text-text">{(rt.num_goroutine ?? 0).toLocaleString()}</dd></div>
+            <div>
+              <dt class="text-xs text-text-muted">Memory limit</dt>
+              <dd class="text-text" data-testid="runtime-limit">
+                {runtimeInfo.memory_limit?.limit_bytes ? formatBytes(runtimeInfo.memory_limit.limit_bytes) : 'None'}
+                <span class="text-xs text-text-muted">({formatLimitSource(runtimeInfo.memory_limit?.source)})</span>
+              </dd>
+            </div>
+          </dl>
+          {:else if runtimeLoading}
+          <p class="text-sm text-text-muted flex items-center gap-2"><InlineSpinner /> Loading…</p>
+          {:else}
+          <p class="text-sm text-text-muted">Memory statistics are unavailable.</p>
+          {/if}
+
+          <div class="border-t border-border pt-4 space-y-3">
+            <label for="memory-limit-mb" class="block text-sm font-medium text-text-muted">
+              Memory limit (MiB)
+              <Tooltip text="A soft limit: when Vault's heap approaches it, the Go garbage collector works harder to stay under it. Set it above the backup working set, or the collector runs almost continuously and backups slow down. 0 turns it off. Applied immediately; no restart needed." />
+            </label>
+            <div class="flex flex-col sm:flex-row gap-2">
+              <input
+                id="memory-limit-mb"
+                type="number"
+                min="0"
+                max="1048576"
+                step="64"
+                bind:value={memoryLimitMb}
+                disabled={readOnly}
+                placeholder="0"
+                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              />
+              {#if !readOnly}
+              <button
+                onclick={saveMemoryLimit}
+                disabled={memoryLimitSaving}
+                class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {#if memoryLimitSaving}<InlineSpinner />{/if}
+                Save Memory Limit
+              </button>
+              {/if}
+            </div>
+            <p class="text-xs text-text-muted">
+              0 = off (the default). Otherwise 512 MiB or more.
+              {#if runtimeInfo?.suggested_limit_mb}
+                About 12% of this server's RAM would be {runtimeInfo.suggested_limit_mb.toLocaleString()} MiB.
+              {/if}
+            </p>
+            {#if runtimeInfo?.memory_limit?.environment_override}
+            <p class="text-xs text-amber-400" data-testid="memory-env-override">
+              The GOMEMLIMIT environment variable is set and takes precedence over this setting.
+            </p>
+            {/if}
+            {#if runtimeInfo?.upload_warnings?.length}
+            <div class="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 space-y-1" data-testid="memory-upload-warnings">
+              <p class="text-xs font-medium text-amber-400">S3 upload buffers can exceed this limit:</p>
+              <ul class="text-xs text-amber-400 list-disc pl-4">
+                {#each runtimeInfo.upload_warnings as w (w.job_id)}
+                <li>{w.job_name} → {w.destination}: up to {formatBytes(w.estimate_bytes)} (part size × 5 × parallel uploads)</li>
+                {/each}
+              </ul>
+              <p class="text-xs text-text-muted">Raise the limit, lower the destination's part size, or reduce the job's parallel uploads. Other work running at the same time (verification, replication, mounts) needs memory too.</p>
+            </div>
+            {/if}
+          </div>
+        </div>
+      </div>
 
       <!-- Diagnostics -->
       <div id="set-diagnostics" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">

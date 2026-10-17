@@ -445,6 +445,9 @@
           </label>
           <input id="s3_part_size" type="number" bind:value={form.config.part_size_mb} placeholder="0 (64 MiB)" min="0" max="5120"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          <p class="mt-1 text-xs text-text-muted" data-testid="s3-part-memory-hint">
+            Each upload stream buffers up to {(((Number(form.config.part_size_mb) || 64) * 5)).toLocaleString()} MiB (part size × 5).
+          </p>
         </div>
       </div>
     </details>
