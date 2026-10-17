@@ -178,6 +178,19 @@ describe('createLogWindow', () => {
     expect(win.rows[win.rows.length - 1].key).toBe('k1999')
   })
 
+  it('stays capped when a collapse toggle expands rows between the anchors', async () => {
+    const { state, win } = setup(2000)
+    win.pin() // anchors k0 .. k199
+    // Expanding folded groups inserts thousands of rows between them.
+    state.all = [state.all[0], ...mk(3000, 'x'), ...state.all.slice(1)]
+    expect(win.rows).toHaveLength(600)
+    expect(win.rows[0].key).toBe('k0')
+    expect(win.hiddenBelow).toBe(true)
+    // Growing continues from the clamped edge.
+    await win.grow()
+    expect(win.rows.length).toBeLessThanOrEqual(600)
+  })
+
   describe('jumpToOldest', () => {
     it('renders only the oldest rows and scrolls to the bottom', async () => {
       const { el, win } = setup(2000)

@@ -12,6 +12,7 @@
 
 import {
   RENDER_WINDOW_BASE,
+  RENDER_WINDOW_MAX,
   renderedCount,
   extendWindow,
   renderedStart,
@@ -49,10 +50,11 @@ export function scrollAction({ atTop, nearOldest, follow, hiddenAbove, hiddenBel
 export function createLogWindow({ rows, box, tick }) {
   let bottom = $state(null) // bottom edge anchor { key, count } (logrows.js)
   let top = $state(null) // top edge anchor { key, index }; null at the live edge
-  let moving = false // a grow/raise is mid-flight; ignore re-entry
+  let moving = $state(false) // a grow/raise is mid-flight; ignore re-entry
   let suppress = false // one-shot: swallow the scroll event of our own write
 
-  const count = () => renderedCount(rows(), bottom)
+  // Where the bottom anchor alone puts the window's end.
+  const anchoredEnd = () => renderedCount(rows(), bottom)
 
   // A top anchor on the first ENTRY row at or after index i. Anchoring on a
   // date header would not hold: today's header stays at index 0 while new
@@ -69,11 +71,21 @@ export function createLogWindow({ rows, box, tick }) {
   const start = () => {
     if (!top) return 0
     const all = rows()
-    const c = count()
+    const c = anchoredEnd()
     const idx = all.findIndex((r) => r.key === top.key)
     if (idx >= 0 && idx < c) return idx
     return Math.min(renderedStart(all, top), Math.max(0, c - RENDER_WINDOW_BASE))
   }
+
+  // Where the window ends: the bottom anchor, but never more than
+  // RENDER_WINDOW_MAX rows past the start. Both anchors can stay valid while
+  // the rows between them multiply (turning Collapse off or Details on
+  // expands every folded group), so the cap is enforced here for every
+  // reader, not only when the window grows or rises.
+  // grow() and raise() lift the cap while they move the window: they render
+  // the new rows, measure, then trim back under the cap with scroll
+  // compensation, which needs the overflow to be on the page in between.
+  const count = () => (moving ? anchoredEnd() : Math.min(anchoredEnd(), start() + RENDER_WINDOW_MAX))
 
   // A programmatic scrollTop write whose own scroll event must be ignored.
   // Browsers fire no event when the position does not change, so the
@@ -144,7 +156,9 @@ export function createLogWindow({ rows, box, tick }) {
       try {
         bottom = extendWindow(rows(), count())
         await tick()
-        const trimmed = trimTop(rows(), top, start(), count())
+        // The raw anchored end, not the capped one: the cap is what this
+        // slide restores by moving the top edge down.
+        const trimmed = trimTop(rows(), top, start(), anchoredEnd())
         if (trimmed !== top) {
           const prevHeight = el.scrollHeight
           const prevTop = el.scrollTop
@@ -174,7 +188,7 @@ export function createLogWindow({ rows, box, tick }) {
         top = raiseWindow(all, start()) ?? topAt(all, 0)
         await tick()
         write(prevTop + (el.scrollHeight - prevHeight))
-        bottom = trimBottom(rows(), bottom, start(), count())
+        bottom = trimBottom(rows(), bottom, start(), anchoredEnd())
       } finally {
         moving = false
       }
