@@ -63,7 +63,8 @@ If upstream becomes active again and releases these fixes:
 2. Remove the `replace` directive and run `go mod tidy`.
 3. Delete `third_party/dnssd/`.
 4. Remove the `COPY third_party/dnssd/` line from `Dockerfile`, the
-   `test-third-party` target in `Makefile`, the third_party test step in
+   `test-third-party` target in `Makefile` together with its use as a
+   prerequisite of `test` (and in `.PHONY`), the third_party test step in
    `.github/workflows/ci.yml`, and the `third_party` exclusions in
    `.pre-commit-config.yaml`, the `gosec` command and
    `.github/codeql/codeql-config.yml`.
