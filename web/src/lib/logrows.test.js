@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow } from './logrows.js'
+import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom } from './logrows.js'
 
 const NOW = new Date('2026-08-25T12:00:00')
 
@@ -257,6 +257,27 @@ describe('render window top edge (#507)', () => {
     const grown = [{ kind: 'entry', key: 'new' }, ...rows]
     expect(renderedStart(grown, top)).toBe(801)
     expect(renderedStart(rows, { key: 'gone', index: 700 })).toBe(700)
-    expect(renderedStart(mk(10), { key: 'gone', index: 700 })).toBe(10)
+    // Never past the start of the oldest base window, so rows stay visible.
+    expect(renderedStart(mk(10), { key: 'gone', index: 700 })).toBe(0)
+    expect(renderedStart(mk(1000), { key: 'gone', index: 950 })).toBe(800)
+  })
+})
+
+describe('render window cap (#507)', () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ kind: 'entry', key: `k${i}` }))
+
+  it('drops the oldest-above rows when growing down past the cap', () => {
+    const rows = mk(2000)
+    expect(trimTop(rows, null, 0, 600, 600)).toBeNull()
+    expect(trimTop(rows, null, 0, 800, 600)).toEqual({ key: 'k200', index: 200 })
+    const keep = { key: 'k10', index: 10 }
+    expect(trimTop(rows, keep, 10, 400, 600)).toBe(keep)
+  })
+
+  it('drops the rows below when growing up past the cap', () => {
+    const rows = mk(2000)
+    const bottom = { key: 'k1999', count: 2000 }
+    expect(trimBottom(rows, bottom, 1400, 2000, 600)).toBe(bottom)
+    expect(trimBottom(rows, bottom, 1200, 2000, 600)).toEqual({ key: 'k1799', count: 1800 })
   })
 })

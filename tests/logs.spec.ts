@@ -193,6 +193,29 @@ test.describe('Logs render window (#507)', () => {
     await consoleBox.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
     await expect.poll(rendered).toBe(399);
 
+    // Further down, the window slides instead of growing: it stays capped at
+    // 600 rows, drops the newest rows above the viewport, and keeps the line
+    // being read in place while it does.
+    for (let i = 0; i < 3; i++) {
+      const before = await consoleBox.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+        const box = el.getBoundingClientRect();
+        const row = [...el.querySelectorAll('[data-entry-id]')].find((r) => r.getBoundingClientRect().top >= box.top) as HTMLElement;
+        const top = row.getBoundingClientRect().top - box.top;
+        el.dispatchEvent(new Event('scroll'));
+        return { id: row.dataset.entryId, top };
+      });
+      await page.waitForTimeout(150);
+      const after = await consoleBox.evaluate((el, id) => {
+        const row = el.querySelector(`[data-entry-id="${id}"]`) as HTMLElement;
+        return row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null;
+      }, before.id);
+      expect(after).not.toBeNull();
+      expect(Math.abs((after as number) - before.top)).toBeLessThan(2);
+      expect(await rendered()).toBeLessThanOrEqual(600);
+    }
+    await expect(consoleBox.locator('[data-entry-id="1500"]')).toHaveCount(0);
+
     // "Jump to oldest" renders only the oldest rows, ending at the marker.
     await page.getByRole('button', { name: 'Jump to oldest log' }).click();
     await expect(consoleBox.locator('[data-entry-id="1"]')).toBeAttached();

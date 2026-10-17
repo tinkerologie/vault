@@ -8,7 +8,7 @@
   import { nearBottom, nearOldestEdge, atTop as isAtTop } from '../lib/scrollflags.js'
   import { getLiveMode } from '../lib/runtime-config.js'
   import { rowTime } from '../lib/tsformat.js'
-  import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow } from '../lib/logrows.js'
+  import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom } from '../lib/logrows.js'
   import { levelStyle, levelLabel } from '../lib/loglevel.js'
   import { formatLine, logLine } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
@@ -52,7 +52,7 @@
   // scrolls towards older lines; see logrows.js for the anchor rules.
   let windowAnchor = $state(null) // bottom edge
   let windowTop = $state(null) // top edge; set only after "Jump to oldest"
-  let raising = false // newer rows are being rendered above the viewport
+  let moving = false // the window is being grown or trimmed; ignore re-entry
   const shownCount = $derived(renderedCount(rows, windowAnchor))
   const shownStart = $derived(Math.min(renderedStart(rows, windowTop), shownCount))
   const shownRows = $derived(rows.slice(shownStart, shownCount))
@@ -70,8 +70,8 @@
   // newer rows ABOVE the viewport, so scrollTop is moved down by exactly the
   // height they add and the line being read stays put.
   async function raiseWindowAbove() {
-    if (!box || raising) return
-    raising = true
+    if (!box || moving) return
+    moving = true
     try {
       const prevHeight = box.scrollHeight
       const prevTop = box.scrollTop
@@ -79,15 +79,36 @@
       await tick()
       suppressNextScroll = true
       box.scrollTop = prevTop + (box.scrollHeight - prevHeight)
+      // Keep the window bounded: drop rows past the cap from the bottom,
+      // which is below the viewport and needs no compensation.
+      windowAnchor = trimBottom(rows, windowAnchor, shownStart, shownCount)
     } finally {
-      raising = false
+      moving = false
     }
   }
 
   // Render the next slice of older rows below the viewport. Content added
-  // below needs no scroll compensation (see the follow effect).
-  function growWindow() {
-    windowAnchor = extendWindow(rows, shownCount)
+  // below needs no scroll compensation (see the follow effect), but rows
+  // dropped from the top to keep the window bounded do: scrollTop moves up
+  // by exactly the height they took, so the line being read stays put.
+  async function growWindow() {
+    if (!box || moving) return
+    moving = true
+    try {
+      windowAnchor = extendWindow(rows, shownCount)
+      await tick()
+      const top = trimTop(rows, windowTop, shownStart, shownCount)
+      if (top !== windowTop) {
+        const prevHeight = box.scrollHeight
+        const prevTop = box.scrollTop
+        windowTop = top
+        await tick()
+        suppressNextScroll = true
+        box.scrollTop = prevTop - (prevHeight - box.scrollHeight)
+      }
+    } finally {
+      moving = false
+    }
   }
 
   const liveMode = getLiveMode()

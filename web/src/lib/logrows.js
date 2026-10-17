@@ -132,7 +132,11 @@ export function extendWindow(rows, count, step = RENDER_WINDOW_STEP) {
 export function renderedStart(rows, top) {
   if (!top) return 0
   const idx = rows.findIndex((r) => r.key === top.key)
-  return Math.max(0, idx >= 0 ? idx : Math.min(top.index, rows.length))
+  if (idx >= 0) return idx
+  // The key is gone (a collapse toggle re-keys rows): keep roughly the same
+  // depth, but never past the start of the oldest base window, or the
+  // window would be empty.
+  return Math.max(0, Math.min(top.index, rows.length - RENDER_WINDOW_BASE))
 }
 
 // The top anchor `step` rows newer than `start`; null once that reaches the
@@ -151,4 +155,25 @@ export function oldestWindow(rows, base = RENDER_WINDOW_BASE) {
     top: start === 0 ? null : { key: rows[start].key, index: start },
     bottom: { key: rows[rows.length - 1].key, count: rows.length },
   }
+}
+
+// The most rows the window holds while the reader scrolls through history
+// (#507): growing at one edge drops rows past this from the other, so a long
+// traversal never rebuilds the whole history on the page.
+export const RENDER_WINDOW_MAX = 600
+
+// After growing DOWN to `count`: the top anchor that keeps at most `max` rows,
+// or `top` unchanged when the window is within bounds.
+export function trimTop(rows, top, start, count, max = RENDER_WINDOW_MAX) {
+  if (count - start <= max) return top
+  const next = count - max
+  return { key: rows[next].key, index: next }
+}
+
+// After growing UP to `start`: the bottom anchor that keeps at most `max`
+// rows, or `bottom` unchanged when the window is within bounds.
+export function trimBottom(rows, bottom, start, count, max = RENDER_WINDOW_MAX) {
+  if (count - start <= max) return bottom
+  const end = start + max
+  return { key: rows[end - 1].key, count: end }
 }
