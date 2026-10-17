@@ -256,6 +256,7 @@ test.describe('Logs render window (#507)', () => {
       await page.waitForTimeout(150);
     }
     expect(await consoleBox.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    await expect.poll(rendered).toBeGreaterThan(200); // the window really grew
     await page.getByPlaceholder(/filter logs/i).fill('Window entry');
     await expect.poll(() => consoleBox.evaluate((el) => el.scrollTop)).toBe(0);
     await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
