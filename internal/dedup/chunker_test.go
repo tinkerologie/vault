@@ -3,8 +3,11 @@ package dedup
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"io"
+	"runtime"
 	"testing"
+	"testing/iotest"
 )
 
 func TestChunkerDeterminism(t *testing.T) {
@@ -112,4 +115,59 @@ func collectBoundaries(t *testing.T, secret, data []byte) []int {
 		t.Fatal(err)
 	}
 	return boundaries
+}
+
+// TestChunkerSplitReusesScanBuffer covers issue #500: Split borrows its
+// 8 MiB scan buffer from a pool instead of allocating one per call, and
+// leaves no file content behind in it.
+func TestChunkerSplitReusesScanBuffer(t *testing.T) {
+	c, err := NewChunker(make([]byte, SecretSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	small := bytes.Repeat([]byte{0xab}, 16<<10)
+	split := func() {
+		if err := c.Split(bytes.NewReader(small), func([]byte) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	split() // warm the pool
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	const calls = 20
+	for range calls {
+		split()
+	}
+	runtime.ReadMemStats(&after)
+	// Without the pool each call allocates 2×ChunkMax (8 MiB). sync.Pool may
+	// drop a buffer at a GC, so allow the odd re-allocation.
+	if perCall := (after.TotalAlloc - before.TotalAlloc) / calls; perCall > 1<<20 {
+		t.Fatalf("Split allocated %d bytes per call; the scan buffer should be pooled", perCall)
+	}
+
+	buf := scanBuffers.Get()
+	defer scanBuffers.Put(buf)
+	for i, b := range *buf {
+		if b != 0 {
+			t.Fatalf("scan buffer byte %d = %#x after Split, want 0", i, b)
+		}
+	}
+}
+
+func TestChunkerSplitClearsBufferOnReadError(t *testing.T) {
+	c, err := NewChunker(make([]byte, SecretSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := io.MultiReader(bytes.NewReader(bytes.Repeat([]byte{0xcd}, 64<<10)), iotest.ErrReader(errors.New("disk gone")))
+	if err := c.Split(r, func([]byte) error { return nil }); err == nil {
+		t.Fatal("want the read error")
+	}
+	buf := scanBuffers.Get()
+	defer scanBuffers.Put(buf)
+	for i, b := range (*buf)[:128<<10] {
+		if b != 0 {
+			t.Fatalf("scan buffer byte %d = %#x after failed Split, want 0", i, b)
+		}
+	}
 }

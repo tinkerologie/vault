@@ -9,6 +9,8 @@ import (
 	// Blank import registers both "fastcdc" and "kfastcdc" algorithms
 	// (the keyed variant lives in the same package as the unkeyed one).
 	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/fastcdc"
+
+	"github.com/tinkerologie/vault/internal/bufpool"
 )
 
 // Default chunk size parameters. 256 KiB / 1 MiB / 4 MiB matches the spec's
@@ -62,7 +64,16 @@ func (c *Chunker) Split(r io.Reader, cb func(chunk []byte) error) error {
 		NormalSize: ChunkAvg,
 		Key:        c.secret,
 	}
-	ch, err := chunkers.NewChunker(algorithm, r, opts)
+	// chunkers.NewChunker allocates a fresh 2×ChunkMax (8 MiB) scan buffer,
+	// and Split runs once per file: a folder of 40,000 small files made
+	// 40,000 such allocations and kept the GC busy for ~40% of the backup's
+	// CPU (issue #500). Borrow the buffer instead. The reader only ever
+	// writes below the number of bytes it has read, so clearing that prefix
+	// on return wipes all file content from it.
+	buf := scanBuffers.Get()
+	src := &countingReader{r: r}
+	defer func() { scanBuffers.PutUsed(buf, int(min(src.n, int64(len(*buf))))) }()
+	ch, err := chunkers.NewChunkerBuffer(algorithm, src, opts, *buf)
 	if err != nil {
 		return fmt.Errorf("dedup: new %s chunker: %w", algorithm, err)
 	}
@@ -80,4 +91,20 @@ func (c *Chunker) Split(r io.Reader, cb func(chunk []byte) error) error {
 			return fmt.Errorf("dedup: chunker next: %w", err)
 		}
 	}
+}
+
+// scanBuffers pools Split's scan buffers, sized like the library's own
+// default (2 × ChunkMax) to keep its read stride.
+var scanBuffers = bufpool.New(2 * ChunkMax)
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }

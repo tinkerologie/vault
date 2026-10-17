@@ -141,3 +141,20 @@ func BenchmarkRepoGet(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkChunkerSplitSmallFile is one small file through Split, the
+// per-file cost of a deduplicated folder backup (issue #500).
+func BenchmarkChunkerSplitSmallFile(b *testing.B) {
+	c, err := NewChunker(make([]byte, SecretSize))
+	if err != nil {
+		b.Fatal(err)
+	}
+	data := bytes.Repeat([]byte{0x5a}, 16<<10)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		if err := c.Split(bytes.NewReader(data), func([]byte) error { return nil }); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
