@@ -321,6 +321,13 @@ func (r *responder) handleQuery(req *Request, services []*Service) {
 	for _, q := range req.msg.Question {
 		msgs := []*dns.Msg{}
 		for _, srv := range services {
+			// Vault patch (tinkerologie/vault#498): a service scoped to
+			// specific interfaces must not answer queries received on
+			// another one. A/AAAA/NSEC already filter by interface; this
+			// covers PTR, SRV, TXT and the DNS-SD meta-query PTR.
+			if !srv.IsVisibleAtInterface(req.IfaceName()) {
+				continue
+			}
 			log.Debug.Printf("%s tries to give response to question %v @%s\n", srv.ServiceInstanceName(), q, req.IfaceName())
 			if msg := r.handleQuestion(q, req, *srv); msg != nil {
 				msgs = append(msgs, msg)
