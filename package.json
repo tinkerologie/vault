@@ -18,7 +18,7 @@
   },
   "homepage": "https://github.com/tinkerologie/vault#readme",
   "devDependencies": {
-    "@playwright/test": "^1.64.0",
+    "@playwright/test": "^1.64.1",
     "@types/node": "^26.6.5"
   }
 }
