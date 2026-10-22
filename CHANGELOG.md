@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Security
+
+- **Storage cleanup can no longer delete files outside Vault's backups (#514):** a local destination whose path was empty (the directory picker's root listing) resolved against the daemon's working directory, `/usr/local/emhttp` on Unraid, and **Delete Storage & Files** then deleted the Unraid WebGUI. Local destinations must now be an absolute, dedicated folder: `/`, system trees such as `/usr`, `/etc` and `/boot`, folders that contain them, and shared parents such as `/mnt/user` are rejected when saved or tested, and also every time a saved destination is used. Symlinks are resolved before the check. Existing destinations with such a path stop working until their path is changed, and can still be deleted with **Keep backup files**.
+- **Deletes are limited to Vault-managed data (#514):** deleting a destination with its files, deleting a job or restore point, and retention now remove only recorded `<job>/<run>` restore points, run folders that contain a Vault `manifest.json`, and the deduplication repository. Other files, and Vault's database backups, are kept. A destination delete that cannot open or list the storage now fails before anything is deleted, and a partial cleanup is reported instead of shown as success. Imports only accept backups found on the destination, and replication only writes files inside the restore point it is copying.
+- **Plugin package no longer changes system directory ownership (#514):** release packages stored every entry, including `/usr`, `/usr/local/emhttp` and `/etc`, as owned by the CI build user (UID 1001), and `installpkg` applied that owner on install. Packages are now built with every entry owned by `root:root`, the build fails if any entry is not, and installing this version restores root ownership of those directories.
+
 ## [v2026.10.02] - 2026-10-17
 
 ### Fixed

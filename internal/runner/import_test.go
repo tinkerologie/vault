@@ -44,6 +44,29 @@ func createNamedLocalDest(t *testing.T, database *db.DB, name, storageDir string
 	return dest
 }
 
+// seedImportManifests writes a placeholder manifest.json under every
+// backup's storage_path, as the destination scan would have found it.
+// ImportBackups refuses paths without one (#514).
+func seedImportManifests(t *testing.T, storageDir string, backups []map[string]any) {
+	t.Helper()
+	for _, b := range backups {
+		p, _ := b["storage_path"].(string)
+		if p == "" {
+			continue
+		}
+		target := filepath.Join(storageDir, filepath.FromSlash(p), "manifest.json")
+		if _, err := os.Stat(target); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte(`{"job_name":"j"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func createLocalDest(t *testing.T, database *db.DB, storageDir string) db.StorageDestination {
 	t.Helper()
 	return createNamedLocalDest(t, database, "test-local", storageDir)
@@ -68,6 +91,7 @@ func TestImportBackups(t *testing.T) {
 			},
 		}
 
+		seedImportManifests(t, storageDir, backups)
 		imported, err := r.ImportBackups(dest.ID, backups)
 		if err != nil {
 			t.Fatalf("ImportBackups error = %v", err)
@@ -113,7 +137,9 @@ func TestImportBackups(t *testing.T) {
 			{"job_name": "dedup-test", "storage_path": "dedup-test/1_run", "backup_type": "full"},
 		}
 
+		seedImportManifests(t, storageDir, backups)
 		imported1, _ := r.ImportBackups(dest.ID, backups)
+		seedImportManifests(t, storageDir, backups)
 		imported2, _ := r.ImportBackups(dest.ID, backups)
 
 		if imported1 != 1 {
@@ -135,6 +161,7 @@ func TestImportBackups(t *testing.T) {
 			{"job_name": "valid", "storage_path": "valid/1_run", "backup_type": "full"},
 		}
 
+		seedImportManifests(t, storageDir, backups)
 		imported, _ := r.ImportBackups(dest.ID, backups)
 		if imported != 1 {
 			t.Errorf("imported = %d, want 1", imported)
@@ -155,6 +182,7 @@ func TestImportBackups(t *testing.T) {
 		backups := []map[string]any{
 			{"job_name": "existing-job", "storage_path": "existing-job/1_run", "backup_type": "full"},
 		}
+		seedImportManifests(t, storageDir, backups)
 		imported, _ := r.ImportBackups(dest.ID, backups)
 		if imported != 1 {
 			t.Errorf("imported = %d, want 1", imported)
@@ -194,6 +222,7 @@ func TestImportBackups(t *testing.T) {
 			},
 		}
 
+		seedImportManifests(t, storageDir, backups)
 		imported, err := r.ImportBackups(dest.ID, backups)
 		if err != nil {
 			t.Fatalf("ImportBackups error = %v", err)
@@ -266,6 +295,7 @@ func TestImportBackups(t *testing.T) {
 			},
 		}
 
+		seedImportManifests(t, storageDir, backups)
 		if _, err := r.ImportBackups(dest.ID, backups); err != nil {
 			t.Fatalf("ImportBackups error = %v", err)
 		}
@@ -291,6 +321,14 @@ func TestImportBackups(t *testing.T) {
 			},
 		}
 
+		// appdata.backup entries point at the archive file itself.
+		archive := filepath.Join(storageDir, "ab_20260304_040001", "plex.tar.gz")
+		if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(archive, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := r.ImportBackups(dest.ID, backups); err != nil {
 			t.Fatalf("ImportBackups error = %v", err)
 		}
@@ -325,6 +363,7 @@ func TestImportBackups(t *testing.T) {
 			},
 		}
 
+		seedImportManifests(t, storageDir, backups)
 		if _, err := r.ImportBackups(dest.ID, backups); err != nil {
 			t.Fatalf("ImportBackups error = %v", err)
 		}
@@ -368,6 +407,7 @@ func TestImportBackups(t *testing.T) {
 			},
 		}
 
+		seedImportManifests(t, storageDir, backups)
 		if _, err := r.ImportBackups(dest.ID, backups); err != nil {
 			t.Fatalf("ImportBackups error = %v", err)
 		}
@@ -764,6 +804,7 @@ func TestImportBackupsRejectsNewerManifestVersion(t *testing.T) {
 			"backup_type":  "full",
 		},
 	}
+	seedImportManifests(t, storageDir, backups)
 	imported, err := r.ImportBackups(dest.ID, backups)
 	if err != nil {
 		t.Fatalf("ImportBackups: %v", err)

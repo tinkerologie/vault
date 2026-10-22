@@ -36,6 +36,7 @@ import (
 	"github.com/tinkerologie/vault/internal/format"
 	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/notify"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/storage"
 	"github.com/tinkerologie/vault/internal/tempdir"
 	"github.com/tinkerologie/vault/internal/ws"
@@ -6117,7 +6118,7 @@ func (r *Runner) enforceRetentionLTR(ctx context.Context, dest db.StorageDestina
 		}
 		r.deleteVMCheckpointsForRP(rp)
 		if adapter != nil && rp.StoragePath != "" {
-			r.deleteStorageDir(adapter, rp.StoragePath)
+			_ = r.deleteRestorePointDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
 		}
 		if err := r.db.DeleteRestorePoint(rp.ID); err != nil {
 			log.Printf("runner: failed to delete restore point %d for job %d: %v", rp.ID, jobID, err)
@@ -6158,7 +6159,7 @@ func (r *Runner) enforceRetention(ctx context.Context, dest db.StorageDestinatio
 		// so retention continues to delete storage and the DB row.
 		r.deleteVMCheckpointsForRP(rp)
 		if adapter != nil && rp.StoragePath != "" {
-			r.deleteStorageDir(adapter, rp.StoragePath)
+			_ = r.deleteRestorePointDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
 		}
 		if err := r.db.DeleteRestorePoint(rp.ID); err != nil {
 			log.Printf("runner: failed to delete restore point %d for job %d: %v", rp.ID, jobID, err)
@@ -6198,11 +6199,6 @@ func (r *Runner) deleteVMCheckpointsForRP(rp db.RestorePoint) {
 	}
 }
 
-// deleteStorageDir recursively deletes all files under a storage path prefix.
-func (r *Runner) deleteStorageDir(adapter storage.Adapter, prefix string) {
-	_ = r.DeleteStorageDir(adapter, prefix)
-}
-
 // DeleteStorageDir recursively deletes all files under a storage path prefix,
 // then removes the directory itself. It returns a joined error describing every
 // list/delete operation that failed (nil when the subtree was removed cleanly)
@@ -6210,6 +6206,12 @@ func (r *Runner) deleteStorageDir(adapter storage.Adapter, prefix string) {
 // — can tell success from partial failure rather than always claiming success.
 // Errors are also logged for operators tailing the daemon log.
 func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) error {
+	// Never recurse from the destination root or from a path that escapes
+	// it: "", ".", "/" and ".." would sweep the whole destination (#514).
+	if _, err := safepath.NormalizeRelative(prefix, false); err != nil {
+		log.Printf("runner: refusing recursive delete of %q: %v", prefix, err)
+		return fmt.Errorf("%w: %q: %w", ErrCleanupRefused, prefix, err)
+	}
 	files, err := adapter.List(prefix)
 	if err != nil {
 		// A directory that no longer exists is already clean — nothing to
@@ -6290,13 +6292,14 @@ func (r *Runner) CleanupJobStorage(jobID int64) error {
 
 	for _, rp := range rps {
 		if rp.StoragePath != "" {
-			_ = r.DeleteStorageDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
+			_ = r.deleteRestorePointDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
 		}
 	}
 
-	// Also clean up the top-level job directory.
-	jobDir := job.Name
-	_ = r.DeleteStorageDir(adapter, jobDir) // best-effort; errors are logged inside
+	// Sweep the job directory for managed run folders the rows missed. Only
+	// directories holding a manifest.json are deleted, so foreign content in
+	// a directory that shares the job's name survives (#514).
+	_ = r.sweepManagedRunDirs(adapter, job.Name) // best-effort
 
 	return nil
 }
@@ -6364,16 +6367,20 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 		var errs []error
 		for _, p := range storagePaths {
 			if p != "" {
-				if e := r.DeleteStorageDir(adapter, p); e != nil {
+				if e := r.deleteRestorePointDir(adapter, p); e != nil {
 					errs = append(errs, e)
 				}
 			}
 		}
-		// Sweep the top-level job directory to catch anything the per-restore-
-		// point paths missed (orphaned partial uploads, sidecar dirs, etc.).
-		// This is best-effort: a job that never wrote a top-level dir would
-		// surface a benign "not found", so its error does not fail the cleanup.
-		_ = r.DeleteStorageDir(adapter, jobName)
+		// Sweep the job directory for managed run folders the recorded paths
+		// missed. Only directories holding a manifest.json are deleted, so
+		// foreign content in a directory that shares the job's name survives
+		// (#514). A missing job directory is not an error (the sweep returns
+		// nil for it); any other failure leaves Vault data behind and is
+		// reported.
+		if e := r.sweepManagedRunDirs(adapter, jobName); e != nil {
+			errs = append(errs, e)
+		}
 
 		// Dedup destinations keep backup data in a shared content-addressed
 		// repo (_vault/), so deleting a job's manifests above leaves its chunks
@@ -6430,27 +6437,7 @@ func (r *Runner) reclaimDedupAfterJobDelete(adapter storage.Adapter, jobID int64
 	// backups (vault.db.<timestamp> + vault.db.latest) share that directory,
 	// and removing the root destroyed the daemon's own disaster-recovery
 	// copies on this destination (issue #183).
-	for _, sub := range dedup.RepoSubpaths() {
-		var e error
-		if fi, statErr := adapter.Stat(sub); statErr == nil && !fi.IsDir {
-			e = adapter.Delete(sub) // plain file (repo.json)
-		} else {
-			e = r.DeleteStorageDir(adapter, sub) // directory (packs/, index/); no-op when absent
-		}
-		if e != nil && !storage.IsNotExist(e) {
-			*errs = append(*errs, fmt.Errorf("remove dedup repo path %s: %w", sub, e))
-		}
-	}
-	// Header copies kept by a key rewrap (#451) hold a sealed master key too.
-	backups, err := dedup.HeaderBackups(adapter)
-	if err != nil {
-		*errs = append(*errs, fmt.Errorf("list dedup header backups: %w", err))
-	}
-	for _, b := range backups {
-		if e := adapter.Delete(b); e != nil && !storage.IsNotExist(e) {
-			*errs = append(*errs, fmt.Errorf("remove dedup header backup %s: %w", b, e))
-		}
-	}
+	*errs = append(*errs, r.removeDedupRepoFiles(adapter)...)
 	// Surface a failure to clear the dedup index too: leaving stale pack/chunk
 	// rows behind would corrupt the repo re-init on the next backup, so it must
 	// not fail silently.
@@ -6517,7 +6504,7 @@ func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.Stor
 		defer storage.CloseAdapter(adapter)
 
 		if storagePath != "" {
-			if e := r.DeleteStorageDir(adapter, storagePath); e != nil {
+			if e := r.deleteRestorePointDir(adapter, storagePath); e != nil {
 				log.Printf("runner: async cleanup for restore point %d failed: %v", rpID, e)
 				r.logActivity("error", "system",
 					fmt.Sprintf("Failed to delete backup files for deleted restore point %d — files may remain on storage", rpID),
@@ -6536,23 +6523,80 @@ func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.Stor
 	}()
 }
 
-// CleanupStorageDestination deletes all Vault backup files from a storage
-// destination by removing all top-level job directories.
+// CleanupStorageDestination deletes Vault's backup files from a storage
+// destination. It removes only data Vault can prove it owns (#514): the
+// restore point paths recorded for jobs on this destination, run directories
+// that contain a manifest.json, and the dedup repository. Unrelated files and
+// directories, and the _vault database backups, are left in place.
+//
+// It returns an error wrapping ErrCleanupUnavailable when nothing could be
+// attempted (the adapter cannot be built or the root cannot be listed), and
+// a joined error describing every refusal or failed delete
+// otherwise (nil when the cleanup was complete).
 func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		return fmt.Errorf("creating storage adapter: %w", err)
+		return fmt.Errorf("%w: creating storage adapter: %w", ErrCleanupUnavailable, err)
 	}
 	defer storage.CloseAdapter(adapter)
 
-	// List and delete all top-level job directories.
-	topEntries, listErr := adapter.List(".")
-	if listErr == nil {
-		for _, entry := range topEntries {
-			if entry.IsDir {
-				_ = r.DeleteStorageDir(adapter, entry.Path) // best-effort; errors are logged inside
+	// Probe the destination before deleting anything: if its root cannot be
+	// listed, the cleanup is unavailable rather than partial, so the caller
+	// keeps the record and the user can choose "Keep backup files".
+	topEntries, err := adapter.List(".")
+	if err != nil && !storage.IsNotExist(err) {
+		return fmt.Errorf("%w: list destination root: %w", ErrCleanupUnavailable, err)
+	}
+
+	var errs []error
+
+	// 1. Restore points the database records for jobs on this destination.
+	jobs, err := r.db.ListJobs()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list jobs: %w", err))
+	}
+	for _, job := range jobs {
+		if job.StorageDestID != dest.ID {
+			continue
+		}
+		rps, err := r.db.ListRestorePoints(job.ID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("list restore points for job %d: %w", job.ID, err))
+			continue
+		}
+		for _, rp := range rps {
+			if rp.StoragePath == "" {
+				continue
+			}
+			if e := r.deleteRestorePointDir(adapter, rp.StoragePath); e != nil {
+				errs = append(errs, e)
 			}
 		}
+	}
+
+	// 2. Run directories found by layout (<job>/<run>/manifest.json), which
+	// covers backups from jobs that were deleted or never imported.
+	for _, entry := range topEntries {
+		if !entry.IsDir || path.Clean(entry.Path) == "_vault" {
+			continue
+		}
+		if e := r.sweepManagedRunDirs(adapter, entry.Path); e != nil {
+			errs = append(errs, e)
+		}
+	}
+
+	// 3. The dedup repository, identified by its repo.json. The _vault
+	// database backups that share the directory are kept (#183).
+	if fi, statErr := adapter.Stat("_vault/repo.json"); statErr == nil && !fi.IsDir {
+		errs = append(errs, r.removeDedupRepoFiles(adapter)...)
+		if e := r.db.DeleteDedupState(dest.ID); e != nil {
+			errs = append(errs, fmt.Errorf("clear dedup index state: %w", e))
+		}
+	}
+
+	if err := errors.Join(errs...); err != nil {
+		log.Printf("runner: cleanup of destination %q incomplete: %v", dest.Name, err)
+		return err
 	}
 	return nil
 }
@@ -6836,27 +6880,41 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 		importRepo    *dedup.Repo
 		importRepoErr error
 		importOpened  bool
+		importDest    db.StorageDestination
 		importAdapter storage.Adapter
+		adapterErr    error
+		adapterOpened bool
 	)
 	defer func() {
 		if importAdapter != nil {
 			storage.CloseAdapter(importAdapter)
 		}
 	}()
+	// One adapter serves every entry: each storage path is checked against
+	// the destination before a row is created for it.
+	openAdapter := func() (storage.Adapter, error) {
+		if adapterOpened {
+			return importAdapter, adapterErr
+		}
+		adapterOpened = true
+		importDest, adapterErr = r.db.GetStorageDestination(storageDestID)
+		if adapterErr != nil {
+			return nil, adapterErr
+		}
+		importAdapter, adapterErr = storage.NewAdapter(importDest.Type, importDest.Config)
+		return importAdapter, adapterErr
+	}
 	openDedup := func() (*dedup.Repo, error) {
 		if importOpened {
 			return importRepo, importRepoErr
 		}
 		importOpened = true
-		dest, err := r.db.GetStorageDestination(storageDestID)
+		adapter, err := openAdapter()
 		if err != nil {
 			importRepoErr = err
 			return nil, err
 		}
-		if importAdapter, importRepoErr = storage.NewAdapter(dest.Type, dest.Config); importRepoErr != nil {
-			return nil, importRepoErr
-		}
-		importRepo, importRepoErr = r.openExistingDedupRepo(importAdapter, dest, pass)
+		importRepo, importRepoErr = r.openExistingDedupRepo(adapter, importDest, pass)
 		if errors.Is(importRepoErr, dedup.ErrServerKeyMismatch) {
 			log.Printf("runner: import: %s", dedup.KeyMismatchHint)
 		}
@@ -6866,32 +6924,40 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 	imported := 0
 
 	for _, b := range backups {
+		// An imported row later authorises retention and job deletion to
+		// recursively delete its storage path, so the client-supplied path
+		// must have the managed <job>/<run> shape and hold a manifest.json on
+		// this destination (#514).
+		rawPath, _ := b["storage_path"].(string)
+		if rawPath == "" {
+			continue
+		}
+		validPath, err := safepath.NormalizeRestorePointPath(rawPath)
+		if err != nil {
+			log.Printf("runner: import: skipping %q: %v", rawPath, err)
+			continue
+		}
+		adapter, err := openAdapter()
+		if err != nil {
+			log.Printf("runner: import: destination %d unavailable: %v", storageDestID, err)
+			continue
+		}
+		if err := checkImportPathOwned(adapter, b, validPath); err != nil {
+			log.Printf("runner: import: skipping %q: %v", rawPath, err)
+			continue
+		}
+
 		if isEnc, _ := b["encrypted"].(bool); isEnc {
-			storagePath, _ := b["storage_path"].(string)
-			if storagePath == "" {
-				continue
-			}
-			dest, err := r.db.GetStorageDestination(storageDestID)
-			if err != nil {
-				log.Printf("runner: import: destination %d not found: %v", storageDestID, err)
-				continue
-			}
-			adapter, err := storage.NewAdapter(dest.Type, dest.Config)
-			if err != nil {
-				log.Printf("runner: import: adapter error for dest %d: %v", storageDestID, err)
-				continue
-			}
+			storagePath := validPath
 			manifestPath := storagePath + "/manifest.json"
 			rc, err := adapter.Read(manifestPath)
 			if err != nil {
-				storage.CloseAdapter(adapter)
 				log.Printf("runner: import: failed to read manifest %s: %v", manifestPath, err)
 				continue
 			}
 			data, err := io.ReadAll(rc)
 			_ = rc.Close()
 			if err != nil {
-				storage.CloseAdapter(adapter)
 				log.Printf("runner: import: failed to read %s: %v", manifestPath, err)
 				continue
 			}
@@ -6917,7 +6983,6 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 						}
 					}
 				}
-				storage.CloseAdapter(adapter)
 				if plaintext == nil {
 					log.Printf("runner: import: cannot decrypt encrypted backup %s", storagePath)
 					continue
@@ -6929,13 +6994,11 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 				}
 				decryptedManifest["storage_path"] = storagePath
 				b = decryptedManifest
-			} else {
-				storage.CloseAdapter(adapter)
 			}
 		}
 
 		jobName, _ := b["job_name"].(string)
-		storagePath, _ := b["storage_path"].(string)
+		storagePath := validPath
 		backupType, _ := b["backup_type"].(string)
 		sizeBytes, _ := b["size_bytes"].(float64)
 		compression, _ := b["compression"].(string)

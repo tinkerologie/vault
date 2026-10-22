@@ -397,29 +397,50 @@ func TestCleanupStorageDestinationEmpty(t *testing.T) {
 	}
 }
 
-// TestCleanupStorageDestinationWipesAllJobDirs covers the loop body that
-// removes top-level job directories.
-func TestCleanupStorageDestinationWipesAllJobDirs(t *testing.T) {
+// TestCleanupStorageDestinationRemovesOnlyManagedRuns checks that a
+// destination wipe removes Vault run folders (those with a manifest.json)
+// and empty job folders, and keeps everything it cannot prove is Vault's
+// (#514).
+func TestCleanupStorageDestinationRemovesOnlyManagedRuns(t *testing.T) {
 	t.Parallel()
 	r, database, storageDir := setupTestRunner(t)
 	dest := createLocalDest(t, database, storageDir)
 
-	for _, name := range []string{"job-a", "job-b", "job-c"} {
-		dir := filepath.Join(storageDir, name, "run1")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(storageDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "data.tar"), []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
+	for _, name := range []string{"job-a", "job-b", "job-c"} {
+		write(name+"/run1/manifest.json", `{"job_name":"j"}`)
+		write(name+"/run1/data.tar", "x")
+	}
+	// Foreign content that shares the destination root.
+	write("languages/en.txt", "keep")
+	write("plugins/dynamix/page.php", "keep")
+	write("job-a/notes/readme.txt", "keep")
+	write("top-level-file.txt", "keep")
+	// A web app's manifest.json is not Vault's.
+	write("Sites/blog/manifest.json", `{"name":"blog","start_url":"/"}`)
+	write("Sites/blog/index.html", "keep")
+	write("_vault/vault.db.latest", "keep")
 
 	if err := r.CleanupStorageDestination(dest); err != nil {
 		t.Fatalf("CleanupStorageDestination: %v", err)
 	}
-	for _, name := range []string{"job-a", "job-b", "job-c"} {
-		if _, err := os.Stat(filepath.Join(storageDir, name)); !os.IsNotExist(err) {
-			t.Errorf("%s should have been removed", name)
+	for _, gone := range []string{"job-a/run1", "job-b", "job-c"} {
+		if _, err := os.Stat(filepath.Join(storageDir, filepath.FromSlash(gone))); !os.IsNotExist(err) {
+			t.Errorf("%s should have been removed (stat err=%v)", gone, err)
+		}
+	}
+	for _, kept := range []string{"languages/en.txt", "plugins/dynamix/page.php", "job-a/notes/readme.txt", "top-level-file.txt", "_vault/vault.db.latest", "Sites/blog/index.html"} {
+		if _, err := os.Stat(filepath.Join(storageDir, filepath.FromSlash(kept))); err != nil {
+			t.Errorf("%s must survive the wipe: %v", kept, err)
 		}
 	}
 }

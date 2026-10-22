@@ -277,8 +277,14 @@
     const { id, deleteFiles, jobCount } = confirmDelete
     confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 }
     try {
-      await api.deleteStorage(id, { deleteFiles, force: jobCount > 0 })
-      showToast(deleteFiles ? 'Storage and backup files deleted' : 'Storage deleted (backup files kept)', 'success')
+      const res = await api.deleteStorage(id, { deleteFiles, force: jobCount > 0 })
+      if (res?.cleanup_error) {
+        // The record is gone but some backup files could not be removed
+        // (or were refused as not Vault-managed, #514).
+        showToast(`Storage deleted, but some backup files were not removed: ${res.cleanup_error}`, 'warning')
+      } else {
+        showToast(deleteFiles ? 'Storage and Vault backup files deleted' : 'Storage deleted (backup files kept)', 'success')
+      }
       await loadData()
     } catch (e) {
       showToast(e.message, 'error')
@@ -748,8 +754,8 @@
             onchange={() => confirmDelete.deleteFiles = true}
             class="mt-0.5 accent-[var(--color-danger)]" />
           <div>
-            <p class="text-sm font-medium text-text">Delete all backup files</p>
-            <p class="text-xs text-text-dim mt-0.5">Remove the storage destination <strong class="text-danger">and permanently delete all Vault backup files</strong> on it.</p>
+            <p class="text-sm font-medium text-text">Delete Vault backup files</p>
+            <p class="text-xs text-text-dim mt-0.5">Remove the storage destination <strong class="text-danger">and permanently delete the Vault-managed restore points</strong> on it. Other files and folders in the destination are left untouched.</p>
           </div>
         </label>
       </div>

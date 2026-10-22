@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/unraid"
 )
 
@@ -424,6 +425,11 @@ func (h *RecoveryHandler) remapStorage(id int64, newPath string) (bool, string) 
 	if dest.Type != "local" {
 		return false, "only local destinations can be remapped"
 	}
+	cleaned, err := safepath.ValidateLocalStorageRoot(newPath)
+	if err != nil {
+		return false, err.Error()
+	}
+	newPath = cleaned
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(dest.Config), &cfg); err != nil {
 		log.Printf("path-remap: storage %d: malformed config: %v", id, err)

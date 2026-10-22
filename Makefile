@@ -102,7 +102,12 @@ package: release
 	cp -r web/dist/. $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui/
 	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cp -r plugin/event $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
-	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/
+	@# Store every entry as root:root. installpkg runs as root and applies the
+	@# archive's owners, so a package built by the CI runner (UID 1001) used to
+	@# hand /usr, /usr/local/emhttp and /etc to that UID on install (#514).
+	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar --owner=0 --group=0 --numeric-owner -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/
+	@bad="$$(tar --numeric-owner -tvJf $(BUILD_DIR)/$(BINARY)-$(VERSION).txz | awk '{ split($$2, o, "/"); u = (o[2] != "") ? o[1] : $$3; g = (o[2] != "") ? o[2] : $$4; if (u != "0" || g != "0") print }')"; \
+		if [ -n "$$bad" ]; then echo "ERROR: package entries not owned by root:root:"; echo "$$bad"; exit 1; fi
 	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"
 
 lint:

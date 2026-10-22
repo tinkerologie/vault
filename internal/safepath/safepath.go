@@ -1,7 +1,9 @@
 package safepath
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"path/filepath"
 	"strings"
@@ -123,4 +125,174 @@ func NormalizeComponent(name string) (string, error) {
 		return "", fmt.Errorf("name must be a single local path component")
 	}
 	return trimmed, nil
+}
+
+// protectedStorageTrees are host directories that must never hold, or sit
+// beneath, a local storage destination: the destination and everything
+// below it would be exposed to Vault's recursive cleanup. Issue #514: a
+// destination that resolved to /usr/local/emhttp let "Delete Storage &
+// Files" erase the Unraid WebGUI.
+var protectedStorageTrees = []string{
+	"/bin",
+	"/boot",
+	"/dev",
+	"/etc",
+	"/lib",
+	"/lib32",
+	"/lib64",
+	"/libx32",
+	"/proc",
+	"/root",
+	"/run",
+	"/sbin",
+	"/sys",
+	"/usr",
+	"/var/cache",
+	"/var/lib",
+	"/var/local",
+	"/var/log",
+	"/var/run",
+	"/var/spool",
+}
+
+// sharedStorageParents are directories that may contain a destination but
+// must not be one: each holds unrelated user data or other mounts side by
+// side, so it is rejected only as the destination itself.
+var sharedStorageParents = []string{
+	"/home",
+	"/media",
+	"/mnt",
+	"/mnt/addons",
+	"/mnt/disks",
+	"/mnt/remotes",
+	"/mnt/rootshare",
+	"/mnt/user",
+	"/mnt/user0",
+	"/opt",
+	"/private",
+	"/private/tmp",
+	"/private/var",
+	"/srv",
+	"/tmp",
+}
+
+// ValidateLocalStorageRoot checks that path is a safe root for a local
+// storage destination and returns it cleaned. It rejects empty and relative
+// paths (they resolve against the daemon's working directory), protected
+// system trees and their ancestors (including "/"), and shared parents such
+// as /mnt/user. The check runs on the path as written and again on its
+// symlink-resolved form, so a symlink cannot smuggle a protected target in.
+func ValidateLocalStorageRoot(p string) (string, error) {
+	trimmed := strings.TrimSpace(p)
+	if trimmed == "" {
+		return "", fmt.Errorf("storage path is required")
+	}
+	if !filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("storage path %q must be an absolute path", trimmed)
+	}
+	cleaned := filepath.Clean(trimmed)
+	if err := checkStorageRoot(p, cleaned); err != nil {
+		return "", err
+	}
+	resolved, err := resolveExistingPrefix(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("storage path %q cannot be resolved: %w", cleaned, err)
+	}
+	if resolved != cleaned {
+		if err := checkStorageRoot(p, resolved); err != nil {
+			return "", err
+		}
+	}
+	return cleaned, nil
+}
+
+func checkStorageRoot(original, p string) error {
+	for _, tree := range protectedStorageTrees {
+		if p == tree || isStrictDescendantPath(tree, p) || isStrictDescendantPath(p, tree) {
+			return fmt.Errorf("storage path %q is a protected system location; choose a dedicated backup directory such as /mnt/user/backups/vault", strings.TrimSpace(original))
+		}
+	}
+	for _, parent := range sharedStorageParents {
+		if p == parent {
+			return fmt.Errorf("storage path %q is a shared parent directory; choose a dedicated subdirectory such as %s", strings.TrimSpace(original), filepath.Join(parent, "vault-backups"))
+		}
+	}
+	return nil
+}
+
+// isStrictDescendantPath reports whether child lies strictly below parent.
+// Both must be clean absolute paths.
+func isStrictDescendantPath(parent, child string) bool {
+	if parent == child {
+		return false
+	}
+	if parent == string(filepath.Separator) {
+		return strings.HasPrefix(child, parent)
+	}
+	return strings.HasPrefix(child, parent+string(filepath.Separator))
+}
+
+// resolveExistingPrefix resolves symlinks in the deepest existing ancestor of
+// p and re-appends the part that does not exist yet. Any error other than
+// "does not exist" fails closed.
+func resolveExistingPrefix(p string) (string, error) {
+	cur := p
+	var rest []string
+	for {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			for i := len(rest) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, rest[i])
+			}
+			return resolved, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p, nil
+		}
+		rest = append(rest, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+// NormalizeRestorePointPath validates a restore point's storage path: a
+// relative, slash-separated path of at least two components
+// (<job name>/<run folder>). It rejects the destination root, absolute
+// paths, traversal, and single top-level directories, so a recorded or
+// imported row can never authorise a recursive delete of the whole
+// destination or of a directory Vault did not create.
+func NormalizeRestorePointPath(p string) (string, error) {
+	trimmed := strings.TrimSpace(filepath.ToSlash(p))
+	if trimmed == "" {
+		return "", fmt.Errorf("restore point path is required")
+	}
+	if path.IsAbs(trimmed) {
+		return "", fmt.Errorf("restore point path %q must be relative", trimmed)
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("restore point path %q must stay within the destination", trimmed)
+	}
+	if !strings.Contains(cleaned, "/") {
+		return "", fmt.Errorf("restore point path %q must be <job>/<run>", trimmed)
+	}
+	return cleaned, nil
+}
+
+// IsStrictDescendant reports whether child is a slash-separated path strictly
+// below parent. Both are cleaned first; absolute or escaping children never
+// qualify. Used to confine a peer-supplied listing to the requested prefix.
+func IsStrictDescendant(parent, child string) bool {
+	parent = path.Clean(filepath.ToSlash(strings.TrimSpace(parent)))
+	child = path.Clean(filepath.ToSlash(strings.TrimSpace(child)))
+	if path.IsAbs(child) || child == "." || child == ".." || strings.HasPrefix(child, "../") {
+		return false
+	}
+	if parent == "." {
+		return true
+	}
+	return strings.HasPrefix(child, parent+"/")
 }

@@ -633,6 +633,17 @@ func (s *MCPServer) addGetJobHistoryTool() {
 
 // --- Storage CRUD Tools ---
 
+// validateStorageConfig builds (and closes) an adapter from the config, which
+// rejects unknown types, malformed configs and unsafe local roots.
+func validateStorageConfig(storageType, configJSON string) error {
+	adapter, err := storage.NewAdapter(storageType, configJSON)
+	if err != nil {
+		return fmt.Errorf("invalid storage config: %w", err)
+	}
+	storage.CloseAdapter(adapter)
+	return nil
+}
+
 type createStorageInput struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
@@ -648,6 +659,11 @@ func (s *MCPServer) addCreateStorageTool() {
 			Name:   input.Name,
 			Type:   input.Type,
 			Config: input.Config,
+		}
+		// Validate like the REST API does, so an unsafe local root (#514)
+		// or a broken config is never persisted.
+		if err := validateStorageConfig(dest.Type, dest.Config); err != nil {
+			return nil, nil, err
 		}
 		id, err := s.db.CreateStorageDestination(dest)
 		if err != nil {
@@ -682,6 +698,11 @@ func (s *MCPServer) addUpdateStorageTool() {
 		}
 		if input.Config != "" {
 			dest.Config = input.Config
+		}
+		if input.Type != "" || input.Config != "" {
+			if err := validateStorageConfig(dest.Type, dest.Config); err != nil {
+				return nil, nil, err
+			}
 		}
 		if err := s.db.UpdateStorageDestination(dest); err != nil {
 			return nil, nil, fmt.Errorf("updating storage %d: %w", input.ID, err)

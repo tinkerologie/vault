@@ -81,7 +81,7 @@ func TestHandlers_DuplicateName_Conflict(t *testing.T) {
 			name: "storage destination",
 			creates: func(t *testing.T) (*httptest.ResponseRecorder, *httptest.ResponseRecorder) {
 				h := newStorageHandlerForTest(t)
-				body := []byte(`{"name":"dup-dest","type":"local","config":"{\"path\":\"/tmp\"}"}`)
+				body := []byte(`{"name":"dup-dest","type":"local","config":"{\"path\":\"/tmp/vault-dup-dest\"}"}`)
 				w1 := httptest.NewRecorder()
 				h.Create(w1, newReq(http.MethodPost, "/storage", body))
 				w2 := httptest.NewRecorder()

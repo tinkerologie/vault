@@ -399,6 +399,35 @@ func TestPathAudit(t *testing.T) {
 	}
 }
 
+// Path remap applies the local storage root policy (#514): an existing but
+// protected directory is refused per row.
+func TestPathRemapRejectsUnsafeStorageRoot514(t *testing.T) {
+	d := newTestDB(t)
+	h := NewRecoveryHandler(d, "v1.0.0")
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "remap-514", Type: "local", Config: `{"path":"/mnt/gone/away"}`,
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+	body := []byte(`{"updates":[{"kind":"storage","id":` + itoa(destID) + `,"new_path":"/"}]}`)
+	w := httptest.NewRecorder()
+	h.PathRemap(w, newReq(http.MethodPost, "/api/v1/recovery/path-remap", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "protected") || strings.Contains(w.Body.String(), `"applied":true`) {
+		t.Fatalf("remap to / should be refused: %s", w.Body.String())
+	}
+	dest, err := d.GetStorageDestination(destID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dest.Config, "/mnt/gone/away") {
+		t.Fatalf("config changed: %s", dest.Config)
+	}
+}
+
 func TestPathRemap(t *testing.T) {
 	d := newTestDB(t)
 	h := NewRecoveryHandler(d, "v1.0.0")

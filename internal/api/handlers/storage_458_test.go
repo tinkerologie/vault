@@ -89,13 +89,16 @@ func TestStorageDelete458_Branches(t *testing.T) {
 		wantStatus458(t, w, http.StatusNoContent)
 	})
 
-	t.Run("deleteFiles cleanup failure is logged", func(t *testing.T) {
+	t.Run("deleteFiles with an unusable adapter fails before deleting", func(t *testing.T) {
 		t.Parallel()
 		h := newStorageHandlerForTest(t)
 		bogus := seedDest458(t, h.db, "bogus-type", "{}", false)
 		w := httptest.NewRecorder()
 		h.Delete(w, reqWithID(http.MethodDelete, "/x?deleteFiles=true", idStr(bogus), nil))
-		wantStatus458(t, w, http.StatusNoContent)
+		wantStatus458(t, w, http.StatusBadRequest)
+		if _, err := h.db.GetStorageDestination(bogus); err != nil {
+			t.Fatalf("record must survive a cleanup that could not run: %v", err)
+		}
 	})
 
 	t.Run("force disable error", func(t *testing.T) {

@@ -175,6 +175,7 @@ func TestImportBackupsMetadataBranchesB458(t *testing.T) {
 		{"job_name": "too-new", "storage_path": "x/y", "version": 50.0},
 		{"job_name": "", "storage_path": "x/z"},
 	}
+	seedImportManifests(t, storageDir, backups)
 	n, err := r.ImportBackups(dest.ID, backups)
 	if err != nil {
 		t.Fatalf("ImportBackups: %v", err)

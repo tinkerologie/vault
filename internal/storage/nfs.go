@@ -94,8 +94,15 @@ func (n *NFSAdapter) mount() error {
 		}
 	}
 
+	local, err := NewValidatedLocalAdapter(basePath)
+	if err != nil {
+		_ = exec.Command("umount", dir).Run() // #nosec G204 //nolint:gosec // dir is vault-controlled temp dir
+		_ = os.Remove(dir)
+		return fmt.Errorf("nfs: %w", err)
+	}
+
 	n.mountDir = dir
-	n.local = NewLocalAdapter(basePath)
+	n.local = local
 	n.mounted = true
 	return nil
 }

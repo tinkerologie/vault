@@ -1,7 +1,12 @@
 <script>
   import { api } from '../lib/api.js'
 
-  let { value = $bindable(''), onselect = () => {}, includeZfs = false, label = 'Path' } = $props()
+  // validate(path) may return a reason string that blocks "Select This Path"
+  // for the current directory (the storage form uses it to refuse unsafe
+  // destination roots, #514). The root listing itself is never selectable:
+  // it is a list of shortcuts, not a directory, and selecting it used to
+  // yield an empty path.
+  let { value = $bindable(''), onselect = () => {}, includeZfs = false, label = 'Path', validate = () => '' } = $props()
 
   let open = $state(false)
   let entries = $state([])
@@ -52,7 +57,12 @@
     browse(entry.path)
   }
 
+  let selectBlockedReason = $derived(
+    loading ? 'Loading…' : !currentPath ? 'Open a directory to select it.' : validate(currentPath) || ''
+  )
+
   function confirm() {
+    if (selectBlockedReason) return
     value = currentPath
     onselect(currentPath)
     open = false
@@ -133,9 +143,12 @@
         </div>
 
         <!-- Footer: select button -->
+        {#if selectBlockedReason && !loading}
+          <p class="px-5 pt-3 text-xs text-warning" role="status" data-testid="path-select-blocked">{selectBlockedReason}</p>
+        {/if}
         <div class="flex justify-end gap-3 px-5 py-3 border-t border-border">
           <button onclick={() => open = false} class="px-4 py-2 text-sm text-text-muted hover:text-text rounded-lg">Cancel</button>
-          <button onclick={confirm} class="px-4 py-2 text-sm font-medium bg-vault text-white rounded-lg hover:bg-vault/90 transition-colors">
+          <button onclick={confirm} disabled={!!selectBlockedReason} class="px-4 py-2 text-sm font-medium bg-vault text-white rounded-lg hover:bg-vault/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             Select This Path
           </button>
         </div>

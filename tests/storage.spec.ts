@@ -141,4 +141,111 @@ test.describe('Storage Management & Target Setup Wizard', () => {
     await expect(page.getByText(/storage deleted/i)).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Local Array Backup' })).not.toBeVisible();
   });
+
+  test.describe('unsafe local roots (#514)', () => {
+    // A small directory tree: the root listing holds shortcuts, then
+    // /mnt -> /mnt/user -> /mnt/user/backups.
+    const tree: Record<string, { path: string; entries: { name: string; path: string; is_dir: boolean }[] }> = {
+      '': { path: '', entries: [{ name: 'mnt', path: '/mnt', is_dir: true }, { name: 'boot', path: '/boot', is_dir: true }] },
+      '/mnt': { path: '/mnt', entries: [{ name: 'user', path: '/mnt/user', is_dir: true }] },
+      '/mnt/user': { path: '/mnt/user', entries: [{ name: 'backups', path: '/mnt/user/backups', is_dir: true }] },
+      '/mnt/user/backups': { path: '/mnt/user/backups', entries: [] },
+      '/boot': { path: '/boot', entries: [] },
+    };
+
+    async function openLocalForm(page) {
+      await page.route(/\/api\/v1\/browse(\?|$)/, (route) => {
+        const p = new URL(route.request().url()).searchParams.get('path') || '';
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(tree[p] ?? tree['']) });
+      });
+      await page.goto('/#/storage');
+      await page.getByRole('button', { name: /add storage/i }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.locator('#sname').fill('Picker Safety');
+      await dialog.getByRole('button', { name: /^Local/ }).click();
+      return dialog;
+    }
+
+    test('the directory picker cannot select the root listing or shared parents', async ({ page }) => {
+      const deletes: string[] = [];
+      page.on('request', (req) => { if (req.method() === 'DELETE') deletes.push(req.url()); });
+      await openLocalForm(page);
+
+      await page.getByRole('button', { name: 'Browse directories' }).click();
+      const select = page.getByRole('button', { name: 'Select This Path' });
+
+      // Root listing: not selectable at all.
+      await expect(select).toBeDisabled();
+      await expect(page.getByTestId('path-select-blocked')).toContainText('Open a directory');
+
+      // Shared parents and protected trees are blocked with a reason.
+      await page.getByRole('button', { name: /^mnt/ }).click();
+      await expect(page.getByTestId('path-select-blocked')).toContainText('shared parent');
+      await expect(select).toBeDisabled();
+      await page.getByRole('button', { name: /^user/ }).click();
+      await expect(page.getByTestId('path-select-blocked')).toContainText('shared parent');
+      await expect(select).toBeDisabled();
+
+      // A dedicated folder is selectable.
+      await page.getByRole('button', { name: /^backups/ }).click();
+      await expect(select).toBeEnabled();
+      await select.click();
+      await expect(page.getByRole('textbox', { name: 'Path' })).toHaveValue('/mnt/user/backups');
+
+      // Picking a directory never triggers a destructive request.
+      expect(deletes).toEqual([]);
+    });
+
+    test('an unsafe typed path shows a hint and is not submitted', async ({ page }) => {
+      const posts: string[] = [];
+      page.on('request', (req) => {
+        if (req.method() === 'POST' && /\/api\/v1\/storage$/.test(new URL(req.url()).pathname)) posts.push(req.url());
+      });
+      const dialog = await openLocalForm(page);
+      const pathInput = dialog.getByRole('textbox', { name: 'Path' });
+
+      await pathInput.fill('/');
+      await expect(dialog.getByTestId('local-path-hint')).toContainText('protected system location');
+      await pathInput.fill('relative/dir');
+      await expect(dialog.getByTestId('local-path-hint')).toContainText('absolute');
+
+      await dialog.getByRole('button', { name: 'Add Storage', exact: true }).click();
+      await expect(page.getByText(/must be absolute/i).last()).toBeVisible();
+      expect(posts).toEqual([]);
+    });
+
+    test('a server rejection of the root is shown to the user', async ({ page }) => {
+      const dialog = await openLocalForm(page);
+      await page.route(/\/api\/v1\/storage$/, (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        return route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'storage path "/mnt/user/link" is a protected system location; choose a dedicated backup directory such as /mnt/user/backups/vault' }),
+        });
+      });
+      await dialog.getByRole('textbox', { name: 'Path' }).fill('/mnt/user/link');
+      await dialog.getByRole('button', { name: 'Add Storage', exact: true }).click();
+      await expect(page.getByText(/is a protected system location/).first()).toBeVisible();
+    });
+
+    test('a partial file cleanup is reported as a warning, not success', async ({ page }) => {
+      await page.route(/\/api\/v1\/storage\/\d+(\?.*)?$/, (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ deleted: true, cleanup_error: 'refusing to delete a path outside Vault\'s managed backup layout: "plugins"' }),
+        });
+      });
+      await page.goto('/#/storage');
+      await page.getByRole('button', { name: /delete storage/i }).first().click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByText(/Other files and folders in the destination are left untouched/)).toBeVisible();
+      await dialog.getByText('Delete Vault backup files').click();
+      await dialog.getByRole('button', { name: 'Delete Storage & Files' }).click();
+      await expect(page.getByText(/some backup files were not removed/i)).toBeVisible();
+      await expect(page.getByText('Storage and Vault backup files deleted')).toHaveCount(0);
+    });
+  });
 });
