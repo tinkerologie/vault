@@ -399,6 +399,7 @@ func TestCleanupStorageDestinationDatabaseErrors514(t *testing.T) {
 		otherRun, _ := d.CreateJobRun(db.JobRun{JobID: otherID, Status: "success"})
 		for _, rp := range []db.RestorePoint{
 			{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "", Metadata: "{}"},
+			{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "plugins", Metadata: "{}"}, // refused: one component
 			{JobRunID: otherRun, JobID: otherID, BackupType: "full", StoragePath: "elsewhere/run", Metadata: "{}"},
 		} {
 			if _, err := d.CreateRestorePoint(rp); err != nil {
@@ -406,8 +407,12 @@ func TestCleanupStorageDestinationDatabaseErrors514(t *testing.T) {
 			}
 		}
 		write514(t, root, "elsewhere/run/data.tar", "x") // another destination's row; not touched
-		if err := r.CleanupStorageDestination(dest); err != nil {
-			t.Fatalf("CleanupStorageDestination: %v", err)
+		write514(t, root, "plugins/dynamix/page.php", "keep")
+		if err := r.CleanupStorageDestination(dest); !errors.Is(err, ErrCleanupRefused) {
+			t.Fatalf("CleanupStorageDestination = %v, want ErrCleanupRefused for the recorded %q", err, "plugins")
+		}
+		if !exists514(t, root, "plugins/dynamix/page.php") {
+			t.Error("a refused recorded path was deleted")
 		}
 		if !exists514(t, root, "elsewhere/run/data.tar") {
 			t.Error("a restore point of another destination was deleted")
