@@ -141,6 +141,11 @@ npm --prefix web run lint
 npm --prefix web run build
 ```
 
+`npm --prefix web test` runs two Vitest projects: `unit` (Node, pure logic)
+and `component` (jsdom, `*.component.test.js` under `web/src/pages` and
+`web/src/components`). Target one with `npx vitest run --project <name>` from
+`web/`. See `CONTRIBUTING.md` for which layer a test belongs in.
+
 Use targeted tests while iterating, then run the checks proportional to the
 change. `make test` prepares the embedded changelog before running Go tests.
 
