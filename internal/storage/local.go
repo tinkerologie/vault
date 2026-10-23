@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,15 +16,53 @@ import (
 	"github.com/tinkerologie/vault/internal/safepath"
 )
 
+// createWriteProbe and removeWriteProbe are the filesystem calls behind
+// TestConnection's write probe. They are variables only so tests can inject
+// write, close and removal failures that a real directory cannot produce.
+var (
+	createWriteProbe = os.CreateTemp
+	removeWriteProbe = os.Remove
+)
+
+// LocalAdapter stores backups in a directory on a locally mounted filesystem.
 type LocalAdapter struct {
 	basePath string
+	// rootErr is set when basePath failed ValidateLocalStorageRoot. Every
+	// operation returns it before touching the filesystem, so a destination
+	// saved before validation existed (or built by a caller that bypasses
+	// the factory) fails closed instead of operating on "/" or on the
+	// daemon's working directory (issue #514).
+	rootErr error
 }
 
+// NewLocalAdapter returns an adapter rooted at basePath. An unsafe root (see
+// safepath.ValidateLocalStorageRoot) does not panic or return nil: the
+// adapter is returned in a failed state and every operation reports the
+// validation error. Use NewValidatedLocalAdapter to get the error up front.
 func NewLocalAdapter(basePath string) *LocalAdapter {
-	return &LocalAdapter{basePath: basePath}
+	cleaned, err := safepath.ValidateLocalStorageRoot(basePath)
+	if err != nil {
+		return &LocalAdapter{basePath: basePath, rootErr: err}
+	}
+	return &LocalAdapter{basePath: cleaned}
 }
 
+// NewValidatedLocalAdapter is NewLocalAdapter that returns the root
+// validation error instead of a failed adapter.
+func NewValidatedLocalAdapter(basePath string) (*LocalAdapter, error) {
+	a := NewLocalAdapter(basePath)
+	if a.rootErr != nil {
+		return nil, a.rootErr
+	}
+	return a, nil
+}
+
+// fullPath joins a storage-relative path to the adapter root, rejecting an
+// unsafe root, traversal, and symlinks that resolve outside the root.
 func (l *LocalAdapter) fullPath(path string, allowRoot bool) (string, error) {
+	if l.rootErr != nil {
+		return "", l.rootErr
+	}
 	fullPath, err := safepath.JoinUnderBase(l.basePath, path, allowRoot)
 	if err != nil {
 		return "", fmt.Errorf("invalid path %q: %w", path, err)
@@ -50,9 +90,14 @@ func (l *LocalAdapter) fullPath(path string, allowRoot bool) (string, error) {
 func verifyNoSymlinkEscape(basePath, fullPath string) error {
 	resolvedBase, err := filepath.EvalSymlinks(basePath)
 	if err != nil {
-		// Base missing/unreadable — let the operation itself surface the
-		// real error rather than masking it with a containment failure.
-		return nil
+		// A missing base is left to the operation itself, which surfaces
+		// the real "not found" error. Any other resolution failure (for
+		// example a permission error or a symlink loop) fails closed: the
+		// containment check cannot run, so the operation must not either.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("resolve destination root %q: %w", basePath, err)
 	}
 	p := fullPath
 	for {
@@ -233,7 +278,13 @@ func (l *LocalAdapter) Stat(path string) (FileInfo, error) {
 	}, nil
 }
 
+// TestConnection checks that the root is a writable directory by creating,
+// writing and removing a uniquely named probe file. Every step's failure is
+// reported, and an existing file is never overwritten.
 func (l *LocalAdapter) TestConnection() error {
+	if l.rootErr != nil {
+		return l.rootErr
+	}
 	info, err := os.Stat(l.basePath)
 	if err != nil {
 		return fmt.Errorf("path not accessible: %w", err)
@@ -241,11 +292,22 @@ func (l *LocalAdapter) TestConnection() error {
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a directory", l.basePath)
 	}
-	testFile := filepath.Join(l.basePath, ".vault_test")
-	if err := os.WriteFile(testFile, []byte("test"), 0600); err != nil {
+	// A uniquely named, exclusively created probe never overwrites an
+	// existing file in the destination, unlike the fixed ".vault_test"
+	// name used before.
+	probe, err := createWriteProbe(l.basePath, ".vault_test-*")
+	if err != nil {
 		return fmt.Errorf("not writable: %w", err)
 	}
-	_ = os.Remove(testFile)
+	probePath := probe.Name()
+	_, writeErr := probe.WriteString("test")
+	closeErr := probe.Close()
+	if err := removeWriteProbe(probePath); err != nil {
+		return fmt.Errorf("remove write probe %s: %w", probePath, err)
+	}
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return fmt.Errorf("not writable: %w", err)
+	}
 	return nil
 }
 
@@ -257,6 +319,9 @@ func (l *LocalAdapter) TestConnection() error {
 func (l *LocalAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	if err := ctx.Err(); err != nil {
 		return Capacity{}, err
+	}
+	if l.rootErr != nil {
+		return Capacity{}, l.rootErr
 	}
 	u, err := fsstat.Stat(l.basePath)
 	if err != nil {

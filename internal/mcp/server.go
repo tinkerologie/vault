@@ -613,6 +613,7 @@ type getJobHistoryInput struct {
 	Limit int   `json:"limit,omitempty"`
 }
 
+// addGetJobHistoryTool registers get_job_history, which lists a job's runs.
 func (s *MCPServer) addGetJobHistoryTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "get_job_history",
@@ -633,12 +634,25 @@ func (s *MCPServer) addGetJobHistoryTool() {
 
 // --- Storage CRUD Tools ---
 
+// validateStorageConfig builds (and closes) an adapter from the config, which
+// rejects unknown types, malformed configs and unsafe local roots.
+func validateStorageConfig(storageType, configJSON string) error {
+	adapter, err := storage.NewAdapter(storageType, configJSON)
+	if err != nil {
+		return fmt.Errorf("invalid storage config: %w", err)
+	}
+	storage.CloseAdapter(adapter)
+	return nil
+}
+
 type createStorageInput struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
 	Config string `json:"config"`
 }
 
+// addCreateStorageTool registers create_storage. The config is validated by
+// building an adapter, so unsafe local roots are rejected (#514).
 func (s *MCPServer) addCreateStorageTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "create_storage",
@@ -648,6 +662,11 @@ func (s *MCPServer) addCreateStorageTool() {
 			Name:   input.Name,
 			Type:   input.Type,
 			Config: input.Config,
+		}
+		// Validate like the REST API does, so an unsafe local root (#514)
+		// or a broken config is never persisted.
+		if err := validateStorageConfig(dest.Type, dest.Config); err != nil {
+			return nil, nil, err
 		}
 		id, err := s.db.CreateStorageDestination(dest)
 		if err != nil {
@@ -665,6 +684,8 @@ type updateStorageInput struct {
 	Config string `json:"config,omitempty"`
 }
 
+// addUpdateStorageTool registers update_storage. A changed type or config is
+// re-validated by building an adapter before it is saved.
 func (s *MCPServer) addUpdateStorageTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "update_storage",
@@ -682,6 +703,11 @@ func (s *MCPServer) addUpdateStorageTool() {
 		}
 		if input.Config != "" {
 			dest.Config = input.Config
+		}
+		if input.Type != "" || input.Config != "" {
+			if err := validateStorageConfig(dest.Type, dest.Config); err != nil {
+				return nil, nil, err
+			}
 		}
 		if err := s.db.UpdateStorageDestination(dest); err != nil {
 			return nil, nil, fmt.Errorf("updating storage %d: %w", input.ID, err)

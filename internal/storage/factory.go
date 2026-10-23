@@ -91,7 +91,9 @@ func newRawAdapter(storageType, configJSON string) (Adapter, error) {
 		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 			return nil, fmt.Errorf("parse local config: %w", err)
 		}
-		return NewLocalAdapter(cfg.Path), nil
+		// Reject an unsafe root here, before the middleware chain, so every
+		// caller (API, runner, replication) fails closed on it (#514).
+		return NewValidatedLocalAdapter(cfg.Path)
 	case "sftp":
 		var cfg SFTPConfig
 		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {

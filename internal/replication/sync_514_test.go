@@ -1,0 +1,324 @@
+package replication
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
+)
+
+// newListingServer serves a fixed remote listing per prefix and "abc" for
+// every download, counting the downloads it served.
+func newListingServer(t *testing.T, listings map[string][]StorageFile, downloads *int) *Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/storage/3/list":
+			files, ok := listings[r.URL.Query().Get("prefix")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(files)
+		case "/api/v1/storage/3/files":
+			if downloads != nil {
+				*downloads++
+			}
+			_, _ = io.WriteString(w, "abc")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// A peer must not be able to direct writes outside the requested restore
+// point, or loop the sync forever (#514).
+func TestDownloadDirConfinement514(t *testing.T) {
+	t.Parallel()
+	cases := map[string]map[string][]StorageFile{
+		"sibling job":        {"job/run": {{Path: "other-job/run/f.bin", Size: 3}}},
+		"parent traversal":   {"job/run": {{Path: "job/run/../../escape.bin", Size: 3}}},
+		"absolute path":      {"job/run": {{Path: "/etc/passwd", Size: 3}}},
+		"root alias":         {"job/run": {{Path: ".", IsDir: true}}},
+		"self listing":       {"job/run": {{Path: "job/run", IsDir: true}}},
+		"prefix lookalike":   {"job/run": {{Path: "job/run-evil/f.bin", Size: 3}}},
+		"listing cycle":      {"job/run": {{Path: "job/run/a", IsDir: true}}, "job/run/a": {{Path: "job/run", IsDir: true}}},
+		"escaping subfolder": {"job/run": {{Path: "job/run/a", IsDir: true}}, "job/run/a": {{Path: "job/x.bin", Size: 3}}},
+	}
+	for name, listing := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			downloads := 0
+			c := newListingServer(t, listing, &downloads)
+			s := NewSyncer(openTestDB(t), nil)
+			dir := t.TempDir()
+			if _, err := s.downloadDir(c, 3, "job/run", storage.NewLocalAdapter(dir)); err == nil {
+				t.Fatal("downloadDir accepted a listing outside the restore point")
+			}
+			if downloads != 0 {
+				t.Fatalf("downloaded %d file(s) from an out-of-prefix listing", downloads)
+			}
+			entries, _ := os.ReadDir(dir)
+			if len(entries) != 0 {
+				t.Fatalf("files were written: %v", entries)
+			}
+		})
+	}
+}
+
+func TestDownloadDirDepthLimit514(t *testing.T) {
+	t.Parallel()
+	listings := map[string][]StorageFile{}
+	cur := "job/run"
+	for range maxDownloadDepth + 2 {
+		next := cur + "/d"
+		listings[cur] = []StorageFile{{Path: next, IsDir: true}}
+		cur = next
+	}
+	c := newListingServer(t, listings, nil)
+	s := NewSyncer(openTestDB(t), nil)
+	if _, err := s.downloadDir(c, 3, "job/run", storage.NewLocalAdapter(t.TempDir())); err == nil || !strings.Contains(err.Error(), "deeper") {
+		t.Fatalf("want depth-limit error, got %v", err)
+	}
+}
+
+// A remote restore point whose storage path is not <job>/<run> is skipped:
+// nothing is downloaded and no local row is created for it.
+func TestSyncRestorePointRejectsUnmanagedPaths514(t *testing.T) {
+	t.Parallel()
+	for _, p := range []string{"", ".", "/", "job", "/abs/run", "../up/run", "job/../.."} {
+		t.Run(p, func(t *testing.T) {
+			t.Parallel()
+			downloads := 0
+			c := newListingServer(t, map[string][]StorageFile{p: {{Path: "f.bin", Size: 3}}, ".": {{Path: "f.bin", Size: 3}}}, &downloads)
+			d := openTestDB(t)
+			destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			src := db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}
+			rj := RemoteJob{ID: 8, StorageDestID: 3, Name: "J"}
+			s := NewSyncer(d, nil)
+			jobID, err := s.ensureLocalJob(src, rj)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rrp := RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}
+			if _, err := s.syncRestorePoint(c, src, rj, rrp, jobID, storage.NewLocalAdapter(t.TempDir())); err == nil {
+				t.Fatal("syncRestorePoint accepted an unmanaged storage path")
+			}
+			if downloads != 0 {
+				t.Fatalf("downloaded %d file(s)", downloads)
+			}
+			rps, _ := d.ListRestorePoints(jobID)
+			if len(rps) != 0 {
+				t.Fatalf("created %d restore point row(s)", len(rps))
+			}
+		})
+	}
+}
+
+// A local adapter with an unsafe root refuses to write anything.
+func TestDownloadDirUnsafeLocalRoot514(t *testing.T) {
+	t.Parallel()
+	c := newListingServer(t, map[string][]StorageFile{"job/run": {{Path: "job/run/f.bin", Size: 3}}}, nil)
+	s := NewSyncer(openTestDB(t), nil)
+	if _, err := s.downloadDir(c, 3, "job/run", storage.NewLocalAdapter("")); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("want root validation error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(".", "job")); !os.IsNotExist(err) {
+		t.Fatalf("a relative root wrote into the working directory: %v", err)
+	}
+}
+
+// A peer path that differs only in form ("job/run/") matches the stored,
+// normalised row and is not downloaded again.
+func TestSyncJobMatchesNormalisedPaths514(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/jobs/8/restore-points") {
+			_ = json.NewEncoder(w).Encode([]RemoteRestorePoint{{ID: 1, JobID: 8, BackupType: "full", StoragePath: "./job/run/"}})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := openTestDB(t)
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
+	src := db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}
+	rj := RemoteJob{ID: 8, Name: "J"}
+	s := NewSyncer(d, nil)
+	jobID, err := s.ensureLocalJob(src, rj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, _ := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "completed", BackupType: "full"})
+	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "job/run"}); err != nil {
+		t.Fatal(err)
+	}
+	n, _, err := s.syncJob(c, src, rj, storage.NewLocalAdapter(t.TempDir()))
+	if err != nil || n != 0 {
+		t.Fatalf("syncJob = %d, %v; want the existing point to be skipped", n, err)
+	}
+}
+
+// A directory listed twice is visited once: the second visit is refused, so
+// a peer cannot make the sync loop over the same subtree.
+func TestDownloadDirRevisit514(t *testing.T) {
+	t.Parallel()
+	c := newListingServer(t, map[string][]StorageFile{
+		"job/run":   {{Path: "job/run/a", IsDir: true}, {Path: "job/run/a/", IsDir: true}},
+		"job/run/a": {},
+	}, nil)
+	s := NewSyncer(openTestDB(t), nil)
+	if _, err := s.downloadDir(c, 3, "job/run", storage.NewLocalAdapter(t.TempDir())); err == nil || !strings.Contains(err.Error(), "revisits") {
+		t.Fatalf("want revisit error, got %v", err)
+	}
+}
+
+// A remote point with an invalid path is compared as-is and then refused.
+func TestSyncJobSkipsInvalidRemotePath514(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/jobs/8/restore-points") {
+			_ = json.NewEncoder(w).Encode([]RemoteRestorePoint{{ID: 1, JobID: 8, BackupType: "full", StoragePath: "../escape"}})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := openTestDB(t)
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
+	s := NewSyncer(d, nil)
+	n, _, err := s.syncJob(c, db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}, RemoteJob{ID: 8, Name: "J"}, storage.NewLocalAdapter(t.TempDir()))
+	if err != nil || n != 0 {
+		t.Fatalf("syncJob = %d, %v; want the invalid point skipped", n, err)
+	}
+}
+
+// An S3-backed peer reports keys with sanitised segments ("My Job" becomes
+// "My_Job"). Those entries still belong to the restore point and are written
+// locally under the restore point's own path; a lookalike or escaping path
+// still does not belong.
+func TestChildRemainderS3Sanitised514(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		parent, child string
+		want          string // joined remainder, "" when rejected
+	}{
+		{"My Job/2026-01-01_000000", "My_Job/2026-01-01_000000/f.bin", "f.bin"},
+		{"My Job/2026-01-01_000000", "My Job/2026-01-01_000000/f.bin", "f.bin"},
+		{"Docker & VMs/run", "Docker___VMs/run/a/b", "a/b"},
+		{"My Job/run", "My_Job/run", ""},
+		{"My Job/run", "My_Job/run-2/f", ""},
+		{"My Job/run", "Other/run/f", ""},
+		{"My Job/run", "../My_Job/run/f", ""},
+		{"My Job/run", "/My_Job/run/f", ""},
+	}
+	for _, tc := range cases {
+		mode := matchUndecided
+		rel, ok := childRemainder(tc.parent, tc.child, &mode)
+		got := ""
+		if ok {
+			got = strings.Join(rel, "/")
+		}
+		if got != tc.want {
+			t.Errorf("childRemainder(%q, %q) = %q, want %q", tc.parent, tc.child, got, tc.want)
+		}
+	}
+
+	downloads := 0
+	c := newListingServer(t, map[string][]StorageFile{
+		"My Job/run":     {{Path: "My_Job/run/sub", IsDir: true}},
+		"My_Job/run/sub": {{Path: "My_Job/run/sub/f.bin", Size: 3}},
+	}, &downloads)
+	s := NewSyncer(openTestDB(t), nil)
+	dir := t.TempDir()
+	if _, err := s.downloadDir(c, 3, "My Job/run", storage.NewLocalAdapter(dir)); err != nil || downloads != 1 {
+		t.Fatalf("downloadDir of an S3-sanitised listing = %v (downloads %d)", err, downloads)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "My Job", "run", "sub", "f.bin")); err != nil || string(b) != "abc" {
+		t.Fatalf("file not written under the restore point path: %q, %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "My_Job")); !os.IsNotExist(err) {
+		t.Fatalf("sanitised path written locally: %v", err)
+	}
+}
+
+// Once a restore point's entries are literal descendants, a sanitised
+// lookalike sibling is refused, and vice versa: a non-S3 peer cannot pull
+// "My_Job/run/secret.bin" into "My Job/run".
+func TestChildRemainderModeLock514(t *testing.T) {
+	t.Parallel()
+	mode := matchUndecided
+	if _, ok := childRemainder("My Job/run", "My Job/run/a.bin", &mode); !ok || mode != matchLiteral {
+		t.Fatalf("literal entry: ok=%v mode=%v", ok, mode)
+	}
+	if _, ok := childRemainder("My Job/run", "My_Job/run/secret.bin", &mode); ok {
+		t.Fatal("sanitised sibling accepted after a literal entry")
+	}
+
+	mode = matchUndecided
+	if _, ok := childRemainder("My Job/run", "My_Job/run/a.bin", &mode); !ok || mode != matchSanitised {
+		t.Fatalf("sanitised entry: ok=%v mode=%v", ok, mode)
+	}
+	if _, ok := childRemainder("My Job/run", "My Job/run/b.bin", &mode); ok {
+		t.Fatal("literal entry accepted after the listing was sanitised")
+	}
+
+	downloads := 0
+	c := newListingServer(t, map[string][]StorageFile{
+		"My Job/run": {{Path: "My Job/run/a.bin", Size: 3}, {Path: "My_Job/run/secret.bin", Size: 3}},
+	}, &downloads)
+	s := NewSyncer(openTestDB(t), nil)
+	if _, err := s.downloadDir(c, 3, "My Job/run", storage.NewLocalAdapter(t.TempDir())); err == nil {
+		t.Fatal("a mixed listing was accepted")
+	}
+}
+
+// fakeRemote serves a fixed listing and streams whose Close fails.
+type fakeRemote struct{ files map[string][]StorageFile }
+
+type closeFailBody struct{ io.Reader }
+
+func (closeFailBody) Close() error { return errors.New("stream reset") }
+
+func (f fakeRemote) ListStorageFiles(_ int64, prefix string) ([]StorageFile, error) {
+	return f.files[prefix], nil
+}
+
+func (f fakeRemote) DownloadFile(int64, string) (io.ReadCloser, error) {
+	return closeFailBody{strings.NewReader("abc")}, nil
+}
+
+// A download whose stream fails to close is reported, not counted as done.
+func TestDownloadDirStreamCloseError514(t *testing.T) {
+	t.Parallel()
+	src := fakeRemote{files: map[string][]StorageFile{"job/run": {{Path: "job/run/f.bin", Size: 3}}}}
+	s := NewSyncer(openTestDB(t), nil)
+	if _, err := s.downloadDir(src, 3, "job/run", storage.NewLocalAdapter(t.TempDir())); err == nil || !strings.Contains(err.Error(), "closing download stream") {
+		t.Fatalf("want a stream close error, got %v", err)
+	}
+}

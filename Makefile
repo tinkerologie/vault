@@ -57,7 +57,7 @@ build-windows: internal/release/CHANGELOG.md build-web
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe ./cmd/vault/
 
 test: internal/release/CHANGELOG.md test-third-party
-	go test ./internal/... ./cmd/... -v
+	go test ./internal/... ./cmd/... ./scripts/... -v
 
 # Patched upstream modules under third_party/ are separate Go modules, so the
 # root ./... patterns never reach their tests (issue #498).
@@ -102,7 +102,10 @@ package: release
 	cp -r web/dist/. $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui/
 	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cp -r plugin/event $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
-	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/
+	@# Store every entry as root:root. installpkg runs as root and applies the
+	@# archive's owners, so a package built by the CI runner (UID 1001) used to
+	@# hand /usr, /usr/local/emhttp and /etc to that UID on install (#514).
+	sh scripts/make-package-archive.sh $(BUILD_DIR)/pkg $(BUILD_DIR)/$(BINARY)-$(VERSION).txz
 	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"
 
 lint:
