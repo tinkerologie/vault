@@ -115,3 +115,103 @@ func TestVerifyNoSymlinkEscapeFailsClosed514(t *testing.T) {
 		t.Fatalf("missing base should defer to the operation: %v", err)
 	}
 }
+
+// The write probe reports every failure: creating it, writing or closing it,
+// and removing it afterwards (a probe left behind would litter the
+// destination). Not parallel: it swaps package-level seams.
+func TestLocalTestConnectionProbeFailures514(t *testing.T) {
+	dir := t.TempDir()
+	origCreate, origRemove := createWriteProbe, removeWriteProbe
+	t.Cleanup(func() { createWriteProbe, removeWriteProbe = origCreate, origRemove })
+
+	cases := map[string]struct {
+		create func(string, string) (*os.File, error)
+		remove func(string) error
+		want   string
+	}{
+		"create fails": {
+			create: func(string, string) (*os.File, error) { return nil, os.ErrPermission },
+			want:   "not writable",
+		},
+		"write and close fail": {
+			// A file that is already closed rejects both the write and the close.
+			create: func(d, p string) (*os.File, error) {
+				f, err := os.CreateTemp(d, p)
+				if err == nil {
+					_ = f.Close()
+				}
+				return f, err
+			},
+			want: "not writable",
+		},
+		"remove fails": {
+			remove: func(string) error { return os.ErrPermission },
+			want:   "remove write probe",
+		},
+	}
+	for name, tc := range cases {
+		createWriteProbe, removeWriteProbe = origCreate, origRemove
+		if tc.create != nil {
+			createWriteProbe = tc.create
+		}
+		if tc.remove != nil {
+			removeWriteProbe = tc.remove
+		}
+		if err := NewLocalAdapter(dir).TestConnection(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: TestConnection = %v, want error containing %q", name, err, tc.want)
+		}
+	}
+}
+
+// The NFS adapter refuses to mount under a protected temp directory, before
+// it creates or mounts anything. Not parallel: it sets TMPDIR.
+func TestNFSMountRejectsProtectedTempDir514(t *testing.T) {
+	t.Setenv("TMPDIR", "/usr/local/emhttp")
+	n, err := NewNFSAdapter(NFSConfig{Host: "nas.invalid", Export: "/export", Version: "4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := n.mount(); err == nil || !strings.Contains(err.Error(), "unsafe mount location") {
+		t.Fatalf("mount = %v, want unsafe mount location", err)
+	}
+	if n.mounted || n.mountDir != "" {
+		t.Fatal("adapter marked mounted after a refused mount")
+	}
+}
+
+// A base path that names a symlink inside the export to a protected host
+// directory is refused, and the export is unmounted again. The fake mount
+// only plants the symlink: nothing is written through it. Not parallel: it
+// swaps the mount seams.
+func TestNFSMountRejectsSymlinkedBasePath514(t *testing.T) {
+	origMount, origUnmount := mountExport, unmountExport
+	t.Cleanup(func() { mountExport, unmountExport = origMount, origUnmount })
+	t.Setenv("TMPDIR", t.TempDir())
+	unmounted := ""
+	mountExport = func(args ...string) ([]byte, error) {
+		target := args[len(args)-1]
+		return nil, os.Symlink("/usr", filepath.Join(target, "link"))
+	}
+	unmountExport = func(dir string) error { unmounted = dir; return nil }
+
+	n, err := NewNFSAdapter(NFSConfig{Host: "nas.invalid", Export: "/export", Version: "4", BasePath: "link/local/emhttp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := n.mount(); err == nil || !strings.Contains(err.Error(), "protected") {
+		t.Fatalf("mount = %v, want a protected-path refusal", err)
+	}
+	if n.mounted || unmounted == "" {
+		t.Fatalf("mounted=%v unmounted=%q; want the export unmounted", n.mounted, unmounted)
+	}
+
+	// A safe base path inside the export mounts normally.
+	mountExport = func(args ...string) ([]byte, error) {
+		return nil, os.Mkdir(filepath.Join(args[len(args)-1], "vault"), 0o755)
+	}
+	ok, _ := NewNFSAdapter(NFSConfig{Host: "nas.invalid", Export: "/export", Version: "4", BasePath: "vault"})
+	if err := ok.mount(); err != nil || !ok.mounted {
+		t.Fatalf("safe mount = %v (mounted %v)", err, ok.mounted)
+	}
+	ok.unmount()
+}

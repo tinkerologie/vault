@@ -417,6 +417,9 @@ func (h *RecoveryHandler) PathRemap(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
+// remapStorage points a local destination at newPath after a recovery onto
+// different disks. newPath must pass the local storage root policy (#514).
+// It returns whether the change was applied and a user-facing error.
 func (h *RecoveryHandler) remapStorage(id int64, newPath string) (bool, string) {
 	dest, err := h.db.GetStorageDestination(id)
 	if err != nil {

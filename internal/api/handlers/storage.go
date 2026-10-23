@@ -282,6 +282,10 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.notifyConfigChange()
 }
 
+// Delete handles DELETE /api/v1/storage/{id}. With force=true, dependent jobs
+// are disabled first. With deleteFiles=true, Vault-managed backup data is
+// removed before the record: the request fails without deleting anything
+// when cleanup cannot run, and reports cleanup_error on a partial cleanup.
 func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
 	if !ok {

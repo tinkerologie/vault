@@ -3,6 +3,7 @@ package replication
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"path"
 	"strings"
@@ -505,6 +506,13 @@ func childRemainder(parent, child string, mode *matchMode) ([]string, bool) {
 	return cs[len(ps):], true
 }
 
+// remoteFiles is the part of *Client that downloadDir needs. It is an
+// interface so tests can return listings and streams a real peer would not.
+type remoteFiles interface {
+	ListStorageFiles(storageID int64, prefix string) ([]StorageFile, error)
+	DownloadFile(storageID int64, filePath string) (io.ReadCloser, error)
+}
+
 // maxDownloadDepth bounds how far below a restore point downloadDir will
 // descend. Vault run folders are a few levels deep; a peer that reports a
 // deeper tree is broken or hostile.
@@ -517,12 +525,15 @@ const maxDownloadDepth = 32
 // the restore point path even when the peer reports sanitised S3 keys. Each
 // directory is visited once, and recursion depth is bounded, so a
 // self-referencing listing cannot loop forever.
-func (s *Syncer) downloadDir(client *Client, storageID int64, dirPath string, localAdapter storage.Adapter) (int64, error) {
+func (s *Syncer) downloadDir(client remoteFiles, storageID int64, dirPath string, localAdapter storage.Adapter) (int64, error) {
 	mode := matchUndecided
 	return s.downloadDirConfined(client, storageID, dirPath, path.Clean(dirPath), localAdapter, map[string]bool{}, &mode, 0)
 }
 
-func (s *Syncer) downloadDirConfined(client *Client, storageID int64, remoteDir, localDir string, localAdapter storage.Adapter, visited map[string]bool, mode *matchMode, depth int) (int64, error) {
+// downloadDirConfined is downloadDir's recursive step: it lists remoteDir,
+// checks each entry with childRemainder, downloads files to the matching
+// path under localDir, and recurses into directories it has not visited.
+func (s *Syncer) downloadDirConfined(client remoteFiles, storageID int64, remoteDir, localDir string, localAdapter storage.Adapter, visited map[string]bool, mode *matchMode, depth int) (int64, error) {
 	if depth > maxDownloadDepth {
 		return 0, fmt.Errorf("remote listing under %q is deeper than %d levels", remoteDir, maxDownloadDepth)
 	}

@@ -206,6 +206,8 @@ func ValidateLocalStorageRoot(p string) (string, error) {
 	return cleaned, nil
 }
 
+// checkStorageRoot applies the protected-tree and shared-parent rules to one
+// clean absolute path. original is the caller's input, quoted in errors.
 func checkStorageRoot(original, p string) error {
 	for _, tree := range protectedStorageTrees {
 		if p == tree || isStrictDescendantPath(tree, p) || isStrictDescendantPath(p, tree) {

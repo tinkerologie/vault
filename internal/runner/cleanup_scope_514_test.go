@@ -2,6 +2,7 @@ package runner
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -418,4 +419,42 @@ func TestCleanupStorageDestinationDatabaseErrors514(t *testing.T) {
 			t.Error("a restore point of another destination was deleted")
 		}
 	})
+}
+
+// failingReadAdapter wraps a real adapter but fails manifest reads, either
+// when opening the file or while reading it.
+type failingReadAdapter struct {
+	storage.Adapter
+	openErr bool
+}
+
+type manifestErrReader struct{}
+
+func (manifestErrReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (manifestErrReader) Close() error             { return nil }
+
+func (f failingReadAdapter) Read(p string) (io.ReadCloser, error) {
+	if f.openErr {
+		return nil, errors.New("open failed")
+	}
+	return manifestErrReader{}, nil
+}
+
+// A manifest that exists but cannot be read is not proof of ownership.
+func TestHasManifestReadFailures514(t *testing.T) {
+	t.Parallel()
+	_, _, root := setupTestRunner(t)
+	write514(t, root, "j/run/manifest.json", `{"job_name":"j"}`)
+	base := localAdapter514(t, root)
+	if !hasManifest(base, "j/run") {
+		t.Fatal("precondition: a readable manifest is accepted")
+	}
+	for name, a := range map[string]storage.Adapter{
+		"open fails": failingReadAdapter{Adapter: base, openErr: true},
+		"read fails": failingReadAdapter{Adapter: base},
+	} {
+		if hasManifest(a, "j/run") {
+			t.Errorf("%s: hasManifest accepted an unreadable manifest", name)
+		}
+	}
 }

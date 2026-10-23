@@ -2,6 +2,7 @@ package replication
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -294,5 +295,30 @@ func TestChildRemainderModeLock514(t *testing.T) {
 	s := NewSyncer(openTestDB(t), nil)
 	if _, err := s.downloadDir(c, 3, "My Job/run", storage.NewLocalAdapter(t.TempDir())); err == nil {
 		t.Fatal("a mixed listing was accepted")
+	}
+}
+
+// fakeRemote serves a fixed listing and streams whose Close fails.
+type fakeRemote struct{ files map[string][]StorageFile }
+
+type closeFailBody struct{ io.Reader }
+
+func (closeFailBody) Close() error { return errors.New("stream reset") }
+
+func (f fakeRemote) ListStorageFiles(_ int64, prefix string) ([]StorageFile, error) {
+	return f.files[prefix], nil
+}
+
+func (f fakeRemote) DownloadFile(int64, string) (io.ReadCloser, error) {
+	return closeFailBody{strings.NewReader("abc")}, nil
+}
+
+// A download whose stream fails to close is reported, not counted as done.
+func TestDownloadDirStreamCloseError514(t *testing.T) {
+	t.Parallel()
+	src := fakeRemote{files: map[string][]StorageFile{"job/run": {{Path: "job/run/f.bin", Size: 3}}}}
+	s := NewSyncer(openTestDB(t), nil)
+	if _, err := s.downloadDir(src, 3, "job/run", storage.NewLocalAdapter(t.TempDir())); err == nil || !strings.Contains(err.Error(), "closing download stream") {
+		t.Fatalf("want a stream close error, got %v", err)
 	}
 }

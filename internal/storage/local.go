@@ -16,6 +16,15 @@ import (
 	"github.com/tinkerologie/vault/internal/safepath"
 )
 
+// createWriteProbe and removeWriteProbe are the filesystem calls behind
+// TestConnection's write probe. They are variables only so tests can inject
+// write, close and removal failures that a real directory cannot produce.
+var (
+	createWriteProbe = os.CreateTemp
+	removeWriteProbe = os.Remove
+)
+
+// LocalAdapter stores backups in a directory on a locally mounted filesystem.
 type LocalAdapter struct {
 	basePath string
 	// rootErr is set when basePath failed ValidateLocalStorageRoot. Every
@@ -48,6 +57,8 @@ func NewValidatedLocalAdapter(basePath string) (*LocalAdapter, error) {
 	return a, nil
 }
 
+// fullPath joins a storage-relative path to the adapter root, rejecting an
+// unsafe root, traversal, and symlinks that resolve outside the root.
 func (l *LocalAdapter) fullPath(path string, allowRoot bool) (string, error) {
 	if l.rootErr != nil {
 		return "", l.rootErr
@@ -267,6 +278,9 @@ func (l *LocalAdapter) Stat(path string) (FileInfo, error) {
 	}, nil
 }
 
+// TestConnection checks that the root is a writable directory by creating,
+// writing and removing a uniquely named probe file. Every step's failure is
+// reported, and an existing file is never overwritten.
 func (l *LocalAdapter) TestConnection() error {
 	if l.rootErr != nil {
 		return l.rootErr
@@ -281,14 +295,14 @@ func (l *LocalAdapter) TestConnection() error {
 	// A uniquely named, exclusively created probe never overwrites an
 	// existing file in the destination, unlike the fixed ".vault_test"
 	// name used before.
-	probe, err := os.CreateTemp(l.basePath, ".vault_test-*")
+	probe, err := createWriteProbe(l.basePath, ".vault_test-*")
 	if err != nil {
 		return fmt.Errorf("not writable: %w", err)
 	}
 	probePath := probe.Name()
 	_, writeErr := probe.WriteString("test")
 	closeErr := probe.Close()
-	if err := os.Remove(probePath); err != nil {
+	if err := removeWriteProbe(probePath); err != nil {
 		return fmt.Errorf("remove write probe %s: %w", probePath, err)
 	}
 	if writeErr != nil {

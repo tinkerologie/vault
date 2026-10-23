@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -21,6 +22,17 @@ type NFSConfig struct {
 	Version  string `json:"version"`   // NFS version: "3" or "4" (default "4").
 	Options  string `json:"options"`   // Extra mount options, e.g. "nolock,soft".
 }
+
+// mountExport and unmountExport run the system mount commands. They are
+// variables only so tests can stand in for a real NFS server.
+var (
+	mountExport = func(args ...string) ([]byte, error) {
+		return exec.Command("mount", args...).CombinedOutput() // #nosec G204 //nolint:gosec // args validated in NewNFSAdapter
+	}
+	unmountExport = func(dir string) error {
+		return exec.Command("umount", dir).Run() // #nosec G204 //nolint:gosec // dir is vault-controlled temp dir
+	}
+)
 
 // NFSAdapter implements Adapter for NFS shares.
 // It mounts the export to a temporary directory on first use and delegates
@@ -63,6 +75,13 @@ func (n *NFSAdapter) mount() error {
 		return nil
 	}
 
+	// The share is mounted at a fresh directory under the OS temp dir, and
+	// the destination root lies inside it. Validate that location before
+	// creating or mounting anything, so a TMPDIR inside a protected system
+	// tree fails closed (#514).
+	if _, err := safepath.ValidateLocalStorageRoot(filepath.Join(os.TempDir(), "vault-nfs")); err != nil {
+		return fmt.Errorf("nfs: unsafe mount location: %w", err)
+	}
 	dir, err := os.MkdirTemp("", "vault-nfs-*")
 	if err != nil {
 		return fmt.Errorf("nfs: creating mount dir: %w", err)
@@ -79,7 +98,7 @@ func (n *NFSAdapter) mount() error {
 	args = append(args, "-o", strings.Join(opts, ","))
 	args = append(args, source, dir)
 
-	if out, err := exec.Command("mount", args...).CombinedOutput(); err != nil { // #nosec G204 //nolint:gosec // args validated in NewNFSAdapter
+	if out, err := mountExport(args...); err != nil {
 		_ = os.Remove(dir)
 		return fmt.Errorf("nfs: mount %s failed: %w\n%s", source, err, strings.TrimSpace(string(out)))
 	}
@@ -88,17 +107,20 @@ func (n *NFSAdapter) mount() error {
 	if n.config.BasePath != "" {
 		basePath, err = safepath.JoinUnderBase(dir, n.config.BasePath, true)
 		if err != nil {
-			_ = exec.Command("umount", dir).Run() // #nosec G204 //nolint:gosec // dir is vault-controlled temp dir
+			_ = unmountExport(dir)
 			_ = os.Remove(dir)
 			return fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err)
 		}
 	}
 
+	// Symlinks inside the export resolve on this host, so a base path that
+	// names one could point at a protected directory. Validate the resolved
+	// root and refuse the mount if it is unsafe (#514).
 	local, err := NewValidatedLocalAdapter(basePath)
 	if err != nil {
-		_ = exec.Command("umount", dir).Run() // #nosec G204 //nolint:gosec // dir is vault-controlled temp dir
+		_ = unmountExport(dir)
 		_ = os.Remove(dir)
-		return fmt.Errorf("nfs: %w", err)
+		return fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err)
 	}
 
 	n.mountDir = dir
@@ -114,7 +136,7 @@ func (n *NFSAdapter) unmount() {
 	if !n.mounted {
 		return
 	}
-	if err := exec.Command("umount", n.mountDir).Run(); err != nil { // #nosec G204 //nolint:gosec // mountDir is vault-controlled temp dir
+	if err := unmountExport(n.mountDir); err != nil {
 		log.Printf("Warning: nfs unmount %s failed: %v", n.mountDir, err)
 	}
 	if err := os.Remove(n.mountDir); err != nil && !os.IsNotExist(err) {

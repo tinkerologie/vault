@@ -613,6 +613,7 @@ type getJobHistoryInput struct {
 	Limit int   `json:"limit,omitempty"`
 }
 
+// addGetJobHistoryTool registers get_job_history, which lists a job's runs.
 func (s *MCPServer) addGetJobHistoryTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "get_job_history",
@@ -650,6 +651,8 @@ type createStorageInput struct {
 	Config string `json:"config"`
 }
 
+// addCreateStorageTool registers create_storage. The config is validated by
+// building an adapter, so unsafe local roots are rejected (#514).
 func (s *MCPServer) addCreateStorageTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "create_storage",
@@ -681,6 +684,8 @@ type updateStorageInput struct {
 	Config string `json:"config,omitempty"`
 }
 
+// addUpdateStorageTool registers update_storage. A changed type or config is
+// re-validated by building an adapter before it is saved.
 func (s *MCPServer) addUpdateStorageTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "update_storage",
