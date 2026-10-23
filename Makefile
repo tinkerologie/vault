@@ -105,8 +105,7 @@ package: release
 	@# Store every entry as root:root. installpkg runs as root and applies the
 	@# archive's owners, so a package built by the CI runner (UID 1001) used to
 	@# hand /usr, /usr/local/emhttp and /etc to that UID on install (#514).
-	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar --owner=0 --group=0 --numeric-owner -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/
-	@sh scripts/check-package-ownership.sh $(BUILD_DIR)/$(BINARY)-$(VERSION).txz
+	sh scripts/make-package-archive.sh $(BUILD_DIR)/pkg $(BUILD_DIR)/$(BINARY)-$(VERSION).txz
 	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"
 
 lint:

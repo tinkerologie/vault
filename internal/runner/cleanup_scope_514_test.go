@@ -101,7 +101,7 @@ func TestCleanupJobStorageKeepsForeignContent514(t *testing.T) {
 		}
 	}
 	write514(t, root, "appdata/2026-01-01_000000/data.tar", "x")
-	write514(t, root, "appdata/2026-01-02_000000/manifest.json", `{"job_name":"j"}`)
+	write514(t, root, "appdata/2026-01-02_000000/manifest.json", `{"job_name":"appdata","run_id":1,"backup_type":"full","items_done":1}`)
 	write514(t, root, "appdata/plex/config.xml", "keep")
 
 	if err := r.CleanupJobStorage(jobID); err != nil {
@@ -167,7 +167,7 @@ func TestEnforceRetentionRefusesUnmanagedPath514(t *testing.T) {
 	}
 	write514(t, root, "usr/local/emhttp/index.php", "keep")
 	write514(t, root, "ret/2026-01-01_000000/data.tar", "x")
-	write514(t, root, "ret/2026-01-09_000000/manifest.json", `{"job_name":"j"}`) // newest, kept by count
+	write514(t, root, "ret/2026-01-09_000000/manifest.json", `{"job_name":"ret","run_id":1,"backup_type":"full","items_done":1}`) // newest, kept by count
 
 	runID, _ := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success"})
 	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "ret/2026-01-09_000000", Metadata: "{}"}); err != nil {
@@ -258,7 +258,7 @@ func TestImportBackupsRejectsUnmanagedPaths514(t *testing.T) {
 	r, d, root := setupTestRunner(t)
 	dest := createLocalDest(t, d, root)
 	write514(t, root, "appdata/plex/config.xml", "x") // two components, no manifest
-	write514(t, root, "ok/run/manifest.json", `{"job_name":"j"}`)
+	write514(t, root, "ok/run/manifest.json", `{"job_name":"ok","run_id":1,"backup_type":"full","items_done":1}`)
 	write514(t, root, "ab_20260101_000000/notes.txt", "x")
 	write514(t, root, "Sites/blog/manifest.json", `{"name":"blog"}`) // not a Vault manifest
 
@@ -294,12 +294,18 @@ func TestHasManifestRejectsForeignFiles514(t *testing.T) {
 	_, _, root := setupTestRunner(t)
 	write514(t, root, "a/run/manifest.json", "not json")
 	write514(t, root, "b/run/manifest.json", `{"name":"web app"}`)
-	write514(t, root, "c/run/manifest.json", `{"job_name":"c"}`)
+	// Another app's file that happens to use job_name is not Vault's either.
+	write514(t, root, "e/run/manifest.json", `{"job_name":"x"}`)
+	// Vault's keys under a directory that is not the job's name: not Vault's.
+	write514(t, root, "f/run/manifest.json", `{"job_name":"other","run_id":1,"backup_type":"full","items_done":1}`)
+	// An S3-sanitised job directory still matches its job_name.
+	write514(t, root, "My_Job/run/manifest.json", `{"job_name":"My Job","run_id":1,"backup_type":"full","items_done":1}`)
+	write514(t, root, "c/run/manifest.json", `{"job_name":"c","run_id":1,"backup_type":"full","items_done":1}`)
 	if err := os.MkdirAll(filepath.Join(root, "d", "run", "manifest.json"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	a := localAdapter514(t, root)
-	for dir, want := range map[string]bool{"a/run": false, "b/run": false, "c/run": true, "d/run": false, "missing/run": false} {
+	for dir, want := range map[string]bool{"a/run": false, "b/run": false, "c/run": true, "d/run": false, "e/run": false, "f/run": false, "My_Job/run": true, "missing/run": false} {
 		if got := hasManifest(a, dir); got != want {
 			t.Errorf("hasManifest(%q) = %v, want %v", dir, got, want)
 		}
@@ -368,7 +374,7 @@ func TestCleanupStorageDestinationDatabaseErrors514(t *testing.T) {
 		if _, err := d.CreateJob(db.Job{Name: "j", StorageDestID: dest.ID}); err != nil {
 			t.Fatal(err)
 		}
-		write514(t, root, "j/run/manifest.json", `{"job_name":"j"}`)
+		write514(t, root, "j/run/manifest.json", `{"job_name":"j","run_id":1,"backup_type":"full","items_done":1}`)
 		if _, err := d.Exec(`ALTER TABLE restore_points RENAME TO rp_hidden_514`); err != nil {
 			t.Fatal(err)
 		}
@@ -445,7 +451,7 @@ func (f failingReadAdapter) Read(p string) (io.ReadCloser, error) {
 func TestHasManifestReadFailures514(t *testing.T) {
 	t.Parallel()
 	_, _, root := setupTestRunner(t)
-	write514(t, root, "j/run/manifest.json", `{"job_name":"j"}`)
+	write514(t, root, "j/run/manifest.json", `{"job_name":"j","run_id":1,"backup_type":"full","items_done":1}`)
 	base := localAdapter514(t, root)
 	if !hasManifest(base, "j/run") {
 		t.Fatal("precondition: a readable manifest is accepted")

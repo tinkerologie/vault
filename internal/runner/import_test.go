@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,7 +62,9 @@ func seedImportManifests(t *testing.T, storageDir string, backups []map[string]a
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(target, []byte(`{"job_name":"j"}`), 0o644); err != nil {
+		// job_name must be the run's parent directory, as Vault writes it.
+		m, _ := json.Marshal(map[string]any{"job_name": path.Dir(p), "run_id": 1, "backup_type": "full", "items_done": 1})
+		if err := os.WriteFile(target, m, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

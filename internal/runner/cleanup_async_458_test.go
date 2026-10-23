@@ -56,7 +56,7 @@ func TestCleanupJobStorageAsyncSuccessB458(t *testing.T) {
 	r, d, storageDir := setupTestRunner(t)
 	dest := createLocalDest(t, d, storageDir)
 	b458WriteFile(t, filepath.Join(storageDir, "jobA", "run1", "data.tar"), "x")
-	b458WriteFile(t, filepath.Join(storageDir, "jobA", "run2", "manifest.json"), `{"job_name":"j"}`)
+	b458WriteFile(t, filepath.Join(storageDir, "jobA", "run2", "manifest.json"), `{"job_name":"jobA","run_id":1,"backup_type":"full","items_done":1}`)
 	b458WriteFile(t, filepath.Join(storageDir, "jobA", "stray", "orphan.part"), "y")
 
 	b458RunAsync(t, func() {

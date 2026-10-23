@@ -417,7 +417,7 @@ func TestCleanupStorageDestinationRemovesOnlyManagedRuns(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"job-a", "job-b", "job-c"} {
-		write(name+"/run1/manifest.json", `{"job_name":"j"}`)
+		write(name+"/run1/manifest.json", `{"job_name":"`+name+`","run_id":1,"backup_type":"full","items_done":1}`)
 		write(name+"/run1/data.tar", "x")
 	}
 	// Foreign content that shares the destination root.

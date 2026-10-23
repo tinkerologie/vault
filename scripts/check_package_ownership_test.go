@@ -76,43 +76,62 @@ func TestCheckPackageOwnershipUsage(t *testing.T) {
 	}
 }
 
-// `make package` must build root-owned entries and run this check.
-func TestPackageTargetUsesOwnershipCheck(t *testing.T) {
+// `make package` builds the archive through make-package-archive.sh.
+func TestPackageTargetUsesArchiveScript(t *testing.T) {
 	mk, err := os.ReadFile(filepath.Join("..", "Makefile"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	recipe := string(mk)
-	start := strings.Index(recipe, "\npackage:")
-	if start < 0 {
-		t.Fatal("no package target in the Makefile")
-	}
-	end := strings.Index(recipe[start+1:], "\n\n")
-	if end < 0 {
-		end = len(recipe) - start - 1
-	}
-	recipe = recipe[start : start+1+end]
-	for _, want := range []string{"tar --owner=0 --group=0 --numeric-owner", "sh scripts/check-package-ownership.sh"} {
-		if !strings.Contains(recipe, want) {
-			t.Errorf("package target is missing %q", want)
-		}
+	if !strings.Contains(string(mk), "sh scripts/make-package-archive.sh $(BUILD_DIR)/pkg $(BUILD_DIR)/$(BINARY)-$(VERSION).txz") {
+		t.Fatal("the package target does not build through scripts/make-package-archive.sh")
 	}
 }
 
-// The package ownership check behind `make package` (#514).
-func TestCheckPackageOwnership(t *testing.T) {
+// The archive script stores root:root entries even when the staged files
+// belong to someone else, runs the ownership check, and fails if tar fails.
+func TestMakePackageArchive(t *testing.T) {
 	if _, err := exec.LookPath("tar"); err != nil {
 		t.Skip("tar not available")
 	}
-	if out, err := runCheck(buildPackage(t, "0")); err != nil {
-		t.Fatalf("root-owned package rejected: %v: %s", err, out)
+	src := t.TempDir()
+	for _, d := range []string{"usr/local/sbin", "etc/rc.d"} {
+		if err := os.MkdirAll(filepath.Join(src, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	out, err := runCheck(buildPackage(t, "1001"))
-	if err == nil || !strings.Contains(out, "not owned by root:root") {
-		t.Fatalf("UID 1001 package accepted: %v: %s", err, out)
+	if err := os.WriteFile(filepath.Join(src, "usr/local/sbin/vault"), []byte("bin"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	out, err = runCheck(filepath.Join(t.TempDir(), "missing.txz"))
-	if err == nil || !strings.Contains(out, "cannot list") {
-		t.Fatalf("unreadable package accepted: %v: %s", err, out)
+	out := filepath.Join(t.TempDir(), "vault.txz")
+	if b, err := exec.Command("sh", "make-package-archive.sh", src, out).CombinedOutput(); err != nil {
+		t.Fatalf("make-package-archive.sh: %v: %s", err, b)
+	}
+	listing, err := exec.Command("tar", "--numeric-owner", "-tvJf", out).CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(listing), "usr/local/sbin/vault") || !strings.Contains(string(listing), "etc/rc.d") {
+		t.Fatalf("archive is missing staged entries:\n%s", listing)
+	}
+	if b, err := exec.Command("sh", "check-package-ownership.sh", out).CombinedOutput(); err != nil {
+		t.Fatalf("built archive fails the ownership check: %v: %s", err, b)
+	}
+
+	cmd := exec.Command("sh", "make-package-archive.sh", src, filepath.Join(t.TempDir(), "x.txz"))
+	cmd.Env = append(os.Environ(), "TAR=false")
+	if b, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("a failing tar was accepted: %s", b)
+	}
+	if b, err := exec.Command("sh", "make-package-archive.sh", src).CombinedOutput(); err == nil || !strings.Contains(string(b), "usage") {
+		t.Fatalf("missing argument: %v: %s", err, b)
+	}
+}
+
+// A failing awk must not be read as "no bad entries".
+func TestCheckPackageOwnershipAwkFailure(t *testing.T) {
+	listing := "drwxr-xr-x 1001/1001 0 2026-10-17 21:51 usr/"
+	out, err := runCheck("pkg.txz", "TAR="+fakeTar(t, listing), "AWK=false")
+	if err == nil || !strings.Contains(out, "cannot check ownership") {
+		t.Fatalf("awk failure accepted: err=%v out=%s", err, out)
 	}
 }
