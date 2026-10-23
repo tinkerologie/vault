@@ -248,11 +248,19 @@ func TestNFSRefusedMountUnmountFailureIsRetried514(t *testing.T) {
 		t.Fatalf("stale = %v, want the mount point kept for retry", n.stale)
 	}
 
+	// A retry that fails again keeps the mount point for the next Close.
+	if err := n.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(unmounts) != 2 || len(n.stale) != 1 {
+		t.Fatalf("unmounts = %v, stale = %v; want the failed retry kept", unmounts, n.stale)
+	}
+
 	fail = false
 	if err := n.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if len(unmounts) != 2 || unmounts[0] != unmounts[1] || len(n.stale) != 0 {
+	if len(unmounts) != 3 || unmounts[0] != unmounts[2] || len(n.stale) != 0 {
 		t.Fatalf("unmounts = %v, stale = %v; want Close to retry and clear it", unmounts, n.stale)
 	}
 }

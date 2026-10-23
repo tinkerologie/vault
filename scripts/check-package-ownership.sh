@@ -3,9 +3,14 @@
 # installpkg runs as root and applies the archive's owners, so a package built
 # by the CI runner (UID 1001) used to hand /usr, /usr/local/emhttp and /etc to
 # that UID on install. Works with GNU tar ("0/0") and bsdtar ("0 0") listings.
+# TAR selects the tar binary (tests use it to supply both listing formats).
 set -u
-pkg="${1:?usage: check-package-ownership.sh <package.txz>}"
-if ! listing="$(tar --numeric-owner -tvJf "$pkg")"; then
+if [ $# -ne 1 ]; then
+	echo "usage: check-package-ownership.sh <package.txz>" >&2
+	exit 2
+fi
+pkg="$1"
+if ! listing="$("${TAR:-tar}" --numeric-owner -tvJf "$pkg")"; then
 	echo "ERROR: cannot list $pkg" >&2
 	exit 1
 fi

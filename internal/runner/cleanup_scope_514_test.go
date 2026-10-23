@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -498,5 +499,35 @@ func TestCheckImportPathOwnedZip514(t *testing.T) {
 	a := localAdapter514(t, root)
 	if err := checkImportPathOwned(a, map[string]any{"source": "appdata.backup"}, "ab_20260101_000000/tower-flash.zip"); err != nil {
 		t.Fatalf("zip archive rejected: %v", err)
+	}
+}
+
+// An encrypted manifest envelope (dedup or age) is Vault's own format and
+// counts as ownership evidence without being decrypted.
+func TestHasManifestAcceptsEncryptedEnvelope514(t *testing.T) {
+	t.Parallel()
+	_, _, root := setupTestRunner(t)
+	env, err := encodeManifestEnvelope("age", "age-v1", []byte("ciphertext"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write514(t, root, "j/run/manifest.json", string(env))
+	// The same envelope with only the version changed isolates the check.
+	var fields map[string]any
+	if err := json.Unmarshal(env, &fields); err != nil || fields["vault_manifest_enc"] == nil {
+		t.Fatalf("fixture is not a versioned envelope: %v: %s", err, env)
+	}
+	fields["vault_manifest_enc"] = 2
+	v2, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write514(t, root, "k/run/manifest.json", string(v2))
+	a := localAdapter514(t, root)
+	if !hasManifest(a, "j/run") {
+		t.Error("encrypted Vault manifest envelope rejected")
+	}
+	if hasManifest(a, "k/run") {
+		t.Error("unknown envelope version accepted")
 	}
 }

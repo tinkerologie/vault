@@ -6543,7 +6543,9 @@ func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 	// Probe the destination before deleting anything: if its root cannot be
 	// listed, the cleanup is unavailable rather than partial, so the caller
 	// keeps the record and the user can choose "Keep backup files".
-	topEntries, err := adapter.List(".")
+	// List the root with an empty prefix: every adapter accepts it, while
+	// S3 rejects "." as a key segment.
+	topEntries, err := adapter.List("")
 	if err != nil && !storage.IsNotExist(err) {
 		return fmt.Errorf("%w: list destination root: %w", ErrCleanupUnavailable, err)
 	}
@@ -6655,7 +6657,8 @@ func ScanManifests(adapter storage.Adapter, d *db.DB, destID int64, serverKey []
 	}
 
 	// List all entries under the storage root.
-	topEntries, err := adapter.List(".")
+	// Empty prefix = destination root for every adapter (S3 rejects ".").
+	topEntries, err := adapter.List("")
 	if err != nil {
 		return nil, fmt.Errorf("listing storage root: %w", err)
 	}
