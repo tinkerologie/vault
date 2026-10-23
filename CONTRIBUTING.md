@@ -112,6 +112,26 @@ cd web && npm ci && npm run build && npm run lint && npm test && cd ..
 make pre-commit-run
 ```
 
+### Choosing a Web Test Layer
+
+The web UI has three test layers. Pick the cheapest one that can observe the behaviour you are changing.
+
+| Layer      | Files                                                                               | Environment                        | Use it for                                                                                                             |
+| ---------- | ----------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Pure logic | `web/src/**/*.test.js`                                                              | Vitest, Node                       | Functions and rune stores in `web/src/lib`. Move logic out of a component into `lib/` when you can test it there.      |
+| Component  | `web/src/pages/**/*.component.test.js`, `web/src/components/**/*.component.test.js` | Vitest, jsdom, Testing Library     | A page's or component's wiring: guards, effects, lifecycle, failed fetches, and scroll handling with stubbed geometry. |
+| End-to-end | `tests/*.spec.ts`                                                                   | Playwright, real browser, mock API | Real layout, smooth scrolling, pixel anchoring, and flows across pages.                                                |
+
+Component tests drive the rendered page through events and store or API updates. Do not export private handlers or add test-only props to reach a branch. Test a failed fetch through the real store with a mocked `api.js`, because that is the contract production relies on. jsdom has no layout, so `web/src/test-support/scroll-box.js` stubs `scrollHeight`, `clientHeight` and `scrollTop` for scroll containers.
+
+`npm --prefix web test` runs both Vitest projects. To iterate on one:
+
+```bash
+cd web
+npx vitest run --project unit
+npx vitest run --project component
+```
+
 ---
 
 ## Commit Message Guidelines
