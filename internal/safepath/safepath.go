@@ -223,11 +223,8 @@ func checkStorageRoot(original, p string) error {
 // isStrictDescendantPath reports whether child lies strictly below parent.
 // Both must be clean absolute paths.
 func isStrictDescendantPath(parent, child string) bool {
-	if parent == child {
-		return false
-	}
 	if parent == string(filepath.Separator) {
-		return strings.HasPrefix(child, parent)
+		return child != parent && strings.HasPrefix(child, parent)
 	}
 	return strings.HasPrefix(child, parent+string(filepath.Separator))
 }

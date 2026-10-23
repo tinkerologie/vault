@@ -178,3 +178,41 @@ func TestSyncJobMatchesNormalisedPaths514(t *testing.T) {
 		t.Fatalf("syncJob = %d, %v; want the existing point to be skipped", n, err)
 	}
 }
+
+// A directory listed twice is visited once: the second visit is refused, so
+// a peer cannot make the sync loop over the same subtree.
+func TestDownloadDirRevisit514(t *testing.T) {
+	t.Parallel()
+	c := newListingServer(t, map[string][]StorageFile{
+		"job/run":   {{Path: "job/run/a", IsDir: true}, {Path: "job/run/a/", IsDir: true}},
+		"job/run/a": {},
+	}, nil)
+	s := NewSyncer(openTestDB(t), nil)
+	if _, err := s.downloadDir(c, 3, "job/run", storage.NewLocalAdapter(t.TempDir())); err == nil || !strings.Contains(err.Error(), "revisits") {
+		t.Fatalf("want revisit error, got %v", err)
+	}
+}
+
+// A remote point with an invalid path is compared as-is and then refused.
+func TestSyncJobSkipsInvalidRemotePath514(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/jobs/8/restore-points") {
+			_ = json.NewEncoder(w).Encode([]RemoteRestorePoint{{ID: 1, JobID: 8, BackupType: "full", StoragePath: "../escape"}})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := openTestDB(t)
+	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
+	s := NewSyncer(d, nil)
+	n, _, err := s.syncJob(c, db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}, RemoteJob{ID: 8, Name: "J"}, storage.NewLocalAdapter(t.TempDir()))
+	if err != nil || n != 0 {
+		t.Fatalf("syncJob = %d, %v; want the invalid point skipped", n, err)
+	}
+}

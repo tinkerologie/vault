@@ -138,3 +138,32 @@ func TestStorageDeleteReportsCleanupError514(t *testing.T) {
 		t.Fatalf("foreign content must survive: %v", err)
 	}
 }
+
+func TestStorageDeleteWithFilesLookupFailures514(t *testing.T) {
+	t.Parallel()
+	t.Run("database error", func(t *testing.T) {
+		t.Parallel()
+		h := newStorageHandlerForTest(t)
+		destID := seedDest458(t, h.db, "local", localCfg458(t.TempDir()), false)
+		breakTable458(t, h.db, "storage_destinations")
+		w := httptest.NewRecorder()
+		h.Delete(w, reqWithID(http.MethodDelete, "/x?deleteFiles=true", idStr(destID), nil))
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500; body: %s", w.Code, w.Body.String())
+		}
+	})
+	t.Run("no runner", func(t *testing.T) {
+		t.Parallel()
+		d := newTestDB(t)
+		h := NewStorageHandler(d, nil, make([]byte, 32))
+		destID := seedDest458(t, d, "local", localCfg458(t.TempDir()), false)
+		w := httptest.NewRecorder()
+		h.Delete(w, reqWithID(http.MethodDelete, "/x?deleteFiles=true", idStr(destID), nil))
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503; body: %s", w.Code, w.Body.String())
+		}
+		if _, err := d.GetStorageDestination(destID); err != nil {
+			t.Fatalf("record must survive: %v", err)
+		}
+	})
+}

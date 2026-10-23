@@ -284,3 +284,133 @@ func TestImportBackupsRejectsUnmanagedPaths514(t *testing.T) {
 		}
 	}
 }
+
+// A manifest.json that is not valid JSON, or valid JSON without a job_name,
+// is not Vault's.
+func TestHasManifestRejectsForeignFiles514(t *testing.T) {
+	t.Parallel()
+	_, _, root := setupTestRunner(t)
+	write514(t, root, "a/run/manifest.json", "not json")
+	write514(t, root, "b/run/manifest.json", `{"name":"web app"}`)
+	write514(t, root, "c/run/manifest.json", `{"job_name":"c"}`)
+	if err := os.MkdirAll(filepath.Join(root, "d", "run", "manifest.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := localAdapter514(t, root)
+	for dir, want := range map[string]bool{"a/run": false, "b/run": false, "c/run": true, "d/run": false, "missing/run": false} {
+		if got := hasManifest(a, dir); got != want {
+			t.Errorf("hasManifest(%q) = %v, want %v", dir, got, want)
+		}
+	}
+}
+
+func TestSweepManagedRunDirsErrors514(t *testing.T) {
+	t.Parallel()
+	r, _, root := setupTestRunner(t)
+	write514(t, root, "afile", "x")
+	a := localAdapter514(t, root)
+	if err := r.sweepManagedRunDirs(a, ".."); !errors.Is(err, ErrCleanupRefused) {
+		t.Errorf("sweep of ..: %v, want ErrCleanupRefused", err)
+	}
+	if err := r.sweepManagedRunDirs(a, "afile"); err == nil {
+		t.Error("sweep of a file: want a listing error")
+	}
+	if err := r.sweepManagedRunDirs(a, "missing"); err != nil {
+		t.Errorf("sweep of a missing dir: %v, want nil", err)
+	}
+}
+
+func TestCheckImportPathOwnedAppdataBackup514(t *testing.T) {
+	t.Parallel()
+	_, _, root := setupTestRunner(t)
+	write514(t, root, "ab_20260101_000000/plex.tar.gz", "x")
+	if err := os.MkdirAll(filepath.Join(root, "ab_20260101_000000", "dir.tar.gz"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := localAdapter514(t, root)
+	ab := map[string]any{"source": "appdata.backup"}
+	for p, ok := range map[string]bool{
+		"ab_20260101_000000/plex.tar.gz":    true,
+		"ab_20260101_000000/missing.tar.gz": false,
+		"ab_20260101_000000/dir.tar.gz":     false,
+		"other/plex.tar.gz":                 false,
+		"ab_20260101_000000/notes.txt":      false,
+	} {
+		if err := checkImportPathOwned(a, ab, p); (err == nil) != ok {
+			t.Errorf("checkImportPathOwned(%q) = %v, want ok=%v", p, err, ok)
+		}
+	}
+}
+
+// A job name that is not a relative path cannot be swept; the async cleanup
+// reports it instead of claiming success.
+func TestCleanupJobStorageAsyncRefusedJobDir514(t *testing.T) {
+	r, d, root := setupTestRunner(t)
+	dest := createLocalDest(t, d, root)
+	b458RunAsync(t, func() {
+		r.CleanupJobStorageAsync(1, "..", dest, nil)
+	})
+	if !b458ActivityContains(t, d, `Failed to delete backup files for deleted job ".."`) {
+		t.Fatal("a refused job directory sweep should be reported")
+	}
+}
+
+// Database errors during a destination wipe are reported, and the layout
+// sweep still runs; restore points without a path are skipped.
+func TestCleanupStorageDestinationDatabaseErrors514(t *testing.T) {
+	t.Parallel()
+	t.Run("restore points unreadable", func(t *testing.T) {
+		t.Parallel()
+		r, d, root := setupTestRunner(t)
+		dest := createLocalDest(t, d, root)
+		if _, err := d.CreateJob(db.Job{Name: "j", StorageDestID: dest.ID}); err != nil {
+			t.Fatal(err)
+		}
+		write514(t, root, "j/run/manifest.json", `{"job_name":"j"}`)
+		if _, err := d.Exec(`ALTER TABLE restore_points RENAME TO rp_hidden_514`); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.CleanupStorageDestination(dest); err == nil {
+			t.Fatal("want the restore point listing error")
+		}
+		if exists514(t, root, "j/run") {
+			t.Error("the layout sweep should still remove managed runs")
+		}
+	})
+	t.Run("jobs unreadable", func(t *testing.T) {
+		t.Parallel()
+		r, d, root := setupTestRunner(t)
+		dest := createLocalDest(t, d, root)
+		if _, err := d.Exec(`ALTER TABLE jobs RENAME TO jobs_hidden_514`); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.CleanupStorageDestination(dest); err == nil {
+			t.Fatal("want the job listing error")
+		}
+	})
+	t.Run("empty and refused recorded paths", func(t *testing.T) {
+		t.Parallel()
+		r, d, root := setupTestRunner(t)
+		dest := createLocalDest(t, d, root)
+		jobID, _ := d.CreateJob(db.Job{Name: "j", StorageDestID: dest.ID})
+		other := createNamedLocalDest(t, d, "other-514", t.TempDir())
+		otherID, _ := d.CreateJob(db.Job{Name: "elsewhere", StorageDestID: other.ID})
+		runID, _ := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success"})
+		otherRun, _ := d.CreateJobRun(db.JobRun{JobID: otherID, Status: "success"})
+		for _, rp := range []db.RestorePoint{
+			{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "", Metadata: "{}"},
+			{JobRunID: otherRun, JobID: otherID, BackupType: "full", StoragePath: "elsewhere/run", Metadata: "{}"},
+		} {
+			if _, err := d.CreateRestorePoint(rp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write514(t, root, "elsewhere/run/data.tar", "x") // another destination's row; not touched
+		if err := r.CleanupStorageDestination(dest); err != nil {
+			t.Fatalf("CleanupStorageDestination: %v", err)
+		}
+		if !exists514(t, root, "elsewhere/run/data.tar") {
+			t.Error("a restore point of another destination was deleted")
+		}
+	})
+}
