@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -44,6 +45,9 @@ type NFSAdapter struct {
 	local    *LocalAdapter
 	mu       sync.Mutex
 	mounted  bool
+	// stale holds mount points a refused mount could not unmount; unmount
+	// (and so Close) retries them so a failed cleanup is never forgotten.
+	stale []string
 }
 
 // NewNFSAdapter creates a new NFS adapter. The share is not mounted until
@@ -107,9 +111,7 @@ func (n *NFSAdapter) mount() error {
 	if n.config.BasePath != "" {
 		basePath, err = safepath.JoinUnderBase(dir, n.config.BasePath, true)
 		if err != nil {
-			_ = unmountExport(dir)
-			_ = os.Remove(dir)
-			return fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err)
+			return n.abortMount(dir, fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err))
 		}
 	}
 
@@ -118,9 +120,7 @@ func (n *NFSAdapter) mount() error {
 	// root and refuse the mount if it is unsafe (#514).
 	local, err := NewValidatedLocalAdapter(basePath)
 	if err != nil {
-		_ = unmountExport(dir)
-		_ = os.Remove(dir)
-		return fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err)
+		return n.abortMount(dir, fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err))
 	}
 
 	n.mountDir = dir
@@ -129,10 +129,33 @@ func (n *NFSAdapter) mount() error {
 	return nil
 }
 
-// unmount removes the NFS mount and cleans up the temporary directory.
+// abortMount undoes a mount that mount() refused after it succeeded. When
+// the unmount itself fails, dir is kept in n.stale for unmount to retry and
+// the failure is added to cause. Called with n.mu held.
+func (n *NFSAdapter) abortMount(dir string, cause error) error {
+	if err := unmountExport(dir); err != nil {
+		n.stale = append(n.stale, dir)
+		return errors.Join(cause, fmt.Errorf("nfs: unmount %s after refused mount: %w", dir, err))
+	}
+	_ = os.Remove(dir)
+	return cause
+}
+
+// unmount removes the NFS mount and cleans up the temporary directory. It
+// also retries mount points a refused mount could not unmount.
 func (n *NFSAdapter) unmount() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	var still []string
+	for _, dir := range n.stale {
+		if err := unmountExport(dir); err != nil {
+			log.Printf("Warning: nfs unmount %s failed: %v", dir, err)
+			still = append(still, dir)
+			continue
+		}
+		_ = os.Remove(dir)
+	}
+	n.stale = still
 	if !n.mounted {
 		return
 	}

@@ -61,8 +61,9 @@
     loading ? 'Loading…' : !currentPath ? 'Open a directory to select it.' : validate(currentPath) || ''
   )
 
+  // Only reachable while selectBlockedReason is empty: the button is disabled
+  // otherwise.
   function confirm() {
-    if (selectBlockedReason) return
     value = currentPath
     onselect(currentPath)
     open = false

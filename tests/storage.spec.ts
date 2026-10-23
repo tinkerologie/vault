@@ -196,6 +196,28 @@ test.describe('Storage Management & Target Setup Wizard', () => {
       expect(deletes).toEqual([]);
     });
 
+    test('the picker cannot select while a directory listing is loading', async ({ page }) => {
+      await openLocalForm(page);
+      // Hold the next listing so the picker stays in its loading state.
+      let release: () => void = () => {};
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      await page.route(/\/api\/v1\/browse\?path=%2Fmnt$/, async (route) => {
+        await held;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(tree['/mnt']) });
+      });
+
+      await page.getByRole('button', { name: 'Browse directories' }).click();
+      await page.getByRole('button', { name: /^mnt/ }).click();
+      const select = page.getByRole('button', { name: 'Select This Path' });
+      await expect(page.getByText('Loading...')).toBeVisible();
+      await expect(select).toBeDisabled();
+      await expect(page.getByTestId('path-select-blocked')).toHaveCount(0);
+
+      release();
+      await expect(page.getByTestId('path-select-blocked')).toContainText('shared parent');
+      await expect(select).toBeDisabled();
+    });
+
     test('an unsafe typed path shows a hint and is not submitted', async ({ page }) => {
       const posts: string[] = [];
       page.on('request', (req) => {

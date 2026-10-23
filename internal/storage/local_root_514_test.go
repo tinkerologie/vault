@@ -215,3 +215,44 @@ func TestNFSMountRejectsSymlinkedBasePath514(t *testing.T) {
 	}
 	ok.unmount()
 }
+
+// When the cleanup of a refused mount cannot unmount, the error says so and
+// Close retries the unmount later instead of forgetting the mount point.
+// Not parallel: it swaps the mount seams.
+func TestNFSRefusedMountUnmountFailureIsRetried514(t *testing.T) {
+	origMount, origUnmount := mountExport, unmountExport
+	t.Cleanup(func() { mountExport, unmountExport = origMount, origUnmount })
+	t.Setenv("TMPDIR", t.TempDir())
+	mountExport = func(args ...string) ([]byte, error) {
+		return nil, os.Symlink("/usr", filepath.Join(args[len(args)-1], "link"))
+	}
+	var unmounts []string
+	fail := true
+	unmountExport = func(dir string) error {
+		unmounts = append(unmounts, dir)
+		if fail {
+			return os.ErrPermission
+		}
+		return nil
+	}
+
+	n, err := NewNFSAdapter(NFSConfig{Host: "nas.invalid", Export: "/export", Version: "4", BasePath: "link"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = n.mount()
+	if err == nil || !strings.Contains(err.Error(), "protected") || !strings.Contains(err.Error(), "after refused mount") {
+		t.Fatalf("mount = %v, want the refusal and the unmount failure", err)
+	}
+	if len(n.stale) != 1 {
+		t.Fatalf("stale = %v, want the mount point kept for retry", n.stale)
+	}
+
+	fail = false
+	if err := n.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(unmounts) != 2 || unmounts[0] != unmounts[1] || len(n.stale) != 0 {
+		t.Fatalf("unmounts = %v, stale = %v; want Close to retry and clear it", unmounts, n.stale)
+	}
+}

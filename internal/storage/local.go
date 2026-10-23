@@ -305,11 +305,8 @@ func (l *LocalAdapter) TestConnection() error {
 	if err := removeWriteProbe(probePath); err != nil {
 		return fmt.Errorf("remove write probe %s: %w", probePath, err)
 	}
-	if writeErr != nil {
-		return fmt.Errorf("not writable: %w", writeErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("not writable: %w", closeErr)
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return fmt.Errorf("not writable: %w", err)
 	}
 	return nil
 }

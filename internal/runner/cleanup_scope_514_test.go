@@ -308,12 +308,12 @@ func TestHasManifestRejectsForeignFiles514(t *testing.T) {
 func TestSweepManagedRunDirsErrors514(t *testing.T) {
 	t.Parallel()
 	r, _, root := setupTestRunner(t)
-	write514(t, root, "afile", "x")
+	write514(t, root, "plain-file", "x")
 	a := localAdapter514(t, root)
 	if err := r.sweepManagedRunDirs(a, ".."); !errors.Is(err, ErrCleanupRefused) {
 		t.Errorf("sweep of ..: %v, want ErrCleanupRefused", err)
 	}
-	if err := r.sweepManagedRunDirs(a, "afile"); err == nil {
+	if err := r.sweepManagedRunDirs(a, "plain-file"); err == nil {
 		t.Error("sweep of a file: want a listing error")
 	}
 	if err := r.sweepManagedRunDirs(a, "missing"); err != nil {
@@ -456,5 +456,47 @@ func TestHasManifestReadFailures514(t *testing.T) {
 		if hasManifest(a, "j/run") {
 			t.Errorf("%s: hasManifest accepted an unreadable manifest", name)
 		}
+	}
+}
+
+// noDirRemover hides the optional RemoveEmptyDir method, like object stores.
+type noDirRemover struct{ storage.Adapter }
+
+// Without directory removal, deleting a run leaves its now-empty parents
+// alone (object stores have no directories to remove).
+func TestDeleteStorageDirWithoutDirRemoval514(t *testing.T) {
+	t.Parallel()
+	r, _, root := setupTestRunner(t)
+	write514(t, root, "job/run/data.tar", "x")
+	a := noDirRemover{localAdapter514(t, root)}
+	if _, ok := any(a).(interface{ RemoveEmptyDir(string) error }); ok {
+		t.Fatal("precondition: the double must not expose RemoveEmptyDir")
+	}
+	if err := r.DeleteStorageDir(a, "job/run"); err != nil {
+		t.Fatalf("DeleteStorageDir: %v", err)
+	}
+	if exists514(t, root, "job/run") || !exists514(t, root, "job") {
+		t.Fatal("want the run gone and its parent left in place")
+	}
+}
+
+// A destination whose root does not exist yet has nothing to delete.
+func TestCleanupStorageDestinationMissingRoot514(t *testing.T) {
+	t.Parallel()
+	r, d, _ := setupTestRunner(t)
+	dest := createLocalDest(t, d, filepath.Join(t.TempDir(), "not-created-yet"))
+	if err := r.CleanupStorageDestination(dest); err != nil {
+		t.Fatalf("CleanupStorageDestination on a missing root: %v", err)
+	}
+}
+
+// AppData Backup's flash backups are .zip archives.
+func TestCheckImportPathOwnedZip514(t *testing.T) {
+	t.Parallel()
+	_, _, root := setupTestRunner(t)
+	write514(t, root, "ab_20260101_000000/tower-flash.zip", "x")
+	a := localAdapter514(t, root)
+	if err := checkImportPathOwned(a, map[string]any{"source": "appdata.backup"}, "ab_20260101_000000/tower-flash.zip"); err != nil {
+		t.Fatalf("zip archive rejected: %v", err)
 	}
 }
