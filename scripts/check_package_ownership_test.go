@@ -135,3 +135,33 @@ func TestCheckPackageOwnershipAwkFailure(t *testing.T) {
 		t.Fatalf("awk failure accepted: err=%v out=%s", err, out)
 	}
 }
+
+// A tar that cannot list the archive fails the check.
+func TestCheckPackageOwnershipListFailure(t *testing.T) {
+	out, err := runCheck("pkg.txz", "TAR=false")
+	if err == nil || !strings.Contains(out, "cannot list") {
+		t.Fatalf("listing failure accepted: err=%v out=%s", err, out)
+	}
+}
+
+// The archive script fails when the archive it built is not root-owned.
+func TestMakePackageArchiveOwnershipFailure(t *testing.T) {
+	src := t.TempDir()
+	for _, d := range []string{"usr", "etc"} {
+		if err := os.MkdirAll(filepath.Join(src, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A tar stand-in that "creates" the archive and lists a UID 1001 entry.
+	stub := filepath.Join(t.TempDir(), "tar")
+	script := "#!/bin/sh\ncase \"$*\" in *-cJf*) for a; do last=$a; done; prev=; for a; do [ \"$prev\" = -cJf ] && : > \"$a\"; prev=$a; done ;; *) echo 'drwxr-xr-x 1001/1001 0 2026-10-17 21:51 usr/' ;; esac\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "make-package-archive.sh", src, filepath.Join(t.TempDir(), "x.txz"))
+	cmd.Env = append(os.Environ(), "TAR="+stub)
+	b, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(b), "not owned by root:root") {
+		t.Fatalf("a non-root archive was accepted: %v: %s", err, b)
+	}
+}

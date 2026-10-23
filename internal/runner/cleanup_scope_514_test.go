@@ -537,3 +537,36 @@ func TestHasManifestAcceptsEncryptedEnvelope514(t *testing.T) {
 		t.Error("unknown envelope version accepted")
 	}
 }
+
+// An imported AppData Backup restore point is a single archive file: it is
+// deleted directly, while a lookalike file outside that shape is refused.
+func TestDeleteRestorePointAppdataArchive514(t *testing.T) {
+	t.Parallel()
+	r, _, root := setupTestRunner(t)
+	write514(t, root, "ab_20260101_000000/plex.tar.gz", "x")
+	write514(t, root, "ab_20260101_000000/tower-flash.zip", "x")
+	write514(t, root, "ab_20260101_000000/keep.tar.gz", "x")
+	write514(t, root, "docs/report.tar.gz", "keep")
+	a := localAdapter514(t, root)
+	for _, p := range []string{"ab_20260101_000000/plex.tar.gz", "ab_20260101_000000/tower-flash.zip"} {
+		if err := r.deleteRestorePointDir(a, p); err != nil {
+			t.Fatalf("deleteRestorePointDir(%q): %v", p, err)
+		}
+		if exists514(t, root, p) {
+			t.Errorf("%s should be deleted", p)
+		}
+	}
+	if !exists514(t, root, "ab_20260101_000000/keep.tar.gz") {
+		t.Error("another archive in the folder was deleted")
+	}
+	if err := r.deleteRestorePointDir(a, "docs/report.tar.gz"); err == nil {
+		t.Error("a file outside an ab_* folder was treated as an archive restore point")
+	}
+	if !exists514(t, root, "docs/report.tar.gz") {
+		t.Error("a non-appdata file was deleted")
+	}
+	// An already-removed archive is clean, not an error.
+	if err := r.deleteRestorePointDir(a, "ab_20260101_000000/plex.tar.gz"); err != nil {
+		t.Errorf("deleting a missing archive: %v", err)
+	}
+}

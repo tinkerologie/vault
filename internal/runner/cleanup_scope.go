@@ -42,7 +42,26 @@ func (r *Runner) deleteRestorePointDir(adapter storage.Adapter, storagePath stri
 		log.Printf("runner: refusing to delete restore point path %q: %v", storagePath, err)
 		return fmt.Errorf("%w: %q: %w", ErrCleanupRefused, storagePath, err)
 	}
+	// An imported AppData Backup restore point is the archive file itself,
+	// which a recursive directory delete cannot remove. Delete it directly,
+	// but only when it has the same shape the import accepted.
+	if isAppdataArchivePath(storagePath) {
+		if fi, err := adapter.Stat(storagePath); err == nil && !fi.IsDir {
+			if err := adapter.Delete(storagePath); err != nil && !storage.IsNotExist(err) {
+				return fmt.Errorf("delete %s: %w", storagePath, err)
+			}
+			return nil
+		}
+	}
 	return r.DeleteStorageDir(adapter, storagePath)
+}
+
+// isAppdataArchivePath reports whether p names an AppData Backup archive:
+// a .tar.gz or .zip file directly inside an ab_* folder.
+func isAppdataArchivePath(p string) bool {
+	name := path.Base(p)
+	isArchive := strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".zip")
+	return isArchive && strings.HasPrefix(path.Base(path.Dir(p)), "ab_")
 }
 
 // hasManifest reports whether dir holds a Vault manifest.json. A file with
@@ -175,9 +194,7 @@ func (r *Runner) removeDedupRepoFiles(adapter storage.Adapter) []error {
 // inside an ab_* folder, which is how ScanAppdataBackups reports it.
 func checkImportPathOwned(adapter storage.Adapter, entry map[string]any, storagePath string) error {
 	if source, _ := entry["source"].(string); source == "appdata.backup" {
-		name := path.Base(storagePath)
-		isArchive := strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".zip")
-		if !strings.HasPrefix(path.Base(path.Dir(storagePath)), "ab_") || !isArchive {
+		if !isAppdataArchivePath(storagePath) {
 			return fmt.Errorf("not an appdata.backup archive path")
 		}
 		fi, err := adapter.Stat(storagePath)

@@ -12,4 +12,4 @@ out="$2"
 case "$out" in /*) ;; *) out="$(pwd)/$out" ;; esac
 here="$(cd "$(dirname "$0")" && pwd)"
 (cd "$src" && COPYFILE_DISABLE=1 "${TAR:-tar}" --owner=0 --group=0 --numeric-owner -cJf "$out" usr/ etc/)
-sh "$here/check-package-ownership.sh" "$out"
+TAR="${TAR:-tar}" sh "$here/check-package-ownership.sh" "$out"
