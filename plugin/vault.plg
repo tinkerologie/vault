@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
     <!ENTITY name      "vault">
     <!ENTITY author    "Ruaan Deysel">
-    <!ENTITY version   "2026.10.02">
+    <!ENTITY version   "2026.10.03">
     <!ENTITY launch    "Settings/Vault">
     <!ENTITY gitURL    "https://github.com/tinkerologie/&name;">
     <!ENTITY pluginURL "https://raw.githubusercontent.com/tinkerologie/&name;/main/plugin/vault.plg">
