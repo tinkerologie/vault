@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/unraid"
 )
 
@@ -416,6 +417,9 @@ func (h *RecoveryHandler) PathRemap(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
+// remapStorage points a local destination at newPath after a recovery onto
+// different disks. newPath must pass the local storage root policy (#514).
+// It returns whether the change was applied and a user-facing error.
 func (h *RecoveryHandler) remapStorage(id int64, newPath string) (bool, string) {
 	dest, err := h.db.GetStorageDestination(id)
 	if err != nil {
@@ -424,6 +428,11 @@ func (h *RecoveryHandler) remapStorage(id int64, newPath string) (bool, string) 
 	if dest.Type != "local" {
 		return false, "only local destinations can be remapped"
 	}
+	cleaned, err := safepath.ValidateLocalStorageRoot(newPath)
+	if err != nil {
+		return false, err.Error()
+	}
+	newPath = cleaned
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(dest.Config), &cfg); err != nil {
 		log.Printf("path-remap: storage %d: malformed config: %v", id, err)

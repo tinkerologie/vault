@@ -21,17 +21,41 @@ Vault writes compressed (and optionally encrypted) backup archives to a storage 
 
 ## Local
 
-| Field                             | Description                                                                                                                               |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Path**                          | Absolute path where Vault will write backups (e.g. `/mnt/user/backups`). The directory must exist and be writable by the `vault` process. |
-| **Stage beside this destination** | Stage temporary backup archives in a `.vault-stage` directory on this destination's disk rather than in cache pools or system temp.       |
+| Field                             | Description                                                                                                                                                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Path**                          | Absolute path to a dedicated folder for Vault's backups (e.g. `/mnt/user/backups/vault`). The directory must exist and be writable by the `vault` process. See [Allowed local paths](#allowed-local-paths). |
+| **Stage beside this destination** | Stage temporary backup archives in a `.vault-stage` directory on this destination's disk rather than in cache pools or system temp.                                                                         |
 
 **Notes:**
 
 - Local destinations are the fastest option — no network overhead.
 - Avoid putting backups on the same array as the source data if you want protection against disk failure.
 - Vault only wakes the destination disk when it needs to write; it does not keep disks spinning between runs.
+- **Use a dedicated folder.** Vault keeps its backups in `<job name>/<run>/` folders, plus `_vault/` for deduplicated data and database backups. Other files in the folder are never deleted, but a dedicated folder keeps backups easy to find and manage.
 - **Staging beside destination:** When enabled, classic folder backups and other staged items create their temporary archives in a hidden `.vault-stage` directory directly on the destination disk. This avoids filling smaller NVMe/SSD cache drives when creating multi-gigabyte archives. Vault automatically excludes this `.vault-stage` folder if the destination path lives inside the folder being backed up.
+
+### Allowed local paths
+
+Vault runs as root, so it refuses local destinations that could expose system files to its cleanup (issue #514). The rules apply when you save or test a destination, and again every time Vault uses one. A saved destination that breaks them stops working until you edit its path. You can still delete it with **Keep backup files**.
+
+| Rejected path                                                                                                                                                | Why                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| An empty or relative path                                                                                                                                    | It would resolve against the daemon's working directory.           |
+| `/`, `/usr` (including `/usr/local/emhttp`), `/etc`, `/boot`, `/root`, `/bin`, `/sbin`, `/lib*`, `/proc`, `/sys`, `/dev`, `/run`, and system parts of `/var` | System and Unraid WebGUI files, and anything below them.           |
+| Any folder that contains one of those, such as `/var`                                                                                                        | It contains protected system files.                                |
+| `/mnt`, `/mnt/user`, `/mnt/user0`, `/mnt/disks`, `/mnt/remotes`, `/mnt/addons`, `/tmp`, `/home`, `/opt`, `/srv`, `/media` themselves                         | Shared parents. Use a subfolder such as `/mnt/user/backups/vault`. |
+
+Vault checks the path as typed and again after following symlinks, so a link that points at a protected location is rejected too. A pool or disk root such as `/mnt/backup_pool` is allowed. The directory picker cannot select its root listing or a rejected folder.
+
+### Deleting a destination and its files
+
+**Delete Storage & Files** removes only data that Vault can prove it owns:
+
+- the restore points Vault has recorded for jobs on the destination;
+- run folders that contain a Vault `manifest.json` (a file with that name from another app does not count);
+- the deduplication repository in `_vault/`.
+
+Vault's database backups in `_vault/` are kept, and so is everything else in the folder. If some files could not be removed, the destination is still deleted and the page shows a warning. If Vault cannot open or list the destination, nothing is deleted, the destination is kept, and you can choose **Keep backup files** instead. Deleting a job or a restore point, and retention cleanup, follow the same rules.
 
 ---
 
@@ -176,7 +200,7 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 After filling in the fields, always click **Test connection** before saving. What the test checks depends on the destination type:
 
 - **All types** — the destination is reachable and the credentials work.
-- **Local, SFTP, NFS, WebDAV** — Vault also writes and deletes a small test file, so write access is confirmed.
+- **Local, SFTP, NFS, WebDAV** — Vault also writes and deletes a small test file, so write access is confirmed. On local destinations the test file has a unique name, so an existing file is never overwritten.
 - **S3** — Vault only checks that the bucket exists and is accessible (no data is written).
 - **SMB** — Vault only lists the configured directory (no data is written).
 
@@ -194,7 +218,7 @@ If you have existing Vault backups (or AppData Backup archives) on a storage des
 4. Click **Scan** — Vault will list all importable archives it finds
 5. Select the archives to import and click **Import**
 
-Imported backups appear as restore points on the relevant jobs so you can restore from them immediately.
+Imported backups appear as restore points on the relevant jobs so you can restore from them immediately. Vault imports only entries it can find on the destination: a Vault backup folder with a Vault `manifest.json`, or an AppData Backup archive inside an `ab_*` folder.
 
 ---
 

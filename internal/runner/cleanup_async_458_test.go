@@ -56,14 +56,23 @@ func TestCleanupJobStorageAsyncSuccessB458(t *testing.T) {
 	r, d, storageDir := setupTestRunner(t)
 	dest := createLocalDest(t, d, storageDir)
 	b458WriteFile(t, filepath.Join(storageDir, "jobA", "run1", "data.tar"), "x")
+	b458WriteFile(t, filepath.Join(storageDir, "jobA", "run2", "manifest.json"), `{"job_name":"jobA","run_id":1,"backup_type":"full","items_done":1}`)
 	b458WriteFile(t, filepath.Join(storageDir, "jobA", "stray", "orphan.part"), "y")
 
 	b458RunAsync(t, func() {
 		r.CleanupJobStorageAsync(1, "jobA", dest, []string{"jobA/run1", ""})
 	})
 
-	if _, err := os.Stat(filepath.Join(storageDir, "jobA")); !os.IsNotExist(err) {
-		t.Fatalf("job directory should be removed, stat err=%v", err)
+	// The recorded path and the unrecorded run folder with a manifest are
+	// Vault's and go. The folder without a manifest is not provably Vault's
+	// and survives (#514), so the job directory stays too.
+	for _, gone := range []string{"run1", "run2"} {
+		if _, err := os.Stat(filepath.Join(storageDir, "jobA", gone)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be removed, stat err=%v", gone, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(storageDir, "jobA", "stray", "orphan.part")); err != nil {
+		t.Fatalf("unmanaged content must survive the job sweep: %v", err)
 	}
 	if n := b458QueueLen(r); n != 0 {
 		t.Fatalf("queue should be empty after cleanup, has %d", n)

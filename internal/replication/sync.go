@@ -3,10 +3,13 @@ package replication
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"path"
 	"strings"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/storage"
 	"github.com/tinkerologie/vault/internal/ws"
 )
@@ -300,16 +303,24 @@ func (s *Syncer) syncJob(
 	}
 
 	// Build set of local storage paths for dedup.
+	// Paths are compared in normalised form: syncRestorePoint stores the
+	// normalised path, so a peer reporting "job/run/" must still match.
+	normPath := func(p string) string {
+		if n, err := safepath.NormalizeRestorePointPath(p); err == nil {
+			return n
+		}
+		return p
+	}
 	localPaths := make(map[string]bool, len(localRPs))
 	for _, lrp := range localRPs {
-		localPaths[lrp.StoragePath] = true
+		localPaths[normPath(lrp.StoragePath)] = true
 	}
 
 	var newCount int
 	var totalBytes int64
 
 	for _, rrp := range remoteRPs {
-		if localPaths[rrp.StoragePath] {
+		if localPaths[normPath(rrp.StoragePath)] {
 			continue // Already synced.
 		}
 
@@ -366,8 +377,16 @@ func (s *Syncer) syncRestorePoint(
 	localJobID int64,
 	localAdapter storage.Adapter,
 ) (int64, error) {
+	// The peer's storage path becomes a local restore point row that later
+	// authorises recursive deletes, so it must have the managed
+	// <job>/<run> shape (#514).
+	storagePath, err := safepath.NormalizeRestorePointPath(rrp.StoragePath)
+	if err != nil {
+		return 0, fmt.Errorf("invalid remote storage path: %w", err)
+	}
+
 	// Recursively list and download all files in the remote storage path.
-	totalBytes, err := s.downloadDir(client, rj.StorageDestID, rrp.StoragePath, localAdapter)
+	totalBytes, err := s.downloadDir(client, rj.StorageDestID, storagePath, localAdapter)
 	if err != nil {
 		return totalBytes, err
 	}
@@ -378,7 +397,7 @@ func (s *Syncer) syncRestorePoint(
 		JobRunID:             0,
 		JobID:                localJobID,
 		BackupType:           rrp.BackupType,
-		StoragePath:          rrp.StoragePath,
+		StoragePath:          storagePath,
 		Metadata:             s.rewriteMetadata(rrp.Metadata, src.Name),
 		SizeBytes:            totalBytes,
 		ParentRestorePointID: 0,
@@ -432,18 +451,114 @@ func (s *Syncer) broadcast(data map[string]any) {
 	s.hub.Broadcast(msg)
 }
 
-// downloadDir recursively lists and downloads all files from a remote storage path.
-func (s *Syncer) downloadDir(client *Client, storageID int64, dirPath string, localAdapter storage.Adapter) (int64, error) {
-	files, err := client.ListStorageFiles(storageID, dirPath)
+// matchMode records how a restore point's listing relates to its path.
+type matchMode int
+
+const (
+	matchUndecided matchMode = iota
+	matchLiteral             // entries sit literally below the restore point
+	matchSanitised           // an S3-backed peer reports sanitised key segments
+)
+
+// childRemainder reports whether a peer-listed child lies strictly below the
+// listed directory and, if so, returns the child's segments below it.
+//
+// An S3-backed peer reports keys with each segment sanitised (a job "My Job"
+// is stored as "My_Job"), while the restore point path keeps the original
+// name. The first entry of a restore point decides the mode, and every later
+// entry must use the same one: a peer whose entries are literal descendants
+// (every non-S3 destination) can never also slip in a sanitised sibling such
+// as "My_Job/run" for "My Job/run". The child must be a clean, relative,
+// non-escaping path in either mode; sanitising is used only for comparison.
+func childRemainder(parent, child string, mode *matchMode) ([]string, bool) {
+	if !safepath.IsStrictDescendant(".", child) {
+		return nil, false // absolute, root alias or escaping
+	}
+	ps := strings.Split(path.Clean(parent), "/")
+	cs := strings.Split(path.Clean(child), "/")
+	if len(cs) <= len(ps) {
+		return nil, false
+	}
+	literal, sanitised := true, true
+	for i := range ps {
+		literal = literal && cs[i] == ps[i]
+		sanitised = sanitised && cs[i] == storage.SanitizeKeySegment(ps[i])
+	}
+	switch *mode {
+	case matchUndecided:
+		switch {
+		case literal:
+			*mode = matchLiteral
+		case sanitised:
+			*mode = matchSanitised
+		default:
+			return nil, false
+		}
+	case matchLiteral:
+		if !literal {
+			return nil, false
+		}
+	case matchSanitised:
+		if !sanitised {
+			return nil, false
+		}
+	}
+	return cs[len(ps):], true
+}
+
+// remoteFiles is the part of *Client that downloadDir needs. It is an
+// interface so tests can return listings and streams a real peer would not.
+type remoteFiles interface {
+	ListStorageFiles(storageID int64, prefix string) ([]StorageFile, error)
+	DownloadFile(storageID int64, filePath string) (io.ReadCloser, error)
+}
+
+// maxDownloadDepth bounds how far below a restore point downloadDir will
+// descend. Vault run folders are a few levels deep; a peer that reports a
+// deeper tree is broken or hostile.
+const maxDownloadDepth = 32
+
+// downloadDir recursively lists and downloads all files from a remote storage
+// path. Every listed entry must sit strictly below the directory that was
+// listed, so a peer cannot direct writes outside the restore point (#514).
+// Files are written locally under dirPath itself, so the local copy matches
+// the restore point path even when the peer reports sanitised S3 keys. Each
+// directory is visited once, and recursion depth is bounded, so a
+// self-referencing listing cannot loop forever.
+func (s *Syncer) downloadDir(client remoteFiles, storageID int64, dirPath string, localAdapter storage.Adapter) (int64, error) {
+	mode := matchUndecided
+	return s.downloadDirConfined(client, storageID, dirPath, path.Clean(dirPath), localAdapter, map[string]bool{}, &mode, 0)
+}
+
+// downloadDirConfined is downloadDir's recursive step: it lists remoteDir,
+// checks each entry with childRemainder, downloads files to the matching
+// path under localDir, and recurses into directories it has not visited.
+func (s *Syncer) downloadDirConfined(client remoteFiles, storageID int64, remoteDir, localDir string, localAdapter storage.Adapter, visited map[string]bool, mode *matchMode, depth int) (int64, error) {
+	if depth > maxDownloadDepth {
+		return 0, fmt.Errorf("remote listing under %q is deeper than %d levels", remoteDir, maxDownloadDepth)
+	}
+	clean := path.Clean(remoteDir)
+	if visited[clean] {
+		return 0, fmt.Errorf("remote listing revisits %q", remoteDir)
+	}
+	visited[clean] = true
+
+	files, err := client.ListStorageFiles(storageID, remoteDir)
 	if err != nil {
-		return 0, fmt.Errorf("list remote files at %q: %w", dirPath, err)
+		return 0, fmt.Errorf("list remote files at %q: %w", remoteDir, err)
 	}
 
 	var totalBytes int64
 	for _, f := range files {
+		rel, ok := childRemainder(clean, f.Path, mode)
+		if !ok {
+			return totalBytes, fmt.Errorf("remote entry %q is outside %q", f.Path, remoteDir)
+		}
+		remote := path.Clean(f.Path)
+		local := path.Join(append([]string{localDir}, rel...)...)
 		if f.IsDir {
 			// Recurse into subdirectories.
-			bytes, err := s.downloadDir(client, storageID, f.Path, localAdapter)
+			bytes, err := s.downloadDirConfined(client, storageID, remote, local, localAdapter, visited, mode, depth+1)
 			if err != nil {
 				return totalBytes, err
 			}
@@ -451,17 +566,17 @@ func (s *Syncer) downloadDir(client *Client, storageID int64, dirPath string, lo
 			continue
 		}
 
-		rc, err := client.DownloadFile(storageID, f.Path)
+		rc, err := client.DownloadFile(storageID, remote)
 		if err != nil {
-			return totalBytes, fmt.Errorf("download %q: %w", f.Path, err)
+			return totalBytes, fmt.Errorf("download %q: %w", remote, err)
 		}
 
-		if err := localAdapter.Write(f.Path, rc); err != nil {
+		if err := localAdapter.Write(local, rc); err != nil {
 			_ = rc.Close()
-			return totalBytes, fmt.Errorf("write %q: %w", f.Path, err)
+			return totalBytes, fmt.Errorf("write %q: %w", local, err)
 		}
 		if err := rc.Close(); err != nil {
-			return totalBytes, fmt.Errorf("closing download stream for %q: %w", f.Path, err)
+			return totalBytes, fmt.Errorf("closing download stream for %q: %w", remote, err)
 		}
 		totalBytes += f.Size
 	}

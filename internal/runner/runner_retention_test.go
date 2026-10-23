@@ -192,7 +192,9 @@ func TestDeleteStorageDirInternalWrapper(t *testing.T) {
 	}
 
 	adapter := storage.NewLocalAdapter(storageDir)
-	r.deleteStorageDir(adapter, "wrap-job/run1")
+	if err := r.deleteRestorePointDir(adapter, "wrap-job/run1"); err != nil {
+		t.Fatalf("deleteRestorePointDir: %v", err)
+	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("directory should have been removed: %v", err)
 	}

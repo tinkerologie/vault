@@ -175,6 +175,7 @@ func TestImportBackupsMetadataBranchesB458(t *testing.T) {
 		{"job_name": "too-new", "storage_path": "x/y", "version": 50.0},
 		{"job_name": "", "storage_path": "x/z"},
 	}
+	seedImportManifests(t, storageDir, backups)
 	n, err := r.ImportBackups(dest.ID, backups)
 	if err != nil {
 		t.Fatalf("ImportBackups: %v", err)
@@ -217,7 +218,7 @@ func TestImportBackupsEncryptedPlaceholdersB458(t *testing.T) {
 	ageEnv, _ := encodeManifestEnvelope("age", "age", []byte("not-age"))
 	b458WriteFile(t, filepath.Join(storageDir, "enc", "r3", "manifest.json"), string(ageEnv))
 	// A plaintext manifest presented as encrypted is closed and imported.
-	b458WriteFile(t, filepath.Join(storageDir, "enc", "r4", "manifest.json"), `{"job_name":"enc"}`)
+	b458WriteFile(t, filepath.Join(storageDir, "enc", "r4", "manifest.json"), `{"job_name":"enc","run_id":4,"backup_type":"full","items_done":1}`)
 
 	backups := []map[string]any{
 		{"encrypted": true, "storage_path": ""},

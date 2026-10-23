@@ -282,6 +282,10 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.notifyConfigChange()
 }
 
+// Delete handles DELETE /api/v1/storage/{id}. With force=true, dependent jobs
+// are disabled first. With deleteFiles=true, Vault-managed backup data is
+// removed before the record: the request fails without deleting anything
+// when cleanup cannot run, and reports cleanup_error on a partial cleanup.
 func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
 	if !ok {
@@ -302,13 +306,34 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optionally delete backup files from storage.
+	// Optionally delete backup files from storage. The cleanup removes only
+	// Vault-managed restore points (#514). When it cannot run at all (the
+	// destination is missing or its config is invalid, such as an unsafe
+	// local root) the request fails before the record is deleted, so the
+	// user can retry with "Keep backup files". A partial cleanup still
+	// deletes the record and reports cleanup_error instead of success.
+	var cleanupErr error
 	if r.URL.Query().Get("deleteFiles") == "true" {
 		dest, err := h.db.GetStorageDestination(id)
-		if err == nil {
-			if err := h.runner.CleanupStorageDestination(dest); err != nil {
-				log.Printf("Warning: failed to clean up files for storage %d: %s", id, err.Error()) // #nosec G706 //nolint:gosec // id is int64 from URL param
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				respondError(w, http.StatusNotFound, "not found")
+				return
 			}
+			respondInternalError(w, err)
+			return
+		}
+		if h.runner == nil {
+			respondError(w, http.StatusServiceUnavailable, "runner not configured")
+			return
+		}
+		if err := h.runner.CleanupStorageDestination(dest); err != nil {
+			if errors.Is(err, runner.ErrCleanupUnavailable) {
+				respondError(w, http.StatusBadRequest, fmt.Sprintf("cannot delete backup files: %v. Nothing was deleted; delete the destination with \"Keep backup files\" instead", err))
+				return
+			}
+			log.Printf("Warning: failed to clean up files for storage %d: %s", id, err.Error()) // #nosec G706 //nolint:gosec // id is int64 from URL param
+			cleanupErr = err
 		}
 	}
 
@@ -329,13 +354,17 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	if disabled > 0 {
-		log.Printf("storage: deleted destination %d and disabled %d dependent job(s)", id, disabled) // #nosec G706 //nolint:gosec // ids are ints, not request-controlled strings
-		respondJSON(w, http.StatusOK, map[string]any{
-			"deleted":         true,
-			"disabled_jobs":   disabled,
-			"disabled_notice": "dependent jobs were disabled and must be re-pointed at a storage destination",
-		})
+	if disabled > 0 || cleanupErr != nil {
+		body := map[string]any{"deleted": true}
+		if disabled > 0 {
+			log.Printf("storage: deleted destination %d and disabled %d dependent job(s)", id, disabled) // #nosec G706 //nolint:gosec // ids are ints, not request-controlled strings
+			body["disabled_jobs"] = disabled
+			body["disabled_notice"] = "dependent jobs were disabled and must be re-pointed at a storage destination"
+		}
+		if cleanupErr != nil {
+			body["cleanup_error"] = cleanupErr.Error()
+		}
+		respondJSON(w, http.StatusOK, body)
 	} else {
 		w.WriteHeader(http.StatusNoContent)
 	}

@@ -2,6 +2,7 @@
   import { api } from '../lib/api.js'
   import { parseConfig } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
+  import { localStoragePathProblem } from '../lib/storagePath.js'
   import Tooltip from './Tooltip.svelte'
 
   let {
@@ -52,9 +53,15 @@
   const init = initial
   let form = $state(initForm(init))
   let saving = $state(false)
+  // Early feedback for unsafe local roots (#514); the server re-validates.
+  let localPathProblem = $derived(form.type === 'local' ? localStoragePathProblem(form.config.path) : '')
 
   async function saveStorage() {
     if (saving) return
+    if (localPathProblem) {
+      ontoast(localPathProblem, 'error')
+      return
+    }
     saving = true
     try {
       const payload = {
@@ -213,7 +220,12 @@
   {#if form.type === 'local'}
     <div>
       <span class="block text-sm font-medium text-text-muted mb-1.5">Path</span>
-      <PathBrowser bind:value={form.config.path} />
+      <PathBrowser bind:value={form.config.path} validate={localStoragePathProblem} />
+      {#if localPathProblem}
+        <p class="text-xs text-warning mt-1.5" data-testid="local-path-hint">{localPathProblem}</p>
+      {:else}
+        <p class="text-xs text-text-dim mt-1.5">Use a dedicated folder. Deleting this destination with its files removes only Vault's backups.</p>
+      {/if}
     </div>
     <label class="flex items-start gap-2 text-sm text-text-muted">
       <input type="checkbox" bind:checked={form.stage_beside_destination} class="accent-vault mt-1" />
