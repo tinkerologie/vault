@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Svelte component tests (#509):** `npm --prefix web test` now also renders Svelte pages in jsdom with Testing Library, in a separate `component` Vitest project beside the Node `unit` project. The first suite covers `Logs.svelte`: its scroll handling, older-page loading, scroll compensation, "Jump to oldest" and mount/unmount lifecycle, plus a rejected older-page fetch through the real log store. `CONTRIBUTING.md` explains when to write a pure-logic, component or Playwright test.
+
 ## [v2026.10.02] - 2026-10-17
 
 ### Fixed
