@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Svelte component tests (#509):** `npm --prefix web test` now also renders Svelte pages in jsdom with Testing Library, in a separate `component` Vitest project beside the Node `unit` project. The first suite covers `Logs.svelte`: its scroll handling, older-page loading, scroll compensation, "Jump to oldest" and mount/unmount lifecycle, plus a rejected older-page fetch through the real log store. `CONTRIBUTING.md` explains when to write a pure-logic, component or Playwright test.
+
 ### Security
 
 - **Storage cleanup can no longer delete files outside Vault's backups (#514):** a local destination whose path was empty (the directory picker's root listing) resolved against the daemon's working directory, `/usr/local/emhttp` on Unraid, and **Delete Storage & Files** then deleted the Unraid WebGUI. Local destinations must now be an absolute, dedicated folder: `/`, system trees such as `/usr`, `/etc` and `/boot`, folders that contain them, and shared parents such as `/mnt/user` are rejected when saved or tested, and also every time a saved destination is used. Symlinks are resolved before the check. Existing destinations with such a path stop working until their path is changed, and can still be deleted with **Keep backup files**.
