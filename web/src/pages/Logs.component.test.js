@@ -187,7 +187,7 @@ describe('scroll compensation', () => {
     const [mid] = makeEntries(1, { start: 47 })
     mid.ts = new Date(Date.parse(mid.ts) + 500).toISOString()
     mid.message = 'Inserted line'
-    const list = [...control_entries()]
+    const list = [...storeEntries()]
     list.push(mid)
     list.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
     control.setEntries(list)
@@ -208,7 +208,7 @@ describe('scroll compensation', () => {
     geo.writes.length = 0
 
     // Same number of rows: no growth.
-    control.setEntries(control_entries().map((e) => ({ ...e })))
+    control.setEntries(storeEntries().map((e) => ({ ...e })))
     await flush()
     expect(geo.writes).toEqual([])
 
@@ -216,7 +216,7 @@ describe('scroll compensation', () => {
     geo.position(box(), 0)
     const [mid] = makeEntries(1, { start: 47 })
     mid.ts = new Date(Date.parse(mid.ts) + 500).toISOString()
-    control.setEntries([...control_entries(), mid].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)))
+    control.setEntries([...storeEntries(), mid].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)))
     await flush()
     expect(geo.writes).toEqual([])
   })
@@ -300,6 +300,6 @@ describe('lifecycle while filling the viewport', () => {
   })
 })
 
-function control_entries() {
+function storeEntries() {
   return current.fixture.store.entries
 }
