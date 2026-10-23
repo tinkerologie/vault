@@ -41,6 +41,7 @@ afterEach(() => {
   current.fixture = null
 })
 
+/** Render Logs against a fresh fixture store; `before` can prime it first. */
 async function mountLogs({ entries = makeEntries(50), hasMore = false, before } = {}) {
   current.fixture = createFixtureStore({ entries, hasMore })
   before?.(current.fixture.control)
@@ -49,7 +50,9 @@ async function mountLogs({ entries = makeEntries(50), hasMore = false, before } 
   return { ...view, ...current.fixture, console: () => document.querySelector('[role="log"]') }
 }
 
+/** Number of log rows currently rendered. */
 const rowCount = () => document.querySelectorAll('[data-entry-id]').length
+/** The "Jump to present" button, or null while following the live edge. */
 const jumpToPresent = () => screen.queryByTitle('Jump to present')
 
 describe('mount without a console', () => {
@@ -300,6 +303,7 @@ describe('lifecycle while filling the viewport', () => {
   })
 })
 
+/** The entries the current fixture store holds, oldest first. */
 function storeEntries() {
   return current.fixture.store.entries
 }

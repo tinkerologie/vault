@@ -12,6 +12,10 @@ import { fireEvent } from '@testing-library/svelte'
 
 const PROPS = ['scrollHeight', 'clientHeight', 'scrollTop']
 
+/**
+ * Install the console geometry stubs and return their controls: `writes`,
+ * `scrollToCalls`, `setScrollHeight`, `position` and `restore`.
+ */
 export function installScrollBox({ clientHeight = 400, rowHeight = 20 } = {}) {
   const proto = HTMLElement.prototype
   const saved = {
