@@ -482,6 +482,12 @@ func (a *S3Adapter) logSanitizedSegment(orig, sanitized string) {
 	}
 }
 
+// SanitizeKeySegment returns the form the S3 adapter stores a path segment
+// under. Callers that compare paths reported by an S3 destination with paths
+// recorded before sanitisation (replication, #514) use it to canonicalise
+// both sides.
+func SanitizeKeySegment(seg string) string { return sanitizeS3KeySegment(seg) }
+
 // sanitizeS3KeySegment replaces characters that trigger the SDK signing
 // asymmetry with `_`. Conservative: replace whitespace and a handful of
 // punctuation chars that need percent-encoding. ASCII alphanumerics, dot,

@@ -429,6 +429,10 @@ func TestCleanupStorageDestinationRemovesOnlyManagedRuns(t *testing.T) {
 	write("Sites/blog/manifest.json", `{"name":"blog","start_url":"/"}`)
 	write("Sites/blog/index.html", "keep")
 	write("_vault/vault.db.latest", "keep")
+	// An empty folder the user created is not Vault's either.
+	if err := os.MkdirAll(filepath.Join(storageDir, "empty-user-folder"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := r.CleanupStorageDestination(dest); err != nil {
 		t.Fatalf("CleanupStorageDestination: %v", err)
@@ -438,7 +442,7 @@ func TestCleanupStorageDestinationRemovesOnlyManagedRuns(t *testing.T) {
 			t.Errorf("%s should have been removed (stat err=%v)", gone, err)
 		}
 	}
-	for _, kept := range []string{"languages/en.txt", "plugins/dynamix/page.php", "job-a/notes/readme.txt", "top-level-file.txt", "_vault/vault.db.latest", "Sites/blog/index.html"} {
+	for _, kept := range []string{"languages/en.txt", "plugins/dynamix/page.php", "job-a/notes/readme.txt", "top-level-file.txt", "_vault/vault.db.latest", "Sites/blog/index.html", "empty-user-folder"} {
 		if _, err := os.Stat(filepath.Join(storageDir, filepath.FromSlash(kept))); err != nil {
 			t.Errorf("%s must survive the wipe: %v", kept, err)
 		}

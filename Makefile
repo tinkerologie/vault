@@ -106,7 +106,8 @@ package: release
 	@# archive's owners, so a package built by the CI runner (UID 1001) used to
 	@# hand /usr, /usr/local/emhttp and /etc to that UID on install (#514).
 	cd $(BUILD_DIR)/pkg && COPYFILE_DISABLE=1 tar --owner=0 --group=0 --numeric-owner -cJf ../$(BINARY)-$(VERSION).txz usr/ etc/
-	@bad="$$(tar --numeric-owner -tvJf $(BUILD_DIR)/$(BINARY)-$(VERSION).txz | awk '{ split($$2, o, "/"); u = (o[2] != "") ? o[1] : $$3; g = (o[2] != "") ? o[2] : $$4; if (u != "0" || g != "0") print }')"; \
+	@listing="$$(tar --numeric-owner -tvJf $(BUILD_DIR)/$(BINARY)-$(VERSION).txz)" || { echo "ERROR: cannot list $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"; exit 1; }; \
+		bad="$$(printf '%s\n' "$$listing" | awk '{ split($$2, o, "/"); u = (o[2] != "") ? o[1] : $$3; g = (o[2] != "") ? o[2] : $$4; if (u != "0" || g != "0") print }')"; \
 		if [ -n "$$bad" ]; then echo "ERROR: package entries not owned by root:root:"; echo "$$bad"; exit 1; fi
 	@echo "Package created: $(BUILD_DIR)/$(BINARY)-$(VERSION).txz"
 

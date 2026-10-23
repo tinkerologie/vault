@@ -77,18 +77,11 @@ func hasManifest(adapter storage.Adapter, dir string) bool {
 	return ok
 }
 
-// removeEmptyDir removes dir when the adapter supports directory removal
-// and dir is empty. A non-empty or missing dir is not an error here.
-func removeEmptyDir(adapter storage.Adapter, dir string) {
-	if dr, ok := adapter.(interface{ RemoveEmptyDir(string) error }); ok {
-		_ = dr.RemoveEmptyDir(dir)
-	}
-}
-
 // sweepManagedRunDirs deletes every child directory of dir that contains a
-// manifest.json, then removes dir itself if that left it empty. Files and
-// directories without a manifest survive. dir must be a relative, non-root
-// path; a missing dir is already clean.
+// Vault manifest.json. Files and directories without one survive. dir itself
+// is removed only when a deleted run left it empty (DeleteStorageDir sweeps
+// the parents it emptied), so an empty folder a user created is kept. dir
+// must be a relative, non-root path; a missing dir is already clean.
 func (r *Runner) sweepManagedRunDirs(adapter storage.Adapter, dir string) error {
 	if _, err := safepath.NormalizeRelative(dir, false); err != nil {
 		return fmt.Errorf("%w: %q: %w", ErrCleanupRefused, dir, err)
@@ -109,8 +102,6 @@ func (r *Runner) sweepManagedRunDirs(adapter storage.Adapter, dir string) error 
 			errs = append(errs, err)
 		}
 	}
-	removeEmptyDir(adapter, dir)
-	r.sweepEmptyParents(adapter, dir, "")
 	return errors.Join(errs...)
 }
 

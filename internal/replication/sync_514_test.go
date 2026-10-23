@@ -216,3 +216,83 @@ func TestSyncJobSkipsInvalidRemotePath514(t *testing.T) {
 		t.Fatalf("syncJob = %d, %v; want the invalid point skipped", n, err)
 	}
 }
+
+// An S3-backed peer reports keys with sanitised segments ("My Job" becomes
+// "My_Job"). Those entries still belong to the restore point and are written
+// locally under the restore point's own path; a lookalike or escaping path
+// still does not belong.
+func TestChildRemainderS3Sanitised514(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		parent, child string
+		want          string // joined remainder, "" when rejected
+	}{
+		{"My Job/2026-01-01_000000", "My_Job/2026-01-01_000000/f.bin", "f.bin"},
+		{"My Job/2026-01-01_000000", "My Job/2026-01-01_000000/f.bin", "f.bin"},
+		{"Docker & VMs/run", "Docker___VMs/run/a/b", "a/b"},
+		{"My Job/run", "My_Job/run", ""},
+		{"My Job/run", "My_Job/run-2/f", ""},
+		{"My Job/run", "Other/run/f", ""},
+		{"My Job/run", "../My_Job/run/f", ""},
+		{"My Job/run", "/My_Job/run/f", ""},
+	}
+	for _, tc := range cases {
+		mode := matchUndecided
+		rel, ok := childRemainder(tc.parent, tc.child, &mode)
+		got := ""
+		if ok {
+			got = strings.Join(rel, "/")
+		}
+		if got != tc.want {
+			t.Errorf("childRemainder(%q, %q) = %q, want %q", tc.parent, tc.child, got, tc.want)
+		}
+	}
+
+	downloads := 0
+	c := newListingServer(t, map[string][]StorageFile{
+		"My Job/run":     {{Path: "My_Job/run/sub", IsDir: true}},
+		"My_Job/run/sub": {{Path: "My_Job/run/sub/f.bin", Size: 3}},
+	}, &downloads)
+	s := NewSyncer(openTestDB(t), nil)
+	dir := t.TempDir()
+	if _, err := s.downloadDir(c, 3, "My Job/run", storage.NewLocalAdapter(dir)); err != nil || downloads != 1 {
+		t.Fatalf("downloadDir of an S3-sanitised listing = %v (downloads %d)", err, downloads)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "My Job", "run", "sub", "f.bin")); err != nil || string(b) != "abc" {
+		t.Fatalf("file not written under the restore point path: %q, %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "My_Job")); !os.IsNotExist(err) {
+		t.Fatalf("sanitised path written locally: %v", err)
+	}
+}
+
+// Once a restore point's entries are literal descendants, a sanitised
+// lookalike sibling is refused, and vice versa: a non-S3 peer cannot pull
+// "My_Job/run/secret.bin" into "My Job/run".
+func TestChildRemainderModeLock514(t *testing.T) {
+	t.Parallel()
+	mode := matchUndecided
+	if _, ok := childRemainder("My Job/run", "My Job/run/a.bin", &mode); !ok || mode != matchLiteral {
+		t.Fatalf("literal entry: ok=%v mode=%v", ok, mode)
+	}
+	if _, ok := childRemainder("My Job/run", "My_Job/run/secret.bin", &mode); ok {
+		t.Fatal("sanitised sibling accepted after a literal entry")
+	}
+
+	mode = matchUndecided
+	if _, ok := childRemainder("My Job/run", "My_Job/run/a.bin", &mode); !ok || mode != matchSanitised {
+		t.Fatalf("sanitised entry: ok=%v mode=%v", ok, mode)
+	}
+	if _, ok := childRemainder("My Job/run", "My Job/run/b.bin", &mode); ok {
+		t.Fatal("literal entry accepted after the listing was sanitised")
+	}
+
+	downloads := 0
+	c := newListingServer(t, map[string][]StorageFile{
+		"My Job/run": {{Path: "My Job/run/a.bin", Size: 3}, {Path: "My_Job/run/secret.bin", Size: 3}},
+	}, &downloads)
+	s := NewSyncer(openTestDB(t), nil)
+	if _, err := s.downloadDir(c, 3, "My Job/run", storage.NewLocalAdapter(t.TempDir())); err == nil {
+		t.Fatal("a mixed listing was accepted")
+	}
+}
