@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Unraid plugin release notes (#522):** The release workflow now fills the plugin's Release Notes dialog from the matching version in `CHANGELOG.md`, replacing the previous notes automatically. Missing or empty notes, invalid manifest XML, and a mismatched manifest version stop publication instead of leaving a changelog link or stale notes.
+
+### Fixed
+
+- **SFTP upload throughput (#517):** Uploads now pipeline up to 64 requests per file, including compressed and encrypted streams whose size is unknown, instead of waiting for each 32 KiB packet's reply. Packet size, connection pool size, retries, and partial-file cleanup remain unchanged.
+
 ## [v2026.10.03] - 2026-10-23
 
 ### Changed

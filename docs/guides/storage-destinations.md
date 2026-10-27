@@ -74,6 +74,7 @@ Vault's database backups in `_vault/` are kept, and so is everything else in the
 - Prefer key-based authentication for unattended backups. Add the Unraid server's public key (`~/.ssh/id_rsa.pub`) to the remote user's `~/.ssh/authorized_keys`.
 - Test the connection before saving — Vault will attempt to list the remote directory and report any permission or connectivity errors.
 - SFTP is the most broadly supported remote protocol and works with virtually any server running OpenSSH.
+- Each upload pipelines up to 64 requests using compatible 32 KiB packets, including compressed or encrypted streams whose size is unknown. This avoids waiting for a network round trip per packet. **Parallel uploads** controls how many files upload together; per-file pipelining requires no configuration.
 
 ---
 

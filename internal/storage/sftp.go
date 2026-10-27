@@ -39,6 +39,17 @@ type SFTPConfig struct {
 // the pool holds open per adapter instance.
 const sftpPoolSize = 4
 
+// Keep 32 KiB packets for server compatibility, with a bounded window of
+// roughly 2 MiB per upload (8 MiB across the four pooled connections).
+const sftpWriteConcurrency = 64
+
+func sftpClientOptions() []sftp.ClientOption {
+	return []sftp.ClientOption{
+		sftp.UseConcurrentWrites(true),
+		sftp.MaxConcurrentRequestsPerFile(sftpWriteConcurrency),
+	}
+}
+
 // sftpConnection holds both halves of a live SSH+SFTP session so both are
 // closed together when the connection is discarded from the pool. The
 // existing connect() path leaked the *ssh.Client because callers only closed
@@ -148,7 +159,7 @@ func (s *SFTPAdapter) dialConnection() (*sftpConnection, error) {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
 
-	sftpClient, err := sftp.NewClient(sshConn)
+	sftpClient, err := sftp.NewClient(sshConn, sftpClientOptions()...)
 	if err != nil {
 		_ = sshConn.Close()
 		return nil, fmt.Errorf("sftp client: %w", err)
@@ -276,7 +287,10 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 		return fmt.Errorf("create: %w", err)
 	}
 
-	if _, err := io.Copy(f, reader); err != nil {
+	// Explicit concurrency also pipelines the runner's size-unknown streams.
+	// pkg/sftp drains pending replies before returning, but errors can leave
+	// holes or extra length: close and remove the file rather than truncate it.
+	if _, err := f.ReadFromWithConcurrency(reader, sftpWriteConcurrency); err != nil {
 		_ = f.Close()
 		_ = client.Remove(full)
 		return fmt.Errorf("write: %w", err)

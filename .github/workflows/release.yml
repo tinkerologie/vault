@@ -97,6 +97,9 @@ jobs:
         # parent-directory paths in embed patterns.
         run: make test
 
+      - name: Build release notes helper
+        run: go build -o build/plgnotes ./cmd/plgnotes
+
       - name: Build release package
         env:
           VERSION_VERSION: ${{ steps.version.outputs.version }}
@@ -125,31 +128,20 @@ jobs:
         env:
           VERSION_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${VERSION_VERSION}"
-          NOTES_FILE="build/RELEASE_NOTES_BASE.md"
-
-          if grep -qE "^## \[v?$VERSION\]" CHANGELOG.md; then
-            awk -v version="$VERSION" '
-              $0 ~ "^## \\[v?" version "\\]" { capture = 1; next }
-              capture && $0 ~ "^## \\[" { exit }
-              capture { print }
-            ' CHANGELOG.md > "$NOTES_FILE"
-
-            python3 -c 'from pathlib import Path; import sys; path = Path(sys.argv[1]); text = path.read_text().strip(); path.write_text((text + "\n") if text else "")' "$NOTES_FILE"
-
-            if [ ! -s "$NOTES_FILE" ]; then
-              echo "No release notes content found for $VERSION in CHANGELOG.md"
-              printf "See [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md) for details.\n" "${GITHUB_REPOSITORY}" > "$NOTES_FILE"
-            fi
-          else
-            echo "Version $VERSION not found in CHANGELOG.md"
-            printf "See [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md) for details.\n" "${GITHUB_REPOSITORY}" > "$NOTES_FILE"
-          fi
-
-          cp "$NOTES_FILE" build/RELEASE_NOTES.md
+          build/plgnotes extract --changelog CHANGELOG.md \
+            --version "$VERSION_VERSION" --output build/RELEASE_NOTES_BASE.md
+          cp build/RELEASE_NOTES_BASE.md build/RELEASE_NOTES.md
 
           echo "Release notes body:"
           cat build/RELEASE_NOTES.md
+
+      - name: Validate plugin release notes before publication
+        env:
+          VERSION_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cp plugin/vault.plg build/vault-validation.plg
+          build/plgnotes update-plg --manifest build/vault-validation.plg \
+            --notes build/RELEASE_NOTES_BASE.md --version "$VERSION_VERSION"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -234,6 +226,7 @@ jobs:
       - name: Update PLG file for txz and SHA256
         env:
           CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
+          VERSION_VERSION: ${{ steps.version.outputs.version }}
         run: |
           SHA256="${CHECKSUM_SHA256}"
           export SHA256
@@ -255,6 +248,9 @@ jobs:
                         r'\1<SHA256>&sha256;</SHA256>', text)
           path.write_text(text)
           PY
+
+          build/plgnotes update-plg --manifest plugin/vault.plg \
+            --notes build/RELEASE_NOTES_BASE.md --version "$VERSION_VERSION"
 
           echo "Updated PLG file"
           grep "ENTITY bundle" plugin/vault.plg
@@ -285,6 +281,7 @@ jobs:
             echo "No changes to PLG file"
           else
             git fetch origin main
+            git restore plugin/vault.plg
             git checkout main
             git pull origin main
 
@@ -307,10 +304,17 @@ jobs:
           path.write_text(text)
           PY
 
-            git add plugin/vault.plg
-            git commit -m "chore: update PLG SHA256 hash for v${VERSION_VERSION} [skip ci]"
-            git push "https://x-access-token:${PLG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
-            echo "Committed and pushed PLG updates"
+            build/plgnotes update-plg --manifest plugin/vault.plg \
+              --notes build/RELEASE_NOTES_BASE.md --version "$VERSION_VERSION"
+
+            if git diff --quiet plugin/vault.plg; then
+              echo "PLG checksum and release notes already published"
+            else
+              git add plugin/vault.plg
+              git commit -m "chore: update PLG SHA256 and release notes for v${VERSION_VERSION} [skip ci]"
+              git push "https://x-access-token:${PLG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+              echo "Committed and pushed PLG updates"
+            fi
           fi
 
       - name: Release Summary
