@@ -1,10 +1,31 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestExitCode(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	if code := exitCode(nil, &stderr); code != 1 || !strings.Contains(stderr.String(), "plgnotes: expected extract or update-plg") {
+		t.Fatalf("invalid invocation: exit=%d, stderr=%q", code, stderr.String())
+	}
+	dir := t.TempDir()
+	changelog := writeFixture(t, dir, "CHANGELOG.md", "## [v2026.10.03]\n- current")
+	output := filepath.Join(dir, "notes.md")
+	stderr.Reset()
+	if code := exitCode([]string{"extract", "--version", "2026.10.03", "--changelog", changelog, "--output", output}, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("valid invocation: exit=%d, stderr=%q", code, stderr.String())
+	}
+	content, err := os.ReadFile(output)
+	if err != nil || string(content) != "- current\n" {
+		t.Fatalf("command output = %q, %v", content, err)
+	}
+}
 
 func writeFixture(t *testing.T, dir, name, content string) string {
 	t.Helper()
@@ -58,6 +79,9 @@ func TestRunFailuresPreserveManifest(t *testing.T) {
 	manifest := writeFixture(t, dir, "vault.plg", fixtureManifest)
 	notes := writeFixture(t, dir, "notes.md", "- current")
 	empty := writeFixture(t, dir, "empty.md", "")
+	// XML normalizes a standalone CR to LF. The round-trip guard must fail
+	// without replacing the manifest when this would alter the supplied notes.
+	carriageReturn := writeFixture(t, dir, "cr.md", "- current\r- next")
 	for _, args := range [][]string{
 		nil, {"unknown"}, {"extract", "--unknown"}, {"extract"}, {"update-plg"},
 		{"extract", "--version", "2026.10.03", "--changelog", "missing", "--output", notes},
@@ -66,6 +90,7 @@ func TestRunFailuresPreserveManifest(t *testing.T) {
 		{"update-plg", "--version", "2026.10.03", "--manifest", manifest, "--notes", "missing"},
 		{"update-plg", "--version", "2026.10.03", "--manifest", manifest, "--notes", empty},
 		{"update-plg", "--version", "2026.10.04", "--manifest", manifest, "--notes", notes},
+		{"update-plg", "--version", "2026.10.03", "--manifest", manifest, "--notes", carriageReturn},
 	} {
 		if err := run(args); err == nil {
 			t.Fatalf("run(%v) should fail", args)
@@ -76,7 +101,7 @@ func TestRunFailuresPreserveManifest(t *testing.T) {
 		}
 	}
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 3 {
+	if err != nil || len(entries) != 4 {
 		t.Fatalf("temporary files leaked: %d entries, %v", len(entries), err)
 	}
 }

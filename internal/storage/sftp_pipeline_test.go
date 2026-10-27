@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,20 +32,31 @@ type writePipelineGate struct {
 	remaining uint32
 }
 
-type failingSFTPFileWriter struct{ sftp.FileWriter }
+type failingSFTPFileWriter struct {
+	sftp.FileWriter
+	failAt    int64
+	onFailure func()
+}
 
 func (w failingSFTPFileWriter) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	file, err := w.FileWriter.Filewrite(r)
 	if err != nil {
 		return nil, err
 	}
-	return failSFTPWriteAt{WriterAt: file}, nil
+	return failSFTPWriteAt{WriterAt: file, failAt: w.failAt, onFailure: w.onFailure}, nil
 }
 
-type failSFTPWriteAt struct{ io.WriterAt }
+type failSFTPWriteAt struct {
+	io.WriterAt
+	failAt    int64
+	onFailure func()
+}
 
 func (w failSFTPWriteAt) WriteAt(p []byte, off int64) (int, error) {
-	if off >= 2*32768 {
+	if off >= w.failAt {
+		if w.onFailure != nil {
+			w.onFailure()
+		}
 		return 0, errors.New("injected remote write failure")
 	}
 	return w.WriterAt.WriteAt(p, off)
@@ -59,7 +72,7 @@ func (w failSFTPWriteAt) Close() error {
 func TestSFTPWriteRemoteFailureRemovesPartialFile(t *testing.T) {
 	t.Parallel()
 	handlers := sftp.InMemHandler()
-	handlers.FilePut = failingSFTPFileWriter{handlers.FilePut}
+	handlers.FilePut = failingSFTPFileWriter{FileWriter: handlers.FilePut, failAt: 2 * 32768}
 	cConn, sConn := net.Pipe()
 	server := sftp.NewRequestServer(sConn, handlers)
 	go func() { _ = server.Serve() }()
@@ -92,6 +105,74 @@ func TestSFTPWriteRemoteFailureRemovesPartialFile(t *testing.T) {
 	t.Cleanup(func() { _ = check.Close() })
 	if _, err := check.Stat("/partial.bin"); !os.IsNotExist(err) {
 		t.Fatalf("partial file remains after remote failure: %v", err)
+	}
+}
+
+// stalledSFTPSource exposes no closer: the adapter must not depend on being
+// able to cancel an arbitrary caller-owned reader to surface a remote error.
+type stalledSFTPSource struct {
+	remaining int
+	release   chan struct{}
+}
+
+func (r *stalledSFTPSource) Read(p []byte) (int, error) {
+	if r.remaining > 0 {
+		n := min(len(p), r.remaining)
+		clear(p[:n])
+		r.remaining -= n
+		return n, nil
+	}
+	<-r.release
+	return 0, io.EOF
+}
+
+func TestSFTPWriteRemoteErrorDoesNotWaitForStalledSource(t *testing.T) {
+	t.Parallel()
+	const windowBytes = 64 * 32768
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	rejected := make(chan struct{})
+	var rejectedOnce sync.Once
+	handlers := sftp.InMemHandler()
+	handlers.FilePut = failingSFTPFileWriter{
+		FileWriter: handlers.FilePut,
+		failAt:     windowBytes - 32768,
+		onFailure:  func() { rejectedOnce.Do(func() { close(rejected) }) },
+	}
+	cConn, sConn := net.Pipe()
+	server := sftp.NewRequestServer(sConn, handlers)
+	go func() { _ = server.Serve() }()
+	t.Cleanup(func() { _ = server.Close() })
+	client, err := sftp.NewClientPipe(cConn, cConn, sftpClientOptions()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &SFTPAdapter{
+		config: SFTPConfig{BasePath: "/"},
+		pool: newSFTPPool(1, func() (sftpConn, error) {
+			return &sftpConnection{sftp: client}, nil
+		}),
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	source := &stalledSFTPSource{remaining: windowBytes, release: make(chan struct{})}
+	defer close(source.release)
+	finished := make(chan error, 1)
+	go func() { finished <- adapter.Write("stalled.bin", source) }()
+	select {
+	case <-rejected:
+	case <-ctx.Done():
+		t.Fatal("server did not reject the final WRITE in the window")
+	}
+	select {
+	case err := <-finished:
+		if err == nil || !strings.Contains(err.Error(), "write:") {
+			t.Fatalf("expected remote write error, got %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("remote WRITE failure is waiting for the stalled source")
+	}
+	if _, err := handlers.FileList.Filelist(sftp.NewRequest("Stat", "/stalled.bin")); !os.IsNotExist(err) {
+		t.Fatalf("partial file remains after remote error: %v", err)
 	}
 }
 

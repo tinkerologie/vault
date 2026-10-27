@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -39,9 +40,10 @@ type SFTPConfig struct {
 // the pool holds open per adapter instance.
 const sftpPoolSize = 4
 
-// Keep 32 KiB packets for server compatibility, with a bounded window of
-// roughly 2 MiB per upload (8 MiB across the four pooled connections).
+// Keep 32 KiB packets for server compatibility and bound the request window.
 const sftpWriteConcurrency = 64
+
+const sftpWriteBatchBytes = sftpWriteConcurrency * 32768
 
 func sftpClientOptions() []sftp.ClientOption {
 	return []sftp.ClientOption{
@@ -287,10 +289,7 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 		return fmt.Errorf("create: %w", err)
 	}
 
-	// Explicit concurrency also pipelines the runner's size-unknown streams.
-	// pkg/sftp drains pending replies before returning, but errors can leave
-	// holes or extra length: close and remove the file rather than truncate it.
-	if _, err := f.ReadFromWithConcurrency(reader, sftpWriteConcurrency); err != nil {
+	if err := writeSFTPStream(f, reader); err != nil {
 		_ = f.Close()
 		_ = client.Remove(full)
 		return fmt.Errorf("write: %w", err)
@@ -300,6 +299,33 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 		return fmt.Errorf("close: %w", err)
 	}
 	return nil
+}
+
+// writeSFTPStream fills one bounded source batch before issuing its pipelined
+// writes. pkg/sftp otherwise reads ahead while replies are pending: a blocked
+// source Read can then prevent it from returning a remote WRITE error. Drain
+// each batch before reading again, without taking ownership of the source or
+// relying on an arbitrary io.Reader being cancellable. This adds one 2 MiB
+// source buffer per upload while retaining 64 concurrent 32 KiB requests.
+func writeSFTPStream(file *sftp.File, reader io.Reader) error {
+	buffer := make([]byte, sftpWriteBatchBytes)
+	for {
+		n, readErr := io.ReadFull(reader, buffer)
+		if n > 0 {
+			// A bounded bytes.Reader cannot stall behind a pending write error.
+			// Errors can leave holes or extra length; Write closes and removes
+			// the partial file after all requests in this batch have drained.
+			if _, err := file.ReadFromWithConcurrency(bytes.NewReader(buffer[:n]), sftpWriteConcurrency); err != nil {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF) {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
 }
 
 func (s *SFTPAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {

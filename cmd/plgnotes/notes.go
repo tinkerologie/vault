@@ -160,11 +160,11 @@ func replaceChanges(manifest, notes, version string) (string, error) {
 	block := "<CHANGES><![CDATA[" + strings.ReplaceAll(rendered, "]]>", "]]]]><![CDATA[>") + "]]></CHANGES>"
 	result := manifest[:info.start] + block + manifest[info.end:]
 	decoded, err := inspectManifest(result)
+	if err == nil && decoded.notes != rendered {
+		err = fmt.Errorf("CHANGES XML round trip changed release notes")
+	}
 	if err != nil {
 		return "", err
-	}
-	if decoded.notes != rendered {
-		return "", fmt.Errorf("CHANGES XML round trip changed release notes")
 	}
 	return result, nil
 }

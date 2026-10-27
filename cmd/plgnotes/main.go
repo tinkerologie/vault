@@ -10,10 +10,15 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "plgnotes:", err)
-		os.Exit(1)
+	os.Exit(exitCode(os.Args[1:], os.Stderr))
+}
+
+func exitCode(args []string, stderr io.Writer) int {
+	if err := run(args); err != nil {
+		_, _ = fmt.Fprintln(stderr, "plgnotes:", err)
+		return 1
 	}
+	return 0
 }
 
 func run(args []string) error {

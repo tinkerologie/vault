@@ -310,7 +310,7 @@ func TestSFTP458_WriteFailures(t *testing.T) {
 
 func TestSFTP458_WritePacketBoundaries(t *testing.T) {
 	t.Parallel()
-	for _, size := range []int{0, 32768, 16*32768 + 97} {
+	for _, size := range []int{0, 32768, 16*32768 + 97, sftpWriteBatchBytes, sftpWriteBatchBytes + 97} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			t.Parallel()
 			srv := startSFTP458Server(t)
