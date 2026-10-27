@@ -8,7 +8,7 @@
     <!ENTITY pluginURL "https://raw.githubusercontent.com/tinkerologie/&name;/main/plugin/vault.plg">
     <!ENTITY bundle    "&name;-&version;.txz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
-    <!ENTITY sha256      "8bd5699a232a4f891ef73338f0c07be39ee6e447059f5ea2dfebbcd943047626">
+    <!ENTITY sha256      "16d4a55ab598aafdcd0d6e8f494d695fda26108bf00c60fd80d94f1422faec63">
     <!ENTITY support   "https://forums.unraid.net/topic/197786-plugin-vault-backup-manager">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
@@ -18,8 +18,19 @@
         readme="&gitURL;#readme">
 
 <CHANGES><![CDATA[
-See full changelog at:
-https://github.com/tinkerologie/vault/blob/main/CHANGELOG.md
+## v2026.10.04
+
+### Changed
+
+- **Unraid plugin release notes (#522):** The release workflow now fills the plugin's Release Notes dialog from the matching version in `CHANGELOG.md`, replacing the previous notes automatically. Missing or empty notes, invalid manifest XML, and a mismatched manifest version stop publication instead of leaving a changelog link or stale notes.
+
+### Fixed
+
+- **SFTP upload throughput (#517):** Uploads now pipeline up to 64 requests per file, including compressed and encrypted streams whose size is unknown, instead of waiting for each 32 KiB packet's reply. Bounded source batches let remote write failures return and clean up partial files without waiting for a stalled source read. Truncated source streams remain errors and their partial remote files are removed. Packet size, connection pool size, and retries remain unchanged.
+
+### Security
+
+- Release binaries now use Go 1.27.3, including the latest standard-library security fixes.
 ]]></CHANGES>
 
 <!-- Prepare persistent plugin storage and prune stale cached bundles -->
