@@ -258,9 +258,9 @@ func TestSMB458_InvalidPaths(t *testing.T) {
 func TestSMB458_WriteFailures(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name   string
-		setup  func(*fakeSMBShare)
-		wantIn string
+		name     string
+		setup    func(*fakeSMBShare)
+		wantText string
 	}{
 		{"mkdir", func(s *fakeSMBShare) { s.errs["mkdirall"] = errSMBBoom }, "mkdir"},
 		{"create", func(s *fakeSMBShare) { s.errs["create"] = errSMBBoom }, "create"},
@@ -278,8 +278,8 @@ func TestSMB458_WriteFailures(t *testing.T) {
 			a, share, _ := newFakeSMB(t, "")
 			tc.setup(share)
 			err := a.Write("f.bin", strings.NewReader("data"))
-			if err == nil || !strings.Contains(err.Error(), tc.wantIn) {
-				t.Fatalf("Write err = %v, want containing %q", err, tc.wantIn)
+			if err == nil || !strings.Contains(err.Error(), tc.wantText) {
+				t.Fatalf("Write err = %v, want containing %q", err, tc.wantText)
 			}
 		})
 	}

@@ -36,7 +36,7 @@ func TestGenerate_WritesAllPages(t *testing.T) {
 }
 
 func TestGenerate_OutDirIsFile(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "afile")
+	file := filepath.Join(t.TempDir(), "regular-file")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}

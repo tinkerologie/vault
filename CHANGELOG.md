@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.10.04] - 2026-10-27
+
+### Changed
+
+- **Unraid plugin release notes (#522):** The release workflow now fills the plugin's Release Notes dialog from the matching version in `CHANGELOG.md`, replacing the previous notes automatically. Missing or empty notes, invalid manifest XML, and a mismatched manifest version stop publication instead of leaving a changelog link or stale notes.
+
+### Fixed
+
+- **SFTP upload throughput (#517):** Uploads now pipeline up to 64 requests per file, including compressed and encrypted streams whose size is unknown, instead of waiting for each 32 KiB packet's reply. Bounded source batches let remote write failures return and clean up partial files without waiting for a stalled source read. Truncated source streams remain errors and their partial remote files are removed. Packet size, connection pool size, and retries remain unchanged.
+
+### Security
+
+- Release binaries now use Go 1.27.3, including the latest standard-library security fixes.
+
 ## [v2026.10.03] - 2026-10-23
 
 ### Changed

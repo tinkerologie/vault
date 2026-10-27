@@ -128,9 +128,12 @@ func TestWrapSFTPListError(t *testing.T) {
 	}
 }
 
-func newInProcessSFTP(t *testing.T, root string) *SFTPAdapter {
+func newInProcessSFTP(t *testing.T, root string, wrapServer ...func(net.Conn) net.Conn) *SFTPAdapter {
 	t.Helper()
 	cConn, sConn := net.Pipe()
+	if len(wrapServer) > 0 {
+		sConn = wrapServer[0](sConn)
+	}
 	server, err := sftp.NewServer(sConn)
 	if err != nil {
 		t.Fatalf("sftp.NewServer: %v", err)
@@ -141,7 +144,7 @@ func newInProcessSFTP(t *testing.T, root string) *SFTPAdapter {
 		_ = cConn.Close()
 		_ = sConn.Close()
 	})
-	client, err := sftp.NewClientPipe(cConn, cConn)
+	client, err := sftp.NewClientPipe(cConn, cConn, sftpClientOptions()...)
 	if err != nil {
 		t.Fatalf("sftp.NewClientPipe: %v", err)
 	}

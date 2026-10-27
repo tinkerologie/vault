@@ -106,6 +106,7 @@ repos:
           bash -c 'export PATH="$HOME/go/bin:$PATH";
           if command -v gosec >/dev/null 2>&1;
           then gosec -fmt=text -exclude-dir=vendor -exclude-dir=build
+          -exclude-dir=third_party
           -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703,G704
           -severity=medium -confidence=medium ./...;
           else echo "gosec not installed. Run go install github.com/securego/gosec/v2/cmd/gosec@latest";
