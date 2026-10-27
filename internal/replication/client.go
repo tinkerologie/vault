@@ -202,7 +202,7 @@ func (c *Client) getJSONWithParams(path string, params map[string]string, target
 
 // doRequestWithParams builds and executes an HTTP request with query params.
 func (c *Client) doRequestWithParams(method, path string, params map[string]string) (*http.Response, error) {
-	u, err := url.JoinPath(c.baseURL, path)
+	u, err := url.JoinPath(c.baseURL, path) // #nosec G125 -- base URL is validated; routes are fixed strings/numeric IDs. File paths are encoded as query parameters, never joined here.
 	if err != nil {
 		return nil, fmt.Errorf("build URL: %w", err)
 	}

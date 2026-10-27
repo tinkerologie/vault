@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -38,6 +39,18 @@ type SFTPConfig struct {
 // sftpPoolSize is the maximum number of concurrent SSH+SFTP connections
 // the pool holds open per adapter instance.
 const sftpPoolSize = 4
+
+// Keep 32 KiB packets for server compatibility and bound the request window.
+const sftpWriteConcurrency = 64
+
+const sftpWriteBatchBytes = sftpWriteConcurrency * 32768
+
+func sftpClientOptions() []sftp.ClientOption {
+	return []sftp.ClientOption{
+		sftp.UseConcurrentWrites(true),
+		sftp.MaxConcurrentRequestsPerFile(sftpWriteConcurrency),
+	}
+}
 
 // sftpConnection holds both halves of a live SSH+SFTP session so both are
 // closed together when the connection is discarded from the pool. The
@@ -148,7 +161,7 @@ func (s *SFTPAdapter) dialConnection() (*sftpConnection, error) {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
 
-	sftpClient, err := sftp.NewClient(sshConn)
+	sftpClient, err := sftp.NewClient(sshConn, sftpClientOptions()...)
 	if err != nil {
 		_ = sshConn.Close()
 		return nil, fmt.Errorf("sftp client: %w", err)
@@ -276,7 +289,7 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 		return fmt.Errorf("create: %w", err)
 	}
 
-	if _, err := io.Copy(f, reader); err != nil {
+	if err := writeSFTPStream(f, reader); err != nil {
 		_ = f.Close()
 		_ = client.Remove(full)
 		return fmt.Errorf("write: %w", err)
@@ -286,6 +299,42 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 		return fmt.Errorf("close: %w", err)
 	}
 	return nil
+}
+
+// writeSFTPStream fills one bounded source batch before issuing its pipelined
+// writes. pkg/sftp otherwise reads ahead while replies are pending: a blocked
+// source Read can then prevent it from returning a remote WRITE error. Drain
+// each batch before reading again, without taking ownership of the source or
+// relying on an arbitrary io.Reader being cancellable. This adds one 2 MiB
+// source buffer per upload while retaining 64 concurrent 32 KiB requests.
+func writeSFTPStream(file *sftp.File, reader io.Reader) error {
+	buffer := make([]byte, sftpWriteBatchBytes)
+	for {
+		// Preserve the source error itself. io.ReadFull would turn an
+		// ordinary short EOF into ErrUnexpectedEOF, making it impossible to
+		// distinguish a final batch from a truncated HTTP response body.
+		n := 0
+		var readErr error
+		for n < len(buffer) && readErr == nil {
+			var count int
+			count, readErr = reader.Read(buffer[n:])
+			n += count
+		}
+		if n > 0 {
+			// A bounded bytes.Reader cannot stall behind a pending write error.
+			// Errors can leave holes or extra length; Write closes and removes
+			// the partial file after all requests in this batch have drained.
+			if _, err := file.ReadFromWithConcurrency(bytes.NewReader(buffer[:n]), sftpWriteConcurrency); err != nil {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
 }
 
 func (s *SFTPAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) error {

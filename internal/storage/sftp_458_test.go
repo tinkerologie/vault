@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -296,6 +297,66 @@ func TestSFTP458_WriteFailures(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(base, "partial.bin")); !os.IsNotExist(err) {
 		t.Errorf("partial file not cleaned up: %v", err)
+	}
+	// Fail after several full packets, when concurrent requests may be pending.
+	lateReader := io.MultiReader(bytes.NewReader(make([]byte, 3*32768+123)), iotestErrReader{boom})
+	if err := a.Write("partial-many-packets.bin", lateReader); !errors.Is(err, boom) {
+		t.Errorf("multi-packet source failure: want %v, got %v", boom, err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "partial-many-packets.bin")); !os.IsNotExist(err) {
+		t.Errorf("multi-packet partial file not cleaned up: %v", err)
+	}
+}
+
+func TestSFTP458_WritePacketBoundaries(t *testing.T) {
+	t.Parallel()
+	for _, size := range []int{0, 32768, 16*32768 + 97, sftpWriteBatchBytes, sftpWriteBatchBytes + 97} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			t.Parallel()
+			srv := startSFTP458Server(t)
+			root := t.TempDir()
+			adapter := srv.adapter(t, root)
+			payload := bytes.Repeat([]byte{0xa5}, size)
+			if err := adapter.Write("boundary.bin", struct{ io.Reader }{bytes.NewReader(payload)}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(filepath.Join(root, "boundary.bin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, payload) {
+				t.Fatal("remote content differs from source")
+			}
+		})
+	}
+}
+
+type unexpectedEOFSFTPReader struct{ *bytes.Reader }
+
+func (r unexpectedEOFSFTPReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if r.Len() == 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func TestSFTP458_UnexpectedSourceEOFIsNotSuccessful(t *testing.T) {
+	t.Parallel()
+	for _, size := range []int{0, 1, 32768, sftpWriteBatchBytes, sftpWriteBatchBytes + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			t.Parallel()
+			srv := startSFTP458Server(t)
+			root := t.TempDir()
+			adapter := srv.adapter(t, root)
+			source := unexpectedEOFSFTPReader{bytes.NewReader(make([]byte, size))}
+			if err := adapter.Write("truncated.bin", source); !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("expected source truncation error, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "truncated.bin")); !os.IsNotExist(err) {
+				t.Fatalf("truncated file not removed: %v", err)
+			}
+		})
 	}
 }
 

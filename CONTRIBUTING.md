@@ -50,6 +50,7 @@ All contributions—whether submitted by humans or AI agents—must adhere to th
 
 - Implement changes following project conventions and the approved plan.
 - Update `CHANGELOG.md` under `## [Unreleased]` describing what changed and why.
+  On release, these entries become the Unraid plugin's Release Notes dialog content.
 - Run all required local validation checks (tests with coverage, linters, type checkers, and formatters). Ensure all checks pass with zero errors and zero warnings.
 
 ### 5. Follow the Pull Request Template

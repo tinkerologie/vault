@@ -29,6 +29,9 @@ Read `AGENTS.md`, `Makefile`, the affected Ansible role or workflow, and
   documentation and repository policy.
 - Keep `CHANGELOG.md` as the root source; build paths must prepare
   `internal/release/CHANGELOG.md` before compiling.
+- Before tagging, ensure the manifest `version` entity matches `VERSION`.
+  The release workflow replaces `<CHANGES>` with the promoted changelog section;
+  missing or empty notes fail before publication. Do not edit `<CHANGES>` by hand.
 - Inspect install, update, uninstall, and rollback behavior before changing the
   plugin lifecycle.
 
