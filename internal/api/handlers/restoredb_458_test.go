@@ -100,11 +100,11 @@ func TestRestoreDB458_ResealWriteFails(t *testing.T) {
 func TestRestoreDB458_ReadTransportError(t *testing.T) {
 	t.Parallel()
 	h, destID, storageDir := newFileBackedStorageHandler(t)
-	if err := os.WriteFile(filepath.Join(storageDir, "afile"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(storageDir, "regular-file"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	h.RestoreDB(w, reqWithID(http.MethodPost, "/x", idStr(destID), []byte(`{"storage_path":"afile/sub"}`)))
+	h.RestoreDB(w, reqWithID(http.MethodPost, "/x", idStr(destID), []byte(`{"storage_path":"regular-file/sub"}`)))
 	if w.Code != http.StatusBadGateway && w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d; body: %s", w.Code, w.Body.String())
 	}

@@ -40,7 +40,7 @@ func run(args []string) error {
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
 	if err := flags.Parse(args[1:]); err != nil {
-		return err
+		return fmt.Errorf("parse %s flags: %w", args[0], err)
 	}
 	if flags.NArg() != 0 || *version == "" || *input == "" ||
 		(output != nil && *output == "") || (notes != nil && *notes == "") {

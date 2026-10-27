@@ -310,7 +310,16 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 func writeSFTPStream(file *sftp.File, reader io.Reader) error {
 	buffer := make([]byte, sftpWriteBatchBytes)
 	for {
-		n, readErr := io.ReadFull(reader, buffer)
+		// Preserve the source error itself. io.ReadFull would turn an
+		// ordinary short EOF into ErrUnexpectedEOF, making it impossible to
+		// distinguish a final batch from a truncated HTTP response body.
+		n := 0
+		var readErr error
+		for n < len(buffer) && readErr == nil {
+			var count int
+			count, readErr = reader.Read(buffer[n:])
+			n += count
+		}
 		if n > 0 {
 			// A bounded bytes.Reader cannot stall behind a pending write error.
 			// Errors can leave holes or extra length; Write closes and removes
@@ -319,7 +328,7 @@ func writeSFTPStream(file *sftp.File, reader io.Reader) error {
 				return err
 			}
 		}
-		if errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF) {
+		if errors.Is(readErr, io.EOF) {
 			return nil
 		}
 		if readErr != nil {

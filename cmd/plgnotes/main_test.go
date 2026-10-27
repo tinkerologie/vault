@@ -14,6 +14,10 @@ func TestExitCode(t *testing.T) {
 	if code := exitCode(nil, &stderr); code != 1 || !strings.Contains(stderr.String(), "plgnotes: expected extract or update-plg") {
 		t.Fatalf("invalid invocation: exit=%d, stderr=%q", code, stderr.String())
 	}
+	stderr.Reset()
+	if code := exitCode([]string{"extract", "--unknown"}, &stderr); code != 1 || !strings.Contains(stderr.String(), "plgnotes: parse extract flags:") {
+		t.Fatalf("invalid flags: exit=%d, stderr=%q", code, stderr.String())
+	}
 	dir := t.TempDir()
 	changelog := writeFixture(t, dir, "CHANGELOG.md", "## [v2026.10.03]\n- current")
 	output := filepath.Join(dir, "notes.md")

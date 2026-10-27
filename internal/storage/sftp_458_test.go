@@ -331,6 +331,35 @@ func TestSFTP458_WritePacketBoundaries(t *testing.T) {
 	}
 }
 
+type unexpectedEOFSFTPReader struct{ *bytes.Reader }
+
+func (r unexpectedEOFSFTPReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if r.Len() == 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func TestSFTP458_UnexpectedSourceEOFIsNotSuccessful(t *testing.T) {
+	t.Parallel()
+	for _, size := range []int{0, 1, 32768, sftpWriteBatchBytes, sftpWriteBatchBytes + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			t.Parallel()
+			srv := startSFTP458Server(t)
+			root := t.TempDir()
+			adapter := srv.adapter(t, root)
+			source := unexpectedEOFSFTPReader{bytes.NewReader(make([]byte, size))}
+			if err := adapter.Write("truncated.bin", source); !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("expected source truncation error, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "truncated.bin")); !os.IsNotExist(err) {
+				t.Fatalf("truncated file not removed: %v", err)
+			}
+		})
+	}
+}
+
 type iotestErrReader struct{ err error }
 
 func (r iotestErrReader) Read([]byte) (int, error) { return 0, r.err }
