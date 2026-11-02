@@ -4,9 +4,12 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [svelte(), tailwindcss()],
-  // Relative, so url() in the built CSS still resolves when the plugin serves the
-  // app from /plugins/vault/ui/. app.php can rewrite index.html, but not the CSS.
-  base: './',
+  experimental: {
+    // Only url() in the built CSS is relative, so it resolves when the plugin serves
+    // the app from /plugins/vault/ui/, where app.php can rewrite index.html but not
+    // the CSS. index.html stays absolute, so the daemon's fallback loads on any path.
+    renderBuiltUrl: (_filename, { hostType }) => (hostType === 'css' ? { relative: true } : undefined),
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

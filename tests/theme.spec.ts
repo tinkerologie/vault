@@ -112,6 +112,18 @@ test.describe('Theme style picker', () => {
 });
 
 test.describe('Plugin-served assets', () => {
+  test('the app still loads from a deep URL', async ({ page }) => {
+    await setupVaultMockApi(page);
+    const failed: string[] = [];
+    page.on('response', (response) => {
+      const { pathname } = new URL(response.url());
+      if (pathname.includes('/assets/') && (!pathname.startsWith('/assets/') || !response.ok())) failed.push(response.url());
+    });
+    await page.goto('/some/unknown/path');
+    await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();
+    expect(failed).toEqual([]);
+  });
+
   test('Retro loads its fonts when the app is served from the plugin path', async ({ page }) => {
     await setupVaultMockApi(page);
     const responses: { url: string; status: number }[] = [];
