@@ -19,6 +19,23 @@ updates:
           - minor
           - patch
 
+  # Vault-maintained dnssd fork: a separate module that root updates never reach
+  - package-ecosystem: gomod
+    directory: /third_party/dnssd
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      dnssd-minor-patch:
+        update-types:
+          - minor
+          - patch
+
   # npm — web UI (Svelte)
   - package-ecosystem: npm
     directory: /web
