@@ -661,8 +661,8 @@ func TestJobIsStale_FollowsTheScheduledRuns(t *testing.T) {
 		{"unparseable schedule falls back to age, recent", "not a schedule", at(2026, 10, 1, 0), at(2026, 10, 10, 0), false},
 		{"unparseable schedule falls back to age, old", "not a schedule", at(2026, 8, 1, 0), at(2026, 10, 10, 0), true},
 		// February's last day was a Monday in 2022 and next is in 2033.
-		{"next run is past the search bound", "0 2 L 2 1", at(2022, 3, 1, 0), at(2030, 1, 1, 0), false},
-		{"the run after next is past the search bound", "0 2 L 2 1", at(2021, 6, 1, 0), at(2030, 1, 1, 0), false},
+		{"rare job before its next run, a decade away", "0 2 L 2 1", at(2022, 3, 1, 0), at(2030, 1, 1, 0), false},
+		{"rare job after two missed runs", "0 2 L 2 1", at(2022, 3, 1, 0), at(2045, 1, 1, 0), true},
 		{"never fires", "0 2 31 2 *", at(2026, 1, 15, 0), at(2030, 1, 1, 0), false},
 	}
 	for _, tc := range cases {
@@ -693,16 +693,20 @@ func TestScheduleStepper_LastDayMatchesTheSchedulersRuns(t *testing.T) {
 	}
 }
 
-func TestScheduleStepper_ReportsNoRunWithinTheBound(t *testing.T) {
+func TestScheduleStepper_RareRunsAndNeverFiring(t *testing.T) {
 	next, err := scheduleStepper("0 2 L 2 1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, ok := next(time.Date(2021, time.June, 1, 0, 0, 0, 0, time.UTC))
-	if want := time.Date(2022, time.February, 28, 2, 0, 0, 0, time.UTC); !ok || !first.Equal(want) {
+	first, ok := next(time.Date(2022, time.March, 1, 0, 0, 0, 0, time.UTC))
+	if want := time.Date(2033, time.February, 28, 2, 0, 0, 0, time.UTC); !ok || !first.Equal(want) {
 		t.Fatalf("first run = %v, %v, want %v", first, ok, want)
 	}
-	if at, ok := next(first); ok || !at.IsZero() {
-		t.Errorf("run after 2022 = %v, %v, want none within the bound", at, ok)
+	never, err := scheduleStepper("0 2 31 2 *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at, ok := never(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)); ok || !at.IsZero() {
+		t.Errorf("never-firing schedule = %v, %v", at, ok)
 	}
 }

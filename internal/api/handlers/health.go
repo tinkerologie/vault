@@ -25,8 +25,11 @@ type staleJob struct {
 	LastSuccessAt time.Time `json:"last_success_at"`
 }
 
-// maxScheduleGap bounds how far ahead a schedule is searched for its next run.
-const maxScheduleGap = 10 * 365 * 24 * time.Hour
+// maxScheduleGap bounds how far ahead a schedule is searched for its next run. The
+// rarest valid schedules, such as a last day that must also be a given weekday in
+// one month, repeat within about 12 years, so only a schedule that never fires
+// reaches it.
+const maxScheduleGap = 40 * 365 * 24 * time.Hour
 
 // jobIsStale reports whether a job's newest backup is old enough to raise an
 // alarm: two scheduled runs have since come and gone, plus a day, so one late or
@@ -41,20 +44,13 @@ func jobIsStale(job db.Job, newest, now time.Time) bool {
 	if err != nil {
 		return now.Sub(newest) > defaultStaleAfter
 	}
-	first, ok := next(newest)
-	if !ok {
-		return false
-	}
+	first, _ := next(newest)
 	second, ok := next(first)
-	if !ok {
-		return false
-	}
-	return now.After(second.Add(24 * time.Hour))
+	return ok && now.After(second.Add(24*time.Hour))
 }
 
 // scheduleStepper returns a function giving a schedule's next run after t. It
-// reports false when the schedule doesn't fire within maxScheduleGap, as a
-// last-day schedule filtered to a rare weekday may not.
+// reports false when the schedule doesn't fire within maxScheduleGap.
 func scheduleStepper(spec string) (func(time.Time) (time.Time, bool), error) {
 	fields := strings.Fields(spec)
 	lastDayOnly := len(fields) == 5 && fields[2] == "L"
