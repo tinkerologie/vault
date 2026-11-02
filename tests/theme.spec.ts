@@ -111,6 +111,32 @@ test.describe('Theme style picker', () => {
   });
 });
 
+test.describe('Plugin-served assets', () => {
+  test('Retro loads its fonts when the app is served from the plugin path', async ({ page }) => {
+    await setupVaultMockApi(page);
+    const responses: { url: string; status: number }[] = [];
+    page.on('response', (response) => {
+      if (new URL(response.url()).pathname.endsWith('.woff2')) responses.push({ url: response.url(), status: response.status() });
+    });
+    // Mirrors app.php: index.html's asset paths point at the plugin's UI folder.
+    await page.route('**/plugins/vault/ui/**', async (route) => {
+      const { pathname } = new URL(route.request().url());
+      const upstream = await route.fetch({ url: `http://127.0.0.1:4173/${pathname.replace('/plugins/vault/ui/', '')}` });
+      if (pathname !== '/plugins/vault/ui/') return route.fulfill({ response: upstream });
+      const html = (await upstream.text()).replaceAll(/(src|href)="(\.?\/)assets\//g, '$1="/plugins/vault/ui/assets/');
+      return route.fulfill({ response: upstream, body: html });
+    });
+    await page.addInitScript(() => localStorage.setItem('vault-style', 'retro'));
+    await page.goto('/plugins/vault/ui/');
+    await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();
+    await expect.poll(() => responses.length).toBeGreaterThan(0);
+    for (const { url, status } of responses) {
+      expect(new URL(url).pathname).toMatch(/^\/plugins\/vault\/ui\/assets\//);
+      expect(status).toBe(200);
+    }
+  });
+});
+
 test.describe('Themed navigation links', () => {
   const seed = (page: Page, style: string) => page.addInitScript((s) => {
     localStorage.setItem('vault-style', s);

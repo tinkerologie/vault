@@ -4,6 +4,9 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [svelte(), tailwindcss()],
+  // Relative, so url() in the built CSS still resolves when the plugin serves the
+  // app from /plugins/vault/ui/. app.php can rewrite index.html, but not the CSS.
+  base: './',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
