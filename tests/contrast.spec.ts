@@ -416,11 +416,14 @@ test('the audit measures text inside a native dialog', async ({ page }) => {
   await page.goto('/#/jobs');
   await page.getByRole('button', { name: /delete job/i }).first().click();
   await expect(page.getByRole('dialog', { name: 'Delete Job' })).toBeVisible();
+  // A short, single-line probe: axe won't measure text whose box isn't fully inside
+  // an opaque ancestor, which long wrapped text can hit with Linux font metrics.
   await page.locator('dialog p').first().evaluate((el) => {
-    el.id = 'contrast-probe';
-    // Foreground only: a forced background can overlap neighbours, and axe then
-    // reports the element as unmeasurable rather than failing it.
-    el.style.cssText = 'color:#fde68a;font-size:14px';
+    const probe = document.createElement('p');
+    probe.id = 'contrast-probe';
+    probe.textContent = 'Contrast probe';
+    probe.style.cssText = 'color:#fde68a;font-size:14px;width:max-content';
+    el.before(probe);
   });
   const { violations, incomplete } = await auditContrast(page, { include: '#contrast-probe' });
   expect(violations, `unmeasured: ${JSON.stringify(incomplete)}`).toHaveLength(1);
