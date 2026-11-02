@@ -538,9 +538,6 @@ test.describe('no horizontal overflow at 375 px (#530)', () => {
     for (const { name, hash, heading, replica: onReplica } of ALL_PAGES) {
       if (replica && !onReplica) continue;
       test(`${name} (${mode})`, async ({ page }) => {
-        // Known gap, reported on #530 and not fixed here: the card grid's
-        // minmax(380px, 1fr) is wider than a phone. This fails loudly once fixed.
-        test.fail(name === 'Storage', 'Storage cards overflow 375 px by 21 px');
         await setupVaultMockApi(page, { replica });
         await waitForPage(page, hash, heading);
         await expectNoOverflow(page, name);

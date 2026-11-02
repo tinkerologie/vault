@@ -461,7 +461,7 @@
       drop from N columns to N-1 when the viewport can't fit N×380px;
       cards then stretch via 1fr to fill whatever room is available.
     -->
-    <div class="grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] gap-4 stagger">
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(min(380px,100%),1fr))] gap-4 stagger">
       {#each destinations as dest (dest.id)}
         {@const cfg = parseConfig(dest.config)}
         {@const tr = testResults.get(dest.id)}
