@@ -73,7 +73,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/storage/{id}/delete-orphans` | Delete files surfaced by `scan-orphans`                                                                            |
 | GET    | `/storage/{id}/dedup-stats`    | Dedup repo statistics (chunks, packs, logical/physical bytes, dedup ratio)                                         |
 | POST   | `/storage/{id}/gc`             | Run mark-and-sweep GC on the destination's dedup repo                                                              |
-| POST   | `/storage/{id}/scan`           | Scan storage for importable backups                                                                                |
+| POST   | `/storage/{id}/scan`           | Scan storage for importable backups. Send `passphrase` in the JSON body; in the query string it returns 400        |
 | POST   | `/storage/{id}/import`         | Import backups discovered during scan (preserves dedup manifest IDs)                                               |
 | GET    | `/storage/{id}/db-backups`     | List Vault database backups found under `_vault/` on the destination (newest first)                                |
 | POST   | `/storage/{id}/restore-db`     | Restore the Vault database from a `_vault/` backup — see body fields below                                         |
