@@ -303,11 +303,11 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 			if !restorePathSafe(restoreDest) || strings.Contains(restoreDest, "../") || strings.Contains(restoreDest, "..\\") {
 				return fmt.Errorf("suspicious plugin restore destination %q", restoreDest)
 			}
-			if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
-				return err
-			}
 			normalized, err := normalizeRestorePath(restoreDest)
 			if err != nil {
+				return err
+			}
+			if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
 				return err
 			}
 			configDir = normalized

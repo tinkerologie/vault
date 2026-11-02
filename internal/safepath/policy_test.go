@@ -50,7 +50,9 @@ func TestDestinationPolicies(t *testing.T) {
 	}
 	for _, tc := range cases {
 		for _, p := range tc.allow {
-			if _, err := tc.check(p); err != nil {
+			// Docker's directories are unreadable to a non-root test run, and
+			// an unresolvable path fails closed. The daemon runs as root.
+			if _, err := tc.check(p); err != nil && !errors.Is(err, fs.ErrPermission) {
 				t.Errorf("%s: %q refused: %v", tc.name, p, err)
 			}
 		}
@@ -58,6 +60,21 @@ func TestDestinationPolicies(t *testing.T) {
 			if _, err := tc.check(p); err == nil {
 				t.Errorf("%s: %q allowed, want refusal", tc.name, p)
 			}
+		}
+	}
+}
+
+func TestIsDockerVolumeData(t *testing.T) {
+	t.Parallel()
+	for p, want := range map[string]bool{
+		"/var/lib/docker/volumes/db/_data":     true,
+		"/var/lib/docker/volumes/db/_data/sub": true,
+		"/var/lib/docker/volumes/db":           false,
+		"/var/lib/docker/volumes/db/other":     false,
+		"/var/lib/docker/image/_data":          false,
+	} {
+		if got := isDockerVolumeData(p); got != want {
+			t.Errorf("isDockerVolumeData(%q) = %v", p, got)
 		}
 	}
 }
