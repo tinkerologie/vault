@@ -221,7 +221,7 @@ func pinnedTLSConfig(certFile string) (*tls.Config, error) {
 	case len(cert.IPAddresses) > 0:
 		name = cert.IPAddresses[0].String()
 	default:
-		return nil, fmt.Errorf("reading --tls-cert: the certificate names no host")
+		return nil, fmt.Errorf("reading --tls-cert: the certificate names no host in its subject alternative names, which Go requires; reissue it with one, or manage the key in the Unraid web UI")
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(cert)

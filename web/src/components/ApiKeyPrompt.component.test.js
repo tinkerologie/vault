@@ -43,7 +43,10 @@ describe('ApiKeyPrompt', () => {
 
   it('names the subject in the local-only notice', () => {
     render(ApiKeyLocalOnlyNotice, { subject: 'vault.key' })
-    expect(document.body.textContent).toContain('You can only get to vault.key')
+    const text = document.body.textContent
+    expect(text).toContain('You can only get to vault.key')
+    expect(text).not.toContain('vault api-key')
+    expect(text).not.toContain('API Access')
   })
 
   it('ignores an empty submission', async () => {

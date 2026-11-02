@@ -27,6 +27,7 @@ let pollEnabled = false
 let pollTicks = 0
 /** Open anomalies at the last poll, by id, serialized to detect changes. @type {Map<number, string>} */
 let knownAnomalies = new Map()
+let anomalyPollInFlight = false
 // /runner/status polls every 2 s, so this checks anomalies every 30 s.
 const ANOMALY_POLL_EVERY = 15
 const ANOMALY_POLL_LIMIT = 100
@@ -115,6 +116,9 @@ function emitMessage(msg) {
  * Emits what changed since the last check, so pages keep their usual handling.
  */
 async function pollAnomalies() {
+  // One at a time, so a slow older response can't overwrite a newer one.
+  if (anomalyPollInFlight) return
+  anomalyPollInFlight = true
   try {
     const { url, options } = buildApiRequest('GET', `/anomalies?state=open&limit=${ANOMALY_POLL_LIMIT}`)
     const res = await fetch(url, options)
@@ -135,6 +139,8 @@ async function pollAnomalies() {
     setOpenList(list)
   } catch {
     // Best-effort: the next check catches up.
+  } finally {
+    anomalyPollInFlight = false
   }
 }
 

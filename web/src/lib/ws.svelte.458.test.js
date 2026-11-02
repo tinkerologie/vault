@@ -290,6 +290,30 @@ describe('websocket mode', () => {
 })
 
 describe('poll mode', () => {
+  it('never runs two anomaly checks at once', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      let release
+      let calls = 0
+      fetchMock.mockImplementation((url) => {
+        if (!String(url).includes('/anomalies')) return Promise.resolve(jsonResponse({ active: false, queue: [] }))
+        calls++
+        return new Promise((resolve) => { release = () => resolve(jsonResponse({ anomalies: [] })) })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(3 * 15 * 2000)
+      expect(calls).toBe(1)
+      release()
+      await vi.advanceTimersByTimeAsync(15 * 2000)
+      expect(calls).toBe(2)
+      release()
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reports anomaly changes a polling client gets no events for', async () => {
     vi.useFakeTimers()
     try {

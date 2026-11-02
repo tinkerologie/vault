@@ -43,14 +43,14 @@ docker exec vault-replica vault api-key generate # a Docker replica
 
 ## Core
 
-| Method | Endpoint             | Description                                                                                                                  |
-| ------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`            | Status, version, mode and `startup` diagnostics; needs local access or the key. Use the open `/ping` for anonymous liveness  |
-| GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs` |
-| GET    | `/ws`                | WebSocket event stream                                                                                                       |
-| GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress)                                                      |
-| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)                                                      |
-| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)                                                         |
+| Method | Endpoint             | Description                                                                                                                                                    |
+| ------ | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/health`            | Status, version, mode and `startup` diagnostics; needs local access or the key. For anonymous liveness use `GET /ping` at the server root, not under `/api/v1` |
+| GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs`                                   |
+| GET    | `/ws`                | WebSocket event stream                                                                                                                                         |
+| GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress)                                                                                        |
+| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)                                                                                        |
+| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)                                                                                           |
 
 ## Jobs
 
