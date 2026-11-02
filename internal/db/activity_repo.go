@@ -1,6 +1,9 @@
 package db
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // MaxActivityLogRows is the total-row cap CreateActivityLog enforces on
 // every insert (10k, matching the daemon's startup CapActivityLogs call).
@@ -79,6 +82,33 @@ func (d *DB) ListActivityLogs(limit int, category string, beforeID int64) ([]Act
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+// ExistingJobRunIDs returns which of ids still have a job_runs row. Callers pass
+// at most one activity page's worth, well under SQLite's bound-variable limit.
+func (d *DB) ExistingJobRunIDs(ids []int64) (map[int64]struct{}, error) {
+	existing := make(map[int64]struct{}, len(ids))
+	if len(ids) == 0 {
+		return existing, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	rows, err := d.Query(`SELECT id FROM job_runs WHERE id IN (`+placeholders+`)`, args...) // #nosec G202 -- only placeholders are concatenated
+	if err != nil {
+		return nil, fmt.Errorf("querying existing job runs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning existing job run: %w", err)
+		}
+		existing[id] = struct{}{}
+	}
+	return existing, rows.Err()
 }
 
 // DeleteOldActivityLogs removes entries older than the specified number of days.

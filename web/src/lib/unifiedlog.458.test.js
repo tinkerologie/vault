@@ -142,6 +142,28 @@ describe('client-side filters', () => {
     expect(store.filtered).toHaveLength(3)
   })
 
+  it('Problems matches warnings and errors only, and composes with job and search', () => {
+    const store = seeded()
+    store.setLevelFilter('problems')
+    expect(store.filtered.map((e) => e.id)).toEqual([1, 2, 3])
+    store.setSearchFilter('exploded')
+    expect(store.filtered.map((e) => e.id)).toEqual([3])
+    store.setSearchFilter('')
+    store.setJobFilter('a')
+    expect(store.filtered.map((e) => e.id)).toEqual([2])
+    store.setJobFilter('')
+    store.setLevelFilter('')
+    expect(store.filtered).toHaveLength(3)
+  })
+
+  it('Problems leaves out routine levels', async () => {
+    api.getActivity.mockResolvedValueOnce(['info', 'debug', 'success', 'warn'].map((level, i) => activity(i + 1, i, { level })).reverse())
+    const store = createUnifiedLogStore()
+    await store.load()
+    store.setLevelFilter('problems')
+    expect(store.filtered.map((e) => e.level)).toEqual(['warn'])
+  })
+
   it('filters by job and composes with level', () => {
     const store = seeded()
     store.setJobFilter('a')

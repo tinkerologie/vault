@@ -1,10 +1,12 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { formatBytes, formatDate, formatDateCompact, parseConfig, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
+  import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import { replaceDatabaseSummary } from '../lib/risky-actions.js'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import StorageBrowser from '../components/StorageBrowser.svelte'
@@ -34,6 +36,10 @@
   let scannedBackups = $state([])
   let selectedBackups = $state(new SvelteSet())
   let vaultDBInfo = $state(null)
+  // What the open "replace database" dialog is about: fixed when it opens.
+  let confirmReplaceDB = $state(null)
+  let restoringDB = $state(false)
+  let replaceDBSummary = $derived(confirmReplaceDB ? replaceDatabaseSummary(confirmReplaceDB) : { source: [], consequences: [] })
   let importing = $state(false)
 
   let needsPassphrase = $derived(scannedBackups.some(b => b.encrypted && b.key === 'age'))
@@ -347,14 +353,30 @@
     }
   }
 
-  async function doRestoreDB(storagePath) {
-    if (!confirm('This will replace the current Vault database with the backup copy. All current data will be lost. The daemon will need to be restarted. Continue?')) return
+  function doRestoreDB(info) {
+    confirmReplaceDB = {
+      storageId: importStorageId,
+      storageName: importStorageName,
+      path: info.path,
+      modified: info.modified_at ? formatDate(info.modified_at) : '',
+    }
+  }
+
+  async function confirmRestoreDB() {
+    if (restoringDB) return
+    restoringDB = true
     try {
-      const result = await api.restoreDB(importStorageId, storagePath)
+      const result = await api.restoreDB(confirmReplaceDB.storageId, confirmReplaceDB.path)
       showToast(result.message || 'Database restored. Please restart Vault.', 'success')
+      // Close one at a time, so focus unwinds through both to the Import button.
+      confirmReplaceDB = null
+      await tick()
       showImport = false
     } catch (e) {
       showToast(`Restore failed: ${e.message}`, 'error')
+      confirmReplaceDB = null
+    } finally {
+      restoringDB = false
     }
   }
 
@@ -386,12 +408,12 @@
   }
 
   const storageColors = {
-    local: 'text-blue-400',
-    sftp: 'text-emerald-400',
-    smb: 'text-purple-400',
-    nfs: 'text-amber-400',
-    webdav: 'text-cyan-400',
-    s3: 'text-orange-400',
+    local: 'text-hue-blue',
+    sftp: 'text-hue-emerald',
+    smb: 'text-hue-purple',
+    nfs: 'text-hue-amber',
+    webdav: 'text-hue-cyan',
+    s3: 'text-hue-orange',
   }
 </script>
 
@@ -439,7 +461,7 @@
       drop from N columns to N-1 when the viewport can't fit N×380px;
       cards then stretch via 1fr to fill whatever room is available.
     -->
-    <div class="grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] gap-4 stagger">
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(min(380px,100%),1fr))] gap-4 stagger">
       {#each destinations as dest (dest.id)}
         {@const cfg = parseConfig(dest.config)}
         {@const tr = testResults.get(dest.id)}
@@ -459,11 +481,11 @@
             </div>
             <div class="flex items-center gap-1">
               <!-- Browse is read-only, so it stays available in replica mode. -->
-              <button onclick={() => browseDest = dest} class="p-1.5 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Browse files" aria-label="Browse destination files">
+              <button onclick={() => browseDest = dest} class="p-1.5 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Browse files" aria-label="Browse destination files">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
               </button>
               {#if !isReplicaMode()}
-              <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
+              <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
                 <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                 Import
               </button>
@@ -515,7 +537,7 @@
                   type="button"
                   onclick={() => refreshCapacity(dest.id)}
                   disabled={refreshingCapacityId === dest.id}
-                  class="text-vault hover:underline disabled:opacity-50 not-italic"
+                  class="text-vault-text hover:underline disabled:opacity-50 not-italic"
                 >
                   {refreshingCapacityId === dest.id ? 'Checking…' : 'Check now'}
                 </button>
@@ -558,13 +580,13 @@
                     type="button"
                     onclick={() => refreshCapacity(dest.id)}
                     disabled={refreshingCapacityId === dest.id}
-                    class="text-vault hover:underline disabled:opacity-50"
+                    class="text-vault-text hover:underline disabled:opacity-50"
                   >
                     {refreshingCapacityId === dest.id ? 'Refreshing…' : 'Refresh'}
                   </button>
                 </div>
                 {#if dest.capacity.error}
-                  <div class="text-rose-500" title={dest.capacity.error}>
+                  <div class="text-danger" title={dest.capacity.error}>
                     ⚠ Last probe failed
                   </div>
                 {/if}
@@ -621,7 +643,7 @@
                   </div>
                   <div class="flex justify-between text-text-dim">
                     <span>Stored {storedPct.toFixed(0)}%</span>
-                    <span class="text-emerald-500">Saved {formatBytes(saved)}</span>
+                    <span class="text-hue-emerald">Saved {formatBytes(saved)}</span>
                   </div>
                 {/if}
                 <div class="flex justify-between text-text-dim">
@@ -658,7 +680,7 @@
           <div class="flex items-center gap-2 pt-3 border-t border-border mt-auto">
             <span class="text-xs text-text-dim whitespace-nowrap" title={formatDate(dest.created_at)}>{formatDateCompact(dest.created_at)}</span>
             {#if jobCount > 0}
-              <span class="text-xs px-2.5 py-1 rounded-full bg-vault/10 text-vault font-medium whitespace-nowrap">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
+              <span class="text-xs px-2.5 py-1 rounded-full bg-vault/10 text-vault-text font-medium whitespace-nowrap">{jobCount} job{jobCount !== 1 ? 's' : ''}</span>
             {:else}
               <span class="text-xs text-text-dim whitespace-nowrap">No jobs</span>
             {/if}
@@ -722,57 +744,43 @@
 </Modal>
 
 <!-- Enhanced Delete Dialog -->
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && confirmDelete.show) confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }} />
-{#if confirmDelete.show}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
-    role="dialog" aria-modal="true" aria-labelledby="del-storage-title" tabindex="-1"
-  >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">
-      <h2 id="del-storage-title" class="text-lg font-semibold text-text">Delete Storage</h2>
-      <p class="text-sm text-text-muted mt-2">Are you sure you want to delete <strong class="text-text">{confirmDelete.name}</strong>?</p>
+<ConfirmDialog
+  show={confirmDelete.show}
+  title="Delete Storage"
+  confirmLabel={confirmDelete.deleteFiles ? 'Delete Storage & Files' : 'Delete Storage'}
+  onconfirm={doDeleteStorage}
+  oncancel={() => { confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
+>
+  {#snippet description()}Are you sure you want to delete <strong class="text-text">{confirmDelete.name}</strong>?{/snippet}
 
-      {#if confirmDelete.jobCount > 0}
-        <div class="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
-          <p class="text-sm text-warning font-medium flex items-center gap-1.5"><svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {confirmDelete.jobCount} job{confirmDelete.jobCount !== 1 ? 's' : ''} use{confirmDelete.jobCount === 1 ? 's' : ''} this storage</p>
-          <p class="text-xs text-text-dim mt-1">Those jobs will no longer have a storage destination and will fail to run.</p>
+    {#if confirmDelete.jobCount > 0}
+      <div class="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
+        <p class="text-sm text-warning font-medium flex items-center gap-1.5"><svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {confirmDelete.jobCount} job{confirmDelete.jobCount !== 1 ? 's' : ''} use{confirmDelete.jobCount === 1 ? 's' : ''} this storage</p>
+        <p class="text-xs text-text-dim mt-1">Those jobs will no longer have a storage destination and will fail to run.</p>
+      </div>
+    {/if}
+
+    <div class="mt-4 space-y-2">
+      <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {!confirmDelete.deleteFiles ? 'border-vault bg-vault/5' : 'border-border hover:border-vault/30'}">
+        <input type="radio" name="delStorageMode" checked={!confirmDelete.deleteFiles}
+          onchange={() => confirmDelete.deleteFiles = false}
+          class="mt-0.5 accent-vault" />
+        <div>
+          <p class="text-sm font-medium text-text">Keep backup files</p>
+          <p class="text-xs text-text-dim mt-0.5">Only remove the storage destination from Vault. Files remain on storage.</p>
         </div>
-      {/if}
-
-      <div class="mt-4 space-y-2">
-        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {!confirmDelete.deleteFiles ? 'border-vault bg-vault/5' : 'border-border hover:border-vault/30'}">
-          <input type="radio" name="delStorageMode" checked={!confirmDelete.deleteFiles}
-            onchange={() => confirmDelete.deleteFiles = false}
-            class="mt-0.5 accent-vault" />
-          <div>
-            <p class="text-sm font-medium text-text">Keep backup files</p>
-            <p class="text-xs text-text-dim mt-0.5">Only remove the storage destination from Vault. Files remain on storage.</p>
-          </div>
-        </label>
-        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {confirmDelete.deleteFiles ? 'border-danger bg-danger/5' : 'border-border hover:border-danger/30'}">
-          <input type="radio" name="delStorageMode" checked={confirmDelete.deleteFiles}
-            onchange={() => confirmDelete.deleteFiles = true}
-            class="mt-0.5 accent-[var(--color-danger)]" />
-          <div>
-            <p class="text-sm font-medium text-text">Delete Vault backup files</p>
-            <p class="text-xs text-text-dim mt-0.5">Remove the storage destination <strong class="text-danger">and permanently delete the Vault-managed restore points</strong> on it. Other files and folders in the destination are left untouched.</p>
-          </div>
-        </label>
-      </div>
-
-      <div class="flex justify-end gap-3 mt-6">
-        <button type="button" onclick={() => { confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
-          class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
-          Cancel
-        </button>
-        <button type="button" onclick={doDeleteStorage}
-          class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-danger text-white hover:bg-danger/90">
-          {confirmDelete.deleteFiles ? 'Delete Storage & Files' : 'Delete Storage'}
-        </button>
-      </div>
+      </label>
+      <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {confirmDelete.deleteFiles ? 'border-danger bg-danger/5' : 'border-border hover:border-danger/30'}">
+        <input type="radio" name="delStorageMode" checked={confirmDelete.deleteFiles}
+          onchange={() => confirmDelete.deleteFiles = true}
+          class="mt-0.5 accent-[var(--color-danger)]" />
+        <div>
+          <p class="text-sm font-medium text-text">Delete Vault backup files</p>
+          <p class="text-xs text-text-dim mt-0.5">Remove the storage destination <strong class="text-danger">and permanently delete the Vault-managed restore points</strong> on it. Other files and folders in the destination are left untouched.</p>
+        </div>
+      </label>
     </div>
-  </div>
-{/if}
+</ConfirmDialog>
 
 <!-- Import Backups Modal -->
 <Modal show={showImport} title={`Import Backups – ${importStorageName}`} onclose={() => showImport = false}>
@@ -787,14 +795,14 @@
         type="text"
         bind:value={importBasePath}
         placeholder="e.g. appdata-backups or appdata/ab_archives"
-        class="flex-1 px-3 py-2 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-dim focus:outline-none focus:border-vault"
+        class="flex-1 px-3 py-2 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
         onkeydown={(e) => e.key === 'Enter' && !scanning && scanStorage()}
       />
       <button
         type="button"
         onclick={scanStorage}
         disabled={scanning}
-        class="px-3 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+        class="px-3 py-2 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
       >
         {scanning ? 'Scanning…' : 'Scan'}
       </button>
@@ -824,7 +832,7 @@
 
       {#if needsPassphrase}
         <div class="p-3 bg-vault/5 border border-vault/30 rounded-lg space-y-2">
-          <div class="flex items-center gap-2 text-xs font-medium text-vault">
+          <div class="flex items-center gap-2 text-xs font-medium text-vault-text">
             <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
             </svg>
@@ -835,14 +843,14 @@
               type="password"
               bind:value={importPassphrase}
               placeholder="Enter encryption passphrase"
-              class="flex-1 px-3 py-1.5 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-dim focus:outline-none focus:border-vault"
+              class="flex-1 px-3 py-1.5 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
               onkeydown={(e) => e.key === 'Enter' && !scanning && importPassphrase && scanStorage()}
             />
             <button
               type="button"
               onclick={scanStorage}
               disabled={scanning || !importPassphrase}
-              class="px-3 py-1.5 text-xs font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              class="px-3 py-1.5 text-xs font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
             >
               Unlock
             </button>
@@ -903,8 +911,9 @@
             <p class="text-xs text-text-dim">Restoring the database will replace <strong>all</strong> current data (jobs, history, settings).</p>
             <button
               type="button"
-              onclick={() => doRestoreDB(vaultDBInfo.path)}
-              class="w-full text-left px-3 py-2 text-xs rounded-lg border border-border hover:border-warning/50 hover:bg-warning/5 transition-colors"
+              disabled={restoringDB}
+              onclick={() => doRestoreDB(vaultDBInfo)}
+              class="w-full text-left px-3 py-2 text-xs rounded-lg border border-border hover:border-warning/50 hover:bg-warning/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span class="font-medium text-text">Vault Database</span>
               <span class="text-text-dim ml-2">{vaultDBInfo.modified_at ? formatDate(vaultDBInfo.modified_at) : ''}</span>
@@ -923,7 +932,7 @@
           onclick={doImport}
           disabled={selectedBackups.size === 0 || importing || hasLockedSelected}
           title={hasLockedSelected ? 'Please unlock encrypted backups before importing' : ''}
-          class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-4 py-2 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {#if importing}Importing...{:else}Import {selectedBackups.size} Backup{selectedBackups.size !== 1 ? 's' : ''}{/if}
         </button>
@@ -931,6 +940,19 @@
     </div>
   {/if}
 </Modal>
+
+<ConfirmDialog
+  show={!!confirmReplaceDB}
+  title="Replace Vault Database"
+  message="Replace the current Vault database with this backup copy?"
+  confirmLabel={restoringDB ? 'Replacing…' : 'Replace Database'}
+  confirmWord="REPLACE"
+  source={replaceDBSummary.source}
+  consequences={replaceDBSummary.consequences}
+  busy={restoringDB}
+  onconfirm={confirmRestoreDB}
+  oncancel={() => confirmReplaceDB = null}
+/>
 
 {#if browseDest}
   <StorageBrowser destId={browseDest.id} destName={browseDest.name} ontoast={showToast} onclose={() => browseDest = null} />

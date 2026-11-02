@@ -7,8 +7,8 @@
 // thing.
 //
 // Colour is never the only signal. Every row also carries a text label, so the
-// console stays readable in the 1-bit and 8-bit themes — where success,
-// danger, warning and info all resolve to the same ink — and for anyone who
+// console stays readable in the 1-Bit theme — where success, danger, warning
+// and info all resolve to the same ink — and for anyone who
 // cannot distinguish the hues.
 
 // Canonical level for a raw API value. Unknown levels fall back to info rather
@@ -25,7 +25,7 @@ const STYLES = {
   error: {
     label: 'error',
     text: 'text-danger',
-    meta: 'text-danger/70',
+    meta: 'text-danger',
     border: 'border-l-danger',
     row: 'bg-danger/[0.07]',
     pill: 'bg-danger/15 text-danger',
@@ -33,7 +33,7 @@ const STYLES = {
   warn: {
     label: 'warn',
     text: 'text-text',
-    meta: 'text-text-dim',
+    meta: 'text-text-muted',
     border: 'border-l-warning',
     row: 'bg-warning/[0.05]',
     pill: 'bg-warning/15 text-warning',
@@ -41,7 +41,7 @@ const STYLES = {
   success: {
     label: 'ok',
     text: 'text-text',
-    meta: 'text-text-dim',
+    meta: 'text-text-muted',
     border: 'border-l-success',
     row: '',
     pill: 'bg-success/15 text-success',
@@ -49,18 +49,18 @@ const STYLES = {
   info: {
     label: 'info',
     text: 'text-text',
-    meta: 'text-text-dim',
+    meta: 'text-text-muted',
     border: 'border-l-info/50',
     row: '',
     pill: 'bg-info/12 text-info',
   },
   debug: {
     label: 'debug',
-    text: 'text-text-dim',
-    meta: 'text-text-dim/70',
+    text: 'text-text-muted',
+    meta: 'text-text-muted',
     border: 'border-l-text-dim/30',
     row: '',
-    pill: 'bg-text-dim/15 text-text-dim',
+    pill: 'bg-text-dim/15 text-text-muted',
   },
 }
 

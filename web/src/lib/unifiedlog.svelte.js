@@ -41,6 +41,7 @@ export function createUnifiedLogStore() {
   let _error = $state('')
   let _hasMore = $state(false)
   let _loadingOlder = $state(false)
+  let _historyStopped = $state(false)
   let _olderPromise = null
   let _olderCtx = -1
   let _olderSilent = true
@@ -581,6 +582,7 @@ export function createUnifiedLogStore() {
     if (_fullHistoryLoaded && !_hasMore) return // already complete
     _fullHistoryLoaded = true
     const ctx = _contextSeq
+    _historyStopped = false
     try {
       while (!_disposed && ctx === _contextSeq && _hasMore && !_error) {
         const outcome = await loadOlder({ limit: FULL_LOAD_LIMIT, silent: true })
@@ -588,6 +590,9 @@ export function createUnifiedLogStore() {
         if (outcome === 'superseded' && ctx !== _contextSeq) break
       }
     } finally {
+      // Older pages remain but nothing is fetching them: a transient failure
+      // (silent here, see loadOlder) or a cursor that wouldn't advance.
+      if (!_disposed && ctx === _contextSeq) _historyStopped = _hasMore
       // If the loop was aborted by a context change, the fresh load already
       // reset _fullHistoryLoaded; leave it otherwise so the pinned buffer
       // keeps the marker honest.
@@ -651,7 +656,9 @@ export function createUnifiedLogStore() {
   }
 
   async function fetchRunLogsForBatch(terminalActivityEntries) {
-    const ids = terminalActivityEntries.map(ae => tryParse(ae.details)?.run_id).filter(Boolean)
+    // A run deleted since (retention, purge) has no log to ask for: its activity
+    // row stands in for it, and the request could only return 404.
+    const ids = terminalActivityEntries.filter(ae => !ae.run_gone).map(ae => tryParse(ae.details)?.run_id).filter(Boolean)
     const runIds = Object.fromEntries(ids.map(id => [id, true]))
     if (Object.keys(runIds).length === 0) return {}
     const results = {}
@@ -691,6 +698,7 @@ export function createUnifiedLogStore() {
 
   function matchesLevel(entry) {
     if (!_levelFilter) return true
+    if (_levelFilter === 'problems') return ['error', 'warn', 'warning'].includes(entry.level)
     if (_levelFilter === 'warn') return entry.level === 'warn' || entry.level === 'warning'
     return entry.level === _levelFilter
   }
@@ -786,6 +794,7 @@ export function createUnifiedLogStore() {
     get loaded() { return _loaded },
     get loading() { return _loading },
     get loadingOlder() { return _loadingOlder },
+    get historyStopped() { return _historyStopped },
     get error() { return _error },
     setError(v) { _error = v },
     get hasMore() { return _hasMore },

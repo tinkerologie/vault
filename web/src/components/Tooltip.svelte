@@ -1,4 +1,5 @@
 <script>
+  import { floatAboveDialogs } from '../lib/dialog.js'
   /**
    * Tooltip – contextual info icon with hover/click-triggered tooltip popup.
    *
@@ -126,11 +127,7 @@
   /** Teleport node to document.body so fixed positioning isn't broken by ancestor transforms/filters. */
   function portal(node) {
     document.body.appendChild(node)
-    return {
-      destroy() {
-        node.remove()
-      }
-    }
+    return floatAboveDialogs(node)
   }
 
   $effect(() => {
@@ -143,7 +140,7 @@
   <button
     bind:this={triggerEl}
     type="button"
-    class={children ? 'tooltip-trigger-custom' : 'tooltip-trigger'}
+    class={children ? 'tooltip-trigger-custom' : 'tooltip-trigger hit-target hit-target-touch'}
     aria-describedby={visible ? tooltipId : undefined}
     onmouseenter={show}
     onmouseleave={hide}
@@ -184,7 +181,8 @@
     justify-content: center;
     color: var(--color-text-dim);
     cursor: help;
-    padding: 2px;
+    /* .hit-target is taller than the 18 px this used to be; keep rows the same height. */
+    margin-block: -3px;
     border-radius: 9999px;
     transition: color 0.15s;
     background: none;
@@ -203,6 +201,7 @@
   .tooltip-trigger-custom {
     display: inline-flex;
     align-items: center;
+    min-height: 24px;
     cursor: help;
     background: none;
     border: none;

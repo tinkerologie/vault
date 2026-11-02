@@ -386,7 +386,7 @@
       <span class="ml-2 text-sm text-text-muted">Discovering items...</span>
     </div>
   {:else if error}
-    <div class="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+    <div class="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-danger">
       Failed to discover items: {error}
       <button onclick={discover} class="ml-2 underline hover:no-underline">Retry</button>
     </div>
@@ -401,12 +401,12 @@
           type="button"
           onclick={() => (activeTab = 'containers')}
           class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'containers'
-            ? 'border-vault text-vault'
+            ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
           Containers
           {#if containerCount > 0}
-            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault-text text-xs rounded-full"
               >{containerCount}</span
             >
           {/if}
@@ -417,12 +417,12 @@
           type="button"
           onclick={() => (activeTab = 'vms')}
           class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'vms'
-            ? 'border-vault text-vault'
+            ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
           Virtual Machines
           {#if vmCount > 0}
-            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault-text text-xs rounded-full"
               >{vmCount}</span
             >
           {/if}
@@ -433,12 +433,12 @@
           type="button"
           onclick={() => (activeTab = 'folders')}
           class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'folders'
-            ? 'border-vault text-vault'
+            ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
           Folders
           {#if folderCount > 0}
-            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault-text text-xs rounded-full"
               >{folderCount}</span
             >
           {/if}
@@ -449,12 +449,12 @@
           type="button"
           onclick={() => (activeTab = 'flash')}
           class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'flash'
-            ? 'border-vault text-vault'
+            ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
           Flash Drive
           {#if flashCount > 0}
-            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault-text text-xs rounded-full"
               >{flashCount}</span
             >
           {/if}
@@ -465,12 +465,12 @@
           type="button"
           onclick={() => (activeTab = 'plugins')}
           class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'plugins'
-            ? 'border-vault text-vault'
+            ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
           Plugins
           {#if pluginCount > 0}
-            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault-text text-xs rounded-full"
               >{pluginCount}</span
             >
           {/if}
@@ -481,12 +481,12 @@
           type="button"
           onclick={() => (activeTab = 'zfs')}
           class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'zfs'
-            ? 'border-vault text-vault'
+            ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
           ZFS Datasets
           {#if zfsCount > 0}
-            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault text-xs rounded-full"
+            <span class="ml-1.5 px-1.5 py-0.5 bg-vault/20 text-vault-text text-xs rounded-full"
               >{zfsCount}</span
             >
           {/if}
@@ -515,7 +515,7 @@
         type="text"
         bind:value={search}
         placeholder="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : activeTab === 'flash' ? 'flash drive' : activeTab === 'zfs' ? 'ZFS datasets' : 'folders'}..."
-        class="w-full bg-surface-3 border border-border rounded-lg pl-10 pr-3 py-2 text-sm text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50"
+        class="w-full bg-surface-3 border border-border rounded-lg pl-10 pr-3 py-2 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
       />
     </div>
 
@@ -527,7 +527,7 @@
         <button
           type="button"
           onclick={() => selectAll('container')}
-          class="text-xs text-vault hover:text-vault/80 transition-colors"
+          class="text-xs text-vault-text hover:underline transition-colors"
         >
           {filtered.every((c) => isSelected('container', c.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
         </button>
@@ -547,7 +547,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path
                       stroke-linecap="round"
                       stroke-linejoin="round"
@@ -565,8 +565,8 @@
               </div>
               <span
                 class="text-xs px-2 py-0.5 rounded-full shrink-0 {container.settings?.state === 'running'
-                  ? 'bg-green-500/15 text-green-400'
-                  : 'bg-yellow-500/15 text-yellow-400'}"
+                  ? 'bg-green-500/15 text-success'
+                  : 'bg-yellow-500/15 text-warning'}"
               >
                 {container.settings?.state || 'unknown'}
               </span>
@@ -584,7 +584,7 @@
         <button
           type="button"
           onclick={() => selectAll('vm')}
-          class="text-xs text-vault hover:text-vault/80 transition-colors"
+          class="text-xs text-vault-text hover:underline transition-colors"
         >
           {filtered.every((v) => isSelected('vm', v.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
         </button>
@@ -604,7 +604,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path
                       stroke-linecap="round"
                       stroke-linejoin="round"
@@ -620,8 +620,8 @@
               </div>
               <span
                 class="text-xs px-2 py-0.5 rounded-full shrink-0 {vm.settings?.state === 'running'
-                  ? 'bg-green-500/15 text-green-400'
-                  : 'bg-gray-500/15 text-gray-400'}"
+                  ? 'bg-green-500/15 text-success'
+                  : 'bg-gray-500/15 text-text-muted'}"
               >
                 {vm.settings?.state || 'shutoff'}
               </span>
@@ -640,7 +640,7 @@
           <button
             type="button"
             onclick={() => selectAll('folder')}
-            class="text-xs text-vault hover:text-vault/80 transition-colors"
+            class="text-xs text-vault-text hover:underline transition-colors"
           >
             {filtered.every((f) => isSelected('folder', f.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
           </button>
@@ -650,7 +650,7 @@
         <button
           type="button"
           onclick={() => (showAddFolder = !showAddFolder)}
-          class="text-xs text-vault hover:text-vault/80 transition-colors flex items-center gap-1"
+          class="text-xs text-vault-text hover:underline transition-colors flex items-center gap-1"
         >
           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Add Custom Folder
@@ -663,7 +663,7 @@
 		  {#if customFolderError}<p class="text-xs text-danger" role="alert">{customFolderError}</p>{/if}
 		  <div class="flex justify-end gap-2">
             <button type="button" onclick={() => (showAddFolder = false)} class="px-3 py-1.5 text-xs text-text-muted hover:text-text bg-surface-3 rounded-lg">Cancel</button>
-			<button type="button" onclick={addCustomFolder} disabled={!customFolderPath.trim() || customFolderChecking} class="px-3 py-1.5 text-xs text-white bg-vault hover:bg-vault-dark rounded-lg disabled:opacity-40">{customFolderChecking ? 'Checking...' : 'Add Folder'}</button>
+			<button type="button" onclick={addCustomFolder} disabled={!customFolderPath.trim() || customFolderChecking} class="px-3 py-1.5 text-xs text-on-vault bg-vault hover:bg-vault-dark rounded-lg disabled:opacity-40">{customFolderChecking ? 'Checking...' : 'Add Folder'}</button>
           </div>
         </div>
       {/if}
@@ -684,7 +684,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
                   >
                 {/if}
@@ -694,7 +694,7 @@
                 <div class="text-xs text-text-muted truncate" title={folder.settings?.path || ''}>{folder.settings?.path || ''}</div>
               </div>
               {#if folder.settings?.preset}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-amber-400">{folder.settings.preset}</span>
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-hue-amber">{folder.settings.preset}</span>
               {/if}
             </button>
           {/each}
@@ -705,7 +705,7 @@
             No folders match your search.
           {:else}
             No preset folders to choose from on this system.
-            Click <span class="text-vault font-medium">Add Custom Folder</span> above to pick any
+            Click <span class="text-vault-text font-medium">Add Custom Folder</span> above to pick any
             path under <code class="text-xs">/mnt</code> or <code class="text-xs">/boot</code>.
           {/if}
         </p>
@@ -716,7 +716,7 @@
         <button
           type="button"
           onclick={() => selectAll('flash')}
-          class="text-xs text-vault hover:text-vault/80 transition-colors"
+          class="text-xs text-vault-text hover:underline transition-colors"
         >
           {filtered.every((f) => isSelected('folder', f.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
         </button>
@@ -736,7 +736,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
                   >
                 {/if}
@@ -745,7 +745,7 @@
                 <div class="text-sm font-medium text-text truncate">{flash.name}</div>
                 <div class="text-xs text-text-muted truncate">{flash.settings?.path || '/boot'}</div>
               </div>
-              <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-amber-400">USB boot drive</span>
+              <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-hue-amber">USB boot drive</span>
             </button>
           {/each}
         </div>
@@ -760,7 +760,7 @@
         <button
           type="button"
           onclick={() => selectAll('plugin')}
-          class="text-xs text-vault hover:text-vault/80 transition-colors"
+          class="text-xs text-vault-text hover:underline transition-colors"
         >
           {filtered.every((p) => isSelected('plugin', p.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
         </button>
@@ -780,7 +780,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
                   >
                 {/if}
@@ -790,7 +790,7 @@
                 <div class="text-xs text-text-muted">Unraid Plugin</div>
               </div>
               {#if plugin.settings?.has_config}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-blue-400">config</span>
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-hue-blue">config</span>
               {/if}
             </button>
           {/each}
@@ -806,7 +806,7 @@
         <button
           type="button"
           onclick={() => selectAll('zfs')}
-          class="text-xs text-vault hover:text-vault/80 transition-colors"
+          class="text-xs text-vault-text hover:underline transition-colors"
         >
           {filtered.every((d) => isSelected('zfs', d.name)) ? 'Deselect all' : 'Select all'} ({filtered.length})
         </button>
@@ -826,7 +826,7 @@
                   : 'border-border'}"
               >
                 {#if sel}
-                  <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
                   >
                 {/if}
@@ -841,7 +841,7 @@
                 </div>
               </div>
               {#if dataset.settings?.used}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-blue-400">
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-hue-blue">
                   {dataset.settings.used}
                 </span>
               {/if}
@@ -876,10 +876,10 @@
               role="listitem"
             >
               <svg aria-hidden="true" class="w-4 h-4 text-text-dim cursor-grab shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg>
-              <span class="text-xs px-1.5 py-0.5 rounded bg-surface-4 text-text-dim shrink-0">{item.item_type}</span>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-surface-4 text-text-muted shrink-0">{item.item_type}</span>
               <span class="text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
               {#if stale}
-                <span class="flex items-center gap-1 text-xs text-yellow-400 shrink-0" title="This item no longer exists on the system">
+                <span class="flex items-center gap-1 text-xs text-warning shrink-0" title="This item no longer exists on the system">
                   <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
                   Not found
                 </span>
@@ -890,7 +890,7 @@
                     type="button"
                     onclick={() => { if (idx > 0) moveItem(idx, idx - 1) }}
                     disabled={idx === 0}
-                    class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
+                    class="hit-target text-text-dim hover:text-text disabled:opacity-30"
                     aria-label="Move up"
                   >
                     <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
@@ -899,7 +899,7 @@
                     type="button"
                     onclick={() => { if (idx < selectedArray.length - 1) moveItem(idx, idx + 1) }}
                     disabled={idx === selectedArray.length - 1}
-                    class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
+                    class="hit-target text-text-dim hover:text-text disabled:opacity-30"
                     aria-label="Move down"
                   >
                     <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
@@ -908,7 +908,7 @@
                 <button
                   type="button"
                   onclick={() => removeItem(key)}
-                  class="p-0.5 text-text-dim hover:text-red-400 transition-colors"
+                  class="hit-target text-text-dim hover:text-danger transition-colors"
                   aria-label="Remove {itemDisplayLabel(item)}"
                   title="Remove from backup job"
                 >

@@ -110,7 +110,7 @@
 {#if dataPoints.length >= 2}
   <div class="bg-surface-2 border border-border rounded-xl p-4 mb-6">
     <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
-      <h3 class="text-sm font-semibold text-text">Job Duration Trend</h3>
+      <h2 class="text-sm font-semibold text-text">Job Duration Trend</h2>
       <div class="flex items-center gap-3 flex-wrap">
         {#if trend}
           <div class="flex items-center gap-1.5 text-xs pl-3 border-l border-border">
@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <div class="relative"
+    <div class="relative" role="presentation"
       onmouseleave={() => hoveredIndex = -1}>
       <svg aria-hidden="true" viewBox="0 0 {width} {height}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">
         <g transform="translate({padding.left},{padding.top})">
@@ -192,7 +192,7 @@
         {@const tooltipX = padding.left + xCenter(hoveredIndex)}
         <div class="absolute pointer-events-none bg-surface-3 border border-border rounded-lg shadow-lg p-2 text-xs -translate-x-1/2 -translate-y-full"
           style="left: {(tooltipX / width) * 100}%; top: {((padding.top + y(p.duration)) / height) * 100 - 5}%">
-          <p class="text-text-dim mb-1">{formatDateShort(p.date)}</p>
+          <p class="text-text-muted mb-1">{formatDateShort(p.date)}</p>
           <p class="font-semibold text-text">{formatDuration(p.duration)}</p>
           {#if p.runCount}
             <p class="text-text-muted mt-0.5">{p.runCount} run{p.runCount !== 1 ? 's' : ''}</p>

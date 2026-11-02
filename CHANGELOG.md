@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Log warnings show their cause (#534):** With Details off, warning and error rows now show the affected item, status and error, such as "Health check · plex · unhealthy · Timed out", and warnings about different containers or statuses no longer fold together. Any row with details can be opened inline by mouse, keyboard or touch, and a folded row lists each entry; opening a row pauses auto-follow so it stays put. A new Problems filter shows only warnings and errors, the jump button now reads "Oldest", level labels and counts are larger, and row copy works by keyboard and touch. Rows are slightly taller to make room for 24 px controls. Copy and export are unchanged.
+- **One clear backup status (#527):** The Dashboard now leads with a banner that gives one verdict, names each problem and links to the page that fixes it, and it won't say "healthy" while items are unprotected, data is loading or a request failed. The health tile's text wraps instead of truncating and is qualified the same way, so a score of 100 with 3 of 19 items unprotected reads "Backups OK · 3 unprotected". The progress tile only shows while a run is active; saved layouts and Customize still work. The 3-2-1 panel now reads "Configured" instead of "Met" while no items are backed up, because the rule only checks your configuration.
+- **Embedded Backups view fits Unraid pages (#526):** With the top-navigation link on, Vault now shows a compact row of links instead of its own header, sidebar and bottom bar, the frame sizes to its content so the page scrolls as one, and dialogs stay on screen. It starts in Unraid's light or dark theme unless you've chosen a mode in Vault. The standalone view is unchanged.
+- **Mobile navigation and touch targets (#530):** On phones, More now opens a sheet listing every page the bottom bar has no room for, and the hamburger menu is gone, so there is one way to get around. More shows as current on pages inside it. "More info" buttons and small actions now reach 24 px, with a 44 px hit area for info buttons and toast dismiss on touch screens. File tree checkboxes are larger. The Logs heading now sits above a toolbar that wraps, so nothing is clipped at 375 px.
+- **Navigation and page semantics (#529):** Navigation items and Dashboard tiles are now real links, so they open in a new tab. Each page has its own tab title, and focus moves to the page heading after navigation. Settings tabs follow the ARIA tabs pattern with arrow, Home and End keys, navs and landmarks are named, the menu button reports its state, and the unlabelled Jobs, Restore and Settings fields now have names. The 3-2-1 panel's goal and dismiss buttons no longer sit inside its toggle.
+- **Typed confirmation (#525):** Replacing the Vault database, restoring after failed pre-flight checks and purging all history now use an in-app dialog that names the source, states what will be lost and enables its confirm button only once you type `REPLACE`, `RESTORE` or `PURGE`, because these actions can't be undone. Cancel keeps initial focus. Normal restores keep their current review step.
+- **Retro theme (#532):** The 8-Bit and 16-Bit themes are merged into one Retro theme with the same self-hosted pixel fonts. Settings now offers Default, 1-Bit and Retro, and saved 8-Bit and 16-Bit preferences move to Retro automatically.
+
+### Fixed
+
+- **Retro fonts load in the plugin (#532):** The pixel fonts returned 404 when the app was served from the Unraid plugin path, so Retro fell back to system fonts.
+- **Jobs bulk bar on phones (#530):** The bulk action bar now wraps inside a 375 px screen and sits above the mobile navigation, standalone and embedded, with full-size touch targets.
+- **Embedded skip link (#526):** In the embedded view, the skip link now scrolls the parent page so the heading it focuses is on screen.
+- **Logs 404s:** The Logs page no longer requests run logs for runs that have been deleted, which filled the console with failed requests on every load. `/activity` now flags those entries with `run_gone`.
+- **Log folding and empty states (#534):** Warnings with different causes no longer fold into one row. "No problems" now waits for older history to load, and says so if older history could not be loaded, with a retry. Each row's expand button names its item and time. Container health messages are redacted like storage errors.
+- **Destructive confirmations (#525):** The recovery wizard now asks you to type REPLACE before replacing the database of a Vault that already has jobs or storage, or when it could not check; first-time recovery on an empty Vault keeps its light confirmation. Bulk job delete now asks first and names how many jobs it removes.
+- **False "Backups healthy" (#527):** The Dashboard now treats skipped and cancelled runs, unhealthy storage, jobs overdue for a backup (including disabled ones) and a health score below 80 as needing attention, with a link for each, across every job rather than a ten-job sample. The health tile uses the same verdict, so "Backups mostly healthy" now reads "Needs attention". `/health/summary` adds `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs`; skipped and cancelled runs lower the score, and a restore no longer counts as a last successful backup.
+- **Accessible dialogs (#528):** Every dialog, the command palette and the file browsers now share one native `<dialog>`. Focus moves in on open, stays inside, and returns to the opener on close, and Escape closes only the topmost dialog. Restore, Recovery and New Job wizard steps move focus to the step heading. Toasts and tooltips stay usable above a dialog.
+- **Retro and 1-Bit contrast (#532):** Text in both themes now meets WCAG AA in light and dark on every page, including replica mode and running restores, checked by the axe audit in the browser tests. Read-only replica settings are no longer dimmed below AA.
+- **Contrast (#524):** Default light and dark text, navigation, status colours and primary buttons now meet WCAG 2.2 AA on every page, checked by an axe audit in the browser tests. Toasts gain a status icon and an opaque background. Retro palettes are unchanged.
+
+### Removed
+
+- **Legacy PHP pages (#533):** Removed the unlinked `VaultJobs`, `VaultStorage`, `VaultHistory`, `VaultRestore` and `VaultSettings` pages and their CSS and JavaScript. Bookmarks to the old `/Settings/VaultJobs`, `/Settings/VaultStorage`, `/Settings/VaultHistory`, `/Settings/VaultRestore` and `/Settings/VaultSettings` URLs stop working; use Settings → Utilities → Vault or the optional Backups navigation entry instead. Plugin upgrades delete these files from existing installs.
+
+### Security
+
+- **Storage health errors are redacted:** Credentials echoed in a storage health-check error are now removed before the message is saved, broadcast or logged.
+
 ## [v2026.10.04] - 2026-10-27
 
 ### Changed

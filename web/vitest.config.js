@@ -43,7 +43,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov'],
       reportsDirectory: './coverage',
-      include: ['src/lib/**/*.{js,svelte}', 'src/pages/Logs.svelte'],
+      include: ['src/lib/**/*.{js,svelte}', 'src/pages/Logs.svelte', 'src/components/ConfirmDialog.svelte'],
       exclude: ['src/lib/**/*.test.js'],
     },
   },

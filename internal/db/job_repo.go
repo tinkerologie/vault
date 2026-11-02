@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -631,6 +632,26 @@ func (d *DB) GetJobRunsSince(jobID int64, since time.Time) ([]JobRun, error) {
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
+}
+
+// GetLastSuccessfulBackupAt returns when the job's newest successful backup
+// finished, or nil if it has none. It reads the whole history, so a long run of
+// skipped or failed runs can't hide the answer.
+func (d *DB) GetLastSuccessfulBackupAt(jobID int64) (*time.Time, error) {
+	var completedAt *time.Time
+	err := d.QueryRow(
+		`SELECT completed_at FROM job_runs
+		WHERE job_id = ? AND status IN ('success', 'completed') AND COALESCE(NULLIF(run_type, ''), 'backup') = 'backup'
+			AND completed_at IS NOT NULL
+		ORDER BY julianday(completed_at) DESC LIMIT 1`, jobID,
+	).Scan(&completedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying last successful backup for job %d: %w", jobID, err)
+	}
+	return completedAt, nil
 }
 
 // Restore Points

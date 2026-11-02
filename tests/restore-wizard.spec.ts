@@ -213,6 +213,20 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
     return summary;
   }
 
+  test('names the search, sort and per-item path filter fields', async ({ page }) => {
+    await page.goto('/#/restore');
+    await page.getByRole('textbox', { name: 'Search items or jobs' }).fill('plex');
+    await expect(page.getByRole('button', { name: /home-assistant/i })).toHaveCount(0);
+    await page.getByRole('textbox', { name: 'Search items or jobs' }).clear();
+    await expect(page.getByRole('combobox', { name: 'Sort:' })).toHaveValue('alpha-asc');
+    await page.getByLabel('Sort:').selectOption('alpha-desc');
+    await expect(page.getByLabel('Sort:')).toHaveValue('alpha-desc');
+
+    const summary = await openPlexPlan(page);
+    await summary.click();
+    await expect(page.getByRole('textbox', { name: 'Filter paths in plex' })).toBeVisible();
+  });
+
   test('shows loading until a slow listing arrives, then the file tree', async ({ page }) => {
     let release: () => void = () => {};
     const held = new Promise<void>(resolve => { release = resolve; });

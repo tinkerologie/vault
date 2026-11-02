@@ -5,10 +5,12 @@ import {
   getApiDisplayBase,
   getDaemonBindAddress,
   getDaemonPort,
+  getHostThemeMode,
   getHour12,
   getLiveMode,
   getRuntimeConfig,
   getTimeFormat,
+  isEmbedded,
   isProxyMode,
 } from './runtime-config.js'
 
@@ -117,5 +119,67 @@ describe('buildApiRequest', () => {
   it('falls back to direct mode when proxy mode has no proxyPath', () => {
     withConfig({ mode: 'unraid-proxy', proxyPath: '' })
     expect(buildApiRequest('GET', '/jobs').url).toBe('/api/v1/jobs')
+  })
+})
+
+describe('embedded presentation (#526)', () => {
+  const ORIGIN = 'http://tower.test'
+  const framed = (cfg, parent = { location: { origin: ORIGIN } }) => {
+    const win = { __VAULT_RUNTIME_CONFIG__: cfg, location: { origin: ORIGIN }, parent, top: parent }
+    win.self = win
+    vi.stubGlobal('window', win)
+  }
+
+  it('defaults to standalone with no host theme', () => {
+    expect(getRuntimeConfig().presentation).toBe('standalone')
+    expect(getRuntimeConfig().hostTheme).toBeNull()
+    expect(isEmbedded()).toBe(false)
+    expect(getHostThemeMode()).toBeNull()
+  })
+
+  it('is embedded when asked for inside a same-origin frame', () => {
+    framed({ presentation: 'embedded' })
+    expect(isEmbedded()).toBe(true)
+  })
+
+  it('needs the explicit request, even when framed', () => {
+    framed({})
+    expect(isEmbedded()).toBe(false)
+    framed({ presentation: 'bogus' })
+    expect(isEmbedded()).toBe(false)
+  })
+
+  it('is standalone at the top level, even when asked for', () => {
+    const win = { __VAULT_RUNTIME_CONFIG__: { presentation: 'embedded' }, location: { origin: ORIGIN } }
+    win.self = win
+    win.top = win
+    win.parent = win
+    vi.stubGlobal('window', win)
+    expect(isEmbedded()).toBe(false)
+  })
+
+  it('is standalone in a frame of another origin', () => {
+    framed({ presentation: 'embedded' }, { location: { origin: 'http://other.test' } })
+    expect(isEmbedded()).toBe(false)
+  })
+
+  it('does not throw when reading a cross-origin parent throws', () => {
+    const parent = {
+      get location() {
+        throw new DOMException('Blocked a frame', 'SecurityError')
+      },
+    }
+    framed({ presentation: 'embedded' }, parent)
+    expect(isEmbedded()).toBe(false)
+  })
+
+  it.each(['light', 'dark'])('passes through a %s host theme', (hostTheme) => {
+    withConfig({ hostTheme })
+    expect(getHostThemeMode()).toBe(hostTheme)
+  })
+
+  it.each(['system', 'black', '', 1, null, {}])('rejects a host theme of %j', (hostTheme) => {
+    withConfig({ hostTheme })
+    expect(getHostThemeMode()).toBeNull()
   })
 })

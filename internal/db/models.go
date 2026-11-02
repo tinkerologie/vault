@@ -212,6 +212,8 @@ type ActivityLogEntry struct {
 	Message   string    `json:"message"`
 	Details   string    `json:"details"`
 	CreatedAt time.Time `json:"created_at"`
+	// RunGone marks an entry whose run, and so its run log, has since been deleted.
+	RunGone bool `json:"run_gone,omitempty"`
 }
 
 // RunLogEntry is one line in a run's streaming log (issue #328).

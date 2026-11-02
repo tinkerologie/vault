@@ -12,10 +12,10 @@ test.describe('Settings Configuration & Management', () => {
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 
     // Verify main tabs are present
-    const generalTab = page.getByRole('button', { name: 'General', exact: true });
-    const securityTab = page.getByRole('button', { name: 'Security', exact: true });
-    const notificationsTab = page.getByRole('button', { name: 'Notifications', exact: true });
-    const referenceTab = page.getByRole('button', { name: 'Reference', exact: true });
+    const generalTab = page.getByRole('tab', { name: 'General', exact: true });
+    const securityTab = page.getByRole('tab', { name: 'Security', exact: true });
+    const notificationsTab = page.getByRole('tab', { name: 'Notifications', exact: true });
+    const referenceTab = page.getByRole('tab', { name: 'Reference', exact: true });
 
     await expect(generalTab).toBeVisible();
     await expect(securityTab).toBeVisible();
@@ -57,7 +57,7 @@ test.describe('Settings Configuration & Management', () => {
     await page.goto('/#/settings');
 
     // Go to Notifications tab
-    await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+    await page.getByRole('tab', { name: 'Notifications', exact: true }).click();
     await expect(page.getByText('Discord Notifications')).toBeVisible();
 
     // Enter Webhook URL
@@ -186,7 +186,7 @@ test.describe('Settings Configuration & Management', () => {
 
   test('downloads the server key for an off-server copy (#451)', async ({ page }) => {
     await page.goto('/#/settings');
-    await page.getByRole('button', { name: 'Security', exact: true }).click();
+    await page.getByRole('tab', { name: 'Security', exact: true }).click();
 
     await expect(page.getByRole('heading', { name: /Server key/ })).toBeVisible();
     await expect(page.getByText(/Anyone with this file and access to your backup storage/)).toBeVisible();
@@ -202,5 +202,11 @@ test.describe('Settings Configuration & Management', () => {
     for await (const c of stream) chunks.push(c as Buffer);
     expect(Buffer.concat(chunks).length).toBe(32);
     await expect(page.getByText(/vault.key downloaded/)).toBeVisible();
+  });
+
+  test('History Retention select is labelled by its section heading', async ({ page }) => {
+    await page.goto('/#/settings');
+    await expect(page.getByRole('combobox', { name: 'History Retention' })).toBeVisible();
+    await expect(page.getByLabel('History Retention')).toHaveValue(/\d+/);
   });
 });

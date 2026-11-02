@@ -287,3 +287,16 @@ func runLogText(t *testing.T, d *db.DB, runID int64) string {
 	}
 	return b.String()
 }
+
+func TestRedactHealthMessage(t *testing.T) {
+	got := redactHealthMessage(`curl: (22) http://admin:hunter2@127.0.0.1:8080/health?token=abc: 503`)
+	if strings.Contains(got, "hunter2") || strings.Contains(got, "token=abc") {
+		t.Errorf("redactHealthMessage = %q, still holds a secret", got)
+	}
+	if !strings.Contains(got, "503") {
+		t.Errorf("redactHealthMessage = %q, want the cause kept", got)
+	}
+	if got := redactHealthMessage("Timed out"); got != "Timed out" {
+		t.Errorf("redactHealthMessage = %q, want plain text untouched", got)
+	}
+}

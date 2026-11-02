@@ -2,13 +2,13 @@
   import { api, isReplicaMode } from '../lib/api.js'
   import { navigate } from '../lib/router.svelte.js'
   import { formatDate } from '../lib/utils.js'
+  import Modal from './Modal.svelte'
   import Toast from './Toast.svelte'
 
   let { show = $bindable(false), onclose = () => {} } = $props()
 
   let query = $state('')
   let selectedIndex = $state(0)
-  let inputEl = $state(null)
   let jobs = $state([])
   let storages = $state([])
   let containers = $state([])
@@ -48,10 +48,14 @@
     if (show && !loaded) {
       loadData()
     }
+  })
+
+  // Apart from the load above: it reads `loaded`, and clearing the query when the
+  // load finishes would wipe what was typed in the meantime.
+  $effect(() => {
     if (show) {
       query = ''
       selectedIndex = 0
-      requestAnimationFrame(() => inputEl?.focus())
     }
   })
 
@@ -200,8 +204,6 @@
       if (filteredCommands[selectedIndex]) {
         executeCommand(filteredCommands[selectedIndex])
       }
-    } else if (e.key === 'Escape') {
-      onclose()
     }
   }
 
@@ -211,29 +213,22 @@
   }
 </script>
 
-{#if show}
-  <div
-    class="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm animate-backdrop"
-    onkeydown={handleKeydown}
-    role="dialog"
-    aria-modal="true"
-    aria-label="Command palette"
-    tabindex="-1"
-  >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden animate-panel-up">
+<Modal {show} label="Command palette" placement="top" {onclose}>
+    <div role="presentation" onkeydown={handleKeydown}>
       <!-- Search input -->
       <div class="flex items-center gap-3 px-4 py-3 border-b border-border">
         <svg aria-hidden="true" class="w-5 h-5 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
         <input
-          bind:this={inputEl}
+          data-autofocus
+          aria-label="Search commands"
           type="text"
           bind:value={query}
           placeholder="Type a command or search..."
-          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-dim focus:outline-none"
+          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
         />
-        <kbd class="text-xs text-text-dim bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">Esc</kbd>
+        <kbd class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">Esc</kbd>
       </div>
 
       <!-- Results -->
@@ -252,6 +247,7 @@
               class="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors
                 {i === selectedIndex ? 'bg-vault/10 text-text' : 'text-text-muted hover:bg-surface-3'}"
               onmouseenter={() => selectedIndex = i}
+              onfocus={() => selectedIndex = i}
               onclick={() => executeCommand(cmd)}
             >
               <svg aria-hidden="true" class="w-4 h-4 shrink-0 {i === selectedIndex ? 'text-vault' : 'text-text-dim'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -259,10 +255,10 @@
               </svg>
               <span class="text-sm flex-1 truncate">{cmd.label}</span>
               {#if cmd.meta}
-                <span class="text-xs text-text-dim capitalize shrink-0">{cmd.meta}</span>
+                <span class="text-xs text-text-muted capitalize shrink-0">{cmd.meta}</span>
               {/if}
               {#if i === selectedIndex}
-                <kbd class="text-xs text-text-dim bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">↵</kbd>
+                <kbd class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">↵</kbd>
               {/if}
             </button>
           {/each}
@@ -270,13 +266,12 @@
       </div>
 
       <!-- Footer -->
-      <div class="px-4 py-2 border-t border-border flex items-center gap-4 text-xs text-text-dim">
+      <div class="px-4 py-2 border-t border-border flex items-center gap-4 text-xs text-text-muted">
         <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">↑↓</kbd> Navigate</span>
         <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">↵</kbd> Execute</span>
         <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">Esc</kbd> Close</span>
       </div>
     </div>
-  </div>
-{/if}
+</Modal>
 
 <Toast message={toastMessage} type={toastType} key={toastKey} />

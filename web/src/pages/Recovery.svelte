@@ -163,7 +163,7 @@
           {/each}
         </ul>
         {#if totalUnprotected > 0}
-          <button onclick={() => navigate('/jobs')} class="mt-3 text-xs text-vault hover:text-vault-dark font-medium">
+          <button onclick={() => navigate('/jobs')} class="mt-3 text-xs text-vault-text hover:underline font-medium">
             Configure backup jobs →
           </button>
         {/if}
@@ -231,28 +231,28 @@
             <div class="flex items-center gap-2 px-3 py-2 bg-danger/5 rounded-lg">
               <div class="w-2 h-2 rounded-full bg-danger shrink-0"></div>
               <span class="text-sm text-text">{c.name}</span>
-              <span class="text-[10px] text-text-dim ml-auto">container</span>
+              <span class="text-[10px] text-text-muted ml-auto">container</span>
             </div>
           {/each}
           {#each unprotectedVMs as v (v.name)}
             <div class="flex items-center gap-2 px-3 py-2 bg-danger/5 rounded-lg">
               <div class="w-2 h-2 rounded-full bg-danger shrink-0"></div>
               <span class="text-sm text-text">{v.name}</span>
-              <span class="text-[10px] text-text-dim ml-auto">vm</span>
+              <span class="text-[10px] text-text-muted ml-auto">vm</span>
             </div>
           {/each}
           {#each unprotectedFolders as f (f.name)}
             <div class="flex items-center gap-2 px-3 py-2 bg-danger/5 rounded-lg">
               <div class="w-2 h-2 rounded-full bg-danger shrink-0"></div>
               <span class="text-sm text-text">{f.name}</span>
-              <span class="text-[10px] text-text-dim ml-auto">folder</span>
+              <span class="text-[10px] text-text-muted ml-auto">folder</span>
             </div>
           {/each}
           {#each unprotectedFlash as f (f.name)}
             <div class="flex items-center gap-2 px-3 py-2 bg-danger/5 rounded-lg">
               <div class="w-2 h-2 rounded-full bg-danger shrink-0"></div>
               <span class="text-sm text-text">{f.name}</span>
-              <span class="text-[10px] text-text-dim ml-auto">flash</span>
+              <span class="text-[10px] text-text-muted ml-auto">flash</span>
             </div>
           {/each}
         </div>

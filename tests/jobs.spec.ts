@@ -193,6 +193,17 @@ test.describe('Jobs Management & Creation Wizard', () => {
       await expect(storage).toHaveAccessibleDescription(describedBy(warningTitle));
     });
 
+    test('names the deferred-upload switch and the review-step enabled toggle', async ({ page }) => {
+      await openVerificationStep(page, 'Offsite S3 (s3)');
+      await page.locator('summary', { hasText: 'Deferred Remote Upload' }).click();
+      const deferred = page.getByRole('checkbox', { name: 'Defer remote upload until all backups complete' });
+      await expect(deferred).toBeEnabled();
+      await expect(deferred).toHaveAccessibleDescription(/Backs up every container to local staging first/);
+      await page.getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(page.getByRole('checkbox', { name: 'Enable scheduled execution' })).toBeChecked();
+      await expect(page.getByLabel('Enable scheduled execution')).toBeAttached();
+    });
+
     test('repeats the warning on the review step', async ({ page }) => {
       await openVerificationStep(page, 'Offsite S3 (s3)');
       await page.getByRole('button', { name: 'Next', exact: true }).click();
@@ -214,6 +225,15 @@ test.describe('Jobs Management & Creation Wizard', () => {
     });
   });
 
+  test('names each bulk-selection checkbox after its job', async ({ page }) => {
+    await page.goto('/#/jobs');
+    const select = page.getByRole('checkbox', { name: 'Select Docker & Appdata' });
+    await expect(select).not.toBeChecked();
+    await select.check();
+    await expect(page.getByLabel('Select Docker & Appdata')).toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'Select VM Backups' })).not.toBeChecked();
+  });
+
   test('supports deleting a job with confirmation modal', async ({ page }) => {
     await page.goto('/#/jobs');
 
@@ -233,5 +253,118 @@ test.describe('Jobs Management & Creation Wizard', () => {
     // Job deleted toast and removed from list
     await expect(page.getByText(/Job deleted/i)).toBeVisible();
     await expect(page.getByText('VM Backups')).toHaveCount(0);
+  });
+
+  test.describe('bulk delete (#525)', () => {
+    const selectJobs = async (page: import('@playwright/test').Page, count: number) => {
+      await page.goto('/#/jobs');
+      for (const name of ['Docker & Appdata', 'VM Backups'].slice(0, count)) {
+        await page.getByRole('checkbox', { name: `Select ${name}` }).check();
+      }
+    };
+    const bar = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Bulk actions' });
+    const deletes = (page: import('@playwright/test').Page) => {
+      const calls: string[] = [];
+      page.on('request', (r) => { if (r.method() === 'DELETE' && /\/jobs\/\d+/.test(r.url())) calls.push(r.url()); });
+      return calls;
+    };
+
+    test('names the count, starts on Cancel, and Cancel deletes nothing', async ({ page }) => {
+      const calls = deletes(page);
+      await selectJobs(page, 2);
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Delete 2 Jobs' });
+      await expect(dialog).toContainText('Backup files remain on storage');
+      await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+      await expect(dialog.getByRole('textbox')).toHaveCount(0);
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await expect(dialog).toHaveCount(0);
+      expect(calls).toHaveLength(0);
+      await expect(bar(page)).toContainText('2 selected');
+    });
+
+    test('Escape cancels, and Enter on Cancel sends nothing', async ({ page }) => {
+      const calls = deletes(page);
+      await selectJobs(page, 1);
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      await expect(page.getByRole('dialog', { name: 'Delete 1 Job' })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    test('the dialog never shows a zero count while the list reloads', async ({ page }) => {
+      await selectJobs(page, 1);
+      await page.route(/\/api\/v1\/jobs(\?|$)/, async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await route.fallback();
+      });
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Delete 1 Job' });
+      await dialog.getByRole('button', { name: 'Delete 1 Job' }).click();
+      await expect(page.getByText('1 job deleted')).toBeVisible();
+      // The list is still reloading here, so the dialog must already be gone.
+      await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 200 });
+    });
+
+    test('confirming deletes each selected job, once', async ({ page }) => {
+      const calls = deletes(page);
+      await selectJobs(page, 2);
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      await page.getByRole('dialog', { name: 'Delete 2 Jobs' }).getByRole('button', { name: 'Delete 2 Jobs' }).click();
+      await expect(page.getByText('2 jobs deleted')).toBeVisible();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      expect(calls).toHaveLength(2);
+    });
+  });
+
+  test.describe('bulk action bar at 375 px', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 667 });
+      await page.goto('/#/jobs');
+      await page.getByRole('checkbox', { name: 'Select Docker & Appdata' }).check();
+    });
+    const bar = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Bulk actions' });
+
+    test('every control is whole, in the viewport, and clear of the bottom nav', async ({ page }) => {
+      const nav = (await page.getByRole('navigation', { name: 'Mobile navigation' }).boundingBox())!;
+      const box = (await bar(page).boundingBox())!;
+      expect(box.y + box.height).toBeLessThanOrEqual(nav.y);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(375);
+      for (const control of [bar(page).getByText('1 selected'), ...await bar(page).getByRole('button').all()]) {
+        const c = (await control.boundingBox())!;
+        expect(c.x).toBeGreaterThanOrEqual(box.x);
+        expect(c.x + c.width).toBeLessThanOrEqual(box.x + box.width);
+        expect(c.y + c.height).toBeLessThanOrEqual(nav.y);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    });
+
+    test('every button takes a real click, without the nav in the way', async ({ page }) => {
+      for (const name of ['Enable', 'Disable', 'Run', 'Delete', 'Clear']) {
+        await bar(page).getByRole('button', { name }).click({ trial: true });
+      }
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      await page.getByRole('dialog', { name: 'Delete 1 Job' }).getByRole('button', { name: 'Cancel' }).click();
+      await bar(page).getByRole('button', { name: 'Clear' }).click();
+      await expect(bar(page)).toHaveCount(0);
+    });
+
+    test('its buttons meet the touch target size', async ({ page }) => {
+      for (const button of await bar(page).getByRole('button').all()) {
+        expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
+    });
+  });
+
+  test('the bulk bar stays one centred row on desktop', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/#/jobs');
+    await page.getByRole('checkbox', { name: 'Select Docker & Appdata' }).check();
+    const box = (await page.getByRole('region', { name: 'Bulk actions' }).boundingBox())!;
+    expect(box.height).toBeLessThan(70);
+    expect(Math.abs(box.x + box.width / 2 - 640)).toBeLessThanOrEqual(1);
+    expect(800 - (box.y + box.height)).toBeLessThanOrEqual(30);
   });
 });

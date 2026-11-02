@@ -1,9 +1,12 @@
 <script>
+  import { tabFromKey } from '../lib/tabs.js'
   import { onMount } from 'svelte'
   import { api, isReplicaMode } from '../lib/api.js'
   import { formatBytes, formatDate, snapshotMigrationMessage } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
+  import { isEmbedded } from '../lib/runtime-config.js'
+  import { scrollHostTo } from '../lib/embed.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Spinner from '../components/Spinner.svelte'
@@ -52,10 +55,26 @@
     { id: 'set-diagnostics', label: 'Diagnostics' },
     { id: 'set-about', label: 'About' },
   ]
+  function onTabKeydown(e) {
+    const next = tabFromKey(e, tabs.map((t) => t.id), activeTab)
+    if (!next) return
+    e.preventDefault()
+    activeTab = next
+    document.getElementById(`settings-tab-${next}`)?.focus()
+  }
+
   function jumpToSetting(id) {
     const el = document.getElementById(id)
     if (!el) return
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const stickyBar = el.closest('main')?.querySelector('.sticky')
+    if (isEmbedded()) {
+      // Nothing in the frame scrolls: the host page does.
+      scrollHostTo(el.getBoundingClientRect().top - (stickyBar ? stickyBar.offsetHeight : 0))
+      el.setAttribute('tabindex', '-1')
+      el.focus({ preventScroll: true })
+      return
+    }
     // Scroll ONLY the <main> scroll container. scrollIntoView() also scrolls the
     // document — a programmatically-scrollable overflow:hidden box on tall pages
     // — shoving the whole app up so the sticky Jump-to bar leaves the viewport
@@ -63,8 +82,7 @@
     // sticky bar's height so the target isn't hidden under it.
     const main = el.closest('main')
     if (main) {
-      const bar = main.querySelector('.sticky')
-      const offset = bar ? bar.offsetHeight : 0
+      const offset = stickyBar ? stickyBar.offsetHeight : 0
       const top = main.scrollTop + el.getBoundingClientRect().top - main.getBoundingClientRect().top - offset
       main.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' })
     } else {
@@ -218,9 +236,9 @@
 
   const aboutBadgeClass = $derived(
     aboutStatus.kind === 'ok'
-      ? 'bg-emerald-500/15 text-emerald-400'
+      ? 'bg-emerald-500/15 text-hue-emerald'
       : aboutStatus.kind === 'update'
-        ? 'bg-orange-500/15 text-orange-400'
+        ? 'bg-orange-500/15 text-hue-orange'
         : 'bg-surface text-text-muted',
   )
 
@@ -1053,18 +1071,25 @@
     {/if}
 
     <!-- Tab Navigation -->
-    <div class="flex gap-1 border-b border-border mb-6 overflow-x-auto">
+    <div role="tablist" aria-label="Settings sections" class="flex gap-1 border-b border-border mb-6 overflow-x-auto">
       {#each tabs as tab (tab.id)}
         <button
+          type="button"
+          role="tab"
+          id="settings-tab-{tab.id}"
+          aria-selected={activeTab === tab.id}
+          aria-controls={activeTab === tab.id ? `settings-panel-${tab.id}` : undefined}
+          tabindex={activeTab === tab.id ? 0 : -1}
           onclick={() => activeTab = tab.id}
-          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap {activeTab === tab.id ? 'border-vault text-vault' : 'border-transparent text-text-muted hover:text-text'}"
+          onkeydown={onTabKeydown}
+          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap {activeTab === tab.id ? 'border-vault text-vault-text' : 'border-transparent text-text-muted hover:text-text'}"
         >
           {tab.label}
         </button>
       {/each}
     </div>
 
-    <div class="space-y-6">
+    <div role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0" class="space-y-6">
       <!-- === GENERAL TAB === -->
       {#if activeTab === 'general'}
       <!-- Jump-to bar (#208 / E11) — sticky so long-tab settings stay reachable -->
@@ -1087,17 +1112,16 @@
           <!-- Theme Style -->
           <div>
             <p class="text-sm text-text-muted mb-2">Theme style</p>
-            <div class="grid grid-cols-4 gap-1 bg-surface-3 rounded-lg p-1 max-w-sm">
+            <div class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-sm">
               {#each [
                 { value: 'default', label: 'Default', icon: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01' },
                 { value: '1bit', label: '1-Bit', icon: 'M8 9l4-4 4 4m0 6l-4 4-4-4' },
-                { value: '8bit', label: '8-Bit', icon: 'M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5' },
-                { value: '16bit', label: '16-Bit', icon: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z' },
+                { value: 'retro', label: 'Retro', icon: 'M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5' },
               ] as opt (opt.value)}
                 <button
                   type="button"
-                  onclick={() => setStyle(/** @type {'default'|'1bit'|'8bit'|'16bit'} */ (opt.value))}
-                  class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getStyle() === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
+                  onclick={() => setStyle(/** @type {'default'|'1bit'|'retro'} */ (opt.value))}
+                  class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getStyle() === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
                   {opt.label}
@@ -1118,7 +1142,7 @@
                 <button
                   type="button"
                   onclick={() => setMode(/** @type {'light'|'system'|'dark'} */ (opt.value))}
-                  class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getMode() === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
+                  class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getMode() === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
                   {opt.label}
@@ -1260,7 +1284,7 @@
                 bind:value={retryMax}
                 disabled={readOnly}
                 placeholder="2"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
             </div>
             <div>
@@ -1268,7 +1292,7 @@
                 <span class="block text-sm font-medium text-text-muted">Delays between retries</span>
                 <Tooltip text='How long to wait before each retry. The Nth retry waits for the Nth delay before running. Defaults to 15 min, 1 h, 4 h.' />
               </div>
-              <div class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
+              <div class:pointer-events-none={readOnly}>
                 <RetryDelaysEditor bind:value={retryDelays} />
               </div>
             </div>
@@ -1278,7 +1302,7 @@
             <button
               onclick={saveRetryPolicy}
               disabled={retrySaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if retrySaving}<InlineSpinner />{/if}
               Save Retry Policy
@@ -1318,7 +1342,7 @@
               </label>
               <input id="throttle-link" type="number" min="1" bind:value={autoThrottleLink} disabled={readOnly}
                 placeholder="e.g. 40"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
             </div>
             <div>
               <label for="throttle-floor" class="block text-sm font-medium text-text-muted mb-1.5">
@@ -1327,14 +1351,14 @@
               </label>
               <input id="throttle-floor" type="number" min="0" bind:value={autoThrottleFloor} disabled={readOnly}
                 placeholder="5"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
             </div>
           </div>
           <p class="text-xs text-text-dim">Applies to uploads to network destinations (SFTP, SMB, NFS, WebDAV, S3). Per-destination bandwidth caps still apply — the stricter limit wins. Takes effect within a few seconds of saving, no restart needed.</p>
           {#if !readOnly}
           <div class="flex justify-end">
             <button onclick={saveAutoThrottle} disabled={autoThrottleSaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if autoThrottleSaving}<InlineSpinner />{/if}
               Save Upload Throttling
             </button>
@@ -1357,7 +1381,7 @@
             </label>
             <textarea id="global-excludes" rows="5" bind:value={globalExcludes} disabled={readOnly}
               placeholder={excludePlaceholder}
-              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim font-mono focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"></textarea>
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted font-mono focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"></textarea>
             <p class="text-xs text-text-dim mt-1.5">One path per line. Added to each job's own exclusions — a job can still exclude more.</p>
           </div>
           <div class="flex items-center justify-between pt-1">
@@ -1381,7 +1405,7 @@
           {#if !readOnly}
           <div class="flex justify-end">
             <button onclick={saveExclusions} disabled={exclusionsSaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if exclusionsSaving}<InlineSpinner />{/if}
               Save Exclusions
             </button>
@@ -1415,7 +1439,7 @@
                 bind:value={compactionThreshold}
                 disabled={readOnly}
                 placeholder="50"
-                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
               <span class="text-sm text-text-muted">%</span>
               {#if !readOnly}
@@ -1423,7 +1447,7 @@
                 type="button"
                 onclick={saveCompactionThreshold}
                 disabled={compactionSaving}
-                class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {#if compactionSaving}<InlineSpinner />{/if}
                 {compactionSaving ? 'Saving…' : 'Save'}
@@ -1500,7 +1524,7 @@
             <button
               onclick={saveAnomalySettings}
               disabled={anomalySaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if anomalySaving}
                 <InlineSpinner />
@@ -1648,7 +1672,7 @@
                 bind:value={discordWebhookUrl}
                 disabled={readOnly}
                 placeholder="https://discord.com/api/webhooks/..."
-                class="flex-1 text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="flex-1 text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
               <button
                 onclick={testDiscord}
@@ -1686,7 +1710,7 @@
                 bind:value={discordBotUsername}
                 disabled={readOnly}
                 placeholder="Vault"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
             </div>
             <div>
@@ -1697,7 +1721,7 @@
                 bind:value={discordBotAvatarUrl}
                 disabled={readOnly}
                 placeholder="https://example.com/avatar.png"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
             </div>
           </div>
@@ -1711,7 +1735,7 @@
                 bind:value={discordMentionRoleId}
                 disabled={readOnly}
                 placeholder="123456789012345678"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
             </div>
             <div>
@@ -1733,7 +1757,7 @@
             <button
               onclick={saveDiscordSettings}
               disabled={discordSaving}
-              class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if discordSaving}
                 <InlineSpinner />
@@ -1767,7 +1791,7 @@
                 <p class="text-sm font-medium text-text">Download emergency kit</p>
                 <p class="text-xs text-text-muted mt-0.5">We recommend saving this encryption key somewhere secure.</p>
               </div>
-              <button onclick={downloadEmergencyKit} class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0">
+              <button onclick={downloadEmergencyKit} class="flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors shrink-0">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                 Download
               </button>
@@ -1780,7 +1804,7 @@
                   <p class="text-sm font-medium text-text">Show my encryption key</p>
                   <p class="text-xs text-text-muted mt-0.5">Please keep your encryption key private.</p>
                 </div>
-                <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
+                <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="hit-target text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
                   {loadingPassphrase ? 'Loading…' : showingPassphrase ? 'Hide' : 'Show'}
                 </button>
               </div>
@@ -1800,7 +1824,7 @@
                     <p class="text-sm font-medium text-text">Change encryption key</p>
                     <p class="text-xs text-text-muted mt-0.5">All future backups will use this encryption key.</p>
                   </div>
-                  <button onclick={startChangePassphrase} class="text-sm font-medium text-danger hover:text-danger/80 transition-colors shrink-0">
+                  <button onclick={startChangePassphrase} class="hit-target text-sm font-medium text-danger hover:underline transition-colors shrink-0">
                     Change
                   </button>
                 </div>
@@ -1810,17 +1834,17 @@
                   <p class="text-xs text-warning">Existing encrypted backups will still require the old passphrase to restore.</p>
                   <div>
                     <label for="change-pass" class="block text-xs font-medium text-text-muted mb-1">New passphrase</label>
-                    <input id="change-pass" type="password" autocomplete="new-password" bind:value={changeNewPass} placeholder="Enter new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <input id="change-pass" type="password" autocomplete="new-password" bind:value={changeNewPass} placeholder="Enter new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
                   </div>
                   <div>
                     <label for="change-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm new passphrase</label>
-                    <input id="change-confirm" type="password" autocomplete="new-password" bind:value={changeConfirmPass} placeholder="Confirm new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <input id="change-confirm" type="password" autocomplete="new-password" bind:value={changeConfirmPass} placeholder="Confirm new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
                   </div>
                   {#if changeNewPass && changeConfirmPass && changeNewPass !== changeConfirmPass}
                     <p class="text-xs text-danger">Passphrases do not match</p>
                   {/if}
                   <div class="flex items-center gap-2">
-                    <button onclick={saveChangePassphrase} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                    <button onclick={saveChangePassphrase} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                       {#if encSaving}<InlineSpinner />{/if}
                       {encSaving ? 'Saving…' : 'Update Passphrase'}
                     </button>
@@ -1834,7 +1858,7 @@
 
             <!-- Disable encryption -->
             <div class="px-5 py-3 flex justify-end">
-              <button onclick={removeEncryption} disabled={encSaving} class="text-xs text-text-dim hover:text-danger transition-colors disabled:opacity-50">
+              <button onclick={removeEncryption} disabled={encSaving} class="hit-target text-xs text-text-dim hover:text-danger transition-colors disabled:opacity-50">
                 {encSaving ? 'Removing…' : 'Disable encryption'}
               </button>
             </div>
@@ -1851,7 +1875,7 @@
                 <div>
                   <label for="enc-pass" class="block text-xs font-medium text-text-muted mb-1">Passphrase</label>
                   <div class="relative">
-                    <input id="enc-pass" type={showEncPassphrase ? 'text' : 'password'} autocomplete="new-password" bind:value={encPassphrase} placeholder="Enter encryption passphrase" class="w-full px-3 py-2 pr-10 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <input id="enc-pass" type={showEncPassphrase ? 'text' : 'password'} autocomplete="new-password" bind:value={encPassphrase} placeholder="Enter encryption passphrase" class="w-full px-3 py-2 pr-10 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
                     <button type="button" onclick={() => showEncPassphrase = !showEncPassphrase} class="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text p-1" aria-label="Toggle passphrase visibility">
                       <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={showEncPassphrase ? 'M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21' : 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'} /></svg>
                     </button>
@@ -1859,12 +1883,12 @@
                 </div>
                 <div>
                   <label for="enc-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm Passphrase</label>
-                  <input id="enc-confirm" type={showEncPassphrase ? 'text' : 'password'} bind:value={encConfirm} placeholder="Confirm passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                  <input id="enc-confirm" type={showEncPassphrase ? 'text' : 'password'} bind:value={encConfirm} placeholder="Confirm passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
                 </div>
                 {#if encPassphrase && encConfirm && encPassphrase !== encConfirm}
                   <p class="text-xs text-danger">Passphrases do not match</p>
                 {/if}
-                <button onclick={saveEncryption} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                <button onclick={saveEncryption} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                   {#if encSaving}<InlineSpinner />{/if}
                   {encSaving ? 'Saving…' : 'Set Passphrase'}
                 </button>
@@ -1892,7 +1916,7 @@
               <p class="text-xs text-danger mt-1">No backup password is set, so this file is the only way to open your deduplicated backups if this server is lost.</p>
             {/if}
           </div>
-          <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
+          <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
             {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>{/if}
             Download
           </button>
@@ -1922,7 +1946,7 @@
                   <p class="text-sm font-medium text-text">Show API key</p>
                   <p class="text-xs text-text-muted mt-0.5">Reveal the key to copy it for external integrations.</p>
                 </div>
-                <button onclick={toggleApiKeyReveal} disabled={apiKeyLoading} class="text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
+                <button onclick={toggleApiKeyReveal} disabled={apiKeyLoading} class="hit-target text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
                   {apiKeyLoading ? 'Loading…' : apiKeyShowing ? 'Hide' : 'Show'}
                 </button>
               </div>
@@ -1945,7 +1969,7 @@
                 <p class="text-sm font-medium text-text">Rotate API key</p>
                 <p class="text-xs text-text-muted mt-0.5">Replace with a new key. Existing integrations will need the new key.</p>
               </div>
-              <button onclick={rotateApiKey} disabled={apiKeyGenerating} class="text-sm font-medium text-warning hover:text-warning/80 transition-colors shrink-0 disabled:opacity-50">
+              <button onclick={rotateApiKey} disabled={apiKeyGenerating} class="text-sm font-medium text-warning hover:underline transition-colors shrink-0 disabled:opacity-50">
                 {apiKeyGenerating ? 'Rotating…' : 'Rotate'}
               </button>
             </div>
@@ -1955,7 +1979,7 @@
               {#if confirmApiKeyRevoke}
                 <div class="flex items-center gap-2">
                   <span class="text-xs text-danger">Revoke key and disable authentication?</span>
-                  <button onclick={revokeApiKey} disabled={apiKeyRevoking} class="text-xs font-medium text-danger hover:text-danger/80 transition-colors disabled:opacity-50">
+                  <button onclick={revokeApiKey} disabled={apiKeyRevoking} class="text-xs font-medium text-danger hover:underline transition-colors disabled:opacity-50">
                     {apiKeyRevoking ? 'Revoking…' : 'Yes, revoke'}
                   </button>
                   <button onclick={() => confirmApiKeyRevoke = false} class="text-xs text-text-muted hover:text-text transition-colors">
@@ -1977,7 +2001,7 @@
               </div>
               <p class="text-xs text-text-muted mb-4">Generate an API key to protect the Vault API when it is exposed beyond localhost. API keys are required for third-party integrations (e.g. Home Assistant) and replication between Vault instances on different servers.</p>
               {#if !isReplicaMode()}
-              <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                 {#if apiKeyGenerating}<InlineSpinner />{/if}
                 {apiKeyGenerating ? 'Generating…' : 'Generate API Key'}
               </button>
@@ -2002,18 +2026,18 @@
           <div>
             <span class="text-xs text-text-muted block mb-1.5">Appdata Directory</span>
             <div class="flex gap-2 items-end">
-              <div class="flex-1" class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
+              <div class="flex-1" class:pointer-events-none={readOnly}>
                 <PathBrowser bind:value={appdataPath} includeZfs={true} />
               </div>
               {#if !readOnly}
-              <button onclick={saveAppdataPath} disabled={appdataSaving || !appdataPath} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+              <button onclick={saveAppdataPath} disabled={appdataSaving || !appdataPath} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
                 {#if appdataSaving}<InlineSpinner />{/if}
                 Apply
               </button>
               {/if}
             </div>
             {#if appdataPath !== appdataDefault && !readOnly}
-              <button onclick={resetAppdataPath} disabled={appdataSaving} class="mt-2 text-xs text-vault hover:underline">
+              <button onclick={resetAppdataPath} disabled={appdataSaving} class="mt-2 text-xs text-vault-text hover:underline">
                 Reset to default ({appdataDefault})
               </button>
             {/if}
@@ -2057,20 +2081,20 @@
             <span class="text-xs text-text-muted block mb-1.5">Custom Location</span>
             <p class="text-xs text-text-dim mb-2">Override the automatic location. Use this if you want backups to be assembled on a specific drive. NVMe-backed ZFS pools are automatically prioritized when detected.</p>
             <div class="flex gap-2 items-end">
-              <div class="flex-1" class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
+              <div class="flex-1" class:pointer-events-none={readOnly}>
                 <!-- Browsing only fills the field; Apply commits it, matching a
                      typed path so neither entry route saves without a click. -->
                 <PathBrowser bind:value={stagingOverrideInput} includeZfs={true} />
               </div>
               {#if !readOnly}
-              <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+              <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
                 {#if stagingSaving}<InlineSpinner />{/if}
                 Apply
               </button>
               {/if}
             </div>
             {#if stagingInfo.override && !readOnly}
-              <button onclick={resetStagingOverride} disabled={stagingSaving} class="mt-2 text-xs text-vault hover:underline">
+              <button onclick={resetStagingOverride} disabled={stagingSaving} class="mt-2 text-xs text-vault-text hover:underline">
                 Reset to automatic
               </button>
             {/if}
@@ -2084,11 +2108,11 @@
       <!-- History Retention -->
       <div id="set-history" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">History Retention</h2>
+          <h2 id="set-history-heading" class="text-base font-semibold text-text">History Retention</h2>
           <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
         </div>
         <div class="p-5 flex items-center gap-2">
-          <select bind:value={historyRetention} disabled={readOnly}
+          <select bind:value={historyRetention} disabled={readOnly} aria-labelledby="set-history-heading"
             class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
             <option value="30">30 days</option>
             <option value="90">90 days</option>
@@ -2099,7 +2123,7 @@
           </select>
           {#if !readOnly}
           <button type="button" onclick={saveHistoryRetention} disabled={historyRetentionSaving}
-            class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+            class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
             {#if historyRetentionSaving}<InlineSpinner />{/if}
             Save
           </button>
@@ -2146,7 +2170,7 @@
           </p>
           <a href="https://tinkerologie.github.io/vault/" target="_blank" rel="noopener"
             aria-label="Open documentation (opens in a new tab)"
-            class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors">
+            class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors">
             <svg aria-hidden="true" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6H6zm7 1.5L18.5 9H13V3.5zM8 12h8v1.5H8V12zm0 3h6v1.5H8V15z"/></svg>
             Open documentation
           </a>
@@ -2174,7 +2198,7 @@
                 <tr class="border-b border-border/50">
                   <td class="py-2 pr-4 font-medium">
                     Zstandard
-                    <span class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-vault/20 text-vault font-semibold uppercase">recommended</span>
+                    <span class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-vault/20 text-vault-text font-semibold uppercase">recommended</span>
                   </td>
                   <td class="py-2 pr-4">
                     <div class="flex gap-0.5">
@@ -2349,13 +2373,13 @@
                    click rather than a side effect of confirming a folder. -->
               <PathBrowser bind:value={snapshotPathInput} includeZfs={true} />
             </div>
-            <button onclick={saveSnapshotPath} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+            <button onclick={saveSnapshotPath} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
               {#if snapshotPathSaving}<InlineSpinner />{/if}
               Apply
             </button>
           </div>
           {#if databaseInfo.snapshot_path_override}
-            <button onclick={resetSnapshotPath} disabled={snapshotPathSaving} class="mt-2 text-xs text-vault hover:underline">
+            <button onclick={resetSnapshotPath} disabled={snapshotPathSaving} class="mt-2 text-xs text-vault-text hover:underline">
               Reset to default
             </button>
           {/if}
@@ -2363,7 +2387,7 @@
         {/if}
         {#if databaseInfo.mode === 'legacy_usb'}
         <div class="px-5 py-3 bg-amber-500/10 border-t border-amber-500/20">
-          <p class="text-xs text-amber-400">No cache drive detected. Database writes go directly to the USB flash drive, which may reduce its lifespan. Add a cache drive to your server, or set a custom save location above to avoid writing to the USB drive.</p>
+          <p class="text-xs text-hue-amber">No cache drive detected. Database writes go directly to the USB flash drive, which may reduce its lifespan. Add a cache drive to your server, or set a custom save location above to avoid writing to the USB drive.</p>
         </div>
         {/if}
       </div>
@@ -2379,7 +2403,7 @@
           <button
             onclick={refreshRuntime}
             disabled={runtimeLoading}
-            class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if runtimeLoading}<InlineSpinner />{/if}
             Refresh
@@ -2425,13 +2449,13 @@
                 bind:value={memoryLimitMb}
                 disabled={readOnly}
                 placeholder="0"
-                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
               {#if !readOnly}
               <button
                 onclick={saveMemoryLimit}
                 disabled={memoryLimitSaving}
-                class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {#if memoryLimitSaving}<InlineSpinner />{/if}
                 Save Memory Limit
@@ -2445,14 +2469,14 @@
               {/if}
             </p>
             {#if runtimeInfo?.memory_limit?.environment_override}
-            <p class="text-xs text-amber-400" data-testid="memory-env-override">
+            <p class="text-xs text-hue-amber" data-testid="memory-env-override">
               The GOMEMLIMIT environment variable is set and takes precedence over this setting.
             </p>
             {/if}
             {#if runtimeInfo?.upload_warnings?.length}
             <div class="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 space-y-1" data-testid="memory-upload-warnings">
-              <p class="text-xs font-medium text-amber-400">S3 upload buffers can exceed this limit:</p>
-              <ul class="text-xs text-amber-400 list-disc pl-4">
+              <p class="text-xs font-medium text-hue-amber">S3 upload buffers can exceed this limit:</p>
+              <ul class="text-xs text-hue-amber list-disc pl-4">
                 {#each runtimeInfo.upload_warnings as w (w.job_id)}
                 <li>{w.job_name} → {w.destination}: up to {formatBytes(w.estimate_bytes)} (part size × 5 × parallel uploads)</li>
                 {/each}
@@ -2476,7 +2500,7 @@
           <button
             onclick={downloadDiagnostics}
             disabled={diagnosticsDownloading}
-            class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if diagnosticsDownloading}
               <InlineSpinner />
@@ -2521,17 +2545,17 @@
               type="button"
               onclick={() => (aboutModalOpen = true)}
               disabled={aboutLoading || releases.length === 0}
-              class="px-3 py-1.5 text-sm font-medium text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-3 py-1.5 text-sm font-medium text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               View Changelog
             </button>
             <a href="https://github.com/tinkerologie/vault" target="_blank" rel="noopener"
-              class="text-sm text-vault hover:text-vault-dark transition-colors flex items-center gap-2">
+              class="hit-target text-sm text-vault-text hover:underline transition-colors flex items-center gap-2">
               <svg aria-hidden="true" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
               GitHub Repository
             </a>
             <a href="https://github.com/sponsors/ruaan-deysel" target="_blank" rel="noopener"
-              class="text-sm text-vault hover:text-vault-dark transition-colors flex items-center gap-2">
+              class="hit-target text-sm text-vault-text hover:underline transition-colors flex items-center gap-2">
               <svg aria-hidden="true" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
               Sponsor
             </a>
