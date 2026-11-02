@@ -304,6 +304,23 @@ for (const viewport of VIEWPORTS) {
       expect(violations.flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html} ${n.failureSummary}`))).toEqual([]);
     });
 
+    test('the skip link brings the focused heading on screen', async ({ page }) => {
+      const frame = await openEmbedded(page, { hash: '#/settings' });
+      await expect(h1(frame, 'Settings')).toBeVisible();
+      await settledFrameHeight(page);
+      await page.evaluate(() => window.scrollTo(0, 900));
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(HEADER_HEIGHT);
+      await page.waitForTimeout(100);
+      await frame.getByRole('link', { name: 'Skip to main content' }).focus();
+      await page.keyboard.press('Enter');
+      const heading = h1(frame, 'Settings');
+      await expect(heading).toBeFocused();
+      await expect.poll(async () => {
+        const box = await heading.boundingBox();
+        return box !== null && box.y >= 0 && box.y + box.height <= viewport.height;
+      }).toBe(true);
+    });
+
     test('a new route brings the frame top back on screen', async ({ page }) => {
       const frame = await openEmbedded(page, { hash: '#/settings' });
       await expect(h1(frame, 'Settings')).toBeVisible();

@@ -226,6 +226,8 @@
   function skipToMain(e) {
     e.preventDefault()
     focusPageHeading(mainContent())
+    // The frame has no scroller of its own: the parent page has to come back.
+    if (embedded) revealFrameTop()
   }
 
   function cycleTheme() {
