@@ -264,3 +264,44 @@ func TestNFSRefusedMountUnmountFailureIsRetried514(t *testing.T) {
 		t.Fatalf("unmounts = %v, stale = %v; want Close to retry and clear it", unmounts, n.stale)
 	}
 }
+
+// A symlink in the export must not make any other host directory the root, even
+// one that is not a protected system tree.
+func TestNFSMountRejectsBaseEscapingExport(t *testing.T) {
+	origMount, origUnmount := mountExport, unmountExport
+	t.Cleanup(func() { mountExport, unmountExport = origMount, origUnmount })
+	t.Setenv("TMPDIR", t.TempDir())
+	outside := t.TempDir()
+	mountExport = func(args ...string) ([]byte, error) {
+		target := args[len(args)-1]
+		if err := os.Mkdir(filepath.Join(target, "inside"), 0o750); err != nil {
+			return nil, err
+		}
+		return nil, os.Symlink(outside, filepath.Join(target, "link"))
+	}
+	unmounted := ""
+	unmountExport = func(dir string) error { unmounted = dir; return nil }
+
+	for _, base := range []string{"link", "link/new/sub"} {
+		n, err := NewNFSAdapter(NFSConfig{Host: "nas.invalid", Export: "/e", BasePath: base})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := n.mount(); err == nil || !strings.Contains(err.Error(), "outside the mounted export") {
+			t.Fatalf("%s: mount = %v", base, err)
+		}
+		if n.mounted || unmounted == "" {
+			t.Fatalf("%s: mounted=%v unmounted=%q", base, n.mounted, unmounted)
+		}
+	}
+	for _, base := range []string{"", "inside", "inside/new/sub"} {
+		n, err := NewNFSAdapter(NFSConfig{Host: "nas.invalid", Export: "/e", BasePath: base})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := n.mount(); err != nil {
+			t.Fatalf("%q: legitimate base refused: %v", base, err)
+		}
+		n.unmount()
+	}
+}

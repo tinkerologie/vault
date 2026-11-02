@@ -275,3 +275,55 @@ func TestRestoreFromSnapshotAndPathErrors_458(t *testing.T) {
 		t.Error("closed DB should fail RestoreFromPath")
 	}
 }
+
+// Issue #543: a snapshot path reached through a symlink must not be restored
+// from or written to.
+func TestSnapshotRefusesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	real := filepath.Join(dir, "real.db")
+	sm := NewSnapshotManager(database, real, real)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.RestoreFromPath(real); err != nil {
+		t.Fatalf("regular snapshot refused: %v", err)
+	}
+	if err := sm.RestoreFromSnapshot(); err != nil {
+		t.Fatalf("regular snapshot refused: %v", err)
+	}
+
+	link := filepath.Join(dir, "link.db")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.RestoreFromPath(link); err == nil {
+		t.Error("RestoreFromPath followed a symlink")
+	}
+	linked := NewSnapshotManager(database, link, real)
+	if err := linked.RestoreFromSnapshot(); err == nil {
+		t.Error("RestoreFromSnapshot followed a symlink")
+	}
+	if err := linked.SaveSnapshot(); err == nil {
+		t.Error("SaveSnapshot wrote through a symlink")
+	}
+
+	etc := filepath.Join(dir, "etc")
+	if err := os.Symlink("/etc", etc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sm.SetSnapshotPath(filepath.Join(etc, "vault.db")); err == nil {
+		t.Error("SetSnapshotPath accepted a symlink out of the approved roots")
+	}
+	if err := NewSnapshotManager(database, "/etc/vault.db", real).SaveSnapshot(); err == nil {
+		t.Error("SaveSnapshot accepted a system path")
+	}
+	if err := sm.RestoreFromPath("/etc/hosts"); err == nil {
+		t.Error("RestoreFromPath accepted a system path")
+	}
+}

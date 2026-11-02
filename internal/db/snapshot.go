@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/safepath"
 	"modernc.org/sqlite"
 )
 
@@ -203,6 +204,9 @@ func (sm *SnapshotManager) SetSnapshotPath(newPath string) (*SnapshotMigration, 
 	if err != nil {
 		return nil, fmt.Errorf("validating snapshot path: %w", err)
 	}
+	if _, err := safepath.CheckSnapshotLocation(validPath); err != nil {
+		return nil, fmt.Errorf("validating snapshot path: %w", err)
+	}
 
 	if err := mkdirAllValidated(filepath.Dir(validPath), 0o750); err != nil {
 		return nil, fmt.Errorf("creating snapshot directory: %w", err)
@@ -332,6 +336,9 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 
 	validPath, err := validateSnapshotPath(snapshotPath)
 	if err != nil {
+		return fmt.Errorf("validating snapshot path: %w", err)
+	}
+	if _, err := safepath.CheckSnapshotLocation(validPath); err != nil {
 		return fmt.Errorf("validating snapshot path: %w", err)
 	}
 
@@ -537,10 +544,15 @@ func (sm *SnapshotManager) RestoreFromSnapshot() error {
 		return fmt.Errorf("validating snapshot path: %w", err)
 	}
 
-	if _, err := os.Stat(validPath); os.IsNotExist(err) {
+	if _, err := os.Lstat(validPath); os.IsNotExist(err) {
 		log.Printf("no snapshot file at %s, skipping restore", validPath)
 		return nil
 	}
+	privateCopy, removeCopy, err := copySnapshotPrivately(validPath)
+	if err != nil {
+		return err
+	}
+	defer removeCopy()
 
 	conn, err := sm.db.Conn(context.Background())
 	if err != nil {
@@ -552,7 +564,7 @@ func (sm *SnapshotManager) RestoreFromSnapshot() error {
 		type restorer interface {
 			NewRestore(string) (*sqlite.Backup, error)
 		}
-		bck, err := driverConn.(restorer).NewRestore(validPath)
+		bck, err := driverConn.(restorer).NewRestore(privateCopy)
 		if err != nil {
 			return err
 		}
@@ -744,6 +756,54 @@ func (sm *SnapshotManager) IntegrityCheck() error {
 	return sm.db.IntegrityCheck()
 }
 
+// copySnapshotPrivately validates a snapshot's location and copies it through a
+// pinned handle into a daemon-owned mode-0600 temp file. SQLite only takes a
+// pathname, so restoring from this copy means a snapshot path swapped for a
+// symlink after validation cannot feed the daemon another file.
+func copySnapshotPrivately(path string) (string, func(), error) {
+	cleaned, err := safepath.CheckSnapshotLocation(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("validating snapshot path: %w", err)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(cleaned))
+	if err != nil {
+		return "", nil, fmt.Errorf("resolving snapshot directory: %w", err)
+	}
+	root, err := safepath.OpenPinnedDir(parent)
+	if err != nil {
+		return "", nil, fmt.Errorf("opening snapshot directory: %w", err)
+	}
+	defer root.Close()
+	name := filepath.Base(cleaned)
+	if info, err := root.Lstat(name); err != nil {
+		return "", nil, fmt.Errorf("inspecting snapshot: %w", err)
+	} else if !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("snapshot %s is not a regular file", cleaned)
+	}
+	src, err := root.Open(name)
+	if err != nil {
+		return "", nil, fmt.Errorf("opening snapshot: %w", err)
+	}
+	defer src.Close()
+	if info, err := src.Stat(); err != nil || !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("snapshot %s is not a regular file", cleaned)
+	}
+	tmp, err := os.CreateTemp("", "vault-snapshot-restore-*.db") // mode 0600
+	if err != nil {
+		return "", nil, fmt.Errorf("creating private snapshot copy: %w", err)
+	}
+	remove := func() { _ = os.Remove(tmp.Name()) }
+	_, err = io.Copy(tmp, src)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		remove()
+		return "", nil, fmt.Errorf("copying snapshot: %w", err)
+	}
+	return tmp.Name(), remove, nil
+}
+
 // RestoreFromPath restores the database from the specified source path.
 // Returns an error if the file doesn't exist or restoration fails.
 func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {
@@ -752,9 +812,14 @@ func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {
 		return fmt.Errorf("validating source path: %w", err)
 	}
 
-	if _, err := os.Stat(validPath); os.IsNotExist(err) {
+	if _, err := os.Lstat(validPath); os.IsNotExist(err) {
 		return fmt.Errorf("snapshot file does not exist: %s", validPath)
 	}
+	privateCopy, removeCopy, err := copySnapshotPrivately(validPath)
+	if err != nil {
+		return err
+	}
+	defer removeCopy()
 
 	conn, err := sm.db.Conn(context.Background())
 	if err != nil {
@@ -766,7 +831,7 @@ func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {
 		type restorer interface {
 			NewRestore(string) (*sqlite.Backup, error)
 		}
-		bck, err := driverConn.(restorer).NewRestore(validPath)
+		bck, err := driverConn.(restorer).NewRestore(privateCopy)
 		if err != nil {
 			return err
 		}

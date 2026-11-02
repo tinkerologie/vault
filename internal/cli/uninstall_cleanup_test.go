@@ -77,6 +77,13 @@ func TestRunUninstallCleanupPreservesNestedBackupRoot(t *testing.T) {
 		t.Fatalf("WriteFile backup: %v", err)
 	}
 
+	// Snapshot files are only removed when they really are SQLite databases.
+	for _, snapshot := range []string{snapshotOverride, filepath.Join(cacheRoot, ".vault", "vault.db")} {
+		if err := os.WriteFile(snapshot, []byte("SQLite format 3\x00"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s): %v", snapshot, err)
+		}
+	}
+
 	for _, stageBase := range []string{
 		filepath.Join(backupRoot, ".vault-stage"),
 		filepath.Join(stagingOverride, ".vault-stage"),

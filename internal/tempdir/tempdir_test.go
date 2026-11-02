@@ -643,3 +643,56 @@ func TestRankCandidatesByFreeSpace(t *testing.T) {
 		}
 	}
 }
+
+// A symlink named .vault-stage must not have its target's contents deleted.
+func TestCleanStageDirIgnoresSymlink(t *testing.T) {
+	base, victim := t.TempDir(), t.TempDir()
+	keep := filepath.Join(victim, "keep")
+	if err := os.WriteFile(keep, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stage := filepath.Join(base, StageDirName)
+	if err := os.Symlink(victim, stage); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(stage)
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("symlink target's contents were deleted: %v", err)
+	}
+}
+
+func TestCleanStageDirRemovesRealEntries(t *testing.T) {
+	stage := filepath.Join(t.TempDir(), StageDirName)
+	if err := os.MkdirAll(filepath.Join(stage, "backup-1", "x"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(stage)
+	if _, err := os.Lstat(stage); !os.IsNotExist(err) {
+		t.Fatalf("stage dir not removed: %v", err)
+	}
+}
+
+// A symlinked or non-directory stage location is skipped for a usable one.
+func TestCreateDirSkipsUnsafeStageBase(t *testing.T) {
+	victim := t.TempDir()
+	override := t.TempDir()
+	if err := os.Symlink(victim, filepath.Join(override, StageDirName)); err != nil {
+		t.Fatal(err)
+	}
+	cache := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cache, StageDirName), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(SetCachePathsForTest([]string{cache}))
+	dir, cleanup, err := CreateBackupDir(StorageConfig{}, override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if strings.HasPrefix(dir, victim) || strings.HasPrefix(dir, filepath.Join(override, StageDirName)) || strings.HasPrefix(dir, filepath.Join(cache, StageDirName)) {
+		t.Fatalf("staged in an unsafe location: %s", dir)
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Fatalf("wrote through the symlink: %v", entries)
+	}
+}

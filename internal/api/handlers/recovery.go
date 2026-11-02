@@ -464,6 +464,11 @@ func (h *RecoveryHandler) remapJobItem(jobID, itemID int64, newPath string) (boo
 		if it.ItemType != "folder" {
 			return false, "only folder items can be remapped"
 		}
+		cleaned, err := safepath.CheckFolderLocation(newPath)
+		if err != nil {
+			return false, err.Error()
+		}
+		newPath = cleaned
 		var s map[string]any
 		if err := json.Unmarshal([]byte(it.Settings), &s); err != nil {
 			log.Printf("path-remap: job item %d: malformed settings: %v", itemID, err)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // entityDeclPattern matches DOCTYPE <!ENTITY name "value"> declarations in .plg files.
@@ -302,6 +303,9 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 			if !restorePathSafe(restoreDest) || strings.Contains(restoreDest, "../") || strings.Contains(restoreDest, "..\\") {
 				return fmt.Errorf("suspicious plugin restore destination %q", restoreDest)
 			}
+			if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
+				return err
+			}
 			normalized, err := normalizeRestorePath(restoreDest)
 			if err != nil {
 				return err
@@ -344,12 +348,15 @@ func pluginPlgFilePath(name string) string {
 // manifest holds only the config files, exactly as the folder backup produced
 // before this change, so existing restore points are unaffected.
 func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
+	safeName, err := normalizeRestoreComponent(item.Name)
+	if err != nil {
+		return dedup.ID{}, fmt.Errorf("invalid plugin name: %w", err)
+	}
 	src, _ := item.Settings["path"].(string)
 	if src == "" {
-		src = pluginPath(item.Name)
-	}
-	if src == "" {
-		return dedup.ID{}, fmt.Errorf("plugin: cannot resolve directory for %q", item.Name)
+		src = pluginPath(safeName)
+	} else if _, err := safepath.CheckFolderLocation(src); err != nil {
+		return dedup.ID{}, fmt.Errorf("plugin: %w", err)
 	}
 	// Forward the incremental cut-off and exclusions into the folder proxy.
 	// Dropping changed_since here is what made every dedup plugin backup a
@@ -375,7 +382,7 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	// Record the .plg installer out-of-tree in the manifest (best-effort).
 	// Attached before PutManifest because the config manifest is not yet
 	// flushed and so cannot be read back mid-run.
-	if plgData, rErr := os.ReadFile(pluginPlgFilePath(item.Name)); rErr == nil { // #nosec G304 — path is pluginsDir + item name, no request-controlled component
+	if plgData, rErr := os.ReadFile(pluginPlgFilePath(safeName)); rErr == nil { // #nosec G304 — path is pluginsDir + a name validated above
 		chunkID, pErr := repo.Put(plgData)
 		if pErr != nil {
 			return dedup.ID{}, fmt.Errorf("plugin: storing .plg for %q: %w", item.Name, pErr)
@@ -397,6 +404,9 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 // (pluginPath(item.Name)) so production restore lands in
 // /boot/config/plugins/<name>/. Tests pass a t.TempDir().
 func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	if _, err := normalizeRestoreComponent(item.Name); err != nil {
+		return fmt.Errorf("invalid plugin name: %w", err)
+	}
 	if destPath == "" {
 		// Mirror ContainerHandler.RestoreChunked: honour restore_destination as
 		// a fallback before the well-known directory, so the parameter and the
@@ -410,6 +420,13 @@ func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	if destPath == "" {
 		return fmt.Errorf("plugin: cannot resolve restore directory for %q", item.Name)
 	}
+	if custom, _ := item.Settings["restore_destination"].(string); custom != "" {
+		if _, err := safepath.CheckCustomRestoreDestination(custom); err != nil {
+			return err
+		}
+	} else if _, err := safepath.CheckFolderLocation(destPath); err != nil {
+		return err
+	}
 	// Propagate the partial-restore file picker through the proxy item so a
 	// selection made on a dedup plugin restore reaches FolderHandler.
 	// RestoreChunked, which honours restore_file_paths. Without this the
@@ -420,7 +437,7 @@ func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	}
 	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: proxySettings}
 	fh := &FolderHandler{}
-	if err := fh.RestoreChunked(ctx, proxy, repo, manifestID, destPath, progress); err != nil {
+	if err := fh.restoreChunkedTree(ctx, proxy, repo, manifestID, destPath, progress); err != nil {
 		return fmt.Errorf("plugin: restoring config for %q: %w", item.Name, err)
 	}
 	return h.restorePluginInstaller(ctx, item, repo, manifestID)

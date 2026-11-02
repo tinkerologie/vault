@@ -210,6 +210,7 @@ func ValidateLocalStorageRoot(p string) (string, error) {
 // checkStorageRoot applies the protected-tree and shared-parent rules to one
 // clean absolute path. original is the caller's input, quoted in errors.
 func checkStorageRoot(original, p string) error {
+	p = canonicalAlias(p)
 	for _, tree := range protectedStorageTrees {
 		if p == tree || isStrictDescendantPath(tree, p) || isStrictDescendantPath(p, tree) {
 			return fmt.Errorf("storage path %q is a protected system location; choose a dedicated backup directory such as /mnt/user/backups/vault", strings.TrimSpace(original))

@@ -376,7 +376,7 @@ func runRecoverExtract(cmd *cobra.Command, _ []string) error {
 	reportPath := filepath.Join(recoverTo, "vault-recover-report-"+time.Now().Format("20060102-150405")+".json")
 	body, err := json.MarshalIndent(rep, "", "  ")
 	if err == nil {
-		err = os.WriteFile(reportPath, body, 0o600)
+		err = writeRecoverReport(recoverTo, filepath.Base(reportPath), body)
 	}
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not write the report to %s: %v\n", reportPath, err)
@@ -387,6 +387,25 @@ func runRecoverExtract(cmd *cobra.Command, _ []string) error {
 		return errors.New("some items could not be recovered")
 	}
 	return nil
+}
+
+// writeRecoverReport creates the report exclusively through a handle on the
+// destination, so a planted file or symlink at its name is never written through.
+func writeRecoverReport(dir, name string, body []byte) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	f, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // printLimited prints a heading and up to 20 lines, pointing at the report

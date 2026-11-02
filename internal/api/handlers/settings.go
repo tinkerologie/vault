@@ -21,6 +21,7 @@ import (
 	"github.com/tinkerologie/vault/internal/docsmeta"
 	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/notify"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/tempdir"
 )
 
@@ -202,6 +203,10 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 		if fi, err := os.Stat(normalizedPath); err == nil && fi.IsDir() {
 			normalizedPath = filepath.Join(normalizedPath, "vault.db")
 		}
+		if _, err := safepath.CheckSnapshotLocation(normalizedPath); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		dir := filepath.Dir(normalizedPath)
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			respondError(w, http.StatusBadRequest, "parent directory does not exist")
@@ -303,6 +308,11 @@ var protectedSettingKeys = map[string]bool{
 	"encryption_passphrase":        true,
 	"encryption_passphrase_hash":   true,
 	"encryption_passphrase_sealed": true,
+	// Path settings are validated by PUT /settings/database, /settings/staging
+	// and /settings/appdata. Later code treats them as authorized locations.
+	"snapshot_path_override": true,
+	"staging_dir_override":   true,
+	"appdata_path":           true,
 }
 
 // Update accepts a JSON object of key-value pairs and upserts them.

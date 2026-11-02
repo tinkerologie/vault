@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
@@ -14,8 +16,14 @@ import (
 
 func newTestExtractor(t *testing.T) *extractor {
 	t.Helper()
+	root := t.TempDir()
+	handle, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
 	return &extractor{
-		ctx: context.Background(), root: t.TempDir(), names: newNamer(false, false),
+		ctx: context.Background(), root: root, handle: handle, names: newNamer(false, false),
 		report: &ItemReport{}, written: map[string]string{}, sizes: map[string]int64{},
 		fromTree: map[string]bool{}, dirTimes: map[string]dirMeta{}, checked: map[string]bool{},
 	}
@@ -94,5 +102,47 @@ func TestExtractDedupSkipsUnmappableNames(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(x.root, "bad\uFFFD.txt")); err != nil {
 		t.Fatalf("the non-UTF-8 name should be recovered as U+FFFD: %v", err)
+	}
+}
+
+func TestOpenItemRootRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "item")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openItemRoot(link); err == nil {
+		t.Fatal("symlinked item folder accepted")
+	}
+	if _, err := openItemRoot(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing folder accepted")
+	}
+	handle, err := openItemRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = handle.Close()
+}
+
+// Issue #545: once a folder has been checked, swapping it for a symlink must not
+// lead later writes out of the item.
+func TestWriteFileSurvivesSwappedDirectory(t *testing.T) {
+	x := newTestExtractor(t)
+	outside := t.TempDir()
+	if _, err := x.writeFile("sub/first", strings.NewReader("a"), 0o640, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(x.root, "sub")
+	if err := os.Rename(sub, sub+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, sub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.writeFile("sub/second", strings.NewReader("b"), 0o640, time.Time{}); err == nil {
+		t.Fatal("wrote through a swapped symlink")
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "second")); !os.IsNotExist(err) {
+		t.Fatalf("file created outside the item: %v", err)
 	}
 }

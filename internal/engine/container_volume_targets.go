@@ -1,11 +1,18 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/moby/moby/client"
+	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // ContainerVolumeTarget describes one volume of a staged classic container
@@ -78,6 +85,12 @@ func ContainerVolumeTargets(sourceDir, restoreDestination string) ([]ContainerVo
 			log.Printf("engine: cannot resolve a restore target for volume %s — it is excluded from the chain prune: %v", mount.Source, targetErr)
 			continue
 		}
+		if restoreDest == "" {
+			if _, policyErr := safepath.CheckVolumeTarget(target); policyErr != nil {
+				log.Printf("engine: restore target %s is outside the in-place volume locations — it is excluded from the chain prune: %v", target, policyErr)
+				continue
+			}
+		}
 		normalized, normErr := normalizeRestorePath(target)
 		if normErr != nil {
 			log.Printf("engine: restore target %s for volume %s is not an approved path — it is excluded from the chain prune: %v", target, mount.Source, normErr)
@@ -118,4 +131,62 @@ func ContainerVolumeArchives(stepDir string) (map[string]string, error) {
 		out[me.Source] = me.Archive
 	}
 	return out, nil
+}
+
+// authorizeVolumeSources decides whether a backup's mount sources may be written
+// in place. Backup metadata is untrusted, so a source must be in an in-place
+// volume location or be a bind the container on this host already has. It runs
+// before anything is written, and a custom restore destination bypasses it
+// because every target is then rewritten beneath that destination.
+func authorizeVolumeSources(sources, live []string) error {
+	for _, source := range sources {
+		if slices.Contains(live, filepath.Clean(source)) {
+			continue
+		}
+		if _, err := safepath.CheckVolumeTarget(source); err != nil {
+			return fmt.Errorf("refusing in-place restore of this container's volume: %w", err)
+		}
+	}
+	return nil
+}
+
+// chunkedVolumeSources lists the mount sources a dedup restore would write.
+func chunkedVolumeSources(m dedup.Manifest, inspect restoreInspect) []string {
+	var sources []string
+	for _, mnt := range inspect.Mounts {
+		if !backupableMount(mnt.Type) || mnt.Source == "" || mnt.Destination == "" {
+			continue
+		}
+		if v, ok := m.Files[containerVolPrefix+mnt.Destination]; ok && v.Size != volumeSkippedSize && len(v.Chunks) > 0 {
+			sources = append(sources, mnt.Source)
+			continue
+		}
+		for k := range m.Files {
+			if dest, ok := ContainerVolumeFileDest(k); ok && dest == mnt.Destination {
+				sources = append(sources, mnt.Source)
+				break
+			}
+		}
+	}
+	return sources
+}
+
+// liveMountSources returns the mount sources of the container currently on this
+// host under name: a locally trusted record of its binds. None is returned when
+// the container is gone or Docker is unavailable.
+func (h *ContainerHandler) liveMountSources(ctx context.Context, name string) []string {
+	if h == nil || h.cli == nil {
+		return nil
+	}
+	result, err := h.cli.ContainerInspect(ctx, strings.TrimPrefix(name, "/"), client.ContainerInspectOptions{})
+	if err != nil {
+		return nil
+	}
+	sources := make([]string, 0, len(result.Container.Mounts))
+	for _, m := range result.Container.Mounts {
+		if m.Source != "" {
+			sources = append(sources, filepath.Clean(m.Source))
+		}
+	}
+	return sources
 }

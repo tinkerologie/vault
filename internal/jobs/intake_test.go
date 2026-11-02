@@ -1,7 +1,10 @@
 package jobs
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -380,5 +383,30 @@ func TestUpdateRestoresThePreviousItemsWhenAReplacementFails(t *testing.T) {
 	}
 	if e.reloads != before {
 		t.Fatalf("effects ran for a write that failed: %d reloads", e.reloads-before)
+	}
+}
+
+func TestIntakeRefusesUnsafeItemPaths(t *testing.T) {
+	i, d, _ := newIntake(t)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "s", Type: "local", Config: `{"path":"/mnt/x"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "share")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := json.Marshal(map[string]string{"path": link})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, item := range map[string]db.JobItem{
+		"plugin traversal": {ItemType: "plugin", ItemName: "../../etc"},
+		"folder symlink":   {ItemType: "folder", ItemName: "f", Settings: string(settings)},
+	} {
+		job := db.Job{Name: "j-" + strings.ReplaceAll(name, " ", "-"), StorageDestID: destID, Schedule: "0 0 * * *", BackupTypeChain: "full", Compression: "none"}
+		if _, _, err := i.Create(job, []db.JobItem{item}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1166,4 +1168,97 @@ func TestMkcolLockedRetryEdges(t *testing.T) {
 			t.Fatalf("status %d after %d calls, want 423 after %d", resp.StatusCode, rt.calls, len(mkcolLockedRetryDelays))
 		}
 	})
+}
+
+// Issue #543: an untrusted manifest must not choose what the server deletes.
+func TestValidateWebDAVManifest(t *testing.T) {
+	const full = "/base/job/run/data.tar"
+	dir := webDAVChunkDir(full)
+	good := []webDAVChunkEntry{{Path: webDAVChunkPath(full, 0), Size: 1}, {Path: dir + "/000001.part", Size: 1}}
+	if err := validateWebDAVManifest(webDAVChunkManifest{Chunks: good}, full); err != nil {
+		t.Fatalf("current and legacy chunk names refused: %v", err)
+	}
+	for _, hostile := range []webDAVChunkEntry{
+		{Path: "/base/other/data.tar"},
+		{Path: "/"},
+		{Path: dir},
+		{Path: dir + "/../000000.dat"},
+		{Path: dir + "/sub/000000.dat"},
+		{Path: webDAVChunkDir("/base/job/other") + "/000000.dat"},
+		{Path: dir + "/evil.dat"},
+		{Path: dir + "/.dat"},
+		{Path: dir + "/000000"},
+		{Path: webDAVChunkPath(full, 0), Size: -1},
+	} {
+		if err := validateWebDAVManifest(webDAVChunkManifest{Chunks: []webDAVChunkEntry{hostile}}, full); err == nil {
+			t.Errorf("%+v accepted", hostile)
+		}
+	}
+}
+
+func TestDeleteRefusesHostileChunkManifest(t *testing.T) {
+	a, root, closeFn := newTestWebDAVAdapter(t, WebDAVConfig{})
+	defer closeFn()
+	if err := os.MkdirAll(filepath.Join(root, "j"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(root, "j", "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	full, err := a.fullPath("j/data.tar", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(webDAVChunkManifest{Version: webDAVManifestVersion, Chunks: []webDAVChunkEntry{{Path: path.Join(path.Dir(full), "victim")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(webDAVManifestPath(full))), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.deleteChunkSidecars(a.client(), full); err == nil {
+		t.Fatal("hostile manifest accepted")
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("victim deleted: %v", err)
+	}
+}
+
+func TestListIgnoresManifestForAnotherObject(t *testing.T) {
+	a, root, closeFn := newTestWebDAVAdapter(t, WebDAVConfig{})
+	defer closeFn()
+	if err := os.MkdirAll(filepath.Join(root, "j"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	full, err := a.fullPath("j/data.tar", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(logical string) {
+		t.Helper()
+		body, err := json.Marshal(webDAVChunkManifest{Version: webDAVManifestVersion, Path: logical, Size: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(webDAVManifestPath(full))), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("j/other.tar")
+	files, err := a.List("j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("forged manifest listed: %+v", files)
+	}
+	write("j/data.tar")
+	files, err = a.List("j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "j/data.tar" {
+		t.Fatalf("genuine manifest not listed: %+v", files)
+	}
 }

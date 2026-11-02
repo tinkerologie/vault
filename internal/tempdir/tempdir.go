@@ -11,7 +11,9 @@ package tempdir
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -217,11 +219,13 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 	if override != "" {
 		if info, err := os.Stat(override); err == nil && info.IsDir() {
 			stageBase := filepath.Join(override, StageDirName)
-			if err := os.MkdirAll(stageBase, 0750); err == nil {
+			if err := ensureStageDir(stageBase); err == nil {
 				dir, err := os.MkdirTemp(stageBase, pattern)
 				if err == nil {
 					return dir, cleanupFunc(dir, stageBase), nil
 				}
+			} else {
+				log.Printf("tempdir: %v", err)
 			}
 		}
 		log.Printf("tempdir: override path %s unusable, falling back to cascade", override)
@@ -233,7 +237,8 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 			return "", nil, false
 		}
 		stageBase := filepath.Join(base, StageDirName)
-		if err := os.MkdirAll(stageBase, 0750); err != nil {
+		if err := ensureStageDir(stageBase); err != nil {
+			log.Printf("tempdir: %v", err)
 			return "", nil, false
 		}
 		dir, err := os.MkdirTemp(stageBase, pattern)
@@ -278,6 +283,23 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 			log.Printf("tempdir: warning: failed to remove %s: %v", dir, err)
 		}
 	}, nil
+}
+
+// ensureStageDir creates stageBase, or accepts it if it already exists as a real
+// directory. The parent of a staging directory can be a user share or a backup
+// destination, so a symlink at this name is treated as hostile.
+func ensureStageDir(stageBase string) error {
+	if err := os.Mkdir(stageBase, 0o750); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("creating %s: %w", stageBase, err)
+	}
+	info, err := os.Lstat(stageBase)
+	if err != nil {
+		return fmt.Errorf("inspecting %s: %w", stageBase, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("refusing to use %s: it is not a real directory", stageBase)
+	}
+	return nil
 }
 
 // cleanupFunc returns a function that removes the temp directory and prunes
@@ -344,15 +366,44 @@ func CleanupStale(destinations []StorageConfig) {
 
 // cleanStageDir removes all subdirectories inside a .vault-stage directory,
 // then prunes the directory itself if empty.
+//
+// The stage directory's parent can be writable by share users, so a symlink here
+// is never followed: without this check a link to /etc would have every entry of
+// /etc removed at the next daemon start. The handle is opened once and compared
+// with the Lstat result, then used for all deletion.
 func cleanStageDir(stageBase string) {
-	entries, err := os.ReadDir(stageBase)
+	info, err := os.Lstat(stageBase)
 	if err != nil {
 		return // directory doesn't exist or unreadable — nothing to clean
+	}
+	if !info.IsDir() {
+		log.Printf("tempdir: not cleaning %s: it is not a real directory", stageBase)
+		return
+	}
+	root, err := os.OpenRoot(stageBase)
+	if err != nil {
+		log.Printf("tempdir: not cleaning %s: %v", stageBase, err)
+		return
+	}
+	defer root.Close()
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		log.Printf("tempdir: not cleaning %s: it changed while being opened", stageBase)
+		return
+	}
+	dir, err := root.Open(".")
+	if err != nil {
+		return
+	}
+	entries, err := dir.ReadDir(-1)
+	_ = dir.Close()
+	if err != nil {
+		return
 	}
 
 	for _, entry := range entries {
 		p := filepath.Join(stageBase, entry.Name())
-		if err := os.RemoveAll(p); err != nil {
+		if err := root.RemoveAll(entry.Name()); err != nil {
 			log.Printf("tempdir: warning: failed to clean stale dir %s: %v", p, err)
 		} else {
 			log.Printf("tempdir: cleaned stale staging dir %s", p)

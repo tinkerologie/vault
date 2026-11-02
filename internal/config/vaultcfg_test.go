@@ -217,3 +217,26 @@ func containsStr(s, sub string) bool {
 	}
 	return false
 }
+
+func TestWriteCfgValueRejectsRecordInjection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault.cfg")
+	if err := WriteCfgValue(path, "SNAPSHOT_PATH", "/mnt/x\nSNAPSHOT_PATH=/etc/passwd"); err == nil {
+		t.Fatal("value with a newline accepted")
+	}
+	if err := WriteCfgValue(path, "SNAPSHOT_PATH", "/mnt/x\rBIND_ADDRESS=0.0.0.0"); err == nil {
+		t.Fatal("value with a carriage return accepted")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("refused value still wrote the file: %v", err)
+	}
+}
+
+func TestReadCfgFirstRecordWins(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault.cfg")
+	if err := os.WriteFile(path, []byte("SNAPSHOT_PATH=/mnt/a\nSNAPSHOT_PATH=/etc/passwd\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadCfgValue(path, "SNAPSHOT_PATH", ""); got != "/mnt/a" {
+		t.Fatalf("SNAPSHOT_PATH = %q, want the first record", got)
+	}
+}

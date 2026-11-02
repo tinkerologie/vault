@@ -669,7 +669,7 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 		if !restorePathSafe(disk.TargetPath) || strings.Contains(disk.TargetPath, "../") || strings.Contains(disk.TargetPath, "..\\") {
 			return fmt.Errorf("validating disk target path %q: unsafe path", disk.TargetPath)
 		}
-		targetPath, err := normalizeRestorePath(disk.TargetPath)
+		targetPath, err := normalizeVMDiskTarget(disk.TargetPath)
 		if err != nil {
 			return fmt.Errorf("validating disk target path %q: %w", disk.TargetPath, err)
 		}
@@ -703,7 +703,7 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 			if !restorePathSafe(plan.NVRAMTargetPath) || strings.Contains(plan.NVRAMTargetPath, "../") || strings.Contains(plan.NVRAMTargetPath, "..\\") {
 				return fmt.Errorf("validating NVRAM target path %q: unsafe path", plan.NVRAMTargetPath)
 			}
-			nvramTargetPath, err := normalizeRestorePath(plan.NVRAMTargetPath)
+			nvramTargetPath, err := normalizeVMNVRAMTarget(plan.NVRAMTargetPath)
 			if err != nil {
 				return fmt.Errorf("validating NVRAM target path %q: %w", plan.NVRAMTargetPath, err)
 			}

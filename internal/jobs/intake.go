@@ -25,6 +25,7 @@ import (
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // ScheduleReloader reloads the cron scheduler so a changed Job takes effect
@@ -322,10 +323,14 @@ func (i *Intake) checkStorageDest(destID int64) error {
 
 // checkFolderPaths applies the allowed-root policy to every folder item.
 func (i *Intake) checkFolderPaths(items []db.JobItem) error {
-	if i.validatePath == nil {
-		return nil
-	}
 	for _, item := range items {
+		if item.ItemType == "plugin" {
+			// The name becomes a path component under the plugins directory.
+			if _, err := safepath.NormalizeComponent(item.ItemName); err != nil {
+				return invalid("items", "plugin item name must be a single folder name")
+			}
+			continue
+		}
 		if item.ItemType != "folder" {
 			continue
 		}
@@ -336,8 +341,14 @@ func (i *Intake) checkFolderPaths(items []db.JobItem) error {
 		if path == "" {
 			continue
 		}
-		if err = i.validatePath(path); err != nil {
-			return invalid("items", "folder path must be under /mnt, /boot, or a discovered ZFS mountpoint")
+		if i.validatePath != nil {
+			if err = i.validatePath(path); err != nil {
+				return invalid("items", "folder path must be under /mnt, /boot, or a discovered ZFS mountpoint")
+			}
+		}
+		// The allow-list above is lexical; this also follows symlinks.
+		if _, err = safepath.CheckFolderLocation(path); err != nil {
+			return invalid("items", "%s", err.Error())
 		}
 	}
 	return nil

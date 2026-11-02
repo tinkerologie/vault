@@ -37,6 +37,11 @@ func ReadCfg(path string) (map[string]string, error) {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
+		if _, dup := result[key]; dup {
+			// The first record wins, matching rc.vault's `grep | head -1`, so
+			// an appended record cannot override an earlier one.
+			continue
+		}
 		// Strip surrounding quotes (single or double).
 		if len(val) >= 2 {
 			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
@@ -64,7 +69,13 @@ func ReadCfgValue(path, key, defaultVal string) string {
 // WriteCfgValue writes or updates a single key in vault.cfg, preserving
 // existing keys and comments. If the key already exists its value is replaced
 // in-place; otherwise it is appended.
+//
+// vault.cfg is line-oriented, so a value holding a control character could forge
+// extra records; such a value is refused rather than escaped.
 func WriteCfgValue(path, key, value string) error {
+	if strings.ContainsFunc(key+value, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return fmt.Errorf("vault.cfg key %q: value must not contain control characters", key)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}

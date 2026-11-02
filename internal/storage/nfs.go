@@ -170,17 +170,43 @@ func (n *NFSAdapter) mountLocked() error {
 		}
 	}
 
-	// Symlinks inside the export resolve on this host, so a base path that
-	// names one could point at a protected directory. Validate the resolved
-	// root and refuse the mount if it is unsafe (#514).
+	// Symlinks inside the export resolve on this host, and the NFS server
+	// controls them. Validate the resolved root (#514), and require it to stay
+	// inside the mounted export.
 	local, err := NewValidatedLocalAdapter(basePath)
 	if err != nil {
+		return n.abortMount(dir, fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err))
+	}
+	if err := checkBaseWithinMount(dir, basePath); err != nil {
 		return n.abortMount(dir, fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err))
 	}
 
 	n.mountDir = dir
 	n.local = local
 	n.mounted = true
+	return nil
+}
+
+// checkBaseWithinMount rejects a base path whose symlinks lead out of the mount.
+func checkBaseWithinMount(mountDir, basePath string) error {
+	realMount, err := filepath.EvalSymlinks(mountDir)
+	if err != nil {
+		return fmt.Errorf("resolving mount: %w", err)
+	}
+	cur, suffix := basePath, ""
+	realBase, err := filepath.EvalSymlinks(cur)
+	for errors.Is(err, os.ErrNotExist) && cur != mountDir {
+		suffix = filepath.Join(filepath.Base(cur), suffix)
+		cur = filepath.Dir(cur)
+		realBase, err = filepath.EvalSymlinks(cur)
+	}
+	if err != nil {
+		return fmt.Errorf("resolving base path: %w", err)
+	}
+	realBase = filepath.Join(realBase, suffix)
+	if realBase != realMount && !strings.HasPrefix(realBase, realMount+string(filepath.Separator)) {
+		return errors.New("it resolves outside the mounted export")
+	}
 	return nil
 }
 
