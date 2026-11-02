@@ -12,6 +12,33 @@ Ansible playbook for deploying, verifying, and managing the Vault plugin on Unra
 
 2. Edit `inventory.yml` with your Unraid server details.
 
+3. Set up SSH key login. Ansible connects with a key only and never with a password:
+
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519   # skip if you already have a key
+   cat ~/.ssh/id_ed25519.pub
+   ```
+
+   In the Unraid web UI, paste the public key under **Users > root > SSH authorized keys**.
+   Unraid keeps `/root/.ssh` on the flash drive at `/boot/config/ssh/root`, so the key
+   survives reboots. Then set `ansible_ssh_private_key_file` in `inventory.yml` to the private
+   key. Use a key without a passphrase or load it into `ssh-agent`, because connections run
+   with `BatchMode=yes` and cannot prompt.
+
+The first connection adds the server's host key to `~/.ssh/known_hosts`
+(`StrictHostKeyChecking=accept-new`); later connections fail if that key changes.
+
+Deploy, verify, uninstall and replica runs stop before connecting if the key is unset or
+the file is missing, or if `ansible_password` is still set. `make build` needs no key.
+
+### Moving from password login
+
+Remove `ansible_password` and any `PubkeyAuthentication=no` or
+`PreferredAuthentications=password` options from `inventory.yml`, then follow step 3.
+`sshpass` is no longer needed. An older run that was interrupted may have left a file holding
+your password; delete it with `rm -f "${TMPDIR:-/tmp}"/vault-sshpass-*`. Turning off password
+login on the server is optional and separate.
+
 ## Usage
 
 ```bash
@@ -67,20 +94,20 @@ python -m pip install -r ansible/tests/requirements.txt
 make test-ansible
 ```
 
-The tests execute the real deploy and verify roles at `-vvv --diff` using
-synthetic credentials. A test connection replaces all remote commands; local
+The tests execute the real deploy and verify roles at `-vvv --diff` using a
+synthetic key and API key. A test connection replaces all remote commands; local
 SSH, SCP, curl, Go, and Playwright commands use fakes, and endpoint requests go
 to a temporary loopback HTTP server. No inventory or Unraid host is needed.
 
-Coverage includes all 13 SCP paths (including `rc.vault`), the SSH tunnel, private file permissions
-and contents, password suppression in output and process arguments, authentication
-and filesystem failures, an unreachable host (which must fail fast without
-leaving a password file), removal of stale password files from interrupted
-runs, included verification failures, and both cleanup conditions. Endpoint errors are checked according to the role's existing behavior:
-they are reported and ignored. Test callbacks inject filesystem failures and
-remove retry delays without changing the production roles.
+Coverage includes key-only options on all 13 SCP paths (including `rc.vault`), the SSH
+tunnel and Ansible's own connection; proof that `sshpass` is never invoked; the preflight
+failures for an unset key, a missing key file and a stored password, through every role
+that connects; API key censoring in output; and authentication failures, an unreachable
+host and included verification failures. Endpoint errors are checked according to the
+role's existing behavior: they are reported and ignored. Test callbacks remove retry
+delays without changing the production roles.
 
-CI runs `make test-ansible` in the **Ansible password handling** job. The existing
+CI runs `make test-ansible` in the **Ansible SSH key handling** job. The existing
 Codecov configuration excludes `ansible/**`, so Codecov's patch percentage does
 not measure these role tests.
 

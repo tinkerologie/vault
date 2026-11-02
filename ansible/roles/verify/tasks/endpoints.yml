@@ -18,6 +18,7 @@
     label: "{{ item.name }}"
   register: endpoint_results
   ignore_errors: true
+  no_log: true # the request carries api_key; the summary below reports each result
 
 - name: Verify ping endpoint # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost
@@ -36,4 +37,4 @@
   ansible.builtin.debug:
     msg: >-
       Endpoints: {{ passed }}/{{ total }} passed, Ping: {{ ping_result.status | default('failed') }}
-      {{ '— FAILED: ' + (failed_items | map(attribute='item.name') | join(', ')) if failed_items | length > 0 else '' }}
+      {% if failed_items | length > 0 %}— FAILED: {% for result in failed_items %}{{ result.item.name }} (HTTP {{ result.status | default('no response') }}){{ ', ' if not loop.last }}{% endfor %}{% endif %}

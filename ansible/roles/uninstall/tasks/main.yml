@@ -2,6 +2,10 @@
 # Uninstall Vault plugin from Unraid
 # Uses 'raw' module — Unraid has no Python interpreter
 
+- name: Check SSH key settings
+  ansible.builtin.import_role:
+    name: ssh_preflight
+
 - name: Check server before uninstall
   ansible.builtin.raw: echo "ok"
   changed_when: false

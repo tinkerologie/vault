@@ -2,6 +2,10 @@
 # Deploy vault-replica Docker container on Unraid
 # Uses 'raw' module — Unraid has no Python interpreter
 
+- name: Check SSH key settings
+  ansible.builtin.import_role:
+    name: ssh_preflight
+
 - name: Check Docker is available
   ansible.builtin.raw: docker info > /dev/null 2>&1 && echo "OK" || echo "FAIL"
   register: docker_check
