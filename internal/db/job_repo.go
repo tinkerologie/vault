@@ -641,7 +641,7 @@ func (d *DB) GetLastSuccessfulBackupAt(jobID int64) (*time.Time, error) {
 	var completedAt *time.Time
 	err := d.QueryRow(
 		`SELECT completed_at FROM job_runs
-		WHERE job_id = ? AND status IN ('success', 'completed') AND COALESCE(run_type, 'backup') = 'backup'
+		WHERE job_id = ? AND status IN ('success', 'completed') AND COALESCE(NULLIF(run_type, ''), 'backup') = 'backup'
 			AND completed_at IS NOT NULL
 		ORDER BY julianday(completed_at) DESC LIMIT 1`, jobID,
 	).Scan(&completedAt)

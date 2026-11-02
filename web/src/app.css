@@ -373,17 +373,17 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
     border-right: 1px solid var(--color-border) !important;
     box-shadow: none !important;
   }
-  & aside nav button {
+  & aside nav a {
     border-radius: 0 !important;
     border: none;
     transition: none;
   }
-  & aside nav button:hover {
+  & aside nav a:hover {
     background-color: var(--color-border) !important;
     color: var(--color-surface) !important;
     text-shadow: none !important;
   }
-  & aside nav button[class*="bg-vault"] {
+  & aside nav a[class*="bg-vault"] {
     background-color: var(--color-vault) !important;
     color: var(--color-on-vault) !important;
     text-shadow: none !important;
@@ -427,11 +427,12 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
 
 /* Monospace chars are wider than proportional – tighten buttons to keep layouts consistent */
 .theme-1bit button { letter-spacing: -0.5px; font-size: 0.8125rem; }
-.theme-1bit aside nav button { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
+.theme-1bit aside nav a { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
 .theme-1bit th, .theme-1bit td { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
 .theme-1bit input, .theme-1bit select, .theme-1bit textarea {
   font-family: ui-monospace, 'SF Mono', Consolas, monospace !important;
 }
+.theme-1bit nav[aria-label="Mobile navigation"] a,
 .theme-1bit nav[aria-label="Mobile navigation"] button {
   font-family: ui-monospace, 'SF Mono', Consolas, monospace;
 }
@@ -471,7 +472,7 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
   letter-spacing: 1px;
   padding: 1px 8px;
 }
-.theme-retro aside nav button {
+.theme-retro aside nav a {
   font-family: 'VT323', monospace;
   letter-spacing: 1px;
 }
@@ -479,6 +480,7 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
 .theme-retro input, .theme-retro select, .theme-retro textarea {
   font-family: 'VT323', monospace !important;
 }
+.theme-retro nav[aria-label="Mobile navigation"] a,
 .theme-retro nav[aria-label="Mobile navigation"] button {
   font-family: 'VT323', monospace;
 }

@@ -7,6 +7,19 @@ test.describe('Cold Disaster Recovery Wizard (#/recover)', () => {
     await setupVaultMockApi(page, { jobs: [], storage: [] });
   });
 
+  test('an empty Vault whose lists come back null still gets the light confirmation', async ({ page }) => {
+    await page.route(/\/api\/v1\/(jobs|storage)(\?|$)/, (route) => (
+      route.request().method() === 'GET' ? route.fulfill({ json: null }) : route.fallback()
+    ));
+    await page.goto('/#/recover');
+    await page.locator('#sname').fill('Disaster Recovery Storage');
+    await page.getByRole('textbox', { name: 'Path' }).fill('/mnt/user/backups');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('button', { name: /Restore this backup/i }).click();
+    await expect(page.getByRole('button', { name: /Yes, restore my settings/i })).toBeVisible();
+    await expect(page.getByLabel('Type REPLACE to confirm')).toHaveCount(0);
+  });
+
   test('guides administrator through 5-step disaster recovery from remote storage', async ({ page }) => {
     await page.goto('/#/recover');
 

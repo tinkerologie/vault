@@ -111,6 +111,55 @@ test.describe('Theme style picker', () => {
   });
 });
 
+test.describe('Themed navigation links', () => {
+  const seed = (page: Page, style: string) => page.addInitScript((s) => {
+    localStorage.setItem('vault-style', s);
+    localStorage.setItem('vault-mode', 'dark');
+  }, style);
+  const nav = (page: Page) => page.getByRole('navigation', { name: 'Main navigation' });
+
+  for (const style of ['1bit', 'retro']) {
+    test(`${style}: the active sidebar link has the solid accent fill`, async ({ page }) => {
+      await setupVaultMockApi(page);
+      await seed(page, style);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.goto('/#/jobs');
+      const active = nav(page).getByRole('link', { name: 'Jobs', exact: true });
+      await expect(active).toBeVisible();
+      const paint = await active.evaluate((el) => {
+        const probe = document.createElement('i');
+        probe.style.cssText = 'background-color:var(--color-vault);color:var(--color-on-vault)';
+        document.body.append(probe);
+        const want = getComputedStyle(probe);
+        const got = getComputedStyle(el);
+        const result = { bg: got.backgroundColor, fg: got.color, wantBg: want.backgroundColor, wantFg: want.color };
+        probe.remove();
+        return result;
+      });
+      expect(paint.bg).toBe(paint.wantBg);
+      expect(paint.fg).toBe(paint.wantFg);
+    });
+  }
+
+  test('1bit: sidebar links are square and monospace', async ({ page }) => {
+    await setupVaultMockApi(page);
+    await seed(page, '1bit');
+    await page.goto('/#/jobs');
+    const link = nav(page).getByRole('link', { name: 'Storage', exact: true });
+    await expect(link).toHaveCSS('border-radius', '0px');
+    await expect(link).toHaveCSS('font-family', /monospace/);
+  });
+
+  test('retro: sidebar and mobile links use the pixel font', async ({ page }) => {
+    await setupVaultMockApi(page);
+    await seed(page, 'retro');
+    await page.goto('/#/jobs');
+    await expect(nav(page).getByRole('link', { name: 'Storage', exact: true })).toHaveCSS('font-family', /VT323/);
+    await page.setViewportSize({ width: 375, height: 700 });
+    await expect(page.getByRole('navigation', { name: 'Mobile navigation' }).getByRole('link').first()).toHaveCSS('font-family', /VT323/);
+  });
+});
+
 test.describe('Saved style migration', () => {
   test.beforeEach(async ({ page }) => {
     await setupVaultMockApi(page);

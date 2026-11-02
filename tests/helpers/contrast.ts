@@ -27,6 +27,8 @@ export interface ContrastFinding {
   required?: string;
   /** axe's reason for an incomplete result, such as `bgGradient` or `bgOverlap`. */
   reason?: string;
+  /** Elements axe says are involved in the reason, such as what overlaps the text. */
+  related?: string[];
 }
 
 export interface ContrastResult {
@@ -72,6 +74,7 @@ function toFinding(node: AxeNode): ContrastFinding {
     ratio: data?.contrastRatio,
     required: data?.expectedContrastRatio,
     reason: data?.messageKey,
+    related: node.any[0]?.relatedNodes?.map((related) => related.html.slice(0, 160)),
   };
 }
 

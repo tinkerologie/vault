@@ -66,7 +66,7 @@
   // Null until known: a failed check must not pass for an empty Vault (#525).
   let current = $state(null)
   Promise.all([api.listJobs(), api.listStorage()])
-    .then(([jobs, storage]) => (current = { jobs: jobs.length, storage: storage.length }))
+    .then(([jobs, storage]) => (current = { jobs: (jobs || []).length, storage: (storage || []).length }))
     .catch(() => {})
   const replacesExisting = $derived(recoverReplacesExisting(current))
   const replaceSummary = $derived(selected && dest

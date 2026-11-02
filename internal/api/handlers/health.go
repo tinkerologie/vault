@@ -42,13 +42,18 @@ func jobStaleAfter(job db.Job, now time.Time) time.Duration {
 
 // cadenceSpec rewrites the scheduler's "L" (last day of month) day-of-month to a
 // fixed day, because cron can't parse "L" and only the gap between runs matters.
+// A weekday filter makes the last day match only occasionally, and cron would
+// read it as an OR with the day, so that case is scored as yearly.
 func cadenceSpec(spec string) string {
 	fields := strings.Fields(spec)
-	if len(fields) == 5 && fields[2] == "L" {
-		fields[2] = "1"
-		return strings.Join(fields, " ")
+	if len(fields) != 5 || fields[2] != "L" {
+		return spec
 	}
-	return spec
+	fields[2] = "1"
+	if fields[4] != "*" {
+		fields[3], fields[4] = "1", "*"
+	}
+	return strings.Join(fields, " ")
 }
 
 // isBackupRun reports whether a run is a backup, not a restore. Older rows have

@@ -561,6 +561,7 @@ func TestHealthSummary_StaleJobs(t *testing.T) {
 		{"schedule cron can't parse, old backup", db.Job{Enabled: true, Schedule: "not a schedule"}, 40 * healthDay, true},
 		{"last-day monthly job within its grace", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 45 * healthDay, false},
 		{"last-day monthly job past its grace", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 70 * healthDay, true},
+		{"last-day weekday-filtered job isn't scored as weekly", db.Job{Enabled: true, Schedule: "0 2 L * 1"}, 100 * healthDay, false},
 		{"last-day yearly job within its grace", db.Job{Enabled: true, Schedule: "0 2 L 1 *"}, 300 * healthDay, false},
 	}
 	for _, tc := range cases {
@@ -609,14 +610,28 @@ func TestHealthSummary_StaleFromRestorePointWhenHistoryPurged(t *testing.T) {
 	}
 }
 
+func TestHealthSummary_EmptyRunTypeCountsAsABackup(t *testing.T) {
+	d := newTestDB(t)
+	jobID := seedHealthJob(t, d, db.Job{Name: "legacy", Enabled: true, Schedule: "0 2 * * *"})
+	seedHealthRun(t, d, jobID, "completed", "", healthHour)
+	if fetchHealthSummary(t, d)["last_success_at"] == nil {
+		t.Error("last_success_at is nil: a run with an empty type is a backup")
+	}
+}
+
 func TestHealthSummary_ReplicatedJobIsNotStale(t *testing.T) {
 	d := newTestDB(t)
 	jobID := seedHealthJob(t, d, db.Job{Name: "replica", Enabled: true, Schedule: "0 2 * * *"})
 	seedHealthRun(t, d, jobID, "completed", "backup", 100*healthDay)
-	if _, err := d.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
-		t.Fatalf("pragma: %v", err)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "peer-dest", Type: "local", Config: `{"path":"/tmp"}`})
+	if err != nil {
+		t.Fatalf("create destination: %v", err)
 	}
-	if _, err := d.Exec(`UPDATE jobs SET source_id = 1 WHERE id = ?`, jobID); err != nil {
+	sourceID, err := d.CreateReplicationSource(db.ReplicationSource{Name: "peer", Type: "vault", URL: "http://x", StorageDestID: destID})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if _, err := d.Exec(`UPDATE jobs SET source_id = ? WHERE id = ?`, sourceID, jobID); err != nil {
 		t.Fatalf("mark replicated: %v", err)
 	}
 	stale, _ := fetchHealthSummary(t, d)["stale_jobs"].([]any)

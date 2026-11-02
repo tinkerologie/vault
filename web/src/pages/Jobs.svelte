@@ -170,6 +170,8 @@
     try {
       const ids = [...selectedJobs]
       await Promise.all(ids.map(id => api.deleteJob(id, false)))
+      // Before the selection clears, because the dialog's text counts it.
+      confirmBulkDelete = false
       showToast(`${ids.length} job${ids.length !== 1 ? 's' : ''} deleted`, 'success')
       selectedJobs = new SvelteSet()
       await loadData()

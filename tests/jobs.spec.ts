@@ -293,6 +293,20 @@ test.describe('Jobs Management & Creation Wizard', () => {
       expect(calls).toHaveLength(0);
     });
 
+    test('the dialog never shows a zero count while the list reloads', async ({ page }) => {
+      await selectJobs(page, 1);
+      await page.route(/\/api\/v1\/jobs(\?|$)/, async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await route.fallback();
+      });
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Delete 1 Job' });
+      await dialog.getByRole('button', { name: 'Delete 1 Job' }).click();
+      await expect(page.getByText('1 job deleted')).toBeVisible();
+      // The list is still reloading here, so the dialog must already be gone.
+      await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 200 });
+    });
+
     test('confirming deletes each selected job, once', async ({ page }) => {
       const calls = deletes(page);
       await selectJobs(page, 2);
