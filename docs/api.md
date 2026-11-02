@@ -150,6 +150,8 @@ A restore of selected files reports the size it actually wrote (`size_source: "r
 
 > Per-job history is available at `GET /jobs/{id}/history`. There is no global `GET /history` endpoint; query individual jobs and merge client-side.
 
+Storage responses mask secrets the same way. On update, a masked secret keeps the stored value, but changing where a destination connects requires entering the secret again, so a stored secret only goes to the server it was entered for: `host` and `port` (SFTP, SMB), `host_key` and `known_hosts_file` (SFTP), the scheme, host and port of `url` and `insecure_skip_verify` (WebDAV), and `endpoint`, `bucket` and `region` (S3). `POST /storage/test` takes an optional `id` to test an edit with the stored secrets under the same rule; without `id`, a masked secret is rejected.
+
 ## Replication
 
 A replication source's `schedule` field takes the same cron expressions as a job's (see [Jobs](#jobs)); an empty string means the source is only synced on demand.

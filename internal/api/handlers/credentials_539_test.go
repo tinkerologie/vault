@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tinkerologie/vault/internal/credentials"
@@ -14,6 +15,12 @@ import (
 )
 
 const replKey = "peer-api-key-value"
+
+// preserveRedactedSecrets keeps the older tests of this behaviour pointed at its
+// new home, credentials.Preserve.
+func preserveRedactedSecrets(incoming, existing string) (string, error) {
+	return credentials.Preserve(incoming, existing), nil
+}
 
 func updateSource(t *testing.T, h *ReplicationHandler, id int64, body string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -279,5 +286,102 @@ func TestRestoreDBSealsPlaintextAndReportsLockedRows(t *testing.T) {
 		if d.Name == "old-plain" && !strings.Contains(d.Config, "restored-secret") {
 			t.Fatalf("restored destination lost access: %s", d.Config)
 		}
+	}
+}
+
+func seedSMB(t *testing.T, d *db.DB) int64 {
+	t.Helper()
+	id, err := d.CreateStorageDestination(db.StorageDestination{Name: "nas", Type: "smb",
+		Config: `{"host":"nas.lan","share":"b","user":"u","password":"stored-pass"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestStorageUpdateRefusesMaskedSecretOnNewHost(t *testing.T) {
+	t.Parallel()
+	h, _, _ := newFileBackedStorageHandler(t)
+	id := seedSMB(t, h.db)
+	put := func(host, pass string) *httptest.ResponseRecorder {
+		cfg, _ := json.Marshal(`{"host":"` + host + `","share":"b","user":"u","password":"` + pass + `"}`)
+		w := httptest.NewRecorder()
+		h.Update(w, reqWithID(http.MethodPut, "/x", idStr(id), []byte(`{"config":`+string(cfg)+`}`)))
+		return w
+	}
+	if w := put("evil.example", credentials.RedactionMarker); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "re-enter") {
+		t.Fatalf("masked on new host: %d %s", w.Code, w.Body.String())
+	}
+	dest, _ := h.db.GetStorageDestination(id)
+	if !strings.Contains(dest.Config, "nas.lan") {
+		t.Fatalf("refused edit was saved: %s", dest.Config)
+	}
+	if w := put("nas.lan", credentials.RedactionMarker); w.Code != http.StatusOK {
+		t.Fatalf("masked on same host: %d %s", w.Code, w.Body.String())
+	}
+	dest, _ = h.db.GetStorageDestination(id)
+	if !strings.Contains(dest.Config, "stored-pass") {
+		t.Fatalf("stored secret lost: %s", dest.Config)
+	}
+	if w := put("new.lan", "typed-pass"); w.Code != http.StatusOK {
+		t.Fatalf("retyped on new host: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestStorageTestConfigUsesStoredSecretOnlyForSameDestination(t *testing.T) {
+	t.Parallel()
+	// Records the password it is offered, challenging first as a real server does.
+	var got atomic.Value
+	got.Store("")
+	recordAuth := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pass, ok := r.BasicAuth()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="dav"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		got.Store(pass)
+		w.WriteHeader(http.StatusMultiStatus)
+	})
+	srv := httptest.NewServer(recordAuth)
+	defer srv.Close()
+	h, _, _ := newFileBackedStorageHandler(t)
+	id, err := h.db.CreateStorageDestination(db.StorageDestination{Name: "dav", Type: "webdav",
+		Config: `{"url":"` + srv.URL + `","username":"u","password":"stored-pass"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(body map[string]any) string {
+		raw, _ := json.Marshal(body)
+		w := httptest.NewRecorder()
+		h.TestConfig(w, httptest.NewRequest(http.MethodPost, "/storage/test", bytes.NewReader(raw)))
+		return strconv.Itoa(w.Code) + " " + w.Body.String()
+	}
+	masked := func(url string) string {
+		return `{"url":"` + url + `","username":"u","password":"` + credentials.RedactionMarker + `"}`
+	}
+
+	post(map[string]any{"id": id, "type": "webdav", "config": masked(srv.URL)})
+	if got.Load() != "stored-pass" {
+		t.Fatalf("server saw password %q, want the stored one", got.Load())
+	}
+
+	got.Store("")
+	other := httptest.NewServer(recordAuth)
+	defer other.Close()
+	if res := post(map[string]any{"id": id, "type": "webdav", "config": masked(other.URL)}); !strings.Contains(res, "re-enter") {
+		t.Fatalf("new host: %s", res)
+	}
+	if got.Load() != "" {
+		t.Fatalf("new host received %q", got.Load())
+	}
+	if res := post(map[string]any{"type": "webdav", "config": masked(other.URL)}); !strings.Contains(res, "enter the password") {
+		t.Fatalf("no id: %s", res)
+	}
+	if got.Load() != "" {
+		t.Fatalf("mask sent as a password: %q", got.Load())
+	}
+	if res := post(map[string]any{"id": 9999, "type": "webdav", "config": masked(other.URL)}); !strings.HasPrefix(res, "404") {
+		t.Fatalf("missing row: %s", res)
 	}
 }

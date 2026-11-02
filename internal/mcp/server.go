@@ -703,13 +703,24 @@ func (s *MCPServer) addUpdateStorageTool() {
 		if input.Name != "" {
 			dest.Name = input.Name
 		}
+		storedType := dest.Type
 		if input.Type != "" {
 			dest.Type = input.Type
 		}
+		// get_storage returns masked secrets, so a client that edits and sends
+		// that config back must not overwrite them with the marker, or use them
+		// to send a stored secret to another server. A type change alone is
+		// checked as an edit that leaves every field masked.
+		edited := input.Config
+		if edited == "" {
+			edited = credentials.Mask(dest.Config)
+		}
+		merged, mErr := credentials.MergeStorageEdit(storedType, dest.Type, edited, dest.Config)
+		if mErr != nil {
+			return nil, nil, mErr
+		}
 		if input.Config != "" {
-			// get_storage returns masked secrets, so a client that edits and
-			// sends that config back must not overwrite them with the marker.
-			dest.Config = credentials.Preserve(input.Config, dest.Config)
+			dest.Config = merged
 		}
 		if input.Type != "" || input.Config != "" {
 			if err := validateStorageConfig(dest.Type, dest.Config); err != nil {

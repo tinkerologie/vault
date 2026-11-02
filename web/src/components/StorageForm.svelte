@@ -160,7 +160,7 @@
     const testedKey = JSON.stringify({ type: form.type, config: form.config })
     const isStale = () => JSON.stringify({ type: form.type, config: form.config }) !== testedKey
     try {
-      const result = await api.testStorageConfig({ type: form.type, config: JSON.stringify(form.config) })
+      const result = await api.testStorageConfig({ id: initial?.id, type: form.type, config: JSON.stringify(form.config) })
       if (isStale()) return
       formTestResult = result
       ontoast(result.success ? 'Connection successful!' : `Connection failed: ${result.error || 'unknown error'}`, result.success ? 'success' : 'error')

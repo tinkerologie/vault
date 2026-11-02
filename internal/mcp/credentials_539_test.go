@@ -45,13 +45,38 @@ func TestMCPUpdateStorageKeepsMaskedSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := `{"host":"c","share":"b","username":"u","password":"` + credentials.RedactionMarker + `"}`
+	cfg := `{"host":"a","share":"c","username":"u","password":"` + credentials.RedactionMarker + `"}`
 	r := callToolRaw(t, session, context.Background(), "update_storage", map[string]any{"id": id, "config": cfg})
 	if r.IsError {
 		t.Fatalf("update %s: %+v", strconv.FormatInt(id, 10), r.Content)
 	}
 	dest, err := d.GetStorageDestination(id)
-	if err != nil || !strings.Contains(dest.Config, "dest-secret") || !strings.Contains(dest.Config, `"host":"c"`) {
+	if err != nil || !strings.Contains(dest.Config, "dest-secret") || !strings.Contains(dest.Config, `"share":"c"`) {
 		t.Fatalf("config = %s (err %v)", dest.Config, err)
+	}
+}
+
+func TestMCPUpdateStorageRefusesMaskedSecretOnNewHost(t *testing.T) {
+	session, d := setupTest(t)
+	ctx := context.Background()
+	id, err := d.CreateStorageDestination(db.StorageDestination{Name: "s", Type: "smb",
+		Config: `{"host":"a","share":"b","user":"u","password":"dest-secret"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"host":"evil","share":"b","user":"u","password":"` + credentials.RedactionMarker + `"}`
+	if r := callToolRaw(t, session, ctx, "update_storage", map[string]any{"id": id, "config": cfg}); !r.IsError {
+		t.Fatal("masked secret followed a new host")
+	}
+	if r := callToolRaw(t, session, ctx, "update_storage", map[string]any{"id": id, "type": "sftp"}); !r.IsError {
+		t.Fatal("type change reused the stored secret")
+	}
+	dest, err := d.GetStorageDestination(id)
+	if err != nil || dest.Type != "smb" || !strings.Contains(dest.Config, `"host":"a"`) {
+		t.Fatalf("refused edit saved: %+v (err %v)", dest, err)
+	}
+	if r := callToolRaw(t, session, ctx, "update_storage", map[string]any{"id": id,
+		"config": `{"host":"new","share":"b","user":"u","password":"typed"}`}); r.IsError {
+		t.Fatalf("retyped secret refused: %+v", r.Content)
 	}
 }

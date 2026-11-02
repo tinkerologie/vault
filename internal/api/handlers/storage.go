@@ -239,15 +239,12 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.Name = name
 	}
 	if patch.Config != nil {
-		// preserveRedactedSecrets carries forward credentials that the
-		// caller (typically the UI's edit modal) round-tripped as the
-		// "••••••••" marker rather than retyping. Without this, editing
-		// any non-credential field on a destination with a password would
-		// silently overwrite the password with the marker bytes and
-		// every subsequent request would 401.
-		merged, mErr := preserveRedactedSecrets(*patch.Config, existing.Config)
+		// The edit modal round-trips secrets as the "••••••••" marker. Keep the
+		// stored value for those, unless the edit moves the destination, which
+		// would hand the stored secret to the new server.
+		merged, mErr := credentials.MergeStorageEdit(existing.Type, existing.Type, *patch.Config, existing.Config)
 		if mErr != nil {
-			respondInternalError(w, mErr)
+			respondError(w, http.StatusBadRequest, mErr.Error())
 			return
 		}
 		existing.Config = merged
@@ -410,6 +407,25 @@ func (h *StorageHandler) TestConfig(w http.ResponseWriter, r *http.Request) {
 	dest.Type = strings.TrimSpace(dest.Type)
 	if dest.Type == "" {
 		respondError(w, http.StatusBadRequest, "type is required")
+		return
+	}
+	// While editing, the modal also posts the row's id so masked secrets test
+	// with the stored values, under the same rule as saving. The mask itself is
+	// never sent to a server as a password.
+	if dest.ID != 0 {
+		stored, err := h.db.GetStorageDestination(dest.ID)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "not found")
+			return
+		}
+		dest.Config, err = credentials.MergeStorageEdit(stored.Type, dest.Type, dest.Config, stored.Config)
+		if err != nil {
+			respondJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+	}
+	if credentials.HasMarker(dest.Config) {
+		respondJSON(w, http.StatusOK, map[string]any{"success": false, "error": "enter the password or secret to test this connection"})
 		return
 	}
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
@@ -1257,13 +1273,6 @@ func newGCRunID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// preserveRedactedSecrets restores the secrets a client round-tripped as the
-// marker. The edit form posts back whatever a read returned, so without this a
-// save would store the marker as the password. See credentials.Preserve.
-func preserveRedactedSecrets(incoming, existing string) (string, error) {
-	return credentials.Preserve(incoming, existing), nil
 }
 
 // redactConfig masks a config for an API response. See credentials.Mask.

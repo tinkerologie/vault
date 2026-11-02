@@ -132,15 +132,74 @@ func TestIsPlaintextRemote(t *testing.T) {
 	t.Parallel()
 	for url, want := range map[string]bool{
 		"http://192.0.2.5:24085": true,
-		"HTTP://nas.lan":           true,
-		"http://127.0.0.1:24085":   false,
-		"http://[::1]:24085":       false,
-		"http://localhost:24085":   false,
-		"https://nas.lan":          false,
-		"://bad":                   false,
+		"HTTP://nas.lan":         true,
+		"http://127.0.0.1:24085": false,
+		"http://[::1]:24085":     false,
+		"http://localhost:24085": false,
+		"https://nas.lan":        false,
+		"://bad":                 false,
 	} {
 		if got := IsPlaintextRemote(url); got != want {
 			t.Errorf("IsPlaintextRemote(%q) = %v", url, got)
 		}
+	}
+}
+
+func TestMergeStorageEdit(t *testing.T) {
+	t.Parallel()
+	m := RedactionMarker
+	tests := []struct {
+		name, typ, stored, edit string
+		wantErr                 bool
+	}{
+		{"sftp same", "sftp", `{"host":"a","password":"p"}`, `{"host":"A ","port":22,"user":"new","password":"` + m + `"}`, false},
+		{"sftp host", "sftp", `{"host":"a","password":"p"}`, `{"host":"evil","password":"` + m + `"}`, true},
+		{"sftp port", "sftp", `{"host":"a","port":22,"password":"p"}`, `{"host":"a","port":2222,"password":"` + m + `"}`, true},
+		{"sftp key file", "sftp", `{"host":"a","key_file":"/k"}`, `{"host":"evil","key_file":"` + m + `"}`, true},
+		{"sftp host key", "sftp", `{"host":"a","host_key":"x","password":"p"}`, `{"host":"a","host_key":"y","password":"` + m + `"}`, true},
+		{"sftp retyped", "sftp", `{"host":"a","password":"p"}`, `{"host":"evil","password":"typed"}`, false},
+		{"smb host", "smb", `{"host":"a","password":"p"}`, `{"host":"evil","password":"` + m + `"}`, true},
+		{"smb share same server", "smb", `{"host":"a","share":"s","password":"p"}`, `{"host":"a","share":"t","password":"` + m + `"}`, false},
+		{"webdav host", "webdav", `{"url":"https://a/x","password":"p"}`, `{"url":"https://evil/x","password":"` + m + `"}`, true},
+		{"webdav downgrade", "webdav", `{"url":"https://a/x","password":"p"}`, `{"url":"http://a/x","password":"` + m + `"}`, true},
+		{"webdav verify off", "webdav", `{"url":"https://a","password":"p"}`, `{"url":"https://a","insecure_skip_verify":true,"password":"` + m + `"}`, true},
+		{"webdav path", "webdav", `{"url":"https://a/x","password":"p"}`, `{"url":"https://a:443/y","insecure_skip_verify":false,"password":"` + m + `"}`, false},
+		{"webdav bad url", "webdav", `{"url":"https://a","password":"p"}`, `{"url":"http://[bad","password":"` + m + `"}`, true},
+		{"webdav url creds stay", "webdav", `{"url":"https://b:c@a/x"}`, `{"url":"https://a/x"}`, false},
+		{"s3 endpoint", "s3", `{"endpoint":"https://a","bucket":"b","secret_key":"s"}`, `{"endpoint":"https://evil","bucket":"b","secret_key":"` + m + `"}`, true},
+		{"s3 bucket", "s3", `{"bucket":"b","secret_key":"s"}`, `{"bucket":"evil","secret_key":"` + m + `"}`, true},
+		{"s3 region", "s3", `{"bucket":"b","region":"r","secret_key":"s"}`, `{"bucket":"b","region":"evil","secret_key":"` + m + `"}`, true},
+		{"s3 prefix", "s3", `{"bucket":"b","secret_key":"s"}`, `{"bucket":"b","base_path":"x","secret_key":"` + m + `"}`, false},
+		{"nfs no secret", "nfs", `{"host":"a"}`, `{"host":"b"}`, false},
+		{"unknown type", "new", `{"server":"a","password":"p"}`, `{"server":"evil","password":"` + m + `"}`, true},
+		{"unknown same", "new", `{"server":"a","password":"p"}`, `{"server":"a","password":"` + m + `"}`, false},
+		{"marker with nothing stored", "sftp", `{"host":"a"}`, `{"host":"evil","password":"` + m + `"}`, false},
+		{"locked secret", "sftp", `{"host":"a","password":"` + sealedPrefix + `x"}`, `{"host":"evil","password":"` + m + `"}`, true},
+		{"masked sealed url", "webdav", `{"url":"` + sealedPrefix + `x"}`, `{"url":"` + m + `"}`, false},
+		{"not json", "sftp", `{"host":"a"}`, `nope`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := MergeStorageEdit(tt.typ, tt.typ, tt.edit, tt.stored)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("stored secret would follow the edit: %s", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(got, RedactionMarker) && strings.Contains(tt.stored, `"password":"p"`) {
+				t.Fatalf("marker not resolved: %s", got)
+			}
+		})
+	}
+	if _, err := MergeStorageEdit("sftp", "smb", `{"host":"a","password":"`+m+`"}`, `{"host":"a","password":"p"}`); err == nil {
+		t.Fatal("type change must not reuse a stored secret")
+	}
+	if !HasMarker(`{"password":"`+m+`"}`) || HasMarker(`{"password":"p"}`) || HasMarker(`nope`) {
+		t.Fatal("HasMarker")
 	}
 }
