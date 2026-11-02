@@ -26,7 +26,7 @@ func TestHealthEndpoint(t *testing.T) {
 	database := testDB(t)
 	srv := NewServer(database, ServerConfig{Addr: ":0"})
 
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := asLocal(httptest.NewRequest("GET", "/api/v1/health", nil))
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 

@@ -151,7 +151,7 @@ $nav_link  = trim((string) ($cfg['NAV_LINK'] ?? ''), " \t\n\r\0\x0B\"'") === 'ye
     <dd><input type="number" name="PORT" value="<?= htmlspecialchars($port) ?>" class="narrow" min="1024" max="65535"></dd>
 </dl>
 <blockquote class="inline_help">
-Port number for the Vault daemon (default: 24085). Keep this configurable in case the host already uses the port or you want to expose the API for external integrations such as Home Assistant. Remote clients need an API key, created under Settings → Security → API Access or with <code>vault api-key generate</code>. The browser UI itself always uses the authenticated Unraid plugin proxy.
+Port number for the Vault daemon (default: 24085). Keep this configurable in case the host already uses the port or you want to expose the API for external integrations such as Home Assistant. The browser UI always uses the authenticated Unraid plugin proxy and needs no API key on any bind address. An API key is only needed for replication and Home Assistant; generate it in Vault under Settings → Security → API Access.
 </blockquote>
 
 <dl>

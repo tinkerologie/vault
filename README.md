@@ -53,7 +53,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 
 **Integration**
 
-- REST API at `/api/v1`, denied by default: remote callers need an API key and cross-origin pages are refused
+- REST API at `/api/v1`: no key for the Unraid web UI, an API key only for replication and Home Assistant
 - MCP server (streamable HTTP + stdio) for Claude Desktop, Claude Code, and other AI tooling
 - Home Assistant custom integration: [`ha-vault`](https://github.com/tinkerologie/ha-vault)
 - Hybrid SQLite snapshot (RAM working DB + persistent snapshot + USB shadow) survives reboots

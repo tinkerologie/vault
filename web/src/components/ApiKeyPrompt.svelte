@@ -22,7 +22,7 @@
   <form onsubmit={submit} class="w-full max-w-md bg-surface-2 border border-border rounded-xl p-5 space-y-3">
     <h1 class="text-base font-semibold text-text">API key required</h1>
     <p class="text-sm text-text-muted">
-      This Vault only accepts remote connections with an API key, and a key can't be created from here.
+      To use Vault with no key, log in to the Unraid web UI and open Vault there. Opening this address directly from another machine needs an API key, which can't be created from here.
     </p>
     <ApiKeyLocalOnlyNotice />
     {#if rejected}

@@ -90,7 +90,6 @@ func (s *Server) setupRoutes() *chi.Mux {
 		})
 		settingsH.SetMemoryLimitChangeHook(memlimit.Apply)
 
-		// The only route open without a credential; see healthPath.
 		r.Get("/health", s.handleHealth)
 
 		r.Get("/ws", s.hub.HandleWS)
@@ -396,22 +395,16 @@ func (s *Server) setupRoutes() *chi.Mux {
 	return r
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	mode := "daemon"
 	if s.config.ReadOnly {
 		mode = "replica"
 	}
 	resp := map[string]any{
-		"status": "ok",
-		"mode":   mode,
+		"status":  "ok",
+		"version": s.config.Version,
+		"mode":    mode,
 	}
-	// An unauthenticated caller learns only that the daemon is up. Version and
-	// startup diagnostics, which name filesystem paths, need local or key access.
-	if requestAccess(r) == accessPublic {
-		respondJSON(w, http.StatusOK, resp)
-		return
-	}
-	resp["version"] = s.config.Version
 	// Surface boot-time persistence diagnostics so operators (and
 	// `make verify`) can confirm at a glance whether configuration
 	// survived a restart or upgrade. Field is omitted entirely when

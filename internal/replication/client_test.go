@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -159,22 +158,5 @@ func TestNormalizeBaseURLRejectsUnsafeURLs(t *testing.T) {
 		if _, err := NormalizeBaseURL(input); err == nil {
 			t.Fatalf("NormalizeBaseURL(%q) should fail", input)
 		}
-	}
-}
-
-// A public /health reply carries no version. Replication can't work without a
-// key, so the connection test must say so rather than report success.
-func TestClientTestConnectionReportsMissingKey(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "mode": "daemon"})
-	}))
-	defer srv.Close()
-
-	client, err := NewClient(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.TestConnection(); err == nil || !strings.Contains(err.Error(), "requires an API key") {
-		t.Errorf("TestConnection error = %v, want a missing-key error", err)
 	}
 }

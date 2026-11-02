@@ -10,17 +10,21 @@ The API serves plain HTTP unless the daemon is started with both `--tls-cert` an
 
 ## Authentication
 
-The API denies by default. Every route except `GET /health` needs one of these:
+**Using Vault from the Unraid web UI never needs a key or password**, on any bind address. Log in to Unraid and open Vault; the plugin proxy reaches the daemon from the server itself.
+
+**An API key is only needed for** replication between two Vault servers, and for [Home Assistant](https://github.com/tinkerologie/ha-vault) connecting when Vault is bound to the server's LAN IP. Those clients send `X-API-Key: <your-api-key>`.
+
+Under that, the API denies by default, with every route including `/health` behind these rules:
 
 | Caller                                                                    | Access                                                                                        |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | The Vault host: the Unraid plugin proxy, the CLI, `curl` or an SSH tunnel | No key needed                                                                                 |
-| Anyone else                                                               | Must send `X-API-Key: <your-api-key>`; refused with `401` until a key exists                  |
+| Anyone else, including an MCP bridge or script on another machine         | Must send the key; refused with `401` until a key exists                                      |
 | A web page on another origin, on any method and from any address          | Refused with `403` unless its origin is on the allowlist; a listed origin still needs the key |
 
 A request only counts as coming from the Vault host when its source address is one of the host's own and its `Host` header is an IP address, `localhost`, or the machine's hostname. A domain pointed at `127.0.0.1` gets no local trust, which is what stops DNS rebinding.
 
-**Creating a key:** use **Settings → Security → API Access** in the Unraid plugin, or run this on the host. On a headless server or Docker replica the CLI is the only way:
+**Creating a key:** in the Unraid web UI, open Vault, go to **Settings → Security → API Access**, generate the key and copy it into the other Vault server or Home Assistant. A headless server or Docker replica has no such page, so use the CLI there:
 
 ```bash
 vault api-key generate                           # on the host; prints only the key
@@ -35,7 +39,7 @@ docker exec vault-replica vault api-key generate # a Docker replica
 
 **Browser origins:** the cross-origin allowlist is empty by default. To let a page on another origin call the API, list its exact origin, either with `--allowed-origin https://ha.example:8123` (repeatable) on `vault daemon` or `vault replica`, or as a comma-separated `ALLOWED_ORIGINS` in `vault.cfg`, then restart. Wildcards aren't accepted. The list also controls CORS, Private Network Access preflights and WebSocket origins.
 
-**The web UI on another machine:** opening a daemon's port directly, as with a Docker replica's own UI, asks for the API key and keeps it for that browser tab. Live progress then uses polling, because a browser can't send the key on a WebSocket connection. Same-origin pages on the Vault host don't need a key, including through an SSH tunnel. Generating, showing, rotating and revoking the key need the Vault host: use the Unraid plugin page, an SSH tunnel, or the CLI.
+**Opening the daemon's port from another machine:** as with a Docker replica's own UI, this asks for the API key and keeps it for that browser tab. Live progress then uses polling, because a browser can't send the key on a WebSocket connection. Same-origin pages on the Vault host don't need a key, including through an SSH tunnel. Generating, showing, rotating and revoking the key need the Vault host: use the Unraid web UI, an SSH tunnel, or the CLI.
 
 ## Core
 

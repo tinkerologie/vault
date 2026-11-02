@@ -242,9 +242,9 @@ func BodySizeLimit(maxBytes int64) func(http.Handler) http.Handler {
 type accessLevel int
 
 const (
-	accessPublic accessLevel = iota // no credential: public routes only
-	accessAPIKey                    // presented the configured API key
-	accessLocal                     // the daemon's own host, not a cross-origin page
+	accessNone   accessLevel = iota
+	accessAPIKey             // presented the configured API key
+	accessLocal              // the daemon's own host, not a cross-origin page
 )
 
 type accessLevelKey struct{}
@@ -264,16 +264,12 @@ func withAccess(r *http.Request, level accessLevel) *http.Request {
 func LocalOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requestAccess(r) != accessLocal {
-			respondJSON(w, http.StatusForbidden, map[string]string{"error": "only available from the Vault host: use the Unraid plugin page, an SSH tunnel, or the vault CLI"})
+			respondJSON(w, http.StatusForbidden, map[string]string{"error": "only available from the Vault host: use the Unraid web UI, an SSH tunnel, or the vault CLI"})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
-
-// healthPath is the one API route open without a credential. handleHealth
-// limits what an unauthenticated caller sees.
-const healthPath = "/api/v1/health"
 
 // APIKeyAuth returns the middleware that decides who reaches the API. It denies
 // by default:
@@ -283,8 +279,9 @@ const healthPath = "/api/v1/health"
 //     loopback, a wildcard, or a specific NIC IP. A browser page on another
 //     origin gets no such trust, and neither does a Host name that isn't this
 //     machine's, since that is how DNS rebinding reaches loopback.
-//   - Everyone else must present the configured API key. With no key configured
-//     they get 401; `vault api-key generate` provisions one locally.
+//   - Everyone else, which in practice means replication peers and Home
+//     Assistant, must present the configured API key. With no key configured they
+//     get 401 and a message saying where to generate one.
 func APIKeyAuth(database *db.DB) func(http.Handler) http.Handler {
 	return apiKeyAuth(database, newLocalIPCache(localIPCacheTTL, readLocalInterfaceIPs), newAPIKeyVerifier(), localHostNames())
 }
@@ -310,23 +307,18 @@ func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, 
 				return
 			}
 
-			key := r.Header.Get("X-API-Key")
-
-			// A presented key is always checked, so a client with a wrong key
-			// learns that here instead of seeing a healthy public response.
-			if key == "" {
-				if r.Method == http.MethodGet && r.URL.Path == healthPath {
-					next.ServeHTTP(w, withAccess(r, accessPublic))
-					return
-				}
+			// An unreadable hash refuses: DB errors must not allow access.
+			hash, err := database.GetSetting("api_key_hash", docsmeta.DefaultFor("api_key_hash"))
+			if err != nil {
 				respondUnauthorized(w)
 				return
 			}
-
-			// An unreadable or empty hash both refuse: there is nothing to
-			// authenticate against, and that must never mean open access.
-			hash, err := database.GetSetting("api_key_hash", docsmeta.DefaultFor("api_key_hash"))
-			if err != nil || hash == "" {
+			if hash == "" {
+				respondJSON(w, http.StatusUnauthorized, map[string]string{"error": noAPIKeyMessage})
+				return
+			}
+			key := r.Header.Get("X-API-Key")
+			if key == "" {
 				respondUnauthorized(w)
 				return
 			}
@@ -342,6 +334,10 @@ func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, 
 		})
 	}
 }
+
+// noAPIKeyMessage is the refusal when no key exists. A key is only needed for
+// replication and Home Assistant, so the message tells that user where to go.
+const noAPIKeyMessage = "no API key configured: generate one in the Unraid web UI under Vault Settings, Security, API Access"
 
 const (
 	// apiKeyAttemptsPerMinute limits bcrypt comparisons per client address.

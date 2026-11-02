@@ -1928,7 +1928,7 @@
       <!-- API Access -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">API Access <Tooltip text="Remote clients (Home Assistant, replication, MCP) are refused until you generate an API key. The Unraid plugin and tools on this server don&apos;t need one." /></h2>
+          <h2 class="text-base font-semibold text-text">API Access <Tooltip text="Only needed for replication between Vault servers, and for Home Assistant when Vault is bound to this server&apos;s LAN IP. Using Vault from the Unraid web UI never needs a key." /></h2>
         </div>
         <div class="divide-y divide-border">
           {#if apiKeyEnabled}
@@ -1938,7 +1938,7 @@
                 <span class="inline-block w-2 h-2 rounded-full bg-success"></span>
                 <span class="text-sm font-medium text-text">API key active</span>
               </div>
-              <p class="text-xs text-text-muted">Remote clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header. Tools on this server don't need it, and web pages from other sites are refused. Showing, rotating and revoking the key only work from this server or the Unraid plugin.</p>
+              <p class="text-xs text-text-muted">Replication and Home Assistant use this key in the <code class="bg-surface px-1 rounded">X-API-Key</code> header. The Unraid web UI doesn't need it.</p>
             </div>
 
             {#if isRemoteKeyClient()}
@@ -2005,7 +2005,7 @@
                 <span class="inline-block w-2 h-2 rounded-full bg-text-dim"></span>
                 <span class="text-sm font-medium text-text">No API key configured</span>
               </div>
-              <p class="text-xs text-text-muted mb-4">Generate an API key to protect the Vault API when it is exposed beyond localhost. API keys are required for third-party integrations (e.g. Home Assistant) and replication between Vault instances on different servers.</p>
+              <p class="text-xs text-text-muted mb-4">You don't need a key to use Vault from the Unraid web UI. Generate one only for replication between Vault servers, or for Home Assistant when Vault is bound to this server's LAN IP.</p>
               {#if !isReplicaMode()}
               <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                 {#if apiKeyGenerating}<InlineSpinner />{/if}

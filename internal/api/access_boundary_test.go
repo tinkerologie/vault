@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/tinkerologie/vault/internal/crypto"
@@ -298,6 +300,8 @@ func TestSettingsUIKeyLifecycle(t *testing.T) {
 		headers    map[string]string
 	}{
 		"plugin proxy over loopback": {loopbackPeer, daemonHost, map[string]string{"X-Vault-Proxy": "unraid-plugin-proxy"}},
+		// BIND_ADDRESS set to the LAN IP: cURL targets that IP, and Linux sources
+		// the connection from it, so peer and Host are both the NIC address.
 		"plugin proxy over NIC bind": {nicIP + ":40000", nicIP + ":24085", map[string]string{"X-Vault-Proxy": "unraid-plugin-proxy"}},
 		"same-origin through a tunnel": {loopbackPeer, "127.0.0.1:8080", map[string]string{
 			"Origin": "http://127.0.0.1:8080", "Sec-Fetch-Site": "same-origin",
@@ -362,7 +366,7 @@ func TestRemoteKeyManagementRefusals(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("key holder generate = %d, want 403", w.Code)
 	}
-	for _, want := range []string{"Unraid plugin page", "SSH tunnel", "CLI"} {
+	for _, want := range []string{"Unraid web UI", "SSH tunnel", "CLI"} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("refusal %s doesn't mention %q", w.Body, want)
 		}
@@ -400,8 +404,9 @@ func TestCrossSiteCannotChangeKey(t *testing.T) {
 	}
 }
 
-// Issue #570: the public health response carries no paths or topology, while
-// callers already trusted keep the startup detail rc.vault and support rely on.
+// Issue #570: /health is behind the boundary like everything else. ha-vault's
+// config flow depends on this: it probes /health with no key and only asks for
+// one on a 401, so a 200 here would create an entry with no key.
 func TestHealthDisclosure(t *testing.T) {
 	database := testDB(t)
 	key := setTestAPIKey(t, database)
@@ -412,17 +417,12 @@ func TestHealthDisclosure(t *testing.T) {
 		RestorationInfo: &db.RestorationInfo{Source: "primary", Path: "/mnt/secretpool/.vault/vault.db"},
 	})
 
-	public := serve(srv, boundaryRequest(http.MethodGet, "/api/v1/health", remotePeer, lanHost, nil))
-	if public.Code != http.StatusOK {
-		t.Fatalf("public health = %d, want 200", public.Code)
+	anon := serve(srv, boundaryRequest(http.MethodGet, "/api/v1/health", remotePeer, lanHost, nil))
+	if anon.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous health = %d, want 401", anon.Code)
 	}
-	for _, leak := range []string{"secretpool", "startup", "version", "hybrid_mode"} {
-		if strings.Contains(public.Body.String(), leak) {
-			t.Errorf("public health leaks %q: %s", leak, public.Body)
-		}
-	}
-	if !strings.Contains(public.Body.String(), `"mode":"daemon"`) {
-		t.Errorf("public health lost mode: %s", public.Body)
+	if strings.Contains(anon.Body.String(), "secretpool") {
+		t.Errorf("anonymous health leaks a path: %s", anon.Body)
 	}
 
 	for name, req := range map[string]*http.Request{
@@ -435,10 +435,74 @@ func TestHealthDisclosure(t *testing.T) {
 		}
 	}
 
-	// A wrong key is reported, not downgraded to the public view, so a
-	// replication connection test can't pass with a bad key.
 	if w := serve(srv, boundaryRequest(http.MethodGet, "/api/v1/health", remotePeer, lanHost, map[string]string{"X-API-Key": "wrong"})); w.Code != http.StatusUnauthorized {
 		t.Errorf("health with wrong key = %d, want 401", w.Code)
+	}
+}
+
+// With no key configured, a remote caller is told where to create one.
+func TestNoKeyRefusalNamesUnraidUI(t *testing.T) {
+	srv := NewServer(testDB(t), ServerConfig{Addr: ":0"})
+	w := serve(srv, boundaryRequest(http.MethodGet, "/api/v1/jobs", remotePeer, lanHost, nil))
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "Unraid web UI") {
+		t.Errorf("refusal = %d %s, want 401 naming the Unraid web UI", w.Code, w.Body)
+	}
+}
+
+// The two clients that need a key, in the exact form their code sends it. Paths
+// come from internal/replication/client.go and ha-vault's api/client.py, whose
+// requests also carry Authorization and no Origin or Sec-Fetch headers.
+func TestKeyClientsAreAccepted(t *testing.T) {
+	database := testDB(t)
+	key := setTestAPIKey(t, database)
+	srv := NewServer(database, ServerConfig{Addr: ":0", Version: "1.2.3"})
+	ha := map[string]string{"X-API-Key": key, "Authorization": "Bearer " + key}
+	replication := map[string]string{"X-API-Key": key}
+	for _, tc := range []struct {
+		name    string
+		path    string
+		headers map[string]string
+	}{
+		{"ha health", "/api/v1/health", ha},
+		{"ha summary", "/api/v1/health/summary", ha},
+		{"ha jobs", "/api/v1/jobs", ha},
+		{"ha settings", "/api/v1/settings", ha},
+		{"replication health", "/api/v1/health", replication},
+		{"replication jobs", "/api/v1/jobs", replication},
+	} {
+		if w := serve(srv, boundaryRequest(http.MethodGet, tc.path, remotePeer, lanHost, tc.headers)); w.Code != http.StatusOK {
+			t.Errorf("%s = %d, want 200: %s", tc.name, w.Code, w.Body)
+		}
+	}
+	// A steady poll from one address never reaches the attempt limiter.
+	for range apiKeyAttemptsPerMinute * 2 {
+		if w := serve(srv, boundaryRequest(http.MethodGet, "/api/v1/health", remotePeer, lanHost, ha)); w.Code != http.StatusOK {
+			t.Fatalf("polling with the key = %d, want 200", w.Code)
+		}
+	}
+}
+
+// Real connection: Home Assistant's WebSocket sends the key as a header and no Origin.
+func TestHomeAssistantWebSocketAccepted(t *testing.T) {
+	database := testDB(t)
+	key := setTestAPIKey(t, database)
+	srv := NewServer(database, ServerConfig{Addr: ":0"})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr, r.Host = remotePeer, lanHost
+		srv.router.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws"
+
+	header := http.Header{"X-Api-Key": {key}}
+	conn, _, err := websocket.Dial(context.Background(), url, &websocket.DialOptions{HTTPHeader: header})
+	if err != nil {
+		t.Fatalf("dial with key: %v", err)
+	}
+	defer conn.CloseNow()
+
+	if _, resp, err := websocket.Dial(context.Background(), url, nil); err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("dial with no key: resp=%v err=%v, want 401", resp, err)
 	}
 }
 
@@ -470,8 +534,7 @@ var localOnlyRoutes = map[string]bool{
 // publicRoutes is every route reachable with no credential. Adding to this
 // list is a security decision: it needs a reason in review.
 var publicRoutes = map[string]bool{
-	"GET /*":             true, // embedded SPA assets, no data
-	"GET /api/v1/health": true, // status and mode only, see TestHealthDisclosure
+	"GET /*": true, // embedded SPA assets, no data
 }
 
 var secretLookingRoute = regexp.MustCompile(`(?i)(passphrase|server-key|api-key|secret|token|credential)`)

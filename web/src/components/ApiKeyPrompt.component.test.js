@@ -25,7 +25,7 @@ describe('ApiKeyPrompt', () => {
   it('points a browser with no key at every way to get one', () => {
     render(ApiKeyPrompt)
     const text = document.body.textContent
-    expect(text).toContain('Unraid plugin page')
+    expect(text).toContain('Unraid web UI')
     expect(text).toContain('SSH tunnel')
     expect(text).toContain('vault api-key generate')
   })

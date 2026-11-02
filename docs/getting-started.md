@@ -32,7 +32,7 @@ Click **Open Web UI** on the Vault settings page, or navigate to:
 http://<your-unraid-ip>:24085
 ```
 
-> **Accessing directly on port 24085:** By default Vault binds to `127.0.0.1`, so it is reachable only through the Unraid plugin proxy. To access it directly (e.g. from Home Assistant or the CLI), change `BIND_ADDRESS` to `0.0.0.0` or your server's LAN IP under **Settings → Vault** in Unraid and restart the daemon. Remote clients are refused until you create an API key, under **Settings → Security → API Access** or with `vault api-key generate` on the server.
+> **Accessing directly on port 24085:** By default Vault binds to `127.0.0.1`, so it is reachable only through the Unraid plugin proxy. To access it directly (e.g. from Home Assistant or the CLI), change `BIND_ADDRESS` to `0.0.0.0` or your server's LAN IP under **Settings → Vault** in Unraid and restart the daemon. You still don't need a key to use Vault from the Unraid web UI. A key is only needed for replication and for Home Assistant; generate it under **Settings → Security → API Access**.
 
 ### Network discovery (mDNS)
 
@@ -169,7 +169,7 @@ Each restore point also shows chain health annotations so you can see the refere
 This can appear if the daemon restarts mid-request. Wait a few seconds and refresh — your job was likely saved successfully. If the error persists, check the **Logs** page for details.
 
 **Configuration lost after reboot**
-Vault uses a hybrid SQLite layout — a working DB in RAM, a periodic snapshot on a discovered cache pool, and a USB shadow on the Unraid flash drive. On boot it restores the freshest valid copy among the persisted copies (cache snapshot, rotated copies, USB shadow, and the USB-direct database left by a boot where no pool was mounted), so configuration — including the Temporary Work Area path — survives reboots and pool-mount races. You can confirm which source was used by running `curl http://127.0.0.1:24085/api/v1/health` on the server (`startup.restoration`); remote callers need the API key to see this detail. If you've changed the snapshot path manually, confirm it points to persistent storage under **Settings → General → Database Location**.
+Vault uses a hybrid SQLite layout — a working DB in RAM, a periodic snapshot on a discovered cache pool, and a USB shadow on the Unraid flash drive. On boot it restores the freshest valid copy among the persisted copies (cache snapshot, rotated copies, USB shadow, and the USB-direct database left by a boot where no pool was mounted), so configuration — including the Temporary Work Area path — survives reboots and pool-mount races. You can confirm which source was used by running `curl http://127.0.0.1:24085/api/v1/health` on the server (`startup.restoration`). If you've changed the snapshot path manually, confirm it points to persistent storage under **Settings → General → Database Location**.
 
 **What is `/mnt/user/.vault`?**
 It is Vault's database snapshot directory, `<pool>/.vault`, which holds `vault.db` and its `rotated/` copies. Unraid shows every top-level pool directory as a user share, so it also appears under `/mnt/user`. Don't delete it while Vault is running; move it under **Settings → General → Database Location** instead. `.vault-stage` next to it is temporary staging.

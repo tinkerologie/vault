@@ -164,11 +164,6 @@ func (c *Client) TestConnection() (*HealthResponse, error) {
 	if err := c.getJSON("/api/v1/health", &resp); err != nil {
 		return nil, fmt.Errorf("test connection: %w", err)
 	}
-	// /health answers without a key but only reports its version to callers
-	// that have one, and every other replication request needs a key.
-	if resp.Version == "" {
-		return nil, fmt.Errorf("test connection: the source requires an API key")
-	}
 	return &resp, nil
 }
 
