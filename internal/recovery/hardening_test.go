@@ -148,6 +148,9 @@ func TestWriteFileSurvivesSwappedDirectory(t *testing.T) {
 }
 
 func TestExtractorWritesThroughItemHandle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links are never recreated on Windows")
+	}
 	x := newTestExtractor(t)
 	stamp := time.Unix(1000, 0)
 	if err := x.mkdir("d/e", 0o750, stamp); err != nil {
