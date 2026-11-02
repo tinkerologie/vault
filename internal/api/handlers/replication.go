@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/credentials"
@@ -172,6 +173,13 @@ func mergeReplicationKey(incoming db.ReplicationSource, stored db.ReplicationSou
 	}
 	if credentials.IsLocked(incoming.Config) {
 		return "", errors.New("config must not contain sealed values")
+	}
+	// The sync decodes field names without regard to case, so treat them alike.
+	for k, v := range in {
+		if k != "api_key" && strings.EqualFold(k, "api_key") {
+			in["api_key"] = v
+			delete(in, k)
+		}
 	}
 	key, _ := in["api_key"].(string)
 	storedKey, _ := ex["api_key"].(string)

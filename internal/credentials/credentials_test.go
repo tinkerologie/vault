@@ -167,6 +167,10 @@ func TestMergeStorageEdit(t *testing.T) {
 		{"webdav url login, verification off", "webdav", `{"url":"https://b:c@a/x"}`, `{"url":"https://a/x","insecure_skip_verify":true}`, true},
 		{"webdav url login, new server", "webdav", `{"url":"https://b:c@a/x"}`, `{"url":"https://evil/x"}`, true},
 		{"webdav url login, new server with typed password", "webdav", `{"url":"https://b:c@a/x"}`, `{"url":"https://new/x","username":"b","password":"typed"}`, false},
+		{"capitalized host", "smb", `{"host":"a","password":"p"}`, `{"HOST":"evil","password":"` + m + `"}`, true},
+		{"second spelling of host", "smb", `{"host":"a","password":"p"}`, `{"host":"a","HOST":"evil","password":"` + m + `"}`, true},
+		{"capitalized stored host", "smb", `{"Host":"a","password":"p"}`, `{"host":"a","Password":"` + m + `"}`, false},
+		{"capitalized url login", "webdav", `{"URL":"https://b:c@a/x"}`, `{"url":"https://evil/x"}`, true},
 		{"unknown type nested values", "new", `{"opts":{"a":1},"password":"p"}`, `{"opts":{"a":2},"password":"` + m + `"}`, true},
 		{"unknown type nested same", "new", `{"opts":{"a":[1]},"password":"p"}`, `{"opts":{"a":[1]},"password":"` + m + `"}`, false},
 		{"unknown type removed field", "new", `{"server":"a","password":"p"}`, `{"password":"` + m + `"}`, true},
@@ -308,5 +312,28 @@ func TestLockedForValidation(t *testing.T) {
 	}
 	if LockedForValidation("nope") != "nope" {
 		t.Fatal("malformed input changed")
+	}
+}
+
+func TestSecretNamesIgnoreCase(t *testing.T) {
+	t.Parallel()
+	in := `{"host":"nas","Password":"hunter2","API_KEY":"hunter3","Access_Key":"hunter4"}`
+	sealed, err := Seal(testKey, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sealed, "hunter") {
+		t.Fatalf("capitalized secret stored in plaintext: %s", sealed)
+	}
+	if opened := Open(testKey, sealed); !strings.Contains(opened, `"Password":"hunter2"`) {
+		t.Fatalf("opened = %s", opened)
+	}
+	masked := Mask(in)
+	if strings.Contains(masked, "hunter2") || strings.Contains(masked, "hunter3") {
+		t.Fatalf("capitalized secret shown: %s", masked)
+	}
+	got := Preserve(`{"password":"`+RedactionMarker+`"}`, `{"Password":"hunter2"}`)
+	if !strings.Contains(got, "hunter2") {
+		t.Fatalf("stored secret not found under another spelling: %s", got)
 	}
 }

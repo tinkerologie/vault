@@ -52,10 +52,24 @@ var maskedKeys = map[string]bool{
 
 // sealedKeys are encrypted at rest. The S3 access key is sealed but stays
 // visible in the edit form, which needs it to show who the destination logs in as.
-func isSealedKey(k string) bool { return maskedKeys[k] || k == "access_key" }
+func isSealedKey(k string) bool { return IsMaskedKey(k) || strings.EqualFold(k, "access_key") }
 
-// IsMaskedKey reports whether a config field is hidden from read responses.
-func IsMaskedKey(k string) bool { return maskedKeys[k] }
+// IsMaskedKey reports whether a config field is hidden from read responses. Case
+// is ignored because the adapters decode JSON field names without regard to it.
+func IsMaskedKey(k string) bool { return maskedKeys[strings.ToLower(k)] }
+
+// foldGet reads a field by the same case rule as the adapters' JSON decoding.
+func foldGet(m map[string]any, field string) any {
+	if v, ok := m[field]; ok {
+		return v
+	}
+	for k, v := range m {
+		if strings.EqualFold(k, field) {
+			return v
+		}
+	}
+	return nil
+}
 
 func parseObject(config string) (map[string]any, bool) {
 	dec := json.NewDecoder(strings.NewReader(config))
@@ -294,7 +308,7 @@ func Preserve(incoming, existing string) string {
 		if !isStr {
 			continue
 		}
-		old, isOldStr := ex[k].(string)
+		old, isOldStr := foldGet(ex, k).(string)
 		if !isOldStr {
 			continue
 		}
@@ -399,11 +413,20 @@ func destinationChanged(storageType string, in, ex map[string]any) bool {
 		return !reflect.DeepEqual(visibleFields(in), visibleFields(ex))
 	}
 	for _, f := range fields {
-		// A masked value is the stored value, unchanged.
-		if s, _ := in[f].(string); s == RedactionMarker {
-			continue
+		stored := destinationValue(storageType, f, foldGet(ex, f))
+		present := false
+		// Every spelling counts: {"host":"a","HOST":"evil"} decodes to either.
+		for k, v := range in {
+			if !strings.EqualFold(k, f) {
+				continue
+			}
+			present = true
+			// A masked value is the stored value, unchanged.
+			if s, _ := v.(string); s != RedactionMarker && destinationValue(storageType, f, v) != stored {
+				return true
+			}
 		}
-		if destinationValue(storageType, f, in[f]) != destinationValue(storageType, f, ex[f]) {
+		if !present && destinationValue(storageType, f, nil) != stored {
 			return true
 		}
 	}
@@ -420,11 +443,11 @@ func MergeStorageEdit(storedType, newType, incoming, existing string) (string, e
 	if !inOK || !exOK {
 		return Preserve(incoming, existing), nil
 	}
-	password, _ := in["password"].(string)
+	password, _ := foldGet(in, "password").(string)
 	typedPassword := password != "" && password != RedactionMarker
 	reusesSecret := false
 	for k, v := range in {
-		old, isOldStr := ex[k].(string)
+		old, isOldStr := foldGet(ex, k).(string)
 		s, isStr := v.(string)
 		if !isStr || !isOldStr || old == "" {
 			continue
@@ -460,6 +483,10 @@ func LockedForValidation(config string) string {
 	for k, v := range m {
 		if s, isStr := v.(string); isStr && isSealed(s) {
 			m[k] = "locked"
+			// A sealed URL still has to pass the adapter's URL checks.
+			if strings.EqualFold(k, "url") || strings.EqualFold(k, "endpoint") {
+				m[k] = "https://locked.invalid"
+			}
 		}
 	}
 	return marshal(m)

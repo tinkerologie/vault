@@ -104,6 +104,8 @@ func TestReplicationUpdateKeepsOrReplacesTheKey(t *testing.T) {
 		{"marker keeps", `"{\"api_key\":\"` + credentials.RedactionMarker + `\"}"`, replKey},
 		{"blank keeps", `"{\"api_key\":\"\"}"`, replKey},
 		{"omitted field keeps", `"{}"`, replKey},
+		{"capitalized marker keeps", `"{\"API_KEY\":\"` + credentials.RedactionMarker + `\"}"`, replKey},
+		{"capitalized new value replaces", `"{\"API_KEY\":\"rotated\"}"`, "rotated"},
 		{"new value replaces", `"{\"api_key\":\"rotated\"}"`, "rotated"},
 	}
 	for _, tt := range tests {
@@ -459,5 +461,28 @@ func TestSealedValuesAreRefusedAsInput(t *testing.T) {
 	rh.Create(w, httptest.NewRequest(http.MethodPost, "/x", bytes.NewBufferString(`{"name":"n","url":"http://n.lan","config":`+cfg+`}`)))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("replication create: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestLockedURLLoginStillSavesOtherFields(t *testing.T) {
+	t.Parallel()
+	h, _, _ := newFileBackedStorageHandler(t)
+	h.db.SetCredentialKey(testSealKey)
+	id, err := h.db.CreateStorageDestination(db.StorageDestination{Name: "dav", Type: "webdav", Config: `{"url":"https://bob:pw@dav.example/x"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.db.SetCredentialKey([]byte("ffffffffffffffffffffffffffffffff"))
+	dest, _ := h.db.GetStorageDestination(id)
+	body, _ := json.Marshal(map[string]string{"name": "renamed", "config": redactConfig(dest.Config)})
+	w := httptest.NewRecorder()
+	h.Update(w, reqWithID(http.MethodPut, "/x", idStr(id), body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("locked URL edit: %d %s", w.Code, w.Body.String())
+	}
+	h.db.SetCredentialKey(testSealKey)
+	dest, _ = h.db.GetStorageDestination(id)
+	if dest.Name != "renamed" || !strings.Contains(dest.Config, "bob:pw") {
+		t.Fatalf("after = %+v", dest)
 	}
 }

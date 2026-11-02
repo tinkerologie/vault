@@ -70,6 +70,10 @@ func TestValidateConfigAcceptsLockedSecretsOnly(t *testing.T) {
 	if err := ValidateConfig("smb", locked); err != nil {
 		t.Fatalf("locked secret: %v", err)
 	}
+	sealedURL := `{"url":"vault-sealed:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`
+	if err := ValidateConfig("webdav", sealedURL); err != nil {
+		t.Fatalf("locked URL: %v", err)
+	}
 	if err := ValidateConfig("bogus", `{}`); err == nil {
 		t.Fatal("unknown type accepted")
 	}
@@ -107,6 +111,9 @@ func TestCredentialRedirectGuard(t *testing.T) {
 		{"upgrade", "http://dav/a", "https://dav/b", true},
 		{"downgrade", "https://dav/a", "http://dav/b", false},
 		{"other host", "https://dav/a", "https://evil/b", false},
+		{"other port", "https://dav/a", "https://dav:8443/b", false},
+		{"same port spelled out", "https://dav/a", "https://dav:443/b", true},
+		{"upgrade to another port", "http://dav/a", "https://dav:8443/b", false},
 	} {
 		rec := &recordingTransport{}
 		resp, err := credentialRedirectGuard{base: rec}.RoundTrip(redirectRequest(t, tc.from, tc.to))

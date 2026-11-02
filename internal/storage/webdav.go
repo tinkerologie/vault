@@ -419,8 +419,8 @@ func (g credentialRedirectGuard) RoundTrip(req *http.Request) (*http.Response, e
 		if from.Scheme == "https" && req.URL.Scheme != "https" {
 			return nil, fmt.Errorf("webdav: refusing to send credentials on a redirect from https to %s", req.URL.Scheme)
 		}
-		if !strings.EqualFold(from.Hostname(), req.URL.Hostname()) {
-			return nil, fmt.Errorf("webdav: refusing to send credentials on a redirect to %s", req.URL.Hostname())
+		if !sameServer(from, req.URL) {
+			return nil, fmt.Errorf("webdav: refusing to send credentials on a redirect to %s", req.URL.Host)
 		}
 	}
 	return g.base.RoundTrip(req)
@@ -431,6 +431,26 @@ func (g credentialRedirectGuard) RoundTrip(req *http.Request) (*http.Response, e
 // Centralising the construction keeps the phase-specific timeouts, TLS
 // settings, and proxy honouring in one place. See client() for the rationale
 // behind the individual timeout choices.
+// sameServer reports whether a redirect stays on one service: the same host and
+// port, or the plain upgrade from the default HTTP port to the default HTTPS port.
+func sameServer(from, to *neturl.URL) bool {
+	if !strings.EqualFold(from.Hostname(), to.Hostname()) {
+		return false
+	}
+	fromPort, toPort := effectivePort(from), effectivePort(to)
+	return fromPort == toPort || (fromPort == "80" && toPort == "443")
+}
+
+func effectivePort(u *neturl.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
+}
+
 func (w *WebDAVAdapter) transport() *http.Transport {
 	t := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
