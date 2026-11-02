@@ -536,10 +536,17 @@ func (h *StorageHandler) DeleteOrphans(w http.ResponseWriter, r *http.Request) {
 // Scan discovers existing backups on a storage destination by reading
 // manifest.json files from each backup run directory.
 //
+// A passphrase is accepted only in the JSON body. One in the query string is
+// refused, because URLs end up in proxy logs and browser history.
+//
 //	POST /api/v1/storage/{id}/scan
 func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
 	if !ok {
+		return
+	}
+	if r.URL.Query().Has("passphrase") {
+		respondError(w, http.StatusBadRequest, "passphrase must be sent in the JSON request body, not the URL")
 		return
 	}
 	dest, err := h.db.GetStorageDestination(id)
@@ -553,18 +560,17 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		Passphrase string `json:"passphrase"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			respondError(w, http.StatusBadRequest, "invalid JSON request body")
+			return
+		}
 	}
 	path := req.Path
 	if path == "" {
 		path = r.URL.Query().Get("path")
 	}
-	passphrase := req.Passphrase
-	if passphrase == "" {
-		passphrase = r.URL.Query().Get("passphrase")
-	}
 
-	manifests, err := h.runner.ScanStorageManifests(dest, passphrase)
+	manifests, err := h.runner.ScanStorageManifests(dest, req.Passphrase)
 	if err != nil {
 		respondInternalError(w, err)
 		return
