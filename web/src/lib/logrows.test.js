@@ -421,3 +421,18 @@ describe('logEmptyState', () => {
     expect(logEmptyState(input)).toEqual({ kind: 'loading', text })
   })
 })
+
+describe('buildRows folding entries with no level or category', () => {
+  const entry = (id, fields = {}) => ({ id, ts: '2026-10-20T12:00:00Z', message: 'Same line', ...fields })
+  const now = new Date('2026-10-20T13:00:00Z')
+  const repeats = (entries) => buildRows(entries, { collapse: true, now }).filter((r) => r.kind === 'entry').map((r) => r.repeat)
+
+  it('folds them together, reading a missing level as info', () => {
+    expect(repeats([entry('a'), entry('b'), entry('c', { level: 'info' })])).toEqual([3])
+  })
+
+  it('keeps them apart from the same line at another level or category', () => {
+    expect(repeats([entry('a'), entry('b', { level: 'error' })])).toEqual([1, 1])
+    expect(repeats([entry('a'), entry('b', { category: 'backup' })])).toEqual([1, 1])
+  })
+})

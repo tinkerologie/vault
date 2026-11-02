@@ -664,3 +664,40 @@ func TestJobStaleAfter_LastDayMatchesTheSchedulersRuns(t *testing.T) {
 		t.Errorf("jobStaleAfter = %v, want %v", got, want)
 	}
 }
+
+// A last-day schedule filtered to a weekday can go over a decade between runs:
+// February's last day was a Monday in 2022 and next is in 2033. With no usable
+// cadence, the staleness allowance is the search bound.
+func TestJobStaleAfter_RareSchedulesFallBackToTheSearchBound(t *testing.T) {
+	const lastMondayOfFebruary = "0 2 L 2 1"
+	cases := []struct {
+		name string
+		spec string
+		now  time.Time
+	}{
+		{"next run is past the bound", lastMondayOfFebruary, time.Date(2022, time.March, 1, 0, 0, 0, 0, time.UTC)},
+		{"the run after next is past the bound", lastMondayOfFebruary, time.Date(2021, time.June, 1, 0, 0, 0, 0, time.UTC)},
+		{"never fires", "0 2 31 2 *", time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := jobStaleAfter(db.Job{Enabled: true, Schedule: tc.spec}, tc.now); got != maxScheduleGap {
+				t.Errorf("jobStaleAfter = %v, want %v", got, maxScheduleGap)
+			}
+		})
+	}
+}
+
+func TestScheduleStepper_ReportsNoRunWithinTheBound(t *testing.T) {
+	next, err := scheduleStepper("0 2 L 2 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok := next(time.Date(2021, time.June, 1, 0, 0, 0, 0, time.UTC))
+	if want := time.Date(2022, time.February, 28, 2, 0, 0, 0, time.UTC); !ok || !first.Equal(want) {
+		t.Fatalf("first run = %v, %v, want %v", first, ok, want)
+	}
+	if at, ok := next(first); ok || !at.IsZero() {
+		t.Errorf("run after 2022 = %v, %v, want none within the bound", at, ok)
+	}
+}

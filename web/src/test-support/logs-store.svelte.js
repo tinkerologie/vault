@@ -27,6 +27,7 @@ export function createFixtureStore({ entries = [], hasMore = false } = {}) {
   let _jobFilter = $state('')
   let _search = $state('')
   let _searching = $state(false)
+  let _historyStopped = $state(false)
 
   // Same filtering as the real store (unifiedlog.svelte.js), so `filtered`
   // and `entries` can never disagree.
@@ -54,6 +55,7 @@ export function createFixtureStore({ entries = [], hasMore = false } = {}) {
     get error() { return _error },
     get searching() { return _searching },
     get hasMore() { return _hasMore },
+    get historyStopped() { return _historyStopped },
     get pruned() { return _pruned },
     get category() { return _category },
     get levelFilter() { return _levelFilter },
@@ -98,6 +100,7 @@ export function createFixtureStore({ entries = [], hasMore = false } = {}) {
     setHasMore(v) { _hasMore = v },
     setError(v) { _error = v },
     setPruned(v) { _pruned = v },
+    setHistoryStopped(v) { _historyStopped = v },
     /** Entries the next loadOlder() prepends to the (oldest-first) buffer. */
     setOlderBatch(list) { olderBatch = list },
     /** Keep the next load() pending until the returned handle resolves. */

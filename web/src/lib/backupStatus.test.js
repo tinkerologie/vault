@@ -221,6 +221,7 @@ describe('healthTone', () => {
     ['failures from the summary', { ...SUMMARY, recent_failed: 1 }, {}, 'warning'],
     ['middling', { ...SUMMARY, health_score: 60 }, {}, 'warning'],
     ['low', { ...SUMMARY, health_score: 49 }, {}, 'danger'],
+    ['high, with no failure count anywhere', { health_score: 100, protected_items: 7, recent_success: 5 }, {}, 'success'],
     ['no score', {}, {}, 'danger'],
   ])('%s', (_name, summary, counts, expected) => {
     expect(healthTone(summary, counts)).toBe(expected)
@@ -253,6 +254,7 @@ describe('false "Backups healthy" (#527)', () => {
     ['several stale jobs', { summary: { ...SUMMARY, stale_jobs: [STALE, STALE] } }, 'warning', ['/jobs'], '2 jobs have no recent backup'],
     ['a low score', { summary: { ...SUMMARY, health_score: 40 } }, 'warning', ['/history'], 'Health score 40 of 100'],
     ['a middling score', { summary: { ...SUMMARY, health_score: 79 } }, 'warning', ['/history'], 'Health score 79 of 100'],
+    ['a missing score', { summary: { protected_items: 7, recent_success: 5 } }, 'warning', ['/history'], 'Health score 0 of 100'],
   ])('%s needs attention, names the problem and links to it', (_name, input, tone, expectedHrefs, detail) => {
     const status = deriveBackupStatus({ ...READY, ...input })
     expect(status.state).toBe('attention')

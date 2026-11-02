@@ -391,6 +391,40 @@ func TestActivityList_MarksEntriesWhoseRunIsGone(t *testing.T) {
 	}
 }
 
+// A failed run lookup mustn't cost the reader the activity page: entries come
+// back unmarked, and the page copes with the 404 if it asks for a gone run's log.
+func TestActivityList_FailedRunLookupLeavesEntriesUnmarked(t *testing.T) {
+	d := newTestDB(t)
+	d.LogActivity("info", "backup", "unknown", `{"run_id":999,"run_log":true}`)
+	for _, stmt := range []string{`PRAGMA foreign_keys = OFF`, `DROP TABLE job_runs`} {
+		if _, err := d.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	NewActivityHandler(d).List(w, httptest.NewRequest(http.MethodGet, "/api/v1/activity", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var entries []db.ActivityLogEntry
+	if err := json.NewDecoder(w.Body).Decode(&entries); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.Message == "unknown" {
+			found = true
+			if e.RunGone {
+				t.Error("run_gone = true, but the lookup failed so nothing is known")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("entry missing from %+v", entries)
+	}
+}
+
 func TestExistingJobRunIDs_NoIDs(t *testing.T) {
 	existing, err := newTestDB(t).ExistingJobRunIDs(nil)
 	if err != nil || len(existing) != 0 {

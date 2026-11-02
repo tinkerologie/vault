@@ -494,6 +494,149 @@ describe('Problems filter (#534)', () => {
     expect(screen.queryByText('No problems')).toBeNull()
     expect(screen.getByText('Checking older logs for problems…')).toBeTruthy()
   })
+
+  it('offers a retry when older logs could not be loaded, since the list may be incomplete', async () => {
+    const { store } = await mountLogs({
+      entries: makeEntries(2),
+      hasMore: true,
+      before: (c) => c.setHistoryStopped(true),
+    })
+    await fireEvent.click(toggle())
+    await flush()
+    expect(screen.getByText('No problems in the logs loaded so far')).toBeTruthy()
+    expect(screen.queryByText('No problems')).toBeNull()
+
+    const loads = store.loadAll.mock.calls.length
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(store.loadAll).toHaveBeenCalledTimes(loads + 1)
+  })
+})
+
+describe('jumpToPresent', () => {
+  it('smooth-scrolls to the top, and pins the live edge only once the scroll settles', async () => {
+    const { control, console: box } = await mountLogs()
+    await userScroll(geo, box(), 200)
+    await fireEvent.click(jumpToPresent())
+    await flush()
+    expect(geo.scrollToCalls).toEqual([{ top: 0, behavior: 'smooth' }])
+    expect(jumpToPresent()).toBeNull()
+
+    // A pin now would cancel the animation.
+    geo.writes.length = 0
+    control.addNewer(makeEntries(1, { start: 1000 }))
+    await flush()
+    expect(geo.writes).not.toContain(0)
+
+    await fireEvent(box(), new Event('scrollend'))
+    control.addNewer(makeEntries(1, { start: 1001 }))
+    await flush()
+    expect(geo.writes).toContain(0)
+  })
+
+  it('pins straight away when already at the top, where no scrollend would ever fire', async () => {
+    const entries = makeEntries(3).map((e) => ({ ...e, level: 'warn', message: `Health check, container=${e.id}, status=unhealthy` }))
+    const { control } = await mountLogs({ entries })
+    // Opening a row at the live edge pauses follow without moving the console.
+    await fireEvent.click(document.querySelector('[data-entry-id] [aria-expanded]'))
+    await flush()
+    await fireEvent.click(jumpToPresent())
+    await flush()
+    expect(geo.scrollToCalls).toEqual([])
+    expect(jumpToPresent()).toBeNull()
+
+    geo.writes.length = 0
+    control.addNewer(makeEntries(1, { start: 1000 }))
+    await flush()
+    expect(geo.writes).toContain(0)
+  })
+})
+
+describe('anchoring an open row', () => {
+  const problems = () => makeEntries(3).map((e, i) => ({ ...e, level: 'warn', message: `Health check, container=c${i}, status=unhealthy` }))
+
+  /** Lay rows out top to bottom under the console's scroll position, or `rowTop` for all. */
+  function stubRowTops(rowTop) {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      if (!this.dataset?.entryId) return { top: 0 }
+      if (rowTop !== undefined) return { top: rowTop }
+      const log = this.closest('[role="log"]')
+      return { top: [...log.querySelectorAll('[data-entry-id]')].indexOf(this) * geo.rowHeight - log.scrollTop }
+    })
+  }
+
+  it('holds the topmost visible line once the focused line has gone', async () => {
+    const entries = problems()
+    const { control, console: box } = await mountLogs({ entries: [...makeEntries(50), ...entries] })
+    stubRowTops()
+    await fireEvent.click(document.querySelector(`[data-entry-id="${entries[1].id}"] [aria-expanded]`))
+    await flush()
+    await userScroll(geo, box(), 300)
+    control.setEntries(makeEntries(60, { start: 2000 }))
+    await flush()
+    await userScroll(geo, box(), 300)
+
+    control.addNewer(makeEntries(1, { start: 3000 }))
+    await flush()
+    expect(box().scrollTop).toBe(320)
+  })
+
+  it('still keeps the reading position when no line is visible to hold', async () => {
+    const entries = problems()
+    const { control, console: box } = await mountLogs({ entries: [...makeEntries(50), ...entries] })
+    await fireEvent.click(document.querySelector(`[data-entry-id="${entries[1].id}"] [aria-expanded]`))
+    await flush()
+    await userScroll(geo, box(), 300)
+    control.setEntries(makeEntries(60, { start: 2000 }))
+    await flush()
+    await userScroll(geo, box(), 300)
+
+    // Every row now starts above the console's top edge.
+    stubRowTops(-100)
+    control.addNewer(makeEntries(1, { start: 3000 }))
+    await flush()
+    expect(box().scrollTop).toBe(320)
+  })
+})
+
+describe('row marking and display', () => {
+  it('does not mark a row for a press outside every row', async () => {
+    const { console: box } = await mountLogs({ entries: makeEntries(2) })
+    await fireEvent.pointerDown(box().querySelector('[data-end-marker]'))
+    await flush()
+    expect(box().querySelector('.bg-vault\\/15')).toBeNull()
+  })
+
+  it('highlights the search box while a search is active, until it is cleared', async () => {
+    await mountLogs({ entries: makeEntries(2) })
+    const input = screen.getByPlaceholderText('Filter logs…')
+    expect(input.className).not.toContain('border-vault')
+    await fireEvent.input(input, { target: { value: 'Log line 1' } })
+    await flush()
+    expect(input.className).toContain('border-vault')
+    expect(rowCount()).toBe(1)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+    await flush()
+    expect(input.className).not.toContain('border-vault')
+    expect(rowCount()).toBe(2)
+  })
+
+  it('wraps message text while Wrap is on', async () => {
+    await mountLogs({ entries: makeEntries(1) })
+    const message = () => screen.getByTitle('Log line 0')
+    expect(message().className).toContain('whitespace-nowrap')
+    await fireEvent.click(screen.getByRole('button', { name: /^Wrap:/ }))
+    await flush()
+    expect(message().className).toContain('whitespace-pre-wrap')
+    expect(message().className).not.toContain('whitespace-nowrap')
+  })
+
+  it('sets a run summary line apart from ordinary lines', async () => {
+    const [plain, summary] = makeEntries(2)
+    await mountLogs({ entries: [plain, { ...summary, type: 'summary', message: 'Backup finished' }] })
+    expect(screen.getByTitle('Backup finished').className).toContain('font-medium')
+    expect(screen.getByTitle(plain.message).className).not.toContain('font-medium')
+  })
 })
 
 /** The entries the current fixture store holds, oldest first. */

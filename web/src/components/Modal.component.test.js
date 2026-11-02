@@ -5,7 +5,7 @@ import { render, screen } from '@testing-library/svelte'
 import { fireEvent } from '@testing-library/dom'
 import { createRawSnippet, tick } from 'svelte'
 import Modal from './Modal.svelte'
-import { floatAboveDialogs } from '../lib/dialog.js'
+import { floatAboveDialogs, modalDialog } from '../lib/dialog.js'
 
 const html = (markup) => createRawSnippet(() => ({ render: () => markup }))
 
@@ -279,11 +279,126 @@ describe('floatAboveDialogs', () => {
   })
 })
 
+describe('Modal focus edge cases', () => {
+  it.each([
+    ['hidden', '<div hidden><button id="a">A</button></div><button id="b">B</button>'],
+    ['inert', '<div inert><button id="a">A</button></div><button id="b">B</button>'],
+  ])('never focuses a control inside a %s subtree', async (_name, markup) => {
+    await open({ title: '', label: 'No header' }, markup)
+    expect(document.activeElement.id).toBe('b')
+  })
+
+  it('skips a control the browser reports as not visible', async () => {
+    Element.prototype.checkVisibility = function checkVisibility() { return this.id !== 'a' }
+    try {
+      await open({ title: '', label: 'No header' })
+      expect(document.activeElement.id).toBe('b')
+    } finally {
+      delete Element.prototype.checkVisibility
+    }
+  })
+
+  it('keeps watching the opener through unrelated page changes while it holds focus', async () => {
+    const { unmount } = await open()
+    unmount()
+    await flush()
+    expect(document.activeElement).toBe(opener)
+
+    main.append(document.createElement('div'))
+    await flush()
+    expect(document.activeElement).toBe(opener)
+
+    opener.remove()
+    await flush()
+    expect(document.activeElement).toBe(main)
+  })
+
+  it('leaves focus alone when the opener vanishes after focus went somewhere else', async () => {
+    const other = document.createElement('button')
+    main.append(other)
+    const { unmount } = await open()
+    unmount()
+    await flush()
+    other.focus()
+    opener.remove()
+    await flush()
+    expect(document.activeElement).toBe(other)
+  })
+
+  it('leaves focus where a route change moved it as the dialog closed', async () => {
+    const heading = document.createElement('h1')
+    heading.tabIndex = -1
+    main.append(heading)
+    const { unmount } = await open()
+    const dialog = document.querySelector('dialog')
+    // Runs after unmount has read the focus, and before focus is restored.
+    const observer = new MutationObserver(() => heading.focus())
+    observer.observe(dialog, { attributes: true })
+    unmount()
+    await flush()
+    observer.disconnect()
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('does not reopen a dialog that is already open, which a browser rejects', () => {
+    const dialog = document.createElement('dialog')
+    dialog.setAttribute('open', '')
+    main.append(dialog)
+    const showModal = vi.spyOn(dialog, 'showModal')
+    const action = modalDialog(dialog, () => {})
+    expect(showModal).not.toHaveBeenCalled()
+    action.destroy()
+    expect(dialog.open).toBe(false)
+  })
+
+  it('does not close again on unmount after a native close', async () => {
+    const { unmount } = await open()
+    const dialog = document.querySelector('dialog')
+    dialog.close()
+    const close = vi.spyOn(dialog, 'close')
+    unmount()
+    await flush()
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('leaves a floated node in place when another joins it', async () => {
+    await open()
+    const dialog = document.querySelector('dialog')
+    const home = document.createElement('section')
+    const first = document.createElement('div')
+    const second = document.createElement('div')
+    home.append(first, second)
+    document.body.append(home)
+    const firstAction = floatAboveDialogs(first)
+    const append = vi.spyOn(dialog, 'append')
+    const secondAction = floatAboveDialogs(second)
+    expect(append.mock.calls).toEqual([[second]])
+    expect(first.parentNode).toBe(dialog)
+    firstAction.destroy()
+    secondAction.destroy()
+    home.remove()
+  })
+})
+
 describe('Modal backdrop (#530)', () => {
   it('does not dismiss a normal dialog on a backdrop click, so work is not lost', async () => {
     const onclose = vi.fn()
     await open({ onclose })
     await fireEvent.click(document.querySelector('dialog'))
     expect(onclose).not.toHaveBeenCalled()
+  })
+
+  it('dismisses a sheet on a backdrop click, only while it is a sheet, and only from outside its panel', async () => {
+    const onclose = vi.fn()
+    const { rerender } = await open({ placement: 'sheet', onclose })
+    const dialog = document.querySelector('dialog')
+    await fireEvent.click(dialog.querySelector('#a'))
+    expect(onclose).not.toHaveBeenCalled()
+    await fireEvent.click(dialog)
+    expect(onclose).toHaveBeenCalledOnce()
+
+    await rerender({ placement: 'center' })
+    await fireEvent.click(dialog)
+    expect(onclose).toHaveBeenCalledOnce()
   })
 })
