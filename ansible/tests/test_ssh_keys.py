@@ -333,7 +333,7 @@ class SSHKeyTests(unittest.TestCase):
                 self.assertEqual(event["program"], "ssh")
                 self.assertTrue(f'IdentityFile="{key}"' in args, args)
                 self.assertTrue("PasswordAuthentication=no" in args, args)
-                self.assertTrue(any(a.startswith("ControlPath=/tmp/.vault-key-") for a in args), args)
+                self.assertTrue(any(a.startswith(("ControlPath=/tmp/.vault-key-", "ControlPath=\"/tmp/.vault-key-")) for a in args), args)
                 # ssh uses the first value it sees for an option.
                 values = [a for a in args if a.split("=")[0] in ("IdentitiesOnly", "BatchMode", "StrictHostKeyChecking")]
                 for option in REQUIRED_OPTIONS:
