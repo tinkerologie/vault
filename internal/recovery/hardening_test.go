@@ -146,3 +146,50 @@ func TestWriteFileSurvivesSwappedDirectory(t *testing.T) {
 		t.Fatalf("file created outside the item: %v", err)
 	}
 }
+
+func TestExtractorWritesThroughItemHandle(t *testing.T) {
+	x := newTestExtractor(t)
+	stamp := time.Unix(1000, 0)
+	if err := x.mkdir("d/e", 0o750, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.writeFile("d/f", strings.NewReader("data"), 0o640, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.copyHardlink("d/g", "d/f", 0o640, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if reason := x.symlink("d/link", "f"); reason != "" {
+		t.Fatalf("symlink: %s", reason)
+	}
+	// Replacing an existing link is allowed; replacing a file is not.
+	if reason := x.symlink("d/link", "g"); reason != "" {
+		t.Fatalf("relink: %s", reason)
+	}
+	if reason := x.symlink("d/f", "g"); reason == "" {
+		t.Fatal("symlink replaced a regular file")
+	}
+	if _, err := x.writeFile("d/link", strings.NewReader("x"), 0o640, stamp); err == nil {
+		t.Fatal("file written over a symlink")
+	}
+	if err := x.finish(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(x.root, "d", "e"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(stamp) {
+		t.Fatalf("directory mtime = %v", info.ModTime())
+	}
+	// Metadata is never applied through a symlink.
+	x.applyMeta(filepath.Join("d", "link"), 0o777, stamp)
+	target, err := os.Stat(filepath.Join(x.root, "d", "g"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Mode().Perm() == 0o777 {
+		t.Fatal("followed the link")
+	}
+	x.applyMeta("missing", 0o777, stamp)
+}

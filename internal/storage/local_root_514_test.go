@@ -305,3 +305,17 @@ func TestNFSMountRejectsBaseEscapingExport(t *testing.T) {
 		n.unmount()
 	}
 }
+
+func TestCheckBaseWithinMountErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := checkBaseWithinMount(filepath.Join(dir, "gone"), filepath.Join(dir, "gone", "x")); err == nil {
+		t.Fatal("unresolvable mount accepted")
+	}
+	loop := filepath.Join(dir, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkBaseWithinMount(dir, filepath.Join(loop, "x")); err == nil {
+		t.Fatal("symlink loop accepted")
+	}
+}

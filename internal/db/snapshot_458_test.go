@@ -327,3 +327,37 @@ func TestSnapshotRefusesSymlinks(t *testing.T) {
 		t.Error("RestoreFromPath accepted a system path")
 	}
 }
+
+func TestCopySnapshotPrivately(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "snap.db")
+	if err := os.WriteFile(src, []byte("bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	copied, remove, err := copySnapshotPrivately(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(copied)
+	if err != nil || string(got) != "bytes" {
+		t.Fatalf("copy = %q, %v", got, err)
+	}
+	info, err := os.Stat(copied)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("copy mode = %v, %v", info, err)
+	}
+	remove()
+	if _, err := os.Stat(copied); !os.IsNotExist(err) {
+		t.Fatalf("copy not removed: %v", err)
+	}
+	for name, bad := range map[string]string{
+		"system path": "/etc/hosts",
+		"directory":   dir,
+		"missing":     filepath.Join(dir, "missing.db"),
+		"no parent":   filepath.Join(dir, "gone", "x.db"),
+	} {
+		if _, _, err := copySnapshotPrivately(bad); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

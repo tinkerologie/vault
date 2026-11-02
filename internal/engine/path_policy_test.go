@@ -269,3 +269,51 @@ func TestMkdirRestoredThroughDanglingSymlinkFails(t *testing.T) {
 		t.Fatalf("existing directory: %v", err)
 	}
 }
+
+func TestApplyRestoredMetaRefusals(t *testing.T) {
+	t.Parallel()
+	mode := os.FileMode(0o777)
+	// Outside the approved roots, with no restore tree given.
+	applyRestoredMeta("", "/sbin/vault-no-such-file", restoredMeta{mode: &mode, uid: -1, gid: -1})
+	// Parent that does not resolve, and a base that does not exist.
+	base := t.TempDir()
+	file := filepath.Join(base, "f")
+	writeFile458(t, file, "x")
+	if err := os.Chmod(file, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	applyRestoredMeta(filepath.Join(base, "gone"), file, restoredMeta{mode: &mode, uid: -1, gid: -1})
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode changed despite the refusal: %v", info.Mode())
+	}
+	// Owner helpers: unknown ids are a no-op, known ids go through Lchown.
+	applyOwner(file, -1, -1)
+	applyOwner(file, os.Getuid(), os.Getgid())
+	applyModTimeFromTime(file, time.Time{})
+	if err := mkdirRestored("relative/dir", 0o755); err == nil {
+		t.Fatal("relative path accepted")
+	}
+}
+
+func TestPinRestoredParentApprovedRoots(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	root, name, err := pinRestoredParent("", filepath.Join(dir, "child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if name != "child" {
+		t.Fatalf("name = %q", name)
+	}
+	if _, _, err := pinRestoredParent("", "/sbin/x"); err == nil {
+		t.Fatal("path outside the approved roots pinned")
+	}
+	if err := symlinkPinned(filepath.Join(dir, "other"), "target", filepath.Join(dir, "link")); err == nil {
+		t.Fatal("symlink created outside its base")
+	}
+}

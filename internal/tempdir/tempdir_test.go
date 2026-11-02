@@ -696,3 +696,44 @@ func TestCreateDirSkipsUnsafeStageBase(t *testing.T) {
 		t.Fatalf("wrote through the symlink: %v", entries)
 	}
 }
+
+func TestStageDirRefusesNonDirectories(t *testing.T) {
+	file := filepath.Join(t.TempDir(), StageDirName)
+	if err := os.WriteFile(file, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(file)
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("file removed: %v", err)
+	}
+	if err := ensureStageDir(file); err == nil {
+		t.Fatal("regular file accepted as a stage directory")
+	}
+	if err := ensureStageDir(filepath.Join(t.TempDir(), "missing", StageDirName)); err == nil {
+		t.Fatal("missing parent accepted")
+	}
+	real := filepath.Join(t.TempDir(), StageDirName)
+	for range 2 { // creating and reusing are both fine
+		if err := ensureStageDir(real); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cleanStageDir(filepath.Join(t.TempDir(), "absent"))
+}
+
+// A symlinked stage directory on the cascade path falls through to the next one.
+func TestCreateDirCascadeSkipsSymlinkedStage(t *testing.T) {
+	victim, bad, good := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Symlink(victim, filepath.Join(bad, StageDirName)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(SetCachePathsForTest([]string{bad, good}))
+	dir, cleanup, err := CreateRestoreDir(StorageConfig{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if !strings.HasPrefix(dir, filepath.Join(good, StageDirName)) {
+		t.Fatalf("staged at %s", dir)
+	}
+}
