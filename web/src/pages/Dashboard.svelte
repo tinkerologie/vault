@@ -797,7 +797,7 @@
 <Toast message={toast.message} type={toast.type} key={toast.key} />
 
 {#snippet pendingBadge()}
-  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-amber-500 shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
+  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-hue-amber shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
     <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
     pending first backup
   </span>
@@ -851,7 +851,7 @@
       <div class="h-full {protectionBar} transition-all duration-500" style="width: {protectionPct}%"></div>
     </div>
     {#if hasUnprotectedItems}
-      <button onclick={() => navigate('/jobs')} class="text-[11px] text-vault-text hover:text-vault-dark font-medium mt-1.5 text-left">{unprotectedCount} unprotected →</button>
+      <button onclick={() => navigate('/jobs')} class="text-[11px] text-vault-text hover:underline font-medium mt-1.5 text-left">{unprotectedCount} unprotected →</button>
     {:else if fullyProtected}
       <p class="text-[11px] text-success mt-1.5 font-medium">All items covered</p>
     {:else}
@@ -917,7 +917,7 @@
       <div class="flex items-center gap-2 mb-2.5">
         <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
         <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{activeRunLabel}</span>
-        <span class="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-vault/15 text-vault font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
+        <span class="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-vault/15 text-vault-text font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
         {#if progress.activeRun.run_type !== 'restore'}
           <button onclick={cancelActiveRun} disabled={progress.cancelling}
             class="text-[11px] px-2 py-0.5 rounded-full border border-danger/40 text-danger hover:bg-danger/10 transition-colors disabled:opacity-50 shrink-0"
@@ -963,7 +963,7 @@
     <div class="px-4 py-3 border-b border-border flex items-center gap-2">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.jobs.icon}/></svg></span>
       <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Backup jobs</span>
-      <button onclick={() => navigate('/jobs')} class="ml-auto text-xs text-vault-text hover:text-vault-dark font-medium">View all →</button>
+      <button onclick={() => navigate('/jobs')} class="ml-auto text-xs text-vault-text hover:underline font-medium">View all →</button>
     </div>
     {#if jobs.length === 0}
       <div class="px-5 py-8 text-center text-sm text-text-muted">No backup jobs configured</div>
@@ -981,7 +981,7 @@
                   <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                   Restore
                 </button>
-                <button onclick={() => runNow(job)} disabled={runningJob === job.id} class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-vault/10 text-vault hover:bg-vault/20 disabled:opacity-50">
+                <button onclick={() => runNow(job)} disabled={runningJob === job.id} class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-vault/10 text-vault-text hover:bg-vault/20 disabled:opacity-50">
                   {#if runningJob === job.id}
                     <svg aria-hidden="true" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                     Running...
@@ -1008,10 +1008,10 @@
   <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : pending ? 'bg-amber-500/5' : 'bg-surface-3'} group">
     <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : pending ? 'bg-amber-500' : 'bg-surface-5'}"></div>
     <span class="text-sm text-text truncate" title={displayLabel}>{displayLabel}</span>
-    {#if type === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium shrink-0">USB boot drive</span>{/if}
+    {#if type === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-hue-amber font-medium shrink-0">USB boot drive</span>{/if}
     {#if isProtected}
       {#if !isReplicaMode()}
-        <button onclick={() => navigate(`/restore?type=${restoreType}&name=${encodeURIComponent(itemName)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {itemName}">
+        <button onclick={() => navigate(`/restore?type=${restoreType}&name=${encodeURIComponent(itemName)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault-text hover:bg-vault/10 rounded transition-all" title="Restore {itemName}">
           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         </button>
       {/if}
@@ -1036,7 +1036,7 @@
           </span>
         </div>
         {#if hasUnprotectedItems}
-          <button onclick={() => navigate('/jobs')} class="text-xs text-vault-text hover:text-vault-dark transition-colors font-medium">+ Add to Backup</button>
+          <button onclick={() => navigate('/jobs')} class="text-xs text-vault-text hover:underline transition-colors font-medium">+ Add to Backup</button>
         {:else if fullyProtected}
           <button onclick={toggleProtection} aria-expanded={protectionExpanded} class="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors">
             {protectionExpanded ? 'Hide items' : 'Show items'}
@@ -1053,7 +1053,7 @@
             {#if trackedContainers.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+                  <svg aria-hidden="true" class="w-4 h-4 text-hue-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
                   <h3 class="text-sm font-medium text-text">Containers</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedContainers.length}/{trackedContainers.length}</span>
                 </div>
@@ -1063,7 +1063,7 @@
             {#if trackedVMs.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                  <svg aria-hidden="true" class="w-4 h-4 text-hue-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                   <h3 class="text-sm font-medium text-text">Virtual Machines</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedVMs.length}/{trackedVMs.length}</span>
                 </div>
@@ -1073,7 +1073,7 @@
             {#if trackedFolders.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                  <svg aria-hidden="true" class="w-4 h-4 text-hue-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                   <h3 class="text-sm font-medium text-text">Folders</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedFolders.length}/{trackedFolders.length}</span>
                 </div>
@@ -1083,7 +1083,7 @@
             {#if trackedFlash.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
+                  <svg aria-hidden="true" class="w-4 h-4 text-hue-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
                   <h3 class="text-sm font-medium text-text">Flash Drive</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedFlash.length}/{trackedFlash.length}</span>
                 </div>
@@ -1173,12 +1173,12 @@
     {@render mHead(CATALOG.quickactions.icon, 'Quick actions')}
     {#if !isReplicaMode()}
       <div class="flex flex-col gap-1.5 mt-auto">
-        <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-white hover:bg-vault-dark disabled:opacity-50 transition-colors text-left">
+        <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-on-vault hover:bg-vault-dark disabled:opacity-50 transition-colors text-left">
           {runningAll ? 'Starting…' : 'Run all backups'}
         </button>
         <div class="flex gap-1.5">
-          <button onclick={() => navigate('/jobs')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">New job</button>
-          <button onclick={() => navigate('/restore')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">Restore</button>
+          <button onclick={() => navigate('/jobs')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault-text hover:bg-vault/20 transition-colors">New job</button>
+          <button onclick={() => navigate('/restore')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault-text hover:bg-vault/20 transition-colors">Restore</button>
         </div>
       </div>
     {:else}
@@ -1380,7 +1380,7 @@
       <div class="dash-head-actions flex gap-2 w-full sm:w-auto">
         {#if layout.editMode}
           <button onclick={layout.reset} class="flex-1 sm:flex-none min-h-[44px] px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-2 border border-border hover:bg-surface-3 rounded-lg transition-colors">Reset</button>
-          <button onclick={layout.toggleEdit} class="flex-1 sm:flex-none min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-success hover:bg-success/90 rounded-lg transition-colors">
+          <button onclick={layout.toggleEdit} class="flex-1 sm:flex-none min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-on-status bg-success hover:bg-success/90 rounded-lg transition-colors">
             <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>Done
           </button>
         {:else}
@@ -1422,25 +1422,25 @@
             <p class="text-sm text-text-muted mt-1">Set up your backup system in a few easy steps.</p>
             <div class="mt-4 flex flex-col sm:flex-row gap-3">
               <button onclick={() => navigate('/storage')} class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {storage.length > 0 ? 'border-success/30 bg-success/5' : 'border-vault/40 bg-vault/5 hover:bg-vault/10'}">
-                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {storage.length > 0 ? 'bg-success text-white' : 'bg-vault text-white'}">
+                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {storage.length > 0 ? 'bg-success text-on-status' : 'bg-vault text-on-vault'}">
                   {#if storage.length > 0}<svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}1{/if}
                 </div>
                 <div>
                   <p class="text-sm font-medium {storage.length > 0 ? 'text-success' : 'text-text'}">Configure Storage</p>
-                  <p class="text-xs {storage.length > 0 ? 'text-success/70' : 'text-text-dim'}">{storage.length > 0 ? `${storage.length} destination${storage.length !== 1 ? 's' : ''} configured` : 'Set up where backups are stored'}</p>
+                  <p class="text-xs {storage.length > 0 ? 'text-success' : 'text-text-dim'}">{storage.length > 0 ? `${storage.length} destination${storage.length !== 1 ? 's' : ''} configured` : 'Set up where backups are stored'}</p>
                 </div>
               </button>
               <button onclick={() => navigate('/jobs')} disabled={storage.length === 0} class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {jobs.length > 0 ? 'border-success/30 bg-success/5' : storage.length > 0 ? 'border-vault/40 bg-vault/5 hover:bg-vault/10' : 'border-border bg-surface-3 opacity-50 cursor-not-allowed'}">
-                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 ? 'bg-success text-white' : storage.length > 0 ? 'bg-vault text-white' : 'bg-surface-4 text-text-dim'}">
+                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 ? 'bg-success text-on-status' : storage.length > 0 ? 'bg-vault text-on-vault' : 'bg-surface-4 text-text-muted'}">
                   {#if jobs.length > 0}<svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}2{/if}
                 </div>
                 <div>
                   <p class="text-sm font-medium {jobs.length > 0 ? 'text-success' : storage.length > 0 ? 'text-text' : 'text-text-dim'}">Create Backup Job</p>
-                  <p class="text-xs {jobs.length > 0 ? 'text-success/70' : 'text-text-dim'}">{jobs.length > 0 ? `${jobs.length} job${jobs.length !== 1 ? 's' : ''} configured` : 'Choose what to back up and when'}</p>
+                  <p class="text-xs {jobs.length > 0 ? 'text-success' : 'text-text-dim'}">{jobs.length > 0 ? `${jobs.length} job${jobs.length !== 1 ? 's' : ''} configured` : 'Choose what to back up and when'}</p>
                 </div>
               </button>
-              <div class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {jobs.length > 0 && storage.length > 0 ? 'border-vault/40 bg-vault/5' : 'border-border bg-surface-3 opacity-50'}">
-                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 && storage.length > 0 ? 'bg-vault text-white' : 'bg-surface-4 text-text-dim'}">3</div>
+              <div class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {jobs.length > 0 && storage.length > 0 ? 'border-vault/40 bg-vault/5' : 'border-border bg-surface-3'}">
+                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 && storage.length > 0 ? 'bg-vault text-on-vault' : 'bg-surface-4 text-text-muted'}">3</div>
                 <div>
                   <p class="text-sm font-medium {jobs.length > 0 && storage.length > 0 ? 'text-text' : 'text-text-dim'}">Run Backups</p>
                   <p class="text-xs text-text-dim">Jobs run on schedule or on demand</p>

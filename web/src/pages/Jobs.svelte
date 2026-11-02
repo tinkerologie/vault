@@ -1168,13 +1168,13 @@
         <svg aria-hidden="true" class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-text-dim pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
         <input type="search" bind:value={search} placeholder="Search jobs by name or description"
           aria-label="Search jobs"
-          class="w-full pl-8 pr-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault" />
+          class="w-full pl-8 pr-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault" />
       </div>
       <!-- Status segmented control -->
       <div class="flex items-center rounded-lg border border-border bg-surface-3 p-0.5 text-xs">
         {#each [['all', 'All'], ['enabled', 'Enabled'], ['disabled', 'Disabled']] as [val, label] (val)}
           <button type="button" onclick={() => statusFilter = val}
-            class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer {statusFilter === val ? 'bg-vault text-white' : 'text-text-muted hover:text-text'}">
+            class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer {statusFilter === val ? 'bg-vault text-on-vault' : 'text-text-muted hover:text-text'}">
             {label}
           </button>
         {/each}
@@ -1283,7 +1283,7 @@
                   <button
                     type="button"
                     onclick={() => openRemediate(job)}
-                    class="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-500 font-medium shrink-0 hover:bg-amber-500/25 transition-colors"
+                    class="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-hue-amber font-medium shrink-0 hover:bg-amber-500/25 transition-colors"
                     title="Some items in this job no longer exist on the system"
                   >
                     <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
@@ -1292,7 +1292,7 @@
                 {/if}
                 <!-- Baseline learning indicator (hidden when anomaly detection is off) -->
                 {#if getAnomalyEnabled() && baselineSamples(job.id) < 10}
-                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-4 text-text-dim font-medium shrink-0">
+                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-4 text-text-muted font-medium shrink-0">
                     Learning baseline ({baselineSamples(job.id)}/10)
                   </span>
                 {/if}
@@ -1306,7 +1306,7 @@
                   {describeSchedule(job.schedule)}
                 </span>
                 {#if nextRuns[String(job.id)]}
-                  <span class="flex items-center gap-1 text-vault font-medium">
+                  <span class="flex items-center gap-1 text-vault-text font-medium">
                     <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                     Next: {relTimeUntil(nextRuns[String(job.id)])}
                   </span>
@@ -1336,7 +1336,7 @@
                 <button
                   onclick={() => runNow(job)}
                   disabled={runningJob === job.id}
-                  class="p-2 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors"
+                  class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors"
                   title="Run Now"
                   aria-label="Run backup now"
                 >
@@ -1347,7 +1347,7 @@
                   {/if}
                 </button>
               {/if}
-              <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job">
+              <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
               </button>
               <button onclick={() => openEdit(job.id)} class="p-2 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit job">
@@ -1388,7 +1388,7 @@
     <button
       onclick={bulkRun}
       disabled={bulkRunning}
-      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-vault hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
+      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-vault-text hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
     >
       <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
       Run
@@ -1418,7 +1418,7 @@
       <div class="flex items-center justify-between gap-3">
         <span class="text-xs font-medium text-text-dim">{expressMode ? 'Full form' : `Step ${step} of ${totalSteps}`}</span>
         <button type="button" onclick={() => expressMode = !expressMode}
-          class="text-xs font-medium text-vault-text hover:text-vault-dark whitespace-nowrap shrink-0">
+          class="text-xs font-medium text-vault-text hover:underline whitespace-nowrap shrink-0">
           {expressMode ? 'Switch to step-by-step' : 'Switch to full form'}
         </button>
       </div>
@@ -1428,9 +1428,9 @@
             <button
               type="button"
               onclick={() => { if (s.n < step || canNext) step = s.n }}
-              class="flex items-center gap-2 {s.n === step ? '' : 'opacity-60'}"
+              class="flex items-center gap-2"
             >
-              <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-white' : s.n === step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
+              <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-on-vault' : s.n === step ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted'}">
                 {#if s.n < step}
                   <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
                 {:else}
@@ -1476,7 +1476,7 @@
         <div>
           <label for="ex_name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name</label>
           <input id="ex_name" type="text" bind:value={form.name} required placeholder={suggestedName || 'My Backup Job'}
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
         <div>
           <span class="block text-sm font-medium text-text-muted mb-1.5">Schedule</span>
@@ -1589,7 +1589,7 @@
                   <button
                     type="button"
                     onclick={() => { showModal = false; navigate('/storage') }}
-                    class="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors"
+                    class="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors"
                   >
                     <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     Configure Storage
@@ -1686,12 +1686,12 @@
         <div>
           <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name <Tooltip text="Used for display and log identification. No strict naming constraints." /></label>
           <input id="name" type="text" bind:value={form.name} required
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim focus:border-vault focus:ring-1 focus:ring-vault" placeholder="Daily Docker Backup" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted focus:border-vault focus:ring-1 focus:ring-vault" placeholder="Daily Docker Backup" />
           {#if suggestedName && !form.name.trim()}
             <button
               type="button"
               onclick={() => form.name = suggestedName}
-              class="mt-1.5 text-xs text-vault hover:text-vault-dark transition-colors"
+              class="mt-1.5 text-xs text-vault-text hover:underline transition-colors"
             >
               Suggestion: {suggestedName}
             </button>
@@ -1701,7 +1701,7 @@
         <div>
           <label for="desc" class="block text-sm font-medium text-text-muted mb-1.5">Description <span class="text-text-dim">(optional)</span></label>
           <input id="desc" type="text" bind:value={form.description}
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="Back up all production containers" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" placeholder="Back up all production containers" />
         </div>
       </div>
 
@@ -1928,7 +1928,7 @@
                 max="10"
                 bind:value={form.retry_max_override}
                 placeholder="Global default"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted"
               />
             </div>
             <div>
@@ -2042,7 +2042,7 @@
                 </label>
                 <div>
                   <p class="text-sm text-text">Automatically back up newly discovered containers</p>
-                  <p class="text-xs text-text-dim mt-0.5">New Docker containers on this server are automatically enrolled into this job on each backup run. Auto-added containers default to backing up appdata mounts and named volumes; non-appdata bind mounts (e.g. large media shares) are excluded by default until reviewed under Container Mounts &amp; Exclusions. Containers carrying the <code class="text-vault font-mono text-[11px]">vault.exclude</code> label are skipped.</p>
+                  <p class="text-xs text-text-dim mt-0.5">New Docker containers on this server are automatically enrolled into this job on each backup run. Auto-added containers default to backing up appdata mounts and named volumes; non-appdata bind mounts (e.g. large media shares) are excluded by default until reviewed under Container Mounts &amp; Exclusions. Containers carrying the <code class="text-vault-text font-mono text-[11px]">vault.exclude</code> label are skipped.</p>
                 </div>
               </div>
             </div>
@@ -2141,7 +2141,7 @@
               Container Mounts &amp; Exclusions
             </summary>
             <div class="space-y-4 mt-3 pl-6">
-              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Container backups include appdata mounts by default based on the configured <a href="#/settings" class="text-vault hover:underline">Appdata Path</a>. Non-appdata bind mounts (e.g. large media or library paths) and shared data are excluded by default to prevent accidental multi-terabyte backups, while Docker named volumes and appdata mounts remain included. You can check any overridable mount to include it. System paths (like /dev or raw disks) cannot be included.</p>
+              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Container backups include appdata mounts by default based on the configured <a href="#/settings" class="text-vault-text hover:underline">Appdata Path</a>. Non-appdata bind mounts (e.g. large media or library paths) and shared data are excluded by default to prevent accidental multi-terabyte backups, while Docker named volumes and appdata mounts remain included. You can check any overridable mount to include it. System paths (like /dev or raw disks) cannot be included.</p>
               {#each selectedContainerItems as cItem (cItem.item_name)}
                 {@const currentExclusions = getExclusionPaths(cItem)}
                 {@const preset = containerPresets[cItem.item_name]}
@@ -2158,7 +2158,7 @@
                         type="checkbox"
                         checked={getDatabaseDump(cItem)}
                         onchange={(e) => updateDatabaseDump(cItem.item_type, cItem.item_name, e.currentTarget.checked)}
-                        class="mt-0.5 w-4 h-4 rounded border-border bg-surface-3 text-vault focus:ring-2 focus:ring-vault/50"
+                        class="mt-0.5 w-4 h-4 rounded border-border bg-surface-3 text-vault-text focus:ring-2 focus:ring-vault/50"
                       />
                       <span class="text-xs">
                         <span class="font-medium text-text">Also save a {getDatabaseKind(cItem)} dump</span>
@@ -2211,12 +2211,12 @@
                             <span class="flex items-center gap-2 flex-wrap">
                               <span class="text-sm font-mono text-text">{mount.destination}</span>
                               {#if isOverridable && included}
-                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-vault/15 text-vault border border-vault/30 font-medium">included (override)</span>
+                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-vault/15 text-vault-text border border-vault/30 font-medium">included (override)</span>
                               {:else if mount.auto_skip}
-                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-dim border border-border">auto-excluded</span>
+                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-muted border border-border">auto-excluded</span>
                               {/if}
                               {#if mount.type === 'volume'}
-                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-dim border border-border">named volume</span>
+                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-muted border border-border">named volume</span>
                               {/if}
                             </span>
                             <span class="block text-xs text-text-dim font-mono truncate" title={mount.source}>{mount.source}{#if mount.auto_skip && mount.skip_reason} · {mount.skip_reason}{/if}</span>
@@ -2254,7 +2254,7 @@
                           const merged = [...new Set([...currentExclusions, ...preset])]
                           updateExclusionPaths('container', cItem.item_name, merged)
                         }}
-                        class="text-xs px-3 py-1.5 rounded-lg border transition-colors {allPresetLoaded ? 'border-green-500/30 text-green-400 bg-green-500/10 cursor-default' : 'border-vault/30 text-vault hover:bg-vault/10 cursor-pointer'}"
+                        class="text-xs px-3 py-1.5 rounded-lg border transition-colors {allPresetLoaded ? 'border-green-500/30 text-success bg-green-500/10 cursor-default' : 'border-vault/30 text-vault-text hover:bg-vault/10 cursor-pointer'}"
                       >
                         {allPresetLoaded ? 'Recommended exclusions loaded' : 'Load recommended exclusions'}
                       </button>
@@ -2269,7 +2269,7 @@
                       placeholder={`/config/Cache
 *.log`}
                       rows="3"
-                      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-dim/50"
+                      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-muted"
                     ></textarea>
                   </div>
                 </div>
@@ -2290,7 +2290,7 @@
                 <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3">
                   <p class="text-sm font-medium text-text" title={itemDisplayLabel(fItem)}>{itemDisplayLabel(fItem)}</p>
                   {#if getRecommendedExclusions(fItem).length > 0}
-                    <p class="text-xs text-vault">Recycle Bin plugin detected "{getRecommendedExclusions(fItem).join(', ')}" excluded automatically. Edit below to change.</p>
+                    <p class="text-xs text-vault-text">Recycle Bin plugin detected "{getRecommendedExclusions(fItem).join(', ')}" excluded automatically. Edit below to change.</p>
                   {/if}
                   <textarea
                     value={getExclusionPaths(fItem).join('\n')}
@@ -2301,7 +2301,7 @@
                     placeholder={`.Recycle.Bin
 *.log`}
                     rows="3"
-                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-dim/50"
+                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono resize-y placeholder:text-text-muted"
                   ></textarea>
                 </div>
               {/each}
@@ -2421,11 +2421,11 @@
         </button>
         <div class="flex gap-2">
           <button type="button" disabled={saving || !canSaveExpress} onclick={() => saveJob(true)}
-            class="px-4 py-2 text-sm font-medium text-vault border border-vault/50 hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40">
+            class="px-4 py-2 text-sm font-medium text-vault-text border border-vault/50 hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40">
             {editing ? 'Save & Run' : 'Create & Run Now'}
           </button>
           <button type="submit" disabled={saving || !canSaveExpress}
-            class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40">
+            class="px-5 py-2 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40">
             {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Create Job'}{/if}
           </button>
         </div>
@@ -2454,7 +2454,7 @@
           <button
             type="submit"
             disabled={!canNext}
-            class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            class="px-5 py-2 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Next
           </button>
@@ -2466,14 +2466,14 @@
             type="button"
             disabled={saving || !canSaveExpress}
             onclick={() => saveJob(true)}
-            class="px-4 py-2 text-sm font-medium text-vault border border-vault/50 hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
+            class="px-4 py-2 text-sm font-medium text-vault-text border border-vault/50 hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
           >
             {editing ? 'Save & Run' : 'Create & Run Now'}
           </button>
           <button
             type="submit"
             disabled={saving || !canSaveExpress}
-            class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40"
+            class="px-5 py-2 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40"
           >
             {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Create Job'}{/if}
           </button>
@@ -2538,7 +2538,7 @@
           type="button"
           onclick={() => removeAllStale(remediating)}
           disabled={remediateBusy}
-          class="px-4 py-2 text-sm font-medium text-white bg-danger hover:bg-danger/90 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-4 py-2 text-sm font-medium text-on-status bg-danger hover:bg-danger/90 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Remove all
         </button>
@@ -2584,7 +2584,7 @@
           Cancel
         </button>
         <button type="button" onclick={doDeleteJob}
-          class="px-4 py-2 text-sm font-medium rounded-lg transition-colors {confirmDelete.deleteFiles ? 'bg-danger text-white hover:bg-danger/90' : 'bg-danger text-white hover:bg-danger/90'}">
+          class="px-4 py-2 text-sm font-medium rounded-lg transition-colors {confirmDelete.deleteFiles ? 'bg-danger text-on-status hover:bg-danger/90' : 'bg-danger text-on-status hover:bg-danger/90'}">
           {confirmDelete.deleteFiles ? 'Delete Job & Files' : 'Delete Job'}
         </button>
       </div>

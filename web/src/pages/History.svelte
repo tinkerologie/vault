@@ -314,7 +314,7 @@
             <div class="py-2.5 flex items-center justify-between gap-3 text-sm">
               <div class="flex items-center gap-2.5 min-w-0">
                 {#if progress.activeRun.run_type === 'restore'}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">Restore</span>
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-hue-purple border border-purple-500/20 shrink-0">Restore</span>
                 {:else}
                   <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
                 {/if}
@@ -335,9 +335,9 @@
             <div class="py-2.5 flex items-center justify-between gap-3 text-sm">
               <div class="flex items-center gap-2.5 min-w-0">
                 {#if entry.kind === 'restore'}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">Restore</span>
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-hue-purple border border-purple-500/20 shrink-0">Restore</span>
                 {:else if entry.kind === 'delete'}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">Cleanup</span>
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-rose-500/10 text-hue-rose border border-rose-500/20 shrink-0">Cleanup</span>
                 {:else}
                   <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
                 {/if}
@@ -411,7 +411,7 @@
         </svg>
         <input type="text" bind:value={searchQuery} placeholder="Search runs..."
           aria-label="Search runs"
-          class="w-full pl-9 pr-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+          class="w-full pl-9 pr-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
       </div>
 
       <!-- Status filter pills -->
@@ -420,7 +420,7 @@
         {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running'], ['skipped','Skipped']] as [val, label] (val)}
           <button type="button" onclick={() => selectedStatus = val}
             aria-pressed={selectedStatus === val}
-            class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {selectedStatus === val ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
+            class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {selectedStatus === val ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
             {label}
           </button>
         {/each}
@@ -432,13 +432,13 @@
         <div role="group" aria-label="Filter by type" class="flex rounded-lg border border-border overflow-hidden text-xs">
         <button onclick={() => selectedRunType = 'all'}
           aria-pressed={selectedRunType === 'all'}
-          class="px-3 py-1.5 transition-colors {selectedRunType === 'all' ? 'bg-vault text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">All</button>
+          class="px-3 py-1.5 transition-colors {selectedRunType === 'all' ? 'bg-vault text-on-vault' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">All</button>
         <button onclick={() => selectedRunType = 'backup'}
           aria-pressed={selectedRunType === 'backup'}
-          class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'backup' ? 'bg-vault text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Backups</button>
+          class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'backup' ? 'bg-vault text-on-vault' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Backups</button>
         <button onclick={() => selectedRunType = 'restore'}
           aria-pressed={selectedRunType === 'restore'}
-          class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'restore' ? 'bg-vault text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Restores</button>
+          class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'restore' ? 'bg-vault text-on-vault' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Restores</button>
         </div>
       </div>
 
@@ -477,7 +477,7 @@
           {#each TREND_PERIODS as [val, label] (val)}
             <button type="button" onclick={() => selectTrendPeriod(val)}
               aria-pressed={trendPeriod === val}
-              class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer {trendPeriod === val ? 'bg-vault text-white' : 'text-text-muted hover:text-text'}">{label}</button>
+              class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer {trendPeriod === val ? 'bg-vault text-on-vault' : 'text-text-muted hover:text-text'}">{label}</button>
           {/each}
         </div>
       </div>
@@ -532,9 +532,9 @@
                             </span>
                           {/if}
                           {#if (run.run_type || 'backup') === 'restore'}
-                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-500/15 text-purple-400">restore</span>
+                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-500/15 text-hue-purple">restore</span>
                           {:else}
-                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-vault/15 text-vault">backup</span>
+                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-vault/15 text-vault-text">backup</span>
                           {/if}
                           {#if run.backup_type}
                             <span class="text-xs text-text-dim capitalize">{run.backup_type}</span>
@@ -606,7 +606,7 @@
                                 <span class="text-xs text-text-dim shrink-0">{formatBytes(item.size_bytes)}</span>
                               {/if}
                               {#if item.unchanged}
-                                <span class="text-xs px-1.5 py-0.5 rounded bg-text-dim/15 text-text-dim shrink-0" title="Nothing had changed since the reference backup — no new data was captured for this item">unchanged</span>
+                                <span class="text-xs px-1.5 py-0.5 rounded bg-text-dim/15 text-text-muted shrink-0" title="Nothing had changed since the reference backup — no new data was captured for this item">unchanged</span>
                               {/if}
                               {#if item.verified}
                                 <span class="text-xs px-1.5 py-0.5 rounded bg-success/15 text-success shrink-0">verified</span>
@@ -633,7 +633,7 @@
       {#if hasMore}
         <div class="text-center mt-6">
           <button type="button" onclick={loadMore}
-            class="px-6 py-2 text-sm font-medium text-vault bg-vault/10 hover:bg-vault/20 rounded-lg transition-colors">
+            class="px-6 py-2 text-sm font-medium text-vault-text bg-vault/10 hover:bg-vault/20 rounded-lg transition-colors">
             Load More ({filteredRuns.length - visibleCount} remaining)
           </button>
         </div>

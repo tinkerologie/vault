@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Contrast (#524):** Default light and dark text, navigation, status colours and primary buttons now meet WCAG 2.2 AA on every page, checked by an axe audit in the browser tests. Toasts gain a status icon and an opaque background. Retro palettes are unchanged.
+
 ### Removed
 
 - **Legacy PHP pages (#533):** Removed the unlinked `VaultJobs`, `VaultStorage`, `VaultHistory`, `VaultRestore` and `VaultSettings` pages and their CSS and JavaScript. Bookmarks to the old `/Settings/VaultJobs`, `/Settings/VaultStorage`, `/Settings/VaultHistory`, `/Settings/VaultRestore` and `/Settings/VaultSettings` URLs stop working; use Settings → Utilities → Vault or the optional Backups navigation entry instead. Plugin upgrades delete these files from existing installs.

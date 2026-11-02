@@ -183,8 +183,8 @@
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
     {#each STEPS as s (s.n)}
-      <div class="flex items-center gap-2 {s.n <= step ? '' : 'opacity-40'}" aria-current={s.n === step ? 'step' : undefined}>
-        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n <= step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
+      <div class="flex items-center gap-2" aria-current={s.n === step ? 'step' : undefined}>
+        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n <= step ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
             <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
           {:else}
@@ -237,7 +237,7 @@
         <label for="recover-pass" class="block text-sm font-medium text-text-muted mb-1.5">Your backup password</label>
         <div class="flex gap-2">
           <input id="recover-pass" type={showPass ? 'text' : 'password'} bind:value={passphrase} autocomplete="off"
-            class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+            class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
           <button type="button" class="btn btn-secondary" onclick={() => (showPass = !showPass)}>
             {showPass ? 'Hide' : 'Show'}
           </button>
@@ -376,7 +376,7 @@
               <input id={`remap-${e.kind}-${e.id}`} type="text" list="path-candidates"
                 bind:value={remapDraft[`${e.kind}-${e.id}`]}
                 placeholder="New path, e.g. /mnt/user/…"
-                class="w-full mt-2 px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+                class="w-full mt-2 px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
               {#if remapError(e)}
                 <p class="text-xs text-danger mt-1">{remapError(e)}</p>
               {/if}

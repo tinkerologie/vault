@@ -43,9 +43,9 @@
   })
 
   const variants = {
-    danger: 'bg-danger text-white hover:bg-danger/90',
-    warning: 'bg-warning text-white hover:bg-warning/90',
-    vault: 'bg-vault text-white hover:bg-vault-dark',
+    danger: 'bg-danger text-on-status hover:bg-danger/90',
+    warning: 'bg-warning text-on-status hover:bg-warning/90',
+    vault: 'bg-vault text-on-vault hover:bg-vault-dark',
   }
 </script>
 

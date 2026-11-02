@@ -237,7 +237,7 @@
         {@const tooltipX = padding.left + xCenter(hoveredIndex)}
         <div class="absolute pointer-events-none bg-surface-3 border border-border rounded-lg shadow-lg p-2 text-xs -translate-x-1/2 -translate-y-full"
           style="left: {(tooltipX / width) * 100}%; top: {((padding.top + y(p.size)) / height) * 100 - 5}%">
-          <p class="text-text-dim mb-1">{formatDateShort(p.date)}</p>
+          <p class="text-text-muted mb-1">{formatDateShort(p.date)}</p>
           {#each activeCategories as cat (cat.key)}
             {#if p.categories[cat.key] > 0}
               <div class="flex items-center gap-1.5">

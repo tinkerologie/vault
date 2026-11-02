@@ -633,7 +633,7 @@
           value={store.search}
           oninput={(e) => { store.setSearchFilter(e.target.value); snapToPresent() }}
           placeholder="Filter logs…"
-          class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-dim/50 {store.search ? 'border-vault text-text' : ''}"
+          class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-muted {store.search ? 'border-vault text-text' : ''}"
         />
         {#if store.search}
           <button type="button" onclick={() => { store.setSearchFilter(''); snapToPresent() }}
@@ -675,7 +675,7 @@
       <!-- Jump to present / new-entries indicator (fixed, bottom-right whenever follow is off) -->
       {#if !follow}
         <button onclick={jumpToPresent}
-          class="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-vault/90 hover:bg-vault text-white text-xs font-medium rounded-lg shadow-lg transition-all flex items-center gap-1.5"
+          class="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-vault/90 hover:bg-vault text-on-vault text-xs font-medium rounded-lg shadow-lg transition-all flex items-center gap-1.5"
           title="Jump to present">
           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
           {#if newCount > 0}{newCount} new {newCount === 1 ? 'entry' : 'entries'}{:else}Jump to present{/if}
@@ -719,11 +719,11 @@
             <div class="flex items-baseline gap-2 px-2 py-px border-l-2 {st.border} {focusedId === entry.id ? 'bg-vault/15' : st.row} group hover:bg-surface-2/50" data-entry-id={entry.id} onclick={(e) => handleRowClick(e)} onpointerdown={() => handleRowPointerDown(entry)}>
               <!-- Time only; the full date is on the day separator above and in
                    the tooltip, which is most of the width this row used to spend. -->
-              <span class="shrink-0 text-text-dim tabular-nums" title={fullTs(entry.ts)}>{rowTime(entry.ts)}</span>
+              <span class="shrink-0 text-text-muted tabular-nums" title={fullTs(entry.ts)}>{rowTime(entry.ts)}</span>
               <!-- Level pill. Colour AND text, so the console still reads in
                    the monochrome themes where every hue collapses to one ink. -->
               <span class="shrink-0 w-[3.5rem] text-center rounded px-1 text-[10px] uppercase tracking-wide {st.pill}" title={entry.level}>{levelLabel(entry.level)}</span>
-              <span class="shrink-0 w-[7ch] truncate text-text-dim" title={entry.category}>{entry.category}</span>
+              <span class="shrink-0 w-[7ch] truncate text-text-muted" title={entry.category}>{entry.category}</span>
               <span class="min-w-0 flex-1 flex items-baseline gap-1.5">
                 <span class="{wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap overflow-hidden text-ellipsis'} shrink-0 max-w-full {st.text} {entry.type === 'summary' ? 'font-medium' : ''}" title={line.message}>
                   {line.message}
@@ -734,7 +734,7 @@
                 {#if showMeta && line.meta}<span class="{st.meta} min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={line.meta}>{line.meta}</span>{/if}
               </span>
               <button type="button" onclick={() => copyRow(row)}
-                class="{copiedId === entry.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} p-0.5 text-text-dim/40 hover:text-text shrink-0 transition-all self-center cursor-pointer" title="Copy">
+                class="{copiedId === entry.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} p-0.5 text-text-muted hover:text-text shrink-0 transition-all self-center cursor-pointer" title="Copy">
                 {#if copiedId === entry.id}
                   <svg aria-hidden="true" class="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                 {:else}

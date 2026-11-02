@@ -56,9 +56,24 @@
   --color-amber-900: #78350f;
   --color-vault: #f59e0b;
   --color-vault-dark: #d97706;
-  /* On-light accent for small text/links/captions — amber-700 ~5.3:1 on #fff (WCAG AA).
+  /* On-light accent for small text/links/captions — amber-800 ~6.3:1 on surface-2 and
+     still AA on the vault/10 and vault/15 tints (WCAG AA).
      Dark/retro themes remap this to their own accent below so they stay unchanged. */
-  --color-vault-text: #b45309;
+  --color-vault-text: #92400e;
+  /* Label on an accent fill: the amber fill keeps its brand value in both modes. */
+  --color-on-vault: #111827;
+  /* Label on a success/danger/warning fill. Dark mode's lighter fills need dark text. */
+  --color-on-status: #ffffff;
+  /* Categorical hues (item and storage types), tuned per mode for text contrast. */
+  --color-hue-blue: var(--color-blue-800);
+  --color-hue-purple: var(--color-purple-800);
+  --color-hue-emerald: var(--color-emerald-800);
+  --color-hue-cyan: var(--color-cyan-800);
+  --color-hue-amber: var(--color-amber-800);
+  --color-hue-rose: var(--color-rose-800);
+  --color-hue-orange: var(--color-orange-800);
+  /* Input placeholder text; preflight's 50% currentcolor falls below AA. */
+  --color-placeholder: var(--color-text-muted);
   /* Light mode (default) */
   --color-surface: #ffffff;
   --color-surface-2: #f9fafb;
@@ -68,17 +83,25 @@
   --color-border: #e5e7eb;
   --color-border-hover: #d1d5db;
   --color-text: #111827;
-  --color-text-muted: #6b7280;
-  --color-text-dim: #9ca3af;
-  --color-success: #16a34a;
-  --color-danger: #dc2626;
-  --color-warning: #d97706;
-  --color-info: #2563eb;
+  --color-text-muted: #4b5563;
+  --color-text-dim: #5f6673;
+  --color-success: #166534;
+  --color-danger: #991b1b;
+  --color-warning: #92400e;
+  --color-info: #1d4ed8;
 }
 
 /* Dark mode overrides */
 .dark {
   --color-vault-text: var(--color-vault);
+  --color-on-status: #111827;
+  --color-hue-blue: var(--color-blue-300);
+  --color-hue-purple: var(--color-purple-300);
+  --color-hue-emerald: var(--color-emerald-300);
+  --color-hue-cyan: var(--color-cyan-300);
+  --color-hue-amber: var(--color-amber-300);
+  --color-hue-rose: var(--color-rose-300);
+  --color-hue-orange: var(--color-orange-300);
   --color-surface: #111827;
   --color-surface-2: #1f2937;
   --color-surface-3: #374151;
@@ -87,12 +110,12 @@
   --color-border: #374151;
   --color-border-hover: #4b5563;
   --color-text: #f9fafb;
-  --color-text-muted: #9ca3af;
-  --color-text-dim: #6b7280;
-  --color-success: #22c55e;
-  --color-danger: #ef4444;
-  --color-warning: #f59e0b;
-  --color-info: #3b82f6;
+  --color-text-muted: #d1d5db;
+  --color-text-dim: #aeb4be;
+  --color-success: #4ade80;
+  --color-danger: #fca5a5;
+  --color-warning: #fbbf24;
+  --color-info: #93c5fd;
 }
 
 /* ═══════════════════════════════════════════════
@@ -102,6 +125,16 @@
 /* 1-Bit Light: white bg, black text */
 .theme-1bit {
   --color-vault-text: var(--color-vault);
+  --color-on-vault: #ffffff;
+  --color-on-status: #ffffff;
+  --color-hue-blue: var(--color-blue-400);
+  --color-hue-purple: var(--color-purple-400);
+  --color-hue-emerald: var(--color-emerald-400);
+  --color-hue-cyan: var(--color-cyan-400);
+  --color-hue-amber: var(--color-amber-400);
+  --color-hue-rose: var(--color-rose-400);
+  --color-hue-orange: var(--color-orange-400);
+  --color-placeholder: color-mix(in oklab, currentcolor 50%, transparent);
   --color-vault: #000000;
   --color-vault-dark: #333333;
   --color-surface: #ffffff;
@@ -147,6 +180,16 @@
 /* 8-Bit Light: warm parchment + NES palette */
 .theme-8bit {
   --color-vault-text: var(--color-vault);
+  --color-on-vault: #ffffff;
+  --color-on-status: #ffffff;
+  --color-hue-blue: var(--color-blue-400);
+  --color-hue-purple: var(--color-purple-400);
+  --color-hue-emerald: var(--color-emerald-400);
+  --color-hue-cyan: var(--color-cyan-400);
+  --color-hue-amber: var(--color-amber-400);
+  --color-hue-rose: var(--color-rose-400);
+  --color-hue-orange: var(--color-orange-400);
+  --color-placeholder: color-mix(in oklab, currentcolor 50%, transparent);
   --color-vault: #e4003a;
   --color-vault-dark: #c00030;
   --color-surface: #f5e6c8;
@@ -192,6 +235,16 @@
 /* 16-Bit Light: warm parchment + deep blue RPG windows */
 .theme-16bit {
   --color-vault-text: var(--color-vault);
+  --color-on-vault: #ffffff;
+  --color-on-status: #ffffff;
+  --color-hue-blue: var(--color-blue-400);
+  --color-hue-purple: var(--color-purple-400);
+  --color-hue-emerald: var(--color-emerald-400);
+  --color-hue-cyan: var(--color-cyan-400);
+  --color-hue-amber: var(--color-amber-400);
+  --color-hue-rose: var(--color-rose-400);
+  --color-hue-orange: var(--color-orange-400);
+  --color-placeholder: color-mix(in oklab, currentcolor 50%, transparent);
   --color-vault: #2038a0;
   --color-vault-dark: #182880;
   --color-surface: #e8e0d0;
@@ -259,6 +312,13 @@ body {
 
 #app {
   height: 100%;
+}
+
+/* In the base layer so placeholder: utilities still win. */
+@layer base {
+  ::placeholder {
+    color: var(--color-placeholder);
+  }
 }
 
 /* ═══════════════════════════════════════════════
@@ -570,13 +630,13 @@ body {
   @apply px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
 }
 .btn-primary {
-  @apply bg-vault text-white hover:bg-vault-dark;
+  @apply bg-vault text-on-vault hover:bg-vault-dark;
 }
 .btn-secondary {
   @apply bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text;
 }
 .btn-danger {
-  @apply bg-danger text-white hover:bg-danger/90;
+  @apply bg-danger text-on-status hover:bg-danger/90;
 }
 .btn-ghost {
   @apply text-text-muted hover:text-text hover:bg-surface-3;
@@ -605,7 +665,7 @@ body {
   @apply bg-info/15 text-info;
 }
 .badge-vault {
-  @apply bg-vault/15 text-vault;
+  @apply bg-vault/15 text-vault-text;
 }
 .badge-neutral {
   @apply bg-surface-3 text-text-muted;

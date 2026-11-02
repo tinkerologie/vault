@@ -447,12 +447,12 @@ export const ITEM_TYPE_ICONS = {
  * @type {Record<string, string>}
  */
 export const ITEM_TYPE_COLORS = {
-  container: 'text-blue-400',
-  vm: 'text-purple-400',
-  folder: 'text-amber-400',
-  flash: 'text-amber-400',
-  plugin: 'text-emerald-400',
-  zfs: 'text-cyan-400',
+  container: 'text-hue-blue',
+  vm: 'text-hue-purple',
+  folder: 'text-hue-amber',
+  flash: 'text-hue-amber',
+  plugin: 'text-hue-emerald',
+  zfs: 'text-hue-cyan',
 }
 
 /**

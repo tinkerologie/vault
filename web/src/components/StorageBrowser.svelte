@@ -78,10 +78,10 @@
 
     <!-- Breadcrumbs -->
     <div class="flex items-center gap-1 px-5 py-2 border-b border-border text-sm overflow-x-auto whitespace-nowrap">
-      <button onclick={() => browse('')} class="text-vault hover:underline shrink-0">root</button>
+      <button onclick={() => browse('')} class="text-vault-text hover:underline shrink-0">root</button>
       {#each breadcrumbs as crumb (crumb.prefix)}
         <span class="text-text-dim shrink-0">/</span>
-        <button onclick={() => browse(crumb.prefix)} class="text-vault hover:underline shrink-0">{crumb.name}</button>
+        <button onclick={() => browse(crumb.prefix)} class="text-vault-text hover:underline shrink-0">{crumb.name}</button>
       {/each}
     </div>
 
@@ -110,7 +110,7 @@
                 type="button"
                 onclick={() => download(entry)}
                 disabled={downloadingPaths.has(entry.path)}
-                class="p-1 text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                class="p-1 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 title="Download file"
                 aria-label={`Download ${baseName(entry.path)}`}
               >

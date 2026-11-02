@@ -241,6 +241,8 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
     { id: 1, timestamp: '2026-10-06T12:00:00Z', level: 'info', category: 'backup', message: 'Job "Docker & Appdata" completed successfully', details: 'duration=15m bytes=10GB' },
     { id: 2, timestamp: '2026-10-06T12:05:00Z', level: 'warn', category: 'health', message: 'Storage capacity above 75%', details: 'free=1TB' },
     { id: 3, timestamp: '2026-10-06T12:10:00Z', level: 'error', category: 'system', message: 'Failed to reach remote endpoint', details: 'host=remote.example.com err=connection refused' },
+    { id: 4, timestamp: '2026-10-06T12:15:00Z', level: 'success', category: 'backup', message: 'Replication sync finished', details: 'items=2' },
+    { id: 5, timestamp: '2026-10-06T12:20:00Z', level: 'debug', category: 'system', message: 'Verbose scheduler tick', details: 'pending=0' },
   ];
 
   let historyRuns = [
@@ -271,6 +273,20 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       dedup_ratio: '1.0x',
       error_message: 'libvirt domain suspended during snapshot',
     },
+    {
+      id: 903,
+      job_id: 1,
+      job_name: 'Docker & Appdata',
+      run_type: 'restore',
+      status: 'completed',
+      backup_type: 'full',
+      started_at: '2026-09-30T04:00:00Z',
+      completed_at: '2026-09-30T04:02:00Z',
+      bytes_written: 1048576,
+      duration_seconds: 120,
+      dedup_ratio: '1.0x',
+      error_message: null,
+    },
   ];
 
   let anomaliesList = [
@@ -279,6 +295,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       scope_kind: 'job',
       scope_id: 1,
       title: 'Unusual Backup Size Spike',
+      summary: 'Backup size spike above baseline',
       description: 'Docker & Appdata backup size increased significantly above baseline',
       severity: 'warning',
       state: 'open',

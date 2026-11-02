@@ -46,7 +46,7 @@
       {#if refreshing}
         <div class="w-5 h-5 border-2 border-vault/30 border-t-vault rounded-full animate-spin"></div>
       {:else}
-        <div class="w-5 h-5 text-vault transition-transform"
+        <div class="w-5 h-5 text-vault-text transition-transform"
           style="transform: rotate({(pullDistance / threshold) * 360}deg); opacity: {pullDistance / threshold}">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />

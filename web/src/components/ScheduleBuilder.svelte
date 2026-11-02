@@ -212,7 +212,7 @@
         <button
           type="button"
           onclick={() => selectFrequency(opt.value)}
-          class="px-3 py-2 text-sm rounded-md transition-all {frequency === opt.value ? 'bg-vault text-white font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
+          class="px-3 py-2 text-sm rounded-md transition-all {frequency === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
         >
           {opt.label}
         </button>
@@ -239,7 +239,7 @@
           <button
             type="button"
             onclick={() => toggleWeekday(i)}
-            class="flex-1 py-2 text-xs font-medium rounded-lg transition-all {weekdays.includes(i) ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text border border-border'}"
+            class="flex-1 py-2 text-xs font-medium rounded-lg transition-all {weekdays.includes(i) ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted hover:text-text border border-border'}"
           >
             {day}
           </button>

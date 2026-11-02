@@ -81,7 +81,7 @@
       bind:value
       aria-label={label}
       placeholder="/mnt/user/backups"
-      class="flex-1 bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50"
+      class="flex-1 bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
     />
     <button
       type="button"
@@ -106,17 +106,17 @@
 
         <!-- Breadcrumbs -->
         <div class="px-5 py-2 border-b border-border/50 flex items-center gap-1 text-xs text-text-muted overflow-x-auto">
-          <button onclick={() => goTo('')} class="hover:text-vault shrink-0">/</button>
+          <button onclick={() => goTo('')} class="hover:text-vault-text shrink-0">/</button>
           {#each breadcrumbs as crumb, i (crumb.path)}
             {#if i > 0}<span class="text-text-dim">/</span>{/if}
-            <button onclick={() => goTo(crumb.path)} class="hover:text-vault shrink-0">{crumb.name}</button>
+            <button onclick={() => goTo(crumb.path)} class="hover:text-vault-text shrink-0">{crumb.name}</button>
           {/each}
         </div>
 
         <!-- Current path -->
         <div class="px-5 py-2 bg-surface-3/50">
           <div class="text-xs text-text-dim">Selected path</div>
-          <div class="text-sm font-mono text-vault">{currentPath || '/'}</div>
+          <div class="text-sm font-mono text-vault-text">{currentPath || '/'}</div>
         </div>
 
         <!-- Directory listing -->
@@ -134,7 +134,7 @@
                 >
                   <svg aria-hidden="true" class="w-5 h-5 text-vault/70 group-hover:text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                   <div class="min-w-0">
-                    <div class="text-sm text-text group-hover:text-vault truncate">{entry.name}</div>
+                    <div class="text-sm text-text group-hover:text-vault-text truncate">{entry.name}</div>
                     <div class="text-xs text-text-dim truncate">{entry.path}</div>
                   </div>
                 </button>
@@ -149,7 +149,7 @@
         {/if}
         <div class="flex justify-end gap-3 px-5 py-3 border-t border-border">
           <button onclick={() => open = false} class="px-4 py-2 text-sm text-text-muted hover:text-text rounded-lg">Cancel</button>
-          <button onclick={confirm} disabled={!!selectBlockedReason} class="px-4 py-2 text-sm font-medium bg-vault text-white rounded-lg hover:bg-vault/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          <button onclick={confirm} disabled={!!selectBlockedReason} class="px-4 py-2 text-sm font-medium bg-vault text-on-vault rounded-lg hover:bg-vault/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             Select This Path
           </button>
         </div>

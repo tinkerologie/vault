@@ -224,7 +224,7 @@
 
 <CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
 
-<a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-white focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
+<a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-on-vault focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
 
 {#if connectionLost}
   <div role="status" aria-live="polite"
@@ -247,7 +247,7 @@
         <span class="text-text font-mono text-sm tracking-widest">┌─ VAULT ─┐</span>
       {:else}
         <div class="w-8 h-8 bg-vault rounded-lg flex items-center justify-center shrink-0">
-          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <svg class="w-5 h-5 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         </div>
         <div>
           <span class="text-lg font-bold text-text tracking-tight">VAULT</span>
@@ -274,7 +274,7 @@
             <button onclick={() => go(item.path)}
               aria-current={isActive(item.path) ? 'page' : undefined}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left
-                {isActive(item.path) ? 'bg-vault/10 text-vault nav-active' : 'text-text-muted hover:text-text hover:bg-surface-3'}">
+                {isActive(item.path) ? 'bg-vault/10 text-vault-text nav-active' : 'text-text-muted hover:text-text hover:bg-surface-3'}">
               <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
               {item.label}
             </button>
@@ -289,7 +289,7 @@
           <button onclick={() => go('/settings')}
             title="Update available — latest release v{latestTag}"
             aria-label="Update available, latest release v{latestTag}. Open settings."
-            class="inline-flex items-center gap-1.5 text-orange-400 hover:text-orange-300 transition-colors">
+            class="inline-flex items-center gap-1.5 text-hue-orange hover:underline transition-colors">
             <span class="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" aria-hidden="true"></span>
             Update available
           </button>
@@ -303,7 +303,7 @@
     <div class="flex items-center justify-between px-4 py-3">
       <div class="flex items-center gap-2">
         <div class="w-7 h-7 bg-vault rounded-lg flex items-center justify-center">
-          <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <svg class="w-4 h-4 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         </div>
         <span class="text-base font-bold text-text">VAULT</span>
       </div>
@@ -325,7 +325,7 @@
           {:else}
             <button onclick={() => go(item.path)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left
-                {isActive(item.path) ? 'bg-vault/10 text-vault nav-active' : 'text-text-muted'}">
+                {isActive(item.path) ? 'bg-vault/10 text-vault-text nav-active' : 'text-text-muted'}">
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
               {item.label}
             </button>
@@ -375,7 +375,7 @@
         onclick={() => go(item.path)}
         aria-current={isActive(item.path) ? 'page' : undefined}
         class="flex flex-col items-center gap-0.5 px-3 py-2 min-w-[44px] min-h-[44px] text-xs transition-colors
-          {isActive(item.path) ? 'text-vault' : 'text-text-muted'}"
+          {isActive(item.path) ? 'text-vault-text' : 'text-text-muted'}"
         aria-label={item.label}
       >
         <div class="relative">

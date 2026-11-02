@@ -177,9 +177,9 @@
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-2 min-w-0 flex-wrap">
                 <span class="text-sm font-medium text-text tabular-nums">{timeLabel(new Date(rp.created_at))}</span>
-                <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium uppercase bg-vault/10 text-vault">{rp.backup_type}</span>
+                <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium uppercase bg-vault/10 text-vault-text">{rp.backup_type}</span>
                 {#if selected}
-                  <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-vault text-white font-medium">Selected</span>
+                  <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-vault text-on-vault font-medium">Selected</span>
                 {/if}
                 {#if rp.jobName}
                   <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-3 text-text font-medium">{rp.jobName}</span>
@@ -246,9 +246,9 @@
                   </div>
                 {:else if selectedItems.length > 0}
                   {#if coverage.coversAll}
-                    <span class="text-emerald-400 font-medium">Contains all {coverage.coverageCount} selected items</span>
+                    <span class="text-hue-emerald font-medium">Contains all {coverage.coverageCount} selected items</span>
                   {:else}
-                    <span class="text-amber-400 font-medium">Contains {coverage.coverageCount} of {coverage.totalSelected} selected items</span>
+                    <span class="text-hue-amber font-medium">Contains {coverage.coverageCount} of {coverage.totalSelected} selected items</span>
                   {/if}
                 {/if}
                 {#if selectedItems.length > 0 && coverage.missingItems.length > 0}

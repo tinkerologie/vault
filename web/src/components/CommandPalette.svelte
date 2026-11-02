@@ -231,9 +231,9 @@
           type="text"
           bind:value={query}
           placeholder="Type a command or search..."
-          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-dim focus:outline-none"
+          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
         />
-        <kbd class="text-xs text-text-dim bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">Esc</kbd>
+        <kbd class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">Esc</kbd>
       </div>
 
       <!-- Results -->
@@ -259,10 +259,10 @@
               </svg>
               <span class="text-sm flex-1 truncate">{cmd.label}</span>
               {#if cmd.meta}
-                <span class="text-xs text-text-dim capitalize shrink-0">{cmd.meta}</span>
+                <span class="text-xs text-text-muted capitalize shrink-0">{cmd.meta}</span>
               {/if}
               {#if i === selectedIndex}
-                <kbd class="text-xs text-text-dim bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">↵</kbd>
+                <kbd class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">↵</kbd>
               {/if}
             </button>
           {/each}
@@ -270,7 +270,7 @@
       </div>
 
       <!-- Footer -->
-      <div class="px-4 py-2 border-t border-border flex items-center gap-4 text-xs text-text-dim">
+      <div class="px-4 py-2 border-t border-border flex items-center gap-4 text-xs text-text-muted">
         <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">↑↓</kbd> Navigate</span>
         <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">↵</kbd> Execute</span>
         <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">Esc</kbd> Close</span>

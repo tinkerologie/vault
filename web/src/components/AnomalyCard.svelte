@@ -97,7 +97,7 @@
     </div>
     <button
       onclick={() => navigate('/anomalies')}
-      class="text-xs text-vault hover:text-vault-dark transition-colors font-medium"
+      class="text-xs text-vault-text hover:underline transition-colors font-medium"
     >
       View all
     </button>
@@ -172,7 +172,7 @@
           <div class="px-5 py-3 text-center">
             <button
               onclick={() => navigate('/anomalies')}
-              class="text-xs text-vault hover:text-vault-dark transition-colors font-medium"
+              class="text-xs text-vault-text hover:underline transition-colors font-medium"
             >
               + {totalOpen - displayed.length} more – view all anomalies
             </button>

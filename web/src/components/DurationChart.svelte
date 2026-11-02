@@ -192,7 +192,7 @@
         {@const tooltipX = padding.left + xCenter(hoveredIndex)}
         <div class="absolute pointer-events-none bg-surface-3 border border-border rounded-lg shadow-lg p-2 text-xs -translate-x-1/2 -translate-y-full"
           style="left: {(tooltipX / width) * 100}%; top: {((padding.top + y(p.duration)) / height) * 100 - 5}%">
-          <p class="text-text-dim mb-1">{formatDateShort(p.date)}</p>
+          <p class="text-text-muted mb-1">{formatDateShort(p.date)}</p>
           <p class="font-semibold text-text">{formatDuration(p.duration)}</p>
           {#if p.runCount}
             <p class="text-text-muted mt-0.5">{p.runCount} run{p.runCount !== 1 ? 's' : ''}</p>

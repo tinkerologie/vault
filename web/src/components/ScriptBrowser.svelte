@@ -63,7 +63,7 @@
         type="text"
         bind:value
         {placeholder}
-        class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text font-mono placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 pr-8"
+        class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text font-mono placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 pr-8"
       />
       {#if value}
         <button
@@ -99,10 +99,10 @@
 
         <!-- Breadcrumbs -->
         <div class="px-5 py-2 border-b border-border/50 flex items-center gap-1 text-xs text-text-muted overflow-x-auto">
-          <button onclick={() => goTo('')} class="hover:text-vault shrink-0">/</button>
+          <button onclick={() => goTo('')} class="hover:text-vault-text shrink-0">/</button>
           {#each breadcrumbs as crumb, i (crumb.path)}
             {#if i > 0}<span class="text-text-dim">/</span>{/if}
-            <button onclick={() => goTo(crumb.path)} class="hover:text-vault shrink-0">{crumb.name}</button>
+            <button onclick={() => goTo(crumb.path)} class="hover:text-vault-text shrink-0">{crumb.name}</button>
           {/each}
         </div>
 
@@ -125,7 +125,7 @@
                     <svg aria-hidden="true" class="w-5 h-5 text-text-muted group-hover:text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                   {/if}
                   <div class="min-w-0 flex-1">
-                    <div class="text-sm text-text group-hover:text-vault truncate">{entry.name}</div>
+                    <div class="text-sm text-text group-hover:text-vault-text truncate">{entry.name}</div>
                   </div>
                   {#if !entry.is_dir}
                     <span class="text-xs text-text-dim shrink-0">Select</span>
