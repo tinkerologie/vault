@@ -11,7 +11,7 @@
   import { buildRows, logEmptyState, rowEntries, isRowExpanded, toggleRowExpanded, rowHasDetails } from '../lib/logrows.js'
   import { createLogWindow, scrollAction } from '../lib/logwindow.svelte.js'
   import { levelStyle, levelLabel } from '../lib/loglevel.js'
-  import { formatLine, logLine, problemSummary, rowDetailsLabel } from '../lib/logline.js'
+  import { formatLine, logLine, problemSummary, rowDetailsLabel, rowStamp } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -799,7 +799,7 @@
                    controls set the row height: WCAG 2.5.8, on rows stacked tightly. -->
               {#if rowHasDetails(row, line.meta)}
                 <button type="button" onclick={() => toggleExpanded(row)} aria-expanded={open} aria-controls={open ? detailsId : undefined}
-                  aria-label={rowDetailsLabel(entry, rowTime(entry.ts), row.repeat)} title={open ? 'Hide details' : 'Show details'}
+                  aria-label={rowDetailsLabel(entry, rowStamp(entry.ts, rowTime(entry.ts)), row.repeat)} title={open ? 'Hide details' : 'Show details'}
                   class="w-6 h-6 shrink-0 flex items-center justify-center text-text-muted hover:text-text cursor-pointer">
                   <svg aria-hidden="true" class="w-3 h-3 transition-transform {open ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
                 </button>

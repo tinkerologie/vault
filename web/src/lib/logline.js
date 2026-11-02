@@ -151,6 +151,12 @@ export function problemFoldKey(entry) {
   return formatLine(entry).meta
 }
 
+// Prefix a row's time with its date, because the same time recurs across days.
+export function rowStamp(ts, time) {
+  const date = new Date(ts)
+  return Number.isNaN(date.getTime()) ? time : `${date.toLocaleDateString()} ${time}`.trim()
+}
+
 // A row's expand button. Rows often share a message, so the item and time tell
 // them apart for anyone who can't see the row around the button.
 export function rowDetailsLabel(entry, time, repeat = 1) {

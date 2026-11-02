@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitMessageMeta, formatLine, logLine, parseInlineMeta, problemFields, problemSummary, problemFoldKey, rowDetailsLabel } from './logline.js'
+import { splitMessageMeta, formatLine, logLine, parseInlineMeta, problemFields, problemSummary, problemFoldKey, rowDetailsLabel, rowStamp } from './logline.js'
 
 describe('splitMessageMeta', () => {
   it.each([
@@ -182,6 +182,14 @@ describe('rowDetailsLabel', () => {
     const later = rowDetailsLabel(entry('Health check, container=plex, status=unhealthy'), '10:00:02')
     expect(plex).toBe('Details for Health check · plex, 10:00:01')
     expect(new Set([plex, sonarr, later]).size).toBe(3)
+  })
+
+  it('tells apart rows at the same time on different days', () => {
+    const first = rowStamp('2026-11-01T10:00:01', '10:00:01')
+    const second = rowStamp('2026-11-02T10:00:01', '10:00:01')
+    expect(first).not.toBe(second)
+    expect(first).toContain('10:00:01')
+    expect(rowStamp('not a date', '10:00:01')).toBe('10:00:01')
   })
 
   it('counts a fold, and copes with no item or time', () => {

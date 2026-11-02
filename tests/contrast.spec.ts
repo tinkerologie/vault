@@ -411,6 +411,7 @@ for (const { style, mode, label } of THEMES) {
 // A top-layer modal makes the page inert, so prove the audit still measures dialog content.
 test('the audit measures text inside a native dialog', async ({ page }) => {
   await seedTheme(page, 'default', 'light');
+  await settleMotion(page);
   await setupVaultMockApi(page);
   await page.goto('/#/jobs');
   await page.getByRole('button', { name: /delete job/i }).first().click();
