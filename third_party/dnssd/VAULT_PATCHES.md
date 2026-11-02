@@ -51,8 +51,6 @@ publishes its service on `lo0` only, so on Linux it timed out with
 happens with unmodified upstream v1.2.14 too. The test now restores the
 original value when it finishes.
 
-## Adding a patch
-
 ## Go and dependency baseline (not a code patch)
 
 - **Vault issues:** tinkerologie/vault#536, #540, #541, #546
@@ -65,6 +63,8 @@ root module selects. The shipped binary already used those versions through
 minimum version selection, so this changes only standalone builds and scans of
 this module. Dependabot and `make security-check` cover this module directly.
 Keep these requirements when re-syncing from upstream.
+
+## Adding a patch
 
 Keep each patch small, mark it with a `Vault patch` comment, add a test in a
 new `*_test.go` file rather than editing upstream tests, and list it here.

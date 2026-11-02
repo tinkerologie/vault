@@ -115,9 +115,13 @@ lint-web:
 
 security-check:
 	gosec -fmt=text -exclude-dir=vendor -exclude-dir=build -exclude-dir=third_party -exclude=G104,G106,G110,G115,G117,G204,G301,G304,G305,G306,G703 -severity=medium -confidence=medium ./...
-	@command -v govulncheck >/dev/null 2>&1 || { echo "Installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
-	$(shell go env GOPATH)/bin/govulncheck ./...
-	cd third_party/dnssd && $(shell go env GOPATH)/bin/govulncheck ./...
+	@GOVULNCHECK="$$(command -v govulncheck || true)"; \
+	if [ -z "$$GOVULNCHECK" ]; then \
+		echo "Installing govulncheck..."; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+		GOVULNCHECK="$$(go env GOPATH)/bin/govulncheck"; \
+	fi; \
+	"$$GOVULNCHECK" ./... && cd third_party/dnssd && "$$GOVULNCHECK" ./...
 	go mod verify
 
 pre-commit-install:
