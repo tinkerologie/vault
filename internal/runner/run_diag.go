@@ -79,6 +79,13 @@ func redactStorageError(s string) string {
 	})
 }
 
+// redactHealthMessage cleans a container health message before it's broadcast or
+// stored. It's free text from the container's own probe, which can quote a URL
+// with credentials, so it gets the same treatment as a storage error.
+func redactHealthMessage(s string) string {
+	return redactStorageError(s)
+}
+
 // runPhase times one stage of one item. end writes a single line: info on
 // success, error naming the stage on failure, so the run log shows both
 // where time went and where an operation stopped.

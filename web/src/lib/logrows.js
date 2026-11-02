@@ -35,6 +35,23 @@ function collapseKey(entry) {
   return `${entry.level || 'info'} ${entry.category || ''} ${message} ${problemFoldKey(entry)}`
 }
 
+// What to show when no row matches. "No problems" is a claim about the whole
+// history, so it waits for the whole history: while older pages load, or once
+// loading has stopped early, the buffer can't support it.
+export function logEmptyState({ problemsOnly = false, hasMore = false, stopped = false }) {
+  if (hasMore && !stopped) return { kind: 'loading', text: problemsOnly ? 'Checking older logs for problems…' : 'Loading older logs…' }
+  if (hasMore) {
+    return {
+      kind: 'partial',
+      title: problemsOnly ? 'No problems in the logs loaded so far' : 'No matching logs loaded so far',
+      subtitle: "Older logs couldn't be loaded, so this may be incomplete.",
+    }
+  }
+  return problemsOnly
+    ? { kind: 'empty', title: 'No problems', subtitle: 'No warnings or errors match the current filters' }
+    : { kind: 'empty', title: 'No logs', subtitle: 'Events appear here as they happen', description: 'Backup and restore operations will stream their output into this console.' }
+}
+
 // Build the display rows.
 //
 // entries: chronological (oldest→newest), as the store holds them.

@@ -141,9 +141,22 @@ export function problemSummary(entry) {
 }
 
 // The part of a problem row's identity that folding must respect: different
-// containers or statuses are different problems. Empty for other levels.
+// containers, statuses or causes are different problems, and folding them would
+// hide all but one cause. It mirrors problemSummary: with no item or status the
+// whole tail is what the row shows. Empty for other levels.
 export function problemFoldKey(entry) {
   if (!isProblem(entry)) return ''
-  const { item, status } = problemFields(entry)
-  return `${item}\u0000${status}`
+  const { item, status, error } = problemFields(entry)
+  if (item || status) return `${item}\u0000${status}\u0000${error}`
+  return formatLine(entry).meta
+}
+
+// A row's expand button. Rows often share a message, so the item and time tell
+// them apart for anyone who can't see the row around the button.
+export function rowDetailsLabel(entry, time, repeat = 1) {
+  const { message } = formatLine(entry)
+  const { item } = problemFields(entry)
+  const parts = [item ? `${message} · ${item}` : message, time]
+  if (repeat > 1) parts.push(`${repeat} entries`)
+  return `Details for ${parts.filter(Boolean).join(', ')}`
 }

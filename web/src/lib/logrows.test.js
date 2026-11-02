@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice, isRowExpanded, toggleRowExpanded, rowHasDetails } from './logrows.js'
+import { buildRows, logEmptyState, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice, isRowExpanded, toggleRowExpanded, rowHasDetails } from './logrows.js'
 
 const NOW = new Date('2026-08-25T12:00:00')
 
@@ -307,11 +307,18 @@ describe('folding warnings and errors (#534)', () => {
   const line = (id, level, message, meta) => ({ ...entry(id, at(id), level, 'health', message), meta })
   const shape = (entries) => buildRows(entries, opts).filter((r) => r.kind === 'entry').map((r) => r.repeat)
 
-  it('folds the same container and status, whatever the error text', () => {
+  it('folds the same container, status and error, whatever else differs', () => {
+    expect(shape([
+      line(1, 'warn', 'Health check, container=plex, attempt=1, status=unhealthy, error=one'),
+      line(2, 'warn', 'Health check, container=plex, attempt=2, status=unhealthy, error=one'),
+    ])).toEqual([2])
+  })
+
+  it('keeps different errors apart, since a fold shows only one', () => {
     expect(shape([
       line(1, 'warn', 'Health check, container=plex, status=unhealthy, error=one'),
       line(2, 'warn', 'Health check, container=plex, status=unhealthy, error=two'),
-    ])).toEqual([2])
+    ])).toEqual([1, 1])
   })
 
   it.each([
@@ -379,5 +386,38 @@ describe('row expansion (#534)', () => {
     expect(rowHasDetails({ repeat: 1 }, '')).toBe(false)
     expect(rowHasDetails({ repeat: 1 }, 'a=b')).toBe(true)
     expect(rowHasDetails({ repeat: 2 }, '')).toBe(true)
+  })
+})
+
+describe('collapsing problems with different causes (#534)', () => {
+  const upload = (id, tail) => entry(id, `2026-08-21T10:00:0${id}`, 'error', 'backup', `Upload failed, ${tail}`)
+
+  it('never folds two causes into one row', () => {
+    const rows = buildRows([upload(1, 'file=a.tar, error=disk full'), upload(2, 'file=b.tar, error=permission denied')], opts).filter((r) => r.kind === 'entry')
+    expect(rows).toHaveLength(2)
+  })
+
+  it('still folds a repeat of the same cause', () => {
+    const rows = buildRows([upload(1, 'file=a.tar, error=disk full'), upload(2, 'file=a.tar, error=disk full')], opts).filter((r) => r.kind === 'entry')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].repeat).toBe(2)
+  })
+})
+
+describe('logEmptyState', () => {
+  it.each([
+    [{ problemsOnly: true }, 'empty', 'No problems'],
+    [{}, 'empty', 'No logs'],
+    [{ problemsOnly: true, hasMore: true, stopped: true }, 'partial', 'No problems in the logs loaded so far'],
+    [{ hasMore: true, stopped: true }, 'partial', 'No matching logs loaded so far'],
+  ])('%j', (input, kind, title) => {
+    expect(logEmptyState(input)).toMatchObject({ kind, title })
+  })
+
+  it.each([
+    [{ problemsOnly: true, hasMore: true }, 'Checking older logs for problems…'],
+    [{ hasMore: true }, 'Loading older logs…'],
+  ])('never claims anything while %j loads', (input, text) => {
+    expect(logEmptyState(input)).toEqual({ kind: 'loading', text })
   })
 })

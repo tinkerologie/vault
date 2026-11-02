@@ -391,7 +391,7 @@ describe('problem rows (#534)', () => {
   it('lists a long fold in steps', async () => {
     const entries = makeEntries(130).map((e) => ({ ...e, message: 'Tick' }))
     await mountLogs({ entries })
-    await fireEvent.click(screen.getByRole('button', { name: 'Details for Tick, 130 entries' }))
+    await fireEvent.click(screen.getByRole('button', { name: /^Details for Tick, .*, 130 entries$/ }))
     await flush()
     expect(document.querySelectorAll('[data-log-details] li')).toHaveLength(100)
     await fireEvent.click(screen.getByRole('button', { name: 'Show 30 more of 30' }))
@@ -425,7 +425,7 @@ describe('problem rows (#534)', () => {
 })
 
 describe('copy stays verbatim (#534)', () => {
-  const folded = () => makeEntries(3).map((e, i) => ({ ...e, level: 'warn', message: `Health check, container=plex, status=failed, error=e${i}` }))
+  const folded = () => makeEntries(3).map((e, i) => ({ ...e, level: 'warn', message: `Health check, container=plex, attempt=${i}, status=failed, error=refused` }))
 
   it('row copy yields every folded line, newest first', async () => {
     const entries = folded()
@@ -485,6 +485,14 @@ describe('Problems filter (#534)', () => {
     await flush()
     expect(screen.getByText('No problems')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset filters' })).toBeTruthy()
+  })
+
+  it('does not say so over a partly loaded buffer', async () => {
+    await mountLogs({ entries: makeEntries(2), hasMore: true })
+    await fireEvent.click(toggle())
+    await flush()
+    expect(screen.queryByText('No problems')).toBeNull()
+    expect(screen.getByText('Checking older logs for problems…')).toBeTruthy()
   })
 })
 

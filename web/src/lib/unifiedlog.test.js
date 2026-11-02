@@ -354,6 +354,25 @@ describe('unified log store', () => {
     expect(store.loadingOlder).toBe(false)
   })
 
+  it('reports loading stopped early, and clears that on a retry that finishes', async () => {
+    const page = Array.from({ length: 30 }, (_, i) => ({ id: 1000 - i, level: 'info', category: 'backup', message: `msg ${i}`, details: null, created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) - i * 1000).toISOString() }))
+    let fail = true
+    api.getActivity.mockImplementation(async (limit = 30, _category = '', beforeId = 0) => {
+      if (!beforeId) return page.slice(0, limit)
+      if (fail) throw new Error('network down')
+      return []
+    })
+    await store.load()
+    expect(store.historyStopped).toBe(false)
+    await store.loadAll()
+    expect(store.hasMore).toBe(true)
+    expect(store.historyStopped).toBe(true)
+    fail = false
+    await store.loadAll()
+    expect(store.hasMore).toBe(false)
+    expect(store.historyStopped).toBe(false)
+  })
+
   it('terminates loadAll after one silent failure and preserves existing rows', async () => {
     const plain30 = Array.from({ length: 30 }, (_, i) => ({
       id: 1000 - i,

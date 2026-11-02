@@ -8,10 +8,10 @@
   import { nearBottom, nearOldestEdge, atTop as isAtTop } from '../lib/scrollflags.js'
   import { getLiveMode } from '../lib/runtime-config.js'
   import { rowTime } from '../lib/tsformat.js'
-  import { buildRows, rowEntries, isRowExpanded, toggleRowExpanded, rowHasDetails } from '../lib/logrows.js'
+  import { buildRows, logEmptyState, rowEntries, isRowExpanded, toggleRowExpanded, rowHasDetails } from '../lib/logrows.js'
   import { createLogWindow, scrollAction } from '../lib/logwindow.svelte.js'
   import { levelStyle, levelLabel } from '../lib/loglevel.js'
-  import { formatLine, logLine, problemSummary } from '../lib/logline.js'
+  import { formatLine, logLine, problemSummary, rowDetailsLabel } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -728,14 +728,20 @@
       <span>searching older logs…</span>
     </div>
   {:else if store.filtered.length === 0}
-    <EmptyState
-      title={store.levelFilter === 'problems' ? 'No problems' : 'No logs'}
-      subtitle={store.levelFilter === 'problems' ? 'No warnings or errors match the current filters' : 'Events appear here as they happen'}
-      description={store.levelFilter === 'problems' ? '' : 'Backup and restore operations will stream their output into this console.'}>
-      {#snippet iconSlot()}
-        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-      {/snippet}
-    </EmptyState>
+    {@const empty = logEmptyState({ problemsOnly: store.levelFilter === 'problems', hasMore: store.hasMore && store.entries.length > 0, stopped: store.historyStopped })}
+    {#if empty.kind === 'loading'}
+      <div class="py-4 text-center text-sm text-text-dim flex items-center justify-center gap-2" aria-live="polite">
+        <span aria-hidden="true" class="inline-block w-4 h-4 border border-vault/30 border-t-vault rounded-full animate-spin"></span>
+        <span>{empty.text}</span>
+      </div>
+    {:else}
+      <EmptyState title={empty.title} subtitle={empty.subtitle} description={empty.description ?? ''}
+        actionLabel={empty.kind === 'partial' ? 'Try again' : ''} onaction={empty.kind === 'partial' ? () => store.loadAll() : null}>
+        {#snippet iconSlot()}
+          <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        {/snippet}
+      </EmptyState>
+    {/if}
   {:else}
     <!-- Console wrapper: scroll container + fixed overlay buttons -->
     <div class="relative vault-console-frame" style="max-height: 72vh">
@@ -793,7 +799,7 @@
                    controls set the row height: WCAG 2.5.8, on rows stacked tightly. -->
               {#if rowHasDetails(row, line.meta)}
                 <button type="button" onclick={() => toggleExpanded(row)} aria-expanded={open} aria-controls={open ? detailsId : undefined}
-                  aria-label="Details for {line.message}{row.repeat > 1 ? `, ${row.repeat} entries` : ''}" title={open ? 'Hide details' : 'Show details'}
+                  aria-label={rowDetailsLabel(entry, rowTime(entry.ts), row.repeat)} title={open ? 'Hide details' : 'Show details'}
                   class="w-6 h-6 shrink-0 flex items-center justify-center text-text-muted hover:text-text cursor-pointer">
                   <svg aria-hidden="true" class="w-3 h-3 transition-transform {open ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
                 </button>

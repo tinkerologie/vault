@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitMessageMeta, formatLine, logLine, parseInlineMeta, problemFields, problemSummary, problemFoldKey } from './logline.js'
+import { splitMessageMeta, formatLine, logLine, parseInlineMeta, problemFields, problemSummary, problemFoldKey, rowDetailsLabel } from './logline.js'
 
 describe('splitMessageMeta', () => {
   it.each([
@@ -154,7 +154,14 @@ describe('problemFoldKey', () => {
     expect(problemFoldKey({ level: 'info', message: 'x, container=a' })).toBe('')
     const key = (message) => problemFoldKey({ level: 'warn', message })
     expect(key('x, container=a, status=b')).not.toBe(key('x, container=ab, status='))
-    expect(key('x, container=a, status=b, error=one')).toBe(key('x, container=a, status=b, error=two'))
+  })
+
+  it('keeps different causes apart, since a fold shows only one (#534)', () => {
+    const key = (message) => problemFoldKey({ level: 'warn', message })
+    expect(key('x, container=a, status=b, error=one')).not.toBe(key('x, container=a, status=b, error=two'))
+    expect(key('x, container=a, status=b, error=one')).toBe(key('x, container=a, status=b, error=one'))
+    expect(key('Upload failed, file=a.tar, error=disk full')).not.toBe(key('Upload failed, file=b.tar, error=permission denied'))
+    expect(key('Upload failed, file=a.tar, error=disk full')).toBe(key('Upload failed, file=a.tar, error=disk full'))
   })
 })
 
@@ -163,5 +170,22 @@ describe('copied and exported text', () => {
     const entry = { ts: '2026-08-21T10:45:48', level: 'warning', category: 'health', type: 'activity', message: 'Health check, container=plex, status=unhealthy, error=Timed out, retrying', meta: { container_name: 'plex', status: 'unhealthy' } }
     expect(formatLine(entry)).toEqual({ message: 'Health check', meta: 'container=plex, status=unhealthy, error=Timed out, retrying' })
     expect(logLine(entry)).toBe('2026-08-21 10:45:48  warn  health  Health check | container=plex, status=unhealthy, error=Timed out, retrying')
+  })
+})
+
+describe('rowDetailsLabel', () => {
+  const entry = (message, extra = {}) => ({ level: 'warn', type: 'activity', message, ...extra })
+
+  it('tells apart rows that share a message', () => {
+    const plex = rowDetailsLabel(entry('Health check, container=plex, status=unhealthy'), '10:00:01')
+    const sonarr = rowDetailsLabel(entry('Health check, container=sonarr, status=unhealthy'), '10:00:01')
+    const later = rowDetailsLabel(entry('Health check, container=plex, status=unhealthy'), '10:00:02')
+    expect(plex).toBe('Details for Health check · plex, 10:00:01')
+    expect(new Set([plex, sonarr, later]).size).toBe(3)
+  })
+
+  it('counts a fold, and copes with no item or time', () => {
+    expect(rowDetailsLabel(entry('Tick'), '10:00:01', 3)).toBe('Details for Tick, 10:00:01, 3 entries')
+    expect(rowDetailsLabel(entry('Tick'), '')).toBe('Details for Tick')
   })
 })

@@ -21,8 +21,8 @@ const ROWS: Row[] = [
   row(3, 'warn', 'health', `Health check, container=plex, status=unhealthy, error=${PLEX_ERROR}`, { container_name: 'plex', status: 'unhealthy', job_id: 1, job_name: 'Nightly' }),
   row(4, 'warn', 'health', 'Health check, container=sonarr, status=unhealthy', { container_name: 'sonarr', status: 'unhealthy', job_id: 2, job_name: 'Weekly' }),
   row(5, 'warn', 'health', 'Health check, container=sonarr, status=failed, error=Container is exited (exit code 1)', { container_name: 'sonarr', status: 'failed', job_id: 2, job_name: 'Weekly' }),
-  row(6, 'warn', 'health', 'Health check, container=radarr, status=unhealthy, error=first', { container_name: 'radarr', status: 'unhealthy', job_id: 2, job_name: 'Weekly' }),
-  row(7, 'warn', 'health', 'Health check, container=radarr, status=unhealthy, error=second', { container_name: 'radarr', status: 'unhealthy', job_id: 2, job_name: 'Weekly' }),
+  row(6, 'warn', 'health', 'Health check, container=radarr, attempt=1, status=unhealthy, error=busy', { container_name: 'radarr', status: 'unhealthy', job_id: 2, job_name: 'Weekly' }),
+  row(7, 'warn', 'health', 'Health check, container=radarr, attempt=2, status=unhealthy, error=busy', { container_name: 'radarr', status: 'unhealthy', job_id: 2, job_name: 'Weekly' }),
   row(8, 'warning', 'health', 'Storage health check, destination=NAS, status=failed, error=dial tcp, refused', { storage_dest_id: 2, status: 'failed', error: 'dial tcp, refused' }),
   row(9, 'error', 'backup', 'Backup finished, job="Nightly", status=failed, items=0/1', { job_id: 1, job_name: 'Nightly' }),
   row(10, 'info', 'system', 'Routine tick'),
@@ -35,8 +35,8 @@ const COPIED = [
   `2026-10-20 12:00:03  warn  health  Health check | container=plex, status=unhealthy, error=${PLEX_ERROR}, job=Nightly`,
   '2026-10-20 12:00:04  warn  health  Health check | container=sonarr, status=unhealthy, job=Weekly',
   '2026-10-20 12:00:05  warn  health  Health check | container=sonarr, status=failed, error=Container is exited (exit code 1), job=Weekly',
-  '2026-10-20 12:00:06  warn  health  Health check | container=radarr, status=unhealthy, error=first, job=Weekly',
-  '2026-10-20 12:00:07  warn  health  Health check | container=radarr, status=unhealthy, error=second, job=Weekly',
+  '2026-10-20 12:00:06  warn  health  Health check | container=radarr, attempt=1, status=unhealthy, error=busy, job=Weekly',
+  '2026-10-20 12:00:07  warn  health  Health check | container=radarr, attempt=2, status=unhealthy, error=busy, job=Weekly',
   '2026-10-20 12:00:08  warn  health  Storage health check | destination=NAS, status=failed, error=dial tcp, refused',
   '2026-10-20 12:00:09  error  backup  Backup finished | job="Nightly", status=failed, items=0/1',
   '2026-10-20 12:00:10  info  system  Routine tick',
@@ -173,8 +173,8 @@ test.describe('row details (#534)', () => {
     await toggleOf(box, 7).click();
     const items = box.locator('[data-log-details] li');
     await expect(items).toHaveCount(2);
-    await expect(items.nth(0)).toContainText('error=second');
-    await expect(items.nth(1)).toContainText('error=first');
+    await expect(items.nth(0)).toContainText('attempt=2');
+    await expect(items.nth(1)).toContainText('attempt=1');
   });
 
   test('a bare row has no toggle', async ({ page }) => {
@@ -482,4 +482,70 @@ test('axe at 375 px with a row opened and Problems on', async ({ page }) => {
   await expect(box.locator('[data-log-details]')).toHaveCount(1);
   await structural(page, 'phone');
   await expectNoContrastViolations(page, 'phone');
+});
+
+test.describe('fixes from review (#534)', () => {
+  const CLEAN = Array.from({ length: 30 }, (_, i) => row(100 + i, 'info', 'backup', `Routine ${i}`));
+
+  async function serveHistory(page: Page, older: (route: Parameters<Parameters<Page['route']>[1]>[0]) => Promise<void>) {
+    await setupVaultMockApi(page);
+    await page.route('**/api/v1/activity*', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      if (new URL(route.request().url()).searchParams.get('before_id')) return older(route);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([...CLEAN].reverse()) });
+    });
+    await page.goto('/#/logs');
+    await page.getByRole('button', { name: /Problems/ }).click();
+  }
+
+  test('different causes get their own rows, each named', async ({ page }) => {
+    await openLogs(page, [
+      row(1, 'error', 'backup', 'Upload failed, file=a.tar, error=disk full'),
+      row(2, 'error', 'backup', 'Upload failed, file=b.tar, error=permission denied'),
+    ]);
+    const box = page.getByRole('log');
+    await expect(box.getByText(/disk full/)).toBeVisible();
+    await expect(box.getByText(/permission denied/)).toBeVisible();
+  });
+
+  test('"No problems" waits while older history is still loading', async ({ page }) => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await serveHistory(page, async (route) => {
+      await held;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+    await expect(page.getByText('Checking older logs for problems…')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'No problems', exact: true })).toHaveCount(0);
+    release();
+    await expect(page.getByRole('heading', { name: 'No problems', exact: true })).toBeVisible();
+  });
+
+  test('"No problems" is qualified when older history failed, and it can retry', async ({ page }) => {
+    let fail = true;
+    await serveHistory(page, async (route) => {
+      if (fail) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"nope"}' });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+    await expect(page.getByRole('heading', { name: 'No problems in the logs loaded so far' })).toBeVisible();
+    await expect(page.getByText("Older logs couldn't be loaded")).toBeVisible();
+    fail = false;
+    await page.getByRole('button', { name: 'Try again' }).click();
+    await expect(page.getByRole('heading', { name: 'No problems', exact: true })).toBeVisible();
+  });
+
+  test('expand buttons on matching rows have distinct accessible names', async ({ page }) => {
+    await openLogs(page, [
+      row(1, 'warn', 'health', 'Health check, container=plex, status=unhealthy'),
+      row(2, 'info', 'system', 'Tick'),
+      row(3, 'warn', 'health', 'Health check, container=sonarr, status=unhealthy'),
+      row(4, 'info', 'system', 'Tock'),
+      row(5, 'warn', 'health', 'Health check, container=plex, status=unhealthy'),
+    ]);
+    const names = await page.getByRole('log').getByRole('button', { name: /^Details for Health check/ }).evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+    expect(names).toHaveLength(3);
+    expect(names[0]).toContain('plex');
+    expect(names[1]).toContain('sonarr');
+    expect(new Set(names).size).toBe(3);
+  });
 });
