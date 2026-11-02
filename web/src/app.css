@@ -553,7 +553,36 @@ body {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-.animate-backdrop {
+
+/* Native dialog shell: a transparent viewport-sized box that centres the panel.
+   Layout only applies under [open], so a closed dialog can never show. */
+dialog.vault-dialog {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  overflow: auto;
+  outline: none;
+}
+dialog.vault-dialog[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+dialog.vault-dialog-top[open] {
+  align-items: flex-start;
+  padding-top: 15vh;
+}
+dialog.vault-dialog::backdrop {
+  background: rgb(0 0 0 / 0.6);
+  backdrop-filter: blur(8px);
   animation: backdrop-in 0.2s ease-out both;
 }
 
@@ -614,7 +643,7 @@ body {
    animate-pulse/animate-spin and all duration-* transitions, which the previous
    targeted list missed. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *, *::before, *::after, *::backdrop {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     animation-delay: 0.01ms !important;

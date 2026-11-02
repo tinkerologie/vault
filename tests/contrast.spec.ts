@@ -362,8 +362,42 @@ for (const { style, mode, label } of THEMES) {
     await setupVaultMockApi(page);
     await page.goto('/#/storage');
     await page.getByRole('button', { name: /add storage/i }).click();
-    const color = await page.locator('[role="dialog"] input[placeholder]').first().evaluate((el) => getComputedStyle(el, '::placeholder').color);
+    const color = await page.locator('dialog input[placeholder]').first().evaluate((el) => getComputedStyle(el, '::placeholder').color);
     expect(color).toBe(await cssColor(page, '--color-text-muted'));
+  });
+}
+
+// A top-layer modal makes the page inert, so prove the audit still measures dialog content.
+test('the audit measures text inside a native dialog', async ({ page }) => {
+  await seedTheme(page, 'default', 'light');
+  await setupVaultMockApi(page);
+  await page.goto('/#/jobs');
+  await page.getByRole('button', { name: /delete job/i }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Delete Job' })).toBeVisible();
+  await page.locator('dialog p').first().evaluate((el) => {
+    el.id = 'contrast-probe';
+    el.style.cssText = 'color:#f59e0b;background:#ffffff;font-size:14px';
+  });
+  const { violations } = await auditContrast(page, { include: '#contrast-probe' });
+  expect(violations).toHaveLength(1);
+});
+
+for (const { style, mode, label } of THEMES) {
+  test(`toast above an open dialog: ${label}`, async ({ page }) => {
+    await seedTheme(page, style, mode);
+    await settleMotion(page);
+    await setupVaultMockApi(page);
+    await page.route(/\/api\/v1\/storage$/, (route) => route.request().method() === 'POST'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'backend down' }) })
+      : route.fallback());
+    await page.goto('/#/storage');
+    await page.locator('main').getByRole('button', { name: /add storage/i }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Add Storage' });
+    await dialog.locator('#sname').fill('Rejected');
+    await dialog.getByRole('textbox', { name: 'Path' }).fill('/mnt/user/backups/vault');
+    await dialog.getByRole('button', { name: 'Add Storage', exact: true }).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expectNoContrastViolations(page, `${label} toast over dialog`, { include: '[role="alert"]' });
   });
 }
 

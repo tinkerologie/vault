@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import { createStepFocus } from '../lib/dialog.js'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
@@ -17,6 +18,10 @@
   let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null, onmount = null } = $props()
 
   let step = $state(1)
+  const STEP_HEADINGS = { 1: 'Choose what to restore', 2: 'Pick a backup version', 3: 'Set restore options' }
+  let wizardRoot = $state(null)
+  const trackStep = createStepFocus()
+  $effect(() => trackStep(step, () => wizardRoot))
   let selectedItems = $state(new SvelteMap()) // key: "type:name", value: item object
   let autoSelectApplied = false // deep-link auto-select is one-time per mount
 
@@ -1136,7 +1141,7 @@
   }
 </script>
 
-<div>
+<div bind:this={wizardRoot}>
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
     {#each [{n:1, label:'Select Items'}, {n:2, label:'Choose Version'}, {n:3, label:'Restore'}] as s (s.n)}
@@ -1166,6 +1171,8 @@
       {/if}
     {/each}
   </div>
+
+  <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-4 outline-none">Step {step} of 3: {STEP_HEADINGS[step]}</h2>
 
   <!-- Step 1: What to restore (multi-select) -->
   {#if step === 1}

@@ -1,9 +1,11 @@
 <script>
   import { api } from '../lib/api.js'
+  import Modal from './Modal.svelte'
 
   let { value = $bindable(''), label = 'Script', placeholder = '/path/to/script.sh' } = $props()
   let inputId = $derived(`script-browser-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)
 
+  const titleId = $props.id()
   let open = $state(false)
   let entries = $state([])
   let currentPath = $state('')
@@ -86,23 +88,22 @@
     </button>
   </div>
 
-  {#if open}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop" role="presentation">
-      <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col animate-panel-up">
+  <Modal show={open} labelledby={titleId} onclose={() => open = false}>
+      <div class="max-h-[80vh] flex flex-col min-h-0">
         <!-- Header -->
         <div class="flex items-center justify-between px-5 py-3 border-b border-border">
-          <h3 class="text-base font-semibold text-text">Select Script</h3>
-          <button onclick={() => open = false} class="text-text-muted hover:text-text p-1" aria-label="Close">
+          <h3 id={titleId} class="text-base font-semibold text-text">Select Script</h3>
+          <button type="button" onclick={() => open = false} class="text-text-muted hover:text-text p-1" aria-label="Close">
             <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
 
         <!-- Breadcrumbs -->
         <div class="px-5 py-2 border-b border-border/50 flex items-center gap-1 text-xs text-text-muted overflow-x-auto">
-          <button onclick={() => goTo('')} class="hover:text-vault-text shrink-0">/</button>
+          <button type="button" onclick={() => goTo('')} class="hover:text-vault-text shrink-0">/</button>
           {#each breadcrumbs as crumb, i (crumb.path)}
             {#if i > 0}<span class="text-text-dim">/</span>{/if}
-            <button onclick={() => goTo(crumb.path)} class="hover:text-vault-text shrink-0">{crumb.name}</button>
+            <button type="button" onclick={() => goTo(crumb.path)} class="hover:text-vault-text shrink-0">{crumb.name}</button>
           {/each}
         </div>
 
@@ -116,6 +117,7 @@
             <div class="divide-y divide-border/30">
               {#each entries as entry (entry.path)}
                 <button
+                  type="button"
                   onclick={() => selectEntry(entry)}
                   class="w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-surface-3 transition-colors group"
                 >
@@ -138,9 +140,8 @@
 
         <!-- Footer -->
         <div class="flex justify-end gap-3 px-5 py-3 border-t border-border">
-          <button onclick={() => open = false} class="px-4 py-2 text-sm text-text-muted hover:text-text rounded-lg">Cancel</button>
+          <button type="button" onclick={() => open = false} class="px-4 py-2 text-sm text-text-muted hover:text-text rounded-lg">Cancel</button>
         </div>
       </div>
-    </div>
-  {/if}
+  </Modal>
 </div>

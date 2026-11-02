@@ -1,5 +1,6 @@
 <script>
   import { api } from '../lib/api.js'
+  import { createStepFocus } from '../lib/dialog.js'
   import { navigate } from '../lib/router.svelte.js'
   import { formatBytes } from '../lib/utils.js'
   import StorageForm from '../components/StorageForm.svelte'
@@ -15,6 +16,9 @@
   ]
 
   let step = $state(1)
+  let wizardRoot = $state(null)
+  const trackStep = createStepFocus()
+  $effect(() => trackStep(step, () => wizardRoot))
   let dest = $state(null)
   let backups = $state([])
   let noBackups = $state(false)
@@ -173,7 +177,7 @@
   }
 </script>
 
-<div class="max-w-3xl mx-auto p-4 sm:p-6">
+<div bind:this={wizardRoot} class="max-w-3xl mx-auto p-4 sm:p-6">
   <h1 class="text-2xl font-bold text-text">Recover Vault</h1>
   <p class="text-sm text-text-muted mt-1 mb-6">
     Bring back your jobs, storage and history from a backup. You'll need access to your backup storage
@@ -201,7 +205,7 @@
 
   {#if step === 1}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
-      <h2 class="text-base font-semibold text-text mb-1">Connect the storage that holds your backups</h2>
+      <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Connect the storage that holds your backups</h2>
       <p class="text-sm text-text-muted mb-4">
         Point Vault at the place your old server sent its backups — the same share, server or bucket
         you used before. Use "Test connection" to make sure it works before continuing.
@@ -228,7 +232,7 @@
 
   {:else if step === 2}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
-      <h2 class="text-base font-semibold text-text mb-1">Enter your backup password</h2>
+      <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Enter your backup password</h2>
       <p class="text-sm text-text-muted mb-4">
         This is the encryption password you chose when you set up encryption on your old server
         (Settings → Encryption). It's the only thing you need from before.
@@ -259,7 +263,7 @@
 
   {:else if step === 3}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
-      <h2 class="text-base font-semibold text-text mb-1">Choose which backup to restore</h2>
+      <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Choose which backup to restore</h2>
       <p class="text-sm text-text-muted mb-4">
         The most recent backup is already selected — that's the right choice for almost everyone.
       </p>
@@ -316,7 +320,7 @@
   {:else if step === 4}
     {#if unlockedDedup.length > 0 || lockedDedup.length > 0}
       <div class="bg-surface-2 border border-border rounded-xl p-5 mb-4">
-        <h2 class="text-base font-semibold text-text mb-1">Deduplicated backups</h2>
+        <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Deduplicated backups</h2>
         {#each unlockedDedup as r (r.storage_id)}
           <p class="text-sm text-success">✓ {r.name}: unlocked with your backup password.</p>
         {/each}
@@ -342,7 +346,7 @@
       </div>
     {/if}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
-      <h2 class="text-base font-semibold text-text mb-1">Check your folder paths</h2>
+      <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Check your folder paths</h2>
       {#if audit === null}
         <p class="text-sm text-text-muted mb-4">
           We couldn't check your paths automatically. If a backup fails later, review the paths in
@@ -395,7 +399,7 @@
   {:else if step === 5}
     <div class="bg-surface-2 border border-border rounded-xl p-8 text-center">
       <div class="text-4xl mb-3" aria-hidden="true">🎉</div>
-      <h2 class="text-xl font-bold text-text mb-2">Vault is back</h2>
+      <h2 data-step-heading tabindex="-1" class="text-xl font-bold text-text mb-2 outline-none">Vault is back</h2>
       <p class="text-sm text-text-muted max-w-md mx-auto mb-6">
         Recovered {summary.jobs} job(s) and {summary.storage} storage destination(s).
         To bring files, containers or VMs back, use the normal Restore page. And store your backup

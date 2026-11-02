@@ -1,4 +1,6 @@
 <script>
+  import { floatAboveDialogs } from '../lib/dialog.js'
+
   let { message = '', type = 'info', key = 0 } = $props()
 
   let show = $state(false)
@@ -32,7 +34,7 @@
 </script>
 
 {#if show}
-  <div class="fixed top-4 right-4 z-[100] animate-slide-in" role="alert" aria-live="polite">
+  <div use:floatAboveDialogs class="fixed top-4 right-4 z-[100] animate-slide-in" role="alert" aria-live="polite">
     <!-- Opaque base, so text contrast never depends on the page under the toast. -->
     <div class="rounded-lg bg-surface-2 shadow-lg">
       <div class="px-4 py-3 rounded-lg border {colors[type] || colors.info} flex items-center gap-3 min-w-[280px]">

@@ -336,7 +336,7 @@
   </div>
 
   <!-- Main content -->
-  <main id="main-content" class="flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0">
+  <main id="main-content" tabindex="-1" class="outline-none flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0">
     {#key getRoute()}
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fade-up">
       {#if getRoute() === '/'}

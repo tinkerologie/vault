@@ -5,6 +5,7 @@
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { formatBytes, formatDate, formatDateCompact, parseConfig, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
+  import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import StorageBrowser from '../components/StorageBrowser.svelte'
@@ -722,57 +723,43 @@
 </Modal>
 
 <!-- Enhanced Delete Dialog -->
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && confirmDelete.show) confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }} />
-{#if confirmDelete.show}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
-    role="dialog" aria-modal="true" aria-labelledby="del-storage-title" tabindex="-1"
-  >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">
-      <h2 id="del-storage-title" class="text-lg font-semibold text-text">Delete Storage</h2>
-      <p class="text-sm text-text-muted mt-2">Are you sure you want to delete <strong class="text-text">{confirmDelete.name}</strong>?</p>
+<ConfirmDialog
+  show={confirmDelete.show}
+  title="Delete Storage"
+  confirmLabel={confirmDelete.deleteFiles ? 'Delete Storage & Files' : 'Delete Storage'}
+  onconfirm={doDeleteStorage}
+  oncancel={() => { confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
+>
+  {#snippet description()}Are you sure you want to delete <strong class="text-text">{confirmDelete.name}</strong>?{/snippet}
 
-      {#if confirmDelete.jobCount > 0}
-        <div class="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
-          <p class="text-sm text-warning font-medium flex items-center gap-1.5"><svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {confirmDelete.jobCount} job{confirmDelete.jobCount !== 1 ? 's' : ''} use{confirmDelete.jobCount === 1 ? 's' : ''} this storage</p>
-          <p class="text-xs text-text-dim mt-1">Those jobs will no longer have a storage destination and will fail to run.</p>
+    {#if confirmDelete.jobCount > 0}
+      <div class="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
+        <p class="text-sm text-warning font-medium flex items-center gap-1.5"><svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {confirmDelete.jobCount} job{confirmDelete.jobCount !== 1 ? 's' : ''} use{confirmDelete.jobCount === 1 ? 's' : ''} this storage</p>
+        <p class="text-xs text-text-dim mt-1">Those jobs will no longer have a storage destination and will fail to run.</p>
+      </div>
+    {/if}
+
+    <div class="mt-4 space-y-2">
+      <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {!confirmDelete.deleteFiles ? 'border-vault bg-vault/5' : 'border-border hover:border-vault/30'}">
+        <input type="radio" name="delStorageMode" checked={!confirmDelete.deleteFiles}
+          onchange={() => confirmDelete.deleteFiles = false}
+          class="mt-0.5 accent-vault" />
+        <div>
+          <p class="text-sm font-medium text-text">Keep backup files</p>
+          <p class="text-xs text-text-dim mt-0.5">Only remove the storage destination from Vault. Files remain on storage.</p>
         </div>
-      {/if}
-
-      <div class="mt-4 space-y-2">
-        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {!confirmDelete.deleteFiles ? 'border-vault bg-vault/5' : 'border-border hover:border-vault/30'}">
-          <input type="radio" name="delStorageMode" checked={!confirmDelete.deleteFiles}
-            onchange={() => confirmDelete.deleteFiles = false}
-            class="mt-0.5 accent-vault" />
-          <div>
-            <p class="text-sm font-medium text-text">Keep backup files</p>
-            <p class="text-xs text-text-dim mt-0.5">Only remove the storage destination from Vault. Files remain on storage.</p>
-          </div>
-        </label>
-        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {confirmDelete.deleteFiles ? 'border-danger bg-danger/5' : 'border-border hover:border-danger/30'}">
-          <input type="radio" name="delStorageMode" checked={confirmDelete.deleteFiles}
-            onchange={() => confirmDelete.deleteFiles = true}
-            class="mt-0.5 accent-[var(--color-danger)]" />
-          <div>
-            <p class="text-sm font-medium text-text">Delete Vault backup files</p>
-            <p class="text-xs text-text-dim mt-0.5">Remove the storage destination <strong class="text-danger">and permanently delete the Vault-managed restore points</strong> on it. Other files and folders in the destination are left untouched.</p>
-          </div>
-        </label>
-      </div>
-
-      <div class="flex justify-end gap-3 mt-6">
-        <button type="button" onclick={() => { confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
-          class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
-          Cancel
-        </button>
-        <button type="button" onclick={doDeleteStorage}
-          class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-danger text-on-status hover:bg-danger/90">
-          {confirmDelete.deleteFiles ? 'Delete Storage & Files' : 'Delete Storage'}
-        </button>
-      </div>
+      </label>
+      <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {confirmDelete.deleteFiles ? 'border-danger bg-danger/5' : 'border-border hover:border-danger/30'}">
+        <input type="radio" name="delStorageMode" checked={confirmDelete.deleteFiles}
+          onchange={() => confirmDelete.deleteFiles = true}
+          class="mt-0.5 accent-[var(--color-danger)]" />
+        <div>
+          <p class="text-sm font-medium text-text">Delete Vault backup files</p>
+          <p class="text-xs text-text-dim mt-0.5">Remove the storage destination <strong class="text-danger">and permanently delete the Vault-managed restore points</strong> on it. Other files and folders in the destination are left untouched.</p>
+        </div>
+      </label>
     </div>
-  </div>
-{/if}
+</ConfirmDialog>
 
 <!-- Import Backups Modal -->
 <Modal show={showImport} title={`Import Backups – ${importStorageName}`} onclose={() => showImport = false}>

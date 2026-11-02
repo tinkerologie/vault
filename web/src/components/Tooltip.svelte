@@ -1,4 +1,5 @@
 <script>
+  import { floatAboveDialogs } from '../lib/dialog.js'
   /**
    * Tooltip – contextual info icon with hover/click-triggered tooltip popup.
    *
@@ -126,11 +127,7 @@
   /** Teleport node to document.body so fixed positioning isn't broken by ancestor transforms/filters. */
   function portal(node) {
     document.body.appendChild(node)
-    return {
-      destroy() {
-        node.remove()
-      }
-    }
+    return floatAboveDialogs(node)
   }
 
   $effect(() => {

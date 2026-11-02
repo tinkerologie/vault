@@ -1,4 +1,5 @@
 <script>
+  import { createStepFocus } from '../lib/dialog.js'
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { navigate } from '../lib/router.svelte.js'
@@ -11,6 +12,7 @@
   import VerifyCostWarning from '../components/VerifyCostWarning.svelte'
   import { describeSchedule, relTimeUntil, itemDisplayLabel } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
+  import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -177,7 +179,15 @@
   }
 
   // Wizard step
+  const WIZARD_STEPS = [{ n: 1, label: 'What' }, { n: 2, label: 'Where & when' }, { n: 3, label: 'How' }, { n: 4, label: 'Name & review' }]
   let step = $state(1)
+  let wizardForm = $state(null)
+  // Reset while closed, so the step a create/edit/duplicate opens on is not a change.
+  const trackWizardStep = createStepFocus()
+  $effect(() => {
+    if (showModal && !expressMode) trackWizardStep(step, () => wizardForm)
+    else trackWizardStep.reset()
+  })
   const totalSteps = 4
   // Express mode renders every primary field on one scrollable page for power
   // users; the step-by-step wizard stays the default (issue #207 / E10).
@@ -1424,7 +1434,7 @@
       </div>
       {#if !expressMode}
         <div class="flex items-center gap-1 sm:gap-2 overflow-x-auto">
-          {#each [{n:1, label:'What'}, {n:2, label:'Where & when'}, {n:3, label:'How'}, {n:4, label:'Name & review'}] as s (s.n)}
+          {#each WIZARD_STEPS as s (s.n)}
             <button
               type="button"
               onclick={() => { if (s.n < step || canNext) step = s.n }}
@@ -1448,7 +1458,7 @@
     </div>
   {/snippet}
 
-  <form onsubmit={(e) => {
+  <form bind:this={wizardForm} onsubmit={(e) => {
     e.preventDefault()
     if (expressMode) {
       if (canSaveExpress) saveJob()
@@ -1549,6 +1559,7 @@
         </div>
       </div>
     {:else}
+    <h3 data-step-heading tabindex="-1" class="text-sm font-semibold text-text mb-4 outline-none">{WIZARD_STEPS[step - 1]?.label}</h3>
     <!-- Step 1 · What — backup types then the items for those types -->
     {#if step === 1}
       <div class="space-y-4">
@@ -2547,47 +2558,33 @@
   {/if}
 </Modal>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && confirmDelete.show) confirmDelete = { show: false, id: 0, name: '', deleteFiles: false } }} />
-{#if confirmDelete.show}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop"
-    role="dialog" aria-modal="true" aria-labelledby="delete-title" tabindex="-1"
-  >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 animate-panel-up">
-      <h2 id="delete-title" class="text-lg font-semibold text-text">Delete Job</h2>
-      <p class="text-sm text-text-muted mt-2">Are you sure you want to delete <strong class="text-text">{confirmDelete.name}</strong>?</p>
+<ConfirmDialog
+  show={confirmDelete.show}
+  title="Delete Job"
+  confirmLabel={confirmDelete.deleteFiles ? 'Delete Job & Files' : 'Delete Job'}
+  onconfirm={doDeleteJob}
+  oncancel={() => { confirmDelete = { show: false, id: 0, name: '', deleteFiles: false } }}
+>
+  {#snippet description()}Are you sure you want to delete <strong class="text-text">{confirmDelete.name}</strong>?{/snippet}
 
-      <div class="mt-4 space-y-2">
-        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {!confirmDelete.deleteFiles ? 'border-vault bg-vault/5' : 'border-border hover:border-vault/30'}">
-          <input type="radio" name="deleteMode" checked={!confirmDelete.deleteFiles}
-            onchange={() => confirmDelete.deleteFiles = false}
-            class="mt-0.5 accent-vault" />
-          <div>
-            <p class="text-sm font-medium text-text">Keep backup files</p>
-            <p class="text-xs text-text-dim mt-0.5">Only remove the job from Vault. Backup files remain on storage and can be imported later.</p>
-          </div>
-        </label>
-        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {confirmDelete.deleteFiles ? 'border-danger bg-danger/5' : 'border-border hover:border-danger/30'}">
-          <input type="radio" name="deleteMode" checked={confirmDelete.deleteFiles}
-            onchange={() => confirmDelete.deleteFiles = true}
-            class="mt-0.5 accent-[var(--color-danger)]" />
-          <div>
-            <p class="text-sm font-medium text-text">Delete backup files</p>
-            <p class="text-xs text-text-dim mt-0.5">Remove the job <strong class="text-danger">and permanently delete all backup files</strong> from storage. This cannot be undone.</p>
-          </div>
-        </label>
-      </div>
-
-      <div class="flex justify-end gap-3 mt-6">
-        <button type="button" onclick={() => { confirmDelete = { show: false, id: 0, name: '', deleteFiles: false } }}
-          class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
-          Cancel
-        </button>
-        <button type="button" onclick={doDeleteJob}
-          class="px-4 py-2 text-sm font-medium rounded-lg transition-colors {confirmDelete.deleteFiles ? 'bg-danger text-on-status hover:bg-danger/90' : 'bg-danger text-on-status hover:bg-danger/90'}">
-          {confirmDelete.deleteFiles ? 'Delete Job & Files' : 'Delete Job'}
-        </button>
-      </div>
+    <div class="mt-4 space-y-2">
+      <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {!confirmDelete.deleteFiles ? 'border-vault bg-vault/5' : 'border-border hover:border-vault/30'}">
+        <input type="radio" name="deleteMode" checked={!confirmDelete.deleteFiles}
+          onchange={() => confirmDelete.deleteFiles = false}
+          class="mt-0.5 accent-vault" />
+        <div>
+          <p class="text-sm font-medium text-text">Keep backup files</p>
+          <p class="text-xs text-text-dim mt-0.5">Only remove the job from Vault. Backup files remain on storage and can be imported later.</p>
+        </div>
+      </label>
+      <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {confirmDelete.deleteFiles ? 'border-danger bg-danger/5' : 'border-border hover:border-danger/30'}">
+        <input type="radio" name="deleteMode" checked={confirmDelete.deleteFiles}
+          onchange={() => confirmDelete.deleteFiles = true}
+          class="mt-0.5 accent-[var(--color-danger)]" />
+        <div>
+          <p class="text-sm font-medium text-text">Delete backup files</p>
+          <p class="text-xs text-text-dim mt-0.5">Remove the job <strong class="text-danger">and permanently delete all backup files</strong> from storage. This cannot be undone.</p>
+        </div>
+      </label>
     </div>
-  </div>
-{/if}
+</ConfirmDialog>
