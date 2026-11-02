@@ -53,6 +53,19 @@ original value when it finishes.
 
 ## Adding a patch
 
+## Go and dependency baseline (not a code patch)
+
+- **Vault issues:** tinkerologie/vault#536, #540, #541, #546
+- **File:** `go.mod`, `go.sum`
+
+The upstream module declares `go 1.20` and `golang.org/x/net v0.26.0`. Vault
+raises the `go` directive to match the root module and raises `x/net`,
+`miekg/dns` and the indirect `golang.org/x/*` requirements to the versions the
+root module selects. The shipped binary already used those versions through
+minimum version selection, so this changes only standalone builds and scans of
+this module. Dependabot and `make security-check` cover this module directly.
+Keep these requirements when re-syncing from upstream.
+
 Keep each patch small, mark it with a `Vault patch` comment, add a test in a
 new `*_test.go` file rather than editing upstream tests, and list it here.
 Open upstream pull requests worth considering include brutella/dnssd#66

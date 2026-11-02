@@ -36,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
+- **Go 1.27.3 and updated dnssd dependencies (#536, #540, #541, #546):** Vault now builds with Go 1.27.3. The bundled mDNS library no longer declares an end-of-life Go version or vulnerable `golang.org/x/net`, and Dependabot and `make security-check` now cover it.
 - **Storage health errors are redacted:** Credentials echoed in a storage health-check error are now removed before the message is saved, broadcast or logged.
 
 ## [v2026.10.04] - 2026-10-27
