@@ -69,7 +69,7 @@ func TestPackageShipsOnlyRetainedPages(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("..", "plugin", "assets")); !os.IsNotExist(err) {
 		t.Errorf("plugin/assets must not exist: stat err = %v", err)
 	}
-	for _, include := range []string{"api.php", "app.php", "apply.sh", "control.php", "proxy.php"} {
+	for _, include := range []string{"api.php", "app.php", "apply.sh", "control.php", "embed-host.js", "proxy.php"} {
 		if _, err := os.Stat(filepath.Join("..", "plugin", "pages", "include", include)); err != nil {
 			t.Errorf("retained include: %v", err)
 		}
@@ -120,7 +120,7 @@ func TestManifestCleanupRemovesOnlyLegacyFiles(t *testing.T) {
 	}
 	retained := []string{
 		"Vault.page", "Backups.page", "README.md", "vault.cfg",
-		"include/api.php", "include/app.php", "include/apply.sh", "include/control.php", "include/proxy.php",
+		"include/api.php", "include/app.php", "include/apply.sh", "include/control.php", "include/embed-host.js", "include/proxy.php",
 		"event/started", "event/stopping_svcs",
 		"ui/index.html", "ui/assets/index-abc123.js",
 	}

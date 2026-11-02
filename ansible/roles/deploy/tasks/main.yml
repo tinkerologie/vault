@@ -215,6 +215,20 @@
       until: scp_upload_app_php_via_scp.rc == 0
       changed_when: true
 
+    - name: Upload embed-host.js via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          sshpass -f '{{ sshpass_file.path }}'
+          scp {{ scp_common_opts }}
+          {{ playbook_dir }}/../plugin/pages/include/embed-host.js
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/embed-host.js
+      register: scp_upload_embed_host_js_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_embed_host_js_via_scp.rc == 0
+      changed_when: true
+
     - name: Upload proxy.php via SCP
       delegate_to: localhost
       ansible.builtin.command:

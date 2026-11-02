@@ -34,7 +34,7 @@ if ($html === false) {
     exit;
 }
 
-$runtimeConfig = [
+$runtimeConfig = array_merge([
     'mode' => 'unraid-proxy',
     'proxyPath' => '/plugins/vault/include/proxy.php',
     'apiDisplayBase' => '/plugins/vault/include/proxy.php',
@@ -43,7 +43,7 @@ $runtimeConfig = [
     'liveMode' => 'poll',
     'csrfToken' => $var['csrf_token'] ?? '',
     'timeFormat' => vault_detect_time_format(),
-];
+], vault_embed_runtime_config($_GET));
 
 $inject = '<script>window.__VAULT_RUNTIME_CONFIG__=' . json_encode(
     $runtimeConfig,

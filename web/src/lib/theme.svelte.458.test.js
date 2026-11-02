@@ -268,3 +268,70 @@ describe('setStyle / setMode', () => {
     expect(theme.getMode()).toBe('light')
   })
 })
+
+describe('initTheme host default (#526)', () => {
+  it('starts in the host mode over the OS preference, without persisting it', async () => {
+    await setup({ prefersDark: true })
+    theme.initTheme('light')
+    expect(theme.getMode()).toBe('light')
+    expect(theme.getIsDark()).toBe(false)
+    expect(storage.data['vault-mode']).toBeUndefined()
+  })
+
+  it.each([
+    ['system', 'dark', false],
+    ['light', 'dark', false],
+    ['dark', 'light', true],
+  ])('a stored %s beats a %s host', async (stored, host, dark) => {
+    await setup({ stored: { 'vault-mode': stored }, prefersDark: false })
+    theme.initTheme(host)
+    expect(theme.getMode()).toBe(stored)
+    expect(theme.getIsDark()).toBe(dark)
+  })
+
+  it('an invalid stored mode falls back to the host', async () => {
+    await setup({ stored: { 'vault-mode': 'dim' }, prefersDark: true })
+    theme.initTheme('light')
+    expect(theme.getMode()).toBe('light')
+  })
+
+  it('a legacy preference beats the host, even when it cannot be written', async () => {
+    await setup({ stored: { 'vault-theme': 'dark' }, prefersDark: false })
+    theme.initTheme('light')
+    expect(theme.getMode()).toBe('dark')
+
+    await setup({ stored: { 'vault-theme': 'dark' }, storageOpts: { failSet: true }, prefersDark: false })
+    theme.initTheme('light')
+    expect(theme.getMode()).toBe('dark')
+  })
+
+  it('an unrecognised legacy value does not block the host', async () => {
+    await setup({ stored: { 'vault-theme': 'neon' }, prefersDark: true })
+    theme.initTheme('light')
+    expect(theme.getMode()).toBe('light')
+  })
+
+  it.each([null, undefined, 'system', 'black'])('keeps following the OS with a host default of %j', async (host) => {
+    await setup({ prefersDark: true })
+    theme.initTheme(host)
+    expect(theme.getMode()).toBe('system')
+    expect(theme.getIsDark()).toBe(true)
+  })
+
+  it('an explicit choice after a host default persists and wins next load', async () => {
+    await setup({ prefersDark: true })
+    theme.initTheme('light')
+    theme.setMode('system')
+    expect(storage.data['vault-mode']).toBe('system')
+    expect(theme.getIsDark()).toBe(true)
+    theme.initTheme('light')
+    expect(theme.getMode()).toBe('system')
+  })
+
+  it('choosing a style alone does not lock in the mode', async () => {
+    await setup({ prefersDark: true })
+    theme.initTheme('light')
+    theme.setStyle('retro')
+    expect(storage.data['vault-mode']).toBeUndefined()
+  })
+})

@@ -8,6 +8,8 @@
   import { shouldRedirectRoute } from './lib/route-guard.js'
   import { groupBySection, isMobileNavActive, isMoreActive, moreNavItems } from './lib/mobile-nav.js'
   import { loadFeatureFlags, getAnomalyEnabled, getReplicationEnabled, getFeatureFlagsLoaded } from './lib/settings.svelte.js'
+  import { getHostThemeMode, isEmbedded } from './lib/runtime-config.js'
+  import { revealFrameTop } from './lib/embed.js'
   import { onMount, tick } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -24,6 +26,11 @@
   import Spinner from './components/Spinner.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
   import MoreSheet from './components/MoreSheet.svelte'
+  import EmbeddedNav from './components/EmbeddedNav.svelte'
+
+  // Framed by Unraid's Backups page (#526): no fixed chrome, and the document
+  // takes its natural height so the frame can size to it.
+  const embedded = isEmbedded()
 
   let moreOpen = $state(false)
   let showCommandPalette = $state(false)
@@ -102,7 +109,10 @@
   $effect(() => {
     if (!routeChanged(getRoute())) return
     moreOpen = false
-    tick().then(() => focusPageHeading(mainContent()))
+    tick().then(() => {
+      focusPageHeading(mainContent())
+      if (embedded) revealFrameTop()
+    })
   })
 
   // Running plugin version shown in the sidebar footer. Sourced from the same
@@ -128,7 +138,7 @@
       try {
         // initTheme is guarded internally, but keep a belt-and-braces catch so a
         // future unguarded line here can never abort the boot sequence.
-        try { initTheme() } catch { /* theme failures must never block boot */ }
+        try { initTheme(embedded ? getHostThemeMode() : null) } catch { /* theme failures must never block boot */ }
 
         // Detect replica mode from health endpoint.
         try {
@@ -242,9 +252,12 @@
   </div>
 {/if}
 
-<div class="flex h-screen bg-surface">
+<div class={embedded ? 'bg-surface' : 'flex h-screen bg-surface'}>
   {#if !ready}
     <div class="flex-1 flex items-center justify-center"><Spinner text="Connecting..." /></div>
+  {:else}
+  {#if embedded}
+    <EmbeddedNav items={nav} route={getRoute()} />
   {:else}
   <!-- Sidebar -->
   <aside aria-label="Sidebar" class="hidden lg:flex lg:flex-col w-64 bg-surface-2 border-r border-border shrink-0">
@@ -316,9 +329,10 @@
       </div>
     </div>
   </header>
+  {/if}
 
   <!-- Main content -->
-  <main id="main-content" tabindex="-1" class="outline-none flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0">
+  <main id="main-content" tabindex="-1" class={embedded ? 'outline-none pb-20' : 'outline-none flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0'}>
     {#key getRoute()}
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fade-up">
       {#if getRoute() === '/'}
@@ -350,6 +364,7 @@
     {/key}
   </main>
 
+  {#if !embedded}
   <!-- Mobile bottom navigation -->
   <nav class="fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-border flex justify-around py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] z-40 lg:hidden" aria-label="Mobile navigation">
     {#snippet barItem(/** @type {string} */ icon, /** @type {string} */ label, /** @type {boolean} */ active)}
@@ -390,5 +405,6 @@
   </nav>
 
   <MoreSheet show={moreOpen} id="more-sheet" items={moreItems} route={getRoute()} onclose={() => moreOpen = false} />
+  {/if}
   {/if}
 </div>

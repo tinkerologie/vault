@@ -1,4 +1,6 @@
 <script>
+  import { isEmbedded } from '../lib/runtime-config.js'
+
   let { onrefresh = async () => {}, children } = $props()
 
   let pulling = $state(false)
@@ -6,9 +8,12 @@
   let refreshing = $state(false)
   let startY = 0
   const threshold = 80
+  // The host page does the scrolling when embedded, so this frame's scrollY is
+  // always 0 and scrolling that page back up would count as a pull.
+  const enabled = !isEmbedded()
 
   function handleTouchStart(e) {
-    if (window.scrollY === 0) {
+    if (enabled && window.scrollY === 0) {
       startY = e.touches[0].clientY
       pulling = true
     }

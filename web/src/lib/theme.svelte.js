@@ -77,10 +77,13 @@ function applyTheme() {
   // selects the family, so there is nothing to load or unload here.
 }
 
-/** Migrate from old single-key 'vault-theme' to two-key system */
+/**
+ * Migrate from old single-key 'vault-theme' to two-key system.
+ * @returns {boolean} true when it carried over a preference
+ */
 function migrateOldTheme() {
   const old = safeGet('vault-theme')
-  if (!old) return
+  if (!old) return false
   const map = new Map([
     ['light', { style: 'default', mode: 'light' }],
     ['dark', { style: 'default', mode: 'dark' }],
@@ -104,14 +107,20 @@ function migrateOldTheme() {
     if (wroteStyle && wroteMode) {
       safeRemove('vault-theme')
     }
-    return
+    return true
   }
   // Unrecognised legacy value – nothing to preserve, drop it.
   safeRemove('vault-theme')
+  return false
 }
 
-export function initTheme() {
-  migrateOldTheme()
+/**
+ * @param {'light' | 'dark' | null} [hostDefault] the mode to start in when the
+ * user has never chosen one. It's never persisted, so any stored choice wins,
+ * including an explicit 'system'.
+ */
+export function initTheme(hostDefault = null) {
+  const migrated = migrateOldTheme()
   const savedStyle = safeGet(STYLE_KEY)
   const storedStyle = (savedStyle && LEGACY_STYLES.get(savedStyle)) || savedStyle
   // A failed write keeps Retro for this session and retries on the next load.
@@ -122,6 +131,8 @@ export function initTheme() {
   }
   if (storedMode && VALID_MODES.includes(/** @type {any} */ (storedMode))) {
     mode = /** @type {'light' | 'system' | 'dark'} */ (storedMode)
+  } else if (!migrated && (hostDefault === 'light' || hostDefault === 'dark')) {
+    mode = hostDefault
   }
   // Detach any handler from the previous MediaQueryList before replacing it
   // (e.g. under HMR). Operating on the *existing* mediaQuery is the only way

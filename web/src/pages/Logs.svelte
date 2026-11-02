@@ -671,7 +671,7 @@
     </EmptyState>
   {:else}
     <!-- Console wrapper: scroll container + fixed overlay buttons -->
-    <div class="relative" style="max-height: 72vh">
+    <div class="relative vault-console-frame" style="max-height: 72vh">
       <!-- Jump to present / new-entries indicator (fixed, bottom-right whenever follow is off) -->
       {#if !follow}
         <button onclick={jumpToPresent}

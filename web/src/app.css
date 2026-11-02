@@ -260,6 +260,39 @@ body {
   height: 100%;
 }
 
+/* ═══════════════════════════════════════════════
+   EMBEDDED – framed by Unraid's Backups page (#526)
+   The document takes its natural height and the host sizes the frame to it, so
+   the frame is often taller than the screen and vh means the wrong thing. Fixed
+   UI anchors to the visible part the host publishes. Unlayered, so these beat
+   the utilities they override and standalone markup stays as it is. Heights that
+   add to the page are fixed lengths: a vh height there would grow the frame,
+   which grows the vh height.
+   ═══════════════════════════════════════════════ */
+html.vault-embedded {
+  --vault-visible-top: 0px;
+  --vault-visible-height: 100vh;
+  /* Distance from the frame's bottom edge to the bottom of the visible part. */
+  --vault-visible-bottom: calc(100vh - var(--vault-visible-top) - var(--vault-visible-height));
+  height: auto;
+}
+html.vault-embedded body,
+html.vault-embedded #app {
+  height: auto;
+}
+html.vault-embedded .max-h-\[90vh\] { max-height: calc(var(--vault-visible-height) * 0.9); }
+html.vault-embedded .max-h-\[80vh\] { max-height: calc(var(--vault-visible-height) * 0.8); }
+html.vault-embedded .max-h-\[70vh\] { max-height: calc(var(--vault-visible-height) * 0.7); }
+html.vault-embedded .min-h-\[60vh\] { min-height: 20rem; }
+html.vault-embedded .h-\[72vh\] { height: 30rem; }
+html.vault-embedded .vault-console-frame { max-height: 30rem !important; }
+html.vault-embedded .fixed.top-0 { top: var(--vault-visible-top); }
+html.vault-embedded .fixed.top-4 { top: calc(var(--vault-visible-top) + 1rem); }
+html.vault-embedded .fixed.bottom-6 { bottom: calc(var(--vault-visible-bottom) + 1.5rem); }
+html.vault-embedded .focus\:fixed:focus { top: calc(var(--vault-visible-top) + 0.5rem); }
+html.vault-embedded [role="tabpanel"] > .sticky.top-0 { top: var(--vault-visible-top); }
+html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) + 1rem); }
+
 /* In the base layer so placeholder: utilities still win. */
 @layer base {
   ::placeholder {
@@ -607,6 +640,14 @@ dialog.vault-dialog-top[open] {
 }
 dialog.vault-dialog-sheet[open] {
   align-items: flex-end;
+}
+html.vault-embedded dialog.vault-dialog {
+  top: var(--vault-visible-top);
+  bottom: auto;
+  height: var(--vault-visible-height);
+}
+html.vault-embedded dialog.vault-dialog-top[open] {
+  padding-top: calc(var(--vault-visible-height) * 0.15);
 }
 dialog.vault-dialog::backdrop {
   background: rgb(0 0 0 / 0.6);

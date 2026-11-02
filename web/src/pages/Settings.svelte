@@ -5,6 +5,8 @@
   import { formatBytes, formatDate, snapshotMigrationMessage } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
+  import { isEmbedded } from '../lib/runtime-config.js'
+  import { scrollHostTo } from '../lib/embed.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Spinner from '../components/Spinner.svelte'
@@ -65,6 +67,14 @@
     const el = document.getElementById(id)
     if (!el) return
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const stickyBar = el.closest('main')?.querySelector('.sticky')
+    if (isEmbedded()) {
+      // Nothing in the frame scrolls: the host page does.
+      scrollHostTo(el.getBoundingClientRect().top - (stickyBar ? stickyBar.offsetHeight : 0))
+      el.setAttribute('tabindex', '-1')
+      el.focus({ preventScroll: true })
+      return
+    }
     // Scroll ONLY the <main> scroll container. scrollIntoView() also scrolls the
     // document — a programmatically-scrollable overflow:hidden box on tall pages
     // — shoving the whole app up so the sticky Jump-to bar leaves the viewport
@@ -72,8 +82,7 @@
     // sticky bar's height so the target isn't hidden under it.
     const main = el.closest('main')
     if (main) {
-      const bar = main.querySelector('.sticky')
-      const offset = bar ? bar.offsetHeight : 0
+      const offset = stickyBar ? stickyBar.offsetHeight : 0
       const top = main.scrollTop + el.getBoundingClientRect().top - main.getBoundingClientRect().top - offset
       main.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' })
     } else {

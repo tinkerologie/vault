@@ -183,4 +183,4 @@ Settings → Support → _Download diagnostics_ exports a ZIP containing system 
 
 ## Optional: "Backups" link in the top navigation
 
-Vault can add a **Backups** entry to the Unraid top navigation bar for one-click access to the web UI, embedded inside the Unraid interface. It is **off by default** — enable it under _Settings → Utilities → Vault → Quick Access_. The entry uses Unraid's supported plugin menu extension point; no core files are modified.
+Vault can add a **Backups** entry to the Unraid top navigation bar for one-click access to the web UI, embedded inside the Unraid interface. The embedded view fits the page: a compact row of links replaces Vault's own header, sidebar and bottom bar, the page scrolls as one, and it follows Unraid's light or dark theme until you choose a mode in Vault's settings. It is **off by default** — enable it under _Settings → Utilities → Vault → Quick Access_. The entry uses Unraid's supported plugin menu extension point; no core files are modified.
