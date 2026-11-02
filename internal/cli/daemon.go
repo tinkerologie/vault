@@ -463,7 +463,7 @@ var daemonCmd = &cobra.Command{
 			TLSKey:         tlsKey,
 			ServerKey:      serverKey,
 			Version:        version,
-			AllowedOrigins: append(allowedOrigins, strings.Split(config.ReadCfgValue(cfgPath, "ALLOWED_ORIGINS", ""), ",")...),
+			AllowedOrigins: resolveAllowedOrigins(allowedOrigins, cfgPath),
 		}
 		srv := api.NewServer(database, cfg)
 		srv.SetStartupDiagnostics(startupDiag)

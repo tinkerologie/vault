@@ -182,7 +182,16 @@ func isCrossOrigin(r *http.Request) bool {
 		return false
 	}
 	u, err := url.Parse(origin)
-	return err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host)
+	if err != nil || u.Host == "" {
+		return true
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	// A TLS-terminating proxy makes an https page look like this: its origin
+	// must be listed, because a forwarded-scheme header can't be trusted here.
+	return !strings.EqualFold(u.Scheme, scheme) || !strings.EqualFold(u.Host, r.Host)
 }
 
 // CrossOriginGuard refuses requests from pages on an origin the operator has

@@ -3,12 +3,16 @@ package cli
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,7 +48,7 @@ from the host itself. In Docker, run them inside the container:
 
 func init() {
 	apiKeyCmd.PersistentFlags().String("addr", "", "Local daemon address as ip:port (default: from vault.cfg, else 127.0.0.1:"+apiKeyDefaultPort+")")
-	apiKeyCmd.PersistentFlags().Bool("tls", false, "The daemon serves TLS (certificate not verified, since the address must be this host)")
+	apiKeyCmd.PersistentFlags().String("tls-cert", "", "The certificate file the daemon was started with; use this when it serves TLS")
 
 	apiKeyCmd.AddCommand(
 		&cobra.Command{
@@ -146,7 +150,7 @@ func printAPIKey(cmd *cobra.Command, method, route string) error {
 
 func callAPIKeyRoute(cmd *cobra.Command, method, route string) ([]byte, error) {
 	addr, _ := cmd.Flags().GetString("addr")
-	useTLS, _ := cmd.Flags().GetBool("tls")
+	certFile, _ := cmd.Flags().GetString("tls-cert")
 	target, err := resolveLocalDaemonAddr(addr)
 	if err != nil {
 		return nil, err
@@ -154,11 +158,11 @@ func callAPIKeyRoute(cmd *cobra.Command, method, route string) ([]byte, error) {
 
 	scheme := "http"
 	transport := &http.Transport{} // No Proxy: this must reach the local daemon directly.
-	if useTLS {
+	if certFile != "" {
 		scheme = "https"
-		// The address is verified local above, and a daemon's certificate rarely
-		// names 127.0.0.1, so there is nothing for verification to add.
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 //nolint:gosec // local-only address, checked by resolveLocalDaemonAddr
+		if transport.TLSClientConfig, err = pinnedTLSConfig(certFile); err != nil {
+			return nil, err
+		}
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: apiKeyRequestTimeout}
@@ -193,9 +197,49 @@ func callAPIKeyRoute(cmd *cobra.Command, method, route string) ([]byte, error) {
 	return body, nil
 }
 
+// pinnedTLSConfig trusts exactly the daemon's own certificate. The connection
+// goes to a local IP the certificate rarely names, so it's verified against a
+// name the certificate does carry; only the holder of that certificate's key
+// can pass.
+func pinnedTLSConfig(certFile string) (*tls.Config, error) {
+	data, err := os.ReadFile(certFile) // #nosec G304 //nolint:gosec // path given by the operator on the command line
+	if err != nil {
+		return nil, fmt.Errorf("reading --tls-cert: %w", err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("reading --tls-cert: no certificate in %s", certFile)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("reading --tls-cert: %w", err)
+	}
+	var name string
+	switch {
+	case len(cert.DNSNames) > 0:
+		name = cert.DNSNames[0]
+	case len(cert.IPAddresses) > 0:
+		name = cert.IPAddresses[0].String()
+	default:
+		return nil, fmt.Errorf("reading --tls-cert: the certificate names no host")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+	return &tls.Config{RootCAs: roots, ServerName: name, MinVersion: tls.VersionTLS12}, nil
+}
+
+// resolveAllowedOrigins combines --allowed-origin with ALLOWED_ORIGINS from the
+// vault.cfg beside the database. The API validates and normalises the result.
+func resolveAllowedOrigins(flagOrigins []string, cfgPath string) []string {
+	origins := slices.Clone(flagOrigins)
+	if value := config.ReadCfgValue(cfgPath, "ALLOWED_ORIGINS", ""); value != "" {
+		origins = append(origins, strings.Split(value, ",")...)
+	}
+	return origins
+}
+
 // resolveLocalDaemonAddr picks the daemon address and refuses anything that
-// isn't this host: the daemon would refuse a remote caller anyway, and TLS
-// verification is off for this one connection.
+// isn't this host, since the daemon would refuse a remote caller anyway.
 func resolveLocalDaemonAddr(flagAddr string) (string, error) {
 	host, port := "127.0.0.1", apiKeyDefaultPort
 	if flagAddr != "" {
@@ -214,7 +258,12 @@ func resolveLocalDaemonAddr(flagAddr string) (string, error) {
 		return "", fmt.Errorf("invalid address %q: expected an IP address of this host", host)
 	}
 	if ip.IsUnspecified() {
-		ip = net.IPv4(127, 0, 0, 1)
+		// Stay in the bind's family: an IPv6 wildcard may be IPv6-only.
+		if ip.To4() != nil {
+			ip = net.IPv4(127, 0, 0, 1)
+		} else {
+			ip = net.IPv6loopback
+		}
 	}
 	if !ip.IsLoopback() && !isHostInterfaceIP(ip) {
 		return "", fmt.Errorf("%s is not an address of this host; API keys can only be managed locally", ip)

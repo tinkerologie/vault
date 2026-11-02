@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -136,6 +137,47 @@ func TestCrossOriginLoopbackRequestsRefused(t *testing.T) {
 				t.Errorf("%s %s = %d, want 403", tc.method, tc.path, w.Code)
 			}
 		})
+	}
+}
+
+// An origin is scheme, host and port. Fetch metadata isn't sent to plain HTTP
+// hosts, so the scheme has to be compared directly: an http page on the daemon's
+// name must not pass as the daemon's https origin, or the reverse. Non-browser
+// clients such as the plugin proxy send no Origin and never reach this.
+func TestCrossOriginComparesScheme(t *testing.T) {
+	serverTLS := &tls.ConnectionState{}
+	for _, tc := range []struct {
+		name   string
+		origin string
+		tls    *tls.ConnectionState
+		want   bool
+	}{
+		{"http page, http daemon", "http://" + daemonHost, nil, false},
+		{"https page, https daemon", "https://" + daemonHost, serverTLS, false},
+		{"http page, https daemon", "http://" + daemonHost, serverTLS, true},
+		{"https page, http daemon", "https://" + daemonHost, nil, true},
+		{"scheme case is ignored", "HTTPS://" + daemonHost, serverTLS, false},
+		{"other scheme", "ftp://" + daemonHost, nil, true},
+		{"no origin, proxy or CLI", "", nil, false},
+		{"no origin over TLS", "", serverTLS, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/1/run", nil)
+			req.Host, req.TLS = daemonHost, tc.tls
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			if got := isCrossOrigin(req); got != tc.want {
+				t.Errorf("isCrossOrigin = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	srv := NewServer(testDB(t), ServerConfig{Addr: ":0"})
+	w := serve(srv, boundaryRequest(http.MethodPost, "/api/v1/settings/api-key/generate", loopbackPeer, daemonHost,
+		map[string]string{"Origin": "https://" + daemonHost}))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("https page against http daemon = %d, want 403", w.Code)
 	}
 }
 
@@ -469,10 +511,16 @@ func TestKeyClientsAreAccepted(t *testing.T) {
 		{"ha settings", "/api/v1/settings", ha},
 		{"replication health", "/api/v1/health", replication},
 		{"replication jobs", "/api/v1/jobs", replication},
+		{"replication source list", "/api/v1/replication", ha},
 	} {
 		if w := serve(srv, boundaryRequest(http.MethodGet, tc.path, remotePeer, lanHost, tc.headers)); w.Code != http.StatusOK {
 			t.Errorf("%s = %d, want 200: %s", tc.name, w.Code, w.Body)
 		}
+	}
+	// There is no /replication/sources route: it reaches /replication/{id} and
+	// fails ID parsing, which is past the boundary, not a refusal.
+	if w := serve(srv, boundaryRequest(http.MethodGet, "/api/v1/replication/sources", remotePeer, lanHost, ha)); w.Code != http.StatusBadRequest {
+		t.Errorf("/replication/sources = %d, want 400", w.Code)
 	}
 	// A steady poll from one address never reaches the attempt limiter.
 	for range apiKeyAttemptsPerMinute * 2 {

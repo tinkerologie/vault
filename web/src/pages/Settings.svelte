@@ -1787,6 +1787,9 @@
               <p class="text-sm text-text-muted leading-relaxed">Keep this passphrase in a safe place, as you will need it to restore your encrypted backups. Download it as an emergency kit file and store it somewhere safe. Encryption keeps your backups private and secure.</p>
             </div>
 
+            {#if isRemoteKeyClient()}
+            <div class="px-5 py-4"><ApiKeyLocalOnlyNotice subject="the encryption key and emergency kit" /></div>
+            {:else}
             <!-- Download emergency kit -->
             <div class="px-5 py-4 flex items-center justify-between gap-4">
               <div>
@@ -1816,6 +1819,8 @@
                 </div>
               {/if}
             </div>
+
+            {/if}
 
             <!-- Change passphrase -->
             {#if !isReplicaMode()}
@@ -1918,11 +1923,16 @@
               <p class="text-xs text-danger mt-1">No backup password is set, so this file is the only way to open your deduplicated backups if this server is lost.</p>
             {/if}
           </div>
+          {#if !isRemoteKeyClient()}
           <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
             {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>{/if}
             Download
           </button>
+          {/if}
         </div>
+        {#if isRemoteKeyClient()}
+        <div class="px-5 pb-4"><ApiKeyLocalOnlyNotice subject="vault.key" /></div>
+        {/if}
       </div>
 
       <!-- API Access -->
@@ -1942,7 +1952,7 @@
             </div>
 
             {#if isRemoteKeyClient()}
-            <div class="px-5 py-4"><ApiKeyLocalOnlyNotice /></div>
+            <div class="px-5 py-4"><ApiKeyLocalOnlyNotice subject="the API key" /></div>
             {:else}
             <!-- Reveal key -->
             <div class="px-5 py-4">

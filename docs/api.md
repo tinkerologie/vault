@@ -31,13 +31,13 @@ vault api-key generate                           # on the host; prints only the 
 docker exec vault-replica vault api-key generate # a Docker replica
 ```
 
-`vault api-key` also has `show`, `rotate`, `revoke` and `status`. The commands call the running daemon on this host, using the address in `vault.cfg` or `--addr ip:port`; add `--tls` if it serves TLS.
+`vault api-key` also has `show`, `rotate`, `revoke` and `status`. The commands call the running daemon on this host, using the address in `vault.cfg` or `--addr ip:port`; if it serves TLS, add `--tls-cert <file>` with the certificate it was started with.
 
 **Local-only routes:** these answer `403` to anything but the Vault host, even with a valid key: `/settings/api-key/key`, `/settings/api-key/generate`, `/settings/api-key/rotate`, `DELETE /settings/api-key`, `/settings/encryption/passphrase` and `/settings/server-key`.
 
 **Failed attempts:** key checks are rate limited per address and in total, and answer `429` past the limit. A client using the correct key is not affected once it has authenticated.
 
-**Browser origins:** the cross-origin allowlist is empty by default. To let a page on another origin call the API, list its exact origin, either with `--allowed-origin https://ha.example:8123` (repeatable) on `vault daemon` or `vault replica`, or as a comma-separated `ALLOWED_ORIGINS` in `vault.cfg`, then restart. Wildcards aren't accepted. The list also controls CORS, Private Network Access preflights and WebSocket origins.
+**Browser origins:** the cross-origin allowlist is empty by default. To let a page on another origin call the API, list its exact origin, either with `--allowed-origin https://ha.example:8123` (repeatable) on `vault daemon` or `vault replica`, or as a comma-separated `ALLOWED_ORIGINS` in the `vault.cfg` beside the database, then restart. Wildcards aren't accepted. The list also controls CORS, Private Network Access preflights and WebSocket origins.
 
 **Opening the daemon's port from another machine:** as with a Docker replica's own UI, this asks for the API key and keeps it for that browser tab. Live progress then uses polling, because a browser can't send the key on a WebSocket connection. Same-origin pages on the Vault host don't need a key, including through an SSH tunnel. Generating, showing, rotating and revoking the key need the Vault host: use the Unraid web UI, an SSH tunnel, or the CLI.
 
@@ -45,7 +45,7 @@ docker exec vault-replica vault api-key generate # a Docker replica
 
 | Method | Endpoint             | Description                                                                                                                  |
 | ------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`            | Open without a key: status and mode. With local or key access, also version and `startup` diagnostics                        |
+| GET    | `/health`            | Status, version, mode and `startup` diagnostics; needs local access or the key. Use the open `/ping` for anonymous liveness  |
 | GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs` |
 | GET    | `/ws`                | WebSocket event stream                                                                                                       |
 | GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress)                                                      |

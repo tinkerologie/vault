@@ -11,6 +11,7 @@ const anomalies = vi.hoisted(() => ({
   handleBulkResolved: vi.fn(),
   handleBulkAcked: vi.fn(),
   notifyBaselineUpdated: vi.fn(),
+  setOpenList: vi.fn(),
 }))
 const mounts = vi.hoisted(() => ({
   handleMountStarted: vi.fn(),
@@ -289,6 +290,61 @@ describe('websocket mode', () => {
 })
 
 describe('poll mode', () => {
+  it('reports anomaly changes a polling client gets no events for', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const seen = []
+      ws.onWsMessage((m) => seen.push(m))
+      const a1 = { id: 1, state: 'open', title: 'a' }
+      const a2 = { id: 2, state: 'open', title: 'b' }
+      const responses = [[a1, a2], [{ ...a1, title: 'changed' }, a2], [a2], [a2]]
+      const anomalyUrls = []
+      fetchMock.mockImplementation(async (url) => {
+        if (String(url).includes('/anomalies')) {
+          anomalyUrls.push(url)
+          const next = responses.shift()
+          if (next === undefined) return jsonResponse({}, false, 500)
+          return jsonResponse({ anomalies: next })
+        }
+        return jsonResponse({ active: false, queue: [] })
+      })
+      ws.connectWs()
+      const window = async () => { await vi.advanceTimersByTimeAsync(15 * 2000) }
+      const types = () => seen.filter((m) => m.type.startsWith('anomaly.')).map((m) => [m.type, m.data?.id])
+
+      await window()
+      expect(anomalyUrls[0]).toContain('state=open')
+      expect(types()).toEqual([['anomaly.raised', 1], ['anomaly.raised', 2]])
+      expect(anomalies.setOpenList).toHaveBeenLastCalledWith([a1, a2])
+
+      seen.length = 0
+      await window()
+      expect(types()).toEqual([['anomaly.updated', 1]])
+
+      seen.length = 0
+      await window()
+      expect(types()).toEqual([['anomaly.bulk_resolved', undefined]])
+
+      seen.length = 0
+      await window()
+      expect(types()).toEqual([])
+
+      await window() // a failed check changes nothing
+      expect(types()).toEqual([])
+
+      fetchMock.mockImplementation(async (url) => {
+        if (String(url).includes('/anomalies')) throw new Error('offline')
+        return jsonResponse({ active: false, queue: [] })
+      })
+      await window() // nor does an unreachable daemon
+      expect(types()).toEqual([])
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('polls /runner/status instead of opening a socket and emits reconciled messages', async () => {
     await loadWs({ liveMode: 'poll' })
     const seen = []

@@ -1,6 +1,7 @@
 <script>
   import { getApiKey, setApiKey } from '../lib/auth.svelte.js'
   import ApiKeyLocalOnlyNotice from './ApiKeyLocalOnlyNotice.svelte'
+  import Modal from './Modal.svelte'
 
   const rejected = getApiKey() !== ''
   let key = $state('')
@@ -18,9 +19,10 @@
   }
 </script>
 
-<div class="fixed inset-0 z-[150] flex items-center justify-center bg-surface p-4">
-  <form onsubmit={submit} class="w-full max-w-md bg-surface-2 border border-border rounded-xl p-5 space-y-3">
-    <h1 class="text-base font-semibold text-text">API key required</h1>
+<!-- Nothing behind this works without a key, so there is nothing to close to:
+     the dialog gets a title, but Esc and the close button leave it open. -->
+<Modal show title="API key required" size="md" onclose={() => {}}>
+  <form onsubmit={submit} class="space-y-3">
     <p class="text-sm text-text-muted">
       To use Vault with no key, log in to the Unraid web UI and open Vault there. Opening this address directly from another machine needs an API key, which can't be created from here.
     </p>
@@ -33,8 +35,8 @@
     {/if}
     <label class="block text-sm font-medium text-text">
       API key
-      <input type="password" autocomplete="off" bind:value={key} class="mt-1 w-full px-3 py-2 bg-surface border border-border rounded-lg text-sm text-text" />
+      <input data-autofocus type="password" autocomplete="off" bind:value={key} class="mt-1 w-full px-3 py-2 bg-surface border border-border rounded-lg text-sm text-text" />
     </label>
     <button type="submit" class="px-4 py-2 bg-vault text-on-vault rounded-lg text-sm font-medium">Continue</button>
   </form>
-</div>
+</Modal>

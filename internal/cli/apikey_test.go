@@ -2,14 +2,22 @@ package cli
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeKeyDaemon stands in for the daemon's key routes; the routes themselves
@@ -56,7 +64,7 @@ func TestAPIKeyCommands(t *testing.T) {
 	srv := httptest.NewServer(fakeKeyDaemon(&enabled))
 	defer srv.Close()
 	addr := strings.TrimPrefix(srv.URL, "http://")
-	flags := []string{"--addr", addr, "--tls=false"}
+	flags := []string{"--addr", addr}
 
 	run := func(cmd string) (string, error) { return runAPIKeyCmd(t, append([]string{cmd}, flags...)...) }
 
@@ -93,16 +101,105 @@ func TestAPIKeyCommands(t *testing.T) {
 	}
 }
 
+func writeCertPEM(t *testing.T, der []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "cert.pem")
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The CLI verifies the daemon against the daemon's own certificate file, so it
+// needs no bypass, and a different certificate is refused.
 func TestAPIKeyCommandOverTLS(t *testing.T) {
 	enabled := false
 	srv := httptest.NewTLSServer(fakeKeyDaemon(&enabled))
 	defer srv.Close()
-	out, err := runAPIKeyCmd(t, "status", "--addr", strings.TrimPrefix(srv.URL, "https://"), "--tls")
+	addr := strings.TrimPrefix(srv.URL, "https://")
+	t.Cleanup(func() {
+		if err := apiKeyCmd.PersistentFlags().Set("tls-cert", ""); err != nil {
+			t.Error(err)
+		}
+	})
+
+	cert := writeCertPEM(t, srv.Certificate().Raw)
+	out, err := runAPIKeyCmd(t, "status", "--addr", addr, "--tls-cert", cert)
 	if err != nil || !strings.Contains(out, "not configured") {
-		t.Errorf("status over TLS = %q, %v", out, err)
+		t.Errorf("status with the daemon's certificate = %q, %v", out, err)
 	}
-	if err := apiKeyCmd.PersistentFlags().Set("tls", "false"); err != nil {
+
+	if _, err := runAPIKeyCmd(t, "status", "--addr", addr, "--tls-cert", writeCertPEM(t, selfSignedDER(t))); err == nil {
+		t.Error("a different certificate was accepted")
+	}
+
+	if _, err := runAPIKeyCmd(t, "status", "--addr", addr, "--tls-cert", filepath.Join(t.TempDir(), "missing.pem")); err == nil || !strings.Contains(err.Error(), "reading --tls-cert") {
+		t.Errorf("missing file: %v", err)
+	}
+	garbage := filepath.Join(t.TempDir(), "bad.pem")
+	if err := os.WriteFile(garbage, []byte("not pem"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := runAPIKeyCmd(t, "status", "--addr", addr, "--tls-cert", garbage); err == nil || !strings.Contains(err.Error(), "no certificate") {
+		t.Errorf("garbage file: %v", err)
+	}
+}
+
+func selfSignedDER(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		DNSNames:     []string{"vault.test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der
+}
+
+func TestPinnedTLSConfigServerName(t *testing.T) {
+	cfg, err := pinnedTLSConfig(writeCertPEM(t, selfSignedDER(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ServerName != "vault.test" || cfg.RootCAs == nil {
+		t.Errorf("config = %q, %v", cfg.ServerName, cfg.RootCAs)
+	}
+	// A certificate naming nothing can't be matched, and says so.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pinnedTLSConfig(writeCertPEM(t, der)); err == nil || !strings.Contains(err.Error(), "names no host") {
+		t.Errorf("nameless certificate: %v", err)
+	}
+}
+
+func TestResolveAllowedOrigins(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "vault.cfg")
+	if err := os.WriteFile(cfg, []byte("ALLOWED_ORIGINS='https://a.example, https://b.example'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := resolveAllowedOrigins([]string{"https://flag.example"}, cfg)
+	want := []string{"https://flag.example", "https://a.example", " https://b.example"}
+	if !slices.Equal(got, want) {
+		t.Errorf("origins = %q, want %q", got, want)
+	}
+	if got := resolveAllowedOrigins(nil, filepath.Join(t.TempDir(), "missing.cfg")); len(got) != 0 {
+		t.Errorf("no config = %q, want none", got)
 	}
 }
 
@@ -122,7 +219,7 @@ func TestAPIKeyCommandFailures(t *testing.T) {
 		}
 	}))
 	addr := strings.TrimPrefix(srv.URL, "http://")
-	flags := []string{"--addr", addr, "--tls=false"}
+	flags := []string{"--addr", addr}
 	for _, tc := range []struct{ cmd, want string }{
 		{"show", "returned no API key"},
 		{"rotate", "reading API key response"},
@@ -135,7 +232,7 @@ func TestAPIKeyCommandFailures(t *testing.T) {
 		}
 	}
 	srv.Close()
-	if _, err := runAPIKeyCmd(t, "status", "--addr", addr, "--tls=false"); err == nil || !strings.Contains(err.Error(), "is it running") {
+	if _, err := runAPIKeyCmd(t, "status", "--addr", addr); err == nil || !strings.Contains(err.Error(), "is it running") {
 		t.Errorf("stopped daemon: %v", err)
 	}
 }
@@ -156,6 +253,13 @@ func TestResolveLocalDaemonAddr(t *testing.T) {
 	daemonCfgPath = cfg
 	if got, err := resolveLocalDaemonAddr(""); err != nil || got != "127.0.0.1:9999" {
 		t.Errorf("wildcard from cfg = %q, %v", got, err)
+	}
+
+	if err := os.WriteFile(cfg, []byte("BIND_ADDRESS='::'\nPORT='9999'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveLocalDaemonAddr(""); err != nil || got != "[::1]:9999" {
+		t.Errorf("IPv6 wildcard from cfg = %q, %v", got, err)
 	}
 
 	if got, err := resolveLocalDaemonAddr("[::1]:24085"); err != nil || got != "[::1]:24085" {

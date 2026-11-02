@@ -91,7 +91,7 @@ disaster recovery.`,
 			ServerKey:      serverKey,
 			Version:        version,
 			ReadOnly:       true,
-			AllowedOrigins: allowedOrigins,
+			AllowedOrigins: resolveAllowedOrigins(allowedOrigins, filepath.Join(filepath.Dir(dbPath), "vault.cfg")),
 		}
 		srv := api.NewServer(database, cfg)
 

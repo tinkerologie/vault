@@ -9,6 +9,7 @@ import {
   handleBulkResolved,
   handleBulkAcked,
   notifyBaselineUpdated,
+  setOpenList,
 } from './anomalies.svelte.js'
 import {
   handleMountStarted,
@@ -23,6 +24,12 @@ let reconnectTimer = null
 let pollTimer = null
 let previousStatus = null
 let pollEnabled = false
+let pollTicks = 0
+/** Open anomalies at the last poll, by id, serialized to detect changes. @type {Map<number, string>} */
+let knownAnomalies = new Map()
+// /runner/status polls every 2 s, so this checks anomalies every 30 s.
+const ANOMALY_POLL_EVERY = 15
+const ANOMALY_POLL_LIMIT = 100
 let status = $state('disconnected')
 
 // Counts live run-state transitions (start/completion). resyncRunnerStatus
@@ -103,8 +110,39 @@ function emitMessage(msg) {
   }
 }
 
+/**
+ * Stands in for the anomaly.* WebSocket events a polling client never gets.
+ * Emits what changed since the last check, so pages keep their usual handling.
+ */
+async function pollAnomalies() {
+  try {
+    const { url, options } = buildApiRequest('GET', `/anomalies?state=open&limit=${ANOMALY_POLL_LIMIT}`)
+    const res = await fetch(url, options)
+    if (!res.ok) return
+    const list = (await res.json())?.anomalies ?? []
+    const next = new Map(list.map((a) => [a.id, JSON.stringify(a)]))
+    for (const anomaly of list) {
+      const before = knownAnomalies.get(anomaly.id)
+      if (before === undefined) emitMessage({ type: 'anomaly.raised', data: anomaly })
+      else if (before !== next.get(anomaly.id)) emitMessage({ type: 'anomaly.updated', data: anomaly })
+    }
+    // An anomaly that left the open list may be resolved or acked; the event
+    // that tells pages to refetch covers either.
+    if ([...knownAnomalies.keys()].some((id) => !next.has(id))) {
+      emitMessage({ type: 'anomaly.bulk_resolved', data: null })
+    }
+    knownAnomalies = next
+    setOpenList(list)
+  } catch {
+    // Best-effort: the next check catches up.
+  }
+}
+
 async function pollRunnerStatus() {
   if (!pollEnabled) return
+
+  pollTicks++
+  if (pollTicks % ANOMALY_POLL_EVERY === 0) void pollAnomalies()
 
   try {
     const { url, options } = buildApiRequest('GET', '/runner/status')
