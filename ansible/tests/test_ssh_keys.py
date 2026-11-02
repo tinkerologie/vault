@@ -319,7 +319,6 @@ class SSHKeyTests(unittest.TestCase):
                 HOME=str(root),
                 PATH=str(root / "bin") + os.pathsep + env["PATH"],
                 ANSIBLE_CONFIG=str(ANSIBLE / "ansible.cfg"),
-                ANSIBLE_CALLBACKS_ENABLED="",
                 ANSIBLE_NOCOLOR="1",
             )
             completed = subprocess.run(
@@ -334,6 +333,7 @@ class SSHKeyTests(unittest.TestCase):
                 self.assertEqual(event["program"], "ssh")
                 self.assertTrue(f'IdentityFile="{key}"' in args, args)
                 self.assertTrue("PasswordAuthentication=no" in args, args)
+                self.assertTrue(any(a.startswith("ControlPath=/tmp/.vault-key-") for a in args), args)
                 # ssh uses the first value it sees for an option.
                 values = [a for a in args if a.split("=")[0] in ("IdentitiesOnly", "BatchMode", "StrictHostKeyChecking")]
                 for option in REQUIRED_OPTIONS:
@@ -387,7 +387,7 @@ class SSHKeyTests(unittest.TestCase):
         paths += list((ANSIBLE / "group_vars").rglob("*.yml")) + list((ANSIBLE / "roles").rglob("*.yml"))
         for path in paths:
             text = path.read_text()
-            for forbidden in (*FORBIDDEN_OPTIONS, "sshpass", "ansible_password:", "{{ ansible_password"):
+            for forbidden in (*FORBIDDEN_OPTIONS, "sshpass", "ansible_password:", "{{ ansible_password", "/tmp/.vault-deploy-"):
                 self.assertFalse(forbidden in text, f"{forbidden} in {path}")
 
     def test_authentication_failures_keep_diagnostics(self):
@@ -411,7 +411,7 @@ class SSHKeyTests(unittest.TestCase):
         # The role intentionally reports endpoint errors and continues verification.
         self.assertEqual(run.rc, 0, run.output)
         self.assertTrue("Endpoints: 0/3 passed, Ping: 503" in run.output, run.output)
-        self.assertTrue("FAILED: Health, Jobs, Storage" in run.output, run.output)
+        self.assertTrue("FAILED: Health (HTTP 503), Jobs (HTTP 503), Storage (HTTP 503)" in run.output, run.output)
         self.assertTrue(any("exit" in event["args"] for event in run.commands if event["program"] == "ssh"))
 
     def test_unreachable_server_fails_fast(self):

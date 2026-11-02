@@ -19,10 +19,11 @@ ssh_key_opts: >-
 # uploads are separate processes, and without a shared connection each one
 # authenticates again — Unraid's sshd starts refusing those logins part-way
 # through a deploy, which leaves the plugin half-updated with its service
-# already stopped.
+# already stopped. The path is new with key-only login so a run can never
+# attach to a master left by an older password-authenticated run.
 scp_common_opts: >-
   {{ ssh_key_opts }}
-  -o ControlMaster=auto -o ControlPath=/tmp/.vault-deploy-%r@%h:%p
+  -o ControlMaster=auto -o ControlPath=/tmp/.vault-key-%r@%h:%p
   -o ControlPersist=120s
 api_port: "{{ hostvars[inventory_hostname].api_port | default(24085) }}"
 bind_address: "{{ hostvars[inventory_hostname].bind_address | default('127.0.0.1') }}"

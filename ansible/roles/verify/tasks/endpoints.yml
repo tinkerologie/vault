@@ -37,4 +37,4 @@
   ansible.builtin.debug:
     msg: >-
       Endpoints: {{ passed }}/{{ total }} passed, Ping: {{ ping_result.status | default('failed') }}
-      {{ '— FAILED: ' + (failed_items | map(attribute='item.name') | join(', ')) if failed_items | length > 0 else '' }}
+      {% if failed_items | length > 0 %}— FAILED: {% for result in failed_items %}{{ result.item.name }} (HTTP {{ result.status | default('no response') }}){{ ', ' if not loop.last }}{% endfor %}{% endif %}
