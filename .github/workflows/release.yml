@@ -301,6 +301,8 @@ jobs:
       contents: read # check out main; the app token does the push
     env:
       CGO_ENABLED: '0'
+      CHECKSUM_SHA256: ${{ needs.release.outputs.sha256 }}
+      VERSION_VERSION: ${{ needs.release.outputs.version }}
 
     steps:
       - name: Checkout main
@@ -326,24 +328,26 @@ jobs:
 
       - name: Update and commit PLG
         id: plg
-        env:
-          CHECKSUM_SHA256: ${{ needs.release.outputs.sha256 }}
-          VERSION_VERSION: ${{ needs.release.outputs.version }}
         run: |
           if ! [[ "$CHECKSUM_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
             echo "ERROR: release job returned an invalid SHA256"
             exit 1
           fi
 
-          SHA256="${CHECKSUM_SHA256}"
-          export SHA256
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Kept outside the checkout so a retry reuses this copy and the helper built
+          # above, whatever a newer main contains. update-plg fails if the manifest
+          # version is not this release's, so a hash can never land on another version.
+          cat > "$RUNNER_TEMP/update-plg.sh" <<'SCRIPT'
+          set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
           import os, re
           path = Path("plugin/vault.plg")
           text = path.read_text()
-          sha = os.environ["SHA256"]
+          sha = os.environ["CHECKSUM_SHA256"]
           # Preserve original leading whitespace via backreference (\1) so
           # the workflow never drifts the indentation in vault.plg.
           text = re.sub(r'(?m)^([ \t]*)<!ENTITY bundle\s+".*?">',
@@ -363,12 +367,17 @@ jobs:
 
           if git diff --quiet plugin/vault.plg; then
             echo "PLG checksum and release notes already published"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
             git add plugin/vault.plg
             git commit -m "chore: update PLG SHA256 and release notes for v${VERSION_VERSION} [skip ci]"
+          fi
+          SCRIPT
+
+          BEFORE=$(git rev-parse HEAD)
+          bash "$RUNNER_TEMP/update-plg.sh"
+          if [ "$(git rev-parse HEAD)" = "$BEFORE" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -387,13 +396,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-token.outputs.token }}
         # The credential helper reads GH_TOKEN, so the token never enters a URL or argv.
-        # If a PR merged since checkout, replay the PLG commit on the new main. Only git
-        # runs here: nothing fetched is built or executed, and a conflict fails the job.
+        # If main moved, redo the update on it with the copies made before the token
+        # existed. Fetched files are only data: nothing from them is built or run.
         run: |
           gh auth setup-git
           for attempt in 1 2 3 4 5; do
             if git push origin main; then
-              echo "Committed and pushed PLG updates"
+              echo "Pushed PLG updates"
               exit 0
             fi
 
@@ -402,7 +411,13 @@ jobs:
               exit 1
             fi
 
-            echo "Push rejected, refreshing main and retrying..."
+            echo "Push rejected, regenerating the PLG update on the new main..."
             sleep $((attempt * 5))
-            git pull --rebase origin main
+            git fetch origin main
+            git reset --hard FETCH_HEAD
+            env -u GH_TOKEN bash "$RUNNER_TEMP/update-plg.sh"
+            if [ "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" ]; then
+              echo "main already has this PLG update"
+              exit 0
+            fi
           done
