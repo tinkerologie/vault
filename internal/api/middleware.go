@@ -314,7 +314,7 @@ func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, 
 				return
 			}
 			if hash == "" {
-				respondJSON(w, http.StatusUnauthorized, map[string]string{"error": noAPIKeyMessage})
+				respondJSON(w, http.StatusUnauthorized, map[string]string{"error": unconfiguredRefusal})
 				return
 			}
 			key := r.Header.Get("X-API-Key")
@@ -335,9 +335,9 @@ func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, 
 	}
 }
 
-// noAPIKeyMessage is the refusal when no key exists. A key is only needed for
+// unconfiguredRefusal is the refusal when no key exists. A key is only needed for
 // replication and Home Assistant, so the message tells that user where to go.
-const noAPIKeyMessage = "no API key configured: generate one in the Unraid web UI under Vault Settings, Security, API Access"
+const unconfiguredRefusal = "no API key configured: generate one in the Unraid web UI under Vault Settings, Security, API Access"
 
 const (
 	// apiKeyAttemptsPerMinute limits bcrypt comparisons per client address.
