@@ -314,6 +314,27 @@ describe('poll mode', () => {
     }
   })
 
+  it('gives up on a stalled anomaly check so later ones still run', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      let calls = 0
+      fetchMock.mockImplementation((url, options) => {
+        if (!String(url).includes('/anomalies')) return Promise.resolve(jsonResponse({ active: false, queue: [] }))
+        calls++
+        return new Promise((_, reject) => {
+          options.signal.addEventListener('abort', () => reject(new Error('aborted')))
+        })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(2 * 15 * 2000)
+      expect(calls).toBe(2)
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reports anomaly changes a polling client gets no events for', async () => {
     vi.useFakeTimers()
     try {

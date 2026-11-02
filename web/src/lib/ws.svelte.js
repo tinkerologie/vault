@@ -31,6 +31,7 @@ let anomalyPollInFlight = false
 // /runner/status polls every 2 s, so this checks anomalies every 30 s.
 const ANOMALY_POLL_EVERY = 15
 const ANOMALY_POLL_LIMIT = 100
+const ANOMALY_POLL_TIMEOUT_MS = 15000
 let status = $state('disconnected')
 
 // Counts live run-state transitions (start/completion). resyncRunnerStatus
@@ -119,9 +120,12 @@ async function pollAnomalies() {
   // One at a time, so a slow older response can't overwrite a newer one.
   if (anomalyPollInFlight) return
   anomalyPollInFlight = true
+  // Covers the body too: a stalled check must not block every later one.
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ANOMALY_POLL_TIMEOUT_MS)
   try {
     const { url, options } = buildApiRequest('GET', `/anomalies?state=open&limit=${ANOMALY_POLL_LIMIT}`)
-    const res = await fetch(url, options)
+    const res = await fetch(url, { ...options, signal: controller.signal })
     if (!res.ok) return
     const list = (await res.json())?.anomalies ?? []
     const next = new Map(list.map((a) => [a.id, JSON.stringify(a)]))
@@ -140,6 +144,7 @@ async function pollAnomalies() {
   } catch {
     // Best-effort: the next check catches up.
   } finally {
+    clearTimeout(timer)
     anomalyPollInFlight = false
   }
 }
