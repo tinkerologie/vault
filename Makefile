@@ -123,6 +123,7 @@ security-check:
 	fi; \
 	"$$GOVULNCHECK" ./... && cd third_party/dnssd && "$$GOVULNCHECK" ./...
 	go mod verify
+	cd third_party/dnssd && go mod verify
 
 pre-commit-install:
 	@echo "Installing pre-commit hooks..."
