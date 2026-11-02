@@ -79,13 +79,13 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	started := time.Now()
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		msg := err.Error()
+		msg := redactStorageError(err.Error())
 		_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
 		r.recordBreakerOutcome(dest.ID, false)
 		r.broadcastStorageHealth(dest.ID, "failed", msg)
 		lv, ms, dt := healthCheckActivity(dest, "failed", msg, time.Since(started))
 		r.logActivity(lv, "health", ms, dt)
-		log.Printf("runner: health check FAILED for %q (id=%d): adapter construction: %v", dest.Name, dest.ID, err)
+		log.Printf("runner: health check FAILED for %q (id=%d): adapter construction: %s", dest.Name, dest.ID, msg)
 		return "failed", msg
 	}
 	defer storage.CloseAdapter(adapter)
@@ -98,13 +98,13 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 	select {
 	case checkErr := <-resultCh:
 		if checkErr != nil {
-			msg := checkErr.Error()
+			msg := redactStorageError(checkErr.Error())
 			_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
 			r.recordBreakerOutcome(dest.ID, false)
 			r.broadcastStorageHealth(dest.ID, "failed", msg)
 			lv, ms, dt := healthCheckActivity(dest, "failed", msg, time.Since(started))
 			r.logActivity(lv, "health", ms, dt)
-			log.Printf("runner: health check FAILED for %q (id=%d): %v", dest.Name, dest.ID, checkErr)
+			log.Printf("runner: health check FAILED for %q (id=%d): %s", dest.Name, dest.ID, msg)
 			return "failed", msg
 		}
 	case <-time.After(healthCheckTimeout):

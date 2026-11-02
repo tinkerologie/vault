@@ -26,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Legacy PHP pages (#533):** Removed the unlinked `VaultJobs`, `VaultStorage`, `VaultHistory`, `VaultRestore` and `VaultSettings` pages and their CSS and JavaScript. Bookmarks to the old `/Settings/VaultJobs`, `/Settings/VaultStorage`, `/Settings/VaultHistory`, `/Settings/VaultRestore` and `/Settings/VaultSettings` URLs stop working; use Settings → Utilities → Vault or the optional Backups navigation entry instead. Plugin upgrades delete these files from existing installs.
 
+### Security
+
+- **Storage health errors are redacted:** Credentials echoed in a storage health-check error are now removed before the message is saved, broadcast or logged.
+
 ## [v2026.10.04] - 2026-10-27
 
 ### Changed

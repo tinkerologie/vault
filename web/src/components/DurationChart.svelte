@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <div class="relative"
+    <div class="relative" role="presentation"
       onmouseleave={() => hoveredIndex = -1}>
       <svg aria-hidden="true" viewBox="0 0 {width} {height}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">
         <g transform="translate({padding.left},{padding.top})">
