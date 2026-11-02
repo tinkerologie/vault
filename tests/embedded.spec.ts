@@ -1,7 +1,7 @@
 import path from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
 import { test, expect, type FrameLocator, type Page } from '@playwright/test';
-import { setupVaultMockApi } from './mocks/vault-api';
+import { setupVaultMockApi, mockJob1Points } from './mocks/vault-api';
 
 // The embedded Backups view (#526), through a real iframe. The harness stands in
 // for Unraid's page: a tall header above the frame, a floating scroll arrow, and
@@ -43,6 +43,8 @@ const harnessHtml = (frameSrc: string) => `<!doctype html><html><head><title>Unr
 </body></html>`;
 
 type EmbedOptions = {
+  /** Adds routes that must win over the mock API, before the first request. */
+  beforeLoad?: () => Promise<unknown>;
   hostTheme?: string | null;
   stored?: Record<string, string>;
   hash?: string;
@@ -54,6 +56,7 @@ type EmbedOptions = {
 async function openEmbedded(page: Page, options: EmbedOptions = {}): Promise<FrameLocator> {
   const { hostTheme = null, stored = {}, hash = '#/', replica = false, crossOrigin = false } = options;
   await setupVaultMockApi(page, { replica, replicationSources: REPLICATION_SOURCES });
+  await options.beforeLoad?.();
   await page.addInitScript(({ hostTheme, stored }) => {
     if (window.self !== window.top) {
       (window as any).__VAULT_RUNTIME_CONFIG__ = { presentation: 'embedded', hostTheme };
@@ -347,6 +350,33 @@ for (const viewport of VIEWPORTS) {
       await childWindow(page).evaluate(() => { location.hash = '#/logs'; });
       await expect(h1(frame, 'Logs')).toBeVisible();
       await expect.poll(async () => (await page.locator('#vault-backups-frame').boundingBox())!.y).toBeGreaterThanOrEqual(-1);
+    });
+
+    test('restore timeline day jumps scroll the parent page', async ({ page }) => {
+      // The mock's points share a day, so spread them out to draw the day strip.
+      const spreadPointsAcrossDays = () => page.route(/\/jobs\/1\/restore-points(\?|$)/, (route) => route.fulfill({
+        json: Array.from({ length: 12 }, (_, i) => ({
+          ...mockJob1Points[0],
+          id: 1001 + i,
+          created_at: `2026-10-${String(i + 1).padStart(2, '0')}T02:00:00Z`,
+        })),
+      }));
+      const frame = await openEmbedded(page, { hash: '#/restore', beforeLoad: spreadPointsAcrossDays });
+      await frame.getByRole('button', { name: /plex/i }).click();
+      await frame.getByRole('button', { name: 'Next', exact: true }).click();
+      const days = frame.getByRole('group', { name: 'Backup activity by day' }).getByRole('button');
+      await expect(days.first()).toBeVisible();
+      await settledFrameHeight(page);
+      const before = await page.evaluate(() => window.scrollY);
+      // The strip runs oldest to newest and the list newest first, so the first
+      // bar is the last, offscreen day.
+      await days.first().click();
+      const target = frame.locator('[id^="rpday-"]').last();
+      await expect.poll(async () => {
+        const box = await target.boundingBox();
+        return box !== null && box.y >= 0 && box.y < page.viewportSize()!.height;
+      }).toBe(true);
+      expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(before);
     });
 
     test('Settings jump links scroll the parent page', async ({ page }) => {

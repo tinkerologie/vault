@@ -418,10 +418,12 @@ test('the audit measures text inside a native dialog', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'Delete Job' })).toBeVisible();
   await page.locator('dialog p').first().evaluate((el) => {
     el.id = 'contrast-probe';
-    el.style.cssText = 'color:#f59e0b;background:#ffffff;font-size:14px';
+    // Foreground only: a forced background can overlap neighbours, and axe then
+    // reports the element as unmeasurable rather than failing it.
+    el.style.cssText = 'color:#fde68a;font-size:14px';
   });
-  const { violations } = await auditContrast(page, { include: '#contrast-probe' });
-  expect(violations).toHaveLength(1);
+  const { violations, incomplete } = await auditContrast(page, { include: '#contrast-probe' });
+  expect(violations, `unmeasured: ${JSON.stringify(incomplete)}`).toHaveLength(1);
 });
 
 for (const { style, mode, label } of THEMES) {

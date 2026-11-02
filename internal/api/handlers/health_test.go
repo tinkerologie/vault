@@ -511,6 +511,9 @@ func TestHealthSummary_RestoreRunsDoNotCountAsBackups(t *testing.T) {
 	resp := fetchHealthSummary(t, d)
 	assertFloat(t, resp, "recent_partial", 0)
 	assertFloat(t, resp, "recent_cancelled", 0)
+	assertFloat(t, resp, "recent_success", 0)
+	assertFloat(t, resp, "recent_failed", 0)
+	assertFloat(t, resp, "success_rate", 0)
 	if resp["last_success_at"] != nil {
 		t.Errorf("last_success_at = %v, a restore is not a backup", resp["last_success_at"])
 	}
@@ -554,7 +557,11 @@ func TestHealthSummary_StaleJobs(t *testing.T) {
 		{"disabled job, old backup", db.Job{Schedule: "0 2 * * *"}, 40 * healthDay, true},
 		{"manual job, recent backup", db.Job{Enabled: true}, 10 * healthDay, false},
 		{"manual job, old backup", db.Job{Enabled: true}, 40 * healthDay, true},
-		{"schedule cron can't parse", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 10 * healthDay, false},
+		{"schedule cron can't parse", db.Job{Enabled: true, Schedule: "not a schedule"}, 10 * healthDay, false},
+		{"schedule cron can't parse, old backup", db.Job{Enabled: true, Schedule: "not a schedule"}, 40 * healthDay, true},
+		{"last-day monthly job within its grace", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 45 * healthDay, false},
+		{"last-day monthly job past its grace", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 70 * healthDay, true},
+		{"last-day yearly job within its grace", db.Job{Enabled: true, Schedule: "0 2 L 1 *"}, 300 * healthDay, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

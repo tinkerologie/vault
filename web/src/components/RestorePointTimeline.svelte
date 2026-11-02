@@ -1,6 +1,8 @@
 <script>
   import { formatBytes, formatDate, relTime, itemTypeCountLabel } from '../lib/utils.js'
   import { getPointCoverage } from '../lib/restore-plan.js'
+  import { isEmbedded } from '../lib/runtime-config.js'
+  import { scrollHostTo } from '../lib/embed.js'
   import Tooltip from './Tooltip.svelte'
 
   let {
@@ -119,6 +121,11 @@
   function scrollToDay(key) {
     const el = document.getElementById(`rpday-${key}`)
     if (!el) return
+    if (isEmbedded()) {
+      // Nothing in the frame scrolls: the host page does.
+      scrollHostTo(el.getBoundingClientRect().top)
+      return
+    }
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
   }

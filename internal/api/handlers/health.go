@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -31,12 +32,23 @@ func jobStaleAfter(job db.Job, now time.Time) time.Duration {
 	if !job.Enabled || job.Schedule == "" {
 		return defaultStaleAfter
 	}
-	schedule, err := cron.ParseStandard(job.Schedule)
+	schedule, err := cron.ParseStandard(cadenceSpec(job.Schedule))
 	if err != nil {
 		return defaultStaleAfter
 	}
 	next := schedule.Next(now)
 	return 2*schedule.Next(next).Sub(next) + 24*time.Hour
+}
+
+// cadenceSpec rewrites the scheduler's "L" (last day of month) day-of-month to a
+// fixed day, because cron can't parse "L" and only the gap between runs matters.
+func cadenceSpec(spec string) string {
+	fields := strings.Fields(spec)
+	if len(fields) == 5 && fields[2] == "L" {
+		fields[2] = "1"
+		return strings.Join(fields, " ")
+	}
+	return spec
 }
 
 // isBackupRun reports whether a run is a backup, not a restore. Older rows have
@@ -147,16 +159,14 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, run := range runs {
+			if !isBackupRun(run) {
+				continue
+			}
 			switch run.Status {
 			case "success", "completed":
 				recentSuccess++
 			case "failed", "error":
 				recentFailed++
-			}
-			if !isBackupRun(run) {
-				continue
-			}
-			switch run.Status {
 			case "partial":
 				recentPartial++
 			case "skipped":
