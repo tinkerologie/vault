@@ -193,6 +193,17 @@ test.describe('Jobs Management & Creation Wizard', () => {
       await expect(storage).toHaveAccessibleDescription(describedBy(warningTitle));
     });
 
+    test('names the deferred-upload switch and the review-step enabled toggle', async ({ page }) => {
+      await openVerificationStep(page, 'Offsite S3 (s3)');
+      await page.locator('summary', { hasText: 'Deferred Remote Upload' }).click();
+      const deferred = page.getByRole('checkbox', { name: 'Defer remote upload until all backups complete' });
+      await expect(deferred).toBeEnabled();
+      await expect(deferred).toHaveAccessibleDescription(/Backs up every container to local staging first/);
+      await page.getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(page.getByRole('checkbox', { name: 'Enable scheduled execution' })).toBeChecked();
+      await expect(page.getByLabel('Enable scheduled execution')).toBeAttached();
+    });
+
     test('repeats the warning on the review step', async ({ page }) => {
       await openVerificationStep(page, 'Offsite S3 (s3)');
       await page.getByRole('button', { name: 'Next', exact: true }).click();
@@ -212,6 +223,15 @@ test.describe('Jobs Management & Creation Wizard', () => {
       await expect(page.getByLabel(/job name/i)).toBeVisible();
       await expect(page.getByText(warningTitle)).toHaveCount(0);
     });
+  });
+
+  test('names each bulk-selection checkbox after its job', async ({ page }) => {
+    await page.goto('/#/jobs');
+    const select = page.getByRole('checkbox', { name: 'Select Docker & Appdata' });
+    await expect(select).not.toBeChecked();
+    await select.check();
+    await expect(page.getByLabel('Select Docker & Appdata')).toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'Select VM Backups' })).not.toBeChecked();
   });
 
   test('supports deleting a job with confirmation modal', async ({ page }) => {

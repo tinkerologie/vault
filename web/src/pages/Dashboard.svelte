@@ -620,10 +620,6 @@
   })
 
 
-  // Keyboard activation for the click-through tiles (role="button"): fire on both
-  // Enter and Space, matching native button semantics, and stop Space scrolling.
-  function cardKey(e, fn) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn() } }
-
   // ── Tile catalog + layout ────────────────────────────────────────────────
   // span = 12-col width. `bare` tiles render their own card (they reuse a
   // self-carding component/panel); the rest get the shared card shell.
@@ -824,7 +820,7 @@
 {/snippet}
 
 {#snippet tHealth()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" title="View backup history" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" title="View backup history">
     {@render mHead(CATALOG.health.icon, 'Health score')}
     <div class="flex items-center gap-3 mt-auto">
       <div class="relative w-12 h-12 shrink-0">
@@ -840,7 +836,7 @@
         {#if avgSpeed}<p class="text-[11px] text-text-dim mt-0.5 tabular-nums">avg {avgSpeed}</p>{/if}
       </div>
     </div>
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tProtected()}
@@ -851,7 +847,7 @@
       <div class="h-full {protectionBar} transition-all duration-500" style="width: {protectionPct}%"></div>
     </div>
     {#if hasUnprotectedItems}
-      <button onclick={() => navigate('/jobs')} class="text-[11px] text-vault-text hover:underline font-medium mt-1.5 text-left">{unprotectedCount} unprotected →</button>
+      <a href="#/jobs" class="self-start text-[11px] text-vault-text hover:underline font-medium mt-1.5">{unprotectedCount} unprotected →</a>
     {:else if fullyProtected}
       <p class="text-[11px] text-success mt-1.5 font-medium">All items covered</p>
     {:else}
@@ -865,7 +861,7 @@
 {/snippet}
 
 {#snippet tNextRun()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => cardKey(e, () => navigate('/jobs'))}>
+  <a href="#/jobs" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.nextrun.icon, 'Next run')}
     {#if soonestNextRun}
       <p class="text-xl font-bold text-text tabular-nums leading-none">{relTimeUntil(soonestNextRun)}</p>
@@ -874,11 +870,11 @@
       <p class="text-xl font-bold text-text-dim leading-none">No schedule</p>
     {/if}
     <p class="text-[11px] text-vault-text font-medium mt-auto pt-1.5 tabular-nums">{jobs.length} job{jobs.length === 1 ? '' : 's'} · {enabledJobs.length} enabled</p>
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tLastBackup()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.lastbackup.icon, 'Last backup')}
     {#if lastBackup}
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
@@ -895,7 +891,7 @@
     {:else}
       <p class="text-base font-bold text-text-dim">No runs yet</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tThreeTwoOne()}
@@ -963,7 +959,7 @@
     <div class="px-4 py-3 border-b border-border flex items-center gap-2">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.jobs.icon}/></svg></span>
       <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Backup jobs</span>
-      <button onclick={() => navigate('/jobs')} class="ml-auto text-xs text-vault-text hover:underline font-medium">View all →</button>
+      <a href="#/jobs" class="ml-auto text-xs text-vault-text hover:underline font-medium">View all →</a>
     </div>
     {#if jobs.length === 0}
       <div class="px-5 py-8 text-center text-sm text-text-muted">No backup jobs configured</div>
@@ -977,10 +973,10 @@
             </div>
             {#if !isReplicaMode()}
               <div class="flex items-center gap-2 shrink-0">
-                <button onclick={() => navigate(`/restore?job=${job.id}`)} class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text" title="Restore from {job.name}">
+                <a href="#/restore?job={job.id}" class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text" title="Restore from {job.name}">
                   <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                   Restore
-                </button>
+                </a>
                 <button onclick={() => runNow(job)} disabled={runningJob === job.id} class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-vault/10 text-vault-text hover:bg-vault/20 disabled:opacity-50">
                   {#if runningJob === job.id}
                     <svg aria-hidden="true" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -1011,9 +1007,9 @@
     {#if type === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-hue-amber font-medium shrink-0">USB boot drive</span>{/if}
     {#if isProtected}
       {#if !isReplicaMode()}
-        <button onclick={() => navigate(`/restore?type=${restoreType}&name=${encodeURIComponent(itemName)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault-text hover:bg-vault/10 rounded transition-all" title="Restore {itemName}">
+        <a href="#/restore?type={restoreType}&name={encodeURIComponent(itemName)}" class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault-text hover:bg-vault/10 rounded transition-all" title="Restore {itemName}">
           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-        </button>
+        </a>
       {/if}
       <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
     {:else if pending}
@@ -1036,7 +1032,7 @@
           </span>
         </div>
         {#if hasUnprotectedItems}
-          <button onclick={() => navigate('/jobs')} class="text-xs text-vault-text hover:underline transition-colors font-medium">+ Add to Backup</button>
+          <a href="#/jobs" class="text-xs text-vault-text hover:underline transition-colors font-medium">+ Add to Backup</a>
         {:else if fullyProtected}
           <button onclick={toggleProtection} aria-expanded={protectionExpanded} class="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors">
             {protectionExpanded ? 'Hide items' : 'Show items'}
@@ -1101,17 +1097,17 @@
 
 {#snippet tStorageCombined()}
   {#if storageCombined}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
+    <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.storageCombined.icon, 'Storage used')}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{formatBytes(storageCombined.used)}</p>
       <p class="text-[11px] text-text-muted mt-1 tabular-nums">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
       <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full bg-vault" style="width: {storageCombined.pct}%"></div></div>
-    </div>
+    </a>
   {:else}{@render metricCardEmpty(CATALOG.storageCombined.icon, 'Storage used')}{/if}
 {/snippet}
 
 {#snippet tStoragePerTarget()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
+  <a href="#/storage" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.storagePerTarget.icon, 'Storage per target')}
     {#if storageCaps.length}
       <div class="flex flex-col gap-2.5">
@@ -1124,28 +1120,28 @@
         {/each}
       </div>
     {:else}<p class="text-xs text-text-dim mt-auto">No capacity data yet — probe a destination on the Storage page.</p>{/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tRecovery()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => cardKey(e, () => navigate('/recovery'))}>
+  <a href="#/recovery" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
     <p class="text-[26px] leading-none font-bold tabular-nums {fullyProtected ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {protectionBar}" style="width: {protectionPct}%"></div></div>
     <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{totalProtected}/{totalItems} items recoverable</p>
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tAttention()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.attention.icon, 'Needs attention')}
     <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
     <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tSuccessRate()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.successrate.icon, 'Success rate')}
     {#if successStats}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{successStats.pct}%</p>
@@ -1155,16 +1151,16 @@
       <p class="text-[26px] leading-none font-bold text-text-dim">—</p>
       <p class="text-[11px] text-text-dim mt-auto pt-1.5">No completed runs yet</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tAnomalies()}
   {#if getAnomalyEnabled()}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/anomalies')} role="button" tabindex="0" onkeydown={(e) => cardKey(e, () => navigate('/anomalies'))}>
+    <a href="#/anomalies" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.anomalies.icon, 'Anomalies')}
       <p class="text-[26px] leading-none font-bold tabular-nums {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
       <p class="text-[11px] text-text-dim mt-auto pt-1.5">{anomalies.openList.length === 0 ? 'No unusual runs detected' : 'open — review on Anomalies'}</p>
-    </div>
+    </a>
   {:else}{@render metricCardEmpty(CATALOG.anomalies.icon, 'Anomalies')}{/if}
 {/snippet}
 
@@ -1177,8 +1173,8 @@
           {runningAll ? 'Starting…' : 'Run all backups'}
         </button>
         <div class="flex gap-1.5">
-          <button onclick={() => navigate('/jobs')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault-text hover:bg-vault/20 transition-colors">New job</button>
-          <button onclick={() => navigate('/restore')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault-text hover:bg-vault/20 transition-colors">Restore</button>
+          <a href="#/jobs" class="flex-1 text-center text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault-text hover:bg-vault/20 transition-colors">New job</a>
+          <a href="#/restore" class="flex-1 text-center text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault-text hover:bg-vault/20 transition-colors">Restore</a>
         </div>
       </div>
     {:else}
@@ -1188,7 +1184,7 @@
 {/snippet}
 
 {#snippet tSizeTrend()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
     <div class="flex items-center gap-2 mb-2.5">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.sizeTrend.icon}/></svg></span>
       <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted truncate">Backup size trend</span>
@@ -1205,11 +1201,11 @@
     {:else}
       <p class="text-xs text-text-dim py-5 text-center">{trendLoading ? 'Loading trend…' : 'Not enough history yet'}</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tCalendar()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.calendar.icon, 'Backup calendar')}
     {#if calendarGrid}
       <div class="flex items-start justify-between gap-4 flex-wrap">
@@ -1248,16 +1244,16 @@
     {:else}
       <p class="text-xs text-text-dim py-6 text-center">{trendLoading ? 'Loading…' : 'No history yet'}</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tSavings()}
   {#if dedupSummary}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
+    <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
       <p class="text-[26px] leading-none font-bold text-success tabular-nums">{dedupSummary.ratio.toFixed(1)}×</p>
       <p class="text-[11px] text-text-muted mt-auto pt-1.5 tabular-nums">{formatBytes(dedupSummary.logical)} → {formatBytes(dedupSummary.physical)} stored</p>
-    </div>
+    </a>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
@@ -1268,12 +1264,12 @@
 
 {#snippet tForecast()}
   {#if forecastSummary}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
+    <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">~{forecastSummary.days}<span class="text-base text-text-dim font-semibold"> days</span></p>
       <p class="text-[11px] text-text-muted mt-1.5">until {forecastSummary.name} is full</p>
       <p class="text-[11px] text-warning mt-auto pt-1 font-medium tabular-nums">+{formatBytes(forecastSummary.perDay)}/day</p>
-    </div>
+    </a>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
@@ -1302,7 +1298,7 @@
 {/snippet}
 
 {#snippet tRetention()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => cardKey(e, () => navigate('/jobs'))}>
+  <a href="#/jobs" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.retention.icon, 'Retention & cleanup')}
     {#if retentionSummary}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{retentionSummary.prunable}<span class="text-base text-text-dim font-semibold"> prunable</span></p>
@@ -1310,7 +1306,7 @@
     {:else}
       <p class="text-[11px] text-text-dim mt-auto">{retentionLoading ? 'Loading…' : 'No retention policy set'}</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tReplicationStatus()}
@@ -1319,7 +1315,7 @@
     {@const noneActive = rs.enabled === 0}
     {@const ok = !noneActive && rs.failed === 0 && rs.partial === 0 && rs.synced === rs.enabled}
     {@const caption = rs.failed > 0 ? `${rs.failed} failed` : rs.partial > 0 ? `${rs.partial} partial` : ok ? 'All offsite copies synced' : 'sync pending'}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/replication')} onkeydown={(e) => cardKey(e, () => navigate('/replication'))}>
+    <a href="#/replication" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.replicationStatus.icon, 'Replication status')}
       {#if noneActive}
         <p class="text-base font-bold text-text-dim mt-auto">All sources disabled</p>
@@ -1330,7 +1326,7 @@
         <p class="text-[26px] leading-none font-bold tabular-nums {rs.failed > 0 ? 'text-danger' : ok ? 'text-success' : 'text-warning'}">{rs.synced}<span class="text-base text-text-dim font-semibold">/{rs.enabled}</span></p>
         <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{caption}{#if rs.lastSync} · last {relTime(rs.lastSync)}{/if}</p>
       {/if}
-    </div>
+    </a>
   {:else}{@render metricCardEmpty(CATALOG.replicationStatus.icon, 'Replication status')}{/if}
 {/snippet}
 
@@ -1504,13 +1500,15 @@
                 </div>
               </div>
             {/if}
-            {@render tileBody(t.id)}
+            <!-- Inert while customizing: the toolbar owns the keyboard here, so Tab
+                 can't reach a link or control the overlay blocks for the mouse. -->
+            <div inert={layout.editMode}>{@render tileBody(t.id)}</div>
           </div>
         {/each}
       </div>
 
       {#if layout.editMode}
-        <aside class="dash-addpanel shrink-0 bg-surface-2 border border-border rounded-xl p-4">
+        <aside aria-label="Add tiles" class="dash-addpanel shrink-0 bg-surface-2 border border-border rounded-xl p-4">
           <div class="text-sm font-bold text-text">Add tiles</div>
           <div class="text-xs text-text-muted mb-3">Click to add to your dashboard</div>
           <div class="dash-cat-list flex flex-col gap-2">

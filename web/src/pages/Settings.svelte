@@ -1,4 +1,5 @@
 <script>
+  import { tabFromKey } from '../lib/tabs.js'
   import { onMount } from 'svelte'
   import { api, isReplicaMode } from '../lib/api.js'
   import { formatBytes, formatDate, snapshotMigrationMessage } from '../lib/utils.js'
@@ -52,6 +53,14 @@
     { id: 'set-diagnostics', label: 'Diagnostics' },
     { id: 'set-about', label: 'About' },
   ]
+  function onTabKeydown(e) {
+    const next = tabFromKey(e, tabs.map((t) => t.id), activeTab)
+    if (!next) return
+    e.preventDefault()
+    activeTab = next
+    document.getElementById(`settings-tab-${next}`)?.focus()
+  }
+
   function jumpToSetting(id) {
     const el = document.getElementById(id)
     if (!el) return
@@ -1053,10 +1062,17 @@
     {/if}
 
     <!-- Tab Navigation -->
-    <div class="flex gap-1 border-b border-border mb-6 overflow-x-auto">
+    <div role="tablist" aria-label="Settings sections" class="flex gap-1 border-b border-border mb-6 overflow-x-auto">
       {#each tabs as tab (tab.id)}
         <button
+          type="button"
+          role="tab"
+          id="settings-tab-{tab.id}"
+          aria-selected={activeTab === tab.id}
+          aria-controls={activeTab === tab.id ? `settings-panel-${tab.id}` : undefined}
+          tabindex={activeTab === tab.id ? 0 : -1}
           onclick={() => activeTab = tab.id}
+          onkeydown={onTabKeydown}
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap {activeTab === tab.id ? 'border-vault text-vault-text' : 'border-transparent text-text-muted hover:text-text'}"
         >
           {tab.label}
@@ -1064,7 +1080,7 @@
       {/each}
     </div>
 
-    <div class="space-y-6">
+    <div role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0" class="space-y-6">
       <!-- === GENERAL TAB === -->
       {#if activeTab === 'general'}
       <!-- Jump-to bar (#208 / E11) — sticky so long-tab settings stay reachable -->
@@ -2083,11 +2099,11 @@
       <!-- History Retention -->
       <div id="set-history" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">History Retention</h2>
+          <h2 id="set-history-heading" class="text-base font-semibold text-text">History Retention</h2>
           <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
         </div>
         <div class="p-5 flex items-center gap-2">
-          <select bind:value={historyRetention} disabled={readOnly}
+          <select bind:value={historyRetention} disabled={readOnly} aria-labelledby="set-history-heading"
             class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
             <option value="30">30 days</option>
             <option value="90">90 days</option>

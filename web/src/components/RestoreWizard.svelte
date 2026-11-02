@@ -1241,6 +1241,7 @@
               type="text"
               bind:value={searchQuery}
               placeholder="Search items or jobs..."
+              aria-label="Search items or jobs"
               class="w-full pl-9 pr-8 py-1.5 text-xs bg-surface-2 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
             />
             {#if searchQuery}
@@ -1258,8 +1259,9 @@
           </div>
 
           <div class="flex items-center gap-2 shrink-0 text-xs text-text-muted">
-            <span>Sort:</span>
+            <label for="rw-sort">Sort:</label>
             <select
+              id="rw-sort"
               bind:value={sortBy}
               class="bg-surface-2 border border-border rounded-lg px-2.5 py-1.5 text-xs text-text focus:outline-none focus:border-vault cursor-pointer"
             >
@@ -1760,7 +1762,7 @@
                       <p class="text-xs text-text-muted">This backup captured no restorable files for this item.</p>
                     {:else}
                       <div class="flex flex-wrap items-center gap-2">
-                        <input type="text" placeholder="Filter by path…" bind:value={entry.search}
+                        <input type="text" placeholder="Filter by path…" bind:value={entry.search} aria-label="Filter paths in {itemDisplayLabel(item)}"
                           class="flex-1 min-w-40 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-vault" />
                         <button type="button" onclick={() => selectAllFiles(item)}
                           class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Select all</button>

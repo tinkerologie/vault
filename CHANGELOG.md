@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Navigation and page semantics (#529):** Navigation items and Dashboard tiles are now real links, so they open in a new tab. Each page has its own tab title, and focus moves to the page heading after navigation. Settings tabs follow the ARIA tabs pattern with arrow, Home and End keys, navs and landmarks are named, the menu button reports its state, and the unlabelled Jobs, Restore and Settings fields now have names. The 3-2-1 panel's goal and dismiss buttons no longer sit inside its toggle.
 - **Typed confirmation (#525):** Replacing the Vault database, restoring after failed pre-flight checks and purging all history now use an in-app dialog that names the source, states what will be lost and enables its confirm button only once you type `REPLACE`, `RESTORE` or `PURGE`, because these actions can't be undone. Cancel keeps initial focus. Normal restores keep their current review step.
 - **Retro theme (#532):** The 8-Bit and 16-Bit themes are merged into one Retro theme with the same self-hosted pixel fonts. Settings now offers Default, 1-Bit and Retro, and saved 8-Bit and 16-Bit preferences move to Retro automatically.
 

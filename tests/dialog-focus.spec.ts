@@ -90,7 +90,7 @@ const CASES: Case[] = [
     setup: async (page) => {
       await page.route('**/api/v1/settings/encryption', (route) => route.request().method() === 'GET' ? route.fulfill(json({ encryption_enabled: true })) : route.fallback());
     },
-    prepare: async (page) => { await page.getByRole('button', { name: 'Security', exact: true }).click(); },
+    prepare: async (page) => { await page.getByRole('tab', { name: 'Security', exact: true }).click(); },
     opener: (p) => p.getByRole('button', { name: 'Disable encryption' }),
     dialog: 'Remove Encryption',
   },
@@ -148,7 +148,7 @@ test.describe('Dialog keyboard contract (#528)', () => {
     await expect(dialog).toBeVisible();
     expect(await dialog.evaluate((el) => el.tagName === 'DIALOG' && el.matches(':modal'))).toBe(true);
     // The dialog's DOM parent is in <main>, so ask whether a page control can still be hit.
-    const nav = page.locator('aside nav button').first();
+    const nav = page.locator('aside nav a').first();
     const hit = await nav.evaluate((el) => {
       const box = el.getBoundingClientRect();
       return document.elementFromPoint(box.left + 5, box.top + 5)?.closest('dialog') !== null;
@@ -346,7 +346,7 @@ test.describe('Command palette (#528)', () => {
     await expect(search(page)).toHaveValue('');
   });
 
-  test('Enter runs a command, and focus lands on main content', async ({ page }) => {
+  test('Enter runs a command, and a route change lands focus on the new heading', async ({ page }) => {
     await page.goto('/#/jobs');
     await expect(page.getByRole('heading', { name: 'Backup Jobs' })).toBeVisible();
     await page.keyboard.press('Control+k');
@@ -354,7 +354,27 @@ test.describe('Command palette (#528)', () => {
     await page.keyboard.press('Enter');
     await expect(palette(page)).toHaveCount(0);
     await expect(page).toHaveURL(/#\/storage/);
-    await expect.poll(() => page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName)).toBe('main-content');
+    await expect(page.getByRole('heading', { level: 1, name: 'Storage Destinations' })).toBeFocused();
+  });
+
+  test('a command that stays on this route lands focus on main content', async ({ page }) => {
+    await page.goto('/#/storage');
+    await expect(page.getByRole('heading', { name: 'Storage Destinations' })).toBeVisible();
+    await page.keyboard.press('Control+k');
+    await search(page).fill('Go to Storage');
+    await page.keyboard.press('Enter');
+    await expect(palette(page)).toHaveCount(0);
+    await expect(page.locator('main#main-content')).toBeFocused();
+  });
+
+  test('going back with a dialog open lands focus on the previous heading', async ({ page }) => {
+    await page.goto('/#/jobs');
+    await page.locator('aside nav').getByRole('link', { name: 'Storage' }).click();
+    await page.getByRole('button', { name: /delete storage/i }).first().click();
+    await expect(page.getByRole('dialog', { name: 'Delete Storage' })).toBeVisible();
+    await page.goBack();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('heading', { level: 1, name: 'Backup Jobs' })).toBeFocused();
   });
 
   test('Enter on a tabbed-to row runs that row', async ({ page }) => {

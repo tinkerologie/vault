@@ -1,11 +1,13 @@
 <script>
   import { getRoute, navigate } from './lib/router.svelte.js'
+  import { pageTitle } from './lib/routes.js'
+  import { createRouteChangeDetector, focusPageHeading } from './lib/focus.js'
   import { connectWs, getWsStatus } from './lib/ws.svelte.js'
   import { initTheme, getMode, setMode, getIsThemed } from './lib/theme.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
   import { shouldRedirectRoute } from './lib/route-guard.js'
   import { loadFeatureFlags, getAnomalyEnabled, getReplicationEnabled, getFeatureFlagsLoaded } from './lib/settings.svelte.js'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
   import Jobs from './pages/Jobs.svelte'
@@ -98,6 +100,20 @@
 
   let ready = $state(false)
   let replicaMode = $state(false)
+
+  const mainContent = () => document.getElementById('main-content')
+
+  $effect(() => { document.title = pageTitle(getRoute()) })
+
+  // One place for every way a route can change: links, the command palette,
+  // navigate() calls, back/forward and guard redirects. Initial entry and
+  // query-only changes don't count, so a page load never steals focus.
+  const routeChanged = createRouteChangeDetector()
+  $effect(() => {
+    if (!routeChanged(getRoute())) return
+    mobileMenuOpen = false
+    tick().then(() => focusPageHeading(mainContent()))
+  })
 
   // Running plugin version shown in the sidebar footer. Sourced from the same
   // /health response used for replica-mode detection; 'dev' fallback matches
@@ -206,9 +222,10 @@
   ]
   let mobileNav = $derived(replicaMode ? replicaMobileNav : daemonMobileNav)
 
-  function go(path) {
-    navigate(path)
-    mobileMenuOpen = false
+  // `#main-content` would otherwise be parsed as a route and render Dashboard.
+  function skipToMain(e) {
+    e.preventDefault()
+    focusPageHeading(mainContent())
   }
 
   function cycleTheme() {
@@ -224,7 +241,7 @@
 
 <CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
 
-<a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-on-vault focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
+<a href="#main-content" onclick={skipToMain} class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-on-vault focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
 
 {#if connectionLost}
   <div role="status" aria-live="polite"
@@ -240,7 +257,7 @@
     <div class="flex-1 flex items-center justify-center"><Spinner text="Connecting..." /></div>
   {:else}
   <!-- Sidebar -->
-  <aside class="hidden lg:flex lg:flex-col w-64 bg-surface-2 border-r border-border shrink-0">
+  <aside aria-label="Sidebar" class="hidden lg:flex lg:flex-col w-64 bg-surface-2 border-r border-border shrink-0">
     <!-- Brand -->
     <div class="flex items-center gap-3 px-6 py-5 border-b border-border">
       {#if getIsThemed()}
@@ -257,7 +274,7 @@
     </div>
 
     <!-- Nav links -->
-    <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+    <nav aria-label="Main navigation" class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
       {#each navSections as group (group.section ?? '_top')}
         {#if group.section}
           <div class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-text-muted select-none">{group.section}</div>
@@ -271,13 +288,13 @@
               {item.label}
             </a>
           {:else}
-            <button onclick={() => go(item.path)}
+            <a href="#{item.path}"
               aria-current={isActive(item.path) ? 'page' : undefined}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left
                 {isActive(item.path) ? 'bg-vault/10 text-vault-text nav-active' : 'text-text-muted hover:text-text hover:bg-surface-3'}">
               <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
               {item.label}
-            </button>
+            </a>
           {/if}
         {/each}
       {/each}
@@ -286,20 +303,20 @@
       <footer class="px-3 py-3 border-t border-border text-xs text-text-muted flex items-center justify-between gap-2">
         <span>v{version}</span>
         {#if updateAvailable}
-          <button onclick={() => go('/settings')}
+          <a href="#/settings"
             title="Update available — latest release v{latestTag}"
             aria-label="Update available, latest release v{latestTag}. Open settings."
             class="inline-flex items-center gap-1.5 text-hue-orange hover:underline transition-colors">
             <span class="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" aria-hidden="true"></span>
             Update available
-          </button>
+          </a>
         {/if}
       </footer>
     {/if}
   </aside>
 
   <!-- Mobile header -->
-  <div class="lg:hidden fixed top-0 left-0 right-0 z-40 bg-surface-2 border-b border-border">
+  <header class="lg:hidden fixed top-0 left-0 right-0 z-40 bg-surface-2 border-b border-border">
     <div class="flex items-center justify-between px-4 py-3">
       <div class="flex items-center gap-2">
         <div class="w-7 h-7 bg-vault rounded-lg flex items-center justify-center">
@@ -307,12 +324,12 @@
         </div>
         <span class="text-base font-bold text-text">VAULT</span>
       </div>
-      <button onclick={() => mobileMenuOpen = !mobileMenuOpen} class="text-text-muted p-2 -mr-2 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Toggle menu">
+      <button onclick={() => mobileMenuOpen = !mobileMenuOpen} class="text-text-muted p-2 -mr-2 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Toggle menu" aria-expanded={mobileMenuOpen} aria-controls={mobileMenuOpen ? 'mobile-menu' : undefined}>
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={mobileMenuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'}/></svg>
       </button>
     </div>
     {#if mobileMenuOpen}
-      <nav class="px-3 pb-3 space-y-1 bg-surface-2 border-t border-border animate-fade-up">
+      <nav id="mobile-menu" aria-label="Main navigation" class="px-3 pb-3 space-y-1 bg-surface-2 border-t border-border animate-fade-up">
         {#each nav as item (item.path)}
           {#if item.external}
             <a href={item.href} target="_blank" rel="noopener"
@@ -323,17 +340,19 @@
               {item.label}
             </a>
           {:else}
-            <button onclick={() => go(item.path)}
+            <a href="#{item.path}"
+              onclick={() => mobileMenuOpen = false}
+              aria-current={isActive(item.path) ? 'page' : undefined}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left
                 {isActive(item.path) ? 'bg-vault/10 text-vault-text nav-active' : 'text-text-muted'}">
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
               {item.label}
-            </button>
+            </a>
           {/if}
         {/each}
       </nav>
     {/if}
-  </div>
+  </header>
 
   <!-- Main content -->
   <main id="main-content" tabindex="-1" class="outline-none flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0">
@@ -371,8 +390,8 @@
   <!-- Mobile bottom navigation -->
   <nav class="fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-border flex justify-around py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] z-40 lg:hidden" aria-label="Mobile navigation">
     {#each mobileNav as item (item.path)}
-      <button
-        onclick={() => go(item.path)}
+      <a
+        href="#{item.path}"
         aria-current={isActive(item.path) ? 'page' : undefined}
         class="flex flex-col items-center gap-0.5 px-3 py-2 min-w-[44px] min-h-[44px] text-xs transition-colors
           {isActive(item.path) ? 'text-vault-text' : 'text-text-muted'}"
@@ -387,7 +406,7 @@
           {/if}
         </div>
         <span>{item.label}</span>
-      </button>
+      </a>
     {/each}
   </nav>
 

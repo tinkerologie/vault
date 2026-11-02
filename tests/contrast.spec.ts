@@ -86,7 +86,7 @@ for (const { style, mode, label } of THEMES) {
     for (const tab of SETTINGS_TABS) {
       test(`Settings ${tab} tab`, async ({ page }) => {
         await page.goto('/#/settings');
-        await page.getByRole('button', { name: tab, exact: true }).click();
+        await page.getByRole('tab', { name: tab, exact: true }).click();
         await page.waitForTimeout(100);
         await expectNoContrastViolations(page, `${label} Settings ${tab}`);
       });
@@ -106,7 +106,7 @@ for (const { style, mode, label } of THEMES) {
 
     test('active navigation and hovered primary button', async ({ page }) => {
       await page.goto('/#/jobs');
-      const active = page.locator('aside nav button[aria-current="page"]');
+      const active = page.locator('aside nav a[aria-current="page"]');
       await expect(active).toContainText('Jobs');
       await expectNoContrastViolations(page, `${label} active nav`, { include: 'aside nav' });
 
@@ -181,7 +181,7 @@ for (const { style, mode, label } of THEMES) {
 
     test('success and error toasts', async ({ page }) => {
       await page.goto('/#/settings');
-      await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+      await page.getByRole('tab', { name: 'Notifications', exact: true }).click();
       await page.locator('#discord-url').fill('https://discord.com/api/webhooks/123456/abcdef');
       await page.locator('#discord-url').locator('..').getByRole('button', { name: 'Test' }).click();
       const toast = page.getByRole('alert');
@@ -298,7 +298,7 @@ for (const { style, mode, label } of THEMES) {
       await expectNoContrastViolations(page, `${label} mobile jobs`);
 
       await page.locator('header button[aria-expanded], button[aria-label*="menu" i]').first().click();
-      await expect(page.getByRole('button', { name: 'Logs', exact: true }).first()).toBeVisible();
+      await expect(page.getByRole('link', { name: 'Logs', exact: true }).first()).toBeVisible();
       await expectNoContrastViolations(page, `${label} mobile menu`);
     });
 
@@ -327,7 +327,7 @@ for (const { style, mode, label } of THEMES) {
         test(`read-only Settings ${tab} tab`, async ({ page }) => {
           await page.goto('/#/settings');
           await expect(page.getByText(/^Read-only replica/).first()).toBeVisible();
-          await page.getByRole('button', { name: tab, exact: true }).click();
+          await page.getByRole('tab', { name: tab, exact: true }).click();
           await page.waitForTimeout(100);
           await expectNoContrastViolations(page, `${label} replica Settings ${tab}`);
         });

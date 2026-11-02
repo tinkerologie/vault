@@ -102,7 +102,7 @@
     {#each GOAL_ORDER as g (g)}
       <button
         type="button"
-        onclick={(e) => { e.stopPropagation(); selectGoal(g) }}
+        onclick={() => selectGoal(g)}
         class="text-xs px-2.5 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap {goal === g ? 'bg-surface-1 text-text font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
         aria-pressed={goal === g}
       >{GOAL_LABELS[g]}</button>
@@ -111,20 +111,29 @@
 {/snippet}
 
 <div class="border rounded-xl mb-8 {bgColor}">
-  <div class="px-5 py-4 flex items-center justify-between gap-3 cursor-pointer" role="button" tabindex="0" onclick={() => expanded = !expanded} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expanded = !expanded } }}>
-    <div class="flex items-center gap-3 min-w-0">
-      <h3 class="text-sm font-semibold text-text whitespace-nowrap">3-2-1 Backup Rule</h3>
-      <span class="text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1 whitespace-nowrap {chipColor} {bgColor}">
-        {#if goalMet}{@render checkIcon()}{/if}{statusLabel}
-      </span>
-    </div>
-    <div class="flex items-center gap-3">
-      {#if onGoalChange}<div class="hidden md:block">{@render goalPicker()}</div>{/if}
+  <!-- The toggle's ::after stretches over the row, so the whole header stays
+       clickable while the goal and dismiss buttons remain its siblings. -->
+  <div class="relative px-5 py-4 flex items-center justify-between gap-3">
+    <h2 class="min-w-0">
+      <button
+        type="button"
+        onclick={() => expanded = !expanded}
+        aria-expanded={expanded}
+        class="flex items-center gap-3 min-w-0 text-left cursor-pointer after:absolute after:inset-0 after:content-['']"
+      >
+        <span class="text-sm font-semibold text-text whitespace-nowrap">3-2-1 Backup Rule</span>
+        <span class="text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1 whitespace-nowrap {chipColor} {bgColor}">
+          {#if goalMet}{@render checkIcon()}{/if}{statusLabel}
+        </span>
+      </button>
+    </h2>
+    <div class="relative flex items-center gap-3 pointer-events-none">
+      {#if onGoalChange}<div class="hidden md:block pointer-events-auto">{@render goalPicker()}</div>{/if}
       {#if ondismiss}
         <button
           type="button"
-          onclick={(e) => { e.stopPropagation(); ondismiss() }}
-          class="text-text-muted hover:text-text p-1 -m-1 rounded transition-colors cursor-pointer"
+          onclick={ondismiss}
+          class="pointer-events-auto text-text-muted hover:text-text p-1 -m-1 rounded transition-colors cursor-pointer"
           title="Hide – re-enable in Settings"
           aria-label="Hide 3-2-1 Backup Rule"
         >

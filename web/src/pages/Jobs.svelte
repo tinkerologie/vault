@@ -1246,6 +1246,7 @@
                   checked={selectedJobs.has(job.id)}
                   onchange={() => toggleSelectJob(job.id)}
                   onclick={(e) => e.stopPropagation()}
+                  aria-label="Select {job.name}"
                   class="accent-vault w-3.5 h-3.5 shrink-0 cursor-pointer"
                 />
                 <!-- Toggle switch -->
@@ -2008,12 +2009,12 @@
             <div class="mt-3 pl-6">
               <div class="flex items-start gap-3">
                 <label class="relative inline-flex items-center cursor-pointer mt-0.5" class:opacity-50={_isLocalDest} class:cursor-not-allowed={_isLocalDest} title={_isLocalDest ? 'Only available when destination is remote' : ''}>
-                  <input type="checkbox" bind:checked={form.defer_remote_upload} disabled={_isLocalDest} class="sr-only peer" />
+                  <input type="checkbox" bind:checked={form.defer_remote_upload} disabled={_isLocalDest} aria-labelledby="defer-upload-label" aria-describedby="defer-upload-description" class="sr-only peer" />
                   <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
                 </label>
                 <div>
-                  <p class="text-sm text-text">Defer remote upload until all backups complete</p>
-                  <p class="text-xs text-text-dim mt-0.5">Backs up every container to local staging first and brings them all online before any data is sent to the remote destination. {_isLocalDest ? 'Only available when destination is remote (SFTP, SMB, NFS, S3, WebDAV).' : 'Per-file uploads are retried up to 3 times with exponential backoff (5s → 30s → 2m).'}</p>
+                  <p id="defer-upload-label" class="text-sm text-text">Defer remote upload until all backups complete</p>
+                  <p id="defer-upload-description" class="text-xs text-text-dim mt-0.5">Backs up every container to local staging first and brings them all online before any data is sent to the remote destination. {_isLocalDest ? 'Only available when destination is remote (SFTP, SMB, NFS, S3, WebDAV).' : 'Per-file uploads are retried up to 3 times with exponential backoff (5s → 30s → 2m).'}</p>
                 </div>
               </div>
             </div>
@@ -2408,10 +2409,10 @@
         <!-- Enabled toggle -->
         <div class="flex items-center gap-3">
           <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" bind:checked={form.enabled} class="sr-only peer" />
+            <input type="checkbox" bind:checked={form.enabled} aria-labelledby="job-enabled-label" class="sr-only peer" />
             <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
           </label>
-          <span class="text-sm text-text-muted">Enable scheduled execution</span>
+          <span id="job-enabled-label" class="text-sm text-text-muted">Enable scheduled execution</span>
         </div>
       </div>
     {/if}

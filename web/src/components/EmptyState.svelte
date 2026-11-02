@@ -9,7 +9,7 @@
   {:else if icon}
     <div class="text-4xl mb-3 opacity-30">{icon}</div>
   {/if}
-  <h3 class="text-lg font-medium text-text-muted">{title}</h3>
+  <h2 class="text-lg font-medium text-text-muted">{title}</h2>
   {#if subtitle}
     <p class="text-xs text-text-dim mt-0.5">{subtitle}</p>
   {/if}
