@@ -228,6 +228,10 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
 export interface VaultMockOptions {
   /** Body served for GET /runner/status; defaults to an idle runner. */
   runnerStatus?: Record<string, unknown>;
+  /** Report replica mode from GET /health, so the UI runs read-only. */
+  replica?: boolean;
+  /** Body served for GET /replication; defaults to no targets. */
+  replicationSources?: Record<string, unknown>[];
 }
 
 export async function setupVaultMockApi(page: Page, options: VaultMockOptions = {}) {
@@ -350,7 +354,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ status: 'ok', version: '2026.09.01' }),
+        body: JSON.stringify({ status: 'ok', version: '2026.09.01', ...(options.replica ? { mode: 'replica' } : {}) }),
       });
     }
 
@@ -1183,7 +1187,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([]),
+        body: JSON.stringify(path.endsWith('/replication') ? (options.replicationSources ?? []) : []),
       });
     }
 

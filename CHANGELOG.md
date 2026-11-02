@@ -6,8 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Retro theme (#532):** The 8-Bit and 16-Bit themes are merged into one Retro theme with the same self-hosted pixel fonts. Settings now offers Default, 1-Bit and Retro, and saved 8-Bit and 16-Bit preferences move to Retro automatically.
+
 ### Fixed
 
+- **Retro and 1-Bit contrast (#532):** Text in both themes now meets WCAG AA in light and dark on every page, including replica mode and running restores, checked by the axe audit in the browser tests. Read-only replica settings are no longer dimmed below AA.
 - **Contrast (#524):** Default light and dark text, navigation, status colours and primary buttons now meet WCAG 2.2 AA on every page, checked by an axe audit in the browser tests. Toasts gain a status icon and an opaque background. Retro palettes are unchanged.
 
 ### Removed

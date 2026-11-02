@@ -7,8 +7,8 @@
 // thing.
 //
 // Colour is never the only signal. Every row also carries a text label, so the
-// console stays readable in the 1-bit and 8-bit themes — where success,
-// danger, warning and info all resolve to the same ink — and for anyone who
+// console stays readable in the 1-Bit theme — where success, danger, warning
+// and info all resolve to the same ink — and for anyone who
 // cannot distinguish the hues.
 
 // Canonical level for a raw API value. Unknown levels fall back to info rather

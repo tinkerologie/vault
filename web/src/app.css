@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 /* ═══════════════════════════════════════════════
-   RETRO FONTS – self-hosted (8-bit / 16-bit styles)
+   PIXEL FONTS – self-hosted (Retro style)
    Vault must render identically on an Unraid box with no internet, so these
    ship in the embedded bundle rather than loading from fonts.googleapis.com.
    @font-face is lazily resolved: the browser only fetches a file when a rule
@@ -58,7 +58,7 @@
   --color-vault-dark: #d97706;
   /* On-light accent for small text/links/captions — amber-800 ~6.3:1 on surface-2 and
      still AA on the vault/10 and vault/15 tints (WCAG AA).
-     Dark/retro themes remap this to their own accent below so they stay unchanged. */
+     Dark and 1-Bit themes remap this to their own accent below so they stay unchanged. */
   --color-vault-text: #92400e;
   /* Label on an accent fill: the amber fill keeps its brand value in both modes. */
   --color-on-vault: #111827;
@@ -127,14 +127,13 @@
   --color-vault-text: var(--color-vault);
   --color-on-vault: #ffffff;
   --color-on-status: #ffffff;
-  --color-hue-blue: var(--color-blue-400);
-  --color-hue-purple: var(--color-purple-400);
-  --color-hue-emerald: var(--color-emerald-400);
-  --color-hue-cyan: var(--color-cyan-400);
-  --color-hue-amber: var(--color-amber-400);
-  --color-hue-rose: var(--color-rose-400);
-  --color-hue-orange: var(--color-orange-400);
-  --color-placeholder: color-mix(in oklab, currentcolor 50%, transparent);
+  --color-hue-blue: var(--color-text);
+  --color-hue-purple: var(--color-text);
+  --color-hue-emerald: var(--color-text);
+  --color-hue-cyan: var(--color-text);
+  --color-hue-amber: var(--color-text);
+  --color-hue-rose: var(--color-text);
+  --color-hue-orange: var(--color-text);
   --color-vault: #000000;
   --color-vault-dark: #333333;
   --color-surface: #ffffff;
@@ -146,7 +145,7 @@
   --color-border-hover: #444444;
   --color-text: #000000;
   --color-text-muted: #333333;
-  --color-text-dim: #666666;
+  --color-text-dim: #4d4d4d;
   --color-success: #000000;
   --color-danger: #000000;
   --color-warning: #000000;
@@ -155,6 +154,8 @@
 
 /* 1-Bit Dark: black bg, white text */
 .theme-1bit.dark {
+  --color-on-vault: #000000;
+  --color-on-status: #000000;
   --color-vault: #ffffff;
   --color-vault-dark: #cccccc;
   --color-surface: #000000;
@@ -166,7 +167,7 @@
   --color-border-hover: #cccccc;
   --color-text: #ffffff;
   --color-text-muted: #cccccc;
-  --color-text-dim: #888888;
+  --color-text-dim: #b0b0b0;
   --color-success: #ffffff;
   --color-danger: #ffffff;
   --color-warning: #ffffff;
@@ -174,24 +175,20 @@
 }
 
 /* ═══════════════════════════════════════════════
-   8-BIT – NES / Game Boy Pixel
+   RETRO – pixel fonts on solid colour pairs
+   Hue tokens are inherited from the default light and .dark values on purpose;
+   the contrast audit in tests/contrast.spec.ts measures them on these surfaces.
    ═══════════════════════════════════════════════ */
 
-/* 8-Bit Light: warm parchment + NES palette */
-.theme-8bit {
-  --color-vault-text: var(--color-vault);
+/* Retro Light: warm parchment + cartridge red */
+.theme-retro {
+  --color-vault: #b0002c;
+  --color-vault-dark: #8c0022;
+  --color-vault-text: #8c0022;
   --color-on-vault: #ffffff;
   --color-on-status: #ffffff;
-  --color-hue-blue: var(--color-blue-400);
-  --color-hue-purple: var(--color-purple-400);
-  --color-hue-emerald: var(--color-emerald-400);
-  --color-hue-cyan: var(--color-cyan-400);
-  --color-hue-amber: var(--color-amber-400);
-  --color-hue-rose: var(--color-rose-400);
-  --color-hue-orange: var(--color-orange-400);
-  --color-placeholder: color-mix(in oklab, currentcolor 50%, transparent);
-  --color-vault: #e4003a;
-  --color-vault-dark: #c00030;
+  /* Darker than the default amber hue: its tint sits on parchment here. */
+  --color-hue-amber: var(--color-amber-900);
   --color-surface: #f5e6c8;
   --color-surface-2: #eedcb0;
   --color-surface-3: #e2cea0;
@@ -199,88 +196,37 @@
   --color-surface-5: #c0a870;
   --color-border: #6b4226;
   --color-border-hover: #8b5a30;
-  --color-text: #3c2415;
-  --color-text-muted: #5c3d28;
-  --color-text-dim: #8a6b50;
-  --color-success: #209028;
-  --color-danger: #e4003a;
-  --color-warning: #f8b800;
-  --color-info: #0070ec;
+  --color-text: #2a1608;
+  --color-text-muted: #4a2f1a;
+  --color-text-dim: #5a3d26;
+  --color-success: #0f5a17;
+  --color-danger: #8f0024;
+  --color-warning: #6e4200;
+  --color-info: #0b4fa8;
 }
 
-/* 8-Bit Dark: deep navy + neon accents */
-.theme-8bit.dark {
+/* Retro Dark: deep navy + arcade gold */
+.theme-retro.dark {
   --color-vault: #f8b800;
   --color-vault-dark: #d09800;
+  --color-vault-text: #f8b800;
+  --color-hue-amber: var(--color-amber-300);
+  --color-on-vault: #0f0f23;
+  --color-on-status: #0f0f23;
   --color-surface: #0f0f23;
   --color-surface-2: #181830;
   --color-surface-3: #22223a;
   --color-surface-4: #2e2e48;
   --color-surface-5: #3a3a58;
-  --color-border: #4a4a6a;
-  --color-border-hover: #6a6a8a;
-  --color-text: #e0d4b8;
-  --color-text-muted: #b0a490;
-  --color-text-dim: #706858;
-  --color-success: #40e848;
-  --color-danger: #ff3860;
-  --color-warning: #f8b800;
-  --color-info: #43b5e0;
-}
-
-/* ═══════════════════════════════════════════════
-   16-BIT – SNES / Sega Genesis RPG
-   ═══════════════════════════════════════════════ */
-
-/* 16-Bit Light: warm parchment + deep blue RPG windows */
-.theme-16bit {
-  --color-vault-text: var(--color-vault);
-  --color-on-vault: #ffffff;
-  --color-on-status: #ffffff;
-  --color-hue-blue: var(--color-blue-400);
-  --color-hue-purple: var(--color-purple-400);
-  --color-hue-emerald: var(--color-emerald-400);
-  --color-hue-cyan: var(--color-cyan-400);
-  --color-hue-amber: var(--color-amber-400);
-  --color-hue-rose: var(--color-rose-400);
-  --color-hue-orange: var(--color-orange-400);
-  --color-placeholder: color-mix(in oklab, currentcolor 50%, transparent);
-  --color-vault: #2038a0;
-  --color-vault-dark: #182880;
-  --color-surface: #e8e0d0;
-  --color-surface-2: #ddd5c5;
-  --color-surface-3: #d0c8b8;
-  --color-surface-4: #c0b8a8;
-  --color-surface-5: #b0a898;
-  --color-border: #2038a0;
-  --color-border-hover: #3050c0;
-  --color-text: #2a2040;
-  --color-text-muted: #484060;
-  --color-text-dim: #706888;
-  --color-success: #208830;
-  --color-danger: #c83030;
-  --color-warning: #d8a020;
-  --color-info: #38a8d8;
-}
-
-/* 16-Bit Dark: midnight + vibrant RPG neon */
-.theme-16bit.dark {
-  --color-vault: #6070d0;
-  --color-vault-dark: #4858b0;
-  --color-surface: #10102a;
-  --color-surface-2: #181838;
-  --color-surface-3: #202048;
-  --color-surface-4: #282858;
-  --color-surface-5: #303068;
-  --color-border: #4848a0;
-  --color-border-hover: #6060c0;
-  --color-text: #d0d0e8;
-  --color-text-muted: #a0a0c0;
-  --color-text-dim: #686888;
-  --color-success: #40d848;
-  --color-danger: #e04848;
-  --color-warning: #f0c830;
-  --color-info: #38d8f0;
+  --color-border: #8a8aaa;
+  --color-border-hover: #a8a8c4;
+  --color-text: #f0e6cc;
+  --color-text-muted: #d0c4a8;
+  --color-text-dim: #b8ad94;
+  --color-success: #5cf064;
+  --color-danger: #ff8aa0;
+  --color-warning: #f8c830;
+  --color-info: #7fd0f0;
 }
 
 html {
@@ -326,8 +272,7 @@ body {
    ═══════════════════════════════════════════════ */
 
 .theme-1bit,
-.theme-8bit,
-.theme-16bit {
+.theme-retro {
   /* Square corners everywhere */
   & [class*="rounded"] { border-radius: 0 !important; }
   & [class*="rounded-full"] { border-radius: 0 !important; }
@@ -380,13 +325,14 @@ body {
   & .btn:active { filter: brightness(0.8); transform: none; box-shadow: none; }
   & .btn-primary {
     background-color: var(--color-vault);
-    color: var(--color-surface);
+    color: var(--color-on-vault);
     text-shadow: none;
     border-color: var(--color-vault);
   }
   & .btn-primary:hover {
     background-color: var(--color-vault-dark);
     border-color: var(--color-vault-dark);
+    color: var(--color-on-vault);
   }
 
   /* Sidebar */
@@ -406,7 +352,7 @@ body {
   }
   & aside nav button[class*="bg-vault"] {
     background-color: var(--color-vault) !important;
-    color: var(--color-surface) !important;
+    color: var(--color-on-vault) !important;
     text-shadow: none !important;
   }
 
@@ -446,8 +392,6 @@ body {
   font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
 }
 
-/* 1-bit dark: vault is white, so text on vault-bg must be black */
-.theme-1bit.dark .bg-vault { color: #000000 !important; }
 /* Monospace chars are wider than proportional – tighten buttons to keep layouts consistent */
 .theme-1bit button { letter-spacing: -0.5px; font-size: 0.8125rem; }
 .theme-1bit aside nav button { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
@@ -460,20 +404,23 @@ body {
 }
 
 /* ═══════════════════════════════════════════════
-   8-BIT specific – Press Start 2P + VT323, pixel borders
+   RETRO specific – Press Start 2P + VT323, chunky panels
+   These are the only rules that select the pixel fonts, so no other style
+   downloads them. Every panel and nav state is a solid colour pair: no scanlines
+   or gradients behind text, so measured contrast is the contrast people see.
    ═══════════════════════════════════════════════ */
 
-.theme-8bit,
-.theme-8bit body {
+.theme-retro,
+.theme-retro body {
   font-family: 'VT323', 'Courier New', monospace;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
 
 /* Pixel font on headings – scale down because Press Start 2P runs large */
-.theme-8bit h1,
-.theme-8bit h2,
-.theme-8bit h3 {
+.theme-retro h1,
+.theme-retro h2,
+.theme-retro h3 {
   font-family: 'Press Start 2P', monospace;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -481,117 +428,34 @@ body {
   line-height: 1.8;
 }
 
-.theme-8bit .btn {
+.theme-retro .btn {
   font-family: 'VT323', monospace;
   letter-spacing: 2px;
+  border-width: 2px;
 }
-.theme-8bit .badge {
+.theme-retro .badge {
   font-family: 'VT323', monospace;
   letter-spacing: 1px;
   padding: 1px 8px;
 }
-.theme-8bit aside nav button {
+.theme-retro aside nav button {
   font-family: 'VT323', monospace;
   letter-spacing: 1px;
 }
-.theme-8bit th, .theme-8bit td { font-family: 'VT323', monospace; }
-.theme-8bit input, .theme-8bit select, .theme-8bit textarea {
+.theme-retro th, .theme-retro td { font-family: 'VT323', monospace; }
+.theme-retro input, .theme-retro select, .theme-retro textarea {
   font-family: 'VT323', monospace !important;
 }
-.theme-8bit nav[aria-label="Mobile navigation"] button {
+.theme-retro nav[aria-label="Mobile navigation"] button {
   font-family: 'VT323', monospace;
 }
 
-/* Pixel border on cards via box-shadow */
-.theme-8bit .bg-surface-2 {
+/* Chunky panels – pixel border with an inset highlight */
+.theme-retro .bg-surface-2 {
   border: 2px solid var(--color-border);
   box-shadow:
     inset 2px 2px 0 var(--color-surface-3),
     inset -2px -2px 0 var(--color-surface-4);
-}
-
-/* Chunky 2px border on buttons */
-.theme-8bit .btn { border-width: 2px; }
-
-/* ═══════════════════════════════════════════════
-   16-BIT specific – SNES/Genesis RPG dialogs
-   ═══════════════════════════════════════════════ */
-
-.theme-16bit,
-.theme-16bit body {
-  font-family: 'VT323', 'Courier New', monospace;
-}
-
-/* Pixel font on headings */
-.theme-16bit h1,
-.theme-16bit h2,
-.theme-16bit h3 {
-  font-family: 'Press Start 2P', monospace;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  font-size: 0.7em;
-  line-height: 1.8;
-}
-
-.theme-16bit .btn {
-  font-family: 'VT323', monospace;
-  letter-spacing: 2px;
-}
-.theme-16bit .badge {
-  font-family: 'VT323', monospace;
-  letter-spacing: 1px;
-  padding: 1px 8px;
-}
-.theme-16bit aside nav button {
-  font-family: 'VT323', monospace;
-  letter-spacing: 1px;
-}
-.theme-16bit th, .theme-16bit td { font-family: 'VT323', monospace; }
-.theme-16bit input, .theme-16bit select, .theme-16bit textarea {
-  font-family: 'VT323', monospace !important;
-}
-.theme-16bit nav[aria-label="Mobile navigation"] button {
-  font-family: 'VT323', monospace;
-}
-
-/* RPG dialog box panels – double border with inner highlight */
-.theme-16bit .bg-surface-2 {
-  border: 3px solid var(--color-border);
-  box-shadow:
-    inset 0 0 0 1px var(--color-border-hover),
-    inset 0 0 0 2px var(--color-surface);
-}
-
-/* RPG panel title bar – gradient header */
-.theme-16bit .bg-surface-2 > :first-child {
-  border-bottom: 2px solid var(--color-border);
-  background: linear-gradient(180deg, var(--color-surface-3) 0%, var(--color-surface-2) 100%);
-}
-
-/* Faint scanlines (period-accurate: consoles played on CRT TVs) */
-.theme-16bit::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 3px,
-    rgba(0, 0, 0, 0.03) 3px,
-    rgba(0, 0, 0, 0.03) 6px
-  );
-  pointer-events: none;
-  z-index: 9999;
-}
-
-/* RPG-style nav highlight – cursor-like active state */
-.theme-16bit aside nav button:hover {
-  background: linear-gradient(90deg, var(--color-vault) 0%, transparent 100%) !important;
-  color: var(--color-text) !important;
-}
-.theme-16bit aside nav button[class*="bg-vault"] {
-  background: linear-gradient(90deg, var(--color-vault) 0%, var(--color-vault-dark) 100%) !important;
-  color: #ffffff !important;
 }
 
 /* Scrollbar */

@@ -1,11 +1,11 @@
-// Theme management – two-axis system: style (default/1bit/8bit/16bit) × mode (light/system/dark).
+// Theme management – two-axis system: style (default/1bit/retro) × mode (light/system/dark).
 // Persists to localStorage 'vault-style' + 'vault-mode'.
 // Applies CSS classes on <html>: .theme-{style} + .dark
 
 const STYLE_KEY = 'vault-style'
 const MODE_KEY = 'vault-mode'
 
-/** @type {'default' | '1bit' | '8bit' | '16bit'} */
+/** @type {'default' | '1bit' | 'retro'} */
 let style = $state('default')
 
 /** @type {'light' | 'system' | 'dark'} */
@@ -50,8 +50,10 @@ function safeRemove(key) {
   } catch { /* storage blocked – nothing to remove */ }
 }
 
-const STYLE_CLASSES = ['theme-1bit', 'theme-8bit', 'theme-16bit']
-const VALID_STYLES = /** @type {const} */ (['default', '1bit', '8bit', '16bit'])
+const STYLE_CLASSES = ['theme-1bit', 'theme-retro']
+const VALID_STYLES = /** @type {const} */ (['default', '1bit', 'retro'])
+// Styles merged into Retro (#532). A Map, so a stored 'constructor' matches nothing.
+const LEGACY_STYLES = new Map([['8bit', 'retro'], ['16bit', 'retro']])
 const VALID_MODES = /** @type {const} */ (['light', 'system', 'dark'])
 
 function applyTheme() {
@@ -70,8 +72,8 @@ function applyTheme() {
     document.documentElement.classList.add(`theme-${style}`)
   }
 
-  // Retro fonts (Press Start 2P / VT323) are self-hosted @font-face rules in
-  // app.css. The browser fetches them only when a retro style's CSS actually
+  // Pixel fonts (Press Start 2P / VT323) are self-hosted @font-face rules in
+  // app.css. The browser fetches them only when the Retro style's CSS actually
   // selects the family, so there is nothing to load or unload here.
 }
 
@@ -79,21 +81,20 @@ function applyTheme() {
 function migrateOldTheme() {
   const old = safeGet('vault-theme')
   if (!old) return
-  /** @type {Record<string, {style: string, mode: string}>} */
-  const map = {
-    'light': { style: 'default', mode: 'light' },
-    'dark': { style: 'default', mode: 'dark' },
-    'system': { style: 'default', mode: 'system' },
-    'retro': { style: '16bit', mode: 'light' },
-    'retro-dark': { style: '16bit', mode: 'dark' },
-  }
-  const mapped = map[old]
+  const map = new Map([
+    ['light', { style: 'default', mode: 'light' }],
+    ['dark', { style: 'default', mode: 'dark' }],
+    ['system', { style: 'default', mode: 'system' }],
+    ['retro', { style: 'retro', mode: 'light' }],
+    ['retro-dark', { style: 'retro', mode: 'dark' }],
+  ])
+  const mapped = map.get(old)
   if (mapped) {
     // Apply the migrated preference in memory immediately so it takes effect
     // this session even if persistence fails. initTheme reads the new keys
     // after this returns, but on a failed write those keys are null and won't
     // override what we set here.
-    style = /** @type {'default' | '1bit' | '8bit' | '16bit'} */ (mapped.style)
+    style = /** @type {'default' | '1bit' | 'retro'} */ (mapped.style)
     mode = /** @type {'light' | 'system' | 'dark'} */ (mapped.mode)
     // Only retire the legacy key once BOTH new keys are durably written, so a
     // partial write (e.g. quota exceeded mid-migration) can't drop the setting;
@@ -111,10 +112,13 @@ function migrateOldTheme() {
 
 export function initTheme() {
   migrateOldTheme()
-  const storedStyle = safeGet(STYLE_KEY)
+  const savedStyle = safeGet(STYLE_KEY)
+  const storedStyle = (savedStyle && LEGACY_STYLES.get(savedStyle)) || savedStyle
+  // A failed write keeps Retro for this session and retries on the next load.
+  if (storedStyle !== savedStyle) safeSet(STYLE_KEY, storedStyle)
   const storedMode = safeGet(MODE_KEY)
   if (storedStyle && VALID_STYLES.includes(/** @type {any} */ (storedStyle))) {
-    style = /** @type {'default' | '1bit' | '8bit' | '16bit'} */ (storedStyle)
+    style = /** @type {'default' | '1bit' | 'retro'} */ (storedStyle)
   }
   if (storedMode && VALID_MODES.includes(/** @type {any} */ (storedMode))) {
     mode = /** @type {'light' | 'system' | 'dark'} */ (storedMode)
@@ -139,7 +143,7 @@ export function initTheme() {
   applyTheme()
 }
 
-/** @returns {'default' | '1bit' | '8bit' | '16bit'} */
+/** @returns {'default' | '1bit' | 'retro'} */
 export function getStyle() {
   return style
 }
@@ -162,7 +166,7 @@ export function getIsThemed() {
 // Backward compat alias
 export const getIsRetro = getIsThemed
 
-/** @param {'default' | '1bit' | '8bit' | '16bit'} newStyle */
+/** @param {'default' | '1bit' | 'retro'} newStyle */
 export function setStyle(newStyle) {
   style = newStyle
   safeSet(STYLE_KEY, newStyle)

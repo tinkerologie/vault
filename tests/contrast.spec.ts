@@ -29,10 +29,45 @@ const PAGES: { name: string; hash: string; ready: (page: Page) => Promise<void> 
 
 const SETTINGS_TABS = ['General', 'Security', 'Notifications', 'Reference'];
 
-for (const mode of ['light', 'dark'] as ThemeMode[]) {
-  test.describe(`WCAG AA contrast: default ${mode}`, () => {
+const THEMES = (['default', '1bit', 'retro'] as ThemeStyle[]).flatMap((style) =>
+  (['light', 'dark'] as ThemeMode[]).map((mode) => ({ style, mode, label: `${style} ${mode}` })),
+);
+
+// Routes App.svelte keeps on a replica (route-guard.js hides Jobs, Restore and Recovery).
+const REPLICA_PAGES = PAGES.filter(({ hash }) => !['#/jobs', '#/restore', '#/recovery', '#/recover'].includes(hash));
+
+const REPLICATION_SOURCES = [
+  { id: 1, name: 'Primary Tower', url: 'http://tower.example.test:24085', enabled: true, schedule: '0 3 * * *', last_sync_at: '2026-10-06T03:00:00Z', last_sync_status: 'success', last_sync_error: '', storage_dest_id: 1 },
+  { id: 2, name: 'Offsite Tower', url: 'http://offsite.example.test:24085', enabled: true, schedule: '0 4 * * *', last_sync_at: '2026-10-06T04:00:00Z', last_sync_status: 'failed', last_sync_error: 'connection refused', storage_dest_id: 1 },
+];
+
+const RUNNING_RESTORE = {
+  active: true,
+  job_id: 1,
+  run_id: 77,
+  job_name: 'Docker & Appdata',
+  run_type: 'restore',
+  items_total: 3,
+  items_done: 1,
+  items_failed: 1,
+  started_at: '2026-10-06T12:00:00Z',
+  current_item: 'plex',
+  current_item_type: 'container',
+  current_item_message: 'Restoring volumes',
+  current_item_percent: 42,
+  phase: 'transferring',
+  bytes_done: 2147483648,
+  bytes_total: 5368709120,
+  progress_determinate: true,
+  rate_bytes_per_sec: 5242880,
+  eta_seconds: 600,
+  queue: [{ id: 2, job_id: 2, job_name: 'VM Backups', run_type: 'backup', status: 'queued' }],
+};
+
+for (const { style, mode, label } of THEMES) {
+  test.describe(`WCAG AA contrast: ${label}`, () => {
     test.beforeEach(async ({ page }) => {
-      await seedTheme(page, 'default', mode);
+      await seedTheme(page, style, mode);
       await settleMotion(page);
       await setupVaultMockApi(page);
       // Tall enough that axe measures content instead of reporting it as scrolled under layers.
@@ -43,7 +78,7 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       test(`${name} page`, async ({ page }) => {
         await open(page, hash, ready);
         await expect(page.locator('html').first()).toHaveClass(mode === 'dark' ? /dark/ : /^(?!.*dark)/);
-        await expectNoContrastViolations(page, `${mode} ${name}`);
+        await expectNoContrastViolations(page, `${label} ${name}`);
       });
     }
 
@@ -52,7 +87,7 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
         await page.goto('/#/settings');
         await page.getByRole('button', { name: tab, exact: true }).click();
         await page.waitForTimeout(100);
-        await expectNoContrastViolations(page, `${mode} Settings ${tab}`);
+        await expectNoContrastViolations(page, `${label} Settings ${tab}`);
       });
     }
 
@@ -60,24 +95,24 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       await page.route('**/api/v1/jobs', (route) => (route.request().method() === 'GET' ? route.fulfill(json([])) : route.fallback()));
       await page.goto('/#/');
       await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} getting started`);
+      await expectNoContrastViolations(page, `${label} getting started`);
 
       await page.route('**/api/v1/storage', (route) => (route.request().method() === 'GET' ? route.fulfill(json([])) : route.fallback()));
       await page.reload();
       await expect(page.getByRole('button', { name: /storage|start/i }).first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} welcome`);
+      await expectNoContrastViolations(page, `${label} welcome`);
     });
 
     test('active navigation and hovered primary button', async ({ page }) => {
       await page.goto('/#/jobs');
       const active = page.locator('aside nav button[aria-current="page"]');
       await expect(active).toContainText('Jobs');
-      await expectNoContrastViolations(page, `${mode} active nav`, { include: 'aside nav' });
+      await expectNoContrastViolations(page, `${label} active nav`, { include: 'aside nav' });
 
       const newJob = page.getByRole('button', { name: /new job/i });
       await newJob.hover();
       await newJob.evaluate((el) => el.setAttribute('data-audit', 'hover'));
-      await expectNoContrastViolations(page, `${mode} hovered primary`, { include: '[data-audit="hover"]' });
+      await expectNoContrastViolations(page, `${label} hovered primary`, { include: '[data-audit="hover"]' });
     });
 
     test('hovered destructive button', async ({ page }) => {
@@ -86,7 +121,7 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       const confirm = page.getByRole('button', { name: 'Delete Storage', exact: true });
       await confirm.hover();
       await page.waitForTimeout(50);
-      await expectNoContrastViolations(page, `${mode} delete dialog with hovered danger button`);
+      await expectNoContrastViolations(page, `${label} delete dialog with hovered danger button`);
     });
 
     test('History filters, run type, chart tooltip and run inspector', async ({ page }) => {
@@ -107,32 +142,32 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       const main = page.locator('main');
       await main.getByRole('button', { name: 'Failed', exact: true }).click();
       await expect(page.locator('main span', { hasText: 'VM Backups' }).first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} History failed filter`);
+      await expectNoContrastViolations(page, `${label} History failed filter`);
       await main.getByRole('button', { name: 'All', exact: true }).first().click();
 
       await main.getByRole('button', { name: /^Restores?$/ }).click();
       await expect(page.getByText('restore', { exact: true }).first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} History restore runs`);
+      await expectNoContrastViolations(page, `${label} History restore runs`);
       await main.getByRole('button', { name: 'All', exact: true }).nth(1).click();
 
       await page.locator('main svg g[role="img"]').first().hover();
       await expect(page.locator('main .pointer-events-none.bg-surface-3')).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} History chart tooltip`);
+      await expectNoContrastViolations(page, `${label} History chart tooltip`);
 
       await page.locator('div[role="button"]', { hasText: 'Docker & Appdata' }).first().click();
       await expect(page.getByText('Deduplication savings 53%')).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} run inspector`);
+      await expectNoContrastViolations(page, `${label} run inspector`);
     });
 
     test('Logs levels and focused row', async ({ page }) => {
       await page.goto('/#/logs');
       await expect(page.getByText('Failed to reach remote endpoint').first()).toBeVisible();
       await expect(page.getByText('debug', { exact: true }).first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} Logs levels`);
+      await expectNoContrastViolations(page, `${label} Logs levels`);
 
       for (const message of ['Failed to reach remote endpoint', 'Verbose scheduler tick']) {
         await page.getByText(message).first().click();
-        await expectNoContrastViolations(page, `${mode} Logs focused row: ${message}`);
+        await expectNoContrastViolations(page, `${label} Logs focused row: ${message}`);
       }
     });
 
@@ -140,7 +175,7 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       await page.goto('/#/settings');
       const selected = page.getByRole('button', { name: mode === 'dark' ? 'Dark' : 'Light', exact: true });
       await expect(selected).toHaveClass(/bg-vault/);
-      await expectNoContrastViolations(page, `${mode} selected appearance`, { include: '#set-appearance' });
+      await expectNoContrastViolations(page, `${label} selected appearance`, { include: '#set-appearance' });
     });
 
     test('success and error toasts', async ({ page }) => {
@@ -151,7 +186,7 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       const toast = page.getByRole('alert');
       await expect(toast.filter({ hasText: /Test notification sent/i })).toBeVisible();
       await expect(toast.locator('[data-toast-icon="success"]')).toHaveAttribute('aria-hidden', 'true');
-      await expectNoContrastViolations(page, `${mode} success toast`, { include: '[role="alert"]' });
+      await expectNoContrastViolations(page, `${label} success toast`, { include: '[role="alert"]' });
 
       await page.route('**/api/v1/settings/discord/test', (route) =>
         route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'webhook rejected' }) }),
@@ -159,29 +194,29 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       await page.locator('#discord-url').locator('..').getByRole('button', { name: 'Test' }).click();
       await expect(toast.filter({ hasText: /webhook rejected/i })).toBeVisible();
       await expect(toast.locator('[data-toast-icon="error"]')).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} error toast`, { include: '[role="alert"]' });
+      await expectNoContrastViolations(page, `${label} error toast`, { include: '[role="alert"]' });
     });
 
     test('job wizard, delete dialog and run queued toast', async ({ page }) => {
       await page.goto('/#/jobs');
       await page.getByRole('button', { name: /run backup now/i }).first().click();
       await expect(page.getByText(/queued for execution/i).first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} job queued`);
+      await expectNoContrastViolations(page, `${label} job queued`);
 
       await page.getByRole('button', { name: /new job/i }).click();
       await expect(page.getByText('Select one or more backup types.')).toBeVisible();
       await page.getByRole('button', { name: /Containers/i }).first().click();
       await page.getByRole('button', { name: /plex/i }).first().click();
-      await expectNoContrastViolations(page, `${mode} job wizard items`);
+      await expectNoContrastViolations(page, `${label} job wizard items`);
 
       await page.getByRole('button', { name: 'Next', exact: true }).click();
       await page.waitForTimeout(100);
-      await expectNoContrastViolations(page, `${mode} job wizard second step`);
+      await expectNoContrastViolations(page, `${label} job wizard second step`);
 
       await page.reload();
       await page.getByRole('button', { name: /delete job/i }).first().click();
       await expect(page.getByRole('dialog').first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} delete job dialog`);
+      await expectNoContrastViolations(page, `${label} delete job dialog`);
     });
 
     test('storage form and storage browser', async ({ page }) => {
@@ -189,29 +224,29 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       await page.getByRole('button', { name: /add storage/i }).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByRole('heading', { name: /add storage/i })).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} add storage`);
+      await expectNoContrastViolations(page, `${label} add storage`);
       await dialog.getByRole('button', { name: 'S3 / S3-Compatible' }).click();
       await expect(dialog.getByRole('button', { name: 'Wasabi' })).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} add S3 storage`);
+      await expectNoContrastViolations(page, `${label} add S3 storage`);
 
       await page.reload();
       await page.getByRole('button', { name: /browse destination files/i }).first().click();
       await expect(page.getByText('Browse Local Array Backup')).toBeVisible();
       await page.waitForTimeout(100);
-      await expectNoContrastViolations(page, `${mode} storage browser`);
+      await expectNoContrastViolations(page, `${label} storage browser`);
     });
 
     test('restore wizard steps', async ({ page }) => {
       await page.goto('/#/restore');
       await page.getByRole('button', { name: /plex/i }).click();
       await page.getByRole('button', { name: /home-assistant/i }).click();
-      await expectNoContrastViolations(page, `${mode} restore items`);
+      await expectNoContrastViolations(page, `${label} restore items`);
 
       await page.getByRole('button', { name: 'Next', exact: true }).click();
       await expect(page.getByText(/Your selection comes from 2 backup jobs/i)).toBeVisible();
       await page.getByRole('button', { name: /Docker & Appdata/i }).first().click();
       await page.getByRole('button', { name: /VM Backups/i }).first().click();
-      await expectNoContrastViolations(page, `${mode} restore points`);
+      await expectNoContrastViolations(page, `${label} restore points`);
     });
 
     test('command palette and changelog modal', async ({ page }) => {
@@ -221,19 +256,19 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       await page.goto('/#/settings');
       await page.keyboard.press('Control+k');
       await expect(page.locator('kbd').first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} command palette`);
+      await expectNoContrastViolations(page, `${label} command palette`);
       await page.keyboard.press('Escape');
 
       await page.getByRole('button', { name: /view changelog/i }).click();
       await expect(page.getByText('v2026.09.01').first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} changelog modal`);
+      await expectNoContrastViolations(page, `${label} changelog modal`);
     });
 
     test('dashboard customisation', async ({ page }) => {
       await page.goto('/#/');
       await page.getByRole('button', { name: /customi[sz]e|edit/i }).first().click();
       await page.waitForTimeout(100);
-      await expectNoContrastViolations(page, `${mode} dashboard edit mode`);
+      await expectNoContrastViolations(page, `${label} dashboard edit mode`);
     });
 
     test('mobile navigation at 375 px', async ({ page }) => {
@@ -241,32 +276,72 @@ for (const mode of ['light', 'dark'] as ThemeMode[]) {
       await page.goto('/#/jobs');
       const nav = page.locator('nav[aria-label="Mobile navigation"]');
       await expect(nav).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} mobile jobs`);
+      await expectNoContrastViolations(page, `${label} mobile jobs`);
 
       await page.locator('header button[aria-expanded], button[aria-label*="menu" i]').first().click();
       await expect(page.getByRole('button', { name: 'Logs', exact: true }).first()).toBeVisible();
-      await expectNoContrastViolations(page, `${mode} mobile menu`);
+      await expectNoContrastViolations(page, `${label} mobile menu`);
     });
 
     test('skip link when focused', async ({ page }) => {
       await page.goto('/#/jobs');
       await page.keyboard.press('Tab');
       await expect(page.getByRole('link', { name: /skip/i })).toBeFocused();
-      await expectNoContrastViolations(page, `${mode} skip link`, { include: 'a[href="#main-content"]' });
+      await expectNoContrastViolations(page, `${label} skip link`, { include: 'a[href="#main-content"]' });
+    });
+
+    test.describe('replica mode', () => {
+      test.beforeEach(async ({ page }) => {
+        // Second setup wins: Playwright runs the most recently added route first.
+        await setupVaultMockApi(page, { replica: true, replicationSources: REPLICATION_SOURCES });
+      });
+
+      for (const { name, hash, ready } of REPLICA_PAGES) {
+        test(`${name} page`, async ({ page }) => {
+          await open(page, hash, ready);
+          await expect(page.getByText(/^Read-only replica/).first()).toBeVisible();
+          await expectNoContrastViolations(page, `${label} replica ${name}`);
+        });
+      }
+
+      for (const tab of SETTINGS_TABS) {
+        test(`read-only Settings ${tab} tab`, async ({ page }) => {
+          await page.goto('/#/settings');
+          await expect(page.getByText(/^Read-only replica/).first()).toBeVisible();
+          await page.getByRole('button', { name: tab, exact: true }).click();
+          await page.waitForTimeout(100);
+          await expectNoContrastViolations(page, `${label} replica Settings ${tab}`);
+        });
+      }
+    });
+
+    test.describe('active runs', () => {
+      test('restore running in the restore wizard', async ({ page }) => {
+        await setupVaultMockApi(page, { runnerStatus: RUNNING_RESTORE });
+        await page.goto('/#/restore');
+        await page.getByRole('button', { name: /plex/i }).click();
+        await page.getByRole('button', { name: /home-assistant/i }).click();
+        await page.getByRole('button', { name: 'Next', exact: true }).click();
+        await page.getByRole('button', { name: /Docker & Appdata/i }).first().click();
+        await page.getByRole('button', { name: /VM Backups/i }).first().click();
+        await page.getByRole('button', { name: /Continue/i }).click();
+        await expect(page.getByText('Restore in progress')).toBeVisible();
+        await expect(page.getByRole('progressbar').first()).toBeVisible();
+        await expectNoContrastViolations(page, `${label} restore running`);
+      });
+
+      test('backup running on the dashboard and Jobs page', async ({ page }) => {
+        await setupVaultMockApi(page, { runnerStatus: { ...RUNNING_RESTORE, run_type: 'backup', current_item_message: 'Uploading' } });
+        await page.goto('/#/');
+        await expect(page.getByRole('progressbar').first()).toBeVisible();
+        await expectNoContrastViolations(page, `${label} backup running on dashboard`);
+        await page.goto('/#/jobs');
+        await expect(page.getByRole('heading', { name: 'Backup Jobs' })).toBeVisible();
+        await expectNoContrastViolations(page, `${label} backup running on Jobs`);
+      });
     });
   });
 }
-
-// Retro palettes are out of scope for the audit (#532 extends it). This only guards
-// that token and markup changes above did not leak default values into them.
-const RETRO: { style: ThemeStyle; mode: ThemeMode; selected: string }[] = [
-  { style: '1bit', mode: 'light', selected: 'rgb(255, 255, 255)' },
-  { style: '1bit', mode: 'dark', selected: 'rgb(0, 0, 0)' },
-  { style: '8bit', mode: 'light', selected: 'rgb(255, 255, 255)' },
-  { style: '8bit', mode: 'dark', selected: 'rgb(255, 255, 255)' },
-  { style: '16bit', mode: 'light', selected: 'rgb(255, 255, 255)' },
-  { style: '16bit', mode: 'dark', selected: 'rgb(255, 255, 255)' },
-];
 
 async function cssColor(page: Page, token: string) {
   return page.evaluate((name) => {
@@ -279,38 +354,18 @@ async function cssColor(page: Page, token: string) {
   }, token);
 }
 
-for (const { style, mode, selected } of RETRO) {
-  test(`retro palette unchanged: ${style} ${mode}`, async ({ page }) => {
+// axe's color-contrast rule does not measure placeholders, so assert the token instead.
+for (const { style, mode, label } of THEMES) {
+  test(`placeholders use the readable muted token: ${label}`, async ({ page }) => {
     await seedTheme(page, style, mode);
     await settleMotion(page);
     await setupVaultMockApi(page);
-
     await page.goto('/#/storage');
-    const primary = page.locator('.btn-primary').first();
-    if (await primary.count()) {
-      await expect(primary).toHaveCSS('color', await cssColor(page, '--color-surface'));
-    }
-
-    await page.goto('/#/history');
-    const allFilter = page.getByRole('button', { name: 'All', exact: true }).first();
-    await expect(allFilter).toHaveClass(/bg-vault/);
-    await expect(allFilter).toHaveCSS('color', selected);
-
-    await page.setViewportSize({ width: 375, height: 812 });
-    const activeMobile = page.locator('nav[aria-label="Mobile navigation"] button[aria-current="page"]');
-    await expect(activeMobile).toHaveCSS('color', await cssColor(page, '--color-vault'));
+    await page.getByRole('button', { name: /add storage/i }).click();
+    const color = await page.locator('[role="dialog"] input[placeholder]').first().evaluate((el) => getComputedStyle(el, '::placeholder').color);
+    expect(color).toBe(await cssColor(page, '--color-text-muted'));
   });
 }
-
-test('placeholders use the readable muted token in default themes', async ({ page }) => {
-  await seedTheme(page, 'default', 'light');
-  await settleMotion(page);
-  await setupVaultMockApi(page);
-  await page.goto('/#/storage');
-  await page.getByRole('button', { name: /add storage/i }).click();
-  const color = await page.locator('[role="dialog"] input[placeholder]').first().evaluate((el) => getComputedStyle(el, '::placeholder').color);
-  expect(color).toBe(await cssColor(page, '--color-text-muted'));
-});
 
 test('the audit reports a real failure with its measured colours', async ({ page }) => {
   await seedTheme(page, 'default', 'light');

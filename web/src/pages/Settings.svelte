@@ -1087,16 +1087,15 @@
           <!-- Theme Style -->
           <div>
             <p class="text-sm text-text-muted mb-2">Theme style</p>
-            <div class="grid grid-cols-4 gap-1 bg-surface-3 rounded-lg p-1 max-w-sm">
+            <div class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-sm">
               {#each [
                 { value: 'default', label: 'Default', icon: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01' },
                 { value: '1bit', label: '1-Bit', icon: 'M8 9l4-4 4 4m0 6l-4 4-4-4' },
-                { value: '8bit', label: '8-Bit', icon: 'M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5' },
-                { value: '16bit', label: '16-Bit', icon: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z' },
+                { value: 'retro', label: 'Retro', icon: 'M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5' },
               ] as opt (opt.value)}
                 <button
                   type="button"
-                  onclick={() => setStyle(/** @type {'default'|'1bit'|'8bit'|'16bit'} */ (opt.value))}
+                  onclick={() => setStyle(/** @type {'default'|'1bit'|'retro'} */ (opt.value))}
                   class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getStyle() === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
@@ -1268,7 +1267,7 @@
                 <span class="block text-sm font-medium text-text-muted">Delays between retries</span>
                 <Tooltip text='How long to wait before each retry. The Nth retry waits for the Nth delay before running. Defaults to 15 min, 1 h, 4 h.' />
               </div>
-              <div class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
+              <div class:pointer-events-none={readOnly}>
                 <RetryDelaysEditor bind:value={retryDelays} />
               </div>
             </div>
@@ -2002,7 +2001,7 @@
           <div>
             <span class="text-xs text-text-muted block mb-1.5">Appdata Directory</span>
             <div class="flex gap-2 items-end">
-              <div class="flex-1" class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
+              <div class="flex-1" class:pointer-events-none={readOnly}>
                 <PathBrowser bind:value={appdataPath} includeZfs={true} />
               </div>
               {#if !readOnly}
@@ -2057,7 +2056,7 @@
             <span class="text-xs text-text-muted block mb-1.5">Custom Location</span>
             <p class="text-xs text-text-dim mb-2">Override the automatic location. Use this if you want backups to be assembled on a specific drive. NVMe-backed ZFS pools are automatically prioritized when detected.</p>
             <div class="flex gap-2 items-end">
-              <div class="flex-1" class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
+              <div class="flex-1" class:pointer-events-none={readOnly}>
                 <!-- Browsing only fills the field; Apply commits it, matching a
                      typed path so neither entry route saves without a click. -->
                 <PathBrowser bind:value={stagingOverrideInput} includeZfs={true} />

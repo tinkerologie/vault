@@ -93,13 +93,13 @@ describe('initTheme', () => {
   })
 
   it('restores a persisted style and mode', async () => {
-    await setup({ stored: { 'vault-style': '8bit', 'vault-mode': 'light' } })
+    await setup({ stored: { 'vault-style': 'retro', 'vault-mode': 'light' } })
     theme.initTheme()
-    expect(theme.getStyle()).toBe('8bit')
+    expect(theme.getStyle()).toBe('retro')
     expect(theme.getMode()).toBe('light')
     expect(theme.getIsDark()).toBe(false)
     expect(theme.getIsThemed()).toBe(true)
-    expect(classes.has('theme-8bit')).toBe(true)
+    expect(classes.has('theme-retro')).toBe(true)
   })
 
   it('ignores invalid persisted values', async () => {
@@ -142,8 +142,8 @@ describe('legacy vault-theme migration', () => {
     ['light', 'default', 'light'],
     ['dark', 'default', 'dark'],
     ['system', 'default', 'system'],
-    ['retro', '16bit', 'light'],
-    ['retro-dark', '16bit', 'dark'],
+    ['retro', 'retro', 'light'],
+    ['retro-dark', 'retro', 'dark'],
   ]
   it.each(cases)('maps %s to style=%s mode=%s and retires the old key', async (old, style, mode) => {
     await setup({ stored: { 'vault-theme': old } })
@@ -158,7 +158,7 @@ describe('legacy vault-theme migration', () => {
   it('applies the migrated value in memory but keeps the legacy key when persistence fails', async () => {
     await setup({ stored: { 'vault-theme': 'retro-dark' }, storageOpts: { failSet: true } })
     theme.initTheme()
-    expect(theme.getStyle()).toBe('16bit')
+    expect(theme.getStyle()).toBe('retro')
     expect(theme.getMode()).toBe('dark')
     expect(storage.data['vault-theme']).toBe('retro-dark')
   })
@@ -171,6 +171,71 @@ describe('legacy vault-theme migration', () => {
   })
 })
 
+describe('saved 8-Bit and 16-Bit styles (#532)', () => {
+  it.each(['8bit', '16bit'])('moves %s to Retro, keeps the stored mode and persists the change', async (saved) => {
+    await setup({ stored: { 'vault-style': saved, 'vault-mode': 'dark' } })
+    theme.initTheme()
+    expect(theme.getStyle()).toBe('retro')
+    expect(theme.getMode()).toBe('dark')
+    expect(theme.getIsThemed()).toBe(true)
+    expect([...classes].sort()).toEqual(['dark', 'theme-retro'])
+    expect(storage.data['vault-style']).toBe('retro')
+    expect(storage.data['vault-mode']).toBe('dark')
+  })
+
+  it.each(['8bit', '16bit'])('still shows Retro when %s cannot be rewritten', async (saved) => {
+    await setup({ stored: { 'vault-style': saved }, storageOpts: { failSet: true } })
+    expect(() => theme.initTheme()).not.toThrow()
+    expect(theme.getStyle()).toBe('retro')
+    expect(classes.has('theme-retro')).toBe(true)
+    expect(storage.data['vault-style']).toBe(saved)
+  })
+
+  it('does not rewrite a style that is already current', async () => {
+    await setup({ stored: { 'vault-style': 'retro' } })
+    theme.initTheme()
+    expect(storage.setItem).not.toHaveBeenCalled()
+  })
+
+  it.each(['neon', '8BIT', '32bit', '', ' 8bit', 'constructor', '__proto__', 'toString'])(
+    'falls back to the default style for the invalid value %j',
+    async (saved) => {
+      await setup({ stored: { 'vault-style': saved } })
+      expect(() => theme.initTheme()).not.toThrow()
+      expect(theme.getStyle()).toBe('default')
+      expect(theme.getIsThemed()).toBe(false)
+      expect([...classes].filter((c) => c.startsWith('theme-'))).toEqual([])
+    },
+  )
+
+  it('lets a recognised vault-theme win over a stale saved style', async () => {
+    await setup({ stored: { 'vault-theme': 'dark', 'vault-style': '16bit' } })
+    theme.initTheme()
+    expect(theme.getStyle()).toBe('default')
+    expect(storage.data['vault-style']).toBe('default')
+  })
+
+  it('keeps vault-theme for a retry when only one key can be written', async () => {
+    await setup({ stored: { 'vault-theme': 'retro-dark' } })
+    storage.setItem.mockImplementation((k, v) => {
+      if (k === 'vault-mode') throw new Error('QuotaExceededError')
+      storage.data[k] = String(v)
+    })
+    theme.initTheme()
+    expect(theme.getStyle()).toBe('retro')
+    expect(theme.getMode()).toBe('dark')
+    expect(storage.data['vault-theme']).toBe('retro-dark')
+  })
+
+  it.each(['constructor', '__proto__'])('drops the invalid legacy vault-theme value %s', async (old) => {
+    await setup({ stored: { 'vault-theme': old } })
+    expect(() => theme.initTheme()).not.toThrow()
+    expect(theme.getStyle()).toBe('default')
+    expect(storage.data['vault-theme']).toBeUndefined()
+    expect(storage.data['vault-style']).toBeUndefined()
+  })
+})
+
 describe('setStyle / setMode', () => {
   it('switches style classes and persists the choice', async () => {
     await setup()
@@ -178,11 +243,11 @@ describe('setStyle / setMode', () => {
     theme.setStyle('1bit')
     expect(classes.has('theme-1bit')).toBe(true)
     expect(storage.data['vault-style']).toBe('1bit')
-    theme.setStyle('16bit')
+    theme.setStyle('retro')
     expect(classes.has('theme-1bit')).toBe(false)
-    expect(classes.has('theme-16bit')).toBe(true)
+    expect(classes.has('theme-retro')).toBe(true)
     theme.setStyle('default')
-    expect(classes.has('theme-16bit')).toBe(false)
+    expect(classes.has('theme-retro')).toBe(false)
     expect(theme.getIsThemed()).toBe(false)
   })
 
