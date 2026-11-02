@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -348,5 +350,50 @@ func TestActivityList_InvalidBeforeID(t *testing.T) {
 				t.Fatalf("status = %d, want %d", w.Code, tt.want)
 			}
 		})
+	}
+}
+
+func TestActivityList_MarksEntriesWhoseRunIsGone(t *testing.T) {
+	d := newTestDB(t)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "dest", Type: "local", Config: `{"path":"/tmp"}`})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+	jobID, err := d.CreateJob(db.Job{Name: "job", Enabled: true, StorageDestID: destID, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	runID, err := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "completed", BackupType: "full"})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	details := func(id int64, runLog bool) string {
+		return fmt.Sprintf(`{"run_id":%d,"run_log":%t}`, id, runLog)
+	}
+	d.LogActivity("info", "backup", "live", details(runID, true))
+	d.LogActivity("info", "backup", "gone", details(runID+999, true))
+	d.LogActivity("info", "backup", "no run log", details(runID+999, false))
+	d.LogActivity("info", "system", "no details", "")
+
+	w := httptest.NewRecorder()
+	NewActivityHandler(d).List(w, httptest.NewRequest(http.MethodGet, "/api/v1/activity", nil))
+	var entries []db.ActivityLogEntry
+	if err := json.NewDecoder(w.Body).Decode(&entries); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	gone := map[string]bool{}
+	for _, e := range entries {
+		gone[e.Message] = e.RunGone
+	}
+	want := map[string]bool{"live": false, "gone": true, "no run log": false, "no details": false}
+	if !maps.Equal(gone, want) {
+		t.Errorf("run_gone = %v, want %v", gone, want)
+	}
+}
+
+func TestExistingJobRunIDs_NoIDs(t *testing.T) {
+	existing, err := newTestDB(t).ExistingJobRunIDs(nil)
+	if err != nil || len(existing) != 0 {
+		t.Errorf("ExistingJobRunIDs(nil) = %v, %v", existing, err)
 	}
 }

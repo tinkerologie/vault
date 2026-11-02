@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -59,7 +61,41 @@ func (h *ActivityHandler) List(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []db.ActivityLogEntry{}
 	}
+	h.markRunsGone(entries)
 	respondJSON(w, http.StatusOK, entries)
+}
+
+// markRunsGone flags entries pointing at a run log that no longer exists. Activity
+// outlives its runs (retention, a purge, a deleted job), and without this the
+// Logs page asks for each gone run's log and gets a 404. A failed lookup leaves
+// the entries unmarked: the page then asks, and copes with the 404.
+func (h *ActivityHandler) markRunsGone(entries []db.ActivityLogEntry) {
+	runIDs := make([]int64, len(entries))
+	var ids []int64
+	for i, entry := range entries {
+		var details struct {
+			RunID  int64 `json:"run_id"`
+			RunLog bool  `json:"run_log"`
+		}
+		if json.Unmarshal([]byte(entry.Details), &details) != nil || !details.RunLog || details.RunID == 0 {
+			continue
+		}
+		runIDs[i] = details.RunID
+		ids = append(ids, details.RunID)
+	}
+	existing, err := h.db.ExistingJobRunIDs(ids)
+	if err != nil {
+		log.Printf("activity: checking run logs: %v", err)
+		return
+	}
+	for i, id := range runIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := existing[id]; !ok {
+			entries[i].RunGone = true
+		}
+	}
 }
 
 // Purge deletes all activity log entries.

@@ -656,7 +656,9 @@ export function createUnifiedLogStore() {
   }
 
   async function fetchRunLogsForBatch(terminalActivityEntries) {
-    const ids = terminalActivityEntries.map(ae => tryParse(ae.details)?.run_id).filter(Boolean)
+    // A run deleted since (retention, purge) has no log to ask for: its activity
+    // row stands in for it, and the request could only return 404.
+    const ids = terminalActivityEntries.filter(ae => !ae.run_gone).map(ae => tryParse(ae.details)?.run_id).filter(Boolean)
     const runIds = Object.fromEntries(ids.map(id => [id, true]))
     if (Object.keys(runIds).length === 0) return {}
     const results = {}

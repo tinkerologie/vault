@@ -336,3 +336,43 @@ test.describe('Logs render window (#507)', () => {
     release();
   });
 });
+
+test.describe('Logs with history whose runs are gone', () => {
+  const finished = (id: number, runId: number, extra: Record<string, unknown> = {}) => ({
+    id, level: 'info', category: 'backup', message: `Backup finished ${runId}`,
+    details: JSON.stringify({ run_id: runId, run_log: true, job_id: 1, job_name: 'Nightly' }),
+    created_at: new Date(Date.UTC(2026, 9, 20, 12, 0, id)).toISOString(), ...extra,
+  });
+
+  test('loads with no failed requests and keeps their summary rows', async ({ page }) => {
+    await setupVaultMockApi(page);
+    await page.route('**/api/v1/activity*', (route) => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify([finished(3, 30, { run_gone: true }), finished(2, 20, { run_gone: true }), finished(1, 10)]),
+    }));
+    const asked: string[] = [];
+    await page.route(/\/api\/v1\/runs\/\d+\/logs/, (route) => {
+      asked.push(new URL(route.request().url()).pathname);
+      const live = route.request().url().includes('/runs/10/');
+      return route.fulfill({
+        status: live ? 200 : 404, contentType: 'application/json',
+        body: JSON.stringify(live ? { run_id: 10, entries: [{ id: 1, run_id: 10, level: 'info', message: 'Live run line', ts: '2026-10-20T12:00:01Z' }], last_id: 1 } : { error: 'run not found' }),
+      });
+    });
+    const failed: string[] = [];
+    page.on('response', (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${r.url()}`); });
+    const consoleErrors: string[] = [];
+    page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+
+    await page.goto('/#/logs');
+    const box = page.getByRole('log');
+    await expect(box.getByText('Backup finished 30')).toBeVisible();
+    await expect(box.getByText('Backup finished 20')).toBeVisible();
+    await expect(box.getByText('Live run line')).toBeVisible();
+    await expect(box.locator('[data-end-marker]')).toBeAttached();
+
+    expect(failed).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+    expect(asked).toEqual(['/api/v1/runs/10/logs']);
+  });
+});
