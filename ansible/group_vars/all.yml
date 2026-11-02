@@ -7,15 +7,21 @@ config_dir: "/boot/config/plugins/{{ plugin_name }}"
 binary_path: "/usr/local/sbin/vault"
 rc_script: "/etc/rc.d/rc.vault"
 
+# Key-only SSH options for every scp and ssh command delegated to localhost.
+# Ansible's own connection gets the same options from ansible.cfg (ssh_args).
+ssh_key_opts: >-
+  -i {{ ansible_ssh_private_key_file | expanduser | quote }}
+  -o IdentitiesOnly=yes -o BatchMode=yes
+  -o StrictHostKeyChecking=accept-new
+  -o ConnectTimeout=10
+
 # Options shared by every delegated scp upload. ControlMaster matters: the
 # uploads are separate processes, and without a shared connection each one
 # authenticates again — Unraid's sshd starts refusing those logins part-way
 # through a deploy, which leaves the plugin half-updated with its service
 # already stopped.
 scp_common_opts: >-
-  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-  -o PubkeyAuthentication=no -o PreferredAuthentications=password
-  -o ConnectTimeout=10
+  {{ ssh_key_opts }}
   -o ControlMaster=auto -o ControlPath=/tmp/.vault-deploy-%r@%h:%p
   -o ControlPersist=120s
 api_port: "{{ hostvars[inventory_hostname].api_port | default(24085) }}"

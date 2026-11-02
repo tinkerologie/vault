@@ -18,6 +18,7 @@
     label: "{{ item.name }}"
   register: endpoint_results
   ignore_errors: true
+  no_log: true # the request carries api_key; the summary below reports each result
 
 - name: Verify ping endpoint # checkov:skip=CKV2_ANSIBLE_1:Loopback (127.0.0.1) connection through an SSH tunnel — traffic is already encrypted by SSH; TLS does not apply.
   delegate_to: localhost

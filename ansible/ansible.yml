@@ -20,9 +20,10 @@
 #   -e create_backup=true — Backup config before uninstall
 #
 # Prerequisites:
-#   brew install ansible sshpass   (macOS)
+#   brew install ansible           (macOS)
 #   pip install ansible            (Linux)
 #   cp inventory.yml.example inventory.yml
+#   Set ansible_ssh_private_key_file and add its public key on Unraid (see README.md)
 
 - name: Vault Plugin Deployment
   hosts: unraid
