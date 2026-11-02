@@ -11,6 +11,7 @@
   import DurationChart from '../components/DurationChart.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import { PURGE_HISTORY_SUMMARY } from '../lib/risky-actions.js'
   import Tooltip from '../components/Tooltip.svelte'
   import Toast from '../components/Toast.svelte'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
@@ -244,11 +245,14 @@
   }
 
   async function handlePurge() {
+    if (purging) return
     purging = true
     try {
       await api.purgeHistory()
-      confirmPurge = false
+      // Reload first: the Purge button is disabled once the list is empty, so
+      // closing after the reload sends focus to the page instead of a dead control.
       await loadData()
+      confirmPurge = false
     } catch (e) {
       confirmPurge = false
       error = e.message || 'Failed to purge history'
@@ -648,9 +652,13 @@
 <ConfirmDialog
   show={confirmPurge}
   title="Purge All History"
-  message="This permanently deletes ALL job-run history AND their restore points – the recoverable backups Vault tracks. The backup files on storage are left behind (orphaned), so you would have to re-import them to restore. This cannot be undone."
+  message="Permanently delete all job-run history and their restore points, the recoverable backups Vault tracks?"
   confirmLabel={purging ? 'Purging…' : 'Purge Everything'}
   variant="danger"
+  confirmWord="PURGE"
+  source={PURGE_HISTORY_SUMMARY.source}
+  consequences={PURGE_HISTORY_SUMMARY.consequences}
+  busy={purging}
   onconfirm={handlePurge}
   oncancel={() => confirmPurge = false}
 />

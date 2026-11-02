@@ -1,11 +1,12 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { formatBytes, formatDate, formatDateCompact, parseConfig, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import { replaceDatabaseSummary } from '../lib/risky-actions.js'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import StorageBrowser from '../components/StorageBrowser.svelte'
@@ -35,6 +36,10 @@
   let scannedBackups = $state([])
   let selectedBackups = $state(new SvelteSet())
   let vaultDBInfo = $state(null)
+  // What the open "replace database" dialog is about: fixed when it opens.
+  let confirmReplaceDB = $state(null)
+  let restoringDB = $state(false)
+  let replaceDBSummary = $derived(confirmReplaceDB ? replaceDatabaseSummary(confirmReplaceDB) : { source: [], consequences: [] })
   let importing = $state(false)
 
   let needsPassphrase = $derived(scannedBackups.some(b => b.encrypted && b.key === 'age'))
@@ -348,14 +353,30 @@
     }
   }
 
-  async function doRestoreDB(storagePath) {
-    if (!confirm('This will replace the current Vault database with the backup copy. All current data will be lost. The daemon will need to be restarted. Continue?')) return
+  function doRestoreDB(info) {
+    confirmReplaceDB = {
+      storageId: importStorageId,
+      storageName: importStorageName,
+      path: info.path,
+      modified: info.modified_at ? formatDate(info.modified_at) : '',
+    }
+  }
+
+  async function confirmRestoreDB() {
+    if (restoringDB) return
+    restoringDB = true
     try {
-      const result = await api.restoreDB(importStorageId, storagePath)
+      const result = await api.restoreDB(confirmReplaceDB.storageId, confirmReplaceDB.path)
       showToast(result.message || 'Database restored. Please restart Vault.', 'success')
+      // Close one at a time, so focus unwinds through both to the Import button.
+      confirmReplaceDB = null
+      await tick()
       showImport = false
     } catch (e) {
       showToast(`Restore failed: ${e.message}`, 'error')
+      confirmReplaceDB = null
+    } finally {
+      restoringDB = false
     }
   }
 
@@ -890,8 +911,9 @@
             <p class="text-xs text-text-dim">Restoring the database will replace <strong>all</strong> current data (jobs, history, settings).</p>
             <button
               type="button"
-              onclick={() => doRestoreDB(vaultDBInfo.path)}
-              class="w-full text-left px-3 py-2 text-xs rounded-lg border border-border hover:border-warning/50 hover:bg-warning/5 transition-colors"
+              disabled={restoringDB}
+              onclick={() => doRestoreDB(vaultDBInfo)}
+              class="w-full text-left px-3 py-2 text-xs rounded-lg border border-border hover:border-warning/50 hover:bg-warning/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span class="font-medium text-text">Vault Database</span>
               <span class="text-text-dim ml-2">{vaultDBInfo.modified_at ? formatDate(vaultDBInfo.modified_at) : ''}</span>
@@ -918,6 +940,19 @@
     </div>
   {/if}
 </Modal>
+
+<ConfirmDialog
+  show={!!confirmReplaceDB}
+  title="Replace Vault Database"
+  message="Replace the current Vault database with this backup copy?"
+  confirmLabel={restoringDB ? 'Replacing…' : 'Replace Database'}
+  confirmWord="REPLACE"
+  source={replaceDBSummary.source}
+  consequences={replaceDBSummary.consequences}
+  busy={restoringDB}
+  onconfirm={confirmRestoreDB}
+  oncancel={() => confirmReplaceDB = null}
+/>
 
 {#if browseDest}
   <StorageBrowser destId={browseDest.id} destName={browseDest.name} ontoast={showToast} onclose={() => browseDest = null} />

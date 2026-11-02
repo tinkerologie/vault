@@ -13,6 +13,8 @@
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
   import Tooltip from './Tooltip.svelte'
+  import ConfirmDialog from './ConfirmDialog.svelte'
+  import { restoreAnywaySummary } from '../lib/risky-actions.js'
   import FileTree from './FileTree.svelte'
 
   let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null, onmount = null } = $props()
@@ -1091,15 +1093,28 @@
     checkAllUnitsFinished()
   }
 
-  function handleRestoreAnyway() {
-    const failedUnits = restoreUnits.filter(unit => {
+  let confirmRestoreAnyway = $state(false)
+
+  let restoreAnywayContent = $derived(confirmRestoreAnyway
+    ? restoreAnywaySummary(restoreUnits.map(unit => {
       const s = getUnitSettings(unit.jobId)
-      return !s.preflightResult?.ok
-    })
-    const names = failedUnits.map(u => u.jobName).join(', ')
-    if (window.confirm(`Pre-flight checks did not all pass for: ${names}. Restore anyway?`)) {
-      doRestore()
-    }
+      return {
+        jobName: unit.jobName,
+        pointDate: formatDate(unit.point.created_at),
+        destination: (s.showDestOverride && s.restoreDestination.trim()) || 'Original location',
+        cleanDestination: s.cleanDestination && !unitHasPartialSelection(unit),
+        preflight: s.preflightResult,
+      }
+    }))
+    : { source: [], consequences: [] })
+
+  function handleRestoreAnyway() {
+    if (canRestoreAnyway) confirmRestoreAnyway = true
+  }
+
+  function confirmRestoreAnywayNow() {
+    confirmRestoreAnyway = false
+    doRestore()
   }
 
   function goBack() {
@@ -2081,3 +2096,16 @@
     {/if}
   {/if}
 </div>
+
+<ConfirmDialog
+  show={confirmRestoreAnyway}
+  title="Restore Despite Failed Checks"
+  message="Pre-flight checks did not all pass. Restore anyway?"
+  confirmLabel="Restore Anyway"
+  confirmWord="RESTORE"
+  confirmDisabled={!canRestoreAnyway}
+  source={restoreAnywayContent.source}
+  consequences={restoreAnywayContent.consequences}
+  onconfirm={confirmRestoreAnywayNow}
+  oncancel={() => confirmRestoreAnyway = false}
+/>

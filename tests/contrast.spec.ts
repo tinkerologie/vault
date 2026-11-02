@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { setupVaultMockApi } from './mocks/vault-api';
+import { RISKY_FLOWS } from './helpers/risky-flows';
 import { auditContrast, expectNoContrastViolations, seedTheme, settleMotion, type ThemeMode, type ThemeStyle } from './helpers/contrast';
 
 const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -248,6 +249,24 @@ for (const { style, mode, label } of THEMES) {
       await page.getByRole('button', { name: /VM Backups/i }).first().click();
       await expectNoContrastViolations(page, `${label} restore points`);
     });
+
+    for (const flow of RISKY_FLOWS) {
+      test(`typed confirmation: ${flow.name}`, async ({ page }) => {
+        await flow.arrive(page);
+        await (await flow.opener(page, 'mouse')).click();
+        const dialog = page.getByRole('dialog', { name: flow.title });
+        await expect(dialog).toBeVisible();
+        await expectNoContrastViolations(page, `${label} ${flow.name} dialog`);
+
+        await dialog.getByLabel(`Type ${flow.word} to confirm`).fill(flow.word);
+        const confirm = dialog.getByRole('button', { name: flow.confirmLabel, exact: true });
+        await expect(confirm).toBeEnabled();
+        await expectNoContrastViolations(page, `${label} ${flow.name} dialog ready`);
+
+        await confirm.hover();
+        await expectNoContrastViolations(page, `${label} ${flow.name} dialog hovered confirm`);
+      });
+    }
 
     test('command palette and changelog modal', async ({ page }) => {
       await page.route('**/api/v1/release/changelog', (route) =>

@@ -144,6 +144,15 @@ export function modalDialog(dialog, requestClose) {
     requestClose()
   }
 
+  // The browser has already closed it here, so an owner that declines (a dialog
+  // locked while its request runs) needs it shown again.
+  function onClose() {
+    requestClose()
+    tick().then(() => {
+      if (dialog.isConnected && !dialog.open) dialog.showModal()
+    })
+  }
+
   function onKeydown(e) {
     if (e.key !== 'Tab' || e.defaultPrevented || e.target.closest('dialog') !== dialog) return
     const items = tabbablesIn(dialog)
@@ -173,7 +182,7 @@ export function modalDialog(dialog, requestClose) {
   dialog.tabIndex = -1
   dialog.addEventListener('cancel', onCancel)
   // Chromium skips a cancelable `cancel` on repeated Escape and closes directly.
-  dialog.addEventListener('close', requestClose)
+  dialog.addEventListener('close', onClose)
   dialog.addEventListener('keydown', onKeydown)
   if (!dialog.open) dialog.showModal()
   stack.push(dialog)
@@ -185,7 +194,7 @@ export function modalDialog(dialog, requestClose) {
     destroy() {
       contentObserver.disconnect()
       dialog.removeEventListener('cancel', onCancel)
-      dialog.removeEventListener('close', requestClose)
+      dialog.removeEventListener('close', onClose)
       dialog.removeEventListener('keydown', onKeydown)
       stack.splice(stack.indexOf(dialog), 1)
       syncFloating()
