@@ -100,7 +100,6 @@ package: release
 	cp -r plugin/pages/include $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cp plugin/README.md $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/README.md
 	cp -r web/dist/. $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/ui/
-	cp -r plugin/assets $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	cp -r plugin/event $(BUILD_DIR)/pkg/usr/local/emhttp/plugins/$(BINARY)/
 	@# Store every entry as root:root. installpkg runs as root and applies the
 	@# archive's owners, so a package built by the CI runner (UID 1001) used to

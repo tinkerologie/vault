@@ -205,6 +205,31 @@ class PasswordHandlingTests(unittest.TestCase):
         self.assertTrue(uploads[-3]["args"][-3].endswith("/plugin/event/started"))
         self.assertTrue(uploads[-3]["args"][-2].endswith("/plugin/event/stopping_svcs"))
 
+    def test_deploy_removes_legacy_ui_and_never_uploads_it(self):
+        tasks = yaml.safe_load((ANSIBLE / "roles" / "deploy" / "tasks" / "main.yml").read_text())
+
+        def walk(items):
+            for item in items or []:
+                yield item
+                for key in ("block", "rescue", "always"):
+                    yield from walk(item.get(key))
+
+        cleanup = next(t for t in walk(tasks) if t.get("name") == "Clean up old sub-page files")
+        script = cleanup["ansible.builtin.raw"]
+        for name in ("VaultJobs", "VaultRestore", "VaultStorage", "VaultHistory", "VaultSettings"):
+            self.assertTrue("{{ plugin_dir }}/" + name + ".page" in script, name)
+        self.assertTrue("{{ plugin_dir }}/assets" in script, script)
+
+        rc, output, commands, _, _ = self.run_role("deploy")
+        self.assertEqual(rc, 0, output)
+        uploads = [event for event in commands if event["program"] == "sshpass"]
+        self.assertTrue(uploads)
+        for event in uploads:
+            joined = " ".join(event["args"])
+            self.assertFalse("plugin/assets" in joined, joined)
+            for name in ("VaultJobs", "VaultRestore", "VaultStorage", "VaultHistory", "VaultSettings"):
+                self.assertFalse(name in joined, joined)
+
     def test_verify_tunnel_and_included_tasks(self):
         rc, output, commands, tasks, port = self.run_role("verify")
         self.assertEqual(rc, 0, output)

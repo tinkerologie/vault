@@ -196,6 +196,8 @@ https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
 
 The daemon runs at `/usr/local/sbin/vault` with the database at `/boot/config/plugins/vault/vault.db`.
 
+The plugin installs `Vault.page`, `Backups.page`, `include/`, `ui/`, `event/` and `README.md` under `/usr/local/emhttp/plugins/vault`. The post-install step in `plugin/vault.plg` also deletes the removed legacy PHP pages and their `assets/` directory, so upgrades don't leave them behind.
+
 Service management:
 
 ```bash

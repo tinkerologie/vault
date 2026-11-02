@@ -106,7 +106,7 @@ internal/storage/   Local, SFTP, SMB, NFS, WebDAV, and S3 adapters
 internal/scheduler/ Cron scheduling and maintenance jobs
 internal/ws/        WebSocket hub
 web/                Svelte 5 application and Vitest tests
-plugin/             Unraid plugin metadata, PHP pages, assets, service script
+plugin/             Unraid plugin metadata, PHP pages, service script
 ansible/            Build, deployment, and live verification
 docs/               User and maintainer documentation
 ```
