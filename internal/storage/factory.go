@@ -87,6 +87,18 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 	return a, nil
 }
 
+// ValidateConfig checks a config as NewAdapter would, without connecting. Secrets
+// this server's vault.key cannot open are accepted, so an edit to other fields of
+// a locked destination can still be saved.
+func ValidateConfig(storageType, configJSON string) error {
+	adapter, err := NewAdapter(storageType, credentials.LockedForValidation(configJSON))
+	if err != nil {
+		return err
+	}
+	CloseAdapter(adapter)
+	return nil
+}
+
 // newRawAdapter is the original type-dispatched factory, kept here so the
 // throttled-wrap step in NewAdapter is the only public entry point.
 func newRawAdapter(storageType, configJSON string) (Adapter, error) {

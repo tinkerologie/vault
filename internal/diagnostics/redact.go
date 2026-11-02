@@ -69,7 +69,13 @@ func redactMap(m map[string]any) map[string]any {
 	result := make(map[string]any, len(m))
 	for k, v := range m {
 		if isSensitiveKey(k) {
-			if s, ok := v.(string); ok && s != "" {
+			switch val := v.(type) {
+			case string:
+				if val != "" {
+					result[k] = redactedPlaceholder
+					continue
+				}
+			case map[string]any, []any:
 				result[k] = redactedPlaceholder
 				continue
 			}
@@ -183,6 +189,8 @@ var logRedactPatterns = []logRedactPattern{
 	// and the `@host` suffix so the reader can still see which endpoint
 	// was being contacted.
 	{regexp.MustCompile(`(https?://)([^:/@\s]+):([^@\s]+)@`), `${1}` + redactedPlaceholder + `@`},
+	// URL query parameters used as bearer or signature credentials.
+	{regexp.MustCompile(`(?i)([?&](?:sig|signature|x-amz-signature|x-amz-credential|client_secret)=)[^&#\s]+`), `${1}` + redactedPlaceholder},
 	// The same for any scheme and for a bare token with no colon.
 	{regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`), `${1}` + redactedPlaceholder + `@`},
 	// Discord webhook URLs are sensitive end-to-end (the token IS in

@@ -63,6 +63,9 @@ var daemonCmd = &cobra.Command{
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
 		mdns, _ := cmd.Flags().GetBool("mdns")
+		if err := api.CheckTLSPair(tlsCert, tlsKey); err != nil {
+			return err
+		}
 
 		// Tee the standard logger into an in-memory ring buffer so the
 		// diagnostics bundle can include the last ~1 MiB of daemon log

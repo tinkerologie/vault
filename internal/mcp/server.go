@@ -712,6 +712,9 @@ func (s *MCPServer) addUpdateStorageTool() {
 		// to send a stored secret to another server. A type change alone is
 		// checked as an edit that leaves every field masked.
 		edited := input.Config
+		if credentials.IsLocked(edited) {
+			return nil, nil, fmt.Errorf("config must not contain sealed values")
+		}
 		if edited == "" {
 			edited = credentials.Mask(dest.Config)
 		}
@@ -723,8 +726,8 @@ func (s *MCPServer) addUpdateStorageTool() {
 			dest.Config = merged
 		}
 		if input.Type != "" || input.Config != "" {
-			if err := validateStorageConfig(dest.Type, dest.Config); err != nil {
-				return nil, nil, err
+			if err := storage.ValidateConfig(dest.Type, dest.Config); err != nil {
+				return nil, nil, fmt.Errorf("invalid storage config: %w", err)
 			}
 		}
 		if err := s.db.UpdateStorageDestination(dest); err != nil {

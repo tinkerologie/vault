@@ -19,6 +19,11 @@ import (
 // the next boot finishes the job.
 const settingSealScrubPending = "secrets_seal_scrub_pending"
 
+// settingSealCopiesDone records that older copies have been inspected once. They
+// can hold plaintext even when no live row does: a credential deleted since, or a
+// passphrase an earlier version already sealed in the working database.
+const settingSealCopiesDone = "secrets_seal_copies_done"
+
 const (
 	selectStorageConfig     = `SELECT COALESCE(config, '{}') FROM storage_destinations WHERE id = ?`
 	selectReplicationConfig = `SELECT COALESCE(config, '{}') FROM replication_sources WHERE id = ?`
@@ -112,7 +117,11 @@ func (d *DB) sealRows(key []byte) (int, error) {
 		return 0, err
 	}
 	changed += n
-	if changed > 0 {
+	var copiesDone string
+	if err := tx.QueryRow(`SELECT value FROM settings WHERE key = ?`, settingSealCopiesDone).Scan(&copiesDone); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("read seal state: %w", err)
+	}
+	if changed > 0 || copiesDone != "1" {
 		if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, '1')
 			ON CONFLICT(key) DO UPDATE SET value = '1'`, settingSealScrubPending); err != nil {
 			return 0, fmt.Errorf("record seal state: %w", err)
@@ -281,6 +290,9 @@ func (d *DB) SealPersistentCopies(ctx context.Context, sm *SnapshotManager, extr
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
+	}
+	if err := d.SetSetting(settingSealCopiesDone, "1"); err != nil {
+		return fmt.Errorf("record seal state: %w", err)
 	}
 	if err := d.SetSetting(settingSealScrubPending, ""); err != nil {
 		return fmt.Errorf("clear seal state: %w", err)

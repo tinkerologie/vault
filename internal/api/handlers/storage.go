@@ -239,6 +239,12 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.Name = name
 	}
 	if patch.Config != nil {
+		// Reads never return sealed values, so one in a request is not ours to
+		// keep: it would be stored as if it were already encrypted.
+		if credentials.IsLocked(*patch.Config) {
+			respondError(w, http.StatusBadRequest, "config must not contain sealed values")
+			return
+		}
 		// The edit modal round-trips secrets as the "••••••••" marker. Keep the
 		// stored value for those, unless the edit moves the destination, which
 		// would hand the stored secret to the new server.
@@ -248,13 +254,12 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		existing.Config = merged
-		// Re-validate; the user may have broken the config blob.
-		adapter, err := storage.NewAdapter(existing.Type, existing.Config)
-		if err != nil {
+		// Re-validate; the user may have broken the config blob. Secrets that
+		// stay locked don't block saving other fields.
+		if err := storage.ValidateConfig(existing.Type, existing.Config); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		storage.CloseAdapter(adapter)
 	}
 	if patch.BackupDatabaseEnabled != nil {
 		existing.BackupDatabaseEnabled = *patch.BackupDatabaseEnabled

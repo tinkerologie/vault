@@ -583,3 +583,20 @@ func TestDaemonSealsExistingCredentialsOnStart(t *testing.T) {
 		}
 	}
 }
+
+// Half-configured TLS stops the daemon before anything is advertised or opened.
+func TestDaemonRefusesHalfConfiguredTLSBeforeStarting(t *testing.T) {
+	e := newDaemonEnv458(t)
+	cmd := &cobra.Command{Use: "daemon"}
+	cmd.SetContext(context.Background())
+	cmd.Flags().String("db", e.dbPath, "")
+	cmd.Flags().String("addr", "127.0.0.1:0", "")
+	cmd.Flags().String("tls-cert", "/tmp/only-a-cert", "")
+	cmd.Flags().String("tls-key", "", "")
+	if err := daemonCmd.RunE(cmd, nil); err == nil || !strings.Contains(err.Error(), "--tls-key") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(e.dbPath); !os.IsNotExist(err) {
+		t.Fatalf("started before refusing: %v", err)
+	}
+}

@@ -73,3 +73,17 @@ func TestRedactRunLogPlainTextAndFallbacks(t *testing.T) {
 		t.Errorf("string resembling JSON should survive: %s", got)
 	}
 }
+
+func TestRedactNestedUnderSensitiveKeysAndQueryCredentials(t *testing.T) {
+	t.Parallel()
+	got := RedactJSON(`{"password":{"value":"nested-secret"},"tokens":["list-secret"],"keep_last":5,` +
+		`"url":"https://dav.example/x?sig=sig-secret&signature=two-secret&X-Amz-Signature=three-secret&keep=yes"}`)
+	for _, leak := range []string{"nested-secret", "list-secret", "sig-secret", "two-secret", "three-secret"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q in %s", leak, got)
+		}
+	}
+	if !strings.Contains(got, "keep=yes") || !strings.Contains(got, `"keep_last":5`) {
+		t.Errorf("harmless values lost: %s", got)
+	}
+}

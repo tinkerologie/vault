@@ -228,7 +228,7 @@ func TestStorageResponseMasksURLCredentialsAndMalformedConfig(t *testing.T) {
 	if strings.Contains(out["config"].(string), "s3cret") {
 		t.Fatalf("malformed config leaked: %v", out["config"])
 	}
-	out = storageResponseWithCapacity(db.StorageDestination{Config: `{"password":"vault-sealed:v1:abc"}`})
+	out = storageResponseWithCapacity(db.StorageDestination{Config: `{"password":"vault-sealed:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`})
 	if out["credentials_locked"] != true || strings.Contains(out["config"].(string), "vault-sealed") {
 		t.Fatalf("locked row = %v", out)
 	}
@@ -383,5 +383,81 @@ func TestStorageTestConfigUsesStoredSecretOnlyForSameDestination(t *testing.T) {
 	}
 	if res := post(map[string]any{"id": 9999, "type": "webdav", "config": masked(other.URL)}); !strings.HasPrefix(res, "404") {
 		t.Fatalf("missing row: %s", res)
+	}
+}
+
+func TestLockedDestinationStillSavesOtherFields(t *testing.T) {
+	t.Parallel()
+	h, _, _ := newFileBackedStorageHandler(t)
+	h.db.SetCredentialKey(testSealKey)
+	id := seedSMB(t, h.db)
+	h.db.SetCredentialKey([]byte("ffffffffffffffffffffffffffffffff"))
+	before, _ := h.db.GetStorageDestination(id)
+	if !credentials.IsLocked(before.Config) {
+		t.Fatalf("premise: %s", before.Config)
+	}
+
+	// The form sends back what a read returned, with a new name and base path.
+	masked := redactConfig(before.Config)
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(masked), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["base_path"] = "/moved"
+	inner, _ := json.Marshal(cfg)
+	body, _ := json.Marshal(map[string]string{"name": "renamed", "config": string(inner)})
+	w := httptest.NewRecorder()
+	h.Update(w, reqWithID(http.MethodPut, "/x", idStr(id), body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("locked edit: %d %s", w.Code, w.Body.String())
+	}
+
+	// The original key still opens it, with the new fields.
+	h.db.SetCredentialKey(testSealKey)
+	after, err := h.db.GetStorageDestination(id)
+	if err != nil || after.Name != "renamed" || !strings.Contains(after.Config, "stored-pass") || !strings.Contains(after.Config, "/moved") {
+		t.Fatalf("after = %+v (err %v)", after, err)
+	}
+	h.db.SetCredentialKey([]byte("ffffffffffffffffffffffffffffffff"))
+
+	// The locked secret still cannot follow a new host, or be used to connect.
+	cfg["host"] = "evil.example"
+	inner, _ = json.Marshal(cfg)
+	body, _ = json.Marshal(map[string]string{"config": string(inner)})
+	w = httptest.NewRecorder()
+	h.Update(w, reqWithID(http.MethodPut, "/x", idStr(id), body))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("locked secret on new host: %d %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.TestConnection(w, reqWithID(http.MethodPost, "/x", idStr(id), nil))
+	if strings.Contains(w.Body.String(), `"success":true`) || w.Code == http.StatusOK && !strings.Contains(w.Body.String(), "vault.key") {
+		t.Fatalf("locked destination connected: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSealedValuesAreRefusedAsInput(t *testing.T) {
+	t.Parallel()
+	const token = "vault-sealed:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	h, _, _ := newFileBackedStorageHandler(t)
+	id := seedSMB(t, h.db)
+	inner, _ := json.Marshal(map[string]string{"host": "nas.lan", "password": token})
+	body, _ := json.Marshal(map[string]string{"config": string(inner)})
+	w := httptest.NewRecorder()
+	h.Update(w, reqWithID(http.MethodPut, "/x", idStr(id), body))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("storage update: %d %s", w.Code, w.Body.String())
+	}
+
+	rh, d := setupReplicationTest(t)
+	src := seedSource(t, d, "http://peer.lan")
+	cfg := `"{\"api_key\":\"` + token + `\"}"`
+	if w := updateSource(t, rh, src, `{"name":"peer","url":"http://peer.lan","config":`+cfg+`}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("replication update: %d %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	rh.Create(w, httptest.NewRequest(http.MethodPost, "/x", bytes.NewBufferString(`{"name":"n","url":"http://n.lan","config":`+cfg+`}`)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("replication create: %d %s", w.Code, w.Body.String())
 	}
 }

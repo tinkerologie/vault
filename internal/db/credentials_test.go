@@ -518,3 +518,58 @@ func TestSealPersistentCopiesReportsSnapshotFailures(t *testing.T) {
 		t.Fatal("marker cleared despite failure")
 	}
 }
+
+// Older copies are inspected once even when no live row needs sealing: the
+// credential may have been deleted, or sealed by an earlier version.
+func TestOlderCopiesAreInspectedWithoutLiveChanges(t *testing.T) {
+	dir := t.TempDir()
+	older := filepath.Join(dir, "vault.db.migrated")
+	c, err := Open(older)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedPlaintext(t, c)
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d := openCredDB(t)
+	d.SetCredentialKey(credKeyA)
+	if n, err := d.SealSecretsAtRest(); err != nil || n != 0 {
+		t.Fatalf("changed %d (err %v)", n, err)
+	}
+	if err := d.SealPersistentCopies(context.Background(), nil, []string{older}); err != nil {
+		t.Fatal(err)
+	}
+	if fileHasSecret(t, older) {
+		t.Fatal("older copy still holds plaintext")
+	}
+
+	// Done once: a later start with nothing to seal does no copy work.
+	if _, err := d.SealSecretsAtRest(); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := d.GetSetting(settingSealScrubPending, ""); v != "" {
+		t.Fatalf("copy work repeated, pending = %q", v)
+	}
+}
+
+func TestMalformedStoredConfigIsSealed(t *testing.T) {
+	d := openCredDB(t)
+	id, _ := seedPlaintextRaw(t, d)
+	bad := `{"password":"` + plaintextSecret + `"}trailing`
+	if _, err := d.Exec(`UPDATE storage_destinations SET config = ? WHERE id = ?`, bad, id); err != nil {
+		t.Fatal(err)
+	}
+	d.SetCredentialKey(credKeyA)
+	if _, err := d.SealSecretsAtRest(); err != nil {
+		t.Fatal(err)
+	}
+	if raw := rawConfig(t, d, selectStorageConfig, id); strings.Contains(raw, plaintextSecret) {
+		t.Fatalf("malformed config left in plaintext: %s", raw)
+	}
+	dest, err := d.GetStorageDestination(id)
+	if err != nil || dest.Config != bad {
+		t.Fatalf("config = %q (err %v)", dest.Config, err)
+	}
+}

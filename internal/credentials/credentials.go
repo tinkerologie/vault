@@ -10,11 +10,14 @@ package credentials
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/tinkerologie/vault/internal/crypto"
@@ -58,7 +61,11 @@ func parseObject(config string) (map[string]any, bool) {
 	dec := json.NewDecoder(strings.NewReader(config))
 	dec.UseNumber()
 	var m map[string]any
-	if err := dec.Decode(&m); err != nil || m == nil || dec.More() {
+	if err := dec.Decode(&m); err != nil || m == nil {
+		return nil, false
+	}
+	// Anything after the object means the input is not one object.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, false
 	}
 	return m, true
@@ -73,7 +80,19 @@ func marshal(m map[string]any) string {
 	return strings.TrimSuffix(buf.String(), "\n")
 }
 
-func isSealed(s string) bool { return strings.HasPrefix(s, sealedPrefix) }
+// minSealedBytes is the shortest output of crypto.Seal: a GCM nonce and tag.
+const minSealedBytes = 12 + 16
+
+// isSealed reports whether s has the exact shape of a sealed value, so a real
+// password that merely starts with the prefix is still sealed like any other.
+func isSealed(s string) bool {
+	token, found := strings.CutPrefix(s, sealedPrefix)
+	if !found {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(token)
+	return err == nil && len(raw) >= minSealedBytes
+}
 
 // hasUserinfo reports whether s is a URL carrying inline credentials.
 func hasUserinfo(s string) bool {
@@ -108,12 +127,20 @@ func StripUserinfo(s string) string {
 func Seal(key []byte, config string) (string, error) {
 	m, ok := parseObject(config)
 	if !ok {
-		return config, nil
+		return sealWhole(key, config)
 	}
 	changed := false
 	for k, v := range m {
 		s, isStr := v.(string)
-		if !isStr || s == "" || isSealed(s) {
+		if !isStr && isSealedKey(k) {
+			// No adapter accepts this shape, but it can still hold the secret.
+			switch v.(type) {
+			case map[string]any, []any:
+				raw, _ := json.Marshal(v)
+				s = string(raw)
+			}
+		}
+		if s == "" || isSealed(s) {
 			continue
 		}
 		if isSealedKey(k) && s == RedactionMarker {
@@ -137,11 +164,30 @@ func Seal(key []byte, config string) (string, error) {
 	return marshal(m), nil
 }
 
+// sealWhole seals a config that is not a JSON object as one value, because
+// nothing can tell which part of it is the secret.
+func sealWhole(key []byte, config string) (string, error) {
+	if len(key) == 0 || config == "" || isSealed(config) {
+		return config, nil
+	}
+	token, err := crypto.Seal(key, config)
+	if err != nil {
+		return "", fmt.Errorf("seal config: %w", err)
+	}
+	return sealedPrefix + token, nil
+}
+
 // Open decrypts a stored config. A secret the key cannot open stays sealed, so
 // the row reads as locked rather than failing the whole listing. Plaintext
 // configs written before sealing pass through unchanged.
 func Open(key []byte, stored string) string {
 	if !strings.Contains(stored, sealedPrefix) {
+		return stored
+	}
+	if isSealed(stored) {
+		if plain, err := crypto.Unseal(key, strings.TrimPrefix(stored, sealedPrefix)); err == nil {
+			return plain
+		}
 		return stored
 	}
 	m, ok := parseObject(stored)
@@ -168,7 +214,7 @@ func IsLocked(config string) bool {
 	}
 	m, ok := parseObject(config)
 	if !ok {
-		return true
+		return isSealed(config)
 	}
 	for _, v := range m {
 		if s, isStr := v.(string); isStr && isSealed(s) {
@@ -191,13 +237,25 @@ func Mask(config string) string {
 
 func maskMap(m map[string]any) map[string]any {
 	for k, v := range m {
-		if s, isStr := v.(string); isStr && s != "" && IsMaskedKey(k) {
+		if IsMaskedKey(k) && hasContent(v) {
 			m[k] = RedactionMarker
 			continue
 		}
 		m[k] = maskValue(v)
 	}
 	return m
+}
+
+// hasContent reports whether a value under a secret's key could hold the secret.
+func hasContent(v any) bool {
+	switch val := v.(type) {
+	case string:
+		return val != ""
+	case map[string]any, []any:
+		return true
+	default:
+		return false
+	}
 }
 
 func maskValue(v any) any {
@@ -240,10 +298,11 @@ func Preserve(incoming, existing string) string {
 		if !isOldStr {
 			continue
 		}
-		restoreMarker := s == RedactionMarker && (IsMaskedKey(k) || isSealed(old))
-		restoreURL := hasUserinfo(old) && s == StripUserinfo(old)
-		if restoreMarker || restoreURL {
+		if s == RedactionMarker && (IsMaskedKey(k) || isSealed(old)) {
 			in[k] = old
+			changed = true
+		} else if withLogin, ok := carryURLLogin(s, old); ok {
+			in[k] = withLogin
 			changed = true
 		}
 	}
@@ -251,6 +310,25 @@ func Preserve(incoming, existing string) string {
 		return incoming
 	}
 	return marshal(in)
+}
+
+// carryURLLogin keeps the login embedded in a stored URL when a client sends the
+// URL back without it, as reads return it, on the same server. A path edit keeps
+// the login; another server does not get it.
+func carryURLLogin(incoming, stored string) (string, bool) {
+	if !hasUserinfo(stored) || hasUserinfo(incoming) || originOf(incoming) != originOf(stored) {
+		return "", false
+	}
+	in, err := url.Parse(incoming)
+	if err != nil {
+		return "", false
+	}
+	old, err := url.Parse(stored)
+	if err != nil {
+		return "", false
+	}
+	in.User = old.User
+	return in.String(), true
 }
 
 // destinationFields lists, per storage type, the config fields that decide who
@@ -304,16 +382,21 @@ func originOf(raw string) string {
 	return strings.ToLower(u.Scheme + "://" + u.Hostname() + ":" + port)
 }
 
+func visibleFields(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if !IsMaskedKey(k) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func destinationChanged(storageType string, in, ex map[string]any) bool {
 	fields, known := destinationFields[storageType]
 	if !known {
 		// An unknown type gets the strict rule: any visible field counts.
-		for k, v := range in {
-			if !IsMaskedKey(k) && v != ex[k] {
-				return true
-			}
-		}
-		return false
+		return !reflect.DeepEqual(visibleFields(in), visibleFields(ex))
 	}
 	for _, f := range fields {
 		// A masked value is the stored value, unchanged.
@@ -337,10 +420,25 @@ func MergeStorageEdit(storedType, newType, incoming, existing string) (string, e
 	if !inOK || !exOK {
 		return Preserve(incoming, existing), nil
 	}
+	password, _ := in["password"].(string)
+	typedPassword := password != "" && password != RedactionMarker
 	reusesSecret := false
 	for k, v := range in {
 		old, isOldStr := ex[k].(string)
-		if s, isStr := v.(string); isStr && s == RedactionMarker && isOldStr && old != "" && (IsMaskedKey(k) || isSealed(old)) {
+		s, isStr := v.(string)
+		if !isStr || !isOldStr || old == "" {
+			continue
+		}
+		if s == RedactionMarker && (IsMaskedKey(k) || isSealed(old)) {
+			reusesSecret = true
+		}
+		// The stored URL carries the login. A typed password takes over from it.
+		// Otherwise the same server reuses it, and on another server it would
+		// vanish, leaving a destination that silently cannot log in.
+		if hasUserinfo(old) && !hasUserinfo(s) && !typedPassword {
+			if originOf(s) != originOf(old) {
+				return "", ErrSecretRetarget
+			}
 			reusesSecret = true
 		}
 	}
@@ -348,6 +446,23 @@ func MergeStorageEdit(storedType, newType, incoming, existing string) (string, e
 		return "", ErrSecretRetarget
 	}
 	return Preserve(incoming, existing), nil
+}
+
+// LockedForValidation returns a config that can be checked by building an
+// adapter: a sealed secret is swapped for a placeholder. Adapters do not connect
+// when built, so the placeholder never reaches a server, and the result must
+// never be saved or used to connect.
+func LockedForValidation(config string) string {
+	m, ok := parseObject(config)
+	if !ok {
+		return config
+	}
+	for k, v := range m {
+		if s, isStr := v.(string); isStr && isSealed(s) {
+			m[k] = "locked"
+		}
+	}
+	return marshal(m)
 }
 
 // HasMarker reports whether a config still holds a masked value at its top level.

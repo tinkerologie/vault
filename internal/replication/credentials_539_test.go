@@ -78,7 +78,7 @@ func TestSyncFailsClosedOnLockedKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	defer srv.Close()
 	d := openTestDB(t)
-	id, err := d.CreateReplicationSource(db.ReplicationSource{Name: "p", Type: "remote_vault", URL: srv.URL, Config: `{"api_key":"vault-sealed:v1:abc"}`})
+	id, err := d.CreateReplicationSource(db.ReplicationSource{Name: "p", Type: "remote_vault", URL: srv.URL, Config: `{"api_key":"vault-sealed:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`})
 	if err != nil {
 		t.Fatal(err)
 	}

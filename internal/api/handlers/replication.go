@@ -170,6 +170,9 @@ func mergeReplicationKey(incoming db.ReplicationSource, stored db.ReplicationSou
 		// A stored config that does not parse has no key worth keeping.
 		_ = json.Unmarshal([]byte(stored.Config), &ex)
 	}
+	if credentials.IsLocked(incoming.Config) {
+		return "", errors.New("config must not contain sealed values")
+	}
 	key, _ := in["api_key"].(string)
 	storedKey, _ := ex["api_key"].(string)
 	if key != "" && key != credentials.RedactionMarker {
@@ -233,6 +236,11 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		src.URL = normalizedURL
 	default:
 		respondError(w, http.StatusBadRequest, "invalid type: must be remote_vault")
+		return
+	}
+
+	if credentials.IsLocked(src.Config) {
+		respondError(w, http.StatusBadRequest, "config must not contain sealed values")
 		return
 	}
 

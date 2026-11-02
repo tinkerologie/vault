@@ -242,8 +242,10 @@ func moveURLCredentials(cfg WebDAVConfig, rawURL string) WebDAVConfig {
 	if err != nil || parsed.User == nil {
 		return cfg
 	}
-	if cfg.Username == "" && cfg.Password == "" {
+	if cfg.Username == "" {
 		cfg.Username = parsed.User.Username()
+	}
+	if cfg.Password == "" {
 		cfg.Password, _ = parsed.User.Password()
 	}
 	parsed.User = nil
@@ -293,7 +295,7 @@ func warnPlaintextWebDAV(rawURL string) {
 // Power-users can still cap total request lifetime via TimeoutSeconds.
 func (w *WebDAVAdapter) client() *gowebdav.Client {
 	c := gowebdav.NewAuthClient(w.config.URL, gowebdav.NewAutoAuth(w.config.Username, w.config.Password))
-	c.SetTransport(&mkcolExistsTransport{base: w.transport()})
+	c.SetTransport(&mkcolExistsTransport{base: w.guardedTransport()})
 
 	if w.config.TimeoutSeconds > 0 {
 		c.SetTimeout(time.Duration(w.config.TimeoutSeconds) * time.Second)
@@ -398,6 +400,30 @@ func (t *mkcolExistsTransport) retryLockedMkcol(req *http.Request, resp *http.Re
 		}
 	}
 	return resp, nil
+}
+
+// guardedTransport is transport with credentialRedirectGuard, for every client
+// that sends the login.
+func (w *WebDAVAdapter) guardedTransport() http.RoundTripper {
+	return credentialRedirectGuard{base: w.transport()}
+}
+
+// credentialRedirectGuard stops a redirect that would expose the login. Go keeps
+// Authorization on a same-host redirect even from https to http, and this sits
+// below every WebDAV client, including the third-party one.
+type credentialRedirectGuard struct{ base http.RoundTripper }
+
+func (g credentialRedirectGuard) RoundTrip(req *http.Request) (*http.Response, error) {
+	if prev := req.Response; prev != nil && prev.Request != nil && req.Header.Get("Authorization") != "" {
+		from := prev.Request.URL
+		if from.Scheme == "https" && req.URL.Scheme != "https" {
+			return nil, fmt.Errorf("webdav: refusing to send credentials on a redirect from https to %s", req.URL.Scheme)
+		}
+		if !strings.EqualFold(from.Hostname(), req.URL.Hostname()) {
+			return nil, fmt.Errorf("webdav: refusing to send credentials on a redirect to %s", req.URL.Hostname())
+		}
+	}
+	return g.base.RoundTrip(req)
 }
 
 // transport builds the http.Transport used by both the gowebdav client
@@ -890,7 +916,7 @@ func (w *WebDAVAdapter) rawRangeRequest(full string, offset, length int64) (io.R
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
 	req.Header.Set("Accept-Encoding", "identity")
 
-	httpClient := &http.Client{Transport: w.transport()}
+	httpClient := &http.Client{Transport: w.guardedTransport()}
 	if w.config.TimeoutSeconds > 0 {
 		httpClient.Timeout = time.Duration(w.config.TimeoutSeconds) * time.Second
 	}
@@ -1213,7 +1239,7 @@ func (w *WebDAVAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	if w.config.Username != "" || w.config.Password != "" {
 		req.SetBasicAuth(w.config.Username, w.config.Password)
 	}
-	httpClient := &http.Client{Transport: w.transport()}
+	httpClient := &http.Client{Transport: w.guardedTransport()}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return Capacity{}, fmt.Errorf("webdav: propfind: %w", err)

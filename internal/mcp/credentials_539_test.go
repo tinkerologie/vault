@@ -80,3 +80,29 @@ func TestMCPUpdateStorageRefusesMaskedSecretOnNewHost(t *testing.T) {
 		t.Fatalf("retyped secret refused: %+v", r.Content)
 	}
 }
+
+func TestMCPLockedDestinationStillSavesOtherFields(t *testing.T) {
+	session, d := setupTest(t)
+	ctx := context.Background()
+	key := []byte("0123456789abcdef0123456789abcdef")
+	d.SetCredentialKey(key)
+	id, err := d.CreateStorageDestination(db.StorageDestination{Name: "s", Type: "smb",
+		Config: `{"host":"a","share":"b","user":"u","password":"dest-secret"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SetCredentialKey([]byte("ffffffffffffffffffffffffffffffff"))
+	masked := `{"host":"a","share":"c","user":"u","password":"` + credentials.RedactionMarker + `"}`
+	if r := callToolRaw(t, session, ctx, "update_storage", map[string]any{"id": id, "name": "renamed", "config": masked}); r.IsError {
+		t.Fatalf("locked edit refused: %+v", r.Content)
+	}
+	d.SetCredentialKey(key)
+	dest, err := d.GetStorageDestination(id)
+	if err != nil || dest.Name != "renamed" || !strings.Contains(dest.Config, "dest-secret") || !strings.Contains(dest.Config, `"share":"c"`) {
+		t.Fatalf("after = %+v (err %v)", dest, err)
+	}
+	if r := callToolRaw(t, session, ctx, "update_storage", map[string]any{"id": id,
+		"config": `{"host":"a","password":"vault-sealed:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`}); !r.IsError {
+		t.Fatal("sealed value accepted as input")
+	}
+}

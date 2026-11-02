@@ -150,6 +150,9 @@ to log in without them. To unlock them, do either of these:
 - Put the original `vault.key` back as described above and restart Vault.
 - Edit each destination or replication target and enter its credentials again.
 
+You can still change other settings on a locked destination, such as its name
+or path, and the sealed credentials are kept.
+
 A locked deduplicated destination needs one of these before its dedup key can
 be unlocked.
 

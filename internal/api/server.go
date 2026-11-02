@@ -260,8 +260,8 @@ func (s *Server) StartWithContext(ctx context.Context) error {
 		}
 	}()
 
-	if (s.config.TLSCert == "") != (s.config.TLSKey == "") {
-		return errors.New("--tls-cert and --tls-key must be set together; refusing to fall back to plain HTTP")
+	if err := CheckTLSPair(s.config.TLSCert, s.config.TLSKey); err != nil {
+		return err
 	}
 	if s.config.TLSCert != "" && s.config.TLSKey != "" {
 		log.Printf("Vault API server listening on %s (TLS)", s.config.Addr)
@@ -272,6 +272,15 @@ func (s *Server) StartWithContext(ctx context.Context) error {
 		log.Printf("Warning: the Vault API on %s uses plain HTTP, so API keys and data can be read on the network. Use it only on a network you trust, or start the daemon with --tls-cert and --tls-key", s.config.Addr)
 	}
 	return srv.ListenAndServe()
+}
+
+// CheckTLSPair rejects a half-configured TLS setup, which would otherwise fall
+// back to plain HTTP. Callers run it before anything advertises the listener.
+func CheckTLSPair(cert, key string) error {
+	if (cert == "") != (key == "") {
+		return errors.New("--tls-cert and --tls-key must be set together; refusing to fall back to plain HTTP")
+	}
+	return nil
 }
 
 // isLoopbackAddr reports whether a listen address only accepts local traffic.
