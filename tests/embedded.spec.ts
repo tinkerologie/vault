@@ -165,6 +165,29 @@ for (const viewport of VIEWPORTS) {
       await expect(h1(frame, 'Backup Jobs')).toBeVisible();
     });
 
+    test('the status banner works in the frame (#527)', async ({ page }) => {
+      const frame = await openEmbedded(page);
+      const banner = frame.getByRole('region', { name: 'Backup status' });
+      await expect(banner.getByRole('heading', { name: 'Needs attention' })).toBeVisible();
+      await settledFrameHeight(page);
+      await expectNoNestedScroll(page);
+      expect(await banner.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+      await banner.getByRole('link', { name: 'Add to a backup job' }).click();
+      await expect(h1(frame, 'Backup Jobs')).toBeVisible();
+      expect(await childWindow(page).evaluate(() => location.hash)).toBe('#/jobs');
+      expect(new URL(page.url()).pathname).toBe(HARNESS);
+    });
+
+    test('the replica banner offers no link to a hidden page in the frame (#527)', async ({ page }) => {
+      const frame = await openEmbedded(page, { replica: true });
+      const banner = frame.getByRole('region', { name: 'Backup status' });
+      await expect(banner.getByRole('heading', { name: 'Needs attention' })).toBeVisible();
+      await expect(banner.getByRole('link', { name: 'Add to a backup job' })).toHaveCount(0);
+      await banner.getByRole('link', { name: 'Review failures' }).click();
+      await expect(h1(frame, 'Backup & Restore History')).toBeVisible();
+    });
+
     test('the frame sizes to its content, growing and shrinking with it', async ({ page }) => {
       const frame = await openEmbedded(page, { hash: '#/anomalies' });
       await expect(h1(frame, 'Anomalies')).toBeVisible();

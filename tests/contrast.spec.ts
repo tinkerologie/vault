@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { setupVaultMockApi } from './mocks/vault-api';
 import { RISKY_FLOWS } from './helpers/risky-flows';
+import { BANNER_STATES } from './helpers/backup-status';
 import { auditContrast, expectNoContrastViolations, seedTheme, settleMotion, type ThemeMode, type ThemeStyle } from './helpers/contrast';
 
 const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -314,6 +315,15 @@ for (const { style, mode, label } of THEMES) {
       await expect(page.getByRole('link', { name: /skip/i })).toBeFocused();
       await expectNoContrastViolations(page, `${label} skip link`, { include: 'a[href="#main-content"]' });
     });
+
+    for (const { name, options, title } of BANNER_STATES) {
+      test(`dashboard status banner: ${name}`, async ({ page }) => {
+        await setupVaultMockApi(page, options);
+        await page.goto('/#/');
+        await expect(page.getByRole('region', { name: 'Backup status' }).getByRole('heading', { name: title })).toBeVisible();
+        await expectNoContrastViolations(page, `${label} banner ${name}`, { include: 'section[aria-label="Backup status"]' });
+      });
+    }
 
     test.describe('replica mode', () => {
       test.beforeEach(async ({ page }) => {

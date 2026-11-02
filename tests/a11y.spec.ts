@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { test, expect, type Page } from '@playwright/test';
 import { setupVaultMockApi } from './mocks/vault-api';
 import { settleMotion } from './helpers/contrast';
+import { BANNER_STATES } from './helpers/backup-status';
 
 // Structural axe audit (#529). Colour contrast has its own suite across every
 // theme in contrast.spec.ts; that is the only rule left out here.
@@ -64,6 +65,15 @@ test.describe('axe structural audit (#529)', () => {
     await expect(page.getByRole('button', { name: 'Done' })).toBeVisible();
     await audit(page, 'Customize');
   });
+
+  for (const { name, options, title } of BANNER_STATES) {
+    test(`Dashboard status banner: ${name}`, async ({ page }) => {
+      await setupVaultMockApi(page, options);
+      await page.goto('/#/');
+      await expect(page.getByRole('region', { name: 'Backup status' }).getByRole('heading', { name: title })).toBeVisible();
+      await audit(page, `Banner ${name}`);
+    });
+  }
 
   test('Replication with sources', async ({ page }) => {
     await setupVaultMockApi(page, { replicationSources: [{ id: 1, name: 'Primary Tower', url: 'http://tower.example.test:24085', enabled: true, schedule: '0 3 * * *', last_sync_at: '2026-10-06T03:00:00Z', last_sync_status: 'success', last_sync_error: '', storage_dest_id: 1 }] });

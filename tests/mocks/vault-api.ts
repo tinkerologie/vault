@@ -232,12 +232,20 @@ export interface VaultMockOptions {
   replica?: boolean;
   /** Body served for GET /replication; defaults to no targets. */
   replicationSources?: Record<string, unknown>[];
+  /** Body served for GET /health/summary; defaults to one with no backup counters. */
+  healthSummary?: Record<string, unknown>;
+  /** Jobs to start from; defaults to createInitialMockJobs(). */
+  jobs?: MockJob[];
+  /** Storage destinations to start from; defaults to createInitialMockStorage(). */
+  storage?: MockStorageDestination[];
+  /** Runs served by the history endpoints; defaults to one success, one failure and a restore. */
+  historyRuns?: Record<string, unknown>[];
 }
 
 export async function setupVaultMockApi(page: Page, options: VaultMockOptions = {}) {
   // Local state per page session
-  let jobsList = createInitialMockJobs();
-  let storageList = createInitialMockStorage();
+  let jobsList = options.jobs ?? createInitialMockJobs();
+  let storageList = options.storage ?? createInitialMockStorage();
   let nextJobId = 3;
   let nextStorageId = 4;
 
@@ -249,7 +257,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
     { id: 5, timestamp: '2026-10-06T12:20:00Z', level: 'debug', category: 'system', message: 'Verbose scheduler tick', details: 'pending=0' },
   ];
 
-  let historyRuns = [
+  let historyRuns: Record<string, unknown>[] = options.historyRuns ?? [
     {
       id: 901,
       job_id: 1,
@@ -341,7 +349,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify(options.healthSummary ?? {
           unraid_connected: true,
           server_version: '2026.09.01',
           degraded: false,

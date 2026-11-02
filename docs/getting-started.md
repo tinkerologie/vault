@@ -45,6 +45,8 @@ When Vault is bound to a non-loopback address it advertises the `_vault._tcp` se
 
 The Dashboard shows a three-step welcome guide: add storage → create job → run backup.
 
+A status banner at the top of the Dashboard gives one verdict on your backups, names anything that needs you, and links to the page that fixes it.
+
 ![Dashboard welcome screen](screenshots/01-dashboard.png)
 
 ---

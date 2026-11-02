@@ -11,11 +11,13 @@
   import Toast from '../components/Toast.svelte'
   import Welcome from '../components/Welcome.svelte'
   import ComplianceBadge from '../components/ComplianceBadge.svelte'
+  import StatusBanner from '../components/StatusBanner.svelte'
   import ActivityTimeline from '../components/ActivityTimeline.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import { getAnomalyEnabled } from '../lib/settings.svelte.js'
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
   import { createDashboardLayout, SPAN_OPTIONS } from '../lib/dashboardLayout.svelte.js'
+  import { attentionCaption, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete } from '../lib/backupStatus.js'
 
   let loading = $state(true)
   let error = $state('')
@@ -35,6 +37,8 @@
   let toast = $state({ message: '', type: 'info', key: 0 })
   let nextRuns = $state({})
   let healthSummary = $state(null)
+  // A source the verdict relies on failed, so the page can't claim "healthy".
+  let statusIncomplete = $state(false)
   let replicationSources = $state([])
   /** @type {Record<string, string>} */
   let settings = $state({})
@@ -152,9 +156,9 @@
         api.health(),
         api.listJobs(),
         api.listStorage(),
-        api.listContainers().catch(() => ({ items: [], available: false })),
-        api.listVMs().catch(() => ({ items: [], available: false })),
-        api.listFolders().catch(() => ({ items: [], available: false })),
+        api.listContainers().catch(() => ({ items: [], available: false, failed: true })),
+        api.listVMs().catch(() => ({ items: [], available: false, failed: true })),
+        api.listFolders().catch(() => ({ items: [], available: false, failed: true })),
         api.getNextRuns().catch(() => ({})),
         api.getHealthSummary().catch(() => null),
         api.listReplicationSources().catch(() => []),
@@ -191,14 +195,20 @@
       for (const key of hSummary?.pending_keys || []) pendSet.add(key)
       pendingItems = pendSet
 
+      let historyFailed = false
       const runPromises = jobs.slice(0, 10).map(async (job) => {
         try {
           const runs = await api.getJobHistory(job.id, 5)
           return (runs || []).map(r => ({ ...r, jobName: job.name }))
-        } catch { return [] }
+        } catch {
+          historyFailed = true
+          return []
+        }
       })
       const allRuns = await Promise.all(runPromises)
       recentRuns = allRuns.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()).slice(0, 10)
+      // A replica never discovers items (api.js), so that isn't a gap there.
+      statusIncomplete = historyFailed || (!isReplicaMode() && isDiscoveryIncomplete({ container: cRes, vm: vRes, folder: fRes }, hSummary))
       // Refresh the Largest-backups tile from a broad history window so it
       // reflects the true largest backup, not just the latest incremental.
       // Fire-and-forget so it never delays the rest of the dashboard.
@@ -382,8 +392,32 @@
     return { pct: Math.round((ok / runs.length) * 100), ok, total: runs.length }
   })
 
-  const recentFailures = $derived(recentRuns.filter(r => r.status === 'failed' || r.status === 'error').length)
-  const attentionCount = $derived(recentFailures + unprotectedCount)
+  // recentRuns only samples ten jobs, so a failure the server counted but this
+  // window missed must still count: no panel may contradict the health tile.
+  const runOutcomes = $derived(countRunOutcomes(recentRuns))
+  const recentFailures = $derived(Math.max(runOutcomes.failed, healthSummary?.recent_failed ?? 0))
+  // Without the health summary nothing is known to be protected, so every item
+  // would look unprotected. That's unknown, not a count of problems.
+  const knownUnprotected = $derived(healthSummary ? unprotectedCount : 0)
+  const attentionCount = $derived(recentFailures + knownUnprotected)
+  // A replica has no discovered items to count, so it takes the server's figures.
+  const statusCounts = $derived(isReplicaMode()
+    ? { pending: pendingItems.size, protectedCount: healthSummary?.protected_items ?? 0, total: healthSummary?.total_items ?? 0 }
+    : { pending: totalItems - totalProtected - unprotectedCount, protectedCount: totalProtected, total: totalItems })
+
+  const backupStatus = $derived(deriveBackupStatus({
+    loading,
+    error: !!error,
+    replica: isReplicaMode(),
+    hasStorage: storage.length > 0,
+    hasJobs: jobs.length > 0,
+    failures: recentFailures,
+    warnings: runOutcomes.warnings,
+    unprotected: unprotectedCount,
+    ...statusCounts,
+    summary: healthSummary,
+    incomplete: statusIncomplete,
+  }))
 
   // Storage capacity tiles derive from destinations that reported a probe.
   const storageCaps = $derived(storage.filter(s => s.capacity && s.capacity.total_bytes > 0))
@@ -600,24 +634,10 @@
   })
 
   const healthScore = $derived(healthSummary?.health_score ?? 0)
-  const healthColor = $derived(healthScore >= 80 ? 'var(--color-success)' : healthScore >= 50 ? 'var(--color-warning)' : 'var(--color-danger)')
-  const healthSummaryText = $derived.by(() => {
-    if (!healthSummary) return ''
-    const s = healthSummary
-    const score = s.health_score ?? 0
-    if (s.recent_failed > 0) {
-      return `${s.recent_failed} recent failure${s.recent_failed === 1 ? '' : 's'} – check History`
-    }
-    // A fresh install scores 0 because nothing has completed yet, not because
-    // anything went wrong. Reporting "Attention needed" there is a false alarm
-    // on the very first screen a new user sees.
-    if (!s.recent_failed && !s.recent_success && !s.last_success_at) {
-      return 'No backups completed yet'
-    }
-    if (score >= 80) return 'All backups healthy'
-    if (score >= 50) return 'Backups mostly healthy'
-    return 'Attention needed – recent backups have not completed'
-  })
+  const healthCounts = $derived({ failures: recentFailures, unprotected: knownUnprotected, pending: statusCounts.pending, warnings: runOutcomes.warnings })
+  const HEALTH_COLORS = { success: 'var(--color-success)', warning: 'var(--color-warning)', danger: 'var(--color-danger)', unknown: 'var(--color-surface-4)' }
+  const healthColor = $derived(HEALTH_COLORS[healthTone(healthSummary, healthCounts)])
+  const healthSummaryText = $derived(healthText(healthSummary, healthCounts))
 
 
   // ── Tile catalog + layout ────────────────────────────────────────────────
@@ -655,6 +675,9 @@
   // can't be computed from current data — so we never render a broken tile.
   function tileAvailable(id) {
     if (id === 'threetwoone') return jobs.length > 0 && backupRuleOn
+    // Only while a run is active, including its short completion grace. Customize
+    // bypasses this, so the tile keeps its saved place and can still be arranged.
+    if (id === 'progress') return Boolean(progress.activeRun)
     if (id === 'storageCombined' || id === 'storagePerTarget') return storageCaps.length > 0
     if (id === 'anomalies') return getAnomalyEnabled()
     if (id === 'protection') return totalItems > 0
@@ -829,10 +852,10 @@
           <circle cx="18" cy="18" r="15" fill="none" stroke={healthColor} stroke-width="4" stroke-linecap="round"
             stroke-dasharray={2 * Math.PI * 15} stroke-dashoffset={2 * Math.PI * 15 * (1 - healthScore / 100)} class="transition-all duration-700" />
         </svg>
-        <div class="absolute inset-0 flex items-center justify-center text-sm font-bold text-text tabular-nums">{healthScore}</div>
+        <div class="absolute inset-0 flex items-center justify-center text-sm font-bold text-text tabular-nums">{healthSummary ? healthScore : '–'}</div>
       </div>
-      <div class="min-w-0">
-        <p class="text-xs font-medium text-text truncate">{healthSummaryText || 'Backup health'}</p>
+      <div class="min-w-0 break-words">
+        <p class="text-xs font-medium text-text">{healthSummaryText}</p>
         {#if avgSpeed}<p class="text-[11px] text-text-dim mt-0.5 tabular-nums">avg {avgSpeed}</p>{/if}
       </div>
     </div>
@@ -846,7 +869,9 @@
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5">
       <div class="h-full {protectionBar} transition-all duration-500" style="width: {protectionPct}%"></div>
     </div>
-    {#if hasUnprotectedItems}
+    {#if !healthSummary}
+      <p class="text-[11px] text-text-dim mt-1.5 font-medium">Protection status unavailable</p>
+    {:else if hasUnprotectedItems}
       <a href="#/jobs" class="self-start text-[11px] text-vault-text hover:underline font-medium mt-1.5">{unprotectedCount} unprotected →</a>
     {:else if fullyProtected}
       <p class="text-[11px] text-success mt-1.5 font-medium">All items covered</p>
@@ -896,7 +921,7 @@
 
 {#snippet tThreeTwoOne()}
   {#if jobs.length > 0 && backupRuleOn}
-    <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={isReplicaMode() ? undefined : dismissBackupRule} goalSetting={settings.backup_rule_goal || ''} onGoalChange={isReplicaMode() ? undefined : setBackupRuleGoal} />
+    <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={isReplicaMode() ? undefined : dismissBackupRule} goalSetting={settings.backup_rule_goal || ''} onGoalChange={isReplicaMode() ? undefined : setBackupRuleGoal} protectedCount={healthSummary?.protected_items ?? null} />
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-4 text-sm text-text-dim">3-2-1 rule unavailable — add a job to compute it.</div>
   {/if}
@@ -1136,7 +1161,7 @@
   <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.attention.icon, 'Needs attention')}
     <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
-    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
+    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCaption({ failures: recentFailures, unprotected: knownUnprotected, fullyProtected, known: !!healthSummary })}</p>
   </a>
 {/snippet}
 
@@ -1394,6 +1419,8 @@
       <span>Read-only replica — write actions are disabled on this instance.</span>
     </div>
   {/if}
+
+  <StatusBanner status={backupStatus} />
 
   {#if loading}
     <Skeleton variant="stats" />

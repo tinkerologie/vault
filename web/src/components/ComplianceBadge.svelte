@@ -8,6 +8,8 @@
     ondismiss,
     goalSetting = '',
     onGoalChange,
+    // Items in a restore point, from the health summary; null when unknown.
+    protectedCount = null,
   } = $props()
 
   // --- Inputs: copies, media diversity, offsite presence ---
@@ -72,9 +74,12 @@
 
   let metCount = $derived(criteria.filter(c => c.met).length)
   let goalMet = $derived(metCount === criteria.length)
+  // The criteria only read configuration: a job pointing at storage counts as a
+  // copy before it has ever run. Don't call that "Met" while nothing is backed up.
+  let noBackupsYet = $derived(goalMet && protectedCount === 0)
 
   // Tone: green when met, red when nothing is met, amber in between.
-  let tone = $derived(goalMet ? 'success' : metCount === 0 ? 'danger' : 'warning')
+  let tone = $derived(noBackupsYet ? 'warning' : goalMet ? 'success' : metCount === 0 ? 'danger' : 'warning')
   let bgColor = $derived(
     tone === 'success' ? 'bg-success/10 border-success/30' :
     tone === 'warning' ? 'bg-warning/10 border-warning/30' :
@@ -85,7 +90,7 @@
     tone === 'warning' ? 'text-warning' :
     'text-danger'
   )
-  let statusLabel = $derived(goalMet ? 'Met' : metCount === 0 ? 'At risk' : `${metCount}/${criteria.length}`)
+  let statusLabel = $derived(noBackupsYet ? 'Configured' : goalMet ? 'Met' : metCount === 0 ? 'At risk' : `${metCount}/${criteria.length}`)
 
   let expanded = $state(false)
 
@@ -123,7 +128,7 @@
       >
         <span class="text-sm font-semibold text-text whitespace-nowrap">3-2-1 Backup Rule</span>
         <span class="text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1 whitespace-nowrap {chipColor} {bgColor}">
-          {#if goalMet}{@render checkIcon()}{/if}{statusLabel}
+          {#if goalMet && !noBackupsYet}{@render checkIcon()}{/if}{statusLabel}
         </span>
       </button>
     </h2>
@@ -154,13 +159,17 @@
 
       <div class="text-xs space-y-1.5">
         {#each criteria as c (c.label)}
-          <p class="inline-flex items-center gap-1.5 {c.met ? 'text-success' : 'text-text-muted'}">
+          <p class="inline-flex items-center gap-1.5 {c.met && !noBackupsYet ? 'text-success' : 'text-text-muted'}">
             {#if c.met}{@render checkIcon()}{:else}{@render xMark()}{/if}{c.label}
           </p>
         {/each}
       </div>
 
-      {#if goalMet}
+      {#if noBackupsYet}
+        <div class="text-xs text-text-muted bg-surface-3 rounded-lg p-3">
+          Configured, but no items are backed up yet. This goal is met once a backup completes.
+        </div>
+      {:else if goalMet}
         <div class="text-xs text-success bg-success/10 rounded-lg p-3 inline-flex items-center gap-1.5">
           {@render checkIcon()} Your {GOAL_LABELS[goal]} goal is met.
         </div>

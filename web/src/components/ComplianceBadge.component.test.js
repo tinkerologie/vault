@@ -60,3 +60,37 @@ describe('ComplianceBadge header', () => {
     expect(screen.queryByRole('button', { name: 'Hide 3-2-1 Backup Rule' })).toBeNull()
   })
 })
+
+// 3-2-1 with nothing protected (#527): the rule reads configuration only, so a job
+// that has never run used to read "Met".
+describe('ComplianceBadge with no backups yet', () => {
+  const expand = async () => {
+    const button = screen.getByRole('button', { name: /^3-2-1 Backup Rule/ })
+    await fireEvent.click(button)
+    await tick()
+    return button
+  }
+
+  it('qualifies a met goal when nothing is protected', async () => {
+    render(ComplianceBadge, { ...props(), protectedCount: 0 })
+    const button = await expand()
+    expect(button.textContent).toContain('Configured')
+    expect(button.textContent).not.toContain('Met')
+    expect(screen.getByText(/no items are backed up yet/)).toBeTruthy()
+    expect(screen.queryByText(/goal is met\./)).toBeNull()
+  })
+
+  it.each([['a positive count', 3], ['an unknown count', null]])('leaves a met goal alone with %s', async (_name, protectedCount) => {
+    render(ComplianceBadge, { ...props(), protectedCount })
+    const button = await expand()
+    expect(button.textContent).toContain('Met')
+    expect(screen.getByText(/goal is met\./)).toBeTruthy()
+  })
+
+  it('keeps an unmet goal unmet when nothing is protected', async () => {
+    render(ComplianceBadge, { ...props(), jobs: [], protectedCount: 0 })
+    const button = await expand()
+    expect(button.textContent).toContain('At risk')
+    expect(screen.queryByText(/no items are backed up yet/)).toBeNull()
+  })
+})
