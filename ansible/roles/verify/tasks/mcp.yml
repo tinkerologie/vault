@@ -10,6 +10,8 @@
       -api-key {{ api_key | default('') | quote }}
   register: mcp_result
   changed_when: false
+  failed_when: false # the assert below reports the failure without the censored command
+  no_log: true # the command line carries api_key
 
 - name: Assert MCP streamable HTTP verification passed
   ansible.builtin.assert:

@@ -21,6 +21,7 @@
   register: ws_result
   changed_when: false
   failed_when: false
+  no_log: true # the command line carries api_key; the assert below reports the status
 
 - name: Verify WebSocket upgrade succeeded
   ansible.builtin.assert:

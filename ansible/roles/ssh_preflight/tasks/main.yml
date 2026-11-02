@@ -1,0 +1,33 @@
+---
+# Fail before any connection unless the inventory is set up for SSH keys.
+# Runs on the controller without a module, and messages name variables only,
+# never their values.
+
+- name: Reject a stored SSH password
+  ansible.builtin.assert:
+    that:
+      - ansible_password is not defined
+      - ansible_ssh_pass is not defined
+      - ansible_ssh_password is not defined
+    fail_msg: >-
+      A password is still set in the inventory (ansible_password). Vault's Ansible
+      lifecycle connects with SSH keys only: remove it and see ansible/README.md.
+    quiet: true
+
+- name: Require an SSH private key setting
+  ansible.builtin.assert:
+    that:
+      - ansible_ssh_private_key_file | default('', true) | length > 0
+    fail_msg: >-
+      ansible_ssh_private_key_file is not set in the inventory. Vault's Ansible
+      lifecycle connects with SSH keys only: see ansible/README.md.
+    quiet: true
+
+- name: Require the SSH private key file
+  ansible.builtin.assert:
+    that:
+      - (ansible_ssh_private_key_file | expanduser) is file
+    fail_msg: >-
+      The file named by ansible_ssh_private_key_file does not exist on this machine.
+      Fix the path in the inventory or create the key: see ansible/README.md.
+    quiet: true
