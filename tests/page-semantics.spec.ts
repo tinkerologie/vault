@@ -378,44 +378,10 @@ test.describe('Page semantics (#529)', () => {
       await page.setViewportSize({ width: 375, height: 812 });
     });
 
-    const toggle = (page: Page) => page.getByRole('button', { name: 'Toggle menu' });
-
-    test('the menu button reports state and the menu closes on navigation', async ({ page }) => {
-      await page.goto('/#/jobs');
-      await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
-      await expect(toggle(page)).not.toHaveAttribute('aria-controls');
-
-      await toggle(page).click();
-      await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true');
-      await expect(toggle(page)).toHaveAttribute('aria-controls', 'mobile-menu');
-      const menu = page.getByRole('navigation', { name: 'Main navigation' });
-      await expect(menu).toHaveAttribute('id', 'mobile-menu');
-      await expect(menu.locator('[aria-current="page"]')).toHaveText('Jobs');
-      await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible();
-
-      await menu.getByRole('link', { name: 'Logs' }).click();
-      await expect(menu).toHaveCount(0);
-      await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
-      await expect(h1(page, 'Logs')).toBeFocused();
-    });
-
-    test('the current page link closes the menu too, and any route change closes it', async ({ page }) => {
-      await page.goto('/#/jobs');
-      const menu = page.getByRole('navigation', { name: 'Main navigation' });
-      await toggle(page).click();
-      await menu.getByRole('link', { name: 'Jobs' }).click();
-      await expect(menu).toHaveCount(0);
-
-      await toggle(page).click();
-      await page.evaluate(() => { location.hash = '#/storage'; });
-      await expect(menu).toHaveCount(0);
-      await expect(h1(page, 'Storage Destinations')).toBeFocused();
-    });
-
     test('bottom navigation items are links', async ({ page }) => {
       await page.goto('/#/jobs');
       const bottom = page.getByRole('navigation', { name: 'Mobile navigation' });
-      for (const [name, href] of [['Home', '#/'], ['Jobs', '#/jobs'], ['History', '#/history'], ['Restore', '#/restore'], ['More', '#/settings']]) {
+      for (const [name, href] of [['Home', '#/'], ['Jobs', '#/jobs'], ['History', '#/history'], ['Restore', '#/restore']]) {
         await expect(bottom.getByRole('link', { name, exact: true })).toHaveAttribute('href', href);
       }
       await expect(bottom.locator('[aria-current="page"]')).toHaveAccessibleName('Jobs');

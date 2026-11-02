@@ -278,3 +278,12 @@ describe('floatAboveDialogs', () => {
     home.remove()
   })
 })
+
+describe('Modal backdrop (#530)', () => {
+  it('does not dismiss a normal dialog on a backdrop click, so work is not lost', async () => {
+    const onclose = vi.fn()
+    await open({ onclose })
+    await fireEvent.click(document.querySelector('dialog'))
+    expect(onclose).not.toHaveBeenCalled()
+  })
+})

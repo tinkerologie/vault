@@ -6,6 +6,7 @@
   import { initTheme, getMode, setMode, getIsThemed } from './lib/theme.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
   import { shouldRedirectRoute } from './lib/route-guard.js'
+  import { groupBySection, isMobileNavActive, isMoreActive, moreNavItems } from './lib/mobile-nav.js'
   import { loadFeatureFlags, getAnomalyEnabled, getReplicationEnabled, getFeatureFlagsLoaded } from './lib/settings.svelte.js'
   import { onMount, tick } from 'svelte'
 
@@ -22,8 +23,9 @@
   import Anomalies from './pages/Anomalies.svelte'
   import Spinner from './components/Spinner.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
+  import MoreSheet from './components/MoreSheet.svelte'
 
-  let mobileMenuOpen = $state(false)
+  let moreOpen = $state(false)
   let showCommandPalette = $state(false)
 
   function handleGlobalKeydown(e) {
@@ -70,19 +72,7 @@
   // Group the visible nav into contiguous sections for the desktop sidebar. A
   // header only appears when its section has ≥1 visible child, so hidden /
   // feature-flagged items never leave an empty section behind.
-  let navSections = $derived.by(() => {
-    const groups = []
-    const bySection = {}
-    for (const item of nav) {
-      const key = item.section ?? '__none__'
-      if (!bySection[key]) {
-        bySection[key] = { section: item.section ?? null, items: [] }
-        groups.push(bySection[key])
-      }
-      bySection[key].items.push(item)
-    }
-    return groups
-  })
+  let navSections = $derived(groupBySection(nav))
 
   // Guard direct deep-links to a hidden route – redirect to Dashboard. Wait
   // until flags are actually loaded so we don't redirect on the optimistic
@@ -111,7 +101,7 @@
   const routeChanged = createRouteChangeDetector()
   $effect(() => {
     if (!routeChanged(getRoute())) return
-    mobileMenuOpen = false
+    moreOpen = false
     tick().then(() => focusPageHeading(mainContent()))
   })
 
@@ -211,16 +201,16 @@
     { path: '/jobs', label: 'Jobs', icon: iconFor('/jobs') },
     { path: '/history', label: 'History', icon: iconFor('/history') },
     { path: '/restore', label: 'Restore', icon: iconFor('/restore') },
-    { path: '/settings', label: 'More', icon: moreIcon },
   ]
   const replicaMobileNav = [
     { path: '/', label: 'Home', icon: iconFor('/') },
     { path: '/replication', label: 'Replication', icon: iconFor('/replication') },
     { path: '/history', label: 'History', icon: iconFor('/history') },
     { path: '/logs', label: 'Logs', icon: iconFor('/logs') },
-    { path: '/settings', label: 'More', icon: moreIcon },
   ]
   let mobileNav = $derived(replicaMode ? replicaMobileNav : daemonMobileNav)
+  let moreItems = $derived(moreNavItems(nav, mobileNav.map((item) => item.path)))
+  let moreActive = $derived(isMoreActive(moreItems, getRoute()))
 
   // `#main-content` would otherwise be parsed as a route and render Dashboard.
   function skipToMain(e) {
@@ -324,34 +314,7 @@
         </div>
         <span class="text-base font-bold text-text">VAULT</span>
       </div>
-      <button onclick={() => mobileMenuOpen = !mobileMenuOpen} class="text-text-muted p-2 -mr-2 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Toggle menu" aria-expanded={mobileMenuOpen} aria-controls={mobileMenuOpen ? 'mobile-menu' : undefined}>
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={mobileMenuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'}/></svg>
-      </button>
     </div>
-    {#if mobileMenuOpen}
-      <nav id="mobile-menu" aria-label="Main navigation" class="px-3 pb-3 space-y-1 bg-surface-2 border-t border-border animate-fade-up">
-        {#each nav as item (item.path)}
-          {#if item.external}
-            <a href={item.href} target="_blank" rel="noopener"
-              onclick={() => mobileMenuOpen = false}
-              aria-label="{item.label} (opens in a new tab)"
-              class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left text-text-muted">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
-              {item.label}
-            </a>
-          {:else}
-            <a href="#{item.path}"
-              onclick={() => mobileMenuOpen = false}
-              aria-current={isActive(item.path) ? 'page' : undefined}
-              class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left
-                {isActive(item.path) ? 'bg-vault/10 text-vault-text nav-active' : 'text-text-muted'}">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
-              {item.label}
-            </a>
-          {/if}
-        {/each}
-      </nav>
-    {/if}
   </header>
 
   <!-- Main content -->
@@ -389,26 +352,43 @@
 
   <!-- Mobile bottom navigation -->
   <nav class="fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-border flex justify-around py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] z-40 lg:hidden" aria-label="Mobile navigation">
+    {#snippet barItem(/** @type {string} */ icon, /** @type {string} */ label, /** @type {boolean} */ active)}
+      <div class="relative">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d={icon} />
+        </svg>
+        {#if active}
+          <span class="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-vault"></span>
+        {/if}
+      </div>
+      <span>{label}</span>
+    {/snippet}
     {#each mobileNav as item (item.path)}
+      {@const active = isMobileNavActive(item.path, getRoute())}
       <a
         href="#{item.path}"
-        aria-current={isActive(item.path) ? 'page' : undefined}
+        aria-current={active ? 'page' : undefined}
         class="flex flex-col items-center gap-0.5 px-3 py-2 min-w-[44px] min-h-[44px] text-xs transition-colors
-          {isActive(item.path) ? 'text-vault-text' : 'text-text-muted'}"
+          {active ? 'text-vault-text' : 'text-text-muted'}"
         aria-label={item.label}
       >
-        <div class="relative">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" d={item.icon} />
-          </svg>
-          {#if isActive(item.path)}
-            <span class="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-vault"></span>
-          {/if}
-        </div>
-        <span>{item.label}</span>
+        {@render barItem(item.icon, item.label, active)}
       </a>
     {/each}
+    <button
+      type="button"
+      onclick={() => moreOpen = true}
+      aria-haspopup="dialog"
+      aria-expanded={moreOpen}
+      aria-controls={moreOpen ? 'more-sheet' : undefined}
+      aria-current={moreActive ? 'page' : undefined}
+      class="flex flex-col items-center gap-0.5 px-3 py-2 min-w-[44px] min-h-[44px] text-xs transition-colors
+        {moreActive ? 'text-vault-text' : 'text-text-muted'}"
+    >
+      {@render barItem(moreIcon, 'More', moreActive)}
+    </button>
   </nav>
 
+  <MoreSheet show={moreOpen} id="more-sheet" items={moreItems} route={getRoute()} onclose={() => moreOpen = false} />
   {/if}
 </div>

@@ -524,6 +524,13 @@ test.describe('Toasts and tooltips above a modal (#528)', () => {
     return dialog;
   }
 
+  test('a toast dismiss button is at least 24 px (#530)', async ({ page }) => {
+    await toastOverDialog(page);
+    const box = (await page.getByRole('alert').getByRole('button', { name: 'Dismiss' }).boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(24);
+    expect(box.height).toBeGreaterThanOrEqual(24);
+  });
+
   test('an error toast is on top of the dialog and can be dismissed', async ({ page }) => {
     const dialog = await toastOverDialog(page);
     const toast = page.getByRole('alert');

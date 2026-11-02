@@ -1241,14 +1241,17 @@
             <div class="flex-1 min-w-0">
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <!-- Bulk checkbox -->
-                <input
-                  type="checkbox"
-                  checked={selectedJobs.has(job.id)}
-                  onchange={() => toggleSelectJob(job.id)}
-                  onclick={(e) => e.stopPropagation()}
-                  aria-label="Select {job.name}"
-                  class="accent-vault w-3.5 h-3.5 shrink-0 cursor-pointer"
-                />
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+                <label class="hit-target shrink-0 cursor-pointer" onclick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selectedJobs.has(job.id)}
+                    onchange={() => toggleSelectJob(job.id)}
+                    onclick={(e) => e.stopPropagation()}
+                    aria-label="Select {job.name}"
+                    class="accent-vault w-3.5 h-3.5 cursor-pointer"
+                  />
+                </label>
                 <!-- Toggle switch -->
                 <button
                   onclick={(e) => { e.stopPropagation(); toggleEnabled(job) }}

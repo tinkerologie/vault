@@ -890,7 +890,7 @@
                     type="button"
                     onclick={() => { if (idx > 0) moveItem(idx, idx - 1) }}
                     disabled={idx === 0}
-                    class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
+                    class="hit-target text-text-dim hover:text-text disabled:opacity-30"
                     aria-label="Move up"
                   >
                     <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
@@ -899,7 +899,7 @@
                     type="button"
                     onclick={() => { if (idx < selectedArray.length - 1) moveItem(idx, idx + 1) }}
                     disabled={idx === selectedArray.length - 1}
-                    class="p-0.5 text-text-dim hover:text-text disabled:opacity-30"
+                    class="hit-target text-text-dim hover:text-text disabled:opacity-30"
                     aria-label="Move down"
                   >
                     <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
@@ -908,7 +908,7 @@
                 <button
                   type="button"
                   onclick={() => removeItem(key)}
-                  class="p-0.5 text-text-dim hover:text-danger transition-colors"
+                  class="hit-target text-text-dim hover:text-danger transition-colors"
                   aria-label="Remove {itemDisplayLabel(item)}"
                   title="Remove from backup job"
                 >

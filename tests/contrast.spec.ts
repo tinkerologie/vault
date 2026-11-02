@@ -297,9 +297,15 @@ for (const { style, mode, label } of THEMES) {
       await expect(nav).toBeVisible();
       await expectNoContrastViolations(page, `${label} mobile jobs`);
 
-      await page.locator('header button[aria-expanded], button[aria-label*="menu" i]').first().click();
-      await expect(page.getByRole('link', { name: 'Logs', exact: true }).first()).toBeVisible();
-      await expectNoContrastViolations(page, `${label} mobile menu`);
+      await page.getByRole('button', { name: 'More', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: 'More' }).getByRole('link', { name: 'Logs', exact: true })).toBeVisible();
+      await expectNoContrastViolations(page, `${label} More sheet`);
+
+      // An active entry in the sheet has its own colours.
+      await page.getByRole('dialog', { name: 'More' }).getByRole('link', { name: 'Logs', exact: true }).click();
+      await page.getByRole('button', { name: 'More', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: 'More' }).locator('[aria-current="page"]')).toHaveText('Logs');
+      await expectNoContrastViolations(page, `${label} More sheet active`);
     });
 
     test('skip link when focused', async ({ page }) => {

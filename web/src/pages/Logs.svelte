@@ -530,12 +530,12 @@
 
 <div>
   <!-- Header -->
-  <div class="flex items-center justify-between mb-5">
-    <div>
+  <div class="flex flex-col gap-3 mb-5 sm:flex-row sm:items-center sm:justify-between">
+    <div class="shrink-0">
       <h1 class="text-2xl font-bold text-text">Logs</h1>
       <p class="text-sm text-text-muted mt-1">Unified activity and run-log output</p>
     </div>
-    <div class="flex items-center gap-2">
+    <div role="group" aria-label="Log actions" class="flex flex-wrap items-center gap-2 sm:justify-end">
       <button onclick={toggleWrap} aria-pressed={wrap}
         class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm transition-colors flex items-center gap-1.5 {wrap ? 'text-text border-vault/50' : 'text-text-muted hover:text-text'}" title="Toggle line wrapping">
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10m-10 6h10M17 15l3-3-3-3"/></svg>

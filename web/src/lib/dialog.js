@@ -87,11 +87,16 @@ function watchOpener(opener) {
   observer.observe(document.body, { childList: true, subtree: true })
 }
 
-/** @param {Element | null} opener @param {HTMLDialogElement | null} topAtClose */
-async function restoreFocus(opener, topAtClose) {
+/** @param {Element | null} opener @param {HTMLDialogElement | null} topAtClose @param {Element | null} focusAtClose */
+async function restoreFocus(opener, topAtClose, focusAtClose) {
   await tick()
   const top = topDialog()
   if (top !== topAtClose) return // a newer dialog opened and already owns focus
+  // Focus moved on purpose since the dialog closed, such as a route change focusing
+  // its heading. The dialog underneath and <main> hold focus only as fallbacks.
+  const active = document.activeElement
+  const fallbacks = [focusAtClose, document.body, top, document.getElementById('main-content')]
+  if (!fallbacks.includes(active)) return
   if (tryFocus(opener)) {
     watchOpener(opener)
     return
@@ -199,8 +204,28 @@ export function modalDialog(dialog, requestClose) {
       stack.splice(stack.indexOf(dialog), 1)
       syncFloating()
       if (dialog.open) dialog.close()
-      restoreFocus(opener, topDialog())
+      restoreFocus(opener, topDialog(), document.activeElement)
     },
+  }
+}
+
+/**
+ * Svelte action that closes a dialog when its backdrop is clicked. The dialog fills
+ * the viewport, so a click that targets the element itself landed outside the panel.
+ * @param {HTMLDialogElement} dialog
+ * @param {(() => void) | null} requestClose Null leaves the backdrop inactive.
+ */
+export function closeOnBackdropClick(dialog, requestClose) {
+  let handler = requestClose
+  /** @param {MouseEvent} e */
+  function onClick(e) {
+    if (e.target === dialog) handler?.()
+  }
+  dialog.addEventListener('click', onClick)
+  return {
+    /** @param {(() => void) | null} next */
+    update(next) { handler = next },
+    destroy() { dialog.removeEventListener('click', onClick) },
   }
 }
 

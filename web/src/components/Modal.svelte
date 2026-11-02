@@ -1,5 +1,5 @@
 <script>
-  import { modalDialog } from '../lib/dialog.js'
+  import { closeOnBackdropClick, modalDialog } from '../lib/dialog.js'
 
   // The only dialog implementation: everything modal composes this component.
   // With a `title` it renders the standard header and padded body. Without one,
@@ -12,7 +12,8 @@
    *   labelledby?: string,
    *   describedby?: string,
    *   size?: 'default' | 'md' | 'lg',
-   *   placement?: 'center' | 'top',
+   *   placement?: 'center' | 'top' | 'sheet',
+   *   id?: string,
    *   onclose?: () => void,
    *   children?: import('svelte').Snippet,
    *   stepper?: import('svelte').Snippet,
@@ -25,6 +26,7 @@
     describedby = undefined,
     size = 'default',
     placement = 'center',
+    id = undefined,
     onclose = () => {},
     children,
     stepper,
@@ -32,18 +34,24 @@
 
   const titleId = $props.id()
   const sizeClass = { default: 'max-w-lg', md: 'max-w-md', lg: 'max-w-2xl' }
+  const isSheet = $derived(placement === 'sheet')
+  // A sheet holds no work to lose, so tapping outside it can dismiss it.
+  const backdropClose = $derived(isSheet ? () => onclose() : null)
 </script>
 
 {#if show}
   <dialog
     use:modalDialog={() => onclose()}
+    use:closeOnBackdropClick={backdropClose}
+    {id}
     class="vault-dialog"
     class:vault-dialog-top={placement === 'top'}
+    class:vault-dialog-sheet={isSheet}
     aria-label={label}
     aria-labelledby={title ? titleId : labelledby}
     aria-describedby={describedby}
   >
-    <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full {sizeClass[size]} mx-4 max-h-[90vh] flex flex-col animate-panel-up" class:overflow-hidden={!title}>
+    <div class="bg-surface-2 border border-border shadow-2xl w-full {sizeClass[size]} max-h-[90vh] flex flex-col animate-panel-up {isSheet ? 'rounded-t-xl border-b-0 pb-[env(safe-area-inset-bottom)]' : 'rounded-xl mx-4'}" class:overflow-hidden={!title}>
       {#if title}
         <div class="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 id={titleId} class="text-lg font-semibold text-text">{title}</h2>

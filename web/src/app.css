@@ -512,6 +512,31 @@ body {
   @apply p-2 rounded-lg text-text-muted hover:bg-surface-3;
 }
 
+/* Target sizes (WCAG 2.5.8, #530). .hit-target is the 24 px minimum. Add
+   .hit-target-touch to an isolated control whose box must stay small: on touch
+   screens a transparent layer grows its hit area to 44 px without moving anything. */
+.hit-target {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+}
+@media (pointer: coarse) {
+  .hit-target-touch {
+    position: relative;
+  }
+  .hit-target-touch::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+}
+
 /* Status badge system */
 .badge {
   @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
@@ -579,6 +604,9 @@ dialog.vault-dialog[open] {
 dialog.vault-dialog-top[open] {
   align-items: flex-start;
   padding-top: 15vh;
+}
+dialog.vault-dialog-sheet[open] {
+  align-items: flex-end;
 }
 dialog.vault-dialog::backdrop {
   background: rgb(0 0 0 / 0.6);

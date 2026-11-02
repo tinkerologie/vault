@@ -111,7 +111,7 @@
       {#if node.isDir}
         <button
           type="button"
-          class="p-0.5 hover:bg-surface-4 rounded text-text-dim hover:text-text shrink-0 focus:outline-none"
+          class="hit-target hover:bg-surface-4 rounded text-text-dim hover:text-text shrink-0 focus:outline-none"
           onclick={(e) => { e.stopPropagation(); ontoggleexpand(node.path) }}
           aria-label={expanded ? `Collapse ${node.name}` : `Expand ${node.name}`}
         >
@@ -125,7 +125,7 @@
           </svg>
         </button>
       {:else}
-        <span class="w-4.5 shrink-0"></span>
+        <span class="w-6 shrink-0"></span>
       {/if}
 
       <input
@@ -134,7 +134,7 @@
         indeterminate={state.indeterminate}
         onchange={(e) => handleCheckboxChange(e, node)}
         onclick={(e) => e.stopPropagation()}
-        class="accent-vault rounded cursor-pointer shrink-0"
+        class="accent-vault rounded cursor-pointer shrink-0 w-6 h-6 m-0"
         aria-label={`Select ${node.name}`}
       />
 

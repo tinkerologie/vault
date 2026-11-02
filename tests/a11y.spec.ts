@@ -7,9 +7,9 @@ import { settleMotion } from './helpers/contrast';
 // theme in contrast.spec.ts; that is the only rule left out here.
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'];
 
-async function audit(page: Page, label: string, knownGaps: string[] = []) {
+async function audit(page: Page, label: string) {
   await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
-  const { violations } = await new AxeBuilder({ page }).withTags(TAGS).disableRules(['color-contrast', ...knownGaps]).analyze();
+  const { violations } = await new AxeBuilder({ page }).withTags(TAGS).disableRules(['color-contrast']).analyze();
   const summary = violations.flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.target.join(' ')} :: ${n.html.slice(0, 140)}`));
   expect(summary, `${label}: axe violations`).toEqual([]);
 }
@@ -87,16 +87,14 @@ test.describe('axe structural audit (#529)', () => {
     const summary = page.locator('summary', { hasText: 'plex' });
     await summary.click();
     await expect(page.getByRole('textbox', { name: 'Filter paths in plex' })).toBeVisible();
-    // Known gap, not a pass: FileTree's expand button and checkbox are under 24 px
-    // (WCAG 2.5.8). Target sizes belong to #530; remove this when that lands.
-    await audit(page, 'Restore plan', ['target-size']);
+    await audit(page, 'Restore plan');
   });
 
-  test('open mobile menu', async ({ page }) => {
+  test('open More sheet', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/#/jobs');
-    await page.getByRole('button', { name: 'Toggle menu' }).click();
-    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
-    await audit(page, 'mobile menu');
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'More' })).toBeVisible();
+    await audit(page, 'More sheet');
   });
 });

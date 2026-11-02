@@ -40,7 +40,7 @@
       <div class="px-4 py-3 rounded-lg border {colors[type] || colors.info} flex items-center gap-3 min-w-[280px]">
         <svg aria-hidden="true" data-toast-icon={icons[type] ? type : 'info'} class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={icons[type] || icons.info}/></svg>
         <span class="text-sm font-medium">{message}</span>
-        <button onclick={() => show = false} class="ml-auto hover:opacity-70 transition-opacity" aria-label="Dismiss">
+        <button onclick={() => show = false} class="hit-target hit-target-touch ml-auto hover:opacity-70 transition-opacity" aria-label="Dismiss">
           <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>

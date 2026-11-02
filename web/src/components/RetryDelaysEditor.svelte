@@ -232,7 +232,7 @@
     <button
       type="button"
       onclick={addRow}
-      class="inline-flex items-center gap-1 text-xs font-medium text-vault-text hover:text-vault-hover focus:outline-none focus:ring-2 focus:ring-vault/50 rounded px-1"
+      class="inline-flex items-center gap-1 min-h-[24px] text-xs font-medium text-vault-text hover:text-vault-hover focus:outline-none focus:ring-2 focus:ring-vault/50 rounded px-1"
     >
       <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
