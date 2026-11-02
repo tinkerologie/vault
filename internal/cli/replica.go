@@ -71,6 +71,10 @@ disaster recovery.`,
 		if err != nil {
 			return fmt.Errorf("loading server key: %w", err)
 		}
+		database.SetCredentialKey(serverKey)
+		if _, sealErr := database.SealSecretsAtRest(); sealErr != nil {
+			log.Printf("ERROR: sealing secrets at rest failed, will retry at next start: %v", sealErr)
+		}
 
 		log.Println("Starting Vault replica daemon (read-only mode)...")
 

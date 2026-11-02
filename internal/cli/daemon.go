@@ -426,15 +426,19 @@ var daemonCmd = &cobra.Command{
 			return fmt.Errorf("loading server key: %w", err)
 		}
 
-		// Migrate any legacy plaintext encryption passphrase to sealed form.
-		if plaintext, _ := database.GetSetting("encryption_passphrase", docsmeta.DefaultFor("encryption_passphrase")); plaintext != "" {
-			sealed, sealErr := crypto.Seal(serverKey, plaintext)
-			if sealErr != nil {
-				log.Printf("Warning: failed to seal legacy passphrase: %v", sealErr)
-			} else {
-				_ = database.SetSetting("encryption_passphrase_sealed", sealed)
-				_ = database.SetSetting("encryption_passphrase", "")
-				log.Println("Migrated legacy plaintext passphrase to sealed storage")
+		// Seal storage and replication secrets and any legacy passphrase, then
+		// rewrite the older database copies. Backups matter more than this step,
+		// so a failure leaves the old state in place, is logged, and is retried
+		// at the next boot.
+		database.SetCredentialKey(serverKey)
+		if n, sealErr := database.SealSecretsAtRest(); sealErr != nil {
+			log.Printf("ERROR: sealing secrets at rest failed, will retry at next start: %v", sealErr)
+		} else {
+			if n > 0 {
+				log.Printf("Sealed secrets at rest in %d row(s)", n)
+			}
+			if copyErr := database.SealPersistentCopies(cmd.Context(), snapshotMgr, persistentDBCopies(dbPath, actualDBPath, usbBackupPath)); copyErr != nil {
+				log.Printf("ERROR: sealing older database copies failed, will retry at next start: %v", copyErr)
 			}
 		}
 
@@ -889,6 +893,19 @@ func restoreUSBPrimaryFromBackup(src, dst string) error {
 	_ = os.Remove(dst + "-wal")
 	_ = os.Remove(dst + "-shm")
 	return nil
+}
+
+// persistentDBCopies lists the database files besides the working DB that may
+// predate sealing. Snapshots are handled by SealPersistentCopies itself.
+func persistentDBCopies(dbPath, workingPath, usbBackupPath string) []string {
+	paths := []string{dbPath + ".migrated"}
+	if dbPath != workingPath {
+		paths = append(paths, dbPath)
+	}
+	if usbBackupPath != "" && usbBackupPath != workingPath {
+		paths = append(paths, usbBackupPath)
+	}
+	return paths
 }
 
 // retireUSBLiveDB renames the live USB DB aside (vault.db → vault.db.migrated)

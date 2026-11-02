@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -258,12 +260,31 @@ func (s *Server) StartWithContext(ctx context.Context) error {
 		}
 	}()
 
+	if (s.config.TLSCert == "") != (s.config.TLSKey == "") {
+		return errors.New("--tls-cert and --tls-key must be set together; refusing to fall back to plain HTTP")
+	}
 	if s.config.TLSCert != "" && s.config.TLSKey != "" {
 		log.Printf("Vault API server listening on %s (TLS)", s.config.Addr)
 		return srv.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
 	}
 	log.Printf("Vault API server listening on %s", s.config.Addr)
+	if !isLoopbackAddr(s.config.Addr) {
+		log.Printf("Warning: the Vault API on %s uses plain HTTP, so API keys and data can be read on the network. Use it only on a network you trust, or start the daemon with --tls-cert and --tls-key", s.config.Addr)
+	}
 	return srv.ListenAndServe()
+}
+
+// isLoopbackAddr reports whether a listen address only accepts local traffic.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func respondJSON(w http.ResponseWriter, status int, data any) {

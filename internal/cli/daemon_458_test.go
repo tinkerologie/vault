@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tinkerologie/vault/internal/credentials"
+	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/logx"
 	"github.com/tinkerologie/vault/internal/tempdir"
@@ -523,5 +525,61 @@ func TestDaemon458_StartupMaintenanceWithConfiguration(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("stale running runs = %d, want 0", n)
+	}
+}
+
+func TestPersistentDBCopies(t *testing.T) {
+	t.Parallel()
+	got := persistentDBCopies("/boot/vault.db", "/tmp/w/vault.db", "/boot/vault.db.backup")
+	want := []string{"/boot/vault.db.migrated", "/boot/vault.db", "/boot/vault.db.backup"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("hybrid = %v", got)
+	}
+	got = persistentDBCopies("/boot/vault.db", "/boot/vault.db", "")
+	if len(got) != 1 || got[0] != "/boot/vault.db.migrated" {
+		t.Fatalf("direct = %v", got)
+	}
+}
+
+func TestDaemonSealsExistingCredentialsOnStart(t *testing.T) {
+	e := newDaemonEnv458(t)
+	if err := os.MkdirAll(filepath.Dir(e.dbPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := db.Open(e.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := seed.CreateStorageDestination(db.StorageDestination{Name: "nas", Type: "smb", Config: `{"host":"a","share":"b","password":"upgrade-secret"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 { // the second start proves the migration is repeatable
+		if err := e.run(t); err != nil {
+			t.Fatalf("RunE: %v", err)
+		}
+		d, err := db.Open(e.dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw string
+		if err := d.QueryRow(`SELECT config FROM storage_destinations WHERE id = ?`, id).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		_ = d.Close()
+		if strings.Contains(raw, "upgrade-secret") {
+			t.Fatalf("not sealed on start: %s", raw)
+		}
+		key, err := crypto.LoadOrCreateServerKey(filepath.Join(filepath.Dir(e.dbPath), "vault.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opened := credentials.Open(key, raw); !strings.Contains(opened, "upgrade-secret") {
+			t.Fatalf("vault.key does not open the sealed value: %s", opened)
+		}
 	}
 }

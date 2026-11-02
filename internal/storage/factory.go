@@ -3,6 +3,8 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/tinkerologie/vault/internal/credentials"
 )
 
 // Options tunes the middleware chain. Zero value = production defaults with
@@ -36,6 +38,11 @@ func NewAdapter(storageType, configJSON string) (Adapter, error) {
 // sit outermost so they record the logical outcome (including all retry
 // attempts) rather than each individual attempt.
 func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapter, error) {
+	// Every adapter is built here, so a sealed value can never be sent to a
+	// server as if it were the password.
+	if credentials.IsLocked(configJSON) {
+		return nil, fmt.Errorf("storage destination: %w", credentials.ErrLocked)
+	}
 	// Universal optional field present on every storage type. Parsed
 	// once up-front so the per-type config structs don't have to
 	// duplicate the same field.

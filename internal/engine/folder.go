@@ -613,7 +613,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if mode == 0 {
 			mode = 0o644
 		}
-		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, mode) // #nosec G304 — full is validated by safepath.JoinUnderBase, resolveWithinBase, and openNoFollow
+		out, err := openRestoreFile(full, mode)
 		if err != nil {
 			if isSymlinkErr(err) {
 				return fmt.Errorf("refusing to restore %s through symlink at %s", fp, full)

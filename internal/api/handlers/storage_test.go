@@ -286,9 +286,10 @@ func TestRedactConfig(t *testing.T) {
 			intact: []string{"host", "password"},
 		},
 		{
-			name:   "invalid json returns original",
-			input:  `not-json`,
-			intact: nil,
+			// Unparseable input may hold anything, so it must not pass through.
+			name:   "invalid json returns empty object",
+			input:  `{"password":"s3cret"`,
+			intact: []string{},
 		},
 	}
 

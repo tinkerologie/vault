@@ -121,7 +121,7 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 				DedupEnabled:          d.DedupEnabled,
 				LastHealthCheckAt:     d.LastHealthCheckAt,
 				LastHealthCheckStatus: d.LastHealthCheckStatus,
-				LastHealthCheckError:  d.LastHealthCheckError,
+				LastHealthCheckError:  RedactText(d.LastHealthCheckError),
 			}
 			bundle.Storage = append(bundle.Storage, si)
 		}
@@ -195,13 +195,13 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 				ItemsSuccess: r.ItemsDone,
 				ItemsFailed:  r.ItemsFailed,
 				SizeBytes:    r.SizeBytes,
-				Log:          r.Log,
+				Log:          RedactRunLog(r.Log),
 			}
 			if r.CompletedAt != nil {
 				ri.DurationSeconds = int(r.CompletedAt.Sub(r.StartedAt).Seconds())
 			}
 			if r.Status == "failed" {
-				ri.ErrorMessages = extractRunErrors(r.Log)
+				ri.ErrorMessages = extractRunErrors(ri.Log)
 			}
 			bundle.Runs = append(bundle.Runs, ri)
 		}
@@ -219,8 +219,8 @@ func (c *Collector) Collect() (*DiagnosticBundle, error) {
 				ID:        l.ID,
 				Level:     l.Level,
 				Category:  l.Category,
-				Message:   l.Message,
-				Details:   l.Details,
+				Message:   RedactText(l.Message),
+				Details:   RedactRunLog(l.Details),
 				CreatedAt: l.CreatedAt,
 			})
 		}

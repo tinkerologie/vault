@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -85,14 +86,33 @@ func openRestoreDestination(dst, normalizedDst string, perm os.FileMode) (*os.Fi
 
 	// Open/create the final file relative to the retained parent descriptor
 	leaf := parts[len(parts)-1]
-	flags := unix.O_CREAT | unix.O_WRONLY | unix.O_TRUNC | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	// O_NONBLOCK and the check below keep a planted FIFO from hanging the
+	// restore or receiving its data. Truncation waits for the type check.
+	flags := unix.O_CREAT | unix.O_WRONLY | unix.O_NONBLOCK | unix.O_NOFOLLOW | unix.O_CLOEXEC
 	fileFd, err := unix.Openat(currentFd, leaf, flags, uint32(perm.Perm()))
 	if err != nil {
 		if isSymlinkErr(err) {
 			return nil, fmt.Errorf("refusing to copy file through symlink at %s", targetPath)
 		}
+		if errors.Is(err, unix.ENXIO) {
+			return nil, fmt.Errorf("refusing to restore to non-regular file %s", targetPath)
+		}
 		return nil, fmt.Errorf("creating dest %s: %w", targetPath, err)
 	}
 
-	return os.NewFile(uintptr(fileFd), targetPath), nil
+	out := os.NewFile(uintptr(fileFd), targetPath)
+	info, err := out.Stat()
+	if err != nil {
+		_ = out.Close()
+		return nil, fmt.Errorf("checking dest %s: %w", targetPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = out.Close()
+		return nil, fmt.Errorf("refusing to restore to non-regular file %s (%s)", targetPath, info.Mode().Type())
+	}
+	if err := out.Truncate(0); err != nil {
+		_ = out.Close()
+		return nil, fmt.Errorf("truncating dest %s: %w", targetPath, err)
+	}
+	return out, nil
 }

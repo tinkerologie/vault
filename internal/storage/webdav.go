@@ -15,15 +15,18 @@ import (
 	"log"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/studio-b12/gowebdav"
+	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/safepath"
 )
 
@@ -224,9 +227,42 @@ func NewWebDAVAdapter(cfg WebDAVConfig) (*WebDAVAdapter, error) {
 	if cfg.ChunkSizeMB > maxWebDAVChunkSizeMB {
 		return nil, fmt.Errorf("webdav: chunk_size_mb must be <= %d, got %d", maxWebDAVChunkSizeMB, cfg.ChunkSizeMB)
 	}
-	cfg.URL = strings.TrimRight(url, "/")
+	cfg = moveURLCredentials(cfg, url)
+	warnPlaintextWebDAV(cfg.URL)
 	cfg.BasePath = strings.Trim(cfg.BasePath, "/")
 	return &WebDAVAdapter{config: cfg}, nil
+}
+
+// moveURLCredentials moves credentials embedded in the server URL into the
+// dedicated fields, so they stay out of request URLs, logs and error text. An
+// explicit username and password win over the embedded ones.
+func moveURLCredentials(cfg WebDAVConfig, rawURL string) WebDAVConfig {
+	cfg.URL = strings.TrimRight(rawURL, "/")
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil || parsed.User == nil {
+		return cfg
+	}
+	if cfg.Username == "" && cfg.Password == "" {
+		cfg.Username = parsed.User.Username()
+		cfg.Password, _ = parsed.User.Password()
+	}
+	parsed.User = nil
+	cfg.URL = strings.TrimRight(parsed.String(), "/")
+	return cfg
+}
+
+// warnedPlaintextWebDAV holds the endpoints already warned about, because an
+// adapter is built for nearly every storage operation.
+var warnedPlaintextWebDAV sync.Map
+
+func warnPlaintextWebDAV(rawURL string) {
+	if !credentials.IsPlaintextRemote(rawURL) {
+		return
+	}
+	if _, seen := warnedPlaintextWebDAV.LoadOrStore(rawURL, true); seen {
+		return
+	}
+	log.Printf("Warning: WebDAV destination %s uses plain HTTP; its login and backup data can be read on the network. Use https:// unless this network is trusted", rawURL) // #nosec G706 //nolint:gosec // credentials were removed from the URL above
 }
 
 // client builds a fresh WebDAV client.

@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/replication"
 )
@@ -132,6 +134,61 @@ func (h *ReplicationHandler) reloadScheduler() {
 	}
 }
 
+// replicationResponse is a source as the API shows it: the API key is masked,
+// plus a warning when the source is reached over plain HTTP.
+type replicationResponse struct {
+	db.ReplicationSource
+	CredentialsLocked bool   `json:"credentials_locked"`
+	Warning           string `json:"warning,omitempty"`
+}
+
+func newReplicationResponse(src db.ReplicationSource) replicationResponse {
+	out := replicationResponse{
+		ReplicationSource: src,
+		CredentialsLocked: credentials.IsLocked(src.Config),
+		Warning:           replication.PlaintextWarning(src.URL),
+	}
+	out.Config = credentials.Mask(src.Config)
+	return out
+}
+
+// mergeReplicationKey resolves the API key on an update. An omitted, blank or
+// masked key keeps the stored one and a new value replaces it. The stored key
+// only ever goes to the URL it was entered for: otherwise anyone who can edit a
+// source could point it at their own server and collect the key.
+func mergeReplicationKey(incoming db.ReplicationSource, stored db.ReplicationSource) (string, error) {
+	var in, ex map[string]any
+	if incoming.Config != "" {
+		if err := json.Unmarshal([]byte(incoming.Config), &in); err != nil {
+			return "", errors.New("invalid config JSON")
+		}
+	}
+	if in == nil {
+		in = map[string]any{}
+	}
+	if stored.Config != "" {
+		// A stored config that does not parse has no key worth keeping.
+		_ = json.Unmarshal([]byte(stored.Config), &ex)
+	}
+	key, _ := in["api_key"].(string)
+	storedKey, _ := ex["api_key"].(string)
+	if key != "" && key != credentials.RedactionMarker {
+		out, err := json.Marshal(in)
+		return string(out), err
+	}
+	if storedKey == "" {
+		delete(in, "api_key")
+		out, err := json.Marshal(in)
+		return string(out), err
+	}
+	if incoming.URL != "" && incoming.URL != stored.URL {
+		return "", errors.New("re-enter the API key when changing the URL")
+	}
+	in["api_key"] = storedKey
+	out, err := json.Marshal(in)
+	return string(out), err
+}
+
 // List returns all replication sources.
 func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 	sources, err := h.db.ListReplicationSources()
@@ -139,7 +196,11 @@ func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, sources)
+	out := make([]replicationResponse, len(sources))
+	for i, src := range sources {
+		out[i] = newReplicationResponse(src)
+	}
+	respondJSON(w, http.StatusOK, out)
 }
 
 // Create adds a new replication source.
@@ -183,7 +244,7 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	src.ID = id
 
 	h.reloadScheduler()
-	respondJSON(w, http.StatusCreated, src)
+	respondJSON(w, http.StatusCreated, newReplicationResponse(src))
 	h.broadcastConfigChange()
 	h.notifyConfigChange()
 }
@@ -199,7 +260,7 @@ func (h *ReplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
-	respondJSON(w, http.StatusOK, src)
+	respondJSON(w, http.StatusOK, newReplicationResponse(src))
 }
 
 // Update modifies a replication source.
@@ -232,13 +293,24 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	stored, err := h.db.GetReplicationSource(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	src.Config, err = mergeReplicationKey(src, stored)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	if err := h.db.UpdateReplicationSource(src); err != nil {
 		respondWriteError(w, err, "replication source")
 		return
 	}
 
 	h.reloadScheduler()
-	respondJSON(w, http.StatusOK, src)
+	respondJSON(w, http.StatusOK, newReplicationResponse(src))
 	h.broadcastConfigChange()
 	h.notifyConfigChange()
 }
@@ -278,6 +350,11 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if credentials.IsLocked(src.Config) {
+		respondError(w, http.StatusConflict, credentials.ErrLocked.Error())
+		return
+	}
+
 	var cfg struct {
 		APIKey string `json:"api_key"`
 	}
@@ -303,7 +380,7 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		respondError(w, http.StatusBadGateway, connErr.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok", "warning": replication.PlaintextWarning(src.URL)})
 }
 
 // TestURL validates a remote Vault URL and performs a live connectivity check
@@ -327,6 +404,11 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 	normalizedURL, err := replication.NormalizeBaseURL(req.URL)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+		return
+	}
+	// Test URL never looks up a stored key, so the marker has no value to stand for.
+	if req.APIKey == credentials.RedactionMarker {
+		respondError(w, http.StatusBadRequest, "enter the API key to test a new URL")
 		return
 	}
 
@@ -353,6 +435,7 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 		"url":     normalizedURL,
 		"version": health.Version,
 		"message": "Connected successfully",
+		"warning": replication.PlaintextWarning(normalizedURL),
 	})
 }
 

@@ -32,8 +32,11 @@ var sensitiveSubstrings = []string{
 	"webhook",
 }
 
-// RedactJSON redacts sensitive fields in a JSON config string.
-// Returns the original string if parsing fails.
+// unparseableConfig replaces JSON that cannot be read, since it may hold anything.
+const unparseableConfig = `"` + redactedPlaceholder + ` unparseable"`
+
+// RedactJSON redacts sensitive fields in a JSON config string, and credentials
+// embedded in URL values. Input that does not parse is replaced entirely.
 func RedactJSON(configJSON string) string {
 	if configJSON == "" {
 		return configJSON
@@ -41,7 +44,7 @@ func RedactJSON(configJSON string) string {
 
 	var raw any
 	if err := json.Unmarshal([]byte(configJSON), &raw); err != nil {
-		return configJSON
+		return unparseableConfig
 	}
 
 	var redacted any
@@ -56,7 +59,7 @@ func RedactJSON(configJSON string) string {
 
 	out, err := json.Marshal(redacted)
 	if err != nil {
-		return configJSON
+		return unparseableConfig
 	}
 	return string(out)
 }
@@ -71,30 +74,41 @@ func redactMap(m map[string]any) map[string]any {
 				continue
 			}
 		}
-		switch val := v.(type) {
-		case map[string]any:
-			result[k] = redactMap(val)
-		case []any:
-			result[k] = redactSlice(val)
-		default:
-			result[k] = val
-		}
+		result[k] = redactValue(v)
 	}
 	return result
+}
+
+// redactValue redacts one JSON value. Strings are free text as far as this code
+// knows, so they are scrubbed too, and a string holding JSON is redacted as JSON:
+// per-item settings sit in run logs in that form.
+func redactValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return redactMap(val)
+	case []any:
+		return redactSlice(val)
+	case string:
+		trimmed := strings.TrimSpace(val)
+		if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			var nested any
+			if json.Unmarshal([]byte(trimmed), &nested) == nil {
+				if out, err := json.Marshal(redactValue(nested)); err == nil {
+					return string(out)
+				}
+			}
+		}
+		return RedactText(val)
+	default:
+		return v
+	}
 }
 
 // redactSlice recursively redacts sensitive fields in slice elements.
 func redactSlice(s []any) []any {
 	result := make([]any, len(s))
 	for i, v := range s {
-		switch val := v.(type) {
-		case map[string]any:
-			result[i] = redactMap(val)
-		case []any:
-			result[i] = redactSlice(val)
-		default:
-			result[i] = val
-		}
+		result[i] = redactValue(v)
 	}
 	return result
 }
@@ -118,7 +132,7 @@ func isSensitiveKey(key string) bool {
 func RedactURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return rawURL
+		return RedactText(rawURL)
 	}
 	if u.User == nil {
 		return rawURL
@@ -169,6 +183,8 @@ var logRedactPatterns = []logRedactPattern{
 	// and the `@host` suffix so the reader can still see which endpoint
 	// was being contacted.
 	{regexp.MustCompile(`(https?://)([^:/@\s]+):([^@\s]+)@`), `${1}` + redactedPlaceholder + `@`},
+	// The same for any scheme and for a bare token with no colon.
+	{regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`), `${1}` + redactedPlaceholder + `@`},
 	// Discord webhook URLs are sensitive end-to-end (the token IS in
 	// the path). Catch them anywhere in a log line, not just the
 	// structured notification path. Anchored on https:// + optional
@@ -197,6 +213,25 @@ func RedactLogLines(input []byte) []byte {
 		out = p.re.ReplaceAll(out, []byte(p.repl))
 	}
 	return out
+}
+
+// RedactText scrubs credentials from a single free-text value.
+func RedactText(s string) string {
+	return string(RedactLogLines([]byte(s)))
+}
+
+// RedactRunLog redacts a persisted run log. Item logs are JSON arrays holding
+// settings and error text; other runs store plain text.
+func RedactRunLog(runLog string) string {
+	var raw any
+	if err := json.Unmarshal([]byte(runLog), &raw); err != nil {
+		return RedactText(runLog)
+	}
+	out, err := json.Marshal(redactValue(raw))
+	if err != nil {
+		return RedactText(runLog)
+	}
+	return string(out)
 }
 
 // RedactDiscordWebhook replaces the webhook token in a Discord URL.

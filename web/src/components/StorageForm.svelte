@@ -332,6 +332,9 @@
       <label for="dav_url" class="block text-sm font-medium text-text-muted mb-1.5">Server URL <Tooltip text="Full URL to the WebDAV endpoint, e.g. https://nextcloud.example.com/remote.php/dav/files/username/" /></label>
       <input id="dav_url" type="url" bind:value={form.config.url} placeholder="https://webdav.example.com/"
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
+      {#if form.config.url?.trim().toLowerCase().startsWith('http://')}
+        <p class="text-xs text-warning mt-1" role="note">Plain HTTP: the login and backup data can be read on the network. Use it only on a network you trust, or use https://.</p>
+      {/if}
     </div>
     <div class="grid grid-cols-2 gap-3">
       <div>

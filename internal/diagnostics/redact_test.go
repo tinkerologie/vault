@@ -18,9 +18,10 @@ func TestRedactJSON(t *testing.T) {
 			want:  "",
 		},
 		{
+			// Unparseable input may hold anything, so it must not pass through.
 			name:  "invalid json",
-			input: "not json",
-			want:  "not json",
+			input: `{"password":"s3cret"`,
+			want:  unparseableConfig,
 		},
 		{
 			name:  "no sensitive fields",

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
 )
 
@@ -293,7 +294,7 @@ func TestStorageRefreshCapacity458_ProbeError(t *testing.T) {
 
 func TestPreserveRedactedSecrets458(t *testing.T) {
 	t.Parallel()
-	in := `{"password":"` + redactionMarker + `","user":"u"}`
+	in := `{"password":"` + credentials.RedactionMarker + `","user":"u"}`
 
 	// Existing config is not JSON: the marker is left alone.
 	got, err := preserveRedactedSecrets(in, "not json")

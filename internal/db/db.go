@@ -19,6 +19,8 @@ var ErrNotFound = errors.New("not found")
 type DB struct {
 	handle atomic.Pointer[sql.DB]
 	path   string
+	// credKey is the vault.key used to seal config secrets (credentials.go).
+	credKey atomic.Pointer[[]byte]
 }
 
 // sql returns the current underlying handle.
@@ -152,6 +154,11 @@ func (d *DB) Reopen() error {
 	// even when the caller (restore flow) already closed it.
 	if old := d.handle.Swap(nd.handle.Load()); old != nil {
 		_ = old.Close()
+	}
+	// A restored database can predate sealing. It stays usable either way, so
+	// a failure here is retried at the next boot rather than failing the swap.
+	if _, err := d.SealSecretsAtRest(); err != nil {
+		log.Printf("Warning: sealing secrets in the reopened database: %v", err)
 	}
 	return nil
 }

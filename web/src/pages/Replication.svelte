@@ -54,32 +54,13 @@
     form.config = JSON.stringify(cfg)
   }
 
-  // Secret keys inside the config blob that must never be wiped by an edit
-  // that left them blank or showed a redaction marker.
-  const SECRET_KEYS = ['api_key']
-  const REDACTED_RE = /^(?:•+|\*+|<?redacted>?)$/i
-
-  function isBlankOrRedacted(v) {
-    return v == null || v === '' || REDACTED_RE.test(String(v).trim())
+  // The API masks the key on every read, so this page never holds the real one.
+  const KEY_MASK = '••••••••'
+  const hasStoredKey = (src) => {
+    try { return JSON.parse(src?.config || '{}').api_key === KEY_MASK } catch { return false }
   }
-
-  // On edit-save, keep any secret the user didn't retype. If the field is blank
-  // or a redaction marker, restore the value we originally loaded (the GET
-  // response still carries the real key today). If the original is ALSO masked
-  // (i.e. server-side redaction was added and we never held the real value),
-  // fail fast: the backend overwrites the whole config blob, so omitting the key
-  // would wipe the stored secret — make the user re-enter it instead.
-  function preserveSecrets(newConfigStr, originalConfigStr) {
-    let cfg, orig
-    try { cfg = JSON.parse(newConfigStr || '{}') } catch { cfg = {} }
-    try { orig = JSON.parse(originalConfigStr || '{}') } catch { orig = {} }
-    for (const key of SECRET_KEYS) {
-      if (!isBlankOrRedacted(cfg[key])) continue
-      if (!isBlankOrRedacted(orig[key])) { cfg[key] = orig[key]; continue }
-      throw new Error(`Please re-enter the ${key.replace(/_/g, ' ')} — it can't be preserved automatically.`)
-    }
-    return JSON.stringify(cfg)
-  }
+  // A blank key on edit means "keep the current key"; the server resolves it.
+  const typedKey = $derived(cloudConfig.api_key && cloudConfig.api_key !== KEY_MASK ? cloudConfig.api_key : '')
 
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
@@ -121,15 +102,19 @@
       modalTestResult = { success: false, error: 'Enter a URL first' }
       return
     }
-    if (!cloudConfig.api_key) {
+    // The stored key can be tested against its own URL only; the server never
+    // sends it anywhere else.
+    const useStoredKey = !typedKey && editing && hasStoredKey(editing) && form.url === editing.url
+    if (!typedKey && !useStoredKey) {
       modalTestResult = { success: false, error: 'Enter an API key – it is required to connect to the remote Vault server' }
       return
     }
     modalTesting = true
     modalTestResult = null
     try {
-      const apiKey = cloudConfig.api_key || ''
-      const result = await api.testReplicationURL(form.url, apiKey)
+      const result = useStoredKey
+        ? await api.testReplicationSource(editing.id)
+        : await api.testReplicationURL(form.url, typedKey)
       modalTestResult = {
         success: true,
         version: result.version,
@@ -169,7 +154,6 @@
     try {
       const payload = { ...form }
       if (editing) {
-        payload.config = preserveSecrets(form.config, editing.config)
         await api.updateReplicationSource(editing.id, payload)
         showToast('Target updated', 'success')
       } else {
@@ -470,6 +454,9 @@
           <input id="repl-url" type="url" required bind:value={form.url} placeholder="http://192.168.1.100:24085"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <p class="text-xs text-text-dim mt-1">The base URL of the remote Vault server (include port). Only jobs created on that server are synced; jobs it replicated from other servers are skipped.</p>
+          {#if form.url?.trim().toLowerCase().startsWith('http://')}
+            <p class="text-xs text-warning mt-1" role="note">Plain HTTP: the API key and backup data can be read on the network. Use it only on a network you trust, or use https://.</p>
+          {/if}
         </div>
 
         <div>
@@ -481,7 +468,10 @@
               <span class="text-danger ml-1" aria-hidden="true">*</span>
             {/if}
           </label>
-          <input id="repl-apikey" type="password" autocomplete="off" required={!editing} value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder={editing ? 'Leave blank to keep the current key' : "Enter the remote server's API key"}
+          {#if editing?.credentials_locked}
+            <p class="text-xs text-danger mb-1" role="alert">This server's vault.key can't open the stored key. Enter it again, or restore the original vault.key.</p>
+          {/if}
+          <input id="repl-apikey" type="password" autocomplete="off" required={!editing} value={typedKey} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder={editing ? 'Leave blank to keep the current key' : "Enter the remote server's API key"}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <div class="mt-2 p-2.5 bg-warning/5 border border-warning/20 rounded-lg flex items-start gap-2">
             <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
