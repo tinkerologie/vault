@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Jobs bulk bar on phones (#530):** The bulk action bar now wraps inside a 375 px screen and sits above the mobile navigation, standalone and embedded, with full-size touch targets.
 - **Embedded skip link (#526):** In the embedded view, the skip link now scrolls the parent page so the heading it focuses is on screen.
 - **Logs 404s:** The Logs page no longer requests run logs for runs that have been deleted, which filled the console with failed requests on every load. `/activity` now flags those entries with `run_gone`.
 - **Log folding and empty states (#534):** Warnings with different causes no longer fold into one row. "No problems" now waits for older history to load, and says so if older history could not be loaded, with a retry. Each row's expand button names its item and time. Container health messages are redacted like storage errors.

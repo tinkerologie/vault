@@ -284,6 +284,22 @@ for (const viewport of VIEWPORTS) {
       }).toBe(true);
     });
 
+    test('every bulk control is on screen and works', async ({ page }) => {
+      const frame = await openEmbedded(page, { hash: '#/jobs' });
+      await expect(h1(frame, 'Backup Jobs')).toBeVisible();
+      await frame.getByRole('checkbox', { name: 'Select Docker & Appdata' }).check();
+      const bar = frame.getByRole('region', { name: 'Bulk actions' });
+      await expect(bar).toBeVisible();
+      for (const control of [bar.getByText('1 selected'), ...await bar.getByRole('button').all()]) {
+        await expect.poll(async () => {
+          const box = await control.boundingBox();
+          return box !== null && box.x >= 0 && box.x + box.width <= viewport.width && box.y >= 0 && box.y + box.height <= viewport.height;
+        }).toBe(true);
+      }
+      await bar.getByRole('button', { name: 'Clear' }).click();
+      await expect(bar).toHaveCount(0);
+    });
+
     test('a toast appears on screen after the parent has scrolled', async ({ page }) => {
       const frame = await openEmbedded(page, { hash: '#/jobs' });
       await expect(h1(frame, 'Backup Jobs')).toBeVisible();

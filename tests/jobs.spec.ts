@@ -303,4 +303,54 @@ test.describe('Jobs Management & Creation Wizard', () => {
       expect(calls).toHaveLength(2);
     });
   });
+
+  test.describe('bulk action bar at 375 px', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 667 });
+      await page.goto('/#/jobs');
+      await page.getByRole('checkbox', { name: 'Select Docker & Appdata' }).check();
+    });
+    const bar = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Bulk actions' });
+
+    test('every control is whole, in the viewport, and clear of the bottom nav', async ({ page }) => {
+      const nav = (await page.getByRole('navigation', { name: 'Mobile navigation' }).boundingBox())!;
+      const box = (await bar(page).boundingBox())!;
+      expect(box.y + box.height).toBeLessThanOrEqual(nav.y);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(375);
+      for (const control of [bar(page).getByText('1 selected'), ...await bar(page).getByRole('button').all()]) {
+        const c = (await control.boundingBox())!;
+        expect(c.x).toBeGreaterThanOrEqual(box.x);
+        expect(c.x + c.width).toBeLessThanOrEqual(box.x + box.width);
+        expect(c.y + c.height).toBeLessThanOrEqual(nav.y);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    });
+
+    test('every button takes a real click, without the nav in the way', async ({ page }) => {
+      for (const name of ['Enable', 'Disable', 'Run', 'Delete', 'Clear']) {
+        await bar(page).getByRole('button', { name }).click({ trial: true });
+      }
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      await page.getByRole('dialog', { name: 'Delete 1 Job' }).getByRole('button', { name: 'Cancel' }).click();
+      await bar(page).getByRole('button', { name: 'Clear' }).click();
+      await expect(bar(page)).toHaveCount(0);
+    });
+
+    test('its buttons meet the touch target size', async ({ page }) => {
+      for (const button of await bar(page).getByRole('button').all()) {
+        expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
+    });
+  });
+
+  test('the bulk bar stays one centred row on desktop', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/#/jobs');
+    await page.getByRole('checkbox', { name: 'Select Docker & Appdata' }).check();
+    const box = (await page.getByRole('region', { name: 'Bulk actions' }).boundingBox())!;
+    expect(box.height).toBeLessThan(70);
+    expect(Math.abs(box.x + box.width / 2 - 640)).toBeLessThanOrEqual(1);
+    expect(800 - (box.y + box.height)).toBeLessThanOrEqual(30);
+  });
 });

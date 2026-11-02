@@ -1383,13 +1383,13 @@
 
 <!-- Bulk action bar -->
 {#if selectedJobs.size > 0}
-  <div role="region" aria-label="Bulk actions" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-border rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+  <div role="region" aria-label="Bulk actions" class="fixed bottom-6 max-lg:bottom-20 left-1/2 -translate-x-1/2 z-50 w-max max-w-[calc(100vw-2rem)] bg-surface-2 border border-border rounded-xl shadow-2xl px-3 sm:px-5 py-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
     <span class="text-sm font-medium text-text">{selectedJobs.size} selected</span>
-    <div class="w-px h-6 bg-border"></div>
+    <div class="w-px h-6 bg-border max-sm:hidden" aria-hidden="true"></div>
     <button
       onclick={() => bulkEnable(true)}
       disabled={bulkRunning}
-      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-success hover:bg-success/10 rounded-lg transition-colors disabled:opacity-40"
+      class="flex items-center gap-1.5 px-3 py-1.5 max-lg:min-h-11 text-xs font-medium text-success hover:bg-success/10 rounded-lg transition-colors disabled:opacity-40"
     >
       <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
       Enable
@@ -1397,7 +1397,7 @@
     <button
       onclick={() => bulkEnable(false)}
       disabled={bulkRunning}
-      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-warning hover:bg-warning/10 rounded-lg transition-colors disabled:opacity-40"
+      class="flex items-center gap-1.5 px-3 py-1.5 max-lg:min-h-11 text-xs font-medium text-warning hover:bg-warning/10 rounded-lg transition-colors disabled:opacity-40"
     >
       <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
       Disable
@@ -1405,7 +1405,7 @@
     <button
       onclick={bulkRun}
       disabled={bulkRunning}
-      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-vault-text hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
+      class="flex items-center gap-1.5 px-3 py-1.5 max-lg:min-h-11 text-xs font-medium text-vault-text hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
     >
       <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
       Run
@@ -1413,15 +1413,15 @@
     <button
       onclick={() => { confirmBulkDelete = true }}
       disabled={bulkRunning}
-      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-40"
+      class="flex items-center gap-1.5 px-3 py-1.5 max-lg:min-h-11 text-xs font-medium text-danger hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-40"
     >
       <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
       Delete
     </button>
-    <div class="w-px h-6 bg-border"></div>
+    <div class="w-px h-6 bg-border max-sm:hidden" aria-hidden="true"></div>
     <button
       onclick={() => { selectedJobs = new SvelteSet() }}
-      class="text-xs text-text-muted hover:text-text transition-colors"
+      class="px-3 py-1.5 max-lg:min-h-11 text-xs text-text-muted hover:text-text transition-colors"
     >
       Clear
     </button>
