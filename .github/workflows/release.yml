@@ -387,7 +387,22 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-token.outputs.token }}
         # The credential helper reads GH_TOKEN, so the token never enters a URL or argv.
+        # If a PR merged since checkout, replay the PLG commit on the new main. Only git
+        # runs here: nothing fetched is built or executed, and a conflict fails the job.
         run: |
           gh auth setup-git
-          git push origin main
-          echo "Committed and pushed PLG updates"
+          for attempt in 1 2 3 4 5; do
+            if git push origin main; then
+              echo "Committed and pushed PLG updates"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              echo "ERROR: failed to push PLG updates after $attempt attempts"
+              exit 1
+            fi
+
+            echo "Push rejected, refreshing main and retrying..."
+            sleep $((attempt * 5))
+            git pull --rebase origin main
+          done

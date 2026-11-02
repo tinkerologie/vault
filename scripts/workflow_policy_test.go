@@ -94,6 +94,22 @@ func TestReleaseTokenNeverMeetsReleaseRefCode(t *testing.T) {
 	}
 }
 
+// A PR merging while publish-plg runs must not lose the release's PLG update,
+// and refreshing main must not run anything fetched while the token is live.
+func TestPLGPushSurvivesMainMovingWithoutRunningFetchedCode(t *testing.T) {
+	publish := workflowJob(t, readRepoFile(t, ".github/workflows/release.yml"), "publish-plg")
+	_, afterMint, found := strings.Cut(publish, "create-github-app-token")
+	if !found {
+		t.Fatal("publish-plg does not mint a token")
+	}
+	assertOrder(t, afterMint, "git push origin main", "git pull --rebase origin main")
+	for _, gone := range []string{"plgnotes", "python3", "go build", "go run", "make ", "npm ", "bash ", "./"} {
+		if strings.Contains(afterMint, gone) {
+			t.Errorf("steps holding the token must run only git and gh, found %q", gone)
+		}
+	}
+}
+
 func TestCILintVersionIsPinned(t *testing.T) {
 	workflow := readRepoFile(t, ".github/workflows/ci.yml")
 	if strings.Contains(workflow, "version: latest") {
