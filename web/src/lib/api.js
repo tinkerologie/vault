@@ -102,7 +102,6 @@ export const api = {
   scanStorage: (id, path = '', passphrase = '') => {
     const params = new URLSearchParams()
     if (path) params.set('path', path)
-    if (passphrase) params.set('passphrase', passphrase)
     const qs = params.toString()
     return request('POST', `/storage/${id}/scan${qs ? '?' + qs : ''}`, passphrase ? { path, passphrase } : null)
   },

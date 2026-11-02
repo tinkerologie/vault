@@ -41,7 +41,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # check out the repository
-      id-token: write # Codecov OIDC upload
     env:
       CGO_ENABLED: '0'
 
@@ -77,26 +76,19 @@ jobs:
       - name: Run linter
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: latest
+          version: v2.15.0
           args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0
 
       - name: Run Go tests with coverage
         run: go test ./internal/... ./cmd/... -v -coverprofile=coverage.txt -covermode=atomic -coverpkg=./internal/...,./cmd/...
 
+      - name: Run repository policy tests
+        run: go test ./scripts/... -count=1
+
       - name: Run patched third_party module tests
         # Nested modules are outside the root ./... patterns (issue #498).
         working-directory: third_party/dnssd
         run: go test ./... -count=1 -v
-
-      - name: Upload Go coverage to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          slug: ${{ github.repository }}
-          files: ./coverage.txt
-          flags: backend
-          disable_search: true
-          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
-          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
 
       - name: Check file restores use copy_file_range
         # A ReadFrom spy test proves dispatch; this proves the syscall on the
@@ -114,27 +106,6 @@ jobs:
 
       - name: Run web tests with coverage and JUnit output
         run: cd web && npm ci && npx vitest run --coverage --reporter=default --reporter=junit --outputFile=./test-report.junit.xml
-
-      - name: Upload web coverage to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          slug: ${{ github.repository }}
-          files: ./web/coverage/lcov.info
-          flags: frontend
-          disable_search: true
-          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
-          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
-
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          slug: ${{ github.repository }}
-          files: ./web/test-report.junit.xml
-          report_type: test_results
-          disable_search: true
-          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
-          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
 
       - name: Cross-compile Linux binary
         env:
@@ -175,7 +146,7 @@ jobs:
         env:
           GOOS: windows
         with:
-          version: latest
+          version: v2.15.0
           args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./internal/recovery/... ./internal/fsstat/... ./internal/safepath/... ./internal/storage/...
 
       - name: Upload Windows binary
@@ -183,6 +154,73 @@ jobs:
         with:
           name: vault-windows-amd64
           path: build/vault-windows-amd64.exe
+
+      - name: Upload coverage reports for the Codecov job
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-reports
+          path: |
+            coverage.txt
+            web/coverage/lcov.info
+            web/test-report.junit.xml
+          if-no-files-found: ignore
+          retention-days: 1
+
+  coverage-upload:
+    # Holds the Codecov OIDC permission away from the job that runs repository
+    # code, npm scripts and third-party tools. Only pinned actions run here.
+    name: Upload Coverage
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the repository for Codecov path mapping
+      id-token: write # Codecov OIDC upload
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download coverage reports
+        # A pattern finds nothing, rather than failing, when tests stopped early.
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-reports
+          merge-multiple: true
+
+      - name: Upload Go coverage to Codecov
+        if: ${{ hashFiles('coverage.txt') != '' }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          slug: ${{ github.repository }}
+          files: ./coverage.txt
+          flags: backend
+          disable_search: true
+          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
+          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
+
+      - name: Upload web coverage to Codecov
+        if: ${{ hashFiles('web/coverage/lcov.info') != '' }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          slug: ${{ github.repository }}
+          files: ./web/coverage/lcov.info
+          flags: frontend
+          disable_search: true
+          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
+          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
+
+      - name: Upload test results to Codecov
+        if: ${{ hashFiles('web/test-report.junit.xml') != '' }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          slug: ${{ github.repository }}
+          files: ./web/test-report.junit.xml
+          report_type: test_results
+          disable_search: true
+          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
+          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
 
   format:
     name: Format

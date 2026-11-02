@@ -15,11 +15,64 @@ permissions:
   contents: read # jobs request only what they need
 
 jobs:
+  validate-ref:
+    # Runs nothing from the tag: only commits already reviewed into main may be
+    # built and released.
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read tags and main
+    outputs:
+      tag: ${{ steps.ref.outputs.tag }}
+      sha: ${{ steps.ref.outputs.sha }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve tag and require it on main
+        id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG=${GITHUB_REF#refs/tags/}
+          fi
+
+          if ! [[ "$TAG" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]+(-?(alpha|beta|rc)[0-9.]*)?$ ]]; then
+            echo "ERROR: '$TAG' is not a release tag such as v2026.03.00"
+            exit 1
+          fi
+
+          if ! SHA=$(git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}"); then
+            echo "ERROR: tag $TAG does not exist"
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "ERROR: tag $TAG ($SHA) is not on main"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG at $SHA"
+
   release:
     name: Release
+    needs: validate-ref
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release and tag
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha256: ${{ steps.checksum.outputs.sha256 }}
     env:
       CGO_ENABLED: '0'
 
@@ -27,7 +80,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.validate-ref.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -48,16 +101,9 @@ jobs:
       - name: Extract version from tag
         id: version
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_TAG: ${{ github.event.inputs.tag }}
+          TAG: ${{ needs.validate-ref.outputs.tag }}
         run: |
-          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
-            TAG="$INPUT_TAG"
-            VERSION=${TAG#v}
-          else
-            TAG=${GITHUB_REF#refs/tags/}
-            VERSION=${TAG#v}
-          fi
+          VERSION=${TAG#v}
 
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -223,70 +269,75 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --notes-file build/RELEASE_NOTES.md
 
-      - name: Update PLG file for txz and SHA256
+      - name: Keep release notes for the PLG job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: build/RELEASE_NOTES_BASE.md
+          retention-days: 1
+
+      - name: Release Summary
         env:
-          CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
           VERSION_VERSION: ${{ steps.version.outputs.version }}
+          CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
         run: |
+          echo "## v${VERSION_VERSION} Released!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** vault-${VERSION_VERSION}.txz" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub-hosted SHA256:** ${CHECKSUM_SHA256}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION_VERSION}" >> $GITHUB_STEP_SUMMARY
+
+  publish-plg:
+    # main requires pull requests; the Unraid plugin manager and Community Applications read
+    # the .plg from main, so its new hash is pushed with the Tinkerologie-Release app, the
+    # only actor the ruleset lets bypass that rule (GITHUB_TOKEN cannot be a bypass actor).
+    # That token must never share a job with code from the release ref, which could outlive
+    # its own step: everything here comes from main, and the release job supplies only data.
+    name: Publish PLG to main
+    needs: release
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read # check out main; the app token does the push
+    env:
+      CGO_ENABLED: '0'
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build release notes helper from main
+        run: go build -o "$RUNNER_TEMP/plgnotes" ./cmd/plgnotes
+
+      - name: Download release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes
+
+      - name: Update and commit PLG
+        id: plg
+        env:
+          CHECKSUM_SHA256: ${{ needs.release.outputs.sha256 }}
+          VERSION_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          if ! [[ "$CHECKSUM_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "ERROR: release job returned an invalid SHA256"
+            exit 1
+          fi
+
           SHA256="${CHECKSUM_SHA256}"
           export SHA256
 
-          echo "Updating PLG file with SHA256: $SHA256"
-          python3 - <<'PY'
-          from pathlib import Path
-          import os, re
-          path = Path("plugin/vault.plg")
-          text = path.read_text()
-          sha = os.environ["SHA256"]
-          # Each regex captures the original leading whitespace (\1) and
-          # reuses it in the replacement so we never alter file indentation.
-          text = re.sub(r'(?m)^([ \t]*)<!ENTITY bundle\s+".*?">',
-                        r'\1<!ENTITY bundle    "&name;-&version;.txz">', text)
-          text = re.sub(r'(?m)^([ \t]*)<!ENTITY (?:md5|sha256)\s+".*?">',
-                        r'\1<!ENTITY sha256      "' + sha + r'">', text)
-          text = re.sub(r'(?m)^([ \t]*)<(?:MD5|SHA256)>&(?:md5|sha256);</(?:MD5|SHA256)>',
-                        r'\1<SHA256>&sha256;</SHA256>', text)
-          path.write_text(text)
-          PY
-
-          build/plgnotes update-plg --manifest plugin/vault.plg \
-            --notes build/RELEASE_NOTES_BASE.md --version "$VERSION_VERSION"
-
-          echo "Updated PLG file"
-          grep "ENTITY bundle" plugin/vault.plg
-          grep "ENTITY sha256" plugin/vault.plg
-
-      # main requires pull requests; the Unraid plugin manager and Community Applications read
-      # the .plg from main, so its new hash is pushed with the Tinkerologie-Release app, the
-      # only actor the ruleset lets bypass that rule (GITHUB_TOKEN cannot be a bypass actor).
-      - name: Mint Tinkerologie-Release token
-        id: release-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.TINKER_RELEASE_CLIENT_ID }}
-          private-key: ${{ secrets.TINKER_RELEASE_PRIVATE_KEY }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write # push the PLG hash commit to main
-
-      - name: Commit and push PLG updates
-        env:
-          CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
-          VERSION_VERSION: ${{ steps.version.outputs.version }}
-          PLG_PUSH_TOKEN: ${{ steps.release-token.outputs.token }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          if git diff --quiet plugin/vault.plg; then
-            echo "No changes to PLG file"
-          else
-            git fetch origin main
-            git restore plugin/vault.plg
-            git checkout main
-            git pull origin main
-
-            SHA256="${CHECKSUM_SHA256}"
-            export SHA256
           python3 <<'PY'
           from pathlib import Path
           import os, re
@@ -304,26 +355,39 @@ jobs:
           path.write_text(text)
           PY
 
-            build/plgnotes update-plg --manifest plugin/vault.plg \
-              --notes build/RELEASE_NOTES_BASE.md --version "$VERSION_VERSION"
+          "$RUNNER_TEMP/plgnotes" update-plg --manifest plugin/vault.plg \
+            --notes "$RUNNER_TEMP/release-notes/RELEASE_NOTES_BASE.md" --version "$VERSION_VERSION"
 
-            if git diff --quiet plugin/vault.plg; then
-              echo "PLG checksum and release notes already published"
-            else
-              git add plugin/vault.plg
-              git commit -m "chore: update PLG SHA256 and release notes for v${VERSION_VERSION} [skip ci]"
-              git push "https://x-access-token:${PLG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
-              echo "Committed and pushed PLG updates"
-            fi
+          grep "ENTITY bundle" plugin/vault.plg
+          grep "ENTITY sha256" plugin/vault.plg
+
+          if git diff --quiet plugin/vault.plg; then
+            echo "PLG checksum and release notes already published"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add plugin/vault.plg
+            git commit -m "chore: update PLG SHA256 and release notes for v${VERSION_VERSION} [skip ci]"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Release Summary
+      - name: Mint Tinkerologie-Release token
+        if: steps.plg.outputs.changed == 'true'
+        id: release-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.TINKER_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.TINKER_RELEASE_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write # push the PLG hash commit to main
+
+      - name: Push PLG updates
+        if: steps.plg.outputs.changed == 'true'
         env:
-          VERSION_VERSION: ${{ steps.version.outputs.version }}
-          CHECKSUM_SHA256: ${{ steps.checksum.outputs.sha256 }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+        # The credential helper reads GH_TOKEN, so the token never enters a URL or argv.
         run: |
-          echo "## v${VERSION_VERSION} Released!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Package:** vault-${VERSION_VERSION}.txz" >> $GITHUB_STEP_SUMMARY
-          echo "**GitHub-hosted SHA256:** ${CHECKSUM_SHA256}" >> $GITHUB_STEP_SUMMARY
-          echo "**URL:** https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION_VERSION}" >> $GITHUB_STEP_SUMMARY
+          gh auth setup-git
+          git push origin main
+          echo "Committed and pushed PLG updates"

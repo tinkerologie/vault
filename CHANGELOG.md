@@ -37,6 +37,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Security
 
 - **Go 1.27.3 and updated dnssd dependencies (#536, #540, #541, #546):** Vault now builds with Go 1.27.3. The bundled mDNS library no longer declares an end-of-life Go version or vulnerable `golang.org/x/net`, and Dependabot and `make security-check` now cover it.
+- **Release publishing is isolated from release code (#537):** Releases now run only from tags on `main`. The token that updates the plugin manifest on `main` no longer shares a job with code from the tag, and no longer appears in a git URL.
+- **CI tool and token scope (#537):** CI now uses a fixed golangci-lint version, and the Codecov identity token is held by a job that runs no repository code.
+- **Backup passphrases stay out of URLs (#560):** Scanning a destination for encrypted backups now sends the passphrase only in the request body, and `POST /api/v1/storage/{id}/scan` returns 400 if `passphrase` is in the query string. If an earlier version was used behind a reverse proxy, check its access logs for `/scan?...passphrase=`, purge those entries and rotate any passphrase found.
 - **Storage health errors are redacted:** Credentials echoed in a storage health-check error are now removed before the message is saved, broadcast or logged.
 
 ## [v2026.10.04] - 2026-10-27

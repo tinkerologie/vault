@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1268,11 +1269,39 @@ func TestStorageScan_WithPassphrase(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
 
-	// Query string with passphrase
-	w2 := httptest.NewRecorder()
-	h.Scan(w2, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/scan?passphrase=test-pass", idStr, nil))
-	if w2.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", w2.Code, w2.Body.String())
+}
+
+// A passphrase in the URL ends up in proxy logs and browser history, so it is
+// refused outright, whether or not the body also carries one (#560).
+func TestStorageScan_RejectsPassphraseInQuery(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	for name, tc := range map[string]struct {
+		query string
+		body  []byte
+	}{
+		"query only":     {query: "?passphrase=url-secret"},
+		"query empty":    {query: "?passphrase="},
+		"query and path": {query: "?path=sub&passphrase=url-secret"},
+		"query and body": {query: "?passphrase=url-secret", body: []byte(`{"passphrase":"body-secret"}`)},
+	} {
+		w := httptest.NewRecorder()
+		h.Scan(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/scan"+tc.query, idStr, tc.body))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400; body: %s", name, w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), "secret") {
+			t.Errorf("%s: response echoes the passphrase: %s", name, w.Body.String())
+		}
+	}
+
+	// The non-secret path parameter still works on its own.
+	w := httptest.NewRecorder()
+	h.Scan(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/scan?path=sub", idStr, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("path query: status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
 }
 

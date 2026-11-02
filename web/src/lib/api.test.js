@@ -109,6 +109,19 @@ describe('storage scan and import', () => {
     expect(fetch.mock.calls[0][1].body).toBeUndefined()
   })
 
+  it('keeps the passphrase out of the URL when no path is given', async () => {
+    const fetch = vi.fn(async () => new Response('{"backups":[]}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.scanStorage(42, '', 'secret123')
+
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/scan')
+    expect(JSON.parse(fetch.mock.calls[0][1].body).passphrase).toBe('secret123')
+  })
+
   it('scans storage with custom path and passphrase', async () => {
     const fetch = vi.fn(async () => new Response('{"backups":[]}', {
       status: 200,
@@ -119,7 +132,8 @@ describe('storage scan and import', () => {
     await api.scanStorage(42, 'backups/sub', 'secret123')
 
     expect(fetch).toHaveBeenCalledOnce()
-    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/scan?path=backups%2Fsub&passphrase=secret123')
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/scan?path=backups%2Fsub')
+    expect(fetch.mock.calls[0][0]).not.toContain('secret123')
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
       path: 'backups/sub',
       passphrase: 'secret123',
