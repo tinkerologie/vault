@@ -560,7 +560,10 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		Passphrase string `json:"passphrase"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			respondError(w, http.StatusBadRequest, "invalid JSON request body")
+			return
+		}
 	}
 	path := req.Path
 	if path == "" {

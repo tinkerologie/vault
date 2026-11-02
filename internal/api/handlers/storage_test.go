@@ -1305,6 +1305,23 @@ func TestStorageScan_RejectsPassphraseInQuery(t *testing.T) {
 	}
 }
 
+func TestStorageScan_RejectsMalformedBody(t *testing.T) {
+	t.Parallel()
+	h, destID := newDedupStorageHandler(t, false)
+	idStr := strconv.FormatInt(destID, 10)
+
+	// A body that cannot be decoded must not silently drop the passphrase and
+	// scan as if none was supplied. The error must not echo the body.
+	w := httptest.NewRecorder()
+	h.Scan(w, reqWithID(http.MethodPost, "/api/v1/storage/"+idStr+"/scan", idStr, []byte(`{"passphrase":"body-secret"`)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "secret") {
+		t.Errorf("response echoes the passphrase: %s", w.Body.String())
+	}
+}
+
 func TestStorageScan_NotFound(t *testing.T) {
 	t.Parallel()
 	h, _ := newDedupStorageHandler(t, false)
