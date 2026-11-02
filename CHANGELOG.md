@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **False "Backups healthy" (#527):** The Dashboard now treats skipped and cancelled runs, unhealthy storage, jobs overdue for a backup (including disabled ones) and a health score below 80 as needing attention, with a link for each, across every job rather than a ten-job sample. The health tile uses the same verdict, so "Backups mostly healthy" now reads "Needs attention". `/health/summary` adds `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs`; skipped and cancelled runs lower the score, and a restore no longer counts as a last successful backup.
 - **Accessible dialogs (#528):** Every dialog, the command palette and the file browsers now share one native `<dialog>`. Focus moves in on open, stays inside, and returns to the opener on close, and Escape closes only the topmost dialog. Restore, Recovery and New Job wizard steps move focus to the step heading. Toasts and tooltips stay usable above a dialog.
 - **Retro and 1-Bit contrast (#532):** Text in both themes now meets WCAG AA in light and dark on every page, including replica mode and running restores, checked by the axe audit in the browser tests. Read-only replica settings are no longer dimmed below AA.
 - **Contrast (#524):** Default light and dark text, navigation, status colours and primary buttons now meet WCAG 2.2 AA on every page, checked by an axe audit in the browser tests. Toasts gain a status icon and an opaque background. Retro palettes are unchanged.

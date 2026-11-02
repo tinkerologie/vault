@@ -21,7 +21,7 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 | Method | Endpoint             | Description                                                             |
 | ------ | -------------------- | ----------------------------------------------------------------------- |
 | GET    | `/health`            | Basic health, version, and mode                                         |
-| GET    | `/health/summary`    | Aggregated dashboard health metrics                                     |
+| GET    | `/health/summary`    | Dashboard health metrics across every job, including `stale_jobs`       |
 | GET    | `/ws`                | WebSocket event stream                                                  |
 | GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress) |
 | GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal) |

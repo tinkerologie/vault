@@ -17,7 +17,7 @@
   import { getAnomalyEnabled } from '../lib/settings.svelte.js'
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
   import { createDashboardLayout, SPAN_OPTIONS } from '../lib/dashboardLayout.svelte.js'
-  import { attentionCaption, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete } from '../lib/backupStatus.js'
+  import { attentionCaption, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from '../lib/backupStatus.js'
 
   let loading = $state(true)
   let error = $state('')
@@ -392,14 +392,16 @@
     return { pct: Math.round((ok / runs.length) * 100), ok, total: runs.length }
   })
 
-  // recentRuns only samples ten jobs, so a failure the server counted but this
-  // window missed must still count: no panel may contradict the health tile.
-  const runOutcomes = $derived(countRunOutcomes(recentRuns))
-  const recentFailures = $derived(Math.max(runOutcomes.failed, healthSummary?.recent_failed ?? 0))
+  // recentRuns only samples ten jobs, so what the server counted across every job
+  // must still count: no panel may contradict the health tile.
+  const runOutcomes = $derived(mergeRunCounts(countRunOutcomes(recentRuns), healthSummary))
+  const recentFailures = $derived(runOutcomes.failures)
+  const unhealthyDests = $derived(unhealthyStorage(storage))
   // Without the health summary nothing is known to be protected, so every item
   // would look unprotected. That's unknown, not a count of problems.
   const knownUnprotected = $derived(healthSummary ? unprotectedCount : 0)
-  const attentionCount = $derived(recentFailures + knownUnprotected)
+  const otherProblems = $derived(runOutcomes.warnings + runOutcomes.skipped + runOutcomes.cancelled + unhealthyDests.length + (healthSummary?.stale_jobs?.length ?? 0))
+  const attentionCount = $derived(recentFailures + knownUnprotected + otherProblems)
   // A replica has no discovered items to count, so it takes the server's figures.
   const statusCounts = $derived(isReplicaMode()
     ? { pending: pendingItems.size, protectedCount: healthSummary?.protected_items ?? 0, total: healthSummary?.total_items ?? 0 }
@@ -413,6 +415,9 @@
     hasJobs: jobs.length > 0,
     failures: recentFailures,
     warnings: runOutcomes.warnings,
+    skipped: runOutcomes.skipped,
+    cancelled: runOutcomes.cancelled,
+    unhealthy: unhealthyDests,
     unprotected: unprotectedCount,
     ...statusCounts,
     summary: healthSummary,
@@ -634,7 +639,7 @@
   })
 
   const healthScore = $derived(healthSummary?.health_score ?? 0)
-  const healthCounts = $derived({ failures: recentFailures, unprotected: knownUnprotected, pending: statusCounts.pending, warnings: runOutcomes.warnings })
+  const healthCounts = $derived({ failures: recentFailures, unprotected: knownUnprotected, pending: statusCounts.pending, warnings: runOutcomes.warnings, skipped: runOutcomes.skipped, cancelled: runOutcomes.cancelled, unhealthy: unhealthyDests.length, incomplete: statusIncomplete })
   const HEALTH_COLORS = { success: 'var(--color-success)', warning: 'var(--color-warning)', danger: 'var(--color-danger)', unknown: 'var(--color-surface-4)' }
   const healthColor = $derived(HEALTH_COLORS[healthTone(healthSummary, healthCounts)])
   const healthSummaryText = $derived(healthText(healthSummary, healthCounts))
@@ -1161,7 +1166,7 @@
   <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.attention.icon, 'Needs attention')}
     <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
-    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCaption({ failures: recentFailures, unprotected: knownUnprotected, fullyProtected, known: !!healthSummary })}</p>
+    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCaption({ failures: recentFailures, unprotected: knownUnprotected, other: otherProblems, fullyProtected, known: !!healthSummary })}</p>
   </a>
 {/snippet}
 

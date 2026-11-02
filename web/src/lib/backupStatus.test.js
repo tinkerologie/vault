@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { announcementKey, attentionCaption, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete } from './backupStatus.js'
+import { announcementKey, attentionCaption, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from './backupStatus.js'
 
 // The Dashboard's single verdict (#527).
 const SUMMARY = { health_score: 100, protected_items: 7, recent_success: 5, recent_failed: 0, last_success_at: '2026-10-06T02:15:00Z' }
@@ -150,11 +150,11 @@ describe('announcementKey', () => {
 describe('countRunOutcomes', () => {
   it('sorts runs into failed and warnings', () => {
     const runs = ['failed', 'error', 'partial', 'completed', 'success', 'running', 'cancelled'].map((status) => ({ status }))
-    expect(countRunOutcomes(runs)).toEqual({ failed: 2, warnings: 1 })
+    expect(countRunOutcomes(runs)).toEqual({ failed: 2, warnings: 1, skipped: 0, cancelled: 1 })
   })
 
   it('accepts nothing', () => {
-    expect(countRunOutcomes(null)).toEqual({ failed: 0, warnings: 0 })
+    expect(countRunOutcomes(null)).toEqual({ failed: 0, warnings: 0, skipped: 0, cancelled: 0 })
   })
 })
 
@@ -201,8 +201,8 @@ describe('healthText', () => {
     ['warnings', SUMMARY, { warnings: 1 }, 'Backups OK · 1 with warnings'],
     ['pending', SUMMARY, { pending: 2 }, 'Backups OK · 2 pending'],
     ['every qualifier', SUMMARY, { unprotected: 1, warnings: 2, pending: 3 }, 'Backups OK · 1 unprotected · 2 with warnings · 3 pending'],
-    ['a middling score', { ...SUMMARY, health_score: 60 }, {}, 'Backups mostly healthy'],
-    ['a middling score with unprotected items', { ...SUMMARY, health_score: 60 }, { unprotected: 2 }, 'Backups mostly healthy · 2 unprotected'],
+    ['a middling score', { ...SUMMARY, health_score: 60 }, {}, 'Needs attention'],
+    ['a middling score with unprotected items', { ...SUMMARY, health_score: 60 }, { unprotected: 2 }, 'Needs attention · 2 unprotected'],
     ['a low score', { ...SUMMARY, health_score: 10 }, {}, 'Needs attention'],
     ['a missing score', { recent_success: 1 }, {}, 'Needs attention'],
   ])('%s', (_name, summary, counts, expected) => {
@@ -235,6 +235,126 @@ describe('attentionCaption', () => {
     [{ fullyProtected: false }, 'No failures'],
     [{ known: false }, 'No failures · protection unknown'],
     [{}, 'No failures'],
+  ])('%j', (input, expected) => {
+    expect(attentionCaption(input)).toBe(expected)
+  })
+})
+
+describe('false "Backups healthy" (#527)', () => {
+  const STALE = { id: 3, name: 'Photos', enabled: false, last_success_at: '2025-03-12T02:00:00Z' }
+
+  it.each([
+    ['skipped runs', { skipped: 2 }, 'warning', ['/history'], '2 runs skipped'],
+    ['cancelled runs', { cancelled: 1 }, 'warning', ['/history'], '1 run cancelled'],
+    ['one unhealthy destination', { unhealthy: ['NAS'] }, 'danger', ['/storage'], 'Storage "NAS" is unhealthy'],
+    ['several unhealthy destinations', { unhealthy: ['NAS', 'S3'] }, 'danger', ['/storage'], '2 storage destinations are unhealthy'],
+    ['a disabled job gone stale', { summary: { ...SUMMARY, stale_jobs: [STALE] } }, 'warning', ['/jobs'], 'Disabled job "Photos" last backed up 2025-03-12'],
+    ['an enabled job gone stale', { summary: { ...SUMMARY, stale_jobs: [{ ...STALE, enabled: true }] } }, 'warning', ['/jobs'], 'Job "Photos" last backed up 2025-03-12'],
+    ['several stale jobs', { summary: { ...SUMMARY, stale_jobs: [STALE, STALE] } }, 'warning', ['/jobs'], '2 jobs have no recent backup'],
+    ['a low score', { summary: { ...SUMMARY, health_score: 40 } }, 'warning', ['/history'], 'Health score 40 of 100'],
+    ['a middling score', { summary: { ...SUMMARY, health_score: 79 } }, 'warning', ['/history'], 'Health score 79 of 100'],
+  ])('%s needs attention, names the problem and links to it', (_name, input, tone, expectedHrefs, detail) => {
+    const status = deriveBackupStatus({ ...READY, ...input })
+    expect(status.state).toBe('attention')
+    expect(status.tone).toBe(tone)
+    expect(hrefs(status)).toEqual(expectedHrefs)
+    expect(status.detail).toBe(detail)
+  })
+
+  it('reproduces the review: skipped and cancelled runs, score 40, last success in 2025', () => {
+    const summary = { ...SUMMARY, health_score: 40, last_success_at: '2025-03-12T02:00:00Z', recent_skipped: 5, recent_cancelled: 1, stale_jobs: [STALE] }
+    const counts = mergeRunCounts(countRunOutcomes([]), summary)
+    const status = deriveBackupStatus({ ...READY, ...counts, summary })
+    expect(status.state).toBe('attention')
+    expect(status.detail).toContain('5 runs skipped')
+    expect(status.detail).toContain('1 run cancelled')
+    expect(status.detail).toContain('last backed up 2025-03-12')
+    expect(status.detail).toContain('Health score 40')
+    expect(healthText(summary, counts)).toMatch(/^Needs attention/)
+  })
+
+  it('a replica links stale jobs to History, since it has no Jobs page', () => {
+    const status = deriveBackupStatus({ ...READY, replica: true, summary: { ...SUMMARY, stale_jobs: [STALE] } })
+    expect(hrefs(status)).toEqual(['/history'])
+  })
+
+  it('a score with no runs behind it is not a low score', () => {
+    const summary = { ...SUMMARY, health_score: 40, recent_success: 0, last_success_at: null }
+    expect(deriveBackupStatus({ ...READY, summary }).state).toBe('healthy')
+    expect(healthText(summary)).toBe('Backups OK · no recent runs')
+    expect(healthTone(summary)).toBe('warning')
+  })
+
+  describe('mergeRunCounts', () => {
+    const NONE = { failed: 0, warnings: 0, skipped: 0, cancelled: 0 }
+
+    it('takes what only the server saw, such as an eleventh job', () => {
+      const merged = mergeRunCounts(NONE, { recent_failed: 1, recent_partial: 2, recent_skipped: 3, recent_cancelled: 4 })
+      expect(merged).toEqual({ failures: 1, warnings: 2, skipped: 3, cancelled: 4 })
+    })
+
+    it('keeps what only the sample saw, and copes with no summary', () => {
+      const sample = { failed: 1, warnings: 2, skipped: 3, cancelled: 4 }
+      expect(mergeRunCounts(sample, null)).toEqual({ failures: 1, warnings: 2, skipped: 3, cancelled: 4 })
+    })
+  })
+
+  describe('countRunOutcomes', () => {
+    it('counts skipped and cancelled backups', () => {
+      const runs = [{ status: 'skipped' }, { status: 'skipped', run_type: 'backup' }, { status: 'cancelled' }]
+      expect(countRunOutcomes(runs)).toMatchObject({ skipped: 2, cancelled: 1 })
+    })
+
+    it('ignores a cancelled or partial restore, but not a failed one', () => {
+      const runs = ['cancelled', 'partial', 'skipped', 'failed'].map((status) => ({ status, run_type: 'restore' }))
+      expect(countRunOutcomes(runs)).toEqual({ failed: 1, warnings: 0, skipped: 0, cancelled: 0 })
+    })
+  })
+
+  describe('unhealthyStorage', () => {
+    it('names destinations with a failed check or an open breaker', () => {
+      const storage = [
+        { name: 'ok', last_health_check_status: 'ok', breaker_state: 'closed' },
+        { name: 'failed', last_health_check_status: 'failed' },
+        { name: 'open', last_health_check_status: 'ok', breaker_state: 'open' },
+        { name: 'unchecked', last_health_check_status: '' },
+      ]
+      expect(unhealthyStorage(storage)).toEqual(['failed', 'open'])
+    })
+
+    it('accepts nothing', () => {
+      expect(unhealthyStorage(null)).toEqual([])
+    })
+  })
+
+  describe('the banner and the health tile never conflict', () => {
+    const SUMMARIES = [
+      SUMMARY,
+      { ...SUMMARY, health_score: 79 },
+      { ...SUMMARY, health_score: 40 },
+      { ...SUMMARY, health_score: 0, recent_success: 0, last_success_at: null },
+      { ...SUMMARY, stale_jobs: [STALE] },
+      { ...FRESH, recent_success: 1 },
+      FRESH,
+    ]
+    const COUNTS = [{}, { failures: 1 }, { warnings: 1 }, { skipped: 1 }, { cancelled: 1 }, { unhealthy: ['NAS'] }, { incomplete: true }, { unprotected: 1 }, { pending: 1 }]
+
+    const cases = SUMMARIES.flatMap((summary) => COUNTS.map((counts) => [summary, counts]))
+
+    it.each(cases)('%j with %j', (summary, counts) => {
+      const status = deriveBackupStatus({ ...READY, ...counts, summary })
+      const text = healthText(summary, { ...counts, unhealthy: counts.unhealthy?.length ?? 0 })
+      if (status.state === 'healthy') expect(text).not.toMatch(/needs attention|failure|skipped|cancelled|overdue|unhealthy/i)
+      if (text === 'All backups healthy') expect(status.state).toBe('healthy')
+      if (/^Needs attention/.test(text)) expect(status.state).toBe('attention')
+    })
+  })
+})
+
+describe('attentionCaption with other issues', () => {
+  it.each([
+    [{ other: 2 }, 'No failures · 2 other issues'],
+    [{ failures: 1, other: 1 }, '1 recent failure · 0 unprotected · 1 other issue'],
   ])('%j', (input, expected) => {
     expect(attentionCaption(input)).toBe(expected)
   })

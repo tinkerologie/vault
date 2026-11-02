@@ -1,5 +1,5 @@
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
-import { setupVaultMockApi, type VaultMockOptions } from './mocks/vault-api';
+import { createInitialMockJobs, createInitialMockStorage, setupVaultMockApi, type VaultMockOptions } from './mocks/vault-api';
 import { ALL_ITEM_KEYS, BANNER_STATES, HEALTHY, run, summary } from './helpers/backup-status';
 import { seedTheme } from './helpers/contrast';
 
@@ -189,6 +189,79 @@ test.describe('banner states', () => {
     await expect(title(page)).toHaveText('No backup data on this replica yet');
     await banner(page).getByRole('link', { name: 'Open Replication' }).click();
     await expect(h1(page, 'Replication')).toBeVisible();
+  });
+});
+
+test.describe('states that used to read as healthy', () => {
+  const STALE = { id: 1, name: 'Docker & Appdata', enabled: false, last_success_at: '2025-03-12T02:15:00Z' };
+  const REVIEW_SUMMARY = summary(ALL_ITEM_KEYS, {
+    health_score: 40, recent_success: 0, recent_skipped: 5, recent_cancelled: 1, success_rate: 0, last_success_at: '2025-03-12T02:15:00Z', stale_jobs: [STALE],
+  });
+  const brokenStorage = (fields: Record<string, unknown>) => createInitialMockStorage().map((dest, i) => (i === 0 ? { ...dest, ...fields } : dest));
+
+  const CASES: { name: string; options: VaultMockOptions; detail: string; link: string; heading: string; tile: string }[] = [
+    { name: 'skipped run', options: { healthSummary: summary(ALL_ITEM_KEYS), historyRuns: [run(1, 'skipped')] }, detail: '1 run skipped', link: 'Review skipped runs', heading: 'Backup & Restore History', tile: 'Needs attention · 1 skipped' },
+    { name: 'cancelled run', options: { healthSummary: summary(ALL_ITEM_KEYS), historyRuns: [run(1, 'cancelled')] }, detail: '1 run cancelled', link: 'Review cancelled runs', heading: 'Backup & Restore History', tile: 'Needs attention · 1 cancelled' },
+    { name: 'failed storage health check', options: { ...HEALTHY, storage: brokenStorage({ name: 'Offline NAS', last_health_check_status: 'failed', last_health_check_at: '2026-10-06T02:00:00Z' }) as never }, detail: 'Storage "Offline NAS" is unhealthy', link: 'Check storage', heading: 'Storage Destinations', tile: 'Needs attention · storage unhealthy' },
+    { name: 'open breaker', options: { ...HEALTHY, storage: brokenStorage({ name: 'Offline NAS', breaker_state: 'open' }) as never }, detail: 'Storage "Offline NAS" is unhealthy', link: 'Check storage', heading: 'Storage Destinations', tile: 'Needs attention · storage unhealthy' },
+    { name: 'disabled job gone stale', options: { healthSummary: summary(ALL_ITEM_KEYS, { stale_jobs: [STALE] }), historyRuns: [run(1, 'completed')] }, detail: 'Disabled job "Docker & Appdata" last backed up 2025-03-12', link: 'Review jobs', heading: 'Backup Jobs', tile: 'Needs attention · 1 overdue' },
+    { name: 'low score', options: { healthSummary: summary(ALL_ITEM_KEYS, { health_score: 40 }), historyRuns: [run(1, 'completed')] }, detail: 'Health score 40 of 100', link: 'View history', heading: 'Backup & Restore History', tile: 'Needs attention' },
+  ];
+
+  for (const { name, options, detail, link, heading, tile } of CASES) {
+    test(`${name}: names the problem, agrees with the tile, and links to it`, async ({ page }) => {
+      await open(page, options);
+      await expect(title(page)).toHaveText('Needs attention');
+      await expect(banner(page)).toContainText(detail);
+      await expect(healthTile(page)).toContainText(tile);
+      await expect(healthTile(page)).not.toContainText('All backups healthy');
+      await banner(page).getByRole('link', { name: link }).click();
+      await expect(h1(page, heading)).toBeVisible();
+    });
+  }
+
+  test('the review scenario: skipped and cancelled runs, score 40, last success in 2025', async ({ page }) => {
+    await open(page, { healthSummary: REVIEW_SUMMARY, historyRuns: [run(1, 'skipped'), run(2, 'cancelled')] });
+    await expect(title(page)).toHaveText('Needs attention');
+    for (const text of ['5 runs skipped', '1 run cancelled', 'last backed up 2025-03-12', 'Health score 40 of 100']) {
+      await expect(banner(page)).toContainText(text);
+    }
+    await expect(healthTile(page)).toContainText(/Health score\s+40\s+Needs attention/);
+    await expect(healthTile(page)).not.toContainText(/healthy/i);
+  });
+
+  test('a partial run on an eleventh job, past the sample, still needs attention', async ({ page }) => {
+    const base = createInitialMockJobs()[0];
+    const jobs = Array.from({ length: 11 }, (_, i) => ({ ...base, id: i + 1, name: `Job ${i + 1}` }));
+    const eleventh = { ...run(11, 'partial'), job_id: 11 };
+    await open(page, { jobs, healthSummary: summary(ALL_ITEM_KEYS, { recent_partial: 1 }), historyRuns: [run(1, 'completed'), eleventh] });
+    await expect(title(page)).toHaveText('Needs attention');
+    await expect(banner(page)).toContainText('1 run finished with warnings');
+    await expect(healthTile(page)).toContainText('Backups OK · 1 with warnings');
+  });
+
+  test('failed discovery makes the tile qualify itself too, not only the banner', async ({ page }) => {
+    await setupVaultMockApi(page, HEALTHY);
+    await page.route('**/api/v1/vms', (route) => route.fulfill(json({ error: 'nope' }, 500)));
+    await page.goto('/#/');
+    await expect(title(page)).toHaveText('Backup health unavailable');
+    await expect(healthTile(page)).toContainText('Backups OK · some data unavailable');
+  });
+
+  test('a Needs attention tile counts them rather than reading 0', async ({ page }) => {
+    await page.addInitScript((key) => localStorage.setItem(key, JSON.stringify(['attention'])), LAYOUT_KEY);
+    await open(page, { healthSummary: summary(ALL_ITEM_KEYS), historyRuns: [run(1, 'skipped')] });
+    const tile = page.getByRole('link', { name: /^Needs attention/ });
+    await expect(tile).toContainText('1');
+    await expect(tile).toContainText('No failures · 1 other issue');
+  });
+
+  test('fits at 375 px with every problem listed', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await open(page, { healthSummary: REVIEW_SUMMARY, historyRuns: [run(1, 'skipped'), run(2, 'cancelled')] });
+    await expect(title(page)).toHaveText('Needs attention');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(await healthTile(page).evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   });
 });
 

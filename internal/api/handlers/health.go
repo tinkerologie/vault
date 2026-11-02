@@ -6,8 +6,44 @@ import (
 	"sort"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"github.com/tinkerologie/vault/internal/db"
 )
+
+// defaultStaleAfter is how long a job with no cadence to judge it by (disabled,
+// manual-only, or a schedule cron can't parse such as "L") may go without a
+// successful backup before the dashboard flags it.
+const defaultStaleAfter = 35 * 24 * time.Hour
+
+// staleJob names a job whose newest backup is older than its cadence allows.
+type staleJob struct {
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	Enabled       bool      `json:"enabled"`
+	LastSuccessAt time.Time `json:"last_success_at"`
+}
+
+// jobStaleAfter allows two missed runs plus a day, so one late or retried run
+// doesn't raise an alarm. A disabled schedule never fires, so its cadence says
+// nothing about how old the job's backups may get.
+func jobStaleAfter(job db.Job, now time.Time) time.Duration {
+	if !job.Enabled || job.Schedule == "" {
+		return defaultStaleAfter
+	}
+	schedule, err := cron.ParseStandard(job.Schedule)
+	if err != nil {
+		return defaultStaleAfter
+	}
+	next := schedule.Next(now)
+	return 2*schedule.Next(next).Sub(next) + 24*time.Hour
+}
+
+// isBackupRun reports whether a run is a backup, not a restore. Older rows have
+// no run type, and those were all backups.
+func isBackupRun(run db.JobRun) bool {
+	return run.RunType == "" || run.RunType == "backup"
+}
 
 // HealthHandler serves aggregated health metrics for the dashboard.
 type HealthHandler struct {
@@ -27,8 +63,10 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var recentSuccess, recentFailed int
+	var recentSuccess, recentFailed, recentPartial, recentSkipped, recentCancelled int
 	var lastSuccessTime *time.Time
+	staleJobs := []staleJob{}
+	now := time.Now()
 
 	// Counts are per distinct item (type:name), not per job-item pair. The same
 	// container or VM is frequently covered by several jobs; counting it once
@@ -83,6 +121,27 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// A run of skips or failures can push the last success out of any recent
+		// window, so this isn't read from the runs below. With run history purged,
+		// the newest restore point is the only record left of a backup.
+		lastSuccess, lsErr := h.db.GetLastSuccessfulBackupAt(job.ID)
+		if lsErr != nil {
+			log.Printf("health summary: finding last success for job %d: %v", job.ID, lsErr)
+		}
+		if lastSuccess != nil && (lastSuccessTime == nil || lastSuccess.After(*lastSuccessTime)) {
+			lastSuccessTime = lastSuccess
+		}
+		newestBackup := lastSuccess
+		for i := range rps {
+			if newestBackup == nil || rps[i].CreatedAt.After(*newestBackup) {
+				newestBackup = &rps[i].CreatedAt
+			}
+		}
+		// A replicated job runs on its source, so its age here says nothing.
+		if job.SourceID == 0 && newestBackup != nil && now.Sub(*newestBackup) > jobStaleAfter(job, now) {
+			staleJobs = append(staleJobs, staleJob{ID: job.ID, Name: job.Name, Enabled: job.Enabled, LastSuccessAt: *newestBackup})
+		}
+
 		runs, err := h.db.GetJobRuns(job.ID, 10)
 		if err != nil {
 			continue
@@ -91,11 +150,19 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			switch run.Status {
 			case "success", "completed":
 				recentSuccess++
-				if run.CompletedAt != nil && (lastSuccessTime == nil || run.CompletedAt.After(*lastSuccessTime)) {
-					lastSuccessTime = run.CompletedAt
-				}
 			case "failed", "error":
 				recentFailed++
+			}
+			if !isBackupRun(run) {
+				continue
+			}
+			switch run.Status {
+			case "partial":
+				recentPartial++
+			case "skipped":
+				recentSkipped++
+			case "cancelled":
+				recentCancelled++
 			}
 		}
 	}
@@ -118,7 +185,9 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	totalItems := len(allItems)
 	protectedItems := len(protectedSet)
 
-	totalRuns := recentSuccess + recentFailed
+	// A skipped or cancelled run is a backup that didn't happen, so it lowers the
+	// success rate. A partial run isn't scored; it's reported as a warning.
+	totalRuns := recentSuccess + recentFailed + recentSkipped + recentCancelled
 	successRate := 0
 	if totalRuns > 0 {
 		successRate = (recentSuccess * 100) / totalRuns
@@ -134,16 +203,20 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	healthScore := (protectionPct*40 + successRate*60 + 50) / 100
 
 	result := map[string]any{
-		"health_score":    healthScore,
-		"total_items":     totalItems,
-		"protected_items": protectedItems,
-		"protected_keys":  protectedKeys,
-		"pending_keys":    pendingKeys,
-		"protection_pct":  protectionPct,
-		"success_rate":    successRate,
-		"recent_success":  recentSuccess,
-		"recent_failed":   recentFailed,
-		"last_success_at": lastSuccessTime,
+		"health_score":     healthScore,
+		"total_items":      totalItems,
+		"protected_items":  protectedItems,
+		"protected_keys":   protectedKeys,
+		"pending_keys":     pendingKeys,
+		"protection_pct":   protectionPct,
+		"success_rate":     successRate,
+		"recent_success":   recentSuccess,
+		"recent_failed":    recentFailed,
+		"recent_partial":   recentPartial,
+		"recent_skipped":   recentSkipped,
+		"recent_cancelled": recentCancelled,
+		"last_success_at":  lastSuccessTime,
+		"stale_jobs":       staleJobs,
 	}
 	respondJSON(w, http.StatusOK, result)
 }

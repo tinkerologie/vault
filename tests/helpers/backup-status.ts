@@ -46,6 +46,7 @@ export const BANNER_STATES: { name: string; options: VaultMockOptions; title: st
   { name: 'unprotected', options: { healthSummary: summary(ALL_ITEM_KEYS.slice(0, 4)), historyRuns: [run(1, 'completed')] }, title: 'Needs attention' },
   { name: 'failures', options: { healthSummary: summary(ALL_ITEM_KEYS, { recent_failed: 1 }), historyRuns: [run(1, 'failed')] }, title: 'Needs attention' },
   { name: 'warnings', options: { healthSummary: summary(ALL_ITEM_KEYS), historyRuns: [run(1, 'partial')] }, title: 'Needs attention' },
+  { name: 'skipped runs', options: { healthSummary: summary(ALL_ITEM_KEYS, { recent_skipped: 2, health_score: 40 }), historyRuns: [run(1, 'skipped')] }, title: 'Needs attention' },
   { name: 'first run, no storage', options: { jobs: [], storage: [], healthSummary: FRESH_SUMMARY, historyRuns: [] }, title: 'Set up your first backup' },
   { name: 'no jobs', options: { jobs: [], healthSummary: FRESH_SUMMARY, historyRuns: [] }, title: 'Create your first backup job' },
   { name: 'waiting for first backup', options: { healthSummary: FRESH_SUMMARY, historyRuns: [] }, title: 'No backups completed yet' },
