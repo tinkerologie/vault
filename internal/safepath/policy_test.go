@@ -90,6 +90,9 @@ func TestCheckSnapshotLocationFileKinds(t *testing.T) {
 	if _, err := CheckSnapshotLocation(regular); err != nil {
 		t.Errorf("regular file refused: %v", err)
 	}
+	if _, err := CheckSnapshotLocation(filepath.Join(dir, "a..b.db")); err == nil {
+		t.Error("name containing .. allowed")
+	}
 	if _, err := CheckSnapshotLocation(dir); err == nil {
 		t.Error("directory allowed")
 	}

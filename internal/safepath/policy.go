@@ -106,6 +106,11 @@ func CheckSnapshotLocation(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Same substring barrier as db.removeValidated, which every snapshot write
+	// already applies, and the form CodeQL's go/path-injection query recognises.
+	if strings.Contains(cleaned, "..") {
+		return "", fmt.Errorf("snapshot path %q must not contain \"..\"", cleaned)
+	}
 	info, err := os.Lstat(cleaned)
 	if errors.Is(err, fs.ErrNotExist) {
 		return cleaned, nil
