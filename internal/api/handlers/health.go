@@ -28,28 +28,28 @@ type staleJob struct {
 // maxScheduleGap bounds how far ahead a schedule is searched for its next run.
 const maxScheduleGap = 10 * 365 * 24 * time.Hour
 
-// jobStaleAfter allows two missed runs plus a day, so one late or retried run
-// doesn't raise an alarm. A disabled schedule never fires, so its cadence says
-// nothing about how old the job's backups may get.
-func jobStaleAfter(job db.Job, now time.Time) time.Duration {
+// jobIsStale reports whether a job's newest backup is old enough to raise an
+// alarm: two scheduled runs have since come and gone, plus a day, so one late or
+// retried run doesn't count. Walking the runs themselves keeps irregular schedules
+// such as "Mondays and Tuesdays" quiet through their long gap. A disabled schedule
+// never fires, so only age says anything about it.
+func jobIsStale(job db.Job, newest, now time.Time) bool {
 	if !job.Enabled || job.Schedule == "" {
-		return defaultStaleAfter
+		return now.Sub(newest) > defaultStaleAfter
 	}
 	next, err := scheduleStepper(job.Schedule)
 	if err != nil {
-		return defaultStaleAfter
+		return now.Sub(newest) > defaultStaleAfter
 	}
-	first, ok := next(now)
+	first, ok := next(newest)
 	if !ok {
-		return maxScheduleGap
+		return false
 	}
 	second, ok := next(first)
 	if !ok {
-		return maxScheduleGap
+		return false
 	}
-	// An irregular schedule's coming gap can be shorter than the one it's in now.
-	gap := max(second.Sub(first), first.Sub(now))
-	return 2*gap + 24*time.Hour
+	return now.After(second.Add(24 * time.Hour))
 }
 
 // scheduleStepper returns a function giving a schedule's next run after t. It
@@ -178,7 +178,7 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// A replicated job runs on its source, so its age here says nothing.
-		if job.SourceID == 0 && newestBackup != nil && now.Sub(*newestBackup) > jobStaleAfter(job, now) {
+		if job.SourceID == 0 && newestBackup != nil && jobIsStale(job, *newestBackup, now) {
 			staleJobs = append(staleJobs, staleJob{ID: job.ID, Name: job.Name, Enabled: job.Enabled, LastSuccessAt: *newestBackup})
 		}
 

@@ -552,19 +552,12 @@ func TestHealthSummary_StaleJobs(t *testing.T) {
 	}{
 		{"daily job within its grace", db.Job{Enabled: true, Schedule: "0 2 * * *"}, 2 * healthDay, false},
 		{"daily job past its grace", db.Job{Enabled: true, Schedule: "0 2 * * *"}, 4 * healthDay, true},
-		{"monthly job within its grace", db.Job{Enabled: true, Schedule: "0 2 1 * *"}, 45 * healthDay, false},
 		{"disabled job, recent backup", db.Job{Schedule: "0 2 * * *"}, 10 * healthDay, false},
 		{"disabled job, old backup", db.Job{Schedule: "0 2 * * *"}, 40 * healthDay, true},
 		{"manual job, recent backup", db.Job{Enabled: true}, 10 * healthDay, false},
 		{"manual job, old backup", db.Job{Enabled: true}, 40 * healthDay, true},
 		{"schedule cron can't parse", db.Job{Enabled: true, Schedule: "not a schedule"}, 10 * healthDay, false},
 		{"schedule cron can't parse, old backup", db.Job{Enabled: true, Schedule: "not a schedule"}, 40 * healthDay, true},
-		{"last-day monthly job within its grace", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 45 * healthDay, false},
-		{"last-day monthly job past its grace", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 70 * healthDay, true},
-		{"last-day weekday-filtered job isn't scored as weekly", db.Job{Enabled: true, Schedule: "0 2 L * 1"}, 100 * healthDay, false},
-		{"last-day job in rare months and on one weekday isn't stale early", db.Job{Enabled: true, Schedule: "0 2 L 1,7 1"}, 500 * healthDay, false},
-		{"last-day job that can never fire isn't flagged", db.Job{Enabled: true, Schedule: "0 2 L 2 0"}, 500 * healthDay, false},
-		{"last-day yearly job within its grace", db.Job{Enabled: true, Schedule: "0 2 L 1 *"}, 300 * healthDay, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -642,13 +635,52 @@ func TestHealthSummary_ReplicatedJobIsNotStale(t *testing.T) {
 	}
 }
 
-func TestJobStaleAfter_LastDayMatchesTheSchedulersRuns(t *testing.T) {
-	now := time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC)
+func TestJobIsStale_FollowsTheScheduledRuns(t *testing.T) {
+	at := func(year int, month time.Month, day, hour int) time.Time {
+		return time.Date(year, month, day, hour, 0, 0, 0, time.UTC)
+	}
+	cases := []struct {
+		name   string
+		spec   string
+		newest time.Time
+		now    time.Time
+		want   bool
+	}{
+		// 2026-10-27 is a Tuesday. The next runs are Monday and Tuesday.
+		{"Mon/Tue job in its long gap", "0 2 * * 1,2", at(2026, 10, 27, 2), at(2026, 11, 1, 12), false},
+		{"Mon/Tue job one run missed", "0 2 * * 1,2", at(2026, 10, 27, 2), at(2026, 11, 2, 12), false},
+		{"Mon/Tue job two runs missed, inside the day's grace", "0 2 * * 1,2", at(2026, 10, 27, 2), at(2026, 11, 4, 1), false},
+		{"Mon/Tue job two runs missed", "0 2 * * 1,2", at(2026, 10, 27, 2), at(2026, 11, 4, 3), true},
+		{"monthly job one run missed", "0 2 1 * *", at(2026, 9, 1, 2), at(2026, 10, 15, 0), false},
+		{"monthly job two runs missed", "0 2 1 * *", at(2026, 9, 1, 2), at(2026, 11, 3, 0), true},
+		{"last-day job one run missed", "0 2 L * *", at(2026, 8, 31, 2), at(2026, 10, 15, 0), false},
+		{"last-day job two runs missed", "0 2 L * *", at(2026, 8, 31, 2), at(2026, 11, 2, 0), true},
+		{"last-day yearly job within a year", "0 2 L 1 *", at(2026, 1, 31, 2), at(2026, 12, 1, 0), false},
+		{"last-day Monday job between rare runs", "0 2 L * 1", at(2026, 8, 31, 2), at(2026, 11, 1, 0), false},
+		{"last-day job in rare months on one weekday", "0 2 L 1,7 1", at(2025, 6, 1, 0), at(2026, 11, 1, 0), false},
+		{"unparseable schedule falls back to age, recent", "not a schedule", at(2026, 10, 1, 0), at(2026, 10, 10, 0), false},
+		{"unparseable schedule falls back to age, old", "not a schedule", at(2026, 8, 1, 0), at(2026, 10, 10, 0), true},
+		// February's last day was a Monday in 2022 and next is in 2033.
+		{"next run is past the search bound", "0 2 L 2 1", at(2022, 3, 1, 0), at(2030, 1, 1, 0), false},
+		{"the run after next is past the search bound", "0 2 L 2 1", at(2021, 6, 1, 0), at(2030, 1, 1, 0), false},
+		{"never fires", "0 2 31 2 *", at(2026, 1, 15, 0), at(2030, 1, 1, 0), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			job := db.Job{Enabled: true, Schedule: tc.spec}
+			if got := jobIsStale(job, tc.newest, tc.now); got != tc.want {
+				t.Errorf("jobIsStale = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestScheduleStepper_LastDayMatchesTheSchedulersRuns(t *testing.T) {
 	next, err := scheduleStepper("0 2 L * *")
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, ok := next(now)
+	first, ok := next(time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC))
 	if !ok || !first.Equal(time.Date(2026, time.January, 31, 2, 0, 0, 0, time.UTC)) {
 		t.Fatalf("first run = %v, %v", first, ok)
 	}
@@ -658,33 +690,6 @@ func TestJobStaleAfter_LastDayMatchesTheSchedulersRuns(t *testing.T) {
 	}
 	if _, err := scheduleStepper("not a schedule"); err == nil {
 		t.Error("an unparseable schedule should return an error")
-	}
-	got := jobStaleAfter(db.Job{Enabled: true, Schedule: "0 2 L * *"}, now)
-	if want := 2*second.Sub(first) + 24*time.Hour; got != want {
-		t.Errorf("jobStaleAfter = %v, want %v", got, want)
-	}
-}
-
-// A last-day schedule filtered to a weekday can go over a decade between runs:
-// February's last day was a Monday in 2022 and next is in 2033. With no usable
-// cadence, the staleness allowance is the search bound.
-func TestJobStaleAfter_RareSchedulesFallBackToTheSearchBound(t *testing.T) {
-	const lastMondayOfFebruary = "0 2 L 2 1"
-	cases := []struct {
-		name string
-		spec string
-		now  time.Time
-	}{
-		{"next run is past the bound", lastMondayOfFebruary, time.Date(2022, time.March, 1, 0, 0, 0, 0, time.UTC)},
-		{"the run after next is past the bound", lastMondayOfFebruary, time.Date(2021, time.June, 1, 0, 0, 0, 0, time.UTC)},
-		{"never fires", "0 2 31 2 *", time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := jobStaleAfter(db.Job{Enabled: true, Schedule: tc.spec}, tc.now); got != maxScheduleGap {
-				t.Errorf("jobStaleAfter = %v, want %v", got, maxScheduleGap)
-			}
-		})
 	}
 }
 

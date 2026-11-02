@@ -794,7 +794,7 @@
             {@const text = summary ?? line.message}
             {@const open = isRowExpanded(row, expanded)}
             {@const detailsId = `log-details-${row.key}`}
-            <div class="flex max-sm:flex-wrap items-start leading-6 gap-x-2 pr-2 border-l-2 {st.border} {focusedId === String(entry.id) ? 'bg-vault/15' : st.row} group hover:bg-surface-2/50" data-entry-id={entry.id}>
+            <div class={`flex max-sm:flex-wrap items-start leading-6 gap-x-2 pr-2 border-l-2 ${st.border} ${focusedId === String(entry.id) ? 'bg-vault/15' : st.row} group hover:bg-surface-2/50`} data-entry-id={entry.id}>
               <!-- One row's details, without the console-wide Details toggle. 24 px
                    controls set the row height: WCAG 2.5.8, on rows stacked tightly. -->
               {#if rowHasDetails(row, line.meta)}
@@ -812,20 +812,20 @@
               <!-- Level pill. Colour AND text, so the console still reads in
                    the monochrome themes where every hue collapses to one ink. The
                    highlighted row's tint is too strong for the level's own colour. -->
-              <span class="shrink-0 w-[3.5rem] mt-1 leading-4 text-center rounded px-1 text-[11px] uppercase tracking-wide {st.pill} {focusedId === String(entry.id) ? '!text-text' : ''}" title={entry.level}>{levelLabel(entry.level)}</span>
+              <span class={`shrink-0 w-[3.5rem] mt-1 leading-4 text-center rounded px-1 text-[11px] uppercase tracking-wide ${st.pill} ${focusedId === String(entry.id) ? '!text-text' : ''}`} title={entry.level}>{levelLabel(entry.level)}</span>
               <span class="shrink-0 w-[7ch] truncate text-text-muted" title={entry.category}>{entry.category}</span>
               <span class="min-w-0 flex-1 flex items-center gap-1.5 max-sm:order-last max-sm:basis-full max-sm:pl-8 max-sm:pb-1">
                 <!-- On a phone the cause is the reason the row exists, so it wraps there. -->
-                <span class="{wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap overflow-hidden text-ellipsis'} {summary ? 'max-sm:whitespace-pre-wrap max-sm:break-words' : ''} shrink-0 max-w-full {st.text} {entry.type === 'summary' ? 'font-medium' : ''}" title={text}>
+                <span class={`${wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap overflow-hidden text-ellipsis'} ${summary ? 'max-sm:whitespace-pre-wrap max-sm:break-words' : ''} shrink-0 max-w-full ${st.text} ${entry.type === 'summary' ? 'font-medium' : ''}`} title={text}>
                   {text}
                 </span>
                 {#if row.repeat > 1}
-                  <span class="shrink-0 rounded px-1 leading-4 text-[11px] tabular-nums bg-surface-3 text-text-muted" title={repeatTitle(row)}>×{row.repeat}</span>
+                  <span class="shrink-0 rounded px-1 leading-4 text-[11px] tabular-nums bg-surface-3 text-text-muted" title={repeatTitle(row)}>{`×${row.repeat}`}</span>
                 {/if}
                 {#if showMeta && line.meta}<span class="{st.meta} min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={line.meta}>{line.meta}</span>{/if}
               </span>
               <button type="button" onclick={() => copyRow(row)} aria-label={row.repeat > 1 ? `Copy ${row.repeat} log lines` : 'Copy log line'}
-                class="log-row-copy {copiedId === entry.id || focusedId === String(entry.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'} w-6 h-6 max-sm:ml-auto shrink-0 flex items-center justify-center text-text-muted hover:text-text transition-all cursor-pointer" title="Copy">
+                class={`log-row-copy ${copiedId === entry.id || focusedId === String(entry.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'} w-6 h-6 max-sm:ml-auto shrink-0 flex items-center justify-center text-text-muted hover:text-text transition-all cursor-pointer`} title="Copy">
                 {#if copiedId === entry.id}
                   <svg aria-hidden="true" class="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                 {:else}

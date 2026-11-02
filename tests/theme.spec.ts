@@ -146,6 +146,8 @@ test.describe('Plugin-served assets', () => {
       expect(new URL(url).pathname).toMatch(/^\/plugins\/vault\/ui\/assets\//);
       expect(status).toBe(200);
     }
+    // Requests still in flight must not outlive the test and fail the run.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 });
 

@@ -115,7 +115,7 @@
         type="button"
         disabled={!canConfirm}
         onclick={confirm}
-        class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed {variants[variant] || variants.danger}"
+        class={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${variants[variant] || variants.danger}`}
       >
         {confirmLabel}
       </button>
