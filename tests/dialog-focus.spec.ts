@@ -486,6 +486,8 @@ test.describe('Wizard step focus (#528)', () => {
   });
 
   test('Recovery: each step change lands on its heading', async ({ page }) => {
+    // An empty Vault, which keeps the inline confirmation rather than a dialog.
+    await setupVaultMockApi(page, { jobs: [], storage: [] });
     await page.goto('/#/recover');
     await expect(page.getByRole('heading', { name: /Connect the storage/i })).toBeVisible();
     expect(await focusedHeading(page)).toBeNull();

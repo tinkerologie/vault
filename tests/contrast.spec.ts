@@ -219,6 +219,12 @@ for (const { style, mode, label } of THEMES) {
       await page.getByRole('button', { name: /delete job/i }).first().click();
       await expect(page.getByRole('dialog').first()).toBeVisible();
       await expectNoContrastViolations(page, `${label} delete job dialog`);
+
+      await page.keyboard.press('Escape');
+      await page.getByRole('checkbox', { name: 'Select Docker & Appdata' }).check();
+      await page.getByRole('region', { name: 'Bulk actions' }).getByRole('button', { name: 'Delete' }).click();
+      await expect(page.getByRole('dialog', { name: 'Delete 1 Job' })).toBeVisible();
+      await expectNoContrastViolations(page, `${label} bulk delete dialog`);
     });
 
     test('storage form and storage browser', async ({ page }) => {

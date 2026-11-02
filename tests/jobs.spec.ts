@@ -254,4 +254,53 @@ test.describe('Jobs Management & Creation Wizard', () => {
     await expect(page.getByText(/Job deleted/i)).toBeVisible();
     await expect(page.getByText('VM Backups')).toHaveCount(0);
   });
+
+  test.describe('bulk delete (#525)', () => {
+    const selectJobs = async (page: import('@playwright/test').Page, count: number) => {
+      await page.goto('/#/jobs');
+      for (const name of ['Docker & Appdata', 'VM Backups'].slice(0, count)) {
+        await page.getByRole('checkbox', { name: `Select ${name}` }).check();
+      }
+    };
+    const bar = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Bulk actions' });
+    const deletes = (page: import('@playwright/test').Page) => {
+      const calls: string[] = [];
+      page.on('request', (r) => { if (r.method() === 'DELETE' && /\/jobs\/\d+/.test(r.url())) calls.push(r.url()); });
+      return calls;
+    };
+
+    test('names the count, starts on Cancel, and Cancel deletes nothing', async ({ page }) => {
+      const calls = deletes(page);
+      await selectJobs(page, 2);
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Delete 2 Jobs' });
+      await expect(dialog).toContainText('Backup files remain on storage');
+      await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+      await expect(dialog.getByRole('textbox')).toHaveCount(0);
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await expect(dialog).toHaveCount(0);
+      expect(calls).toHaveLength(0);
+      await expect(bar(page)).toContainText('2 selected');
+    });
+
+    test('Escape cancels, and Enter on Cancel sends nothing', async ({ page }) => {
+      const calls = deletes(page);
+      await selectJobs(page, 1);
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      await expect(page.getByRole('dialog', { name: 'Delete 1 Job' })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    test('confirming deletes each selected job, once', async ({ page }) => {
+      const calls = deletes(page);
+      await selectJobs(page, 2);
+      await bar(page).getByRole('button', { name: 'Delete' }).click();
+      await page.getByRole('dialog', { name: 'Delete 2 Jobs' }).getByRole('button', { name: 'Delete 2 Jobs' }).click();
+      await expect(page.getByText('2 jobs deleted')).toBeVisible();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      expect(calls).toHaveLength(2);
+    });
+  });
 });

@@ -22,6 +22,27 @@ export function replaceDatabaseSummary({ storageName, path, modified = '' }) {
   }
 }
 
+/**
+ * The recovery wizard's wording for replacing a Vault that already holds settings.
+ * A null `current` means the check failed, so it can't be assumed empty.
+ *
+ * @param {{ storageName: string, path: string, modified?: string }} backup
+ * @param {{ jobs: number, storage: number } | null} current
+ */
+export function recoverReplaceSummary(backup, current) {
+  const { source, consequences } = replaceDatabaseSummary(backup)
+  const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`
+  const holding = current
+    ? `This Vault currently has ${count(current.jobs, 'job')} and ${count(current.storage, 'storage destination')}, and they are replaced.`
+    : "Vault couldn't check what this server currently holds, so anything it has is replaced."
+  return { source, consequences: [holding, ...consequences, 'Your backed-up files on storage are not touched.'] }
+}
+
+/** Whether recovery would overwrite something, so it needs a typed confirmation. */
+export function recoverReplacesExisting(current) {
+  return !current || current.jobs > 0 || current.storage > 0
+}
+
 /** @param {{ ok?: boolean, checks?: { label: string, status: string, detail?: string }[] } | null | undefined} preflight */
 function failedChecks(preflight) {
   const failed = (preflight?.checks ?? []).filter((c) => c.status === 'fail')

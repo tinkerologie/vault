@@ -163,6 +163,8 @@
     }
   }
 
+  let confirmBulkDelete = $state(false)
+
   async function bulkDelete() {
     bulkRunning = true
     try {
@@ -175,6 +177,7 @@
       showToast(e.message, 'error')
     } finally {
       bulkRunning = false
+      confirmBulkDelete = false
     }
   }
 
@@ -1380,7 +1383,7 @@
 
 <!-- Bulk action bar -->
 {#if selectedJobs.size > 0}
-  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-border rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+  <div role="region" aria-label="Bulk actions" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-border rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
     <span class="text-sm font-medium text-text">{selectedJobs.size} selected</span>
     <div class="w-px h-6 bg-border"></div>
     <button
@@ -1408,7 +1411,7 @@
       Run
     </button>
     <button
-      onclick={bulkDelete}
+      onclick={() => { confirmBulkDelete = true }}
       disabled={bulkRunning}
       class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-40"
     >
@@ -2561,6 +2564,16 @@
     {/if}
   {/if}
 </Modal>
+
+<ConfirmDialog
+  show={confirmBulkDelete}
+  title={selectedJobs.size === 1 ? 'Delete 1 Job' : `Delete ${selectedJobs.size} Jobs`}
+  message="They are removed from Vault. Backup files remain on storage and can be imported later."
+  confirmLabel={selectedJobs.size === 1 ? 'Delete 1 Job' : `Delete ${selectedJobs.size} Jobs`}
+  busy={bulkRunning}
+  onconfirm={bulkDelete}
+  oncancel={() => { confirmBulkDelete = false }}
+/>
 
 <ConfirmDialog
   show={confirmDelete.show}

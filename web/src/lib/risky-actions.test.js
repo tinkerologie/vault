@@ -1,9 +1,35 @@
 import { describe, expect, it } from 'vitest'
-import { PURGE_HISTORY_SUMMARY, replaceDatabaseSummary, restoreAnywaySummary } from './risky-actions.js'
+import { PURGE_HISTORY_SUMMARY, replaceDatabaseSummary, restoreAnywaySummary, recoverReplaceSummary, recoverReplacesExisting } from './risky-actions.js'
 
 const fail = { ok: false, checks: [{ label: 'Storage reachable', status: 'ok' }, { label: 'Space', status: 'fail', detail: 'disk full' }, { label: 'Archive', status: 'fail' }] }
 const pass = { ok: true, checks: [{ label: 'Storage reachable', status: 'ok' }] }
 const unit = (over) => ({ jobName: 'Docker', pointDate: 'Oct 1', destination: 'Original location', cleanDestination: false, preflight: fail, ...over })
+
+describe('recoverReplaceSummary', () => {
+  const BACKUP = { storageName: 'NAS', path: '_vault/vault.db.gz', modified: 'Oct 1' }
+
+  it('names what is replaced', () => {
+    const { source, consequences } = recoverReplaceSummary(BACKUP, { jobs: 3, storage: 1 })
+    expect(source.map((s) => s.value)).toEqual(['NAS', '_vault/vault.db.gz', 'Oct 1'])
+    expect(consequences[0]).toBe('This Vault currently has 3 jobs and 1 storage destination, and they are replaced.')
+    expect(consequences).toContain('Your backed-up files on storage are not touched.')
+  })
+
+  it('says so when it could not check', () => {
+    expect(recoverReplaceSummary(BACKUP, null).consequences[0]).toMatch(/couldn't check/)
+  })
+})
+
+describe('recoverReplacesExisting', () => {
+  it.each([
+    [{ jobs: 0, storage: 0 }, false],
+    [{ jobs: 1, storage: 0 }, true],
+    [{ jobs: 0, storage: 1 }, true],
+    [null, true],
+  ])('%j is %s', (current, expected) => {
+    expect(recoverReplacesExisting(current)).toBe(expected)
+  })
+})
 
 describe('replaceDatabaseSummary', () => {
   it('names the storage, the file and the date', () => {

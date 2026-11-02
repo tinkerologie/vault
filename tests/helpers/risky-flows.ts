@@ -135,4 +135,27 @@ export const RISKY_FLOWS: RiskyFlow[] = [
       await expect(page.getByRole('button', { name: /purge/i }).first()).toBeDisabled();
     },
   },
+  {
+    name: 'Recovery wizard over an existing Vault',
+    word: 'REPLACE',
+    title: 'Replace Vault Database',
+    confirmLabel: 'Replace Database',
+    arrive: async (page) => {
+      await page.goto('/#/recover');
+      await page.locator('#sname').fill('Disaster Recovery Storage');
+      await page.getByRole('textbox', { name: 'Path' }).fill('/mnt/user/backups');
+      await page.getByRole('button', { name: 'Connect', exact: true }).click();
+      await expect(page.getByRole('heading', { name: /Choose which backup to restore/i })).toBeVisible();
+    },
+    opener: async (page) => page.getByRole('button', { name: 'Restore this backup' }),
+    isAction: (r) => r.method() === 'POST' && /\/storage\/\d+\/restore-db$/.test(r.url()),
+    calls: 1,
+    source: ['Disaster Recovery Storage', 'vault.db.20261005.gz'],
+    loss: [/This Vault currently has \d+ jobs? and \d+ storage destinations?, and they are replaced/, 'cannot be undone', 'not touched'],
+    actionUrl: /\/storage\/\d+\/restore-db$/,
+    afterConfirm: async (page) => {
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: /Check your folder paths/i })).toBeVisible();
+    },
+  },
 ];

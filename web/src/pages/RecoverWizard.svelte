@@ -2,7 +2,9 @@
   import { api } from '../lib/api.js'
   import { createStepFocus } from '../lib/dialog.js'
   import { navigate } from '../lib/router.svelte.js'
+  import { recoverReplaceSummary, recoverReplacesExisting } from '../lib/risky-actions.js'
   import { formatBytes } from '../lib/utils.js'
+  import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import StorageForm from '../components/StorageForm.svelte'
   import Toast from '../components/Toast.svelte'
   import InlineSpinner from '../components/InlineSpinner.svelte'
@@ -61,9 +63,15 @@
   // What this Vault holds BEFORE the wizard touches anything (step 1 creates
   // a destination) — the restore confirmation must not claim the settings are
   // "(empty)" when the wizard was opened on an already-configured Vault.
-  let current = $state({ jobs: 0, storage: 0 })
-  Promise.all([api.listJobs().catch(() => []), api.listStorage().catch(() => [])])
+  // Null until known: a failed check must not pass for an empty Vault (#525).
+  let current = $state(null)
+  Promise.all([api.listJobs(), api.listStorage()])
     .then(([jobs, storage]) => (current = { jobs: jobs.length, storage: storage.length }))
+    .catch(() => {})
+  const replacesExisting = $derived(recoverReplacesExisting(current))
+  const replaceSummary = $derived(selected && dest
+    ? recoverReplaceSummary({ storageName: dest.name, path: selected.path, modified: selected.timestamp ? fmtWhen(selected.timestamp) : '' }, current)
+    : { source: [], consequences: [] })
 
   const latestEncrypted = $derived(backups.length > 0 && backups[0].encrypted)
   const anyEncrypted = $derived(backups.some((b) => b.encrypted))
@@ -287,15 +295,10 @@
         {/each}
       </fieldset>
 
-      {#if confirmRestore}
+      {#if confirmRestore && !replacesExisting}
         <div class="bg-warning/10 border border-warning/30 rounded-lg p-4 mt-4">
           <p class="text-sm text-text mb-3">
-            {#if current.jobs > 0 || current.storage > 0}
-              This replaces this Vault's current settings —
-              <strong>including its {current.jobs} job(s) and {current.storage} storage destination(s)</strong> —
-            {:else}
-              This replaces this Vault's current (empty) settings
-            {/if}
+            This replaces this Vault's current (empty) settings
             with the backup
             {selected.is_latest ? 'from your most recent backup' : `from ${new Date(selected.timestamp).toLocaleString()}`}.
             Your backed-up files on storage are not touched.
@@ -311,7 +314,7 @@
 
       <div class="flex items-center justify-between mt-5 pt-4 border-t border-border">
         <button type="button" class="btn btn-ghost" onclick={goBack}>Back</button>
-        {#if !confirmRestore}
+        {#if !confirmRestore || replacesExisting}
           <button type="button" class="btn btn-primary" disabled={!selected} onclick={startRestore}>Restore this backup</button>
         {/if}
       </div>
@@ -412,5 +415,18 @@
     </div>
   {/if}
 </div>
+
+<ConfirmDialog
+  show={confirmRestore && replacesExisting}
+  title="Replace Vault Database"
+  message="This replaces this Vault's current settings with the selected backup."
+  source={replaceSummary.source}
+  consequences={replaceSummary.consequences}
+  confirmWord="REPLACE"
+  confirmLabel={restoring ? "Replacing…" : "Replace Database"}
+  busy={restoring}
+  onconfirm={doRestore}
+  oncancel={() => (confirmRestore = false)}
+/>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
