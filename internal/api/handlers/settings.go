@@ -795,7 +795,8 @@ func (h *SettingsHandler) RotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	h.GenerateAPIKey(w, r)
 }
 
-// RevokeAPIKey removes the stored API key, disabling authentication.
+// RevokeAPIKey removes the stored API key. Remote callers are then refused until
+// a new key is generated.
 //
 //	DELETE /api/v1/settings/api-key
 func (h *SettingsHandler) RevokeAPIKey(w http.ResponseWriter, _ *http.Request) {
@@ -810,6 +811,6 @@ func (h *SettingsHandler) RevokeAPIKey(w http.ResponseWriter, _ *http.Request) {
 
 	h.notifyConfigChange()
 	respondJSON(w, http.StatusOK, map[string]string{
-		"message": "API key revoked — authentication disabled",
+		"message": "API key revoked — remote access is disabled until a new key is generated",
 	})
 }

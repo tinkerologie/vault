@@ -10,21 +10,38 @@ The API serves plain HTTP unless the daemon is started with both `--tls-cert` an
 
 ## Authentication
 
-By default Vault binds to `127.0.0.1` and all loopback requests are unauthenticated. When you configure an API key under **Settings → Security → API Access**, remote requests (non-loopback IPs) must include the key in every request:
+The API denies by default. Every route except `GET /health` needs one of these:
 
-```http
-X-API-Key: <your-api-key>
+| Caller                                                                    | Access                                                                                        |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| The Vault host: the Unraid plugin proxy, the CLI, `curl` or an SSH tunnel | No key needed                                                                                 |
+| Anyone else                                                               | Must send `X-API-Key: <your-api-key>`; refused with `401` until a key exists                  |
+| A web page on another origin, on any method and from any address          | Refused with `403` unless its origin is on the allowlist; a listed origin still needs the key |
+
+A request only counts as coming from the Vault host when its source address is one of the host's own and its `Host` header is an IP address, `localhost`, or the machine's hostname. A domain pointed at `127.0.0.1` gets no local trust, which is what stops DNS rebinding.
+
+**Creating a key:** use **Settings → Security → API Access** in the Unraid plugin, or run this on the host. On a headless server or Docker replica the CLI is the only way:
+
+```bash
+vault api-key generate                           # on the host; prints only the key
+docker exec vault-replica vault api-key generate # a Docker replica
 ```
 
-Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validation so that the Unraid plugin proxy can reach the daemon without a key.
+`vault api-key` also has `show`, `rotate`, `revoke` and `status`. The commands call the running daemon on this host, using the address in `vault.cfg` or `--addr ip:port`; add `--tls` if it serves TLS.
 
-**Generating a key:** Go to **Settings → Security → API Access** → **Generate Key**. Copy and store it securely — it is shown only once. Use this key for Home Assistant, replication targets, and any other external integrations.
+**Local-only routes:** these answer `403` to anything but the Vault host, even with a valid key: `/settings/api-key/key`, `/settings/api-key/generate`, `/settings/api-key/rotate`, `DELETE /settings/api-key`, `/settings/encryption/passphrase` and `/settings/server-key`.
+
+**Failed attempts:** key checks are rate limited per address and in total, and answer `429` past the limit. A client using the correct key is not affected once it has authenticated.
+
+**Browser origins:** the cross-origin allowlist is empty by default. To let a page on another origin call the API, list its exact origin, either with `--allowed-origin https://ha.example:8123` (repeatable) on `vault daemon` or `vault replica`, or as a comma-separated `ALLOWED_ORIGINS` in `vault.cfg`, then restart. Wildcards aren't accepted. The list also controls CORS, Private Network Access preflights and WebSocket origins.
+
+**The web UI on another machine:** opening a daemon's port directly, as with a Docker replica's own UI, asks for the API key and keeps it for that browser tab. Live progress then uses polling, because a browser can't send the key on a WebSocket connection. Same-origin pages on the Vault host don't need a key, including through an SSH tunnel. Generating, showing, rotating and revoking the key need the Vault host: use the Unraid plugin page, an SSH tunnel, or the CLI.
 
 ## Core
 
 | Method | Endpoint             | Description                                                                                                                  |
 | ------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`            | Basic health, version, and mode                                                                                              |
+| GET    | `/health`            | Open without a key: status and mode. With local or key access, also version and `startup` diagnostics                        |
 | GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs` |
 | GET    | `/ws`                | WebSocket event stream                                                                                                       |
 | GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress)                                                      |
@@ -88,26 +105,26 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 
 ## Settings
 
-| Method | Endpoint                          | Description                                                                                          |
-| ------ | --------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| GET    | `/settings`                       | List settings                                                                                        |
-| PUT    | `/settings`                       | Update settings                                                                                      |
-| GET    | `/settings/encryption`            | Encryption status                                                                                    |
-| POST   | `/settings/encryption`            | Set encryption passphrase                                                                            |
-| POST   | `/settings/encryption/verify`     | Verify encryption passphrase                                                                         |
-| GET    | `/settings/encryption/passphrase` | Read the configured passphrase (`Cache-Control: no-store`)                                           |
-| GET    | `/settings/server-key`            | Download `vault.key`, the raw 32-byte server key (`Cache-Control: no-store`, rate limited)           |
-| GET    | `/settings/staging`               | Staging directory info                                                                               |
-| PUT    | `/settings/staging`               | Override the staging directory                                                                       |
-| GET    | `/settings/database`              | Database snapshot settings                                                                           |
-| PUT    | `/settings/database`              | Update database snapshot settings                                                                    |
-| POST   | `/settings/discord/test`          | Test the Discord webhook                                                                             |
-| GET    | `/settings/api-key`               | API key status (configured / not configured)                                                         |
-| GET    | `/settings/api-key/key`           | Read the current API key (loopback callers only)                                                     |
-| POST   | `/settings/api-key/generate`      | Generate a new API key (rate-limited)                                                                |
-| POST   | `/settings/api-key/rotate`        | Rotate the existing API key (rate-limited)                                                           |
-| DELETE | `/settings/api-key`               | Revoke the API key                                                                                   |
-| GET    | `/settings/diagnostics`           | Download a diagnostics ZIP (system info, schema, runs, scheduler, daemon log — credentials redacted) |
+| Method | Endpoint                          | Description                                                                                            |
+| ------ | --------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| GET    | `/settings`                       | List settings                                                                                          |
+| PUT    | `/settings`                       | Update settings                                                                                        |
+| GET    | `/settings/encryption`            | Encryption status                                                                                      |
+| POST   | `/settings/encryption`            | Set encryption passphrase                                                                              |
+| POST   | `/settings/encryption/verify`     | Verify encryption passphrase                                                                           |
+| GET    | `/settings/encryption/passphrase` | Read the configured passphrase (local only, `Cache-Control: no-store`)                                 |
+| GET    | `/settings/server-key`            | Download `vault.key`, the raw 32-byte server key (local only, `Cache-Control: no-store`, rate limited) |
+| GET    | `/settings/staging`               | Staging directory info                                                                                 |
+| PUT    | `/settings/staging`               | Override the staging directory                                                                         |
+| GET    | `/settings/database`              | Database snapshot settings                                                                             |
+| PUT    | `/settings/database`              | Update database snapshot settings                                                                      |
+| POST   | `/settings/discord/test`          | Test the Discord webhook                                                                               |
+| GET    | `/settings/api-key`               | API key status (configured / not configured)                                                           |
+| GET    | `/settings/api-key/key`           | Read the current API key (local only)                                                                  |
+| POST   | `/settings/api-key/generate`      | Generate a new API key (local only, rate-limited)                                                      |
+| POST   | `/settings/api-key/rotate`        | Rotate the existing API key (local only, rate-limited)                                                 |
+| DELETE | `/settings/api-key`               | Revoke the API key, refusing remote clients until a new one exists (local only)                        |
+| GET    | `/settings/diagnostics`           | Download a diagnostics ZIP (system info, schema, runs, scheduler, daemon log — credentials redacted)   |
 
 ## Discovery
 
@@ -247,7 +264,7 @@ Connect to `/api/v1/ws` for real-time event streaming. Events include:
 
 Counters never move backward: a retried upload holds its previous high-water mark. Work beyond the expected total raises the total, and a phase reads at most 99% until the next phase starts. When no total is known (for example while scanning), `progress_determinate` is `false` and clients should show the phase and counters without a percentage. Zero and `false` values are omitted from the JSON, so an absent `progress_determinate` means `false` and an absent counter means `0`; all of the fields are absent when the daemon has no structured progress for the item.
 
-Origin patterns cover `localhost`, `127.0.0.1`, `*.local`, `192.168.*.*`, `10.*.*.*`, and the full RFC 1918 `172.16.0.0/12` range (including Docker's default `172.17.0.0/16`).
+The WebSocket follows the same access rules as the rest of the API: same-origin or an [allowlisted origin](#authentication), plus local access or the `X-API-Key` header.
 
 ## Examples
 

@@ -1,15 +1,21 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
@@ -109,22 +115,89 @@ func ReadOnlyGuard(next http.Handler) http.Handler {
 }
 
 // PrivateNetworkAccess answers Chrome/Brave Private Network Access (PNA)
-// preflights. When a page on a more-public origin (e.g. the Unraid webGUI on
-// *.myunraid.net) fetches the daemon on a private LAN/loopback address, the
-// browser sends an OPTIONS preflight carrying
-// Access-Control-Request-Private-Network: true and blocks the request unless the
-// response echoes Access-Control-Allow-Private-Network: true. go-chi/cors does
-// not emit this header, so add it here without touching the origin allow-list.
-// Registered outside cors.Handler so the header survives the preflight response
-// (issue #250).
-func PrivateNetworkAccess(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions &&
-			r.Header.Get("Access-Control-Request-Private-Network") == "true" {
-			w.Header().Set("Access-Control-Allow-Private-Network", "true")
+// preflights for origins the operator listed. go-chi/cors does not emit this
+// header, so add it here. Registered outside cors.Handler so the header
+// survives the preflight response (issue #250). Being a PNA preflight earns
+// nothing by itself: an unlisted origin gets no grant (issue #544).
+func PrivateNetworkAccess(allowed originSet) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodOptions &&
+				r.Header.Get("Access-Control-Request-Private-Network") == "true" &&
+				allowed.has(r.Header.Get("Origin")) {
+				w.Header().Set("Access-Control-Allow-Private-Network", "true")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// originSet is the operator's exact-match allowlist of browser origins, keyed
+// by lower-case scheme://host[:port].
+type originSet map[string]struct{}
+
+func (o originSet) has(origin string) bool {
+	_, ok := o[strings.ToLower(origin)]
+	return ok
+}
+
+func newOriginSet(origins []string) originSet {
+	set := make(originSet, len(origins))
+	for _, origin := range origins {
+		set[origin] = struct{}{}
+	}
+	return set
+}
+
+// parseAllowedOrigins normalises configured origins. Only an exact http(s)
+// scheme://host[:port] is accepted, so wildcards, "null" and anything carrying
+// a path or credentials land in invalid.
+func parseAllowedOrigins(raw []string) (valid, invalid []string) {
+	for _, entry := range raw {
+		entry = strings.ToLower(strings.TrimSpace(entry))
+		if entry == "" {
+			continue
 		}
-		next.ServeHTTP(w, r)
-	})
+		u, err := url.Parse(entry)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			strings.Contains(u.Host, "*") || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			invalid = append(invalid, entry)
+			continue
+		}
+		valid = append(valid, u.Scheme+"://"+u.Host)
+	}
+	return valid, invalid
+}
+
+// isCrossOrigin reports whether a browser sent this request on behalf of a page
+// from another origin. Non-browser clients (the PHP proxy, curl, the CLI, MCP
+// bridges) send neither header and are never cross-origin.
+func isCrossOrigin(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "cross-site", "same-site":
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	return err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host)
+}
+
+// CrossOriginGuard refuses requests from pages on an origin the operator has
+// not listed, on every method. CORS alone can't do this, since it only hides
+// responses and a cross-site form or no-cors fetch still reaches the handler.
+func CrossOriginGuard(allowed originSet) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isCrossOrigin(r) && !allowed.has(r.Header.Get("Origin")) {
+				respondJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // ExtendWriteDeadline returns route-scoped middleware that pushes the
@@ -164,32 +237,69 @@ func BodySizeLimit(maxBytes int64) func(http.Handler) http.Handler {
 	}
 }
 
-// APIKeyAuth returns middleware that enforces API key authentication for
-// requests that do not originate from the daemon's own host. Requests from the
-// host itself — loopback (127.0.0.1, ::1) or any local interface address — are
-// always exempt, which keeps the co-located Unraid PHP proxy working whether
-// the daemon is bound to loopback, a wildcard, or a specific NIC IP. API key
-// authentication only applies to genuine remote clients.
+// accessLevel records how a request earned access, for handlers and route
+// middleware that treat callers differently.
+type accessLevel int
+
+const (
+	accessPublic accessLevel = iota // no credential: public routes only
+	accessAPIKey                    // presented the configured API key
+	accessLocal                     // the daemon's own host, not a cross-origin page
+)
+
+type accessLevelKey struct{}
+
+func requestAccess(r *http.Request) accessLevel {
+	level, _ := r.Context().Value(accessLevelKey{}).(accessLevel)
+	return level
+}
+
+func withAccess(r *http.Request, level accessLevel) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), accessLevelKey{}, level))
+}
+
+// LocalOnly restricts a route to the daemon's own host. It covers routes that
+// return or replace a secret, so a leaked API key can't be turned into the
+// backup passphrase, the server key, or a permanent replacement for itself.
+func LocalOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requestAccess(r) != accessLocal {
+			respondJSON(w, http.StatusForbidden, map[string]string{"error": "only available from the Vault host: use the Unraid plugin page, an SSH tunnel, or the vault CLI"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// healthPath is the one API route open without a credential. handleHealth
+// limits what an unauthenticated caller sees.
+const healthPath = "/api/v1/health"
+
+// APIKeyAuth returns the middleware that decides who reaches the API. It denies
+// by default:
 //
-// The middleware checks the X-API-Key header against the bcrypt hash stored
-// in the settings table. If no API key has been generated, all requests pass.
+//   - The daemon's own host is trusted without a key, which keeps the co-located
+//     Unraid PHP proxy and the CLI working whether the daemon is bound to
+//     loopback, a wildcard, or a specific NIC IP. A browser page on another
+//     origin gets no such trust, and neither does a Host name that isn't this
+//     machine's, since that is how DNS rebinding reaches loopback.
+//   - Everyone else must present the configured API key. With no key configured
+//     they get 401; `vault api-key generate` provisions one locally.
 func APIKeyAuth(database *db.DB) func(http.Handler) http.Handler {
-	return apiKeyAuth(database, newLocalIPCache(localIPCacheTTL, readLocalInterfaceIPs))
+	return apiKeyAuth(database, newLocalIPCache(localIPCacheTTL, readLocalInterfaceIPs), newAPIKeyVerifier(), localHostNames())
 }
 
 // apiKeyAuth is the testable core of APIKeyAuth. The localIPCache identifies
-// addresses that count as "this host" (in addition to loopback) and are
-// therefore exempt from authentication.
-func apiKeyAuth(database *db.DB, local *localIPCache) func(http.Handler) http.Handler {
+// addresses that count as "this host" (in addition to loopback); hostNames are
+// the Host names that may claim local trust.
+func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, hostNames map[string]struct{}) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Requests from the daemon's own host are always exempt. The
-			// Unraid PHP proxy connects to whichever address the daemon is
+			// The Unraid PHP proxy connects to whichever address the daemon is
 			// bound to, so on a specific NIC bind its source address is that
-			// NIC IP rather than loopback — without this the entire proxied
-			// UI returns 401 once an API key is set (#139).
-			if isLocalRequest(r.RemoteAddr, local) {
-				next.ServeHTTP(w, r)
+			// NIC IP rather than loopback (#139).
+			if isLocalRequest(r.RemoteAddr, local) && !isCrossOrigin(r) && isLocalHostHeader(r.Host, hostNames) {
+				next.ServeHTTP(w, withAccess(r, accessLocal))
 				return
 			}
 
@@ -200,35 +310,155 @@ func apiKeyAuth(database *db.DB, local *localIPCache) func(http.Handler) http.Ha
 				return
 			}
 
-			// Check if an API key has been configured.
-			hash, err := database.GetSetting("api_key_hash", docsmeta.DefaultFor("api_key_hash"))
-			if err != nil {
-				// Fail closed: DB errors must not allow unauthenticated access.
-				respondUnauthorized(w)
-				return
-			}
-			if hash == "" {
-				// No API key set — all requests pass.
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Extract key from X-API-Key header.
 			key := r.Header.Get("X-API-Key")
+
+			// A presented key is always checked, so a client with a wrong key
+			// learns that here instead of seeing a healthy public response.
 			if key == "" {
+				if r.Method == http.MethodGet && r.URL.Path == healthPath {
+					next.ServeHTTP(w, withAccess(r, accessPublic))
+					return
+				}
 				respondUnauthorized(w)
 				return
 			}
 
-			// Constant-time comparison via bcrypt.
-			if err := crypto.VerifyPassphrase(key, hash); err != nil {
+			// An unreadable or empty hash both refuse: there is nothing to
+			// authenticate against, and that must never mean open access.
+			hash, err := database.GetSetting("api_key_hash", docsmeta.DefaultFor("api_key_hash"))
+			if err != nil || hash == "" {
 				respondUnauthorized(w)
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			switch verifier.check(w, r, key, hash) {
+			case keyValid:
+				next.ServeHTTP(w, withAccess(r, accessAPIKey))
+			case keyThrottled:
+				respondJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many API key attempts, try again later"})
+			default:
+				respondUnauthorized(w)
+			}
 		})
 	}
+}
+
+const (
+	// apiKeyAttemptsPerMinute limits bcrypt comparisons per client address.
+	apiKeyAttemptsPerMinute = 30
+	// apiKeyVerifySlots caps concurrent bcrypt comparisons across all clients,
+	// which is what stops a distributed flood from taking every CPU.
+	apiKeyVerifySlots = 2
+	// apiKeySlotWait is how long a request queues for a slot before it is
+	// refused. It comfortably covers a cold-start burst from one client.
+	apiKeySlotWait = 2 * time.Second
+)
+
+type keyVerdict int
+
+const (
+	keyInvalid keyVerdict = iota
+	keyValid
+	keyThrottled
+)
+
+// apiKeyVerifier bounds the bcrypt work an unauthenticated client can cause
+// (issue #564). The last verified key is remembered as a digest, so a client
+// that holds the key costs one comparison rather than one per request and keeps
+// working during a flood. The entry is tied to the stored hash, so generating,
+// rotating or revoking a key invalidates it.
+type apiKeyVerifier struct {
+	compare  func(key, hash string) error
+	attempts *httprate.RateLimiter
+	slots    chan struct{}
+	slotWait time.Duration
+
+	mu           sync.Mutex
+	cachedHash   string
+	cachedDigest [sha256.Size]byte
+}
+
+func newAPIKeyVerifier() *apiKeyVerifier {
+	return &apiKeyVerifier{
+		compare:  crypto.VerifyPassphrase,
+		attempts: httprate.NewRateLimiter(apiKeyAttemptsPerMinute, time.Minute),
+		slots:    make(chan struct{}, apiKeyVerifySlots),
+		slotWait: apiKeySlotWait,
+	}
+}
+
+// isCached reports whether digest is the last key verified against hash. The
+// digest is an in-memory lookup of a random 256-bit key, never persisted; the
+// stored credential remains the bcrypt hash.
+func (v *apiKeyVerifier) isCached(digest [sha256.Size]byte, hash string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.cachedHash == hash && subtle.ConstantTimeCompare(v.cachedDigest[:], digest[:]) == 1
+}
+
+func (v *apiKeyVerifier) check(w http.ResponseWriter, r *http.Request, key, hash string) keyVerdict {
+	digest := sha256.Sum256([]byte(key))
+	if v.isCached(digest, hash) {
+		return keyValid
+	}
+
+	timer := time.NewTimer(v.slotWait)
+	defer timer.Stop()
+	select {
+	case v.slots <- struct{}{}:
+		defer func() { <-v.slots }()
+	case <-timer.C:
+		return keyThrottled
+	case <-r.Context().Done():
+		return keyThrottled
+	}
+
+	// Another request may have verified this key while this one queued. Checked
+	// before the limiter so one client's cold-start burst isn't charged for it.
+	if v.isCached(digest, hash) {
+		return keyValid
+	}
+	client, err := keyByRemoteAddr(r)
+	if err != nil || v.attempts.OnLimit(w, r, client) {
+		return keyThrottled
+	}
+	if err := v.compare(key, hash); err != nil {
+		return keyInvalid
+	}
+
+	v.mu.Lock()
+	v.cachedHash, v.cachedDigest = hash, digest
+	v.mu.Unlock()
+	return keyValid
+}
+
+// localHostNames returns the names this machine answers to. An attacker can
+// point their own domain at 127.0.0.1 but can't make a browser send these.
+func localHostNames() map[string]struct{} {
+	names := map[string]struct{}{"localhost": {}}
+	if name, err := os.Hostname(); err == nil && name != "" {
+		name = strings.ToLower(name)
+		names[name] = struct{}{}
+		names[name+".local"] = struct{}{}
+	}
+	return names
+}
+
+// isLocalHostHeader reports whether a Host header names this machine: an IP
+// literal or one of its own names. This is what defeats DNS rebinding, where
+// the browser reaches loopback under an attacker's domain and treats the
+// daemon as same-origin.
+func isLocalHostHeader(hostHeader string, names map[string]struct{}) bool {
+	host, _, err := net.SplitHostPort(hostHeader)
+	if err != nil {
+		host = hostHeader
+	}
+	host = strings.Trim(host, "[]")
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	_, ok := names[strings.ToLower(strings.TrimSuffix(host, "."))]
+	return ok
 }
 
 // isLoopback returns true if the remote address is a loopback address

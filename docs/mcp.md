@@ -57,7 +57,8 @@ mDNS discovery; see [Network discovery](getting-started.md#network-discovery-mdn
 }
 ```
 
-If you have set an API key (Settings → API), pass it as a header. Note there is
+A LAN connection needs an API key: Vault refuses remote clients until one exists
+(Settings → API, or `vault api-key generate` on the server). Pass it as a header. Note there is
 no space after the colon — `mcp-remote` mishandles spaces in header values:
 
 ```json

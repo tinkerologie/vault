@@ -109,7 +109,7 @@ func TestReplication458_SyncSourceMissingDestination(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case "/api/v1/jobs":
 			_ = json.NewEncoder(w).Encode([]RemoteJob{})
 		}

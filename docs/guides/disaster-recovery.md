@@ -194,8 +194,7 @@ it safely even if it contains quotes or backslashes. A JSON file with
 
 List available snapshots first with `GET /api/v1/storage/ID/db-backups`.
 
-If an API key is configured and you are calling from a non-loopback address,
-include it with `-H "X-API-Key: $VAULT_API_KEY"`.
+If you are calling from another machine, an API key is required; include it with `-H "X-API-Key: $VAULT_API_KEY"`.
 
 ---
 

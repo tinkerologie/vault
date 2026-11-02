@@ -40,6 +40,7 @@ disaster recovery.`,
 			return err
 		}
 		mdns, _ := cmd.Flags().GetBool("mdns")
+		allowedOrigins, _ := cmd.Flags().GetStringSlice("allowed-origin")
 
 		// Ensure the database directory exists.
 		if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
@@ -84,12 +85,13 @@ disaster recovery.`,
 		log.Println("Starting Vault replica daemon (read-only mode)...")
 
 		cfg := api.ServerConfig{
-			Addr:      addr,
-			TLSCert:   tlsCert,
-			TLSKey:    tlsKey,
-			ServerKey: serverKey,
-			Version:   version,
-			ReadOnly:  true,
+			Addr:           addr,
+			TLSCert:        tlsCert,
+			TLSKey:         tlsKey,
+			ServerKey:      serverKey,
+			Version:        version,
+			ReadOnly:       true,
+			AllowedOrigins: allowedOrigins,
 		}
 		srv := api.NewServer(database, cfg)
 
@@ -140,5 +142,6 @@ func init() {
 	replicaCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	replicaCmd.Flags().String("tls-key", "", "Path to TLS private key file")
 	replicaCmd.Flags().Bool("mdns", true, mdnsFlagUsage)
+	replicaCmd.Flags().StringSlice("allowed-origin", nil, allowedOriginFlagUsage)
 	rootCmd.AddCommand(replicaCmd)
 }

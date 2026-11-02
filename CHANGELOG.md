@@ -54,6 +54,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **WebDAV URL logins are protected:** A username and password embedded in a WebDAV URL are no longer shown in responses or request URLs, and a WebDAV redirect to another host or from HTTPS to HTTP no longer receives the login.
 - **Plain HTTP warnings:** The daemon log, plugin settings and Replication and WebDAV forms now warn when API keys or logins travel over plain HTTP to another machine. Existing LAN setups keep working. Setting only one of `--tls-cert` and `--tls-key` now stops the daemon instead of silently using plain HTTP.
 - **Restores refuse planted FIFOs:** Restoring a file onto a FIFO or other non-regular file now fails instead of hanging or sending restored data to whoever reads it.
+- **Remote API access now requires a key (#538):** Remote callers are refused until an API key exists. If you use Home Assistant, MCP, replication or anything else over the network, generate a key in Settings or with the new `vault api-key generate` command, then add it to that client. The Unraid plugin and tools on the server itself are unaffected.
+- **Web pages can no longer reach the API (#544, #552, #565):** A page on another site is refused on every method and on the WebSocket, including over localhost, and DNS rebinding no longer earns local trust. Cross-origin access is off by default; list exact origins with `--allowed-origin` or `ALLOWED_ORIGINS` in `vault.cfg`.
+- **Secrets are only available from the server (#544):** Showing the API key or backup passphrase, downloading `vault.key`, and generating, rotating or revoking the API key now work only from the Vault host or the Unraid plugin, even with a valid key.
+- **API key guessing is throttled (#564):** Failed key checks are limited per address and in total, so a flood can't exhaust the CPU. Setting the backup passphrase is rate limited too.
+- **Health check shows less (#570):** Without local or key access, `/api/v1/health` reports only status and mode, no version or filesystem paths.
 - **Storage health errors are redacted:** Credentials echoed in a storage health-check error are now removed before the message is saved, broadcast or logged.
 
 ## [v2026.10.04] - 2026-10-27

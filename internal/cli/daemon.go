@@ -67,6 +67,7 @@ var daemonCmd = &cobra.Command{
 		if err := api.CheckTLSPair(tlsCert, tlsKey); err != nil {
 			return err
 		}
+		allowedOrigins, _ := cmd.Flags().GetStringSlice("allowed-origin")
 
 		// Tee the standard logger into an in-memory ring buffer so the
 		// diagnostics bundle can include the last ~1 MiB of daemon log
@@ -457,11 +458,12 @@ var daemonCmd = &cobra.Command{
 		log.Println("Starting Vault daemon...")
 
 		cfg := api.ServerConfig{
-			Addr:      addr,
-			TLSCert:   tlsCert,
-			TLSKey:    tlsKey,
-			ServerKey: serverKey,
-			Version:   version,
+			Addr:           addr,
+			TLSCert:        tlsCert,
+			TLSKey:         tlsKey,
+			ServerKey:      serverKey,
+			Version:        version,
+			AllowedOrigins: append(allowedOrigins, strings.Split(config.ReadCfgValue(cfgPath, "ALLOWED_ORIGINS", ""), ",")...),
 		}
 		srv := api.NewServer(database, cfg)
 		srv.SetStartupDiagnostics(startupDiag)
@@ -714,6 +716,7 @@ func init() {
 	daemonCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	daemonCmd.Flags().String("tls-key", "", "Path to TLS private key file")
 	daemonCmd.Flags().Bool("mdns", true, mdnsFlagUsage)
+	daemonCmd.Flags().StringSlice("allowed-origin", nil, allowedOriginFlagUsage)
 	rootCmd.AddCommand(daemonCmd)
 }
 

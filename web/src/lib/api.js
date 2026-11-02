@@ -1,4 +1,5 @@
-import { buildApiRequest } from './runtime-config.js'
+import { buildApiRequest, isProxyMode } from './runtime-config.js'
+import { markAuthRequired } from './auth.svelte.js'
 
 /** @type {boolean} */
 let _isReplica = false
@@ -50,6 +51,7 @@ async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_
     try { data = JSON.parse(text) } catch { /* non-JSON body */ }
   }
   if (!res.ok) {
+    if (res.status === 401 && !isProxyMode()) markAuthRequired()
     const msg = res.status === 401
       ? 'Not authorized — your session or API key may have expired.'
       : (data && data.error) || `HTTP ${res.status}`

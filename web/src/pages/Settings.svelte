@@ -6,6 +6,8 @@
   import { copyText } from '../lib/clipboard.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
   import { isEmbedded } from '../lib/runtime-config.js'
+  import { isRemoteKeyClient } from '../lib/auth.svelte.js'
+  import ApiKeyLocalOnlyNotice from '../components/ApiKeyLocalOnlyNotice.svelte'
   import { scrollHostTo } from '../lib/embed.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
@@ -917,7 +919,7 @@
       apiKeyEnabled = false
       apiKeyRevealed = ''
       apiKeyShowing = false
-      showToast('API key revoked – authentication disabled', 'success')
+      showToast('API key revoked – remote access disabled', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -1926,7 +1928,7 @@
       <!-- API Access -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">API Access <Tooltip text="Generate an API key to authenticate external integrations (Home Assistant, replication) when Vault is exposed on the network. Not required when accessed via localhost." /></h2>
+          <h2 class="text-base font-semibold text-text">API Access <Tooltip text="Remote clients (Home Assistant, replication, MCP) are refused until you generate an API key. The Unraid plugin and tools on this server don&apos;t need one." /></h2>
         </div>
         <div class="divide-y divide-border">
           {#if apiKeyEnabled}
@@ -1936,9 +1938,12 @@
                 <span class="inline-block w-2 h-2 rounded-full bg-success"></span>
                 <span class="text-sm font-medium text-text">API key active</span>
               </div>
-              <p class="text-xs text-text-muted">External clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header when connecting from non-localhost addresses. Localhost connections are always exempt.</p>
+              <p class="text-xs text-text-muted">Remote clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header. Tools on this server don't need it, and web pages from other sites are refused. Showing, rotating and revoking the key only work from this server or the Unraid plugin.</p>
             </div>
 
+            {#if isRemoteKeyClient()}
+            <div class="px-5 py-4"><ApiKeyLocalOnlyNotice /></div>
+            {:else}
             <!-- Reveal key -->
             <div class="px-5 py-4">
               <div class="flex items-center justify-between gap-4">
@@ -1978,7 +1983,7 @@
             <div class="px-5 py-3 flex justify-end">
               {#if confirmApiKeyRevoke}
                 <div class="flex items-center gap-2">
-                  <span class="text-xs text-danger">Revoke key and disable authentication?</span>
+                  <span class="text-xs text-danger">Revoke key and refuse all remote clients?</span>
                   <button onclick={revokeApiKey} disabled={apiKeyRevoking} class="text-xs font-medium text-danger hover:underline transition-colors disabled:opacity-50">
                     {apiKeyRevoking ? 'Revoking…' : 'Yes, revoke'}
                   </button>
@@ -1993,6 +1998,7 @@
               {/if}
             </div>
             {/if}
+            {/if}
           {:else}
             <div class="px-5 py-4">
               <div class="flex items-center gap-2 mb-3">
@@ -2005,6 +2011,8 @@
                 {#if apiKeyGenerating}<InlineSpinner />{/if}
                 {apiKeyGenerating ? 'Generating…' : 'Generate API Key'}
               </button>
+              {:else}
+              <p class="text-xs text-text-muted">On a replica, run <code class="bg-surface px-1 rounded">vault api-key generate</code> on the host or in its container.</p>
               {/if}
             </div>
           {/if}

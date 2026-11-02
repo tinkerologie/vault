@@ -392,7 +392,7 @@ func TestSyncSourceNoStorageDest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case "/api/v1/jobs":
 			_ = json.NewEncoder(w).Encode([]RemoteJob{{ID: 1, Name: "j"}})
 		default:
@@ -420,7 +420,7 @@ func TestSyncSourceAutoSelectStorageDest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case "/api/v1/jobs":
 			_ = json.NewEncoder(w).Encode([]RemoteJob{})
 		default:
@@ -451,7 +451,7 @@ func TestSyncSourceBadAdapter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case "/api/v1/jobs":
 			_ = json.NewEncoder(w).Encode([]RemoteJob{})
 		}
@@ -477,7 +477,7 @@ func TestSyncSourceListJobsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case "/api/v1/jobs":
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -508,7 +508,7 @@ func TestSyncSourceFullPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case r.URL.Path == "/api/v1/jobs":
 			_ = json.NewEncoder(w).Encode([]RemoteJob{
 				{ID: 5, Name: "Remote J", BackupTypeChain: "full", Compression: "zstd", StorageDestID: 9},
@@ -580,7 +580,7 @@ func TestSyncJobDownloadError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case r.URL.Path == "/api/v1/jobs":
 			_ = json.NewEncoder(w).Encode([]RemoteJob{
 				{ID: 1, Name: "j", StorageDestID: 1},
@@ -620,7 +620,7 @@ func TestSyncJobListRPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case r.URL.Path == "/api/v1/jobs":
 			_ = json.NewEncoder(w).Encode([]RemoteJob{
 				{ID: 7, Name: "j7"},
@@ -832,7 +832,7 @@ func TestSyncSourceSkipsReplicatedRemoteJobs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "test"})
 		case r.URL.Path == "/api/v1/jobs":
 			_, _ = w.Write([]byte(`[
 				{"id": 1, "name": "nightly", "source_id": 0},
