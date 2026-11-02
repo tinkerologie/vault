@@ -26,9 +26,12 @@ const current = vi.hoisted(() => ({ fixture: null }))
 vi.mock('../lib/unifiedlog.svelte.js', () => ({
   createUnifiedLogStore: () => current.fixture.store,
 }))
+vi.mock('../lib/clipboard.js', () => ({ copyText: vi.fn(async () => true) }))
 vi.mock('../lib/api.js', async () => (await import('../test-support/scroll-box.js')).apiModuleMock())
 
 import Logs from './Logs.svelte'
+import { copyText } from '../lib/clipboard.js'
+import { logLine } from '../lib/logline.js'
 
 let geo
 
@@ -300,6 +303,188 @@ describe('lifecycle while filling the viewport', () => {
     expect(store.loadOlder).toHaveBeenCalledOnce()
     expect(store.loadAll).not.toHaveBeenCalled()
     expect(store.setupWs).not.toHaveBeenCalled()
+  })
+})
+
+describe('problem rows (#534)', () => {
+  const problems = () => makeEntries(3).map((e, i) => ({
+    ...e,
+    level: i === 1 ? 'warning' : 'warn',
+    category: 'health',
+    message: `Health check, container=c${i}, status=unhealthy, error=Timed out, retrying`,
+    meta: { container_name: `c${i}`, status: 'unhealthy', error: 'SENTINEL-STRUCTURED' },
+  }))
+  const text = () => document.querySelector('[role="log"]').textContent
+  const row = (entry) => document.querySelector(`[data-entry-id="${entry.id}"]`)
+
+  it('shows the summary with Details off and the canonical text with it on', async () => {
+    await mountLogs({ entries: problems() })
+    expect(text()).toContain('Health check · c0 · unhealthy · Timed out, retrying')
+    await fireEvent.click(screen.getByRole('button', { name: /^Details:/ }))
+    await flush()
+    expect(text()).not.toContain('Health check · c0')
+    expect(text()).toContain('container=c0, status=unhealthy, error=Timed out, retrying')
+  })
+
+  it('never renders structured details, in the row or opened', async () => {
+    const entries = problems()
+    await mountLogs({ entries })
+    await fireEvent.click(row(entries[2]).querySelector('[aria-expanded]'))
+    await flush()
+    expect(document.querySelector('[data-log-details]')).toBeTruthy()
+    expect(document.body.innerHTML).not.toContain('SENTINEL')
+  })
+
+  it('opens one row at a time, and closes it again', async () => {
+    const entries = problems()
+    await mountLogs({ entries })
+    const toggle = row(entries[1]).querySelector('[aria-expanded]')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.hasAttribute('aria-controls')).toBe(false)
+
+    await fireEvent.click(toggle)
+    await flush()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById(toggle.getAttribute('aria-controls'))).toBeTruthy()
+    expect(row(entries[0]).querySelector('[aria-expanded]').getAttribute('aria-expanded')).toBe('false')
+    expect(document.querySelectorAll('[data-log-details]')).toHaveLength(1)
+
+    await fireEvent.click(toggle)
+    await flush()
+    expect(document.querySelectorAll('[data-log-details]')).toHaveLength(0)
+  })
+
+  it('offers no toggle on a bare row', async () => {
+    const entries = makeEntries(2)
+    await mountLogs({ entries })
+    expect(row(entries[0]).querySelector('[aria-expanded]')).toBeNull()
+  })
+
+  it('pauses auto-follow on opening, and holds the anchor line as lines arrive', async () => {
+    const entries = problems()
+    const { control } = await mountLogs({ entries })
+    expect(jumpToPresent()).toBeNull()
+    await fireEvent.click(row(entries[1]).querySelector('[aria-expanded]'))
+    await flush()
+    expect(jumpToPresent()).toBeTruthy()
+
+    geo.writes.length = 0
+    control.addNewer(makeEntries(1, { start: 1000 }))
+    await flush()
+    expect(geo.writes).not.toContain(0) // the follow pin is off
+    expect(screen.getByText('1 new entry')).toBeTruthy()
+  })
+
+  it('falls back to growth compensation when the anchor line has gone', async () => {
+    const entries = problems()
+    const { control, console: box } = await mountLogs({ entries: [...makeEntries(50), ...entries] })
+    await fireEvent.click(row(entries[1]).querySelector('[aria-expanded]'))
+    await flush()
+    await userScroll(geo, box(), 300)
+
+    // The whole buffer is replaced: nothing it anchored on is left.
+    control.setEntries(makeEntries(80, { start: 2000 }))
+    await flush()
+    expect(rowCount()).toBe(80)
+  })
+
+  it('lists a long fold in steps', async () => {
+    const entries = makeEntries(130).map((e) => ({ ...e, message: 'Tick' }))
+    await mountLogs({ entries })
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Tick, 130 entries' }))
+    await flush()
+    expect(document.querySelectorAll('[data-log-details] li')).toHaveLength(100)
+    await fireEvent.click(screen.getByRole('button', { name: 'Show 30 more of 30' }))
+    await flush()
+    expect(document.querySelectorAll('[data-log-details] li')).toHaveLength(130)
+  })
+
+  it('marks the row by pointer and by focus, and triple-click selects it', async () => {
+    const entries = problems()
+    await mountLogs({ entries })
+    const target = row(entries[0])
+    await fireEvent.pointerDown(target)
+    await flush()
+    expect(target.className).toContain('bg-vault/15')
+
+    await fireEvent.focusIn(row(entries[1]).querySelector('[aria-label="Copy log line"]'))
+    await flush()
+    expect(row(entries[1]).className).toContain('bg-vault/15')
+    expect(target.className).not.toContain('bg-vault/15')
+
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((fn) => { fn(); return 1 })
+    const selected = vi.spyOn(window, 'getSelection')
+    await fireEvent.click(target, { detail: 1 })
+    expect(selected).not.toHaveBeenCalled()
+    await fireEvent.click(target, { detail: 3 })
+    expect(window.getSelection().toString()).toContain('Health check')
+    await fireEvent.click(document.querySelector('[data-end-marker]'), { detail: 3 })
+    raf.mockRestore()
+    selected.mockRestore()
+  })
+})
+
+describe('copy stays verbatim (#534)', () => {
+  const folded = () => makeEntries(3).map((e, i) => ({ ...e, level: 'warn', message: `Health check, container=plex, status=failed, error=e${i}` }))
+
+  it('row copy yields every folded line, newest first', async () => {
+    const entries = folded()
+    copyText.mockClear()
+    await mountLogs({ entries })
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy 3 log lines' }))
+    await flush()
+    expect(copyText).toHaveBeenCalledWith([...entries].reverse().map(logLine).join('\n'))
+    expect(document.querySelector('.log-row-copy .text-success')).toBeTruthy()
+  })
+
+  it('Copy all holds every filtered entry, outside the render window too', async () => {
+    const entries = makeEntries(500)
+    copyText.mockClear()
+    await mountLogs({ entries })
+    expect(rowCount()).toBeLessThan(500)
+    await fireEvent.click(screen.getByTitle('Copy all filtered logs'))
+    await flush()
+    expect(copyText).toHaveBeenCalledWith(entries.map(logLine).join('\n'))
+  })
+})
+
+describe('Problems filter (#534)', () => {
+  const entries = () => makeEntries(4).map((e, i) => ({ ...e, level: ['info', 'warn', 'warning', 'error'][i] }))
+  const toggle = () => screen.getByRole('button', { name: 'Problems' })
+
+  it('toggles the level filter on and off, in step with the select', async () => {
+    const { store } = await mountLogs({ entries: entries() })
+    const select = screen.getByRole('combobox', { name: 'Level' })
+    await fireEvent.click(toggle())
+    await flush()
+    expect(store.levelFilter).toBe('problems')
+    expect(toggle().getAttribute('aria-pressed')).toBe('true')
+    expect(select.value).toBe('problems')
+    expect(rowCount()).toBe(3)
+
+    await fireEvent.click(toggle())
+    await flush()
+    expect(store.levelFilter).toBe('')
+    expect(toggle().getAttribute('aria-pressed')).toBe('false')
+    expect(rowCount()).toBe(4)
+  })
+
+  it('clears in one click through Reset filters', async () => {
+    await mountLogs({ entries: entries() })
+    await fireEvent.click(toggle())
+    await flush()
+    await fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }))
+    await flush()
+    expect(rowCount()).toBe(4)
+    expect(screen.queryByRole('button', { name: 'Reset filters' })).toBeNull()
+  })
+
+  it('says so when there are no problems', async () => {
+    await mountLogs({ entries: makeEntries(2) })
+    await fireEvent.click(toggle())
+    await flush()
+    expect(screen.getByText('No problems')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Reset filters' })).toBeTruthy()
   })
 })
 

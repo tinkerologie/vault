@@ -13,23 +13,26 @@
 //      becomes one row that says so.
 //
 // Collapsing is deliberately conservative: same level, same category, and the
-// exact same message text. Entries that merely look similar ("Health check:
+// same human-readable text. Entries that merely look similar ("Health check:
 // plex" vs "Health check: sonarr") stay separate rows, because the differing
-// part is the part worth reading.
+// part is the part worth reading. Warnings and errors must also match on item
+// and status, wherever those appear.
 
 import { dayKey, dayLabel } from './tsformat.js'
-import { splitMessageMeta } from './logline.js'
+import { splitMessageMeta, problemFoldKey } from './logline.js'
 
-// Rows fold on what the user actually SEES: level, category, and the
-// human-readable part of the message. The `key=value` tail is deliberately
+// Routine rows fold on what the user actually SEES: level, category, and the
+// human-readable part of the message. Their `key=value` tail is deliberately
 // excluded — eight "Uploaded recyclarr, file=…" lines differ only in the tail,
 // read as one repeated line, and are exactly the noise collapsing exists to
 // absorb. Nothing is lost: the folded entries stay on the row, so copy and
 // export still yield every line verbatim. The caller turns collapsing off when
 // the metadata tail is on screen, since that is the part being folded over.
+// Warning and error rows show their item and status (#534), so those join the
+// key: a problem with plex must never hide inside a row about sonarr.
 function collapseKey(entry) {
   const { message } = splitMessageMeta(entry.message)
-  return `${entry.level || 'info'} ${entry.category || ''} ${message}`
+  return `${entry.level || 'info'} ${entry.category || ''} ${message} ${problemFoldKey(entry)}`
 }
 
 // Build the display rows.
@@ -70,8 +73,11 @@ export function buildRows(entries, { collapse = true, now = new Date() } = {}) {
       // Same line again. The row's representative stays the newest entry —
       // it is the one whose timestamp the user sees — and the rest are kept
       // so copy and export still yield every line.
+      // The key follows the OLDEST entry: a new line folding in at the top then
+      // keeps the row's DOM element, and with it keyboard focus and open details.
       prev.repeat++
       prev.entries.push(entry)
+      prev.key = String(entry.id)
       if (dateRow) dateRow.count++
       continue
     }
@@ -87,6 +93,26 @@ export function buildRows(entries, { collapse = true, now = new Date() } = {}) {
 // Every entry a row stands for, newest-first — what copying that row yields.
 export function rowEntries(row) {
   return row.kind === 'entry' ? row.entries : []
+}
+
+// Inline expansion (#534) is tracked by entry id, in a set the caller owns. A row
+// counts as expanded when ANY entry it stands for is in the set, so it stays
+// open when a newer line folds into it and changes its representative entry.
+export function isRowExpanded(row, expanded) {
+  return expanded.size > 0 && rowEntries(row).some((e) => expanded.has(e.id))
+}
+
+// The set after toggling `row`: closing removes every entry the row stands for.
+export function toggleRowExpanded(row, expanded) {
+  const next = new Set(expanded)
+  if (isRowExpanded(row, expanded)) for (const e of rowEntries(row)) next.delete(e.id)
+  else next.add(row.entry.id)
+  return next
+}
+
+// A row can expand when there is something it does not already show.
+export function rowHasDetails(row, meta) {
+  return row.repeat > 1 || Boolean(meta)
 }
 
 // Render window (#507). The console used to put every loaded row on the page;

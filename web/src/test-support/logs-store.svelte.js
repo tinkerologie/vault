@@ -31,7 +31,7 @@ export function createFixtureStore({ entries = [], hasMore = false } = {}) {
   // Same filtering as the real store (unifiedlog.svelte.js), so `filtered`
   // and `entries` can never disagree.
   const matchesLevel = (e) =>
-    !_levelFilter || (_levelFilter === 'warn' ? e.level === 'warn' || e.level === 'warning' : e.level === _levelFilter)
+    !_levelFilter || (_levelFilter === 'problems' ? ['error', 'warn', 'warning'].includes(e.level) : _levelFilter === 'warn' ? e.level === 'warn' || e.level === 'warning' : e.level === _levelFilter)
   const matchesJob = (e) => !_jobFilter || e.jobName === _jobFilter
   const filtered = $derived(_entries.filter((e) => matchesLevel(e) && matchesJob(e) && matchesSearch(e, _search)))
   const jobs = $derived(

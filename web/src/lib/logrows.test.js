@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice } from './logrows.js'
+import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice, isRowExpanded, toggleRowExpanded, rowHasDetails } from './logrows.js'
 
 const NOW = new Date('2026-08-25T12:00:00')
 
@@ -299,5 +299,85 @@ describe('window slice date header (#507)', () => {
     expect(keys(windowSlice(rows, 3, 5))).toEqual(['day-1', 'c'])
     expect(windowSlice(rows, 6, 6)).toEqual([])
     expect(keys(windowSlice([{ kind: 'entry', key: 'x' }], 0, 1))).toEqual(['x'])
+  })
+})
+
+describe('folding warnings and errors (#534)', () => {
+  const at = (id) => `2026-08-25T09:00:${String(id).padStart(2, '0')}`
+  const line = (id, level, message, meta) => ({ ...entry(id, at(id), level, 'health', message), meta })
+  const shape = (entries) => buildRows(entries, opts).filter((r) => r.kind === 'entry').map((r) => r.repeat)
+
+  it('folds the same container and status, whatever the error text', () => {
+    expect(shape([
+      line(1, 'warn', 'Health check, container=plex, status=unhealthy, error=one'),
+      line(2, 'warn', 'Health check, container=plex, status=unhealthy, error=two'),
+    ])).toEqual([2])
+  })
+
+  it.each([
+    ['a different container', 'Health check, container=plex, status=failed', 'Health check, container=sonarr, status=failed'],
+    ['a different status', 'Health check, container=plex, status=failed', 'Health check, container=plex, status=unhealthy'],
+    ['a different destination', 'Storage health check, destination=a, status=failed', 'Storage health check, destination=b, status=failed'],
+    ['an identifier on only one line', 'Health check, container=plex', 'Health check'],
+  ])('keeps %s apart', (_name, a, b) => {
+    expect(shape([line(1, 'warn', a), line(2, 'warn', b)])).toEqual([1, 1])
+    expect(shape([line(1, 'error', a), line(2, 'error', b)])).toEqual([1, 1])
+  })
+
+  it('separates on structured identifiers too', () => {
+    expect(shape([
+      line(1, 'warn', 'Storage health check', { storage_dest_id: 1 }),
+      line(2, 'warn', 'Storage health check', { storage_dest_id: 2 }),
+    ])).toEqual([1, 1])
+  })
+
+  it('folds problems with no identifier at all', () => {
+    expect(shape([line(1, 'warn', 'Disk low'), line(2, 'warn', 'Disk low')])).toEqual([2])
+  })
+
+  it('still folds routine rows over a differing tail', () => {
+    expect(shape([
+      line(1, 'info', 'Health check, container=plex, status=ok'),
+      line(2, 'info', 'Health check, container=sonarr, status=running'),
+    ])).toEqual([2])
+  })
+
+  it('keeps a row\'s key when a newer line folds in at the top', () => {
+    const older = [line(1, 'info', 'Tick'), line(2, 'info', 'Tick')]
+    const key = (entries) => buildRows(entries, opts).find((r) => r.kind === 'entry').key
+    expect(key([...older, line(3, 'info', 'Tick')])).toBe(key(older))
+  })
+})
+
+describe('row expansion (#534)', () => {
+  const folded = () => buildRows([
+    entry(1, '2026-08-25T09:00:00', 'info', 'backup', 'Tick'),
+    entry(2, '2026-08-25T09:00:01', 'info', 'backup', 'Tick'),
+  ], opts).find((r) => r.kind === 'entry')
+
+  it('opens through the representative and stays open as the row grows', () => {
+    const open = toggleRowExpanded(folded(), new Set())
+    expect([...open]).toEqual([2])
+    const grown = buildRows([
+      entry(1, '2026-08-25T09:00:00', 'info', 'backup', 'Tick'),
+      entry(2, '2026-08-25T09:00:01', 'info', 'backup', 'Tick'),
+      entry(3, '2026-08-25T09:00:02', 'info', 'backup', 'Tick'),
+    ], opts).find((r) => r.kind === 'entry')
+    expect(isRowExpanded(grown, open)).toBe(true)
+    expect(toggleRowExpanded(grown, open).size).toBe(0)
+  })
+
+  it('leaves other rows alone', () => {
+    const other = { id: 9 }
+    const open = toggleRowExpanded(folded(), new Set([other.id]))
+    expect(open.has(9)).toBe(true)
+    expect(isRowExpanded(folded(), new Set([9]))).toBe(false)
+    expect(isRowExpanded(folded(), new Set())).toBe(false)
+  })
+
+  it('offers details only when the row hides something', () => {
+    expect(rowHasDetails({ repeat: 1 }, '')).toBe(false)
+    expect(rowHasDetails({ repeat: 1 }, 'a=b')).toBe(true)
+    expect(rowHasDetails({ repeat: 2 }, '')).toBe(true)
   })
 })

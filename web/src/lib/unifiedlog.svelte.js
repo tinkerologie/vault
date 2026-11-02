@@ -691,6 +691,7 @@ export function createUnifiedLogStore() {
 
   function matchesLevel(entry) {
     if (!_levelFilter) return true
+    if (_levelFilter === 'problems') return ['error', 'warn', 'warning'].includes(entry.level)
     if (_levelFilter === 'warn') return entry.level === 'warn' || entry.level === 'warning'
     return entry.level === _levelFilter
   }

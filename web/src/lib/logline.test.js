@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitMessageMeta, formatLine, logLine } from './logline.js'
+import { splitMessageMeta, formatLine, logLine, parseInlineMeta, problemFields, problemSummary, problemFoldKey } from './logline.js'
 
 describe('splitMessageMeta', () => {
   it.each([
@@ -81,5 +81,87 @@ describe('logLine', () => {
   it('normalizes warning level and unparseable ts', () => {
     const entry = { ts: 'not-a-date', level: 'warning', category: 'system', type: 'activity', message: 'Disk low' }
     expect(logLine(entry)).toBe('--:--:--  warn  system  Disk low')
+  })
+})
+
+describe('parseInlineMeta', () => {
+  it.each([
+    ['nothing', '', {}],
+    ['null', null, {}],
+    ['plain pairs', 'container=plex, status=ok', { container: 'plex', status: 'ok' }],
+    ['quoted with an escaped quote', 'job="a \\"b\\", c", status=x', { job: 'a "b", c', status: 'x' }],
+    ['unquoted value with a comma', 'container=a, b, status=x', { container: 'a, b', status: 'x' }],
+    ['error keeps the rest of the tail', 'status=failed, error=dial tcp, refused, code=7', { status: 'failed', error: 'dial tcp, refused, code=7' }],
+    ['a wholly quoted error is unquoted', 'error="bad, thing"', { error: 'bad, thing' }],
+    ['a partly quoted error stays verbatim', 'error="bad" and, x=1', { error: '"bad" and, x=1' }],
+    ['empty value is absent', 'status=, container=plex', { container: 'plex' }],
+    ['first occurrence wins', 'status=a, status=b', { status: 'a' }],
+    ['stops at text that is not a pair', 'not a pair', {}],
+  ])('%s', (_name, meta, want) => {
+    expect(parseInlineMeta(meta)).toEqual(want)
+  })
+})
+
+describe('problemFields', () => {
+  it.each([
+    ['inline container', { message: 'Health check, container=plex, status=unhealthy, error=Timed out' }, { item: 'plex', status: 'unhealthy', error: 'Timed out' }],
+    ['inline destination', { message: 'Storage health check, destination=NAS, status=failed' }, { item: 'NAS', status: 'failed', error: '' }],
+    ['inline job, quoted', { message: 'Backup finished, job="USB", status=failed' }, { item: 'USB', status: 'failed', error: '' }],
+    ['structured wins over inline', { message: 'Health check, container=a, status=b', meta: { container_name: 'x', status: 'y' } }, { item: 'x', status: 'y', error: '' }],
+    ['structured destination id', { message: 'Storage health check', meta: { storage_dest_id: 3 } }, { item: '3', status: '', error: '' }],
+    ['non-scalar and non-object details are ignored', { message: 'x', meta: { container_name: {}, status: '' } }, { item: '', status: '', error: '' }],
+    ['a details string is ignored', { message: 'x', meta: 'text' }, { item: '', status: '', error: '' }],
+  ])('%s', (_name, entry, want) => {
+    expect(problemFields(entry)).toEqual(want)
+  })
+
+  it('never takes error text from structured details, which Details does not show', () => {
+    const entry = { level: 'warn', type: 'activity', message: 'Post-script failed: job', meta: { error: 'SENTINEL', message: 'SENTINEL', script: 'SENTINEL', status: 'failed' } }
+    expect(problemFields(entry).error).toBe('')
+    expect(problemSummary(entry)).toBe('Post-script failed: job · failed')
+  })
+})
+
+describe('problemSummary', () => {
+  const summary = (level, message, extra = {}) => problemSummary({ level, message, type: 'activity', ...extra })
+
+  it.each(['info', 'debug', 'success', '', undefined])('is null for level %s', (level) => {
+    expect(summary(level, 'Health check, container=plex, status=ok')).toBeNull()
+  })
+
+  it.each(['warn', 'warning', 'error'])('joins item, status and error for level %s', (level) => {
+    expect(summary(level, 'Health check, container=plex, status=unhealthy, error=Timed out, retrying'))
+      .toBe('Health check · plex · unhealthy · Timed out, retrying')
+  })
+
+  it('leaves out what is missing', () => {
+    expect(summary('warn', 'Health check, status=failed')).toBe('Health check · failed')
+    expect(summary('warn', 'Health check, container=plex')).toBe('Health check · plex')
+  })
+
+  it('keeps the whole tail when no field is recognised', () => {
+    expect(summary('warn', 'Failed: plex (container): boom, item=1/3')).toBe('Failed: plex (container): boom · item=1/3')
+    expect(summary('warn', 'Backup failed', { meta: { job: 'USB' } })).toBe('Backup failed · job=USB')
+  })
+
+  it('leaves a bare message unchanged', () => {
+    expect(summary('error', 'Storage capacity above 75%')).toBe('Storage capacity above 75%')
+  })
+})
+
+describe('problemFoldKey', () => {
+  it('is empty for routine rows and separates item from status otherwise', () => {
+    expect(problemFoldKey({ level: 'info', message: 'x, container=a' })).toBe('')
+    const key = (message) => problemFoldKey({ level: 'warn', message })
+    expect(key('x, container=a, status=b')).not.toBe(key('x, container=ab, status='))
+    expect(key('x, container=a, status=b, error=one')).toBe(key('x, container=a, status=b, error=two'))
+  })
+})
+
+describe('copied and exported text', () => {
+  it('stays byte-identical for problem lines', () => {
+    const entry = { ts: '2026-08-21T10:45:48', level: 'warning', category: 'health', type: 'activity', message: 'Health check, container=plex, status=unhealthy, error=Timed out, retrying', meta: { container_name: 'plex', status: 'unhealthy' } }
+    expect(formatLine(entry)).toEqual({ message: 'Health check', meta: 'container=plex, status=unhealthy, error=Timed out, retrying' })
+    expect(logLine(entry)).toBe('2026-08-21 10:45:48  warn  health  Health check | container=plex, status=unhealthy, error=Timed out, retrying')
   })
 })
