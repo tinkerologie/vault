@@ -110,7 +110,7 @@
 {#if dataPoints.length >= 2}
   <div class="bg-surface-2 border border-border rounded-xl p-4 mb-6">
     <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
-      <h3 class="text-sm font-semibold text-text">Job Duration Trend</h3>
+      <h2 class="text-sm font-semibold text-text">Job Duration Trend</h2>
       <div class="flex items-center gap-3 flex-wrap">
         {#if trend}
           <div class="flex items-center gap-1.5 text-xs pl-3 border-l border-border">

@@ -25,6 +25,9 @@ type staleJob struct {
 	LastSuccessAt time.Time `json:"last_success_at"`
 }
 
+// maxScheduleGap bounds how far ahead a schedule is searched for its next run.
+const maxScheduleGap = 10 * 365 * 24 * time.Hour
+
 // jobStaleAfter allows two missed runs plus a day, so one late or retried run
 // doesn't raise an alarm. A disabled schedule never fires, so its cadence says
 // nothing about how old the job's backups may get.
@@ -32,28 +35,48 @@ func jobStaleAfter(job db.Job, now time.Time) time.Duration {
 	if !job.Enabled || job.Schedule == "" {
 		return defaultStaleAfter
 	}
-	schedule, err := cron.ParseStandard(cadenceSpec(job.Schedule))
+	next, err := scheduleStepper(job.Schedule)
 	if err != nil {
 		return defaultStaleAfter
 	}
-	next := schedule.Next(now)
-	return 2*schedule.Next(next).Sub(next) + 24*time.Hour
+	first, ok := next(now)
+	if !ok {
+		return maxScheduleGap
+	}
+	second, ok := next(first)
+	if !ok {
+		return maxScheduleGap
+	}
+	// An irregular schedule's coming gap can be shorter than the one it's in now.
+	gap := max(second.Sub(first), first.Sub(now))
+	return 2*gap + 24*time.Hour
 }
 
-// cadenceSpec rewrites the scheduler's "L" (last day of month) day-of-month to a
-// fixed day, because cron can't parse "L" and only the gap between runs matters.
-// A weekday filter makes the last day match only occasionally, and cron would
-// read it as an OR with the day, so that case is scored as yearly.
-func cadenceSpec(spec string) string {
+// scheduleStepper returns a function giving a schedule's next run after t. It
+// reports false when the schedule doesn't fire within maxScheduleGap, as a
+// last-day schedule filtered to a rare weekday may not.
+func scheduleStepper(spec string) (func(time.Time) (time.Time, bool), error) {
 	fields := strings.Fields(spec)
-	if len(fields) != 5 || fields[2] != "L" {
-		return spec
+	lastDayOnly := len(fields) == 5 && fields[2] == "L"
+	if lastDayOnly {
+		// The scheduler runs "L" as a daily trigger that fires only on the month's
+		// last day, so step through the same days.
+		fields[2] = "*"
+		spec = strings.Join(fields, " ")
 	}
-	fields[2] = "1"
-	if fields[4] != "*" {
-		fields[3], fields[4] = "1", "*"
+	schedule, err := cron.ParseStandard(spec)
+	if err != nil {
+		return nil, err
 	}
-	return strings.Join(fields, " ")
+	return func(t time.Time) (time.Time, bool) {
+		limit := t.Add(maxScheduleGap)
+		for at := schedule.Next(t); !at.IsZero() && at.Before(limit); at = schedule.Next(at) {
+			if !lastDayOnly || at.AddDate(0, 0, 1).Month() != at.Month() {
+				return at, true
+			}
+		}
+		return time.Time{}, false
+	}, nil
 }
 
 // isBackupRun reports whether a run is a backup, not a restore. Older rows have

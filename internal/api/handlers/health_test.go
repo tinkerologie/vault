@@ -562,6 +562,8 @@ func TestHealthSummary_StaleJobs(t *testing.T) {
 		{"last-day monthly job within its grace", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 45 * healthDay, false},
 		{"last-day monthly job past its grace", db.Job{Enabled: true, Schedule: "0 2 L * *"}, 70 * healthDay, true},
 		{"last-day weekday-filtered job isn't scored as weekly", db.Job{Enabled: true, Schedule: "0 2 L * 1"}, 100 * healthDay, false},
+		{"last-day job in rare months and on one weekday isn't stale early", db.Job{Enabled: true, Schedule: "0 2 L 1,7 1"}, 500 * healthDay, false},
+		{"last-day job that can never fire isn't flagged", db.Job{Enabled: true, Schedule: "0 2 L 2 0"}, 500 * healthDay, false},
 		{"last-day yearly job within its grace", db.Job{Enabled: true, Schedule: "0 2 L 1 *"}, 300 * healthDay, false},
 	}
 	for _, tc := range cases {
@@ -637,5 +639,28 @@ func TestHealthSummary_ReplicatedJobIsNotStale(t *testing.T) {
 	stale, _ := fetchHealthSummary(t, d)["stale_jobs"].([]any)
 	if len(stale) != 0 {
 		t.Errorf("stale_jobs = %v, want none", stale)
+	}
+}
+
+func TestJobStaleAfter_LastDayMatchesTheSchedulersRuns(t *testing.T) {
+	now := time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC)
+	next, err := scheduleStepper("0 2 L * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok := next(now)
+	if !ok || !first.Equal(time.Date(2026, time.January, 31, 2, 0, 0, 0, time.UTC)) {
+		t.Fatalf("first run = %v, %v", first, ok)
+	}
+	second, ok := next(first)
+	if !ok || !second.Equal(time.Date(2026, time.February, 28, 2, 0, 0, 0, time.UTC)) {
+		t.Fatalf("second run = %v, %v", second, ok)
+	}
+	if _, err := scheduleStepper("not a schedule"); err == nil {
+		t.Error("an unparseable schedule should return an error")
+	}
+	got := jobStaleAfter(db.Job{Enabled: true, Schedule: "0 2 L * *"}, now)
+	if want := 2*second.Sub(first) + 24*time.Hour; got != want {
+		t.Errorf("jobStaleAfter = %v, want %v", got, want)
 	}
 }
