@@ -248,7 +248,7 @@
   }
 
   const typeColors = {
-    remote_vault: 'text-vault',
+    remote_vault: 'text-vault-text',
   }
 
   function statusBadge(src) {
@@ -371,7 +371,7 @@
             <div class="flex items-center gap-2 mt-4 pt-4 border-t border-border">
               {#if !isReplicaMode()}
               <button onclick={() => syncNow(src.id)} disabled={syncing === src.id}
-                class="px-3 py-1.5 bg-vault/10 hover:bg-vault/20 text-vault text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                class="px-3 py-1.5 bg-vault/10 hover:bg-vault/20 text-vault-text text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5">
                 {#if syncing === src.id}
                   <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                   Syncing...
@@ -461,14 +461,14 @@
       <div>
         <label for="repl-name" class="block text-sm font-medium text-text mb-1">Name</label>
         <input id="repl-name" type="text" required bind:value={form.name} placeholder="e.g. Production Server"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
       </div>
 
       <!-- Remote Vault Fields -->
         <div>
           <label for="repl-url" class="block text-sm font-medium text-text mb-1">Remote Vault URL</label>
           <input id="repl-url" type="url" required bind:value={form.url} placeholder="http://192.168.1.100:24085"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <p class="text-xs text-text-dim mt-1">The base URL of the remote Vault server (include port). Only jobs created on that server are synced; jobs it replicated from other servers are skipped.</p>
         </div>
 
@@ -482,7 +482,7 @@
             {/if}
           </label>
           <input id="repl-apikey" type="password" autocomplete="off" required={!editing} value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder={editing ? 'Leave blank to keep the current key' : "Enter the remote server's API key"}
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <div class="mt-2 p-2.5 bg-warning/5 border border-warning/20 rounded-lg flex items-start gap-2">
             <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
             <p class="text-xs text-text-muted">An API key is required to authenticate with the remote Vault server. Generate one on the remote server under <strong class="text-text">Settings → API Access</strong>, then paste it here.</p>
@@ -521,7 +521,7 @@
 
       <div class="flex items-center gap-2">
         <input id="repl-enabled" type="checkbox" bind:checked={form.enabled}
-          class="w-4 h-4 rounded border-border text-vault focus:ring-vault/50" />
+          class="w-4 h-4 rounded border-border text-vault-text focus:ring-vault/50" />
         <label for="repl-enabled" class="text-sm text-text">Enable scheduled syncing</label>
       </div>
 

@@ -1701,6 +1701,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 						log.Printf("runner: health check error for %s: %v", itemName, err)
 						return
 					}
+					result.Message = redactHealthMessage(result.Message)
 					r.broadcast(map[string]any{
 						"type":        "container_health_check",
 						"job_id":      jobID,
@@ -1784,6 +1785,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 				log.Printf("runner: health check error for %s: %v", name, err)
 				continue
 			}
+			result.Message = redactHealthMessage(result.Message)
 			healthResults = append(healthResults, map[string]any{
 				"name":        result.ContainerName,
 				"status":      result.Status,

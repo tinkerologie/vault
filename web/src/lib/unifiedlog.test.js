@@ -354,6 +354,34 @@ describe('unified log store', () => {
     expect(store.loadingOlder).toBe(false)
   })
 
+  it('does not ask for the log of a run that is gone, and keeps its summary row', async () => {
+    const gone = { id: 500, level: 'info', category: 'backup', message: 'Backup completed: old', run_gone: true, details: JSON.stringify({ run_id: 44, run_log: true, job_id: 2, job_name: 'old' }), created_at: '2026-08-21T14:58:00Z' }
+    api.getActivity.mockImplementation(async (_limit, _category, beforeId = 0) => (beforeId ? [] : [gone]))
+    api.getRunLogs.mockClear()
+    await store.load()
+    expect(api.getRunLogs).not.toHaveBeenCalled()
+    expect(store.entries.map((e) => e.message)).toContain('Backup completed: old')
+  })
+
+  it('reports loading stopped early, and clears that on a retry that finishes', async () => {
+    const page = Array.from({ length: 30 }, (_, i) => ({ id: 1000 - i, level: 'info', category: 'backup', message: `msg ${i}`, details: null, created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) - i * 1000).toISOString() }))
+    let fail = true
+    api.getActivity.mockImplementation(async (limit = 30, _category = '', beforeId = 0) => {
+      if (!beforeId) return page.slice(0, limit)
+      if (fail) throw new Error('network down')
+      return []
+    })
+    await store.load()
+    expect(store.historyStopped).toBe(false)
+    await store.loadAll()
+    expect(store.hasMore).toBe(true)
+    expect(store.historyStopped).toBe(true)
+    fail = false
+    await store.loadAll()
+    expect(store.hasMore).toBe(false)
+    expect(store.historyStopped).toBe(false)
+  })
+
   it('terminates loadAll after one silent failure and preserves existing rows', async () => {
     const plain30 = Array.from({ length: 30 }, (_, i) => ({
       id: 1000 - i,

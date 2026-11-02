@@ -2,8 +2,22 @@ import { test, expect } from '@playwright/test';
 import { setupVaultMockApi } from './mocks/vault-api';
 
 test.describe('Cold Disaster Recovery Wizard (#/recover)', () => {
+  // First-time recovery: an empty Vault gets the light confirmation (#525).
   test.beforeEach(async ({ page }) => {
-    await setupVaultMockApi(page);
+    await setupVaultMockApi(page, { jobs: [], storage: [] });
+  });
+
+  test('an empty Vault whose lists come back null still gets the light confirmation', async ({ page }) => {
+    await page.route(/\/api\/v1\/(jobs|storage)(\?|$)/, (route) => (
+      route.request().method() === 'GET' ? route.fulfill({ json: null }) : route.fallback()
+    ));
+    await page.goto('/#/recover');
+    await page.locator('#sname').fill('Disaster Recovery Storage');
+    await page.getByRole('textbox', { name: 'Path' }).fill('/mnt/user/backups');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('button', { name: /Restore this backup/i }).click();
+    await expect(page.getByRole('button', { name: /Yes, restore my settings/i })).toBeVisible();
+    await expect(page.getByLabel('Type REPLACE to confirm')).toHaveCount(0);
   });
 
   test('guides administrator through 5-step disaster recovery from remote storage', async ({ page }) => {
@@ -39,6 +53,7 @@ test.describe('Cold Disaster Recovery Wizard (#/recover)', () => {
     // Confirm dialog
     const confirmBtn = page.getByRole('button', { name: /Yes, restore my settings/i });
     await expect(confirmBtn).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await confirmBtn.click();
 
     // Step 4: Check folder paths
@@ -100,5 +115,17 @@ test.describe('Cold Disaster Recovery Wizard (#/recover)', () => {
     // The rest of the wizard still works.
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.getByRole('heading', { name: /Vault is back/i })).toBeVisible();
+  });
+
+  test('a failed check of the current settings is not treated as empty', async ({ page }) => {
+    await page.route('**/api/v1/jobs', (route) => (route.request().method() === 'GET' ? route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"nope"}' }) : route.fallback()));
+    await page.goto('/#/recover');
+    await page.locator('#sname').fill('Disaster Recovery Storage');
+    await page.getByRole('textbox', { name: 'Path' }).fill('/mnt/user/backups');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('button', { name: /Restore this backup/i }).click();
+    const dialog = page.getByRole('dialog', { name: 'Replace Vault Database' });
+    await expect(dialog).toContainText("couldn't check");
+    await expect(dialog.getByRole('button', { name: 'Replace Database', exact: true })).toBeDisabled();
   });
 });

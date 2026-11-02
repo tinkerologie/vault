@@ -334,7 +334,7 @@
         type="text"
         bind:value={bulkReason}
         placeholder="Reason (optional)"
-        class="px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim flex-1 min-w-[160px]"
+        class="px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted flex-1 min-w-[160px]"
       />
       <button
         onclick={() => bulkAck('dismiss')}
@@ -500,7 +500,7 @@
           <button
             onclick={() => loadAnomalies(false)}
             disabled={loadingMore}
-            class="text-sm font-medium text-vault hover:text-vault-dark transition-colors disabled:opacity-40"
+            class="text-sm font-medium text-vault-text hover:underline transition-colors disabled:opacity-40"
           >
             {loadingMore ? 'Loading...' : 'Load more'}
           </button>

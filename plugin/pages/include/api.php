@@ -21,6 +21,30 @@ function vault_load_config() {
     return $cfg;
 }
 
+// Light or dark to match Unraid's theme, or null for anything we can't map, such
+// as a custom theme or an unreadable file: the SPA then keeps its own default.
+function vault_detect_host_theme($cfg = '/boot/config/plugins/dynamix/dynamix.cfg') {
+    if (!is_file($cfg)) {
+        return null;
+    }
+    $ini = @parse_ini_file($cfg, true);
+    if (!is_array($ini) || !isset($ini['display']['theme'])) {
+        return null;
+    }
+    $themes = ['black' => 'dark', 'gray' => 'dark', 'white' => 'light', 'azure' => 'light'];
+    return $themes[(string) $ini['display']['theme']] ?? null;
+}
+
+// Presentation hints for app.php, which serves both the Backups frame and the
+// new-tab launcher. Only the frame asks for embed=1 (#526).
+function vault_embed_runtime_config($query, $cfg = '/boot/config/plugins/dynamix/dynamix.cfg') {
+    $embedded = ($query['embed'] ?? '') === '1';
+    return [
+        'presentation' => $embedded ? 'embedded' : 'standalone',
+        'hostTheme' => $embedded ? vault_detect_host_theme($cfg) : null,
+    ];
+}
+
 function vault_get_port() {
     $cfg = vault_load_config();
     return trim((string) ($cfg['PORT'] ?? '24085'), " \t\n\r\0\x0B\"'");

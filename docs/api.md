@@ -18,14 +18,14 @@ Loopback requests (`127.0.0.1` and `::1`) are always exempt from API key validat
 
 ## Core
 
-| Method | Endpoint             | Description                                                             |
-| ------ | -------------------- | ----------------------------------------------------------------------- |
-| GET    | `/health`            | Basic health, version, and mode                                         |
-| GET    | `/health/summary`    | Aggregated dashboard health metrics                                     |
-| GET    | `/ws`                | WebSocket event stream                                                  |
-| GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress) |
-| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal) |
-| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)    |
+| Method | Endpoint             | Description                                                                                                                  |
+| ------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/health`            | Basic health, version, and mode                                                                                              |
+| GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs` |
+| GET    | `/ws`                | WebSocket event stream                                                                                                       |
+| GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress)                                                      |
+| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)                                                      |
+| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)                                                         |
 
 ## Jobs
 
@@ -122,7 +122,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 
 | Method | Endpoint                                | Description                                                                                                                                                                                                               |
 | ------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/activity?limit=N`                     | Activity log entries (`limit` is clamped to ≤ 1000 to prevent OOM)                                                                                                                                                        |
+| GET    | `/activity?limit=N`                     | Activity log entries (`limit` is clamped to ≤ 1000 to prevent OOM); `run_gone` marks an entry whose run log no longer exists                                                                                              |
 | DELETE | `/activity`                             | Purge all activity log entries (irreversible)                                                                                                                                                                             |
 | GET    | `/runs/{runId}/logs?after=<id>&limit=N` | Streaming log entries for one backup/restore run, oldest-first. `?after=<id>` tails only newer lines; `?limit=N` clamped to [1, 1000]. Unknown run → 404; invalid run id or negative `after` / non-positive `limit` → 400 |
 

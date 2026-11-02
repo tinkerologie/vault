@@ -2,6 +2,7 @@ package runner
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tinkerologie/vault/internal/db"
@@ -121,6 +122,36 @@ func TestCheckStorageDestinationTestConnectionFailure(t *testing.T) {
 	}
 	if msg == "" {
 		t.Errorf("msg should be populated on failure")
+	}
+}
+
+// TestCheckStorageDestinationRedactsCredentials makes sure a credential echoed
+// in an adapter error never reaches the persisted, broadcast or logged message.
+func TestCheckStorageDestinationRedactsCredentials(t *testing.T) {
+	t.Parallel()
+	r, database, _ := setupTestRunner(t)
+
+	missing := filepath.Join(t.TempDir(), "password=hunter2", "share")
+	id, err := database.CreateStorageDestination(db.StorageDestination{
+		Name:   "leaky",
+		Type:   "local",
+		Config: `{"path":"` + missing + `"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, _ := database.GetStorageDestination(id)
+
+	status, msg := r.CheckStorageDestination(dest)
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed", status)
+	}
+	if strings.Contains(msg, "hunter2") {
+		t.Errorf("returned message leaks the password: %q", msg)
+	}
+	got, _ := database.GetStorageDestination(id)
+	if strings.Contains(got.LastHealthCheckError, "hunter2") {
+		t.Errorf("persisted error leaks the password: %q", got.LastHealthCheckError)
 	}
 }
 

@@ -111,7 +111,7 @@
       {#if node.isDir}
         <button
           type="button"
-          class="p-0.5 hover:bg-surface-4 rounded text-text-dim hover:text-text shrink-0 focus:outline-none"
+          class="hit-target hover:bg-surface-4 rounded text-text-dim hover:text-text shrink-0 focus:outline-none"
           onclick={(e) => { e.stopPropagation(); ontoggleexpand(node.path) }}
           aria-label={expanded ? `Collapse ${node.name}` : `Expand ${node.name}`}
         >
@@ -125,7 +125,7 @@
           </svg>
         </button>
       {:else}
-        <span class="w-4.5 shrink-0"></span>
+        <span class="w-6 shrink-0"></span>
       {/if}
 
       <input
@@ -134,18 +134,18 @@
         indeterminate={state.indeterminate}
         onchange={(e) => handleCheckboxChange(e, node)}
         onclick={(e) => e.stopPropagation()}
-        class="accent-vault rounded cursor-pointer shrink-0"
+        class="accent-vault rounded cursor-pointer shrink-0 w-6 h-6 m-0"
         aria-label={`Select ${node.name}`}
       />
 
       {#if node.isDir}
         {#if expanded}
-          <svg class="w-4 h-4 text-amber-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+          <svg class="w-4 h-4 text-hue-amber shrink-0" fill="currentColor" viewBox="0 0 20 20">
             <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1H8a3 3 0 00-3 3v1.5a1.5 1.5 0 01-3-1.5V6z" clip-rule="evenodd"/>
             <path d="M6 12a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H8a2 2 0 01-2-2v-2z"/>
           </svg>
         {:else}
-          <svg class="w-4 h-4 text-amber-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+          <svg class="w-4 h-4 text-hue-amber shrink-0" fill="currentColor" viewBox="0 0 20 20">
             <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
           </svg>
         {/if}

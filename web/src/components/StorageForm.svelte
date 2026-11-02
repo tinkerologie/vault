@@ -184,12 +184,12 @@
   }
 
   const storageColors = {
-    local: 'text-blue-400',
-    sftp: 'text-emerald-400',
-    smb: 'text-purple-400',
-    nfs: 'text-amber-400',
-    webdav: 'text-cyan-400',
-    s3: 'text-orange-400',
+    local: 'text-hue-blue',
+    sftp: 'text-hue-emerald',
+    smb: 'text-hue-purple',
+    nfs: 'text-hue-amber',
+    webdav: 'text-hue-cyan',
+    s3: 'text-hue-orange',
   }
 </script>
 
@@ -197,7 +197,7 @@
   <div>
     <label for="sname" class="block text-sm font-medium text-text-muted mb-1.5">Name</label>
     <input id="sname" type="text" bind:value={form.name} required
-      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="My Backup Target" />
+      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" placeholder="My Backup Target" />
   </div>
 
   <div>
@@ -241,7 +241,7 @@
       <div class="col-span-2">
         <label for="cfg_host" class="block text-sm font-medium text-text-muted mb-1.5">Host</label>
         <input id="cfg_host" type="text" bind:value={form.config.host}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="192.168.1.100" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" placeholder="192.168.1.100" />
       </div>
       <div>
         <label for="cfg_port" class="block text-sm font-medium text-text-muted mb-1.5">Port</label>
@@ -253,65 +253,65 @@
       <div>
         <label for="cfg_user" class="block text-sm font-medium text-text-muted mb-1.5">Username</label>
         <input id="cfg_user" type="text" bind:value={form.config.user}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
         <label for="cfg_pass" class="block text-sm font-medium text-text-muted mb-1.5">Password</label>
         <input id="cfg_pass" type="password" autocomplete="off" bind:value={form.config.password}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
     </div>
     <div>
       <label for="cfg_spath" class="block text-sm font-medium text-text-muted mb-1.5">Remote Path <Tooltip text="Absolute path on the SFTP server where Vault will store backups. The directory must exist and the user must have write permission." /></label>
       <input id="cfg_spath" type="text" bind:value={form.config.base_path}
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="/backups/vault" />
+        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" placeholder="/backups/vault" />
     </div>
   {:else if form.type === 'smb'}
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label for="cfg_smbhost" class="block text-sm font-medium text-text-muted mb-1.5">Host</label>
         <input id="cfg_smbhost" type="text" bind:value={form.config.host}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="192.168.1.100" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" placeholder="192.168.1.100" />
       </div>
       <div>
         <label for="cfg_share" class="block text-sm font-medium text-text-muted mb-1.5">Share <Tooltip text="The top-level SMB share name as configured on the server (e.g. Backups). Use the Path field below for a sub-folder within the share." /></label>
         <input id="cfg_share" type="text" bind:value={form.config.share}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" placeholder="Backups" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" placeholder="Backups" />
       </div>
     </div>
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label for="cfg_smbuser" class="block text-sm font-medium text-text-muted mb-1.5">Username</label>
         <input id="cfg_smbuser" type="text" bind:value={form.config.user}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
         <label for="cfg_smbpass" class="block text-sm font-medium text-text-muted mb-1.5">Password</label>
         <input id="cfg_smbpass" type="password" autocomplete="off" bind:value={form.config.password}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
     </div>
     <div>
       <label for="cfg_smbpath" class="block text-sm font-medium text-text-muted mb-1.5">Path</label>
       <input id="cfg_smbpath" type="text" bind:value={form.config.base_path}
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" placeholder="vault" />
+        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" placeholder="vault" />
     </div>
   {:else if form.type === 'nfs'}
     <div class="grid grid-cols-2 gap-3">
       <div class="col-span-2">
         <label for="nfs_host" class="block text-sm font-medium text-text-muted mb-1.5">NFS Host</label>
         <input id="nfs_host" type="text" bind:value={form.config.host} placeholder="192.168.1.100"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div class="col-span-2">
         <label for="nfs_export" class="block text-sm font-medium text-text-muted mb-1.5">Export Path <Tooltip text="The path the NFS server exports – matches the entry in /etc/exports on the server (e.g. /mnt/user/backups). This is what gets mounted, not a sub-path within it." /></label>
         <input id="nfs_export" type="text" bind:value={form.config.export} placeholder="/mnt/user/backups"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
         <label for="nfs_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional sub-directory within the mounted export where Vault will write its data. Leave blank to use the export root directly." /></label>
         <input id="nfs_base" type="text" bind:value={form.config.base_path} placeholder="vault"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
         <label for="nfs_version" class="block text-sm font-medium text-text-muted mb-1.5">NFS Version <Tooltip text="NFSv3: wider compatibility, simpler setup. NFSv4: better security and performance, but may require DNS and auth configuration." /></label>
@@ -324,31 +324,31 @@
       <div class="col-span-2">
         <label for="nfs_options" class="block text-sm font-medium text-text-muted mb-1.5">Mount Options <Tooltip text="Optional NFS mount flags such as rw, sync, hard, soft, or nolock. Leave blank for sensible defaults." /></label>
         <input id="nfs_options" type="text" bind:value={form.config.options} placeholder="Optional: rw,sync"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
     </div>
   {:else if form.type === 'webdav'}
     <div>
       <label for="dav_url" class="block text-sm font-medium text-text-muted mb-1.5">Server URL <Tooltip text="Full URL to the WebDAV endpoint, e.g. https://nextcloud.example.com/remote.php/dav/files/username/" /></label>
       <input id="dav_url" type="url" bind:value={form.config.url} placeholder="https://webdav.example.com/"
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
     </div>
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label for="dav_user" class="block text-sm font-medium text-text-muted mb-1.5">Username</label>
         <input id="dav_user" type="text" bind:value={form.config.username}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
         <label for="dav_pass" class="block text-sm font-medium text-text-muted mb-1.5">Password / App Token</label>
         <input id="dav_pass" type="password" autocomplete="off" bind:value={form.config.password}
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
     </div>
     <div>
       <label for="dav_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional sub-folder under the server URL where Vault will write its data." /></label>
       <input id="dav_base" type="text" bind:value={form.config.base_path} placeholder="vault"
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
     </div>
     <label class="flex items-center gap-2 text-sm text-text-muted">
       <input type="checkbox" bind:checked={form.config.insecure_skip_verify} class="accent-vault" />
@@ -366,7 +366,7 @@
             <Tooltip text="Splits large uploads into separate pieces so one dropped connection doesn't restart the whole file. Recommended: leave at 0 (uses 50 MiB pieces). Use -1 only if your server rejects chunked uploads." />
           </label>
           <input id="dav_chunk" type="number" bind:value={form.config.chunk_size_mb} placeholder="0 (50 MiB)" min="-1"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
         <div>
           <label for="dav_stall" class="block text-sm font-medium text-text-muted mb-1.5">
@@ -374,7 +374,7 @@
             <Tooltip text="Gives up on an upload if no data moves for this many seconds – catches a silently stalled connection. The timer resets whenever data flows, so even huge files finish fine. Recommended: 300 (5 min); use -1 to disable." />
           </label>
           <input id="dav_stall" type="number" bind:value={form.config.stall_timeout_seconds} placeholder="300" min="-1"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
         <div>
           <label for="dav_overall" class="block text-sm font-medium text-text-muted mb-1.5">
@@ -382,7 +382,7 @@
             <Tooltip text="A hard time limit on every request, including a whole file upload. Set too low, it cuts off large uploads. Recommended: leave at 0 (no limit) – the stall timeout above already handles dead connections." />
           </label>
           <input id="dav_overall" type="number" bind:value={form.config.timeout_seconds} placeholder="0 (unlimited)" min="0"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
       </div>
     </details>
@@ -402,35 +402,35 @@
       <div>
         <label for="s3_bucket" class="block text-sm font-medium text-text-muted mb-1.5">Bucket</label>
         <input id="s3_bucket" type="text" bind:value={form.config.bucket} placeholder="my-vault-backups"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
         <label for="s3_region" class="block text-sm font-medium text-text-muted mb-1.5">Region <Tooltip text="AWS region code, e.g. us-east-1. For S3-compatible providers, use the region required by the provider." /></label>
         <input id="s3_region" type="text" bind:value={form.config.region} placeholder="us-east-1"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
     </div>
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label for="s3_ak" class="block text-sm font-medium text-text-muted mb-1.5">Access Key ID</label>
         <input id="s3_ak" type="text" bind:value={form.config.access_key} autocomplete="off"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
       </div>
       <div>
         <label for="s3_sk" class="block text-sm font-medium text-text-muted mb-1.5">Secret Access Key</label>
         <input id="s3_sk" type="password" bind:value={form.config.secret_key} autocomplete="off"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
       </div>
     </div>
     <div>
       <label for="s3_endpoint" class="block text-sm font-medium text-text-muted mb-1.5">Endpoint <Tooltip text="Optional. Required for S3-compatible providers like Backblaze B2, MinIO, Cloudflare R2 or Wasabi. Leave blank for AWS S3." /></label>
       <input id="s3_endpoint" type="text" bind:value={form.config.endpoint} placeholder="https://s3.us-west-002.backblazeb2.com"
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
     </div>
     <div>
       <label for="s3_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional key prefix prepended to every object Vault writes." /></label>
       <input id="s3_base" type="text" bind:value={form.config.base_path} placeholder="vault"
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
     </div>
     <label class="flex items-center gap-2 text-sm text-text-muted">
       <input type="checkbox" bind:checked={form.config.force_path_style} class="accent-vault" />
@@ -448,7 +448,7 @@
             <Tooltip text="The longest a single file's upload may take before Vault gives up. Too low and large files on slow links get cut off. Recommended: leave at 0 (defaults to 240 min / 4 h); raise it only for very large files over slow connections." />
           </label>
           <input id="s3_upload_timeout" type="number" bind:value={form.config.upload_timeout_minutes} placeholder="240 (default)" min="0"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
         <div>
           <label for="s3_part_size" class="block text-sm font-medium text-text-muted mb-1.5">
@@ -456,7 +456,7 @@
             <Tooltip text="Splits large uploads into parts so one network drop doesn't restart the whole transfer. Bigger parts allow bigger single files. Recommended: leave at 0 (64 MiB, handles files up to ~640 GB); raise only for larger files – 256 → ~2.5 TB, 1024 → ~10 TB. Range 5-5120." />
           </label>
           <input id="s3_part_size" type="number" bind:value={form.config.part_size_mb} placeholder="0 (64 MiB)" min="0" max="5120"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
           <p class="mt-1 text-xs text-text-muted" data-testid="s3-part-memory-hint">
             Each upload stream buffers up to {(((Number(form.config.part_size_mb) || 64) * 5)).toLocaleString()} MiB (part size × 5).
           </p>
@@ -480,7 +480,7 @@
       {/if}
     </label>
     <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
-      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
   </div>
 
   <!-- Universal: deduplication. Top-level column on storage_destinations.
@@ -531,7 +531,7 @@
       <button type="button" onclick={() => oncancel()} disabled={saving} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
         Cancel
       </button>
-      <button type="submit" disabled={saving || formTesting} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+      <button type="submit" disabled={saving || formTesting} class="px-4 py-2 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
         {#if saving}Saving...{:else}{submitLabel}{/if}
       </button>
     </div>

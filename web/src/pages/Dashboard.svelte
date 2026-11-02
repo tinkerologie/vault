@@ -11,11 +11,13 @@
   import Toast from '../components/Toast.svelte'
   import Welcome from '../components/Welcome.svelte'
   import ComplianceBadge from '../components/ComplianceBadge.svelte'
+  import StatusBanner from '../components/StatusBanner.svelte'
   import ActivityTimeline from '../components/ActivityTimeline.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import { getAnomalyEnabled } from '../lib/settings.svelte.js'
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
   import { createDashboardLayout, SPAN_OPTIONS } from '../lib/dashboardLayout.svelte.js'
+  import { attentionCaption, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from '../lib/backupStatus.js'
 
   let loading = $state(true)
   let error = $state('')
@@ -35,6 +37,8 @@
   let toast = $state({ message: '', type: 'info', key: 0 })
   let nextRuns = $state({})
   let healthSummary = $state(null)
+  // A source the verdict relies on failed, so the page can't claim "healthy".
+  let statusIncomplete = $state(false)
   let replicationSources = $state([])
   /** @type {Record<string, string>} */
   let settings = $state({})
@@ -152,9 +156,9 @@
         api.health(),
         api.listJobs(),
         api.listStorage(),
-        api.listContainers().catch(() => ({ items: [], available: false })),
-        api.listVMs().catch(() => ({ items: [], available: false })),
-        api.listFolders().catch(() => ({ items: [], available: false })),
+        api.listContainers().catch(() => ({ items: [], available: false, failed: true })),
+        api.listVMs().catch(() => ({ items: [], available: false, failed: true })),
+        api.listFolders().catch(() => ({ items: [], available: false, failed: true })),
         api.getNextRuns().catch(() => ({})),
         api.getHealthSummary().catch(() => null),
         api.listReplicationSources().catch(() => []),
@@ -191,14 +195,20 @@
       for (const key of hSummary?.pending_keys || []) pendSet.add(key)
       pendingItems = pendSet
 
+      let historyFailed = false
       const runPromises = jobs.slice(0, 10).map(async (job) => {
         try {
           const runs = await api.getJobHistory(job.id, 5)
           return (runs || []).map(r => ({ ...r, jobName: job.name }))
-        } catch { return [] }
+        } catch {
+          historyFailed = true
+          return []
+        }
       })
       const allRuns = await Promise.all(runPromises)
       recentRuns = allRuns.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()).slice(0, 10)
+      // A replica never discovers items (api.js), so that isn't a gap there.
+      statusIncomplete = historyFailed || (!isReplicaMode() && isDiscoveryIncomplete({ container: cRes, vm: vRes, folder: fRes }, hSummary))
       // Refresh the Largest-backups tile from a broad history window so it
       // reflects the true largest backup, not just the latest incremental.
       // Fire-and-forget so it never delays the rest of the dashboard.
@@ -382,8 +392,37 @@
     return { pct: Math.round((ok / runs.length) * 100), ok, total: runs.length }
   })
 
-  const recentFailures = $derived(recentRuns.filter(r => r.status === 'failed' || r.status === 'error').length)
-  const attentionCount = $derived(recentFailures + unprotectedCount)
+  // recentRuns only samples ten jobs, so what the server counted across every job
+  // must still count: no panel may contradict the health tile.
+  const runOutcomes = $derived(mergeRunCounts(countRunOutcomes(recentRuns), healthSummary))
+  const recentFailures = $derived(runOutcomes.failures)
+  const unhealthyDests = $derived(unhealthyStorage(storage))
+  // Without the health summary nothing is known to be protected, so every item
+  // would look unprotected. That's unknown, not a count of problems.
+  const knownUnprotected = $derived(healthSummary ? unprotectedCount : 0)
+  const otherProblems = $derived(runOutcomes.warnings + runOutcomes.skipped + runOutcomes.cancelled + unhealthyDests.length + (healthSummary?.stale_jobs?.length ?? 0))
+  const attentionCount = $derived(recentFailures + knownUnprotected + otherProblems)
+  // A replica has no discovered items to count, so it takes the server's figures.
+  const statusCounts = $derived(isReplicaMode()
+    ? { pending: pendingItems.size, protectedCount: healthSummary?.protected_items ?? 0, total: healthSummary?.total_items ?? 0 }
+    : { pending: totalItems - totalProtected - unprotectedCount, protectedCount: totalProtected, total: totalItems })
+
+  const backupStatus = $derived(deriveBackupStatus({
+    loading,
+    error: !!error,
+    replica: isReplicaMode(),
+    hasStorage: storage.length > 0,
+    hasJobs: jobs.length > 0,
+    failures: recentFailures,
+    warnings: runOutcomes.warnings,
+    skipped: runOutcomes.skipped,
+    cancelled: runOutcomes.cancelled,
+    unhealthy: unhealthyDests,
+    unprotected: unprotectedCount,
+    ...statusCounts,
+    summary: healthSummary,
+    incomplete: statusIncomplete,
+  }))
 
   // Storage capacity tiles derive from destinations that reported a probe.
   const storageCaps = $derived(storage.filter(s => s.capacity && s.capacity.total_bytes > 0))
@@ -600,29 +639,11 @@
   })
 
   const healthScore = $derived(healthSummary?.health_score ?? 0)
-  const healthColor = $derived(healthScore >= 80 ? 'var(--color-success)' : healthScore >= 50 ? 'var(--color-warning)' : 'var(--color-danger)')
-  const healthSummaryText = $derived.by(() => {
-    if (!healthSummary) return ''
-    const s = healthSummary
-    const score = s.health_score ?? 0
-    if (s.recent_failed > 0) {
-      return `${s.recent_failed} recent failure${s.recent_failed === 1 ? '' : 's'} – check History`
-    }
-    // A fresh install scores 0 because nothing has completed yet, not because
-    // anything went wrong. Reporting "Attention needed" there is a false alarm
-    // on the very first screen a new user sees.
-    if (!s.recent_failed && !s.recent_success && !s.last_success_at) {
-      return 'No backups completed yet'
-    }
-    if (score >= 80) return 'All backups healthy'
-    if (score >= 50) return 'Backups mostly healthy'
-    return 'Attention needed – recent backups have not completed'
-  })
+  const healthCounts = $derived({ failures: recentFailures, unprotected: knownUnprotected, pending: statusCounts.pending, warnings: runOutcomes.warnings, skipped: runOutcomes.skipped, cancelled: runOutcomes.cancelled, unhealthy: unhealthyDests.length, incomplete: statusIncomplete })
+  const HEALTH_COLORS = { success: 'var(--color-success)', warning: 'var(--color-warning)', danger: 'var(--color-danger)', unknown: 'var(--color-surface-4)' }
+  const healthColor = $derived(HEALTH_COLORS[healthTone(healthSummary, healthCounts)])
+  const healthSummaryText = $derived(healthText(healthSummary, healthCounts))
 
-
-  // Keyboard activation for the click-through tiles (role="button"): fire on both
-  // Enter and Space, matching native button semantics, and stop Space scrolling.
-  function cardKey(e, fn) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn() } }
 
   // ── Tile catalog + layout ────────────────────────────────────────────────
   // span = 12-col width. `bare` tiles render their own card (they reuse a
@@ -659,6 +680,9 @@
   // can't be computed from current data — so we never render a broken tile.
   function tileAvailable(id) {
     if (id === 'threetwoone') return jobs.length > 0 && backupRuleOn
+    // Only while a run is active, including its short completion grace. Customize
+    // bypasses this, so the tile keeps its saved place and can still be arranged.
+    if (id === 'progress') return Boolean(progress.activeRun)
     if (id === 'storageCombined' || id === 'storagePerTarget') return storageCaps.length > 0
     if (id === 'anomalies') return getAnomalyEnabled()
     if (id === 'protection') return totalItems > 0
@@ -797,7 +821,7 @@
 <Toast message={toast.message} type={toast.type} key={toast.key} />
 
 {#snippet pendingBadge()}
-  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-amber-500 shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
+  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-hue-amber shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
     <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
     pending first backup
   </span>
@@ -824,7 +848,7 @@
 {/snippet}
 
 {#snippet tHealth()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" title="View backup history" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" title="View backup history">
     {@render mHead(CATALOG.health.icon, 'Health score')}
     <div class="flex items-center gap-3 mt-auto">
       <div class="relative w-12 h-12 shrink-0">
@@ -833,14 +857,14 @@
           <circle cx="18" cy="18" r="15" fill="none" stroke={healthColor} stroke-width="4" stroke-linecap="round"
             stroke-dasharray={2 * Math.PI * 15} stroke-dashoffset={2 * Math.PI * 15 * (1 - healthScore / 100)} class="transition-all duration-700" />
         </svg>
-        <div class="absolute inset-0 flex items-center justify-center text-sm font-bold text-text tabular-nums">{healthScore}</div>
+        <div class="absolute inset-0 flex items-center justify-center text-sm font-bold text-text tabular-nums">{healthSummary ? healthScore : '–'}</div>
       </div>
-      <div class="min-w-0">
-        <p class="text-xs font-medium text-text truncate">{healthSummaryText || 'Backup health'}</p>
+      <div class="min-w-0 break-words">
+        <p class="text-xs font-medium text-text">{healthSummaryText}</p>
         {#if avgSpeed}<p class="text-[11px] text-text-dim mt-0.5 tabular-nums">avg {avgSpeed}</p>{/if}
       </div>
     </div>
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tProtected()}
@@ -850,8 +874,10 @@
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5">
       <div class="h-full {protectionBar} transition-all duration-500" style="width: {protectionPct}%"></div>
     </div>
-    {#if hasUnprotectedItems}
-      <button onclick={() => navigate('/jobs')} class="text-[11px] text-vault-text hover:text-vault-dark font-medium mt-1.5 text-left">{unprotectedCount} unprotected →</button>
+    {#if !healthSummary}
+      <p class="text-[11px] text-text-dim mt-1.5 font-medium">Protection status unavailable</p>
+    {:else if hasUnprotectedItems}
+      <a href="#/jobs" class="self-start text-[11px] text-vault-text hover:underline font-medium mt-1.5">{unprotectedCount} unprotected →</a>
     {:else if fullyProtected}
       <p class="text-[11px] text-success mt-1.5 font-medium">All items covered</p>
     {:else}
@@ -865,7 +891,7 @@
 {/snippet}
 
 {#snippet tNextRun()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => cardKey(e, () => navigate('/jobs'))}>
+  <a href="#/jobs" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.nextrun.icon, 'Next run')}
     {#if soonestNextRun}
       <p class="text-xl font-bold text-text tabular-nums leading-none">{relTimeUntil(soonestNextRun)}</p>
@@ -874,11 +900,11 @@
       <p class="text-xl font-bold text-text-dim leading-none">No schedule</p>
     {/if}
     <p class="text-[11px] text-vault-text font-medium mt-auto pt-1.5 tabular-nums">{jobs.length} job{jobs.length === 1 ? '' : 's'} · {enabledJobs.length} enabled</p>
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tLastBackup()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.lastbackup.icon, 'Last backup')}
     {#if lastBackup}
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
@@ -895,12 +921,12 @@
     {:else}
       <p class="text-base font-bold text-text-dim">No runs yet</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tThreeTwoOne()}
   {#if jobs.length > 0 && backupRuleOn}
-    <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={isReplicaMode() ? undefined : dismissBackupRule} goalSetting={settings.backup_rule_goal || ''} onGoalChange={isReplicaMode() ? undefined : setBackupRuleGoal} />
+    <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={isReplicaMode() ? undefined : dismissBackupRule} goalSetting={settings.backup_rule_goal || ''} onGoalChange={isReplicaMode() ? undefined : setBackupRuleGoal} protectedCount={healthSummary?.protected_items ?? null} />
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-4 text-sm text-text-dim">3-2-1 rule unavailable — add a job to compute it.</div>
   {/if}
@@ -917,7 +943,7 @@
       <div class="flex items-center gap-2 mb-2.5">
         <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
         <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{activeRunLabel}</span>
-        <span class="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-vault/15 text-vault font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
+        <span class="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-vault/15 text-vault-text font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
         {#if progress.activeRun.run_type !== 'restore'}
           <button onclick={cancelActiveRun} disabled={progress.cancelling}
             class="text-[11px] px-2 py-0.5 rounded-full border border-danger/40 text-danger hover:bg-danger/10 transition-colors disabled:opacity-50 shrink-0"
@@ -963,7 +989,7 @@
     <div class="px-4 py-3 border-b border-border flex items-center gap-2">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.jobs.icon}/></svg></span>
       <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Backup jobs</span>
-      <button onclick={() => navigate('/jobs')} class="ml-auto text-xs text-vault-text hover:text-vault-dark font-medium">View all →</button>
+      <a href="#/jobs" class="ml-auto text-xs text-vault-text hover:underline font-medium">View all →</a>
     </div>
     {#if jobs.length === 0}
       <div class="px-5 py-8 text-center text-sm text-text-muted">No backup jobs configured</div>
@@ -977,11 +1003,11 @@
             </div>
             {#if !isReplicaMode()}
               <div class="flex items-center gap-2 shrink-0">
-                <button onclick={() => navigate(`/restore?job=${job.id}`)} class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text" title="Restore from {job.name}">
+                <a href="#/restore?job={job.id}" class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text" title="Restore from {job.name}">
                   <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                   Restore
-                </button>
-                <button onclick={() => runNow(job)} disabled={runningJob === job.id} class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-vault/10 text-vault hover:bg-vault/20 disabled:opacity-50">
+                </a>
+                <button onclick={() => runNow(job)} disabled={runningJob === job.id} class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-vault/10 text-vault-text hover:bg-vault/20 disabled:opacity-50">
                   {#if runningJob === job.id}
                     <svg aria-hidden="true" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                     Running...
@@ -1008,12 +1034,12 @@
   <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : pending ? 'bg-amber-500/5' : 'bg-surface-3'} group">
     <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : pending ? 'bg-amber-500' : 'bg-surface-5'}"></div>
     <span class="text-sm text-text truncate" title={displayLabel}>{displayLabel}</span>
-    {#if type === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium shrink-0">USB boot drive</span>{/if}
+    {#if type === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-hue-amber font-medium shrink-0">USB boot drive</span>{/if}
     {#if isProtected}
       {#if !isReplicaMode()}
-        <button onclick={() => navigate(`/restore?type=${restoreType}&name=${encodeURIComponent(itemName)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {itemName}">
+        <a href="#/restore?type={restoreType}&name={encodeURIComponent(itemName)}" class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault-text hover:bg-vault/10 rounded transition-all" title="Restore {itemName}">
           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-        </button>
+        </a>
       {/if}
       <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
     {:else if pending}
@@ -1036,7 +1062,7 @@
           </span>
         </div>
         {#if hasUnprotectedItems}
-          <button onclick={() => navigate('/jobs')} class="text-xs text-vault-text hover:text-vault-dark transition-colors font-medium">+ Add to Backup</button>
+          <a href="#/jobs" class="text-xs text-vault-text hover:underline transition-colors font-medium">+ Add to Backup</a>
         {:else if fullyProtected}
           <button onclick={toggleProtection} aria-expanded={protectionExpanded} class="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors">
             {protectionExpanded ? 'Hide items' : 'Show items'}
@@ -1053,7 +1079,7 @@
             {#if trackedContainers.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+                  <svg aria-hidden="true" class="w-4 h-4 text-hue-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
                   <h3 class="text-sm font-medium text-text">Containers</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedContainers.length}/{trackedContainers.length}</span>
                 </div>
@@ -1063,7 +1089,7 @@
             {#if trackedVMs.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                  <svg aria-hidden="true" class="w-4 h-4 text-hue-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                   <h3 class="text-sm font-medium text-text">Virtual Machines</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedVMs.length}/{trackedVMs.length}</span>
                 </div>
@@ -1073,7 +1099,7 @@
             {#if trackedFolders.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                  <svg aria-hidden="true" class="w-4 h-4 text-hue-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                   <h3 class="text-sm font-medium text-text">Folders</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedFolders.length}/{trackedFolders.length}</span>
                 </div>
@@ -1083,7 +1109,7 @@
             {#if trackedFlash.length > 0}
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
+                  <svg aria-hidden="true" class="w-4 h-4 text-hue-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
                   <h3 class="text-sm font-medium text-text">Flash Drive</h3>
                   <span class="text-xs text-text-dim ml-auto">{protectedFlash.length}/{trackedFlash.length}</span>
                 </div>
@@ -1101,17 +1127,17 @@
 
 {#snippet tStorageCombined()}
   {#if storageCombined}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
+    <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.storageCombined.icon, 'Storage used')}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{formatBytes(storageCombined.used)}</p>
       <p class="text-[11px] text-text-muted mt-1 tabular-nums">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
       <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full bg-vault" style="width: {storageCombined.pct}%"></div></div>
-    </div>
+    </a>
   {:else}{@render metricCardEmpty(CATALOG.storageCombined.icon, 'Storage used')}{/if}
 {/snippet}
 
 {#snippet tStoragePerTarget()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
+  <a href="#/storage" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.storagePerTarget.icon, 'Storage per target')}
     {#if storageCaps.length}
       <div class="flex flex-col gap-2.5">
@@ -1124,28 +1150,28 @@
         {/each}
       </div>
     {:else}<p class="text-xs text-text-dim mt-auto">No capacity data yet — probe a destination on the Storage page.</p>{/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tRecovery()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => cardKey(e, () => navigate('/recovery'))}>
+  <a href="#/recovery" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
     <p class="text-[26px] leading-none font-bold tabular-nums {fullyProtected ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {protectionBar}" style="width: {protectionPct}%"></div></div>
     <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{totalProtected}/{totalItems} items recoverable</p>
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tAttention()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.attention.icon, 'Needs attention')}
     <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
-    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
-  </div>
+    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCaption({ failures: recentFailures, unprotected: knownUnprotected, other: otherProblems, fullyProtected, known: !!healthSummary })}</p>
+  </a>
 {/snippet}
 
 {#snippet tSuccessRate()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.successrate.icon, 'Success rate')}
     {#if successStats}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{successStats.pct}%</p>
@@ -1155,16 +1181,16 @@
       <p class="text-[26px] leading-none font-bold text-text-dim">—</p>
       <p class="text-[11px] text-text-dim mt-auto pt-1.5">No completed runs yet</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tAnomalies()}
   {#if getAnomalyEnabled()}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/anomalies')} role="button" tabindex="0" onkeydown={(e) => cardKey(e, () => navigate('/anomalies'))}>
+    <a href="#/anomalies" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.anomalies.icon, 'Anomalies')}
       <p class="text-[26px] leading-none font-bold tabular-nums {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
       <p class="text-[11px] text-text-dim mt-auto pt-1.5">{anomalies.openList.length === 0 ? 'No unusual runs detected' : 'open — review on Anomalies'}</p>
-    </div>
+    </a>
   {:else}{@render metricCardEmpty(CATALOG.anomalies.icon, 'Anomalies')}{/if}
 {/snippet}
 
@@ -1173,12 +1199,12 @@
     {@render mHead(CATALOG.quickactions.icon, 'Quick actions')}
     {#if !isReplicaMode()}
       <div class="flex flex-col gap-1.5 mt-auto">
-        <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-white hover:bg-vault-dark disabled:opacity-50 transition-colors text-left">
+        <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-on-vault hover:bg-vault-dark disabled:opacity-50 transition-colors text-left">
           {runningAll ? 'Starting…' : 'Run all backups'}
         </button>
         <div class="flex gap-1.5">
-          <button onclick={() => navigate('/jobs')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">New job</button>
-          <button onclick={() => navigate('/restore')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">Restore</button>
+          <a href="#/jobs" class="flex-1 text-center text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault-text hover:bg-vault/20 transition-colors">New job</a>
+          <a href="#/restore" class="flex-1 text-center text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault-text hover:bg-vault/20 transition-colors">Restore</a>
         </div>
       </div>
     {:else}
@@ -1188,7 +1214,7 @@
 {/snippet}
 
 {#snippet tSizeTrend()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
     <div class="flex items-center gap-2 mb-2.5">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.sizeTrend.icon}/></svg></span>
       <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted truncate">Backup size trend</span>
@@ -1205,11 +1231,11 @@
     {:else}
       <p class="text-xs text-text-dim py-5 text-center">{trendLoading ? 'Loading trend…' : 'Not enough history yet'}</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tCalendar()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
+  <a href="#/history" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.calendar.icon, 'Backup calendar')}
     {#if calendarGrid}
       <div class="flex items-start justify-between gap-4 flex-wrap">
@@ -1248,16 +1274,16 @@
     {:else}
       <p class="text-xs text-text-dim py-6 text-center">{trendLoading ? 'Loading…' : 'No history yet'}</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tSavings()}
   {#if dedupSummary}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
+    <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
       <p class="text-[26px] leading-none font-bold text-success tabular-nums">{dedupSummary.ratio.toFixed(1)}×</p>
       <p class="text-[11px] text-text-muted mt-auto pt-1.5 tabular-nums">{formatBytes(dedupSummary.logical)} → {formatBytes(dedupSummary.physical)} stored</p>
-    </div>
+    </a>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
@@ -1268,12 +1294,12 @@
 
 {#snippet tForecast()}
   {#if forecastSummary}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
+    <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">~{forecastSummary.days}<span class="text-base text-text-dim font-semibold"> days</span></p>
       <p class="text-[11px] text-text-muted mt-1.5">until {forecastSummary.name} is full</p>
       <p class="text-[11px] text-warning mt-auto pt-1 font-medium tabular-nums">+{formatBytes(forecastSummary.perDay)}/day</p>
-    </div>
+    </a>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
@@ -1302,7 +1328,7 @@
 {/snippet}
 
 {#snippet tRetention()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => cardKey(e, () => navigate('/jobs'))}>
+  <a href="#/jobs" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.retention.icon, 'Retention & cleanup')}
     {#if retentionSummary}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{retentionSummary.prunable}<span class="text-base text-text-dim font-semibold"> prunable</span></p>
@@ -1310,7 +1336,7 @@
     {:else}
       <p class="text-[11px] text-text-dim mt-auto">{retentionLoading ? 'Loading…' : 'No retention policy set'}</p>
     {/if}
-  </div>
+  </a>
 {/snippet}
 
 {#snippet tReplicationStatus()}
@@ -1319,7 +1345,7 @@
     {@const noneActive = rs.enabled === 0}
     {@const ok = !noneActive && rs.failed === 0 && rs.partial === 0 && rs.synced === rs.enabled}
     {@const caption = rs.failed > 0 ? `${rs.failed} failed` : rs.partial > 0 ? `${rs.partial} partial` : ok ? 'All offsite copies synced' : 'sync pending'}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/replication')} onkeydown={(e) => cardKey(e, () => navigate('/replication'))}>
+    <a href="#/replication" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.replicationStatus.icon, 'Replication status')}
       {#if noneActive}
         <p class="text-base font-bold text-text-dim mt-auto">All sources disabled</p>
@@ -1330,7 +1356,7 @@
         <p class="text-[26px] leading-none font-bold tabular-nums {rs.failed > 0 ? 'text-danger' : ok ? 'text-success' : 'text-warning'}">{rs.synced}<span class="text-base text-text-dim font-semibold">/{rs.enabled}</span></p>
         <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{caption}{#if rs.lastSync} · last {relTime(rs.lastSync)}{/if}</p>
       {/if}
-    </div>
+    </a>
   {:else}{@render metricCardEmpty(CATALOG.replicationStatus.icon, 'Replication status')}{/if}
 {/snippet}
 
@@ -1380,7 +1406,7 @@
       <div class="dash-head-actions flex gap-2 w-full sm:w-auto">
         {#if layout.editMode}
           <button onclick={layout.reset} class="flex-1 sm:flex-none min-h-[44px] px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-2 border border-border hover:bg-surface-3 rounded-lg transition-colors">Reset</button>
-          <button onclick={layout.toggleEdit} class="flex-1 sm:flex-none min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-success hover:bg-success/90 rounded-lg transition-colors">
+          <button onclick={layout.toggleEdit} class="flex-1 sm:flex-none min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-on-status bg-success hover:bg-success/90 rounded-lg transition-colors">
             <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>Done
           </button>
         {:else}
@@ -1398,6 +1424,8 @@
       <span>Read-only replica — write actions are disabled on this instance.</span>
     </div>
   {/if}
+
+  <StatusBanner status={backupStatus} />
 
   {#if loading}
     <Skeleton variant="stats" />
@@ -1422,25 +1450,25 @@
             <p class="text-sm text-text-muted mt-1">Set up your backup system in a few easy steps.</p>
             <div class="mt-4 flex flex-col sm:flex-row gap-3">
               <button onclick={() => navigate('/storage')} class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {storage.length > 0 ? 'border-success/30 bg-success/5' : 'border-vault/40 bg-vault/5 hover:bg-vault/10'}">
-                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {storage.length > 0 ? 'bg-success text-white' : 'bg-vault text-white'}">
+                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {storage.length > 0 ? 'bg-success text-on-status' : 'bg-vault text-on-vault'}">
                   {#if storage.length > 0}<svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}1{/if}
                 </div>
                 <div>
                   <p class="text-sm font-medium {storage.length > 0 ? 'text-success' : 'text-text'}">Configure Storage</p>
-                  <p class="text-xs {storage.length > 0 ? 'text-success/70' : 'text-text-dim'}">{storage.length > 0 ? `${storage.length} destination${storage.length !== 1 ? 's' : ''} configured` : 'Set up where backups are stored'}</p>
+                  <p class="text-xs {storage.length > 0 ? 'text-success' : 'text-text-dim'}">{storage.length > 0 ? `${storage.length} destination${storage.length !== 1 ? 's' : ''} configured` : 'Set up where backups are stored'}</p>
                 </div>
               </button>
               <button onclick={() => navigate('/jobs')} disabled={storage.length === 0} class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {jobs.length > 0 ? 'border-success/30 bg-success/5' : storage.length > 0 ? 'border-vault/40 bg-vault/5 hover:bg-vault/10' : 'border-border bg-surface-3 opacity-50 cursor-not-allowed'}">
-                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 ? 'bg-success text-white' : storage.length > 0 ? 'bg-vault text-white' : 'bg-surface-4 text-text-dim'}">
+                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 ? 'bg-success text-on-status' : storage.length > 0 ? 'bg-vault text-on-vault' : 'bg-surface-4 text-text-muted'}">
                   {#if jobs.length > 0}<svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}2{/if}
                 </div>
                 <div>
                   <p class="text-sm font-medium {jobs.length > 0 ? 'text-success' : storage.length > 0 ? 'text-text' : 'text-text-dim'}">Create Backup Job</p>
-                  <p class="text-xs {jobs.length > 0 ? 'text-success/70' : 'text-text-dim'}">{jobs.length > 0 ? `${jobs.length} job${jobs.length !== 1 ? 's' : ''} configured` : 'Choose what to back up and when'}</p>
+                  <p class="text-xs {jobs.length > 0 ? 'text-success' : 'text-text-dim'}">{jobs.length > 0 ? `${jobs.length} job${jobs.length !== 1 ? 's' : ''} configured` : 'Choose what to back up and when'}</p>
                 </div>
               </button>
-              <div class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {jobs.length > 0 && storage.length > 0 ? 'border-vault/40 bg-vault/5' : 'border-border bg-surface-3 opacity-50'}">
-                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 && storage.length > 0 ? 'bg-vault text-white' : 'bg-surface-4 text-text-dim'}">3</div>
+              <div class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {jobs.length > 0 && storage.length > 0 ? 'border-vault/40 bg-vault/5' : 'border-border bg-surface-3'}">
+                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 && storage.length > 0 ? 'bg-vault text-on-vault' : 'bg-surface-4 text-text-muted'}">3</div>
                 <div>
                   <p class="text-sm font-medium {jobs.length > 0 && storage.length > 0 ? 'text-text' : 'text-text-dim'}">Run Backups</p>
                   <p class="text-xs text-text-dim">Jobs run on schedule or on demand</p>
@@ -1504,13 +1532,15 @@
                 </div>
               </div>
             {/if}
-            {@render tileBody(t.id)}
+            <!-- Inert while customizing: the toolbar owns the keyboard here, so Tab
+                 can't reach a link or control the overlay blocks for the mouse. -->
+            <div inert={layout.editMode}>{@render tileBody(t.id)}</div>
           </div>
         {/each}
       </div>
 
       {#if layout.editMode}
-        <aside class="dash-addpanel shrink-0 bg-surface-2 border border-border rounded-xl p-4">
+        <aside aria-label="Add tiles" class="dash-addpanel shrink-0 bg-surface-2 border border-border rounded-xl p-4">
           <div class="text-sm font-bold text-text">Add tiles</div>
           <div class="text-xs text-text-muted mb-3">Click to add to your dashboard</div>
           <div class="dash-cat-list flex flex-col gap-2">

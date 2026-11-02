@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import { createStepFocus } from '../lib/dialog.js'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
@@ -12,11 +13,17 @@
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
   import Tooltip from './Tooltip.svelte'
+  import ConfirmDialog from './ConfirmDialog.svelte'
+  import { restoreAnywaySummary } from '../lib/risky-actions.js'
   import FileTree from './FileTree.svelte'
 
   let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null, onmount = null } = $props()
 
   let step = $state(1)
+  const STEP_HEADINGS = { 1: 'Choose what to restore', 2: 'Pick a backup version', 3: 'Set restore options' }
+  let wizardRoot = $state(null)
+  const trackStep = createStepFocus()
+  $effect(() => trackStep(step, () => wizardRoot))
   let selectedItems = $state(new SvelteMap()) // key: "type:name", value: item object
   let autoSelectApplied = false // deep-link auto-select is one-time per mount
 
@@ -1086,15 +1093,28 @@
     checkAllUnitsFinished()
   }
 
-  function handleRestoreAnyway() {
-    const failedUnits = restoreUnits.filter(unit => {
+  let confirmRestoreAnyway = $state(false)
+
+  let restoreAnywayContent = $derived(confirmRestoreAnyway
+    ? restoreAnywaySummary(restoreUnits.map(unit => {
       const s = getUnitSettings(unit.jobId)
-      return !s.preflightResult?.ok
-    })
-    const names = failedUnits.map(u => u.jobName).join(', ')
-    if (window.confirm(`Pre-flight checks did not all pass for: ${names}. Restore anyway?`)) {
-      doRestore()
-    }
+      return {
+        jobName: unit.jobName,
+        pointDate: formatDate(unit.point.created_at),
+        destination: (s.showDestOverride && s.restoreDestination.trim()) || 'Original location',
+        cleanDestination: s.cleanDestination && !unitHasPartialSelection(unit),
+        preflight: s.preflightResult,
+      }
+    }))
+    : { source: [], consequences: [] })
+
+  function handleRestoreAnyway() {
+    if (canRestoreAnyway) confirmRestoreAnyway = true
+  }
+
+  function confirmRestoreAnywayNow() {
+    confirmRestoreAnyway = false
+    doRestore()
   }
 
   function goBack() {
@@ -1136,7 +1156,7 @@
   }
 </script>
 
-<div>
+<div bind:this={wizardRoot}>
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
     {#each [{n:1, label:'Select Items'}, {n:2, label:'Choose Version'}, {n:3, label:'Restore'}] as s (s.n)}
@@ -1151,8 +1171,8 @@
           }
         }
       }}
-        class="flex items-center gap-2 {s.n <= step ? '' : 'opacity-40'}">
-        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-white' : s.n === step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
+        class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-on-vault' : s.n === step ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
             <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
           {:else}
@@ -1166,6 +1186,8 @@
       {/if}
     {/each}
   </div>
+
+  <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-4 outline-none">Step {step} of 3: {STEP_HEADINGS[step]}</h2>
 
   <!-- Step 1: What to restore (multi-select) -->
   {#if step === 1}
@@ -1184,9 +1206,9 @@
           <div class="flex items-center gap-1.5 flex-wrap">
             {#each typeOptions as t (t)}
               <button type="button" onclick={() => typeFilter = t}
-                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 {typeFilter === t ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
+                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 {typeFilter === t ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
                 {#if t !== 'all'}
-                  <svg aria-hidden="true" class="w-3.5 h-3.5 {typeFilter === t ? 'text-white' : itemTypeColor(t)}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg aria-hidden="true" class="w-3.5 h-3.5 {typeFilter === t ? 'text-on-vault' : itemTypeColor(t)}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={itemTypeIcon(t)}/>
                   </svg>
                 {/if}
@@ -1219,7 +1241,8 @@
               type="text"
               bind:value={searchQuery}
               placeholder="Search items or jobs..."
-              class="w-full pl-9 pr-8 py-1.5 text-xs bg-surface-2 border border-border rounded-lg text-text placeholder-text-dim focus:outline-none focus:border-vault"
+              aria-label="Search items or jobs"
+              class="w-full pl-9 pr-8 py-1.5 text-xs bg-surface-2 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
             />
             {#if searchQuery}
               <button
@@ -1236,8 +1259,9 @@
           </div>
 
           <div class="flex items-center gap-2 shrink-0 text-xs text-text-muted">
-            <span>Sort:</span>
+            <label for="rw-sort">Sort:</label>
             <select
+              id="rw-sort"
               bind:value={sortBy}
               class="bg-surface-2 border border-border rounded-lg px-2.5 py-1.5 text-xs text-text focus:outline-none focus:border-vault cursor-pointer"
             >
@@ -1266,7 +1290,7 @@
                 <div class="w-4.5 h-4.5 rounded border-2 flex items-center justify-center shrink-0 transition-colors
                   {selected ? 'bg-vault border-vault' : 'border-border group-hover:border-vault/40'}">
                   {#if selected}
-                    <svg aria-hidden="true" class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                    <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
                   {/if}
                 </div>
                 <div class="w-7 h-7 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 group-hover:bg-vault/10 transition-colors">
@@ -1291,14 +1315,14 @@
           <div class="w-2.5 h-2.5 rounded-full {selectedCount > 0 ? 'bg-vault animate-pulse' : 'bg-text-dim'}"></div>
           <span class="text-sm font-medium text-text">
             {#if selectedCount > 0}
-              <span class="text-vault font-semibold">{selectedCount}</span> item{selectedCount !== 1 ? 's' : ''} selected
+              <span class="text-vault-text font-semibold">{selectedCount}</span> item{selectedCount !== 1 ? 's' : ''} selected
             {:else}
               Select items to restore
             {/if}
           </span>
         </div>
         <button type="button" onclick={proceedToStep2} disabled={selectedCount === 0}
-          class="px-5 py-2 text-sm font-semibold text-white bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
+          class="px-5 py-2 text-sm font-semibold text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
           Next
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
@@ -1318,7 +1342,7 @@
           <div class="flex items-center gap-1.5 px-2.5 py-1 bg-surface-3 rounded-lg min-w-0">
             <svg aria-hidden="true" class="w-4 h-4 shrink-0 {itemTypeColor(item.type)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={itemTypeIcon(item.type)}/></svg>
             <span class="text-xs font-medium text-text truncate max-w-[200px]" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
-            <span class="text-xs text-text-dim capitalize shrink-0">({itemTypeLabel(item.type)})</span>
+            <span class="text-xs text-text-muted capitalize shrink-0">({itemTypeLabel(item.type)})</span>
           </div>
         {/each}
       </div>
@@ -1359,7 +1383,7 @@
               Plan complete
             </span>
           {:else}
-            <span class="text-xs px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400 font-medium">
+            <span class="text-xs px-2.5 py-1 rounded-full bg-amber-500/15 text-hue-amber font-medium">
               {restorePlan.uncovered.length} item{restorePlan.uncovered.length === 1 ? '' : 's'} not covered yet
             </span>
           {/if}
@@ -1377,11 +1401,11 @@
               </div>
               <div class="shrink-0 text-right">
                 {#if assignment}
-                  <span class="text-emerald-400 font-medium">
+                  <span class="text-hue-emerald font-medium">
                     {assignment.point.jobName || `Job #${assignment.jobId}`} · {formatDate(assignment.point.created_at)}
                   </span>
                 {:else}
-                  <span class="text-amber-400 font-medium">Not covered yet</span>
+                  <span class="text-hue-amber font-medium">Not covered yet</span>
                 {/if}
               </div>
             </div>
@@ -1434,7 +1458,7 @@
           Back
         </button>
         <button type="button" onclick={() => { if (planComplete) step = 3 }} disabled={!planComplete}
-          class="px-5 py-2 text-sm font-semibold text-white bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
+          class="px-5 py-2 text-sm font-semibold text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
           Continue
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
@@ -1525,7 +1549,7 @@
           <div class="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-2">
             <div class="flex items-center gap-2">
               <span class="text-sm font-bold text-text">{unit.jobName}</span>
-              <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-dim font-medium uppercase">{unit.point.backup_type}</span>
+              <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-muted font-medium uppercase">{unit.point.backup_type}</span>
               <span class="text-xs text-text-dim">({formatDate(unit.point.created_at)})</span>
             </div>
             <span class="text-xs font-medium {chainHealthTone(unit.point)}">{chainHealthLabel(unit.point)}</span>
@@ -1658,7 +1682,7 @@
             <input id="rw_passphrase_{unit.jobId}" type="password" autocomplete="off" value={s.passphrase}
               oninput={(e) => updateUnitSetting(unit.jobId, { passphrase: e.target.value })}
               placeholder="Enter passphrase used to encrypt this backup"
-              class="w-full sm:w-96 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+              class="w-full sm:w-96 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
             <p class="text-xs text-text-dim mt-1">This backup uses age encryption. A passphrase is required to decrypt.</p>
           </div>
         {/if}
@@ -1692,9 +1716,9 @@
                   <span class="text-xs text-text-muted">
                     {#if total > 0}
                       {#if sel === total}
-                        <span class="text-emerald-400 font-medium">All {total} files selected</span>
+                        <span class="text-hue-emerald font-medium">All {total} files selected</span>
                       {:else if sel > 0}
-                        <span class="text-amber-400 font-medium">{sel} of {total} files selected</span>
+                        <span class="text-hue-amber font-medium">{sel} of {total} files selected</span>
                       {:else}
                         <span class="text-danger font-medium">0 of {total} files selected (none)</span>
                       {/if}
@@ -1738,8 +1762,8 @@
                       <p class="text-xs text-text-muted">This backup captured no restorable files for this item.</p>
                     {:else}
                       <div class="flex flex-wrap items-center gap-2">
-                        <input type="text" placeholder="Filter by path…" bind:value={entry.search}
-                          class="flex-1 min-w-40 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-dim focus:outline-none focus:ring-1 focus:ring-vault" />
+                        <input type="text" placeholder="Filter by path…" bind:value={entry.search} aria-label="Filter paths in {itemDisplayLabel(item)}"
+                          class="flex-1 min-w-40 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-vault" />
                         <button type="button" onclick={() => selectAllFiles(item)}
                           class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Select all</button>
                         <button type="button" onclick={() => deselectAllFiles(item)}
@@ -1849,7 +1873,7 @@
     <div class="flex items-center gap-4 flex-wrap">
       <button type="button" onclick={doRestore}
         disabled={!canStartRestore}
-        class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
+        class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
         {#if isRestoreRunning}
           <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
           Restoring...
@@ -1890,7 +1914,7 @@
     {#if mountedSession}
       <div class="bg-surface-2 border border-emerald-500/40 rounded-xl p-4 mt-4 flex items-start justify-between gap-3">
         <div class="flex items-start gap-3">
-          <svg aria-hidden="true" class="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg aria-hidden="true" class="w-5 h-5 text-hue-emerald shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
           </svg>
           <div>
@@ -1922,7 +1946,7 @@
           <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
           <span class="text-xs font-semibold uppercase tracking-wider text-text-muted">Restore in progress</span>
           {#if progress.activeRun?.job_name}
-            <span class="ml-auto text-xs px-2 py-0.5 rounded-full bg-vault/15 text-vault font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
+            <span class="ml-auto text-xs px-2 py-0.5 rounded-full bg-vault/15 text-vault-text font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
           {/if}
         </div>
         <div class="flex items-center justify-between text-xs text-text-muted mb-1.5">
@@ -1961,9 +1985,9 @@
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                   {#if !run || run.state === 'queued'}
-                    <span class="px-2 py-0.5 rounded-full bg-surface-4 text-text-dim font-medium">Queued</span>
+                    <span class="px-2 py-0.5 rounded-full bg-surface-4 text-text-muted font-medium">Queued</span>
                   {:else if run.state === 'running'}
-                    <span class="px-2 py-0.5 rounded-full bg-vault/20 text-vault font-medium animate-pulse">Running</span>
+                    <span class="px-2 py-0.5 rounded-full bg-vault/20 text-vault-text font-medium animate-pulse">Running</span>
                   {:else if run.state === 'completed'}
                     <span class="px-2 py-0.5 rounded-full bg-success/20 text-success font-medium">Completed ({run.done}/{run.total})</span>
                   {:else if run.state === 'partial'}
@@ -2034,11 +2058,11 @@
             </svg>
             <span class="text-xs font-semibold text-text">Restore Log</span>
             {#if restoreLogs.length > 0}
-              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-3 text-text-dim font-medium tabular-nums">{restoreLogs.length}</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-3 text-text-muted font-medium tabular-nums">{restoreLogs.length}</span>
             {/if}
           </div>
           {#if isRestoreRunning}
-            <span class="flex items-center gap-1.5 text-[11px] text-vault font-medium">
+            <span class="flex items-center gap-1.5 text-[11px] text-vault-text font-medium">
               <span class="w-1.5 h-1.5 rounded-full bg-vault animate-ping"></span>
               Live
             </span>
@@ -2050,7 +2074,7 @@
             <span class="text-[11px] text-text-dim mr-1">Log source:</span>
             {#each Array.from(unitRuns.values()).filter(u => u.runId) as u (u.jobId)}
               <button type="button" onclick={() => switchLogUnit(u)}
-                class="text-xs px-2.5 py-1 rounded-lg transition-colors cursor-pointer {selectedLogUnitJobId === u.jobId ? 'bg-vault text-white font-medium' : 'bg-surface-3 text-text-muted hover:text-text'}">
+                class="text-xs px-2.5 py-1 rounded-lg transition-colors cursor-pointer {selectedLogUnitJobId === u.jobId ? 'bg-vault text-on-vault font-medium' : 'bg-surface-3 text-text-muted hover:text-text'}">
                 {u.jobName}
               </button>
             {/each}
@@ -2064,7 +2088,7 @@
             {#each restoreLogs as entry (entry.id)}
               <div class="flex items-baseline gap-2">
                 <span class="text-text-dim text-[10px] shrink-0 tabular-nums">{timeOnly(entry.ts)}</span>
-                <span class="text-[10px] px-1 py-0.5 rounded uppercase font-semibold shrink-0 {entry.level === 'error' ? 'bg-danger/20 text-danger' : entry.level === 'warn' ? 'bg-warning/20 text-warning' : 'bg-surface-3 text-text-dim'}">{entry.level}</span>
+                <span class="text-[10px] px-1 py-0.5 rounded uppercase font-semibold shrink-0 {entry.level === 'error' ? 'bg-danger/20 text-danger' : entry.level === 'warn' ? 'bg-warning/20 text-warning' : 'bg-surface-3 text-text-muted'}">{entry.level}</span>
                 <span class="text-text-muted break-all flex-1 {entry.level === 'error' ? 'text-danger' : ''}">{entry.message}</span>
               </div>
             {/each}
@@ -2074,3 +2098,16 @@
     {/if}
   {/if}
 </div>
+
+<ConfirmDialog
+  show={confirmRestoreAnyway}
+  title="Restore Despite Failed Checks"
+  message="Pre-flight checks did not all pass. Restore anyway?"
+  confirmLabel="Restore Anyway"
+  confirmWord="RESTORE"
+  confirmDisabled={!canRestoreAnyway}
+  source={restoreAnywayContent.source}
+  consequences={restoreAnywayContent.consequences}
+  onconfirm={confirmRestoreAnywayNow}
+  oncancel={() => confirmRestoreAnyway = false}
+/>

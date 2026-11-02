@@ -20,6 +20,14 @@ const base = {
 };
 
 test.describe('Structured backup progress on the dashboard (#456)', () => {
+  test('an idle runner shows no progress tile (#527)', async ({ page }) => {
+    await setupVaultMockApi(page);
+    await page.goto('/#/');
+    await expect(page.locator('.dash-tile').first()).toBeVisible();
+    await expect(page.getByText('No backup running')).toHaveCount(0);
+    await expect(page.getByText('Backup in progress')).toHaveCount(0);
+  });
+
   test('shows bytes, percent, rate and ETA for a determinate upload', async ({ page }) => {
     await setupVaultMockApi(page, {
       runnerStatus: {

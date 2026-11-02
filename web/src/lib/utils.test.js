@@ -556,27 +556,27 @@ describe('describeSchedule with custom cron', () => {
 describe('itemTypeIcon and itemTypeColor', () => {
   it('returns appropriate icon and color for recognized types', () => {
     expect(itemTypeIcon('container')).toContain('M20 7l-8-4-8 4')
-    expect(itemTypeColor('container')).toBe('text-blue-400')
+    expect(itemTypeColor('container')).toBe('text-hue-blue')
 
     expect(itemTypeIcon('vm')).toContain('M9.75 17L9 20')
-    expect(itemTypeColor('vm')).toBe('text-purple-400')
+    expect(itemTypeColor('vm')).toBe('text-hue-purple')
 
     expect(itemTypeIcon('folder')).toContain('M3 7v10a2 2')
-    expect(itemTypeColor('folder')).toBe('text-amber-400')
+    expect(itemTypeColor('folder')).toBe('text-hue-amber')
 
     expect(itemTypeIcon('flash')).toContain('M8 7v8a2 2')
-    expect(itemTypeColor('flash')).toBe('text-amber-400')
+    expect(itemTypeColor('flash')).toBe('text-hue-amber')
 
     expect(itemTypeIcon('plugin')).toContain('M11 4a2 2')
-    expect(itemTypeColor('plugin')).toBe('text-emerald-400')
+    expect(itemTypeColor('plugin')).toBe('text-hue-emerald')
 
     expect(itemTypeIcon('zfs')).toContain('M4 7v10c0')
-    expect(itemTypeColor('zfs')).toBe('text-cyan-400')
+    expect(itemTypeColor('zfs')).toBe('text-hue-cyan')
   })
 
   it('accepts plural forms and degrades unknown types cleanly', () => {
     expect(itemTypeIcon('plugins')).toContain('M11 4a2 2')
-    expect(itemTypeColor('plugins')).toBe('text-emerald-400')
+    expect(itemTypeColor('plugins')).toBe('text-hue-emerald')
     expect(itemTypeIcon('unknown')).toBe('M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7')
     expect(itemTypeColor('unknown')).toBe('text-text-muted')
   })

@@ -129,6 +129,21 @@ chmod 755 /usr/local/emhttp/plugins/vault/include/apply.sh
 chmod 755 /usr/local/emhttp/plugins/vault/event/started \
           /usr/local/emhttp/plugins/vault/event/stopping_svcs 2>/dev/null || true
 
+# Remove files left by the legacy PHP UI (#533). This is explicit so the result
+# doesn't depend on upgradepkg, and it also covers files a manual or dev deploy
+# placed outside the package. Never touch ui/: the package just installed it.
+# BEGIN legacy-ui-cleanup
+LEGACY_UI_DIR="/usr/local/emhttp/plugins/vault"
+if [ -n "$LEGACY_UI_DIR" ] && [ -d "$LEGACY_UI_DIR" ]; then
+    rm -f "$LEGACY_UI_DIR/VaultJobs.page" \
+          "$LEGACY_UI_DIR/VaultRestore.page" \
+          "$LEGACY_UI_DIR/VaultStorage.page" \
+          "$LEGACY_UI_DIR/VaultHistory.page" \
+          "$LEGACY_UI_DIR/VaultSettings.page"
+    rm -rf "$LEGACY_UI_DIR/assets"
+fi
+# END legacy-ui-cleanup
+
 # Restart cleanly: stop any leftover daemon (e.g. from an aborted previous
 # upgrade) before starting the new binary. This guarantees the user is
 # running the just-installed version without requiring a server reboot.

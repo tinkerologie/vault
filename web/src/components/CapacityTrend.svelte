@@ -91,15 +91,15 @@
 
   // Tone the trend to the same thresholds as the capacity bar.
   let tone = $derived(
-    !hasQuota ? 'text-vault'
-      : latestPct >= 90 ? 'text-rose-500'
-      : latestPct >= 80 ? 'text-amber-500'
-      : 'text-vault'
+    !hasQuota ? 'text-vault-text'
+      : latestPct >= 90 ? 'text-danger'
+      : latestPct >= 80 ? 'text-warning'
+      : 'text-vault-text'
   )
   // Runway urgency colour, only meaningful for a quota nearing full.
   let runwayTone = $derived(
-    runway.kind === 'full' && runway.days < 30 ? 'text-rose-500'
-      : runway.kind === 'full' && runway.days < 90 ? 'text-amber-500'
+    runway.kind === 'full' && runway.days < 30 ? 'text-danger'
+      : runway.kind === 'full' && runway.days < 90 ? 'text-warning'
       : 'text-text-dim'
   )
   let trendDays = $derived(points.length < 2 ? 0 : Math.round((points[points.length - 1].t - points[0].t) / DAY_MS))

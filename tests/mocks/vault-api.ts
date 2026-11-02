@@ -228,12 +228,24 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
 export interface VaultMockOptions {
   /** Body served for GET /runner/status; defaults to an idle runner. */
   runnerStatus?: Record<string, unknown>;
+  /** Report replica mode from GET /health, so the UI runs read-only. */
+  replica?: boolean;
+  /** Body served for GET /replication; defaults to no targets. */
+  replicationSources?: Record<string, unknown>[];
+  /** Body served for GET /health/summary; defaults to one with no backup counters. */
+  healthSummary?: Record<string, unknown>;
+  /** Jobs to start from; defaults to createInitialMockJobs(). */
+  jobs?: MockJob[];
+  /** Storage destinations to start from; defaults to createInitialMockStorage(). */
+  storage?: MockStorageDestination[];
+  /** Runs served by the history endpoints; defaults to one success, one failure and a restore. */
+  historyRuns?: Record<string, unknown>[];
 }
 
 export async function setupVaultMockApi(page: Page, options: VaultMockOptions = {}) {
   // Local state per page session
-  let jobsList = createInitialMockJobs();
-  let storageList = createInitialMockStorage();
+  let jobsList = options.jobs ?? createInitialMockJobs();
+  let storageList = options.storage ?? createInitialMockStorage();
   let nextJobId = 3;
   let nextStorageId = 4;
 
@@ -241,9 +253,11 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
     { id: 1, timestamp: '2026-10-06T12:00:00Z', level: 'info', category: 'backup', message: 'Job "Docker & Appdata" completed successfully', details: 'duration=15m bytes=10GB' },
     { id: 2, timestamp: '2026-10-06T12:05:00Z', level: 'warn', category: 'health', message: 'Storage capacity above 75%', details: 'free=1TB' },
     { id: 3, timestamp: '2026-10-06T12:10:00Z', level: 'error', category: 'system', message: 'Failed to reach remote endpoint', details: 'host=remote.example.com err=connection refused' },
+    { id: 4, timestamp: '2026-10-06T12:15:00Z', level: 'success', category: 'backup', message: 'Replication sync finished', details: 'items=2' },
+    { id: 5, timestamp: '2026-10-06T12:20:00Z', level: 'debug', category: 'system', message: 'Verbose scheduler tick', details: 'pending=0' },
   ];
 
-  let historyRuns = [
+  let historyRuns: Record<string, unknown>[] = options.historyRuns ?? [
     {
       id: 901,
       job_id: 1,
@@ -271,6 +285,20 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       dedup_ratio: '1.0x',
       error_message: 'libvirt domain suspended during snapshot',
     },
+    {
+      id: 903,
+      job_id: 1,
+      job_name: 'Docker & Appdata',
+      run_type: 'restore',
+      status: 'completed',
+      backup_type: 'full',
+      started_at: '2026-09-30T04:00:00Z',
+      completed_at: '2026-09-30T04:02:00Z',
+      bytes_written: 1048576,
+      duration_seconds: 120,
+      dedup_ratio: '1.0x',
+      error_message: null,
+    },
   ];
 
   let anomaliesList = [
@@ -279,6 +307,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       scope_kind: 'job',
       scope_id: 1,
       title: 'Unusual Backup Size Spike',
+      summary: 'Backup size spike above baseline',
       description: 'Docker & Appdata backup size increased significantly above baseline',
       severity: 'warning',
       state: 'open',
@@ -320,7 +349,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify(options.healthSummary ?? {
           unraid_connected: true,
           server_version: '2026.09.01',
           degraded: false,
@@ -333,7 +362,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ status: 'ok', version: '2026.09.01' }),
+        body: JSON.stringify({ status: 'ok', version: '2026.09.01', ...(options.replica ? { mode: 'replica' } : {}) }),
       });
     }
 
@@ -1166,7 +1195,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([]),
+        body: JSON.stringify(path.endsWith('/replication') ? (options.replicationSources ?? []) : []),
       });
     }
 

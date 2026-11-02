@@ -1,7 +1,10 @@
 <script>
   import { api } from '../lib/api.js'
+  import { createStepFocus } from '../lib/dialog.js'
   import { navigate } from '../lib/router.svelte.js'
+  import { recoverReplaceSummary, recoverReplacesExisting } from '../lib/risky-actions.js'
   import { formatBytes } from '../lib/utils.js'
+  import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import StorageForm from '../components/StorageForm.svelte'
   import Toast from '../components/Toast.svelte'
   import InlineSpinner from '../components/InlineSpinner.svelte'
@@ -15,6 +18,9 @@
   ]
 
   let step = $state(1)
+  let wizardRoot = $state(null)
+  const trackStep = createStepFocus()
+  $effect(() => trackStep(step, () => wizardRoot))
   let dest = $state(null)
   let backups = $state([])
   let noBackups = $state(false)
@@ -57,9 +63,15 @@
   // What this Vault holds BEFORE the wizard touches anything (step 1 creates
   // a destination) — the restore confirmation must not claim the settings are
   // "(empty)" when the wizard was opened on an already-configured Vault.
-  let current = $state({ jobs: 0, storage: 0 })
-  Promise.all([api.listJobs().catch(() => []), api.listStorage().catch(() => [])])
-    .then(([jobs, storage]) => (current = { jobs: jobs.length, storage: storage.length }))
+  // Null until known: a failed check must not pass for an empty Vault (#525).
+  let current = $state(null)
+  Promise.all([api.listJobs(), api.listStorage()])
+    .then(([jobs, storage]) => (current = { jobs: (jobs || []).length, storage: (storage || []).length }))
+    .catch(() => {})
+  const replacesExisting = $derived(recoverReplacesExisting(current))
+  const replaceSummary = $derived(selected && dest
+    ? recoverReplaceSummary({ storageName: dest.name, path: selected.path, modified: selected.timestamp ? fmtWhen(selected.timestamp) : '' }, current)
+    : { source: [], consequences: [] })
 
   const latestEncrypted = $derived(backups.length > 0 && backups[0].encrypted)
   const anyEncrypted = $derived(backups.some((b) => b.encrypted))
@@ -173,7 +185,7 @@
   }
 </script>
 
-<div class="max-w-3xl mx-auto p-4 sm:p-6">
+<div bind:this={wizardRoot} class="max-w-3xl mx-auto p-4 sm:p-6">
   <h1 class="text-2xl font-bold text-text">Recover Vault</h1>
   <p class="text-sm text-text-muted mt-1 mb-6">
     Bring back your jobs, storage and history from a backup. You'll need access to your backup storage
@@ -183,8 +195,8 @@
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
     {#each STEPS as s (s.n)}
-      <div class="flex items-center gap-2 {s.n <= step ? '' : 'opacity-40'}" aria-current={s.n === step ? 'step' : undefined}>
-        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n <= step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
+      <div class="flex items-center gap-2" aria-current={s.n === step ? 'step' : undefined}>
+        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n <= step ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
             <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
           {:else}
@@ -201,7 +213,7 @@
 
   {#if step === 1}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
-      <h2 class="text-base font-semibold text-text mb-1">Connect the storage that holds your backups</h2>
+      <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Connect the storage that holds your backups</h2>
       <p class="text-sm text-text-muted mb-4">
         Point Vault at the place your old server sent its backups — the same share, server or bucket
         you used before. Use "Test connection" to make sure it works before continuing.
@@ -228,7 +240,7 @@
 
   {:else if step === 2}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
-      <h2 class="text-base font-semibold text-text mb-1">Enter your backup password</h2>
+      <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Enter your backup password</h2>
       <p class="text-sm text-text-muted mb-4">
         This is the encryption password you chose when you set up encryption on your old server
         (Settings → Encryption). It's the only thing you need from before.
@@ -237,7 +249,7 @@
         <label for="recover-pass" class="block text-sm font-medium text-text-muted mb-1.5">Your backup password</label>
         <div class="flex gap-2">
           <input id="recover-pass" type={showPass ? 'text' : 'password'} bind:value={passphrase} autocomplete="off"
-            class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-dim" />
+            class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
           <button type="button" class="btn btn-secondary" onclick={() => (showPass = !showPass)}>
             {showPass ? 'Hide' : 'Show'}
           </button>
@@ -259,7 +271,7 @@
 
   {:else if step === 3}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
-      <h2 class="text-base font-semibold text-text mb-1">Choose which backup to restore</h2>
+      <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Choose which backup to restore</h2>
       <p class="text-sm text-text-muted mb-4">
         The most recent backup is already selected — that's the right choice for almost everyone.
       </p>
@@ -283,15 +295,10 @@
         {/each}
       </fieldset>
 
-      {#if confirmRestore}
+      {#if confirmRestore && !replacesExisting}
         <div class="bg-warning/10 border border-warning/30 rounded-lg p-4 mt-4">
           <p class="text-sm text-text mb-3">
-            {#if current.jobs > 0 || current.storage > 0}
-              This replaces this Vault's current settings —
-              <strong>including its {current.jobs} job(s) and {current.storage} storage destination(s)</strong> —
-            {:else}
-              This replaces this Vault's current (empty) settings
-            {/if}
+            This replaces this Vault's current (empty) settings
             with the backup
             {selected.is_latest ? 'from your most recent backup' : `from ${new Date(selected.timestamp).toLocaleString()}`}.
             Your backed-up files on storage are not touched.
@@ -307,7 +314,7 @@
 
       <div class="flex items-center justify-between mt-5 pt-4 border-t border-border">
         <button type="button" class="btn btn-ghost" onclick={goBack}>Back</button>
-        {#if !confirmRestore}
+        {#if !confirmRestore || replacesExisting}
           <button type="button" class="btn btn-primary" disabled={!selected} onclick={startRestore}>Restore this backup</button>
         {/if}
       </div>
@@ -316,7 +323,7 @@
   {:else if step === 4}
     {#if unlockedDedup.length > 0 || lockedDedup.length > 0}
       <div class="bg-surface-2 border border-border rounded-xl p-5 mb-4">
-        <h2 class="text-base font-semibold text-text mb-1">Deduplicated backups</h2>
+        <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Deduplicated backups</h2>
         {#each unlockedDedup as r (r.storage_id)}
           <p class="text-sm text-success">✓ {r.name}: unlocked with your backup password.</p>
         {/each}
@@ -342,7 +349,7 @@
       </div>
     {/if}
     <div class="bg-surface-2 border border-border rounded-xl p-5">
-      <h2 class="text-base font-semibold text-text mb-1">Check your folder paths</h2>
+      <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-1 outline-none">Check your folder paths</h2>
       {#if audit === null}
         <p class="text-sm text-text-muted mb-4">
           We couldn't check your paths automatically. If a backup fails later, review the paths in
@@ -376,7 +383,7 @@
               <input id={`remap-${e.kind}-${e.id}`} type="text" list="path-candidates"
                 bind:value={remapDraft[`${e.kind}-${e.id}`]}
                 placeholder="New path, e.g. /mnt/user/…"
-                class="w-full mt-2 px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text font-mono placeholder-text-dim" />
+                class="w-full mt-2 px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
               {#if remapError(e)}
                 <p class="text-xs text-danger mt-1">{remapError(e)}</p>
               {/if}
@@ -395,7 +402,7 @@
   {:else if step === 5}
     <div class="bg-surface-2 border border-border rounded-xl p-8 text-center">
       <div class="text-4xl mb-3" aria-hidden="true">🎉</div>
-      <h2 class="text-xl font-bold text-text mb-2">Vault is back</h2>
+      <h2 data-step-heading tabindex="-1" class="text-xl font-bold text-text mb-2 outline-none">Vault is back</h2>
       <p class="text-sm text-text-muted max-w-md mx-auto mb-6">
         Recovered {summary.jobs} job(s) and {summary.storage} storage destination(s).
         To bring files, containers or VMs back, use the normal Restore page. And store your backup
@@ -408,5 +415,18 @@
     </div>
   {/if}
 </div>
+
+<ConfirmDialog
+  show={confirmRestore && replacesExisting}
+  title="Replace Vault Database"
+  message="This replaces this Vault's current settings with the selected backup."
+  source={replaceSummary.source}
+  consequences={replaceSummary.consequences}
+  confirmWord="REPLACE"
+  confirmLabel={restoring ? "Replacing…" : "Replace Database"}
+  busy={restoring}
+  onconfirm={doRestore}
+  oncancel={() => (confirmRestore = false)}
+/>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />

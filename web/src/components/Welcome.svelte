@@ -14,21 +14,21 @@
 
   <div class="flex flex-col sm:flex-row gap-6 mb-10 text-left">
     <div class="flex items-start gap-3">
-      <span class="flex items-center justify-center w-8 h-8 rounded-full bg-vault text-white text-sm font-bold shrink-0">1</span>
+      <span class="flex items-center justify-center w-8 h-8 rounded-full bg-vault text-on-vault text-sm font-bold shrink-0">1</span>
       <div>
         <p class="font-medium text-text">Add Storage</p>
         <p class="text-sm text-text-dim">Choose where backups are saved</p>
       </div>
     </div>
     <div class="flex items-start gap-3">
-      <span class="flex items-center justify-center w-8 h-8 rounded-full bg-vault/20 text-vault text-sm font-bold shrink-0">2</span>
+      <span class="flex items-center justify-center w-8 h-8 rounded-full bg-vault/20 text-vault-text text-sm font-bold shrink-0">2</span>
       <div>
         <p class="font-medium text-text">Create a Job</p>
         <p class="text-sm text-text-dim">Pick what to back up and when</p>
       </div>
     </div>
     <div class="flex items-start gap-3">
-      <span class="flex items-center justify-center w-8 h-8 rounded-full bg-vault/20 text-vault text-sm font-bold shrink-0">3</span>
+      <span class="flex items-center justify-center w-8 h-8 rounded-full bg-vault/20 text-vault-text text-sm font-bold shrink-0">3</span>
       <div>
         <p class="font-medium text-text">Run Backup</p>
         <p class="text-sm text-text-dim">Protect your data in minutes</p>

@@ -1,5 +1,5 @@
 <script>
-  import { onMount, tick } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { api, isReplicaMode } from '../lib/api.js'
   import { formatDate } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
@@ -8,14 +8,15 @@
   import { nearBottom, nearOldestEdge, atTop as isAtTop } from '../lib/scrollflags.js'
   import { getLiveMode } from '../lib/runtime-config.js'
   import { rowTime } from '../lib/tsformat.js'
-  import { buildRows, rowEntries } from '../lib/logrows.js'
+  import { buildRows, logEmptyState, rowEntries, isRowExpanded, toggleRowExpanded, rowHasDetails } from '../lib/logrows.js'
   import { createLogWindow, scrollAction } from '../lib/logwindow.svelte.js'
   import { levelStyle, levelLabel } from '../lib/loglevel.js'
-  import { formatLine, logLine } from '../lib/logline.js'
+  import { formatLine, logLine, problemSummary, rowDetailsLabel, rowStamp } from '../lib/logline.js'
   import { createUnifiedLogStore } from '../lib/unifiedlog.svelte.js'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import LogRowDetails from '../components/LogRowDetails.svelte'
 
   const store = createUnifiedLogStore()
   // The console renders NEWEST FIRST, so the scroll axis is inverted relative
@@ -35,6 +36,7 @@
   let wrap = $state(false) // console-wide line wrapping for message text (#328 round 2)
   let focusedId = $state(null) // row highlighted to mark the user's focus (#328 r3 #7)
   let copiedAll = $state(false) // transient confirmation for copy-all (#328 r3 #14)
+  let expanded = $state.raw(new Set()) // entries whose row is open inline (#534)
   let appendingOlder = false // an older batch is landing BELOW the viewport; leave scrollTop alone
 
   // Display rows: newest-first, with date separators and consecutive
@@ -80,6 +82,7 @@
     { value: 'error', label: 'Error' },
     { value: 'warn', label: 'Warn' },
     { value: 'info', label: 'Info' },
+    { value: 'problems', label: 'Problems' },
   ]
 
   onMount(() => {
@@ -138,14 +141,28 @@
   // much content was inserted above the viewport.
   let preScrollHeight = 0
   let preScrollTop = 0
+  let preAnchor = null // { id, top }: the line to hold still while rows are open
   $effect.pre(() => {
     store.filtered
     collapse
     if (box) {
       preScrollHeight = box.scrollHeight
       preScrollTop = box.scrollTop
+      preAnchor = untrack(() => {
+        if (expanded.size === 0) return null
+        const id = (focusedId && entryTopOffset(focusedId) != null) ? focusedId : topmostEntryId()
+        return id ? { id, top: entryTopOffset(id) } : null
+      })
     }
   })
+
+  // An open folded row grows when a new line folds into it, wherever it is, so
+  // total growth no longer means "growth above the viewport". Hold the anchor
+  // line in place by measuring it. It may now be represented by a newer entry.
+  function anchorTopNow(id) {
+    const row = rows.find((r) => r.kind === 'entry' && r.entries.some((e) => String(e.id) === id))
+    return row ? entryTopOffset(row.entry.id) : null
+  }
 
   // Auto-follow, inverted: the newest line is at the TOP, so following the
   // live tail means holding scrollTop at 0.
@@ -168,6 +185,13 @@
       return
     }
     if (appendingOlder) return
+    if (preAnchor && !follow) {
+      const after = anchorTopNow(preAnchor.id)
+      if (after != null) {
+        win.write(anchoredScrollTop(preScrollTop, preAnchor.top, after))
+        return
+      }
+    }
     const grew = box.scrollHeight - preScrollHeight
     if (grew > 0 && preScrollTop > 0) {
       win.write(preScrollTop + grew)
@@ -261,6 +285,9 @@
     followOffMarker = null
     win.reset()
     if (!box) return
+    // Already at the top (a row opened at the live edge pauses follow there):
+    // no scroll will happen, so no scrollend would ever re-arm the pin below.
+    if (box.scrollTop < 1) return
     // The auto-follow effect pins scrollTop instantly on every entries
     // change — it would snap the viewport to the bottom and cancel the
     // smooth animation the moment `follow` flips true above. Suppress the
@@ -356,6 +383,23 @@
   const toggleCollapse = () => anchoredReflow(() => { collapse = !collapse })
   const toggleMeta = () => anchoredReflow(() => { showMeta = !showMeta })
 
+  // Open or close one row. Everything below the row moves and nothing above it
+  // does, and the row is anchored for the case where closing it shrinks the
+  // console enough to clamp scrollTop. Opening a row also pauses auto-follow:
+  // new lines would otherwise push the row being read down the screen. They
+  // wait above, counted on "Jump to present".
+  function toggleExpanded(row) {
+    focusedId = String(row.entry.id) // keyboard activation has no pointerdown
+    const opening = !isRowExpanded(row, expanded)
+    anchoredReflow(() => {
+      expanded = toggleRowExpanded(row, expanded)
+      if (opening && follow) {
+        follow = false
+        win.pin()
+      }
+    })
+  }
+
   async function fillViewport() {
     await tick()
     let guard = 0
@@ -432,24 +476,37 @@
     }
   }
 
-  // Highlight the row immediately on pointer-down (not on click, which waits
-  // for mouse-up) so the focus marker appears without delay (#328 r5 #2).
-  function handleRowPointerDown(entry) {
-    focusedId = entry.id
+  // Mark the row holding the user's attention: immediately on pointer-down (not
+  // on click, which waits for mouse-up, #328 r5 #2), and when keyboard focus
+  // reaches a control in the row. A tap does the same, which reveals row copy.
+  function markRow(e) {
+    const row = closestRow(e.target)
+    if (row) focusedId = row.dataset.entryId
   }
 
-  // Triple-click selects the whole line. Single-click highlighting is handled
-  // by onpointerdown (above).
+  // Triple-click selects the whole line.
   function handleRowClick(e) {
-    if (e.detail === 3) {
-      // Capture the row synchronously: `e.currentTarget` is nulled once the
-      // event finishes dispatching, so reading it inside the rAF callback was
-      // always null and triple-click never selected anything (#328 r4 #8).
-      const row = e.currentTarget
-      if (!row) return
-      // Defer the selection so it overrides the browser's native triple-click
-      // fragment selection after it settles.
-      requestAnimationFrame(() => selectRowText(row))
+    if (e.detail !== 3) return
+    const row = closestRow(e.target)
+    if (!row) return
+    // Defer the selection so it overrides the browser's native triple-click
+    // fragment selection after it settles.
+    requestAnimationFrame(() => selectRowText(row))
+  }
+
+  // Rows are not controls: highlighting and triple-click selection are pointer
+  // conveniences over plain text, and the row's real actions are its buttons.
+  // One delegated set of listeners also spares every rendered row its own.
+  function rowGestures(el) {
+    el.addEventListener('pointerdown', markRow)
+    el.addEventListener('focusin', markRow)
+    el.addEventListener('click', handleRowClick)
+    return {
+      destroy() {
+        el.removeEventListener('pointerdown', markRow)
+        el.removeEventListener('focusin', markRow)
+        el.removeEventListener('click', handleRowClick)
+      },
     }
   }
 
@@ -530,12 +587,12 @@
 
 <div>
   <!-- Header -->
-  <div class="flex items-center justify-between mb-5">
-    <div>
+  <div class="flex flex-col gap-3 mb-5 sm:flex-row sm:items-center sm:justify-between">
+    <div class="shrink-0">
       <h1 class="text-2xl font-bold text-text">Logs</h1>
       <p class="text-sm text-text-muted mt-1">Unified activity and run-log output</p>
     </div>
-    <div class="flex items-center gap-2">
+    <div role="group" aria-label="Log actions" class="flex flex-wrap items-center gap-2 sm:justify-end">
       <button onclick={toggleWrap} aria-pressed={wrap}
         class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm transition-colors flex items-center gap-1.5 {wrap ? 'text-text border-vault/50' : 'text-text-muted hover:text-text'}" title="Toggle line wrapping">
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10m-10 6h10M17 15l3-3-3-3"/></svg>
@@ -585,6 +642,13 @@
 
   <!-- Filter bar -->
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
+    <button type="button" aria-pressed={store.levelFilter === 'problems'}
+      onclick={() => handleLevel(store.levelFilter === 'problems' ? '' : 'problems')}
+      class="px-2 py-1 min-h-6 text-xs rounded-md bg-surface-3 border transition-colors {store.levelFilter === 'problems' ? 'border-vault text-text' : 'border-border text-text-muted hover:text-text'}"
+      title="Show only warnings and errors">
+      Problems
+    </button>
+    <div class="w-px h-4 bg-border" aria-hidden="true"></div>
     <label class="flex items-center gap-1.5">
       <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Level</span>
       <select
@@ -633,7 +697,7 @@
           value={store.search}
           oninput={(e) => { store.setSearchFilter(e.target.value); snapToPresent() }}
           placeholder="Filter logs…"
-          class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-dim/50 {store.search ? 'border-vault text-text' : ''}"
+          class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-muted {store.search ? 'border-vault text-text' : ''}"
         />
         {#if store.search}
           <button type="button" onclick={() => { store.setSearchFilter(''); snapToPresent() }}
@@ -664,18 +728,27 @@
       <span>searching older logs…</span>
     </div>
   {:else if store.filtered.length === 0}
-    <EmptyState title="No logs" subtitle="Events appear here as they happen" description="Backup and restore operations will stream their output into this console.">
-      {#snippet iconSlot()}
-        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-      {/snippet}
-    </EmptyState>
+    {@const empty = logEmptyState({ problemsOnly: store.levelFilter === 'problems', hasMore: store.hasMore && store.entries.length > 0, stopped: store.historyStopped })}
+    {#if empty.kind === 'loading'}
+      <div class="py-4 text-center text-sm text-text-dim flex items-center justify-center gap-2" aria-live="polite">
+        <span aria-hidden="true" class="inline-block w-4 h-4 border border-vault/30 border-t-vault rounded-full animate-spin"></span>
+        <span>{empty.text}</span>
+      </div>
+    {:else}
+      <EmptyState title={empty.title} subtitle={empty.subtitle} description={empty.description ?? ''}
+        actionLabel={empty.kind === 'partial' ? 'Try again' : ''} onaction={empty.kind === 'partial' ? () => store.loadAll() : null}>
+        {#snippet iconSlot()}
+          <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        {/snippet}
+      </EmptyState>
+    {/if}
   {:else}
     <!-- Console wrapper: scroll container + fixed overlay buttons -->
-    <div class="relative" style="max-height: 72vh">
+    <div class="relative vault-console-frame" style="max-height: 72vh">
       <!-- Jump to present / new-entries indicator (fixed, bottom-right whenever follow is off) -->
       {#if !follow}
         <button onclick={jumpToPresent}
-          class="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-vault/90 hover:bg-vault text-white text-xs font-medium rounded-lg shadow-lg transition-all flex items-center gap-1.5"
+          class="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-vault/90 hover:bg-vault text-on-vault text-xs font-medium rounded-lg shadow-lg transition-all flex items-center gap-1.5"
           title="Jump to present">
           <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
           {#if newCount > 0}{newCount} new {newCount === 1 ? 'entry' : 'entries'}{:else}Jump to present{/if}
@@ -684,9 +757,10 @@
 
       {#if !atOldest || win.hiddenBelow}
         <button onclick={jumpToOldest}
-          class="absolute top-3 right-3 z-10 p-2 bg-surface-3 border border-border rounded-lg text-text-muted hover:text-text shadow-lg transition-colors"
+          class="absolute top-1 right-3 z-10 h-6 px-2 flex items-center gap-1 text-xs bg-surface-3 border border-border rounded-md text-text-muted hover:text-text shadow-lg transition-colors"
           title="Jump to oldest log" aria-label="Jump to oldest log">
-          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 14l7 7m0 0l7-7m-7 7V3"/></svg>
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 14l7 7m0 0l7-7m-7 7V3"/></svg>
+          Oldest
         </button>
       {/if}
 
@@ -697,7 +771,7 @@
            the buffer spans the true end (#328). -->
 
       <!-- Scroll container -->
-      <div bind:this={box} onscroll={handleScroll} oncopy={handleCopy}
+      <div bind:this={box} use:rowGestures onscroll={handleScroll} oncopy={handleCopy}
         class="console-scroll bg-surface-1 border border-border rounded-xl overflow-y-auto font-mono text-xs leading-tight h-[72vh]"
         style="overflow-anchor: none;"
         role="log"
@@ -707,34 +781,51 @@
             <!-- Day separator. Sticky, so the day you are reading stays named
                  while you scroll through it; every row below can then drop the
                  date and show a bare time. -->
-            <div class="sticky top-0 z-[1] flex items-center gap-2 pl-3 pr-12 py-1 bg-surface-2/95 backdrop-blur-sm border-y border-border select-none">
-              <span class="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{row.label}</span>
+            <div class="sticky top-0 z-[2] flex items-center gap-2 pl-3 pr-24 min-h-8 bg-surface-2/95 backdrop-blur-sm border-y border-border select-none">
+              <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{row.label}</span>
               <span class="h-px flex-1 bg-border" aria-hidden="true"></span>
-              <span class="text-[10px] text-text-dim tabular-nums">{row.count}</span>
+              <span class="text-[11px] text-text-dim tabular-nums">{row.count}</span>
             </div>
           {:else}
             {@const entry = row.entry}
             {@const st = levelStyle(entry.level)}
             {@const line = formatLine(entry)}
-            <div class="flex items-baseline gap-2 px-2 py-px border-l-2 {st.border} {focusedId === entry.id ? 'bg-vault/15' : st.row} group hover:bg-surface-2/50" data-entry-id={entry.id} onclick={(e) => handleRowClick(e)} onpointerdown={() => handleRowPointerDown(entry)}>
+            {@const summary = showMeta ? null : problemSummary(entry)}
+            {@const text = summary ?? line.message}
+            {@const open = isRowExpanded(row, expanded)}
+            {@const detailsId = `log-details-${row.key}`}
+            <div class={`flex max-sm:flex-wrap items-start leading-6 gap-x-2 pr-2 border-l-2 ${st.border} ${focusedId === String(entry.id) ? 'bg-vault/15' : st.row} group hover:bg-surface-2/50`} data-entry-id={entry.id}>
+              <!-- One row's details, without the console-wide Details toggle. 24 px
+                   controls set the row height: WCAG 2.5.8, on rows stacked tightly. -->
+              {#if rowHasDetails(row, line.meta)}
+                <button type="button" onclick={() => toggleExpanded(row)} aria-expanded={open} aria-controls={open ? detailsId : undefined}
+                  aria-label={rowDetailsLabel(entry, rowStamp(entry.ts, rowTime(entry.ts)), row.repeat)} title={open ? 'Hide details' : 'Show details'}
+                  class="w-6 h-6 shrink-0 flex items-center justify-center text-text-muted hover:text-text cursor-pointer">
+                  <svg aria-hidden="true" class="w-3 h-3 transition-transform {open ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+                </button>
+              {:else}
+                <span class="w-6 h-6 shrink-0" aria-hidden="true"></span>
+              {/if}
               <!-- Time only; the full date is on the day separator above and in
                    the tooltip, which is most of the width this row used to spend. -->
-              <span class="shrink-0 text-text-dim tabular-nums" title={fullTs(entry.ts)}>{rowTime(entry.ts)}</span>
+              <span class="shrink-0 text-text-muted tabular-nums" title={fullTs(entry.ts)}>{rowTime(entry.ts)}</span>
               <!-- Level pill. Colour AND text, so the console still reads in
-                   the monochrome themes where every hue collapses to one ink. -->
-              <span class="shrink-0 w-[3.5rem] text-center rounded px-1 text-[10px] uppercase tracking-wide {st.pill}" title={entry.level}>{levelLabel(entry.level)}</span>
-              <span class="shrink-0 w-[7ch] truncate text-text-dim" title={entry.category}>{entry.category}</span>
-              <span class="min-w-0 flex-1 flex items-baseline gap-1.5">
-                <span class="{wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap overflow-hidden text-ellipsis'} shrink-0 max-w-full {st.text} {entry.type === 'summary' ? 'font-medium' : ''}" title={line.message}>
-                  {line.message}
+                   the monochrome themes where every hue collapses to one ink. The
+                   highlighted row's tint is too strong for the level's own colour. -->
+              <span class={`shrink-0 w-[3.5rem] mt-1 leading-4 text-center rounded px-1 text-[11px] uppercase tracking-wide ${st.pill} ${focusedId === String(entry.id) ? '!text-text' : ''}`} title={entry.level}>{levelLabel(entry.level)}</span>
+              <span class="shrink-0 w-[7ch] truncate text-text-muted" title={entry.category}>{entry.category}</span>
+              <span class="min-w-0 flex-1 flex items-center gap-1.5 max-sm:order-last max-sm:basis-full max-sm:pl-8 max-sm:pb-1">
+                <!-- On a phone the cause is the reason the row exists, so it wraps there. -->
+                <span class={`${wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap overflow-hidden text-ellipsis'} ${summary ? 'max-sm:whitespace-pre-wrap max-sm:break-words' : ''} shrink-0 max-w-full ${st.text} ${entry.type === 'summary' ? 'font-medium' : ''}`} title={text}>
+                  {text}
                 </span>
                 {#if row.repeat > 1}
-                  <span class="shrink-0 rounded px-1 text-[10px] tabular-nums bg-surface-3 text-text-muted" title={repeatTitle(row)}>×{row.repeat}</span>
+                  <span class="shrink-0 rounded px-1 leading-4 text-[11px] tabular-nums bg-surface-3 text-text-muted" title={repeatTitle(row)}>{`×${row.repeat}`}</span>
                 {/if}
                 {#if showMeta && line.meta}<span class="{st.meta} min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={line.meta}>{line.meta}</span>{/if}
               </span>
-              <button type="button" onclick={() => copyRow(row)}
-                class="{copiedId === entry.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} p-0.5 text-text-dim/40 hover:text-text shrink-0 transition-all self-center cursor-pointer" title="Copy">
+              <button type="button" onclick={() => copyRow(row)} aria-label={row.repeat > 1 ? `Copy ${row.repeat} log lines` : 'Copy log line'}
+                class={`log-row-copy ${copiedId === entry.id || focusedId === String(entry.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'} w-6 h-6 max-sm:ml-auto shrink-0 flex items-center justify-center text-text-muted hover:text-text transition-all cursor-pointer`} title="Copy">
                 {#if copiedId === entry.id}
                   <svg aria-hidden="true" class="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                 {:else}
@@ -742,6 +833,9 @@
                 {/if}
               </button>
             </div>
+            {#if open}
+              <LogRowDetails id={detailsId} {row} border={st.border} />
+            {/if}
           {/if}
         {/each}
         <!-- End-of-history marker now sits at the BOTTOM: with newest first,
@@ -765,3 +859,10 @@
   onconfirm={handlePurge}
   oncancel={() => confirmPurge = false}
 />
+
+<style>
+  /* No hover to reveal row copy on a touch screen, so it is simply there. */
+  @media (hover: none), (pointer: coarse) {
+    .log-row-copy { opacity: 1; }
+  }
+</style>

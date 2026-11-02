@@ -8,6 +8,8 @@ const defaultConfig = Object.freeze({
   csrfToken: '',
   liveMode: 'websocket',
   timeFormat: 'auto',
+  presentation: 'standalone',
+  hostTheme: null,
 })
 
 export function getRuntimeConfig() {
@@ -17,6 +19,34 @@ export function getRuntimeConfig() {
 
 export function isProxyMode() {
   return getRuntimeConfig().mode === 'unraid-proxy'
+}
+
+/**
+ * Whether this window is a same-origin frame, which is the only place a host
+ * script can size it. Reading a cross-origin parent throws, and counts as no.
+ * @param {Window} win
+ */
+function isSameOriginFrame(win) {
+  try {
+    return win.self !== win.top && win.parent.location.origin === win.location.origin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * True only when the page asked for embedded presentation and really is in a
+ * host's frame. Elsewhere the embedded layout would be clipped and unscrollable.
+ */
+export function isEmbedded() {
+  if (typeof window === 'undefined') return false
+  return getRuntimeConfig().presentation === 'embedded' && isSameOriginFrame(window)
+}
+
+/** Unraid's light or dark theme, or null when it's unknown. */
+export function getHostThemeMode() {
+  const { hostTheme } = getRuntimeConfig()
+  return hostTheme === 'light' || hostTheme === 'dark' ? hostTheme : null
 }
 
 export function getLiveMode() {

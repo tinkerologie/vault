@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRows, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice } from './logrows.js'
+import { buildRows, logEmptyState, rowEntries, renderedCount, extendWindow, renderedStart, raiseWindow, oldestWindow, trimTop, trimBottom, windowSlice, isRowExpanded, toggleRowExpanded, rowHasDetails } from './logrows.js'
 
 const NOW = new Date('2026-08-25T12:00:00')
 
@@ -299,5 +299,140 @@ describe('window slice date header (#507)', () => {
     expect(keys(windowSlice(rows, 3, 5))).toEqual(['day-1', 'c'])
     expect(windowSlice(rows, 6, 6)).toEqual([])
     expect(keys(windowSlice([{ kind: 'entry', key: 'x' }], 0, 1))).toEqual(['x'])
+  })
+})
+
+describe('folding warnings and errors (#534)', () => {
+  const at = (id) => `2026-08-25T09:00:${String(id).padStart(2, '0')}`
+  const line = (id, level, message, meta) => ({ ...entry(id, at(id), level, 'health', message), meta })
+  const shape = (entries) => buildRows(entries, opts).filter((r) => r.kind === 'entry').map((r) => r.repeat)
+
+  it('folds the same container, status and error, whatever else differs', () => {
+    expect(shape([
+      line(1, 'warn', 'Health check, container=plex, attempt=1, status=unhealthy, error=one'),
+      line(2, 'warn', 'Health check, container=plex, attempt=2, status=unhealthy, error=one'),
+    ])).toEqual([2])
+  })
+
+  it('keeps different errors apart, since a fold shows only one', () => {
+    expect(shape([
+      line(1, 'warn', 'Health check, container=plex, status=unhealthy, error=one'),
+      line(2, 'warn', 'Health check, container=plex, status=unhealthy, error=two'),
+    ])).toEqual([1, 1])
+  })
+
+  it.each([
+    ['a different container', 'Health check, container=plex, status=failed', 'Health check, container=sonarr, status=failed'],
+    ['a different status', 'Health check, container=plex, status=failed', 'Health check, container=plex, status=unhealthy'],
+    ['a different destination', 'Storage health check, destination=a, status=failed', 'Storage health check, destination=b, status=failed'],
+    ['an identifier on only one line', 'Health check, container=plex', 'Health check'],
+  ])('keeps %s apart', (_name, a, b) => {
+    expect(shape([line(1, 'warn', a), line(2, 'warn', b)])).toEqual([1, 1])
+    expect(shape([line(1, 'error', a), line(2, 'error', b)])).toEqual([1, 1])
+  })
+
+  it('separates on structured identifiers too', () => {
+    expect(shape([
+      line(1, 'warn', 'Storage health check', { storage_dest_id: 1 }),
+      line(2, 'warn', 'Storage health check', { storage_dest_id: 2 }),
+    ])).toEqual([1, 1])
+  })
+
+  it('folds problems with no identifier at all', () => {
+    expect(shape([line(1, 'warn', 'Disk low'), line(2, 'warn', 'Disk low')])).toEqual([2])
+  })
+
+  it('still folds routine rows over a differing tail', () => {
+    expect(shape([
+      line(1, 'info', 'Health check, container=plex, status=ok'),
+      line(2, 'info', 'Health check, container=sonarr, status=running'),
+    ])).toEqual([2])
+  })
+
+  it('keeps a row\'s key when a newer line folds in at the top', () => {
+    const older = [line(1, 'info', 'Tick'), line(2, 'info', 'Tick')]
+    const key = (entries) => buildRows(entries, opts).find((r) => r.kind === 'entry').key
+    expect(key([...older, line(3, 'info', 'Tick')])).toBe(key(older))
+  })
+})
+
+describe('row expansion (#534)', () => {
+  const folded = () => buildRows([
+    entry(1, '2026-08-25T09:00:00', 'info', 'backup', 'Tick'),
+    entry(2, '2026-08-25T09:00:01', 'info', 'backup', 'Tick'),
+  ], opts).find((r) => r.kind === 'entry')
+
+  it('opens through the representative and stays open as the row grows', () => {
+    const open = toggleRowExpanded(folded(), new Set())
+    expect([...open]).toEqual([2])
+    const grown = buildRows([
+      entry(1, '2026-08-25T09:00:00', 'info', 'backup', 'Tick'),
+      entry(2, '2026-08-25T09:00:01', 'info', 'backup', 'Tick'),
+      entry(3, '2026-08-25T09:00:02', 'info', 'backup', 'Tick'),
+    ], opts).find((r) => r.kind === 'entry')
+    expect(isRowExpanded(grown, open)).toBe(true)
+    expect(toggleRowExpanded(grown, open).size).toBe(0)
+  })
+
+  it('leaves other rows alone', () => {
+    const other = { id: 9 }
+    const open = toggleRowExpanded(folded(), new Set([other.id]))
+    expect(open.has(9)).toBe(true)
+    expect(isRowExpanded(folded(), new Set([9]))).toBe(false)
+    expect(isRowExpanded(folded(), new Set())).toBe(false)
+  })
+
+  it('offers details only when the row hides something', () => {
+    expect(rowHasDetails({ repeat: 1 }, '')).toBe(false)
+    expect(rowHasDetails({ repeat: 1 }, 'a=b')).toBe(true)
+    expect(rowHasDetails({ repeat: 2 }, '')).toBe(true)
+  })
+})
+
+describe('collapsing problems with different causes (#534)', () => {
+  const upload = (id, tail) => entry(id, `2026-08-21T10:00:0${id}`, 'error', 'backup', `Upload failed, ${tail}`)
+
+  it('never folds two causes into one row', () => {
+    const rows = buildRows([upload(1, 'file=a.tar, error=disk full'), upload(2, 'file=b.tar, error=permission denied')], opts).filter((r) => r.kind === 'entry')
+    expect(rows).toHaveLength(2)
+  })
+
+  it('still folds a repeat of the same cause', () => {
+    const rows = buildRows([upload(1, 'file=a.tar, error=disk full'), upload(2, 'file=a.tar, error=disk full')], opts).filter((r) => r.kind === 'entry')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].repeat).toBe(2)
+  })
+})
+
+describe('logEmptyState', () => {
+  it.each([
+    [{ problemsOnly: true }, 'empty', 'No problems'],
+    [{}, 'empty', 'No logs'],
+    [{ problemsOnly: true, hasMore: true, stopped: true }, 'partial', 'No problems in the logs loaded so far'],
+    [{ hasMore: true, stopped: true }, 'partial', 'No matching logs loaded so far'],
+  ])('%j', (input, kind, title) => {
+    expect(logEmptyState(input)).toMatchObject({ kind, title })
+  })
+
+  it.each([
+    [{ problemsOnly: true, hasMore: true }, 'Checking older logs for problems…'],
+    [{ hasMore: true }, 'Loading older logs…'],
+  ])('never claims anything while %j loads', (input, text) => {
+    expect(logEmptyState(input)).toEqual({ kind: 'loading', text })
+  })
+})
+
+describe('buildRows folding entries with no level or category', () => {
+  const entry = (id, fields = {}) => ({ id, ts: '2026-10-20T12:00:00Z', message: 'Same line', ...fields })
+  const now = new Date('2026-10-20T13:00:00Z')
+  const repeats = (entries) => buildRows(entries, { collapse: true, now }).filter((r) => r.kind === 'entry').map((r) => r.repeat)
+
+  it('folds them together, reading a missing level as info', () => {
+    expect(repeats([entry('a'), entry('b'), entry('c', { level: 'info' })])).toEqual([3])
+  })
+
+  it('keeps them apart from the same line at another level or category', () => {
+    expect(repeats([entry('a'), entry('b', { level: 'error' })])).toEqual([1, 1])
+    expect(repeats([entry('a'), entry('b', { category: 'backup' })])).toEqual([1, 1])
   })
 })

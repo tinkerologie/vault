@@ -1,5 +1,6 @@
 <script>
   import { api } from '../lib/api.js'
+  import Modal from './Modal.svelte'
 
   // validate(path) may return a reason string that blocks "Select This Path"
   // for the current directory (the storage form uses it to refuse unsafe
@@ -8,6 +9,7 @@
   // yield an empty path.
   let { value = $bindable(''), onselect = () => {}, includeZfs = false, label = 'Path', validate = () => '' } = $props()
 
+  const titleId = $props.id()
   let open = $state(false)
   let entries = $state([])
   let currentPath = $state('')
@@ -81,7 +83,7 @@
       bind:value
       aria-label={label}
       placeholder="/mnt/user/backups"
-      class="flex-1 bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50"
+      class="flex-1 bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
     />
     <button
       type="button"
@@ -93,30 +95,29 @@
     </button>
   </div>
 
-  {#if open}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-backdrop" role="presentation">
-      <div class="bg-surface-2 border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col animate-panel-up">
+  <Modal show={open} labelledby={titleId} onclose={() => open = false}>
+      <div class="max-h-[80vh] flex flex-col min-h-0">
         <!-- Header -->
         <div class="flex items-center justify-between px-5 py-3 border-b border-border">
-          <h3 class="text-base font-semibold text-text">Browse Server</h3>
-          <button onclick={() => open = false} class="text-text-muted hover:text-text p-1" aria-label="Close">
+          <h3 id={titleId} class="text-base font-semibold text-text">Browse Server</h3>
+          <button type="button" onclick={() => open = false} class="text-text-muted hover:text-text p-1" aria-label="Close">
             <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
 
         <!-- Breadcrumbs -->
         <div class="px-5 py-2 border-b border-border/50 flex items-center gap-1 text-xs text-text-muted overflow-x-auto">
-          <button onclick={() => goTo('')} class="hover:text-vault shrink-0">/</button>
+          <button type="button" onclick={() => goTo('')} class="hover:text-vault-text shrink-0">/</button>
           {#each breadcrumbs as crumb, i (crumb.path)}
             {#if i > 0}<span class="text-text-dim">/</span>{/if}
-            <button onclick={() => goTo(crumb.path)} class="hover:text-vault shrink-0">{crumb.name}</button>
+            <button type="button" onclick={() => goTo(crumb.path)} class="hover:text-vault-text shrink-0">{crumb.name}</button>
           {/each}
         </div>
 
         <!-- Current path -->
         <div class="px-5 py-2 bg-surface-3/50">
           <div class="text-xs text-text-dim">Selected path</div>
-          <div class="text-sm font-mono text-vault">{currentPath || '/'}</div>
+          <div class="text-sm font-mono text-vault-text">{currentPath || '/'}</div>
         </div>
 
         <!-- Directory listing -->
@@ -129,12 +130,13 @@
             <div class="divide-y divide-border/30">
               {#each entries as entry (entry.path)}
                 <button
+                  type="button"
                   onclick={() => selectDir(entry)}
                   class="w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-surface-3 transition-colors group"
                 >
                   <svg aria-hidden="true" class="w-5 h-5 text-vault/70 group-hover:text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                   <div class="min-w-0">
-                    <div class="text-sm text-text group-hover:text-vault truncate">{entry.name}</div>
+                    <div class="text-sm text-text group-hover:text-vault-text truncate">{entry.name}</div>
                     <div class="text-xs text-text-dim truncate">{entry.path}</div>
                   </div>
                 </button>
@@ -148,12 +150,11 @@
           <p class="px-5 pt-3 text-xs text-warning" role="status" data-testid="path-select-blocked">{selectBlockedReason}</p>
         {/if}
         <div class="flex justify-end gap-3 px-5 py-3 border-t border-border">
-          <button onclick={() => open = false} class="px-4 py-2 text-sm text-text-muted hover:text-text rounded-lg">Cancel</button>
-          <button onclick={confirm} disabled={!!selectBlockedReason} class="px-4 py-2 text-sm font-medium bg-vault text-white rounded-lg hover:bg-vault/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          <button type="button" onclick={() => open = false} class="px-4 py-2 text-sm text-text-muted hover:text-text rounded-lg">Cancel</button>
+          <button type="button" onclick={confirm} disabled={!!selectBlockedReason} class="px-4 py-2 text-sm font-medium bg-vault text-on-vault rounded-lg hover:bg-vault/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             Select This Path
           </button>
         </div>
       </div>
-    </div>
-  {/if}
+  </Modal>
 </div>

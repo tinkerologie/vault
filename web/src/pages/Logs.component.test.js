@@ -26,9 +26,12 @@ const current = vi.hoisted(() => ({ fixture: null }))
 vi.mock('../lib/unifiedlog.svelte.js', () => ({
   createUnifiedLogStore: () => current.fixture.store,
 }))
+vi.mock('../lib/clipboard.js', () => ({ copyText: vi.fn(async () => true) }))
 vi.mock('../lib/api.js', async () => (await import('../test-support/scroll-box.js')).apiModuleMock())
 
 import Logs from './Logs.svelte'
+import { copyText } from '../lib/clipboard.js'
+import { logLine } from '../lib/logline.js'
 
 let geo
 
@@ -300,6 +303,339 @@ describe('lifecycle while filling the viewport', () => {
     expect(store.loadOlder).toHaveBeenCalledOnce()
     expect(store.loadAll).not.toHaveBeenCalled()
     expect(store.setupWs).not.toHaveBeenCalled()
+  })
+})
+
+describe('problem rows (#534)', () => {
+  const problems = () => makeEntries(3).map((e, i) => ({
+    ...e,
+    level: i === 1 ? 'warning' : 'warn',
+    category: 'health',
+    message: `Health check, container=c${i}, status=unhealthy, error=Timed out, retrying`,
+    meta: { container_name: `c${i}`, status: 'unhealthy', error: 'SENTINEL-STRUCTURED' },
+  }))
+  const text = () => document.querySelector('[role="log"]').textContent
+  const row = (entry) => document.querySelector(`[data-entry-id="${entry.id}"]`)
+
+  it('shows the summary with Details off and the canonical text with it on', async () => {
+    await mountLogs({ entries: problems() })
+    expect(text()).toContain('Health check · c0 · unhealthy · Timed out, retrying')
+    await fireEvent.click(screen.getByRole('button', { name: /^Details:/ }))
+    await flush()
+    expect(text()).not.toContain('Health check · c0')
+    expect(text()).toContain('container=c0, status=unhealthy, error=Timed out, retrying')
+  })
+
+  it('never renders structured details, in the row or opened', async () => {
+    const entries = problems()
+    await mountLogs({ entries })
+    await fireEvent.click(row(entries[2]).querySelector('[aria-expanded]'))
+    await flush()
+    expect(document.querySelector('[data-log-details]')).toBeTruthy()
+    expect(document.body.innerHTML).not.toContain('SENTINEL')
+  })
+
+  it('opens one row at a time, and closes it again', async () => {
+    const entries = problems()
+    await mountLogs({ entries })
+    const toggle = row(entries[1]).querySelector('[aria-expanded]')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.hasAttribute('aria-controls')).toBe(false)
+
+    await fireEvent.click(toggle)
+    await flush()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById(toggle.getAttribute('aria-controls'))).toBeTruthy()
+    expect(row(entries[0]).querySelector('[aria-expanded]').getAttribute('aria-expanded')).toBe('false')
+    expect(document.querySelectorAll('[data-log-details]')).toHaveLength(1)
+
+    await fireEvent.click(toggle)
+    await flush()
+    expect(document.querySelectorAll('[data-log-details]')).toHaveLength(0)
+  })
+
+  it('offers no toggle on a bare row', async () => {
+    const entries = makeEntries(2)
+    await mountLogs({ entries })
+    expect(row(entries[0]).querySelector('[aria-expanded]')).toBeNull()
+  })
+
+  it('pauses auto-follow on opening, and holds the anchor line as lines arrive', async () => {
+    const entries = problems()
+    const { control } = await mountLogs({ entries })
+    expect(jumpToPresent()).toBeNull()
+    await fireEvent.click(row(entries[1]).querySelector('[aria-expanded]'))
+    await flush()
+    expect(jumpToPresent()).toBeTruthy()
+
+    geo.writes.length = 0
+    control.addNewer(makeEntries(1, { start: 1000 }))
+    await flush()
+    expect(geo.writes).not.toContain(0) // the follow pin is off
+    expect(screen.getByText('1 new entry')).toBeTruthy()
+  })
+
+  it('falls back to growth compensation when the anchor line has gone', async () => {
+    const entries = problems()
+    const { control, console: box } = await mountLogs({ entries: [...makeEntries(50), ...entries] })
+    await fireEvent.click(row(entries[1]).querySelector('[aria-expanded]'))
+    await flush()
+    await userScroll(geo, box(), 300)
+
+    // The whole buffer is replaced: nothing it anchored on is left.
+    control.setEntries(makeEntries(80, { start: 2000 }))
+    await flush()
+    expect(rowCount()).toBe(80)
+  })
+
+  it('lists a long fold in steps', async () => {
+    const entries = makeEntries(130).map((e) => ({ ...e, message: 'Tick' }))
+    await mountLogs({ entries })
+    await fireEvent.click(screen.getByRole('button', { name: /^Details for Tick, .*, 130 entries$/ }))
+    await flush()
+    expect(document.querySelectorAll('[data-log-details] li')).toHaveLength(100)
+    await fireEvent.click(screen.getByRole('button', { name: 'Show 30 more of 30' }))
+    await flush()
+    expect(document.querySelectorAll('[data-log-details] li')).toHaveLength(130)
+  })
+
+  it('marks the row by pointer and by focus, and triple-click selects it', async () => {
+    const entries = problems()
+    await mountLogs({ entries })
+    const target = row(entries[0])
+    await fireEvent.pointerDown(target)
+    await flush()
+    expect(target.className).toContain('bg-vault/15')
+
+    await fireEvent.focusIn(row(entries[1]).querySelector('[aria-label="Copy log line"]'))
+    await flush()
+    expect(row(entries[1]).className).toContain('bg-vault/15')
+    expect(target.className).not.toContain('bg-vault/15')
+
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((fn) => { fn(); return 1 })
+    const selected = vi.spyOn(window, 'getSelection')
+    await fireEvent.click(target, { detail: 1 })
+    expect(selected).not.toHaveBeenCalled()
+    await fireEvent.click(target, { detail: 3 })
+    expect(window.getSelection().toString()).toContain('Health check')
+    await fireEvent.click(document.querySelector('[data-end-marker]'), { detail: 3 })
+    raf.mockRestore()
+    selected.mockRestore()
+  })
+})
+
+describe('copy stays verbatim (#534)', () => {
+  const folded = () => makeEntries(3).map((e, i) => ({ ...e, level: 'warn', message: `Health check, container=plex, attempt=${i}, status=failed, error=refused` }))
+
+  it('row copy yields every folded line, newest first', async () => {
+    const entries = folded()
+    copyText.mockClear()
+    await mountLogs({ entries })
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy 3 log lines' }))
+    await flush()
+    expect(copyText).toHaveBeenCalledWith([...entries].reverse().map(logLine).join('\n'))
+    expect(document.querySelector('.log-row-copy .text-success')).toBeTruthy()
+  })
+
+  it('Copy all holds every filtered entry, outside the render window too', async () => {
+    const entries = makeEntries(500)
+    copyText.mockClear()
+    await mountLogs({ entries })
+    expect(rowCount()).toBeLessThan(500)
+    await fireEvent.click(screen.getByTitle('Copy all filtered logs'))
+    await flush()
+    expect(copyText).toHaveBeenCalledWith(entries.map(logLine).join('\n'))
+  })
+})
+
+describe('Problems filter (#534)', () => {
+  const entries = () => makeEntries(4).map((e, i) => ({ ...e, level: ['info', 'warn', 'warning', 'error'][i] }))
+  const toggle = () => screen.getByRole('button', { name: 'Problems' })
+
+  it('toggles the level filter on and off, in step with the select', async () => {
+    const { store } = await mountLogs({ entries: entries() })
+    const select = screen.getByRole('combobox', { name: 'Level' })
+    await fireEvent.click(toggle())
+    await flush()
+    expect(store.levelFilter).toBe('problems')
+    expect(toggle().getAttribute('aria-pressed')).toBe('true')
+    expect(select.value).toBe('problems')
+    expect(rowCount()).toBe(3)
+
+    await fireEvent.click(toggle())
+    await flush()
+    expect(store.levelFilter).toBe('')
+    expect(toggle().getAttribute('aria-pressed')).toBe('false')
+    expect(rowCount()).toBe(4)
+  })
+
+  it('clears in one click through Reset filters', async () => {
+    await mountLogs({ entries: entries() })
+    await fireEvent.click(toggle())
+    await flush()
+    await fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }))
+    await flush()
+    expect(rowCount()).toBe(4)
+    expect(screen.queryByRole('button', { name: 'Reset filters' })).toBeNull()
+  })
+
+  it('says so when there are no problems', async () => {
+    await mountLogs({ entries: makeEntries(2) })
+    await fireEvent.click(toggle())
+    await flush()
+    expect(screen.getByText('No problems')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Reset filters' })).toBeTruthy()
+  })
+
+  it('does not say so over a partly loaded buffer', async () => {
+    await mountLogs({ entries: makeEntries(2), hasMore: true })
+    await fireEvent.click(toggle())
+    await flush()
+    expect(screen.queryByText('No problems')).toBeNull()
+    expect(screen.getByText('Checking older logs for problems…')).toBeTruthy()
+  })
+
+  it('offers a retry when older logs could not be loaded, since the list may be incomplete', async () => {
+    const { store } = await mountLogs({
+      entries: makeEntries(2),
+      hasMore: true,
+      before: (c) => c.setHistoryStopped(true),
+    })
+    await fireEvent.click(toggle())
+    await flush()
+    expect(screen.getByText('No problems in the logs loaded so far')).toBeTruthy()
+    expect(screen.queryByText('No problems')).toBeNull()
+
+    const loads = store.loadAll.mock.calls.length
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(store.loadAll).toHaveBeenCalledTimes(loads + 1)
+  })
+})
+
+describe('jumpToPresent', () => {
+  it('smooth-scrolls to the top, and pins the live edge only once the scroll settles', async () => {
+    const { control, console: box } = await mountLogs()
+    await userScroll(geo, box(), 200)
+    await fireEvent.click(jumpToPresent())
+    await flush()
+    expect(geo.scrollToCalls).toEqual([{ top: 0, behavior: 'smooth' }])
+    expect(jumpToPresent()).toBeNull()
+
+    // A pin now would cancel the animation.
+    geo.writes.length = 0
+    control.addNewer(makeEntries(1, { start: 1000 }))
+    await flush()
+    expect(geo.writes).not.toContain(0)
+
+    await fireEvent(box(), new Event('scrollend'))
+    control.addNewer(makeEntries(1, { start: 1001 }))
+    await flush()
+    expect(geo.writes).toContain(0)
+  })
+
+  it('pins straight away when already at the top, where no scrollend would ever fire', async () => {
+    const entries = makeEntries(3).map((e) => ({ ...e, level: 'warn', message: `Health check, container=${e.id}, status=unhealthy` }))
+    const { control } = await mountLogs({ entries })
+    // Opening a row at the live edge pauses follow without moving the console.
+    await fireEvent.click(document.querySelector('[data-entry-id] [aria-expanded]'))
+    await flush()
+    await fireEvent.click(jumpToPresent())
+    await flush()
+    expect(geo.scrollToCalls).toEqual([])
+    expect(jumpToPresent()).toBeNull()
+
+    geo.writes.length = 0
+    control.addNewer(makeEntries(1, { start: 1000 }))
+    await flush()
+    expect(geo.writes).toContain(0)
+  })
+})
+
+describe('anchoring an open row', () => {
+  const problems = () => makeEntries(3).map((e, i) => ({ ...e, level: 'warn', message: `Health check, container=c${i}, status=unhealthy` }))
+
+  /** Lay rows out top to bottom under the console's scroll position, or `rowTop` for all. */
+  function stubRowTops(rowTop) {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      if (!this.dataset?.entryId) return { top: 0 }
+      if (rowTop !== undefined) return { top: rowTop }
+      const log = this.closest('[role="log"]')
+      return { top: [...log.querySelectorAll('[data-entry-id]')].indexOf(this) * geo.rowHeight - log.scrollTop }
+    })
+  }
+
+  it('holds the topmost visible line once the focused line has gone', async () => {
+    const entries = problems()
+    const { control, console: box } = await mountLogs({ entries: [...makeEntries(50), ...entries] })
+    stubRowTops()
+    await fireEvent.click(document.querySelector(`[data-entry-id="${entries[1].id}"] [aria-expanded]`))
+    await flush()
+    await userScroll(geo, box(), 300)
+    control.setEntries(makeEntries(60, { start: 2000 }))
+    await flush()
+    await userScroll(geo, box(), 300)
+
+    control.addNewer(makeEntries(1, { start: 3000 }))
+    await flush()
+    expect(box().scrollTop).toBe(320)
+  })
+
+  it('still keeps the reading position when no line is visible to hold', async () => {
+    const entries = problems()
+    const { control, console: box } = await mountLogs({ entries: [...makeEntries(50), ...entries] })
+    await fireEvent.click(document.querySelector(`[data-entry-id="${entries[1].id}"] [aria-expanded]`))
+    await flush()
+    await userScroll(geo, box(), 300)
+    control.setEntries(makeEntries(60, { start: 2000 }))
+    await flush()
+    await userScroll(geo, box(), 300)
+
+    // Every row now starts above the console's top edge.
+    stubRowTops(-100)
+    control.addNewer(makeEntries(1, { start: 3000 }))
+    await flush()
+    expect(box().scrollTop).toBe(320)
+  })
+})
+
+describe('row marking and display', () => {
+  it('does not mark a row for a press outside every row', async () => {
+    const { console: box } = await mountLogs({ entries: makeEntries(2) })
+    await fireEvent.pointerDown(box().querySelector('[data-end-marker]'))
+    await flush()
+    expect(box().querySelector('.bg-vault\\/15')).toBeNull()
+  })
+
+  it('highlights the search box while a search is active, until it is cleared', async () => {
+    await mountLogs({ entries: makeEntries(2) })
+    const input = screen.getByPlaceholderText('Filter logs…')
+    expect(input.className).not.toContain('border-vault')
+    await fireEvent.input(input, { target: { value: 'Log line 1' } })
+    await flush()
+    expect(input.className).toContain('border-vault')
+    expect(rowCount()).toBe(1)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+    await flush()
+    expect(input.className).not.toContain('border-vault')
+    expect(rowCount()).toBe(2)
+  })
+
+  it('wraps message text while Wrap is on', async () => {
+    await mountLogs({ entries: makeEntries(1) })
+    const message = () => screen.getByTitle('Log line 0')
+    expect(message().className).toContain('whitespace-nowrap')
+    await fireEvent.click(screen.getByRole('button', { name: /^Wrap:/ }))
+    await flush()
+    expect(message().className).toContain('whitespace-pre-wrap')
+    expect(message().className).not.toContain('whitespace-nowrap')
+  })
+
+  it('sets a run summary line apart from ordinary lines', async () => {
+    const [plain, summary] = makeEntries(2)
+    await mountLogs({ entries: [plain, { ...summary, type: 'summary', message: 'Backup finished' }] })
+    expect(screen.getByTitle('Backup finished').className).toContain('font-medium')
+    expect(screen.getByTitle(plain.message).className).not.toContain('font-medium')
   })
 })
 

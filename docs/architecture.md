@@ -196,6 +196,8 @@ https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
 
 The daemon runs at `/usr/local/sbin/vault` with the database at `/boot/config/plugins/vault/vault.db`.
 
+The plugin installs `Vault.page`, `Backups.page`, `include/`, `ui/`, `event/` and `README.md` under `/usr/local/emhttp/plugins/vault`. The post-install step in `plugin/vault.plg` also deletes the removed legacy PHP pages and their `assets/` directory, so upgrades don't leave them behind.
+
 Service management:
 
 ```bash
@@ -253,4 +255,4 @@ Vault uses date-based versioning in the `VERSION` file with the format `YYYY.MM.
 
 ## Top-navigation quick link (`Backups.page`)
 
-`plugin/pages/Backups.page` is an optional top-nav entry (`Menu="Tasks"`, `Type="xmenu"` — the same extension point Community Applications uses) gated by `NAV_LINK` in `vault.cfg` via its `Cond` header, toggled from the Vault settings page through `control.php`'s `navlink` action. It embeds the SPA's proxy entrypoint (`include/app.php`) in an iframe sized to the viewport. Because `app.php` injects Unraid's CSRF token once per render and the SPA has no in-app refresh, the frame reloads itself when the tab regains visibility after >10 minutes hidden so write actions keep working across token rotations. In proxy mode the SPA polls; WebSocket-only live events do not stream here (matching the Utilities page).
+`plugin/pages/Backups.page` is an optional top-nav entry (`Menu="Tasks"`, `Type="xmenu"` — the same extension point Community Applications uses) gated by `NAV_LINK` in `vault.cfg` via its `Cond` header, toggled from the Vault settings page through `control.php`'s `navlink` action. It embeds the SPA's proxy entrypoint (`include/app.php`) in an iframe with `?embed=1`, which selects the embedded presentation: a compact link row in place of the sidebar, header and bottom bar, with no scroll area of its own. `include/embed-host.js` sizes the frame to the SPA's content over a same-origin `postMessage` channel that validates origin, source and shape, and reports the visible part of the frame so dialogs and toasts stay on screen. A framed page that isn't same-origin, or a top-level `?embed=1`, stays standalone. `app.php` maps Unraid's `[display] theme` from `dynamix.cfg` (`black`/`gray` dark, `white`/`azure` light, anything else no hint) to a default mode that's never persisted, so a stored choice in Vault, including System, always wins. Because `app.php` injects Unraid's CSRF token once per render and the SPA has no in-app refresh, the frame reloads itself when the tab regains visibility after >10 minutes hidden so write actions keep working across token rotations. In proxy mode the SPA polls; WebSocket-only live events do not stream here (matching the Utilities page).

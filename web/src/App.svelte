@@ -1,11 +1,16 @@
 <script>
   import { getRoute, navigate } from './lib/router.svelte.js'
+  import { pageTitle } from './lib/routes.js'
+  import { createRouteChangeDetector, focusPageHeading } from './lib/focus.js'
   import { connectWs, getWsStatus } from './lib/ws.svelte.js'
   import { initTheme, getMode, setMode, getIsThemed } from './lib/theme.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
   import { shouldRedirectRoute } from './lib/route-guard.js'
+  import { groupBySection, isMobileNavActive, isMoreActive, moreNavItems } from './lib/mobile-nav.js'
   import { loadFeatureFlags, getAnomalyEnabled, getReplicationEnabled, getFeatureFlagsLoaded } from './lib/settings.svelte.js'
-  import { onMount } from 'svelte'
+  import { getHostThemeMode, isEmbedded } from './lib/runtime-config.js'
+  import { revealFrameTop } from './lib/embed.js'
+  import { onMount, tick } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
   import Jobs from './pages/Jobs.svelte'
@@ -20,8 +25,14 @@
   import Anomalies from './pages/Anomalies.svelte'
   import Spinner from './components/Spinner.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
+  import MoreSheet from './components/MoreSheet.svelte'
+  import EmbeddedNav from './components/EmbeddedNav.svelte'
 
-  let mobileMenuOpen = $state(false)
+  // Framed by Unraid's Backups page (#526): no fixed chrome, and the document
+  // takes its natural height so the frame can size to it.
+  const embedded = isEmbedded()
+
+  let moreOpen = $state(false)
   let showCommandPalette = $state(false)
 
   function handleGlobalKeydown(e) {
@@ -68,19 +79,7 @@
   // Group the visible nav into contiguous sections for the desktop sidebar. A
   // header only appears when its section has ≥1 visible child, so hidden /
   // feature-flagged items never leave an empty section behind.
-  let navSections = $derived.by(() => {
-    const groups = []
-    const bySection = {}
-    for (const item of nav) {
-      const key = item.section ?? '__none__'
-      if (!bySection[key]) {
-        bySection[key] = { section: item.section ?? null, items: [] }
-        groups.push(bySection[key])
-      }
-      bySection[key].items.push(item)
-    }
-    return groups
-  })
+  let navSections = $derived(groupBySection(nav))
 
   // Guard direct deep-links to a hidden route – redirect to Dashboard. Wait
   // until flags are actually loaded so we don't redirect on the optimistic
@@ -98,6 +97,23 @@
 
   let ready = $state(false)
   let replicaMode = $state(false)
+
+  const mainContent = () => document.getElementById('main-content')
+
+  $effect(() => { document.title = pageTitle(getRoute()) })
+
+  // One place for every way a route can change: links, the command palette,
+  // navigate() calls, back/forward and guard redirects. Initial entry and
+  // query-only changes don't count, so a page load never steals focus.
+  const routeChanged = createRouteChangeDetector()
+  $effect(() => {
+    if (!routeChanged(getRoute())) return
+    moreOpen = false
+    tick().then(() => {
+      focusPageHeading(mainContent())
+      if (embedded) revealFrameTop()
+    })
+  })
 
   // Running plugin version shown in the sidebar footer. Sourced from the same
   // /health response used for replica-mode detection; 'dev' fallback matches
@@ -122,7 +138,7 @@
       try {
         // initTheme is guarded internally, but keep a belt-and-braces catch so a
         // future unguarded line here can never abort the boot sequence.
-        try { initTheme() } catch { /* theme failures must never block boot */ }
+        try { initTheme(embedded ? getHostThemeMode() : null) } catch { /* theme failures must never block boot */ }
 
         // Detect replica mode from health endpoint.
         try {
@@ -195,20 +211,23 @@
     { path: '/jobs', label: 'Jobs', icon: iconFor('/jobs') },
     { path: '/history', label: 'History', icon: iconFor('/history') },
     { path: '/restore', label: 'Restore', icon: iconFor('/restore') },
-    { path: '/settings', label: 'More', icon: moreIcon },
   ]
   const replicaMobileNav = [
     { path: '/', label: 'Home', icon: iconFor('/') },
     { path: '/replication', label: 'Replication', icon: iconFor('/replication') },
     { path: '/history', label: 'History', icon: iconFor('/history') },
     { path: '/logs', label: 'Logs', icon: iconFor('/logs') },
-    { path: '/settings', label: 'More', icon: moreIcon },
   ]
   let mobileNav = $derived(replicaMode ? replicaMobileNav : daemonMobileNav)
+  let moreItems = $derived(moreNavItems(nav, mobileNav.map((item) => item.path)))
+  let moreActive = $derived(isMoreActive(moreItems, getRoute()))
 
-  function go(path) {
-    navigate(path)
-    mobileMenuOpen = false
+  // `#main-content` would otherwise be parsed as a route and render Dashboard.
+  function skipToMain(e) {
+    e.preventDefault()
+    focusPageHeading(mainContent())
+    // The frame has no scroller of its own: the parent page has to come back.
+    if (embedded) revealFrameTop()
   }
 
   function cycleTheme() {
@@ -224,7 +243,7 @@
 
 <CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
 
-<a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-white focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
+<a href="#main-content" onclick={skipToMain} class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-on-vault focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
 
 {#if connectionLost}
   <div role="status" aria-live="polite"
@@ -235,19 +254,22 @@
   </div>
 {/if}
 
-<div class="flex h-screen bg-surface">
+<div class={embedded ? 'bg-surface' : 'flex h-screen bg-surface'}>
   {#if !ready}
     <div class="flex-1 flex items-center justify-center"><Spinner text="Connecting..." /></div>
   {:else}
+  {#if embedded}
+    <EmbeddedNav items={nav} route={getRoute()} />
+  {:else}
   <!-- Sidebar -->
-  <aside class="hidden lg:flex lg:flex-col w-64 bg-surface-2 border-r border-border shrink-0">
+  <aside aria-label="Sidebar" class="hidden lg:flex lg:flex-col w-64 bg-surface-2 border-r border-border shrink-0">
     <!-- Brand -->
     <div class="flex items-center gap-3 px-6 py-5 border-b border-border">
       {#if getIsThemed()}
         <span class="text-text font-mono text-sm tracking-widest">┌─ VAULT ─┐</span>
       {:else}
         <div class="w-8 h-8 bg-vault rounded-lg flex items-center justify-center shrink-0">
-          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <svg class="w-5 h-5 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         </div>
         <div>
           <span class="text-lg font-bold text-text tracking-tight">VAULT</span>
@@ -257,7 +279,7 @@
     </div>
 
     <!-- Nav links -->
-    <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+    <nav aria-label="Main navigation" class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
       {#each navSections as group (group.section ?? '_top')}
         {#if group.section}
           <div class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-text-muted select-none">{group.section}</div>
@@ -271,13 +293,13 @@
               {item.label}
             </a>
           {:else}
-            <button onclick={() => go(item.path)}
+            <a href="#{item.path}"
               aria-current={isActive(item.path) ? 'page' : undefined}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left
-                {isActive(item.path) ? 'bg-vault/10 text-vault nav-active' : 'text-text-muted hover:text-text hover:bg-surface-3'}">
+                {isActive(item.path) ? 'bg-vault/10 text-vault-text nav-active' : 'text-text-muted hover:text-text hover:bg-surface-3'}">
               <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
               {item.label}
-            </button>
+            </a>
           {/if}
         {/each}
       {/each}
@@ -286,57 +308,33 @@
       <footer class="px-3 py-3 border-t border-border text-xs text-text-muted flex items-center justify-between gap-2">
         <span>v{version}</span>
         {#if updateAvailable}
-          <button onclick={() => go('/settings')}
+          <a href="#/settings"
             title="Update available — latest release v{latestTag}"
             aria-label="Update available, latest release v{latestTag}. Open settings."
-            class="inline-flex items-center gap-1.5 text-orange-400 hover:text-orange-300 transition-colors">
+            class="inline-flex items-center gap-1.5 text-hue-orange hover:underline transition-colors">
             <span class="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" aria-hidden="true"></span>
             Update available
-          </button>
+          </a>
         {/if}
       </footer>
     {/if}
   </aside>
 
   <!-- Mobile header -->
-  <div class="lg:hidden fixed top-0 left-0 right-0 z-40 bg-surface-2 border-b border-border">
+  <header class="lg:hidden fixed top-0 left-0 right-0 z-40 bg-surface-2 border-b border-border">
     <div class="flex items-center justify-between px-4 py-3">
       <div class="flex items-center gap-2">
         <div class="w-7 h-7 bg-vault rounded-lg flex items-center justify-center">
-          <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <svg class="w-4 h-4 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         </div>
         <span class="text-base font-bold text-text">VAULT</span>
       </div>
-      <button onclick={() => mobileMenuOpen = !mobileMenuOpen} class="text-text-muted p-2 -mr-2 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Toggle menu">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={mobileMenuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'}/></svg>
-      </button>
     </div>
-    {#if mobileMenuOpen}
-      <nav class="px-3 pb-3 space-y-1 bg-surface-2 border-t border-border animate-fade-up">
-        {#each nav as item (item.path)}
-          {#if item.external}
-            <a href={item.href} target="_blank" rel="noopener"
-              onclick={() => mobileMenuOpen = false}
-              aria-label="{item.label} (opens in a new tab)"
-              class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left text-text-muted">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
-              {item.label}
-            </a>
-          {:else}
-            <button onclick={() => go(item.path)}
-              class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left
-                {isActive(item.path) ? 'bg-vault/10 text-vault nav-active' : 'text-text-muted'}">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon}/></svg>
-              {item.label}
-            </button>
-          {/if}
-        {/each}
-      </nav>
-    {/if}
-  </div>
+  </header>
+  {/if}
 
   <!-- Main content -->
-  <main id="main-content" class="flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0">
+  <main id="main-content" tabindex="-1" class={embedded ? 'outline-none pb-20' : 'outline-none flex-1 overflow-y-auto lg:pt-0 pt-14 pb-16 lg:pb-0'}>
     {#key getRoute()}
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fade-up">
       {#if getRoute() === '/'}
@@ -368,28 +366,47 @@
     {/key}
   </main>
 
+  {#if !embedded}
   <!-- Mobile bottom navigation -->
   <nav class="fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-border flex justify-around py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] z-40 lg:hidden" aria-label="Mobile navigation">
+    {#snippet barItem(/** @type {string} */ icon, /** @type {string} */ label, /** @type {boolean} */ active)}
+      <div class="relative">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d={icon} />
+        </svg>
+        {#if active}
+          <span class="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-vault"></span>
+        {/if}
+      </div>
+      <span>{label}</span>
+    {/snippet}
     {#each mobileNav as item (item.path)}
-      <button
-        onclick={() => go(item.path)}
-        aria-current={isActive(item.path) ? 'page' : undefined}
+      {@const active = isMobileNavActive(item.path, getRoute())}
+      <a
+        href="#{item.path}"
+        aria-current={active ? 'page' : undefined}
         class="flex flex-col items-center gap-0.5 px-3 py-2 min-w-[44px] min-h-[44px] text-xs transition-colors
-          {isActive(item.path) ? 'text-vault' : 'text-text-muted'}"
+          {active ? 'text-vault-text' : 'text-text-muted'}"
         aria-label={item.label}
       >
-        <div class="relative">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" d={item.icon} />
-          </svg>
-          {#if isActive(item.path)}
-            <span class="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-vault"></span>
-          {/if}
-        </div>
-        <span>{item.label}</span>
-      </button>
+        {@render barItem(item.icon, item.label, active)}
+      </a>
     {/each}
+    <button
+      type="button"
+      onclick={() => moreOpen = true}
+      aria-haspopup="dialog"
+      aria-expanded={moreOpen}
+      aria-controls={moreOpen ? 'more-sheet' : undefined}
+      aria-current={moreActive ? 'page' : undefined}
+      class="flex flex-col items-center gap-0.5 px-3 py-2 min-w-[44px] min-h-[44px] text-xs transition-colors
+        {moreActive ? 'text-vault-text' : 'text-text-muted'}"
+    >
+      {@render barItem(moreIcon, 'More', moreActive)}
+    </button>
   </nav>
 
+  <MoreSheet show={moreOpen} id="more-sheet" items={moreItems} route={getRoute()} onclose={() => moreOpen = false} />
+  {/if}
   {/if}
 </div>
