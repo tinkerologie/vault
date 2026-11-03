@@ -93,7 +93,9 @@ func (h *AnomalyHandler) resolveAcker() anomalyAcker {
 //	scope_id    - int64
 //	since       - RFC3339 or relative (e.g. "-30d"); defaults to now-30d
 //	limit       - int, capped at 500; defaults to 100
-//	cursor      - opaque page token from a previous response
+//	order       - "id" pages newest-detected first and returns next_cursor;
+//	              omitted, rows come most recently seen first as one page
+//	cursor      - opaque page token from a previous order=id response
 func (h *AnomalyHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
@@ -159,6 +161,19 @@ func (h *AnomalyHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Paging needs an order that never moves. Without it, return one page
+	// most recently seen first and no cursor, so nothing follows it in a
+	// different order.
+	pageByID := cursor != ""
+	switch q.Get("order") {
+	case "":
+	case "id":
+		pageByID = true
+	default:
+		respondError(w, http.StatusBadRequest, `order must be "id"`)
+		return
+	}
+
 	filter := db.AnomalyFilter{
 		States:     states,
 		Severities: severities,
@@ -167,6 +182,7 @@ func (h *AnomalyHandler) List(w http.ResponseWriter, r *http.Request) {
 		Since:      since,
 		Limit:      limit,
 		Cursor:     cursor,
+		PageByID:   pageByID,
 	}
 
 	rows, err := h.db.ListAnomalies(filter)
@@ -179,9 +195,9 @@ func (h *AnomalyHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var nextCursor string
-	if len(rows) == limit {
+	if pageByID && len(rows) == limit {
 		last := rows[len(rows)-1]
-		nextCursor = db.EncodeAnomalyCursor(last.LastSeenAt, last.ID)
+		nextCursor = db.EncodeAnomalyCursor(last.ID)
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{

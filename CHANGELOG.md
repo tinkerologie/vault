@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Anomalies no longer go missing between pages (#587):** With many open anomalies, ones detected in the same second as a page boundary could be skipped, on the Anomalies page and for clients that poll instead of using live updates. The Anomalies page now lists newest-detected first and pages in that order, so one seen again while you page through stays where it is. The Dashboard card and the MCP `list_anomalies` tool still show the most recently seen first. `GET /anomalies` returns `next_cursor` only with `order=id`. A browser tab left open across the upgrade keeps working; reload it to load more.
+- **Polling clients keep reporting resolved anomalies (#593):** When looking up a resolved anomaly kept failing, it no longer holds up the ones behind it, and the waiting list is capped at 200, past which the Anomalies page reloads instead.
 - **Build after the mDNS library update (#588):** The main module now matches the bundled library's `netlink` update, so Vault builds again.
 - **Retro fonts load in the plugin (#532):** The pixel fonts returned 404 when the app was served from the Unraid plugin path, so Retro fell back to system fonts.
 - **Jobs bulk bar on phones (#530):** The bulk action bar now wraps inside a 375 px screen and sits above the mobile navigation, standalone and embedded, with full-size touch targets.

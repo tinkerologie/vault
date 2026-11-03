@@ -332,6 +332,7 @@ export const api = {
     if (filter.scope_id) params.set('scope_id', String(filter.scope_id))
     if (filter.since) params.set('since', filter.since)
     if (filter.limit) params.set('limit', String(filter.limit))
+    if (filter.order) params.set('order', filter.order)
     if (filter.cursor) params.set('cursor', filter.cursor)
     const qs = params.toString()
     return request('GET', `/anomalies${qs ? '?' + qs : ''}`)

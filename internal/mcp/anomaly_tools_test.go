@@ -196,6 +196,32 @@ func TestListAnomaliesSummaryShape(t *testing.T) {
 	}
 }
 
+// An old anomaly seen again must lead list_anomalies, which returns one
+// capped page with no cursor (#587).
+func TestListAnomaliesRecentlySeenFirst(t *testing.T) {
+	t.Parallel()
+	session, database := setupTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	old := seedAnomaly(t, database, "order-old")
+	seedAnomaly(t, database, "order-new")
+	if err := database.RefreshOpenAnomaly(old, 1, nil, time.Now().UTC().Add(time.Minute), "critical"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	res := callTool(t, session, ctx, "list_anomalies", nil)
+	var arr []struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(res), &arr); err != nil {
+		t.Fatalf("unmarshal: %v (raw: %s)", err, res)
+	}
+	if len(arr) != 2 || arr[0].ID != old {
+		t.Errorf("list_anomalies = %s, want the re-seen id %d first", res, old)
+	}
+}
+
 func TestListAnomaliesFilterBySeverity(t *testing.T) {
 	t.Parallel()
 	session, database := setupTest(t)
