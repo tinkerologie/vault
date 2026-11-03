@@ -11,6 +11,8 @@ const EMBED_HOST = path.join(process.cwd(), 'plugin/pages/include/embed-host.js'
 const HARNESS = '/__unraid_page__.html';
 const HEADER_HEIGHT = 300;
 const ARROW_CLEARANCE = 72;
+// Height of the pinned host menu some tests add (Unraid's #menu can stick to the top).
+const PINNED_MENU = 48;
 
 const VIEWPORTS = [
   { name: 'desktop', width: 1280, height: 800 },
@@ -32,11 +34,12 @@ const PAGES = [
   { label: 'Dashboard', hash: '#/', heading: 'Dashboard' },
 ];
 
-const harnessHtml = (frameSrc: string) => `<!doctype html><html><head><title>Unraid</title>
+const harnessHtml = (frameSrc: string, pinnedMenu = false) => `<!doctype html><html><head><title>Unraid</title>
 <style>body{margin:0}#header{height:${HEADER_HEIGHT}px;background:#333}#arrow{position:fixed;right:16px;bottom:16px;width:40px;height:40px;background:#c00}</style>
 </head><body>
 <div id="header"></div>
 <div id="arrow"></div>
+${pinnedMenu ? `<div id="menu" style="position:sticky;top:0;height:${PINNED_MENU}px;background:#036;z-index:10"></div>` : ''}
 <iframe id="vault-backups-frame" src="${frameSrc}" style="width:100%;border:0;display:block" title="Vault Backups"></iframe>
 <script src="/plugins/vault/include/embed-host.js"></script>
 <script>VaultEmbedHost.attach(document.getElementById('vault-backups-frame'));</script>
@@ -51,6 +54,8 @@ type EmbedOptions = {
   replica?: boolean;
   /** Serves the frame from another origin than the parent. */
   crossOrigin?: boolean;
+  /** Adds a host menu pinned to the top of the parent's screen. */
+  pinnedMenu?: boolean;
 };
 
 async function openEmbedded(page: Page, options: EmbedOptions = {}): Promise<FrameLocator> {
@@ -76,7 +81,7 @@ async function openEmbedded(page: Page, options: EmbedOptions = {}): Promise<Fra
     });
   }
   const frameSrc = `${crossOrigin ? frameOrigin : ''}/?embed=1${hash}`;
-  await page.route(`**${HARNESS}`, (route) => route.fulfill({ contentType: 'text/html', body: harnessHtml(frameSrc) }));
+  await page.route(`**${HARNESS}`, (route) => route.fulfill({ contentType: 'text/html', body: harnessHtml(frameSrc, options.pinnedMenu) }));
   await page.route('**/plugins/vault/include/embed-host.js', (route) => route.fulfill({ contentType: 'text/javascript', path: EMBED_HOST }));
   await page.goto(HARNESS);
   return page.frameLocator('#vault-backups-frame');
@@ -127,12 +132,13 @@ const logRow = (id: number) => ({
   created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + id * 1000).toISOString(),
 });
 
-/** Embedded Logs over LOG_COUNT lines, with a socket that can push new ones. */
-async function openEmbeddedLogs(page: Page) {
-  const all = Array.from({ length: LOG_COUNT }, (_, i) => logRow(LOG_COUNT - i));
+/** Embedded Logs over `count` lines, with a socket that can push new ones. */
+async function openEmbeddedLogs(page: Page, { count = LOG_COUNT, pinnedMenu = false } = {}) {
+  const all = Array.from({ length: count }, (_, i) => logRow(count - i));
   let socket: WebSocketRoute | null = null;
   const frame = await openEmbedded(page, {
     hash: '#/logs',
+    pinnedMenu,
     beforeLoad: async () => {
       await page.routeWebSocket('**/api/v1/ws', (ws) => { socket = ws; });
       await page.route('**/api/v1/activity*', async (route) => {
@@ -145,9 +151,9 @@ async function openEmbeddedLogs(page: Page) {
     },
   });
   const log = frame.getByRole('log');
-  await expect(log.locator(`[data-entry-id="${LOG_COUNT}"]`)).toBeVisible();
-  // One date separator and 199 lines: the window is full and older rows wait below it.
-  await expect.poll(() => log.locator('[data-entry-id]').count(), { timeout: 15000 }).toBe(199);
+  await expect(log.locator(`[data-entry-id="${count}"]`)).toBeVisible();
+  // One date separator and up to 199 lines: past that, older rows wait below the window.
+  await expect.poll(() => log.locator('[data-entry-id]').count(), { timeout: 15000 }).toBe(Math.min(count, 199));
   await expect.poll(() => socket !== null).toBe(true);
   await settledFrameHeight(page);
   return {
@@ -324,6 +330,41 @@ for (const viewport of VIEWPORTS) {
       expect((await newest.boundingBox())!.y).toBeLessThan(viewport.height);
       await expect(present).toHaveCount(0);
       await expectNoNestedScroll(page);
+    });
+
+    test('Logs controls clear a pinned host menu after scrolling (#526)', async ({ page }) => {
+      const { frame, log } = await openEmbeddedLogs(page, { pinnedMenu: true });
+      await scrollParentBy(page, (await log.boundingBox())!.y + 1500);
+      const present = frame.getByTitle('Jump to present');
+      await expect(present).toBeVisible();
+      await page.waitForTimeout(100);
+      // The day header and Oldest stick just below the menu, not under it.
+      const day = await log.locator('.sticky').first().boundingBox();
+      expect(Math.abs(day!.y - PINNED_MENU)).toBeLessThanOrEqual(1);
+      const oldest = await frame.getByRole('button', { name: 'Jump to oldest log' }).boundingBox();
+      expect(oldest!.y).toBeGreaterThanOrEqual(PINNED_MENU);
+      await expectInParentViewport(page, oldest);
+      await expectInParentViewport(page, await present.boundingBox());
+    });
+
+    test('Oldest reveals the end of a short console that starts low (#526)', async ({ page }) => {
+      const { frame, log } = await openEmbeddedLogs(page, { count: viewport.width >= 1024 ? 12 : 8 });
+      const end = frame.getByText('— End of logs —');
+      const endBottom = async () => { const b = (await end.boundingBox())!; return b.y + b.height; };
+      const visibleBottom = viewport.height - ARROW_CLEARANCE;
+      // Room below the frame, so the page can scroll the end into view.
+      await page.evaluate(() => { document.body.style.paddingBottom = '600px'; });
+      // Bring the console's top on screen, if it isn't, 60 px above the bottom of the visible part.
+      await scrollParentBy(page, Math.max(0, (await log.boundingBox())!.y - (visibleBottom - 60)));
+      await expect.poll(async () => (await log.boundingBox())!.y).toBeLessThan(visibleBottom);
+      await page.waitForTimeout(100);
+      // Shorter than the screen but starting low enough that its end is below it.
+      expect((await log.boundingBox())!.height).toBeLessThan(visibleBottom);
+      expect(await endBottom()).toBeGreaterThan(visibleBottom);
+      await clickInPlace(page, frame.getByRole('button', { name: 'Jump to oldest log' }));
+      await expect.poll(endBottom).toBeLessThanOrEqual(visibleBottom + 1);
+      // The console's top is still on screen.
+      expect((await log.boundingBox())!.y).toBeGreaterThanOrEqual(0);
     });
 
     test('Logs keep the reading line still while paused, and follow at the live edge (#526)', async ({ page }) => {

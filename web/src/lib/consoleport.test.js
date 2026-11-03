@@ -47,6 +47,17 @@ describe('embeddedScrollTarget', () => {
   it('keeps a console shorter than the screen where it is', () => {
     expect(embeddedScrollTarget(at(100, { consoleHeight: 200 }), 150)).toBeNull()
   })
+
+  it('scrolls a short console that starts low just far enough to show its end', () => {
+    // Only 128 of its 200 px are on screen; its end is 72 px below.
+    const short = { consoleTop: 300, consoleHeight: 200, visibleTop: 0, visibleHeight: 428 }
+    expect(embeddedScrollTarget(short, 200)).toBe(72)
+    // The console's top stays on screen, so it reads as unscrolled afterwards.
+    expect(embeddedGeometry({ ...short, visibleTop: 72 }).scrollTop).toBe(0)
+    expect(embeddedScrollTarget({ ...short, visibleTop: 72 }, 200)).toBeNull()
+    // A write of 0 asks only for the top, which is already on screen.
+    expect(embeddedScrollTarget(short, 0)).toBeNull()
+  })
 })
 
 function fakeElement(rect = { top: 300, height: 2000 }) {

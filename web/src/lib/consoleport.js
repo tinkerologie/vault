@@ -42,8 +42,14 @@ export function embeddedGeometry({ consoleTop, consoleHeight, visibleTop, visibl
 export function embeddedScrollTarget(g, px) {
   const max = Math.max(0, g.consoleHeight - g.visibleHeight)
   const target = Math.max(0, Math.min(px, max))
-  if (Math.abs(target - embeddedGeometry(g).scrollTop) < 1) return null
-  return g.consoleTop + target
+  if (Math.abs(target - embeddedGeometry(g).scrollTop) >= 1) return g.consoleTop + target
+  // Already at that offset. A write further down that reaches the console's
+  // end must also show the end: a console shorter than the screen can start
+  // low enough that its last rows are below it. A write of 0 (follow, filter
+  // reset) asks only for the top and never moves an on-screen console.
+  const hiddenBelow = g.consoleTop + g.consoleHeight - (g.visibleTop + g.visibleHeight)
+  if (px > 0 && px >= g.consoleHeight - g.visibleHeight && hiddenBelow >= 1) return g.visibleTop + hiddenBelow
+  return null
 }
 
 /**
