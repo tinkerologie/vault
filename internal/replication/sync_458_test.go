@@ -152,7 +152,7 @@ func TestReplication458_SyncJobLocalFailuresAndSkips(t *testing.T) {
 	local := storage.NewLocalAdapter(t.TempDir())
 
 	// A remote point whose storage path already exists locally is skipped.
-	jobID, err := s.ensureLocalJob(src, rj)
+	jobID, err := s.ensureLocalJob(src, src.StorageDestID, rj)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestReplication458_SyncJobLocalFailuresAndSkips(t *testing.T) {
 	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "already/here"}); err != nil {
 		t.Fatal(err)
 	}
-	n, _, err := s.syncJob(c, src, rj, local)
+	n, _, err := s.syncJob(c, src, src.StorageDestID, rj, local)
 	if err != nil || n != 0 {
 		t.Fatalf("syncJob with existing point = %d, %v", n, err)
 	}
@@ -171,13 +171,13 @@ func TestReplication458_SyncJobLocalFailuresAndSkips(t *testing.T) {
 	if _, err := d.Exec(`ALTER TABLE restore_points RENAME TO rp_hidden`); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.syncJob(c, src, rj, local); err == nil || !strings.Contains(err.Error(), "list local restore points") {
+	if _, _, err := s.syncJob(c, src, src.StorageDestID, rj, local); err == nil || !strings.Contains(err.Error(), "list local restore points") {
 		t.Errorf("local listing failure: %v", err)
 	}
 	if _, err := d.Exec(`ALTER TABLE jobs RENAME TO jobs_hidden`); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.syncJob(c, src, rj, local); err == nil || !strings.Contains(err.Error(), "ensure local job") {
+	if _, _, err := s.syncJob(c, src, src.StorageDestID, rj, local); err == nil || !strings.Contains(err.Error(), "ensure local job") {
 		t.Errorf("ensure job failure: %v", err)
 	}
 }

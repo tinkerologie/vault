@@ -110,11 +110,8 @@ func seedDedupRepo458(t *testing.T, dbPath, keyPath string, destID int64, withMi
 		t.Fatal(err)
 	}
 	items := map[string]any{
-		"dup":    hex.EncodeToString(mID[:]),
-		"empty":  "",
-		"badhex": "zz",
-		"short":  "abcd",
-		"notstr": 5,
+		"dup":   hex.EncodeToString(mID[:]),
+		"empty": "",
 	}
 	if withMissing {
 		// A manifest ID that was never stored: unreadable during the walk.
@@ -190,13 +187,10 @@ func TestRunDedupGC458_UnreadableManifestFailsGC(t *testing.T) {
 	dedupDestID, dedupGCDBVal, dedupGCKey = destID, dbPath, keyPath
 
 	var runErr error
-	_, stderr := captureStd458(t, func() { runErr = runDedupGC(nil, nil) })
-	if !strings.Contains(stderr, "skipping unreadable manifest") {
-		t.Errorf("stderr missing unreadable-manifest warning: %q", stderr)
-	}
+	captureStd458(t, func() { runErr = runDedupGC(nil, nil) })
 	// GC refuses to sweep when a live manifest cannot be loaded.
-	if runErr == nil || !strings.Contains(runErr.Error(), "run gc") {
-		t.Fatalf("err = %v, want run gc error", runErr)
+	if runErr == nil || !strings.Contains(runErr.Error(), "unreadable") {
+		t.Fatalf("err = %v, want an unreadable-manifest error", runErr)
 	}
 }
 

@@ -344,8 +344,8 @@ func TestCollectLiveManifestIDsEmptyDB(t *testing.T) {
 
 // TestCollectLiveManifestIDsWithUnreadableManifest exercises the
 // "manifest can't be read" branch: we insert a restore point with a
-// manifest ID that doesn't exist on disk; collectLiveManifestIDs should
-// still include the top-level ID rather than failing.
+// manifest ID that doesn't exist on disk; collectLiveManifestIDs must fail so
+// GC deletes nothing, as the set it would return is incomplete.
 func TestCollectLiveManifestIDsWithUnreadableManifest(t *testing.T) {
 	t.Parallel()
 	r, database, storageDir := setupTestRunner(t)
@@ -391,17 +391,8 @@ func TestCollectLiveManifestIDsWithUnreadableManifest(t *testing.T) {
 		t.Fatalf("InitRepo: %v", err)
 	}
 
-	ids, err := r.collectLiveManifestIDs(repo, dest.ID)
-	if err != nil {
-		t.Fatalf("collectLiveManifestIDs: %v", err)
-	}
-	// The walk fails, but the function falls back to treating the top-level
-	// manifest as reachable.
-	if len(ids) != 1 {
-		t.Errorf("got %d live IDs, want 1 (top-level kept on walk failure)", len(ids))
-	}
-	if len(ids) == 1 && ids[0][0] != 0xAA {
-		t.Errorf("first live ID byte = %02x, want AA", ids[0][0])
+	if ids, err := r.collectLiveManifestIDs(repo, dest.ID); err == nil {
+		t.Fatalf("collectLiveManifestIDs = %x, want an error", ids)
 	}
 }
 
@@ -422,16 +413,6 @@ func TestCollectLiveManifestIDsFromMetadataItemManifests(t *testing.T) {
 	runID, _ := database.CreateJobRun(db.JobRun{
 		JobID: jobID, Status: "completed", BackupType: "full",
 	})
-	const hexA = "1111111111111111111111111111111111111111111111111111111111111111"
-	const hexB = "2222222222222222222222222222222222222222222222222222222222222222"
-	meta := `{"item_manifests":{"appdata":"` + hexA + `","config":"` + hexB + `"}}`
-	if _, err := database.CreateRestorePoint(db.RestorePoint{
-		JobRunID: runID, JobID: jobID, BackupType: "full",
-		StoragePath: "multi-dedup-job/1_run", Metadata: meta,
-	}); err != nil {
-		t.Fatalf("CreateRestorePoint: %v", err)
-	}
-
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		t.Fatalf("NewAdapter: %v", err)
@@ -442,12 +423,29 @@ func TestCollectLiveManifestIDsFromMetadataItemManifests(t *testing.T) {
 		t.Fatalf("InitRepo: %v", err)
 	}
 
+	idA, err := repo.PutManifest("appdata", dedup.Manifest{})
+	if err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	idB, err := repo.PutManifest("config", dedup.Manifest{Files: map[string]dedup.ManifestEntry{"f": {Size: 1}}})
+	if err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	meta := `{"item_manifests":{"appdata":"` + hex.EncodeToString(idA[:]) + `","config":"` + hex.EncodeToString(idB[:]) + `"}}`
+	if _, err := database.CreateRestorePoint(db.RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "full",
+		StoragePath: "multi-dedup-job/1_run", Metadata: meta,
+	}); err != nil {
+		t.Fatalf("CreateRestorePoint: %v", err)
+	}
+
 	ids, err := r.collectLiveManifestIDs(repo, dest.ID)
 	if err != nil {
 		t.Fatalf("collectLiveManifestIDs: %v", err)
 	}
-	// Two top-level IDs; each fails to walk (missing from repo) but is
-	// retained as a fallback.
 	if len(ids) != 2 {
 		t.Errorf("got %d live IDs, want 2: %x", len(ids), ids)
 	}

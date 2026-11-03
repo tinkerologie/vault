@@ -113,12 +113,12 @@ func TestSyncRestorePointRejectsUnmanagedPaths514(t *testing.T) {
 			src := db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}
 			rj := RemoteJob{ID: 8, StorageDestID: 3, Name: "J"}
 			s := NewSyncer(d, nil)
-			jobID, err := s.ensureLocalJob(src, rj)
+			jobID, err := s.ensureLocalJob(src, src.StorageDestID, rj)
 			if err != nil {
 				t.Fatal(err)
 			}
 			rrp := RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}
-			if _, err := s.syncRestorePoint(c, src, rj, rrp, jobID, storage.NewLocalAdapter(t.TempDir())); err == nil {
+			if _, err := s.syncRestorePoint(c, src, src.StorageDestID, rj, rrp, jobID, storage.NewLocalAdapter(t.TempDir())); err == nil {
 				t.Fatal("syncRestorePoint accepted an unmanaged storage path")
 			}
 			if downloads != 0 {
@@ -166,7 +166,7 @@ func TestSyncJobMatchesNormalisedPaths514(t *testing.T) {
 	src := db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}
 	rj := RemoteJob{ID: 8, Name: "J"}
 	s := NewSyncer(d, nil)
-	jobID, err := s.ensureLocalJob(src, rj)
+	jobID, err := s.ensureLocalJob(src, src.StorageDestID, rj)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestSyncJobMatchesNormalisedPaths514(t *testing.T) {
 	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "job/run"}); err != nil {
 		t.Fatal(err)
 	}
-	n, _, err := s.syncJob(c, src, rj, storage.NewLocalAdapter(t.TempDir()))
+	n, _, err := s.syncJob(c, src, src.StorageDestID, rj, storage.NewLocalAdapter(t.TempDir()))
 	if err != nil || n != 0 {
 		t.Fatalf("syncJob = %d, %v; want the existing point to be skipped", n, err)
 	}
@@ -212,7 +212,7 @@ func TestSyncJobSkipsInvalidRemotePath514(t *testing.T) {
 	d := openTestDB(t)
 	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
 	s := NewSyncer(d, nil)
-	n, _, err := s.syncJob(c, db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}, RemoteJob{ID: 8, Name: "J"}, storage.NewLocalAdapter(t.TempDir()))
+	n, _, err := s.syncJob(c, db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}, destID, RemoteJob{ID: 8, Name: "J"}, storage.NewLocalAdapter(t.TempDir()))
 	if err != nil || n != 0 {
 		t.Fatalf("syncJob = %d, %v; want the invalid point skipped", n, err)
 	}

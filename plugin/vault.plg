@@ -203,7 +203,6 @@ if [ -x "$DAEMON" ]; then
         --log-path="/var/log/vault.log" \
         --pid-file="/var/run/vault.pid" \
         --hybrid-working-dir="/var/local/vault" \
-        --snapshot-path="/mnt/cache/.vault/vault.db" \
         || echo "Vault uninstall cleanup reported a warning; continuing with package removal"
 fi
 

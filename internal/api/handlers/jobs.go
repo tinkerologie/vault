@@ -133,6 +133,8 @@ type NextRunResolver = func(jobID int64) (string, bool)
 type JobHandler struct {
 	db     *db.DB
 	runner *runner.Runner
+	// readOnly is set on a replica: reads must not persist anything.
+	readOnly bool
 	// intake owns every Job write. It is shared with the MCP adapter so both
 	// enforce the same policy by construction rather than by convention.
 	intake         *jobintake.Intake
@@ -140,6 +142,9 @@ type JobHandler struct {
 	nextRun        NextRunResolver
 	onConfigChange ConfigChangeHook
 }
+
+// SetReadOnly marks the handler as serving a read-only replica.
+func (h *JobHandler) SetReadOnly(readOnly bool) { h.readOnly = readOnly }
 
 func NewJobHandler(database *db.DB, r *runner.Runner, reload ScheduleReloader, intake *jobintake.Intake) *JobHandler {
 	return &JobHandler{db: database, runner: r, schedReload: reload, intake: intake}
@@ -1327,7 +1332,9 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 	}
 	// Body is optional (unencrypted, original-location restore needs nothing).
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if req.Destination != "" {
+	// A preflight does not name its items, so a ZFS dataset name is accepted
+	// here too; Restore checks the destination against the items' type.
+	if req.Destination != "" && !engine.ValidZFSDatasetName(req.Destination) {
 		normalized, err := normalizeRestoreDestination(req.Destination)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
@@ -1394,13 +1401,13 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "restore_point_id is required")
 		return
 	}
-	if req.Destination != "" {
-		normalized, err := normalizeRestoreDestination(req.Destination)
-		if err != nil {
+	// The destination's kind depends on the items, resolved below; reject one
+	// that is neither kind now, so a malformed request fails before any lookup.
+	if req.Destination != "" && !engine.ValidZFSDatasetName(req.Destination) {
+		if _, err := normalizeRestoreDestination(req.Destination); err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
 			return
 		}
-		req.Destination = normalized
 	}
 	for item, paths := range req.FilePaths {
 		for _, p := range paths {
@@ -1487,6 +1494,25 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Destination != "" {
+		allZFS := true
+		for _, t := range targets {
+			allZFS = allZFS && t.Type == "zfs"
+		}
+		// Each ZFS item force-receives into the destination, so one dataset
+		// cannot take several of them.
+		if allZFS && len(targets) > 1 {
+			respondError(w, http.StatusBadRequest, "invalid destination: a destination can be given only when restoring one ZFS item; restore each item separately")
+			return
+		}
+		dest, err := restoreDestinationFor(req.Destination, allZFS)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
+			return
+		}
+		req.Destination = dest
+	}
+
 	// Reject items this restore point never captured (e.g. added to the job
 	// after these backups ran). Restoring them would fail mid-run; fail fast
 	// with a clear message instead. Skipped for legacy restore points whose
@@ -1567,6 +1593,11 @@ func (h *JobHandler) scanStale(jobID int64) ([]db.JobItem, error) {
 			// must not clear a real stale mark.
 			clearIDs = append(clearIDs, item.ID)
 		}
+	}
+	// A read-only server reports the scan but records nothing. A replica has
+	// none of the backed-up items, so it would mark every one missing.
+	if h.readOnly {
+		return stale, nil
 	}
 	if len(markIDs) > 0 {
 		if err := h.db.MarkJobItemsMissing(markIDs, time.Now().UTC().Format(time.RFC3339)); err != nil {

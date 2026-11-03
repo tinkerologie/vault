@@ -676,7 +676,7 @@ func TestEnsureLocalJobReusesExisting(t *testing.T) {
 	// the source, but CreateReplicatedJob/CreateReplicationSource don't
 	// share state. Use Syncer directly.
 	s := NewSyncer(d, nil)
-	gotID, err := s.ensureLocalJob(src, RemoteJob{Name: "Remote Job"})
+	gotID, err := s.ensureLocalJob(src, src.StorageDestID, RemoteJob{Name: "Remote Job"})
 	if err != nil {
 		t.Fatalf("ensureLocalJob: %v", err)
 	}
@@ -694,7 +694,7 @@ func TestEnsureLocalJobCreatesNew(t *testing.T) {
 	})
 	src := db.ReplicationSource{ID: 2, Name: "src2", URL: "http://x", StorageDestID: destID}
 	s := NewSyncer(d, nil)
-	id, err := s.ensureLocalJob(src, RemoteJob{
+	id, err := s.ensureLocalJob(src, src.StorageDestID, RemoteJob{
 		Name: "RJ", BackupTypeChain: "full", Compression: "zstd",
 	})
 	if err != nil {

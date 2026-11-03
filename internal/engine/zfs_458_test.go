@@ -442,7 +442,6 @@ func TestZFSRestore458(t *testing.T) {
 		settings map[string]any
 		want     string
 	}{
-		{name: "original dataset", want: "tank/data"},
 		{name: "restore destination", settings: map[string]any{"restore_destination": "tank/restored", "dataset": "tank/other"}, want: "tank/restored"},
 		{name: "dataset override", settings: map[string]any{"dataset": "tank/other"}, want: "tank/other"},
 	}
@@ -469,12 +468,38 @@ func TestZFSRestore458(t *testing.T) {
 	}
 }
 
+// The dataset named in a backup's metadata never selects the receive target.
+func TestZFSRestoreIgnoresBackupMetadataTarget(t *testing.T) {
+	t.Parallel()
+	f := fakeZFSWorld()
+	src := writeZFSBackup(t, "tank/victim")
+
+	err := newFakeZFSHandler(f).Restore(context.Background(), BackupItem{Name: "data"}, src, noProgress)
+	if err == nil || !strings.Contains(err.Error(), "no target dataset") {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	if recvs := f.commands("recv"); len(recvs) != 0 {
+		t.Fatalf("recv ran without an authorised target: %v", recvs)
+	}
+
+	item := BackupItem{Name: "data", Settings: map[string]any{"dataset": "tank/data"}}
+	if err := newFakeZFSHandler(f).Restore(context.Background(), item, src, noProgress); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	recvs := f.commands("recv")
+	if len(recvs) != 1 || !slices.Equal(recvs[0][1:], []string{"recv", "-F", "tank/data"}) {
+		t.Fatalf("recv = %v", recvs)
+	}
+}
+
 func TestZFSRestoreErrors458(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
 		setup func(t *testing.T, f *fakeZFS) string
 		want  string
+		// dataset overrides the configured target (default tank/data).
+		dataset string
 	}{
 		{
 			name:  "missing metadata",
@@ -499,9 +524,10 @@ func TestZFSRestoreErrors458(t *testing.T) {
 			want: "listing pools",
 		},
 		{
-			name:  "pool missing",
-			setup: func(t *testing.T, _ *fakeZFS) string { return writeZFSBackup(t, "nope/data") },
-			want:  `destination pool "nope" does not exist`,
+			name:    "pool missing",
+			setup:   func(t *testing.T, _ *fakeZFS) string { return writeZFSBackup(t, "nope/data") },
+			want:    `destination pool "nope" does not exist`,
+			dataset: "nope/data",
 		},
 		{
 			name: "send file missing",
@@ -528,7 +554,12 @@ func TestZFSRestoreErrors458(t *testing.T) {
 			t.Parallel()
 			f := fakeZFSWorld()
 			src := tt.setup(t, f)
-			err := newFakeZFSHandler(f).Restore(context.Background(), BackupItem{Name: "data"}, src, noProgress)
+			dataset := tt.dataset
+			if dataset == "" {
+				dataset = "tank/data"
+			}
+			item := BackupItem{Name: "data", Settings: map[string]any{"dataset": dataset}}
+			err := newFakeZFSHandler(f).Restore(context.Background(), item, src, noProgress)
 			if err == nil || !strings.HasPrefix(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want prefix %q", err, tt.want)
 			}

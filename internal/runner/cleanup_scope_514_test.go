@@ -1,14 +1,17 @@
 package runner
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/storage"
 )
 
@@ -306,7 +309,7 @@ func TestHasManifestRejectsForeignFiles514(t *testing.T) {
 	}
 	a := localAdapter514(t, root)
 	for dir, want := range map[string]bool{"a/run": false, "b/run": false, "c/run": true, "d/run": false, "e/run": false, "f/run": false, "My_Job/run": true, "missing/run": false} {
-		if got := hasManifest(a, dir); got != want {
+		if got := hasManifest(a, dir, noUnseal); got != want {
 			t.Errorf("hasManifest(%q) = %v, want %v", dir, got, want)
 		}
 	}
@@ -317,13 +320,13 @@ func TestSweepManagedRunDirsErrors514(t *testing.T) {
 	r, _, root := setupTestRunner(t)
 	write514(t, root, "plain-file", "x")
 	a := localAdapter514(t, root)
-	if err := r.sweepManagedRunDirs(a, ".."); !errors.Is(err, ErrCleanupRefused) {
+	if err := r.sweepManagedRunDirs(a, db.StorageDestination{}, 0, ".."); !errors.Is(err, ErrCleanupRefused) {
 		t.Errorf("sweep of ..: %v, want ErrCleanupRefused", err)
 	}
-	if err := r.sweepManagedRunDirs(a, "plain-file"); err == nil {
+	if err := r.sweepManagedRunDirs(a, db.StorageDestination{}, 0, "plain-file"); err == nil {
 		t.Error("sweep of a file: want a listing error")
 	}
-	if err := r.sweepManagedRunDirs(a, "missing"); err != nil {
+	if err := r.sweepManagedRunDirs(a, db.StorageDestination{}, 0, "missing"); err != nil {
 		t.Errorf("sweep of a missing dir: %v, want nil", err)
 	}
 }
@@ -344,7 +347,7 @@ func TestCheckImportPathOwnedAppdataBackup514(t *testing.T) {
 		"other/plex.tar.gz":                 false,
 		"ab_20260101_000000/notes.txt":      false,
 	} {
-		if err := checkImportPathOwned(a, ab, p); (err == nil) != ok {
+		if err := checkImportPathOwned(a, ab, p, noUnseal); (err == nil) != ok {
 			t.Errorf("checkImportPathOwned(%q) = %v, want ok=%v", p, err, ok)
 		}
 	}
@@ -453,14 +456,14 @@ func TestHasManifestReadFailures514(t *testing.T) {
 	_, _, root := setupTestRunner(t)
 	write514(t, root, "j/run/manifest.json", `{"job_name":"j","run_id":1,"backup_type":"full","items_done":1}`)
 	base := localAdapter514(t, root)
-	if !hasManifest(base, "j/run") {
+	if !hasManifest(base, "j/run", noUnseal) {
 		t.Fatal("precondition: a readable manifest is accepted")
 	}
 	for name, a := range map[string]storage.Adapter{
 		"open fails": failingReadAdapter{Adapter: base, openErr: true},
 		"read fails": failingReadAdapter{Adapter: base},
 	} {
-		if hasManifest(a, "j/run") {
+		if hasManifest(a, "j/run", noUnseal) {
 			t.Errorf("%s: hasManifest accepted an unreadable manifest", name)
 		}
 	}
@@ -503,38 +506,151 @@ func TestCheckImportPathOwnedZip514(t *testing.T) {
 	_, _, root := setupTestRunner(t)
 	write514(t, root, "ab_20260101_000000/tower-flash.zip", "x")
 	a := localAdapter514(t, root)
-	if err := checkImportPathOwned(a, map[string]any{"source": "appdata.backup"}, "ab_20260101_000000/tower-flash.zip"); err != nil {
+	if err := checkImportPathOwned(a, map[string]any{"source": "appdata.backup"}, "ab_20260101_000000/tower-flash.zip", noUnseal); err != nil {
 		t.Fatalf("zip archive rejected: %v", err)
 	}
 }
 
-// An encrypted manifest envelope (dedup or age) is Vault's own format and
-// counts as ownership evidence without being decrypted.
-func TestHasManifestAcceptsEncryptedEnvelope514(t *testing.T) {
+// An encrypted envelope proves ownership only once it decrypts to a manifest
+// that names its parent directory. The marker alone is one forgeable field.
+func TestHasManifestAuthenticatesEncryptedEnvelope(t *testing.T) {
 	t.Parallel()
 	_, _, root := setupTestRunner(t)
-	env, err := encodeManifestEnvelope("age", "age-v1", []byte("ciphertext"))
+	const pass = "correct horse"
+	seal := func(job string) string {
+		t.Helper()
+		plain := fmt.Sprintf(`{"job_name":%q,"run_id":1,"backup_type":"full","items_done":1}`, job)
+		rd, err := crypto.EncryptReader(pass, strings.NewReader(plain))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ct, err := io.ReadAll(rd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = rd.Close()
+		env, err := encodeManifestEnvelope("age", "age-v1", ct)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(env)
+	}
+	marker := `{"vault_manifest_enc":1,"key":"age","algo":"age","payload":"AAAA"}`
+	write514(t, root, "real/run/manifest.json", seal("real"))
+	write514(t, root, "marker/run/manifest.json", marker)
+	write514(t, root, "unknown/run/manifest.json", `{"vault_manifest_enc":1,"key":"other","algo":"x","payload":"AAAA"}`)
+	write514(t, root, "badb64/run/manifest.json", `{"vault_manifest_enc":1,"key":"age","algo":"age","payload":"!"}`)
+	// Decrypts and names its directory, but is not a Vault manifest.
+	rd, err := crypto.EncryptReader(pass, strings.NewReader(`{"job_name":"shape"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	write514(t, root, "j/run/manifest.json", string(env))
-	// The same envelope with only the version changed isolates the check.
-	var fields map[string]any
-	if err := json.Unmarshal(env, &fields); err != nil || fields["vault_manifest_enc"] == nil {
-		t.Fatalf("fixture is not a versioned envelope: %v: %s", err, env)
-	}
-	fields["vault_manifest_enc"] = 2
-	v2, err := json.Marshal(fields)
+	ct, err := io.ReadAll(rd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	write514(t, root, "k/run/manifest.json", string(v2))
+	_ = rd.Close()
+	shape, err := encodeManifestEnvelope("age", "age-v1", ct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write514(t, root, "shape/run/manifest.json", string(shape))
+	// A genuine envelope copied into an unrelated directory.
+	write514(t, root, "unrelated/run/manifest.json", seal("real"))
 	a := localAdapter514(t, root)
-	if !hasManifest(a, "j/run") {
-		t.Error("encrypted Vault manifest envelope rejected")
+
+	unseal := func(env manifestEnvelope) ([]byte, error) {
+		return unsealManifest(env, func() (*dedup.Repo, error) { return nil, errors.New("no repo") }, pass)
 	}
-	if hasManifest(a, "k/run") {
-		t.Error("unknown envelope version accepted")
+	for dir, want := range map[string]bool{"real/run": true, "marker/run": false, "unknown/run": false, "badb64/run": false, "unrelated/run": false, "shape/run": false} {
+		if got := hasManifest(a, dir, unseal); got != want {
+			t.Errorf("hasManifest(%q) = %v, want %v", dir, got, want)
+		}
+	}
+	// A server that cannot decrypt it keeps it, even if it is genuine.
+	noPass := func(env manifestEnvelope) ([]byte, error) {
+		return unsealManifest(env, nil, "")
+	}
+	if hasManifest(a, "real/run", noPass) {
+		t.Error("envelope accepted without a passphrase")
+	}
+	dedupEnv, err := encodeManifestEnvelope("dedup", "aes-256-gcm", []byte("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write514(t, root, "dedupjob/run/manifest.json", string(dedupEnv))
+	if hasManifest(a, "dedupjob/run", unseal) {
+		t.Error("dedup envelope accepted with no repository to verify it")
+	}
+}
+
+// The destination sweep must leave a directory holding only a forged marker.
+func TestCleanupDestinationKeepsForgedEnvelopeDirectory(t *testing.T) {
+	t.Parallel()
+	r, database, root := setupTestRunner(t)
+	dest := createNamedLocalDest(t, database, "forged-dest", root)
+	write514(t, root, "photos/2024/manifest.json", `{"vault_manifest_enc":1,"key":"age","algo":"age","payload":"AAAA"}`)
+	write514(t, root, "photos/2024/family.jpg", "precious")
+	if err := r.CleanupStorageDestination(dest); err != nil {
+		t.Fatalf("CleanupStorageDestination: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "photos/2024/family.jpg")); err != nil {
+		t.Fatalf("user file was deleted: %v", err)
+	}
+	// Import reaches the same check, even when the caller omits "encrypted".
+	n, err := r.ImportBackups(dest.ID, []map[string]any{{"job_name": "photos", "storage_path": "photos/2024"}})
+	if err != nil || n != 0 {
+		t.Fatalf("import of a forged envelope = %d, %v", n, err)
+	}
+}
+
+// A path another job's restore point covers is not deleted for this job, by
+// retention or by the job-directory sweep.
+func TestDeleteRefusesPathHeldByOtherJob(t *testing.T) {
+	t.Parallel()
+	r, database, root := setupTestRunner(t)
+	dest := createNamedLocalDest(t, database, "shared-dest", root)
+	owner, err := database.CreateJob(db.Job{Name: "owner", BackupTypeChain: "full", StorageDestID: dest.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := database.CreateJob(db.Job{Name: "other", BackupTypeChain: "full", StorageDestID: dest.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateRestorePoint(db.RestorePoint{JobRunID: authRun(t, database, owner), JobID: owner, BackupType: "full", StoragePath: "owner/run"}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"job_name":"owner","run_id":1,"backup_type":"full","items_done":1}`
+	write514(t, root, "owner/run/manifest.json", manifest)
+	write514(t, root, "owner/free/manifest.json", manifest)
+	a := localAdapter514(t, root)
+
+	if err := r.deleteJobRestorePointDir(a, dest.ID, other, "owner/run"); !errors.Is(err, ErrCleanupRefused) {
+		t.Fatalf("delete of another job's path = %v", err)
+	}
+	if err := r.deleteJobRestorePointDir(a, dest.ID, other, "owner/run/sub"); !errors.Is(err, ErrCleanupRefused) {
+		t.Fatalf("delete below another job's path = %v", err)
+	}
+	if err := r.sweepManagedRunDirs(a, dest, other, "owner"); !errors.Is(err, ErrCleanupRefused) {
+		t.Fatalf("sweep = %v, want the held directory refused", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "owner/run/manifest.json")); err != nil {
+		t.Fatalf("held restore point deleted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "owner/free")); !os.IsNotExist(err) {
+		t.Fatalf("unheld run directory survived: %v", err)
+	}
+	// The owner itself still deletes it.
+	if err := r.deleteJobRestorePointDir(a, dest.ID, owner, "owner/run"); err != nil {
+		t.Fatalf("owner delete: %v", err)
+	}
+	// Uncertainty refuses too.
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.deleteJobRestorePointDir(a, dest.ID, other, "owner/x"); !errors.Is(err, ErrCleanupRefused) {
+		t.Fatalf("delete with an unreadable database = %v", err)
 	}
 }
 
@@ -570,3 +686,6 @@ func TestDeleteRestorePointAppdataArchive514(t *testing.T) {
 		t.Errorf("deleting a missing archive: %v", err)
 	}
 }
+
+// noUnseal stands in for a server with no key that opens an envelope.
+func noUnseal(manifestEnvelope) ([]byte, error) { return nil, errors.New("cannot unseal") }
