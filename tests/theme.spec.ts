@@ -538,3 +538,37 @@ test.describe('No leftover Default colours', () => {
     }
   }
 });
+
+test.describe('Appearance pickers announce the selection', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  test('style and mode buttons report pressed state as it changes', async ({ page }) => {
+    await seed(page, { 'vault-style': 'default', 'vault-mode': 'light' });
+    await page.goto('/#/settings');
+    const styles = page.getByRole('group', { name: 'Theme style' });
+    await expect(styles.getByRole('button', { name: 'Default', pressed: true })).toBeVisible();
+    await expect(styles.getByRole('button', { pressed: true })).toHaveCount(1);
+    await expect(modeButton(page, 'Light')).toHaveAttribute('aria-pressed', 'true');
+    for (const name of ['System', 'Dark']) await expect(modeButton(page, name)).toHaveAttribute('aria-pressed', 'false');
+
+    await styles.getByRole('button', { name: 'Catppuccin' }).click();
+    await expect(styles.getByRole('button', { name: 'Catppuccin' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(styles.getByRole('button', { name: 'Default' })).toHaveAttribute('aria-pressed', 'false');
+    await modeButton(page, 'Dark').click();
+    await expect(modeButton(page, 'Dark')).toHaveAttribute('aria-pressed', 'true');
+    await expect(modeButton(page, 'Light')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('under Dracula the mode buttons read as disabled, keep the saved mode pressed, and carry the note', async ({ page }) => {
+    await seed(page, { 'vault-style': 'dracula', 'vault-mode': 'system' });
+    await page.goto('/#/settings');
+    const group = page.getByRole('group', { name: 'Color mode' });
+    await expect(group).toHaveAccessibleDescription('Dracula is always dark. Your saved mode comes back when you choose another style.');
+    for (const name of ['Light', 'System', 'Dark']) await expect(group.getByRole('button', { name, disabled: true })).toBeVisible();
+    await expect(group.getByRole('button', { name: 'System', pressed: true })).toBeDisabled();
+    const snapshot = await group.ariaSnapshot();
+    expect(snapshot).toContain('button "System" [disabled] [pressed]');
+  });
+});

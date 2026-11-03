@@ -1113,8 +1113,8 @@
         <div class="px-5 py-4 space-y-4">
           <!-- Theme Style -->
           <div>
-            <p class="text-sm text-text-muted mb-2">Theme style</p>
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-md">
+            <p id="theme-style-label" class="text-sm text-text-muted mb-2">Theme style</p>
+            <div role="group" aria-labelledby="theme-style-label" class="grid grid-cols-2 sm:grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-md">
               {#each [
                 { value: 'default', label: 'Default', icon: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01' },
                 { value: '1bit', label: '1-Bit', icon: 'M8 9l4-4 4 4m0 6l-4 4-4-4' },
@@ -1125,6 +1125,7 @@
                 <button
                   type="button"
                   onclick={() => setStyle(/** @type {'default'|'1bit'|'retro'|'dracula'|'catppuccin'} */ (opt.value))}
+                  aria-pressed={getStyle() === opt.value}
                   class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getStyle() === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
@@ -1147,6 +1148,7 @@
                   type="button"
                   onclick={() => setMode(/** @type {'light'|'system'|'dark'} */ (opt.value))}
                   disabled={getIsModeLocked()}
+                  aria-pressed={getMode() === opt.value}
                   class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed {getMode() === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted enabled:hover:text-text'}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
