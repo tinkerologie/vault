@@ -1,6 +1,7 @@
 /** WebSocket client with auto-reconnect */
 
 import { buildApiRequest, getLiveMode } from './runtime-config.js'
+import { noteUnauthorized } from './api.js'
 import { backoffDelay } from './ws-backoff.js'
 import { reconcileRunnerStatus, trackRunState } from './runner-status-sync.js'
 import {
@@ -9,12 +10,14 @@ import {
   handleBulkResolved,
   handleBulkAcked,
   notifyBaselineUpdated,
+  setOpenList,
 } from './anomalies.svelte.js'
 import {
   handleMountStarted,
   handleMountActive,
   handleMountUnmounted,
   handleMountFailed,
+  setActiveMounts,
 } from './mounts.svelte.js'
 
 let ws = null
@@ -23,6 +26,24 @@ let reconnectTimer = null
 let pollTimer = null
 let previousStatus = null
 let pollEnabled = false
+let pollTicks = 0
+/** Open anomalies at the last poll, by id, serialized to detect changes. @type {Map<number, string>} */
+let knownAnomalies = new Map()
+let anomalyPollInFlight = false
+let mountPollInFlight = false
+// Mounts are started by hand, so someone is usually watching: every 10 s.
+const MOUNT_POLL_EVERY = 5
+// /runner/status polls every 2 s, so this checks anomalies every 30 s.
+const ANOMALY_POLL_EVERY = 15
+// The API's largest page, and a default window that would hide older open ones.
+const ANOMALY_POLL_LIMIT = 500
+const ANOMALY_POLL_MAX_PAGES = 20
+const ANOMALY_POLL_SINCE = '1970-01-01T00:00:00Z'
+// Records fetched per check for anomalies that left the open list.
+const ANOMALY_POLL_MAX_GONE = 20
+/** Anomalies that left the open list and haven't been reported yet. @type {number[]} */
+let goneAnomalies = []
+const ANOMALY_POLL_TIMEOUT_MS = 15000
 let status = $state('disconnected')
 
 // Counts live run-state transitions (start/completion). resyncRunnerStatus
@@ -103,12 +124,104 @@ function emitMessage(msg) {
   }
 }
 
+/**
+ * Every open anomaly, whatever its age. Returns null unless the whole set was
+ * read, because replacing the shared list with part of it would drop the rest.
+ */
+async function fetchOpenAnomalies(signal) {
+  const list = []
+  let cursor = ''
+  for (let page = 0; page < ANOMALY_POLL_MAX_PAGES; page++) {
+    const query = `state=open&since=${encodeURIComponent(ANOMALY_POLL_SINCE)}&limit=${ANOMALY_POLL_LIMIT}` +
+      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
+    const { url, options } = buildApiRequest('GET', `/anomalies?${query}`)
+    const res = await fetch(url, { ...options, signal })
+    noteUnauthorized(res)
+    if (!res.ok) return null
+    const body = await res.json()
+    list.push(...(body?.anomalies ?? []))
+    cursor = body?.next_cursor ?? ''
+    if (!cursor) return list
+  }
+  return null
+}
+
+/**
+ * Stands in for the anomaly.* WebSocket events a polling client never gets.
+ * Emits what changed since the last check, so pages keep their usual handling.
+ */
+async function pollAnomalies() {
+  // One at a time, so a slow older response can't overwrite a newer one.
+  if (anomalyPollInFlight) return
+  anomalyPollInFlight = true
+  // Covers the body too: a stalled check must not block every later one.
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ANOMALY_POLL_TIMEOUT_MS)
+  try {
+    const list = await fetchOpenAnomalies(controller.signal)
+    if (!list) return
+    const next = new Map(list.map((a) => [a.id, JSON.stringify(a)]))
+    for (const anomaly of list) {
+      const before = knownAnomalies.get(anomaly.id)
+      if (before === undefined) emitMessage({ type: 'anomaly.raised', data: anomaly })
+      else if (before !== next.get(anomaly.id)) emitMessage({ type: 'anomaly.updated', data: anomaly })
+    }
+    // An anomaly that left the open list was resolved, acked or expired. Report
+    // its real record, as the live event would: a bulk event would make
+    // listeners refetch a smaller page over this complete list.
+    // Any beyond the per-check cap wait for the next check rather than being lost.
+    const newlyGone = [...knownAnomalies.keys()].filter((id) => !next.has(id) && !goneAnomalies.includes(id))
+    goneAnomalies = [...goneAnomalies, ...newlyGone].filter((id) => !next.has(id))
+    for (const id of goneAnomalies.slice(0, ANOMALY_POLL_MAX_GONE)) {
+      const { url: oneUrl, options: oneOptions } = buildApiRequest('GET', `/anomalies/${id}`)
+      const one = await fetch(oneUrl, { ...oneOptions, signal: controller.signal })
+      noteUnauthorized(one)
+      if (one.ok) emitMessage({ type: 'anomaly.updated', data: await one.json() })
+      // A deleted row has nothing to report; a failure is retried next time.
+      if (one.ok || one.status === 404) goneAnomalies = goneAnomalies.filter((g) => g !== id)
+    }
+    knownAnomalies = next
+    setOpenList(list)
+  } catch {
+    // Best-effort: the next check catches up.
+  } finally {
+    clearTimeout(timer)
+    anomalyPollInFlight = false
+  }
+}
+
+/** Stands in for the mount.* WebSocket events a polling client never gets. */
+async function pollMounts() {
+  if (mountPollInFlight) return
+  mountPollInFlight = true
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ANOMALY_POLL_TIMEOUT_MS)
+  try {
+    const { url, options } = buildApiRequest('GET', '/mounts?active=true')
+    const res = await fetch(url, { ...options, signal: controller.signal })
+    noteUnauthorized(res)
+    if (!res.ok) return
+    const list = await res.json()
+    if (Array.isArray(list)) setActiveMounts(list)
+  } catch {
+    // Best-effort: the next check catches up.
+  } finally {
+    clearTimeout(timer)
+    mountPollInFlight = false
+  }
+}
+
 async function pollRunnerStatus() {
   if (!pollEnabled) return
+
+  pollTicks++
+  if (pollTicks % MOUNT_POLL_EVERY === 0) void pollMounts()
+  if (pollTicks % ANOMALY_POLL_EVERY === 0) void pollAnomalies()
 
   try {
     const { url, options } = buildApiRequest('GET', '/runner/status')
     const res = await fetch(url, options)
+    noteUnauthorized(res)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
     const snapshot = await res.json()
@@ -143,6 +256,7 @@ async function resyncRunnerStatus(socket) {
   try {
     const { url, options } = buildApiRequest('GET', '/runner/status')
     const res = await fetch(url, options)
+    noteUnauthorized(res)
     if (!res.ok) return
     const snapshot = await res.json()
     // Discard the snapshot if this socket was superseded, or if a live run

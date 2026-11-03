@@ -2,15 +2,18 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/go-chi/cors"
 
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
@@ -111,26 +114,33 @@ func TestReadOnlyGuard(t *testing.T) {
 func TestPrivateNetworkAccess(t *testing.T) {
 	t.Parallel()
 
+	const listed = "https://ha.example"
 	okHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := PrivateNetworkAccess(okHandler)
+	handler := PrivateNetworkAccess(newOriginSet([]string{listed}))(okHandler)
 
 	tests := []struct {
 		name      string
 		method    string
+		origin    string
 		pnaHeader string
 		wantAllow bool
 	}{
-		{"preflight with PNA request gets allow header", http.MethodOptions, "true", true},
-		{"preflight without PNA request header is untouched", http.MethodOptions, "", false},
-		{"non-preflight request is untouched", http.MethodGet, "true", false},
+		{"listed origin gets allow header", http.MethodOptions, listed, "true", true},
+		{"unlisted origin gets nothing", http.MethodOptions, "https://attacker.example", "true", false},
+		{"no origin gets nothing", http.MethodOptions, "", "true", false},
+		{"preflight without PNA request header is untouched", http.MethodOptions, listed, "", false},
+		{"non-preflight request is untouched", http.MethodGet, listed, "true", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			req := httptest.NewRequest(tt.method, "/api/v1/health", nil)
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
 			if tt.pnaHeader != "" {
 				req.Header.Set("Access-Control-Request-Private-Network", tt.pnaHeader)
 			}
@@ -145,42 +155,6 @@ func TestPrivateNetworkAccess(t *testing.T) {
 				t.Fatalf("expected no Access-Control-Allow-Private-Network header, got %q", got)
 			}
 		})
-	}
-}
-
-// TestPrivateNetworkAccessWithCORS composes PrivateNetworkAccess with the real
-// cors.Handler in the same order the router wires them (PNA outer, CORS inner),
-// and asserts a realistic PNA preflight receives BOTH the standard CORS headers
-// AND Access-Control-Allow-Private-Network — the browser rejects the preflight
-// unless all are present (issue #250).
-func TestPrivateNetworkAccessWithCORS(t *testing.T) {
-	t.Parallel()
-
-	corsMW := cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*.myunraid.net", "http://localhost:*", "http://127.0.0.1:*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "X-API-Key"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	})
-	final := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := PrivateNetworkAccess(corsMW(final))
-
-	// Realistic PNA preflight: allowed origin + request-method + PNA request header.
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/health", nil)
-	req.Header.Set("Origin", "https://tower.myunraid.net")
-	req.Header.Set("Access-Control-Request-Method", "GET")
-	req.Header.Set("Access-Control-Request-Private-Network", "true")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://tower.myunraid.net" {
-		t.Fatalf("expected CORS origin echoed, got %q", got)
-	}
-	if got := w.Header().Get("Access-Control-Allow-Private-Network"); got != "true" {
-		t.Fatalf("expected Access-Control-Allow-Private-Network=true, got %q", got)
 	}
 }
 
@@ -204,7 +178,7 @@ func TestAPIKeyAuth(t *testing.T) {
 	localCache := newLocalIPCache(time.Minute, func() map[string]struct{} {
 		return map[string]struct{}{"192.168.20.21": {}}
 	})
-	middleware := apiKeyAuth(database, localCache)
+	middleware := apiKeyAuth(database, localCache, newAPIKeyVerifier(), map[string]struct{}{"tower": {}, "localhost": {}})
 	handler := middleware(okHandler)
 
 	// Split to avoid generic-secret scanner false positives on the test fixture.
@@ -217,6 +191,7 @@ func TestAPIKeyAuth(t *testing.T) {
 	tests := []struct {
 		name       string
 		remoteAddr string
+		host       string
 		header     string
 		setupKey   bool
 		wantStatus int
@@ -243,10 +218,31 @@ func TestAPIKeyAuth(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "no key configured passes through",
+			name:       "no key configured refuses remote",
 			remoteAddr: "192.168.1.50:12345",
 			setupKey:   false,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "presented key refused when none configured",
+			remoteAddr: "192.168.1.50:12345",
+			header:     apiKey,
+			setupKey:   false,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "machine hostname keeps local trust",
+			remoteAddr: "127.0.0.1:12345",
+			host:       "TOWER:24085",
+			setupKey:   true,
 			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "foreign hostname on loopback loses local trust",
+			remoteAddr: "127.0.0.1:12345",
+			host:       "attacker.example",
+			setupKey:   true,
+			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name:       "valid key from remote",
@@ -285,6 +281,10 @@ func TestAPIKeyAuth(t *testing.T) {
 
 			req := httptest.NewRequest("GET", "/", nil)
 			req.RemoteAddr = tt.remoteAddr
+			req.Host = "127.0.0.1:24085"
+			if tt.host != "" {
+				req.Host = tt.host
+			}
 			if tt.header != "" {
 				req.Header.Set("X-API-Key", tt.header)
 			}
@@ -295,5 +295,149 @@ func TestAPIKeyAuth(t *testing.T) {
 				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
 			}
 		})
+	}
+}
+
+func newTestVerifier(compare func(key, hash string) error) *apiKeyVerifier {
+	v := newAPIKeyVerifier()
+	v.compare = compare
+	return v
+}
+
+func verifierRequest(addr string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	r.RemoteAddr = addr
+	return r
+}
+
+// Issue #564: a client holding the key pays for one comparison, and rotating the
+// stored hash forces a fresh one.
+func TestAPIKeyVerifierCachesValidKeyPerHash(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	v := newTestVerifier(func(_, _ string) error { calls.Add(1); return nil })
+	for range 5 {
+		if got := v.check(httptest.NewRecorder(), verifierRequest("192.0.2.1:1"), "key", "hash-1"); got != keyValid {
+			t.Fatalf("verdict = %v, want valid", got)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Errorf("compare ran %d times, want 1", calls.Load())
+	}
+	if got := v.check(httptest.NewRecorder(), verifierRequest("192.0.2.1:1"), "key", "hash-2"); got != keyValid {
+		t.Fatalf("verdict after rotation = %v, want valid", got)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("compare ran %d times after a hash change, want 2", calls.Load())
+	}
+}
+
+// Issue #564: bad guesses from one address stop reaching bcrypt.
+func TestAPIKeyVerifierLimitsAttemptsPerAddress(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	v := newTestVerifier(func(_, _ string) error { calls.Add(1); return errors.New("nope") })
+	for range apiKeyAttemptsPerMinute + 20 {
+		v.check(httptest.NewRecorder(), verifierRequest("192.0.2.1:1"), "wrong", "hash")
+	}
+	if got := calls.Load(); got > apiKeyAttemptsPerMinute+1 {
+		t.Errorf("compare ran %d times, want at most %d", got, apiKeyAttemptsPerMinute+1)
+	}
+	if got := v.check(httptest.NewRecorder(), verifierRequest("192.0.2.1:1"), "wrong", "hash"); got != keyThrottled {
+		t.Errorf("verdict past the limit = %v, want throttled", got)
+	}
+	if got := v.check(httptest.NewRecorder(), verifierRequest("192.0.2.2:1"), "wrong", "hash"); got != keyInvalid {
+		t.Errorf("another address = %v, want invalid", got)
+	}
+}
+
+// Issue #564: distributed clients can't run more comparisons at once than there
+// are slots, the excess is refused, and a known key is still served.
+func TestAPIKeyVerifierBoundsConcurrency(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	var running, peak atomic.Int32
+	v := newTestVerifier(func(key, _ string) error {
+		if key == "good" {
+			return nil
+		}
+		n := running.Add(1)
+		defer running.Add(-1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		<-release
+		return errors.New("nope")
+	})
+	v.slotWait = 20 * time.Millisecond
+
+	if got := v.check(httptest.NewRecorder(), verifierRequest("192.0.2.200:1"), "good", "hash"); got != keyValid {
+		t.Fatalf("seeding good key = %v", got)
+	}
+
+	var wg sync.WaitGroup
+	verdicts := make(chan keyVerdict, 8)
+	for i := range 8 {
+		wg.Go(func() {
+			verdicts <- v.check(httptest.NewRecorder(), verifierRequest(fmt.Sprintf("192.0.2.%d:1", i+1)), "bad", "hash")
+		})
+	}
+	throttled := 0
+	for range 8 - apiKeyVerifySlots {
+		if <-verdicts == keyThrottled {
+			throttled++
+		}
+	}
+	if got := v.check(httptest.NewRecorder(), verifierRequest("192.0.2.200:1"), "good", "hash"); got != keyValid {
+		t.Errorf("known key during a flood = %v, want valid", got)
+	}
+	close(release)
+	wg.Wait()
+	if peak.Load() > apiKeyVerifySlots {
+		t.Errorf("peak concurrent comparisons = %d, want at most %d", peak.Load(), apiKeyVerifySlots)
+	}
+	if throttled != 8-apiKeyVerifySlots {
+		t.Errorf("throttled = %d, want %d", throttled, 8-apiKeyVerifySlots)
+	}
+}
+
+func TestAPIKeyVerifierGivesUpWhenClientLeaves(t *testing.T) {
+	t.Parallel()
+	v := newTestVerifier(func(_, _ string) error { return nil })
+	v.slotWait = time.Hour
+	for range apiKeyVerifySlots {
+		v.slots <- struct{}{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got := v.check(httptest.NewRecorder(), verifierRequest("192.0.2.1:1").WithContext(ctx), "key", "hash")
+	if got != keyThrottled {
+		t.Errorf("verdict = %v, want throttled", got)
+	}
+}
+
+// The middleware reports throttling as 429 rather than a misleading 401.
+func TestAPIKeyAuthReportsThrottling(t *testing.T) {
+	t.Parallel()
+	database := testDB(t)
+	if err := database.SetSetting("api_key_hash", "stored-hash"); err != nil {
+		t.Fatal(err)
+	}
+	v := newTestVerifier(func(_, _ string) error { return errors.New("nope") })
+	v.slotWait = time.Millisecond
+	for range apiKeyVerifySlots {
+		v.slots <- struct{}{}
+	}
+	local := newLocalIPCache(time.Minute, func() map[string]struct{} { return nil })
+	h := apiKeyAuth(database, local, v, nil)(http.NotFoundHandler())
+	req := verifierRequest("192.0.2.1:1")
+	req.Header.Set("X-API-Key", "guess")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429", w.Code)
 	}
 }

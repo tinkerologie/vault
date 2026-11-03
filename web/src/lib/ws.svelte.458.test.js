@@ -11,12 +11,14 @@ const anomalies = vi.hoisted(() => ({
   handleBulkResolved: vi.fn(),
   handleBulkAcked: vi.fn(),
   notifyBaselineUpdated: vi.fn(),
+  setOpenList: vi.fn(),
 }))
 const mounts = vi.hoisted(() => ({
   handleMountStarted: vi.fn(),
   handleMountActive: vi.fn(),
   handleMountUnmounted: vi.fn(),
   handleMountFailed: vi.fn(),
+  setActiveMounts: vi.fn(),
 }))
 vi.mock('./anomalies.svelte.js', () => anomalies)
 vi.mock('./mounts.svelte.js', () => mounts)
@@ -289,6 +291,259 @@ describe('websocket mode', () => {
 })
 
 describe('poll mode', () => {
+  it('asks for a key when a poll is refused, as after a rotation', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const auth = await import('./auth.svelte.js')
+      fetchMock.mockResolvedValue(jsonResponse({}, false, 401))
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(auth.isAuthRequired()).toBe(true)
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refreshes mounts a polling client gets no events for, on every check', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      mounts.setActiveMounts.mockClear()
+      const m1 = { id: 1, status: 'active' }
+      const replies = [[m1], [m1], [], { error: 'not a list' }]
+      fetchMock.mockImplementation(async (url) => {
+        if (String(url).includes('/mounts')) {
+          const next = replies.shift()
+          return next === undefined ? jsonResponse({}, false, 500) : jsonResponse(next)
+        }
+        return jsonResponse({ active: false, queue: [], anomalies: [] })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(5 * 2000)
+      expect(mounts.setActiveMounts).toHaveBeenLastCalledWith([m1])
+      await vi.advanceTimersByTimeAsync(5 * 2000)
+      // Repeated, so a slower writer's older snapshot can't stick.
+      expect(mounts.setActiveMounts).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(5 * 2000)
+      expect(mounts.setActiveMounts).toHaveBeenLastCalledWith([])
+      await vi.advanceTimersByTimeAsync(10 * 2000) // a bad body, then an error
+      expect(mounts.setActiveMounts).toHaveBeenCalledTimes(3)
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives up on a stalled mount check, and never runs two at once', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      let calls = 0
+      fetchMock.mockImplementation((url, options) => {
+        if (!String(url).includes('/mounts')) return Promise.resolve(jsonResponse({ active: false, queue: [], anomalies: [] }))
+        calls++
+        return new Promise((_, reject) => {
+          options.signal.addEventListener('abort', () => reject(new Error('aborted')))
+        })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(12000) // past the first check at 10 s
+      expect(calls).toBe(1)
+      await vi.advanceTimersByTimeAsync(20000) // aborted at 25 s, next check at 30 s
+      expect(calls).toBe(2)
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports every anomaly that left the open list, across checks if needed', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const many = Array.from({ length: 25 }, (_, i) => ({ id: i + 1, state: 'open' }))
+      const lists = [many, [], []]
+      let failOnce = true
+      fetchMock.mockImplementation(async (url) => {
+        const one = String(url).match(/\/anomalies\/(\d+)/)
+        if (one) {
+          const id = Number(one[1])
+          if (id === 3 && failOnce) { failOnce = false; return jsonResponse({}, false, 500) }
+          if (id === 4) return jsonResponse({}, false, 404)
+          return jsonResponse({ id, state: 'acknowledged' })
+        }
+        if (String(url).includes('/anomalies')) return jsonResponse({ anomalies: lists.shift() ?? [] })
+        return jsonResponse({ active: false, queue: [] })
+      })
+      const updated = []
+      ws.onWsMessage((m) => { if (m.type === 'anomaly.updated') updated.push(m.data.id) })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(15 * 2000) // baseline: 25 open
+      await vi.advanceTimersByTimeAsync(15 * 2000) // all 25 gone: first 20 checked
+      expect(updated).toHaveLength(18) // 3 failed and is retried; 4 was deleted
+      await vi.advanceTimersByTimeAsync(15 * 2000) // the rest, and the retry
+      expect([...updated].sort((a, b) => a - b)).toEqual(many.map((a) => a.id).filter((id) => id !== 4))
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never runs two anomaly checks at once', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      let release
+      let calls = 0
+      fetchMock.mockImplementation((url) => {
+        if (!String(url).includes('/anomalies')) return Promise.resolve(jsonResponse({ active: false, queue: [] }))
+        calls++
+        return new Promise((resolve) => { release = () => resolve(jsonResponse({ anomalies: [] })) })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(3 * 15 * 2000)
+      expect(calls).toBe(1)
+      release()
+      await vi.advanceTimersByTimeAsync(15 * 2000)
+      expect(calls).toBe(2)
+      release()
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives up on a stalled anomaly check so later ones still run', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      let calls = 0
+      fetchMock.mockImplementation((url, options) => {
+        if (!String(url).includes('/anomalies')) return Promise.resolve(jsonResponse({ active: false, queue: [] }))
+        calls++
+        return new Promise((_, reject) => {
+          options.signal.addEventListener('abort', () => reject(new Error('aborted')))
+        })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(2 * 15 * 2000)
+      expect(calls).toBe(2)
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads every page of open anomalies, of any age, before replacing the list', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const a1 = { id: 1, state: 'open' }
+      const a2 = { id: 2, state: 'open' }
+      const urls = []
+      fetchMock.mockImplementation(async (url) => {
+        if (!String(url).includes('/anomalies')) return jsonResponse({ active: false, queue: [] })
+        urls.push(new URL(url, 'http://x').searchParams)
+        return urls.length === 1
+          ? jsonResponse({ anomalies: [a1], next_cursor: 'c2' })
+          : jsonResponse({ anomalies: [a2], next_cursor: '' })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(15 * 2000)
+      expect(urls).toHaveLength(2)
+      expect(urls[0].get('since')).toBe('1970-01-01T00:00:00Z')
+      expect(urls[1].get('cursor')).toBe('c2')
+      expect(anomalies.setOpenList).toHaveBeenLastCalledWith([a1, a2])
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the shared list when a later page fails or never ends', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      anomalies.setOpenList.mockClear()
+      let calls = 0
+      fetchMock.mockImplementation(async (url) => {
+        if (!String(url).includes('/anomalies')) return jsonResponse({ active: false, queue: [] })
+        calls++
+        return calls === 2
+          ? jsonResponse({}, false, 500)
+          : jsonResponse({ anomalies: [{ id: calls }], next_cursor: 'more' })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(2 * 15 * 2000)
+      expect(calls).toBeGreaterThan(20)
+      expect(anomalies.setOpenList).not.toHaveBeenCalled()
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports anomaly changes a polling client gets no events for', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const seen = []
+      ws.onWsMessage((m) => seen.push(m))
+      const a1 = { id: 1, state: 'open', title: 'a' }
+      const a2 = { id: 2, state: 'open', title: 'b' }
+      const responses = [[a1, a2], [{ ...a1, title: 'changed' }, a2], [a2], [a2]]
+      const anomalyUrls = []
+      fetchMock.mockImplementation(async (url) => {
+        const one = String(url).match(/\/anomalies\/(\d+)/)
+        if (one) return jsonResponse({ id: Number(one[1]), state: 'resolved' })
+        if (String(url).includes('/anomalies')) {
+          anomalyUrls.push(url)
+          const next = responses.shift()
+          if (next === undefined) return jsonResponse({}, false, 500)
+          return jsonResponse({ anomalies: next })
+        }
+        return jsonResponse({ active: false, queue: [] })
+      })
+      ws.connectWs()
+      const window = async () => { await vi.advanceTimersByTimeAsync(15 * 2000) }
+      const types = () => seen.filter((m) => m.type.startsWith('anomaly.')).map((m) => [m.type, m.data?.id])
+
+      await window()
+      expect(anomalyUrls[0]).toContain('state=open')
+      expect(types()).toEqual([['anomaly.raised', 1], ['anomaly.raised', 2]])
+      expect(anomalies.setOpenList).toHaveBeenLastCalledWith([a1, a2])
+
+      seen.length = 0
+      await window()
+      expect(types()).toEqual([['anomaly.updated', 1]])
+
+      seen.length = 0
+      await window()
+      // The real record, not a bulk event that would make listeners refetch.
+      expect(types()).toEqual([['anomaly.updated', 1]])
+      expect(seen.find((m) => m.type === 'anomaly.updated').data.state).toBe('resolved')
+
+      seen.length = 0
+      await window()
+      expect(types()).toEqual([])
+
+      await window() // a failed check changes nothing
+      expect(types()).toEqual([])
+
+      fetchMock.mockImplementation(async (url) => {
+        if (String(url).includes('/anomalies')) throw new Error('offline')
+        return jsonResponse({ active: false, queue: [] })
+      })
+      await window() // nor does an unreachable daemon
+      expect(types()).toEqual([])
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('polls /runner/status instead of opening a socket and emits reconciled messages', async () => {
     await loadWs({ liveMode: 'poll' })
     const seen = []

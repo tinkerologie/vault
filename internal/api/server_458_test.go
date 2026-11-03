@@ -29,7 +29,7 @@ func TestServerSettersAndHealthDiagnostics_458(t *testing.T) {
 	srv.SetStartupDiagnostics(&StartupDiagnostics{})
 
 	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	srv.router.ServeHTTP(w, asLocal(httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -105,7 +105,7 @@ func TestRouteHooksUseLateBoundReloader_458(t *testing.T) {
 	do := func(method, path, body string) int {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.RemoteAddr = "127.0.0.1:5000"
+		asLocal(req)
 		w := httptest.NewRecorder()
 		srv.router.ServeHTTP(w, req)
 		return w.Code
@@ -180,7 +180,7 @@ func TestQuietRequestLoggerDefaults_458(t *testing.T) {
 func TestAPIKeyAuthFailsClosedOnDBError_458(t *testing.T) {
 	d := testDB(t)
 	cache := newLocalIPCache(time.Minute, func() map[string]struct{} { return map[string]struct{}{} })
-	h := apiKeyAuth(d, cache)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	h := apiKeyAuth(d, cache, newAPIKeyVerifier(), localHostNames())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

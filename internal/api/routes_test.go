@@ -258,7 +258,7 @@ func TestReadOnlySettingsUpdateRejected(t *testing.T) {
 	database := testDB(t)
 	srv := NewServer(database, ServerConfig{Addr: ":0", ReadOnly: true})
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"log_level":"debug"}`))
+	req := asLocal(httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"log_level":"debug"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
@@ -273,7 +273,7 @@ func TestRoutes_SettingsUpdate_LogLevelHook(t *testing.T) {
 	srv := NewServer(database, ServerConfig{Addr: ":0", ReadOnly: false})
 
 	logx.SetLevelString("info")
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"log_level":"debug"}`))
+	req := asLocal(httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"log_level":"debug"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)

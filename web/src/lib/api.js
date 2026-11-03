@@ -1,4 +1,5 @@
-import { buildApiRequest } from './runtime-config.js'
+import { buildApiRequest, isProxyMode } from './runtime-config.js'
+import { markAuthRequired } from './auth.svelte.js'
 
 /** @type {boolean} */
 let _isReplica = false
@@ -8,6 +9,15 @@ export function isReplicaMode() { return _isReplica }
 
 /** Set replica mode (called once during app init). */
 export function setReplicaMode(val) { _isReplica = val }
+
+/**
+ * Asks for a key when the daemon refuses a direct browser, for example after the
+ * key was rotated or revoked. Call on every response a direct fetch gets.
+ * @param {Response} res
+ */
+export function noteUnauthorized(res) {
+  if (res.status === 401 && !isProxyMode()) markAuthRequired()
+}
 
 const REQUEST_TIMEOUT_MS = 15000
 // Connection tests reach an arbitrary, possibly slow remote, so they get a
@@ -50,6 +60,7 @@ async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_
     try { data = JSON.parse(text) } catch { /* non-JSON body */ }
   }
   if (!res.ok) {
+    noteUnauthorized(res)
     const msg = res.status === 401
       ? 'Not authorized — your session or API key may have expired.'
       : (data && data.error) || `HTTP ${res.status}`
@@ -175,6 +186,7 @@ export const api = {
   downloadStorageFile: async (id, path) => {
     const { url, options } = buildApiRequest('GET', `/storage/${id}/files?path=${encodeURIComponent(path)}`, {})
     const res = await fetch(url, options)
+    noteUnauthorized(res)
     if (res.status === 401) throw new Error('Not authorized — your session or API key may have expired.')
     if (!res.ok) {
       const text = await res.text().catch(() => '')
@@ -260,6 +272,7 @@ export const api = {
   downloadServerKey: async () => {
     const { url, options } = buildApiRequest('GET', '/settings/server-key', {})
     const res = await fetch(url, options)
+    noteUnauthorized(res)
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       const err = new Error(data.error || `HTTP ${res.status}`)
@@ -280,6 +293,7 @@ export const api = {
   downloadDiagnostics: async () => {
     const { url, options } = buildApiRequest('GET', '/settings/diagnostics', {})
     const res = await fetch(url, options)
+    noteUnauthorized(res)
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       throw new Error(data.error || `HTTP ${res.status}`)

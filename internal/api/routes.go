@@ -41,28 +41,40 @@ func keyByRemoteAddr(r *http.Request) (string, error) {
 	return httprate.CanonicalizeIP(ip), nil
 }
 
+// setEncryptionRatePerMinute limits POST /settings/encryption, which hashes the
+// submitted passphrase with bcrypt (issue #564).
+const setEncryptionRatePerMinute = 10
+
 func (s *Server) setupRoutes() *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(QuietRequestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Heartbeat("/ping"))
 	r.Use(BodySizeLimit(maxRequestBodySize))
+	validOrigins, invalidOrigins := parseAllowedOrigins(s.config.AllowedOrigins)
+	if len(invalidOrigins) > 0 {
+		// A count, not the values: a rejected entry can be a URL with a login in it.
+		log.Printf("Warning: ignoring %d allowed origin(s): each must be an exact http(s)://host[:port]", len(invalidOrigins))
+	}
+	allowedOrigins := newOriginSet(validOrigins)
+	s.hub.SetAllowedOrigins(validOrigins)
+
 	// Answer Private Network Access preflights before cors.Handler writes the
-	// preflight response, so Chrome/Brave don't block LAN/loopback fetches from
-	// a more-public origin (issue #250).
-	r.Use(PrivateNetworkAccess)
+	// preflight response, so Chrome/Brave don't block listed origins (issue #250).
+	r.Use(PrivateNetworkAccess(allowedOrigins))
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*.myunraid.net", "http://localhost:*", "http://127.0.0.1:*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "X-API-Key"},
-		AllowCredentials: true,
-		MaxAge:           300,
+		// AllowOriginFunc rather than AllowedOrigins: go-chi/cors reads an empty
+		// AllowedOrigins as "allow all", and empty is the default here.
+		AllowOriginFunc: func(_ *http.Request, origin string) bool { return allowedOrigins.has(origin) },
+		AllowedMethods:  []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:  []string{"Content-Type", "X-API-Key"},
+		MaxAge:          300,
 	}))
 
 	r.Route("/api/v1", func(r chi.Router) {
-		// Enforce API key authentication for non-loopback requests.
-		// Loopback connections and the Unraid PHP proxy are exempt—
-		// auth only applies when the daemon is exposed on a LAN address.
+		// Every route below is denied by default; see APIKeyAuth and
+		// TestRouteInventoryDeniesByDefault.
+		r.Use(CrossOriginGuard(allowedOrigins))
 		r.Use(APIKeyAuth(s.db))
 
 		// Settings handler is shared between public and authenticated routes.
@@ -79,10 +91,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 		})
 		settingsH.SetMemoryLimitChangeHook(memlimit.Apply)
 
-		// Public endpoints.
 		r.Get("/health", s.handleHealth)
 
-		// All API routes.
 		r.Get("/ws", s.hub.HandleWS)
 
 		healthH := handlers.NewHealthHandler(s.db)
@@ -235,12 +245,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/", settingsH.List)
 			r.Put("/", settingsH.Update)
 			r.Get("/encryption", settingsH.GetEncryptionStatus)
-			r.Post("/encryption", settingsH.SetEncryption)
+			r.With(httprate.LimitBy(setEncryptionRatePerMinute, time.Minute, keyByRemoteAddr)).Post("/encryption", settingsH.SetEncryption)
 			r.With(httprate.LimitBy(10, time.Minute, keyByRemoteAddr)).Post("/encryption/verify", settingsH.VerifyEncryption)
-			r.Get("/encryption/passphrase", settingsH.GetEncryptionPassphrase)
+			r.With(LocalOnly).Get("/encryption/passphrase", settingsH.GetEncryptionPassphrase)
 			// Recovery copy of vault.key (#451): as sensitive as the API key,
 			// so it gets the same rate limit.
-			r.With(httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Get("/server-key", settingsH.GetServerKey)
+			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Get("/server-key", settingsH.GetServerKey)
 			r.Get("/staging", settingsH.GetStagingInfo)
 			r.Put("/staging", settingsH.SetStagingOverride)
 			r.Get("/appdata", settingsH.GetAppdataPath)
@@ -250,13 +260,16 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Put("/database", settingsH.SetSnapshotPath)
 			r.Get("/diagnostics", settingsH.GetDiagnostics)
 			r.Get("/runtime", settingsH.GetRuntime)
+		})
 
-			// API key management.
-			r.Get("/api-key", settingsH.GetAPIKeyStatus)
-			r.With(httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/api-key/generate", settingsH.GenerateAPIKey)
-			r.Get("/api-key/key", settingsH.GetAPIKey)
-			r.With(httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/api-key/rotate", settingsH.RotateAPIKey)
-			r.Delete("/api-key", settingsH.RevokeAPIKey)
+		// API key management sits outside /settings so a replica can use it: a
+		// read-only replica still needs a key before anything remote can reach it.
+		r.Route("/settings/api-key", func(r chi.Router) {
+			r.Get("/", settingsH.GetAPIKeyStatus)
+			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/generate", settingsH.GenerateAPIKey)
+			r.With(LocalOnly).Get("/key", settingsH.GetAPIKey)
+			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/rotate", settingsH.RotateAPIKey)
+			r.With(LocalOnly).Delete("/", settingsH.RevokeAPIKey)
 		})
 
 		activityH := handlers.NewActivityHandler(s.db)

@@ -51,7 +51,7 @@
 - name: Wait for replica API to be ready # checkov:skip=CKV2_ANSIBLE_1:Reaches the just-deployed replica container on the Unraid LAN; TLS is terminated by the user's reverse proxy outside of this role.
   delegate_to: localhost
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ replica_port }}/api/v1/health"
+    url: "http://{{ ansible_host }}:{{ replica_port }}/ping"
     method: GET
     status_code: 200
   register: replica_health
@@ -59,18 +59,16 @@
   delay: 2
   until: replica_health.status == 200
 
-- name: Verify replica is in read-only mode # checkov:skip=CKV2_ANSIBLE_1:Reaches the just-deployed replica container on the Unraid LAN; TLS is terminated by the user's reverse proxy outside of this role.
-  delegate_to: localhost
-  ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ replica_port }}/api/v1/health"
-    method: GET
-    return_content: true
+# /health needs local access or the API key, so ask from inside the container.
+- name: Verify replica is in read-only mode
+  ansible.builtin.raw: docker exec vault-replica wget -qO- http://127.0.0.1:24085/api/v1/health
   register: health_response
+  changed_when: false
 
 - name: Assert replica mode
   ansible.builtin.assert:
     that:
-      - "'replica' in health_response.content"
+      - "'replica' in health_response.stdout"
     fail_msg: "Replica is not in read-only mode"
     success_msg: "Vault replica running in read-only mode"
 

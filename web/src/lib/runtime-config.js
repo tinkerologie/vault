@@ -1,3 +1,5 @@
+import { getApiKey } from './auth.svelte.js'
+
 const defaultConfig = Object.freeze({
   mode: 'direct',
   apiBase: '/api/v1',
@@ -50,6 +52,9 @@ export function getHostThemeMode() {
 }
 
 export function getLiveMode() {
+  // A browser can't send the key on a WebSocket upgrade, so a client that needs
+  // one follows progress by polling.
+  if (getApiKey()) return 'poll'
   return getRuntimeConfig().liveMode || defaultConfig.liveMode
 }
 
@@ -115,9 +120,10 @@ export function buildApiRequest(method, path, { body = null, headers = {} } = {}
     }
   }
 
-  const options = { method, headers }
+  const apiKey = getApiKey()
+  const options = { method, headers: apiKey ? { ...headers, 'X-API-Key': apiKey } : headers }
   if (body !== null) {
-    options.headers = { ...headers, 'Content-Type': 'application/json' }
+    options.headers = { ...options.headers, 'Content-Type': 'application/json' }
     options.body = JSON.stringify(body)
   }
 

@@ -6,6 +6,8 @@
   import { copyText } from '../lib/clipboard.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
   import { isEmbedded } from '../lib/runtime-config.js'
+  import { isRemoteKeyClient } from '../lib/auth.svelte.js'
+  import ApiKeyLocalOnlyNotice from '../components/ApiKeyLocalOnlyNotice.svelte'
   import { scrollHostTo } from '../lib/embed.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
@@ -917,7 +919,7 @@
       apiKeyEnabled = false
       apiKeyRevealed = ''
       apiKeyShowing = false
-      showToast('API key revoked – authentication disabled', 'success')
+      showToast('API key revoked – remote access disabled', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -1785,6 +1787,9 @@
               <p class="text-sm text-text-muted leading-relaxed">Keep this passphrase in a safe place, as you will need it to restore your encrypted backups. Download it as an emergency kit file and store it somewhere safe. Encryption keeps your backups private and secure.</p>
             </div>
 
+            {#if isRemoteKeyClient()}
+            <div class="px-5 py-4"><ApiKeyLocalOnlyNotice subject="the encryption key and emergency kit" /></div>
+            {:else}
             <!-- Download emergency kit -->
             <div class="px-5 py-4 flex items-center justify-between gap-4">
               <div>
@@ -1814,6 +1819,8 @@
                 </div>
               {/if}
             </div>
+
+            {/if}
 
             <!-- Change passphrase -->
             {#if !isReplicaMode()}
@@ -1916,17 +1923,22 @@
               <p class="text-xs text-danger mt-1">No backup password is set, so this file is the only way to open your deduplicated backups if this server is lost.</p>
             {/if}
           </div>
+          {#if !isRemoteKeyClient()}
           <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
             {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>{/if}
             Download
           </button>
+          {/if}
         </div>
+        {#if isRemoteKeyClient()}
+        <div class="px-5 pb-4"><ApiKeyLocalOnlyNotice subject="vault.key" /></div>
+        {/if}
       </div>
 
       <!-- API Access -->
       <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">API Access <Tooltip text="Generate an API key to authenticate external integrations (Home Assistant, replication) when Vault is exposed on the network. Not required when accessed via localhost." /></h2>
+          <h2 class="text-base font-semibold text-text">API Access <Tooltip text="Only needed for replication between Vault servers, and for Home Assistant when Vault is bound to this server&apos;s LAN IP. Using Vault from the Unraid web UI never needs a key." /></h2>
         </div>
         <div class="divide-y divide-border">
           {#if apiKeyEnabled}
@@ -1936,9 +1948,12 @@
                 <span class="inline-block w-2 h-2 rounded-full bg-success"></span>
                 <span class="text-sm font-medium text-text">API key active</span>
               </div>
-              <p class="text-xs text-text-muted">External clients must include the <code class="bg-surface px-1 rounded">X-API-Key</code> header when connecting from non-localhost addresses. Localhost connections are always exempt.</p>
+              <p class="text-xs text-text-muted">Replication and Home Assistant use this key in the <code class="bg-surface px-1 rounded">X-API-Key</code> header. The Unraid web UI doesn't need it.</p>
             </div>
 
+            {#if isRemoteKeyClient()}
+            <div class="px-5 py-4"><ApiKeyLocalOnlyNotice subject="the API key" /></div>
+            {:else}
             <!-- Reveal key -->
             <div class="px-5 py-4">
               <div class="flex items-center justify-between gap-4">
@@ -1978,7 +1993,7 @@
             <div class="px-5 py-3 flex justify-end">
               {#if confirmApiKeyRevoke}
                 <div class="flex items-center gap-2">
-                  <span class="text-xs text-danger">Revoke key and disable authentication?</span>
+                  <span class="text-xs text-danger">Revoke key and refuse all remote clients?</span>
                   <button onclick={revokeApiKey} disabled={apiKeyRevoking} class="text-xs font-medium text-danger hover:underline transition-colors disabled:opacity-50">
                     {apiKeyRevoking ? 'Revoking…' : 'Yes, revoke'}
                   </button>
@@ -1993,18 +2008,21 @@
               {/if}
             </div>
             {/if}
+            {/if}
           {:else}
             <div class="px-5 py-4">
               <div class="flex items-center gap-2 mb-3">
                 <span class="inline-block w-2 h-2 rounded-full bg-text-dim"></span>
                 <span class="text-sm font-medium text-text">No API key configured</span>
               </div>
-              <p class="text-xs text-text-muted mb-4">Generate an API key to protect the Vault API when it is exposed beyond localhost. API keys are required for third-party integrations (e.g. Home Assistant) and replication between Vault instances on different servers.</p>
+              <p class="text-xs text-text-muted mb-4">You don't need a key to use Vault from the Unraid web UI. Generate one only for replication between Vault servers, or for Home Assistant when Vault is bound to this server's LAN IP.</p>
               {#if !isReplicaMode()}
               <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                 {#if apiKeyGenerating}<InlineSpinner />{/if}
                 {apiKeyGenerating ? 'Generating…' : 'Generate API Key'}
               </button>
+              {:else}
+              <p class="text-xs text-text-muted">On a replica, run <code class="bg-surface px-1 rounded">vault api-key generate</code> on the host or in its container.</p>
               {/if}
             </div>
           {/if}
