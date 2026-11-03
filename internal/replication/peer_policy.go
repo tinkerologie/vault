@@ -35,7 +35,7 @@ var (
 // public addresses pass. Addresses that reach this host or cloud metadata do
 // not.
 func checkPeerAddress(addr netip.Addr) error {
-	addr = addr.Unmap()
+	addr = addr.WithZone("").Unmap()
 	if nat64Prefix.Contains(addr) {
 		b := addr.As16()
 		addr = netip.AddrFrom4([4]byte(b[12:]))

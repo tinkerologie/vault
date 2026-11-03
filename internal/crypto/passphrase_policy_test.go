@@ -1,6 +1,10 @@
 package crypto
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestCheckPassphraseStrength(t *testing.T) {
 	t.Parallel()
@@ -24,5 +28,18 @@ func TestCheckPassphraseStrength(t *testing.T) {
 		if err := CheckPassphraseStrength(ok); err != nil {
 			t.Errorf("%q rejected: %v", ok, err)
 		}
+	}
+}
+
+// Repeated words must not make the check quadratic: at this size that took
+// minutes, and the endpoint accepts bodies this large.
+func TestCheckPassphraseStrength_LongRepeatedWordsStayCheap(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	if err := CheckPassphraseStrength(strings.Repeat("password", 1<<17)); err == nil {
+		t.Error("repeated common word accepted")
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Errorf("took %s", d)
 	}
 }

@@ -96,15 +96,20 @@ func onlyCommonWords(s string, leet bool) bool {
 	found := false
 	for _, w := range commonPassphraseWords {
 		word := []rune(w)
-		for i := 0; i+len(word) <= len(norm); {
-			if !slices.Equal(norm[i:i+len(word)], word) {
-				i++
+		// Compact in place: deleting per match would be quadratic on a long
+		// passphrase of repeated words, and the request body allows megabytes.
+		kept := 0
+		for i := 0; i < len(norm); {
+			if i+len(word) <= len(norm) && slices.Equal(norm[i:i+len(word)], word) {
+				i += len(word)
+				found = true
 				continue
 			}
-			norm = slices.Delete(norm, i, i+len(word))
-			wasLetter = slices.Delete(wasLetter, i, i+len(word))
-			found = true
+			norm[kept], wasLetter[kept] = norm[i], wasLetter[i]
+			kept++
+			i++
 		}
+		norm, wasLetter = norm[:kept], wasLetter[:kept]
 	}
 	if !found {
 		return false
