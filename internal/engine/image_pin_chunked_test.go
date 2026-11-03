@@ -162,18 +162,45 @@ func TestFailedChunkedRestorePutsTheTagBack(t *testing.T) {
 }
 
 // A pin whose own check fails after moving the tag puts it back before the
-// restore goes on, so an approved override does not run the backup-time image.
+// restore goes on, so an approved override does not run the backup-time image,
+// but only while the tag still names the image the pin tagged: a tag someone
+// else moved in between keeps their change (Greptile and Aikido review of #606).
 func TestFailedPinCheckPutsTheTagBack(t *testing.T) {
+	t.Run("check fails while the tag names the pinned image", func(t *testing.T) {
+		r := newImageRegistry()
+		r.tags["nginx:1"] = "new-image"
+		r.tags[pinRef] = "old-image"
+		base := r.imageInspect
+		tagInspects := 0
+		r.imageInspect = func(ctx context.Context, ref string) (client.ImageInspectResult, error) {
+			if ref == "nginx:1" {
+				if tagInspects++; tagInspects == 2 { // the check right after tagging
+					return client.ImageInspectResult{}, errFake458
+				}
+			}
+			return base(ctx, ref)
+		}
+		if err := pinBackupImage(t.Context(), r, "nginx:1", pinRef); !errors.Is(err, errFake458) {
+			t.Fatalf("err = %v", err)
+		}
+		if got := r.tags["nginx:1"]; got != "new-image" {
+			t.Errorf("tag left on %q after a failed pin", got)
+		}
+	})
+	t.Run("someone moved the tag after Vault tagged it", func(t *testing.T) {
+		r := newImageRegistry()
+		r.tags["nginx:1"] = "new-image"
+		r.tags[pinRef] = "old-image"
+		r.tags["someone/else:2"] = "elsewhere"
+		f := &tagLandsElsewhere{imageRegistry: r}
+		if err := pinBackupImage(t.Context(), f, "nginx:1", pinRef); err == nil || !strings.Contains(err.Error(), "backup-time image") {
+			t.Fatalf("err = %v", err)
+		}
+		if got := r.tags["nginx:1"]; got != "elsewhere" {
+			t.Errorf("rollback overwrote a tag someone else moved: %q", got)
+		}
+	})
 	r := newImageRegistry()
-	r.tags["nginx:1"] = "new-image"
-	r.tags[pinRef] = "old-image"
-	f := &tagLandsElsewhere{imageRegistry: r}
-	if err := pinBackupImage(t.Context(), f, "nginx:1", pinRef); err == nil || !strings.Contains(err.Error(), "backup-time image") {
-		t.Fatalf("err = %v", err)
-	}
-	if got := r.tags["nginx:1"]; got != "new-image" {
-		t.Errorf("tag left on %q after a failed pin", got)
-	}
 	// A failure to put it back is logged, not raised over the pin error.
 	r.tagErr = errFake458
 	restoreImageTag(t.Context(), r, "nginx:1", "new-image", "")
@@ -248,7 +275,9 @@ func TestFailedRestoreLeavesATagMovedByOthers(t *testing.T) {
 }
 
 // trackCreatedContainer makes the fake daemon remember the image a restore
-// created the container from, and report it the way ContainerInspect does.
+// created the container from, and report it the way ContainerInspect does for
+// the created ID. Looked up by name it reports a replacement container, so a
+// seed that used the name would record the wrong image (Aikido review of #606).
 func trackCreatedContainer(r *imageRegistry, onStart func()) {
 	var created string
 	r.containerCreate = func(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
@@ -261,11 +290,16 @@ func trackCreatedContainer(r *imageRegistry, onStart func()) {
 		}
 		return client.ContainerStartResult{}, nil
 	}
-	r.containerInspect = func(context.Context, string) (client.ContainerInspectResult, error) {
-		if created == "" {
+	r.containerInspect = func(_ context.Context, id string) (client.ContainerInspectResult, error) {
+		switch {
+		case created == "":
 			return client.ContainerInspectResult{}, errInspectMissing
+		case id == "c1":
+			return client.ContainerInspectResult{Container: containertypes.InspectResponse{ID: "c1", Image: created}}, nil
+		default:
+			// By name, a replacement container someone created meanwhile.
+			return client.ContainerInspectResult{Container: containertypes.InspectResponse{ID: "c2", Image: "replacement-image"}}, nil
 		}
-		return client.ContainerInspectResult{Container: containertypes.InspectResponse{ID: "c1", Image: created}}, nil
 	}
 }
 
@@ -325,6 +359,9 @@ func TestChunkedRestoreSeedsTheRunningDigest(t *testing.T) {
 					// The image outlives the tag moving off it.
 					res, err = client.ImageInspectResult{}, nil
 					res.ID, res.RepoDigests = ref, tc.digests
+				case "replacement-image":
+					res, err = client.ImageInspectResult{}, nil
+					res.ID, res.RepoDigests = ref, []string{"nginx@" + newer}
 				case "newer-image", "nginx:1":
 					if r.tags["nginx:1"] == "newer-image" {
 						res.RepoDigests = []string{"nginx@" + newer}
@@ -459,5 +496,31 @@ func TestImageTagRollbackIsBounded(t *testing.T) {
 	}
 	if !h.sawDeadline {
 		t.Error("rollback ran without a deadline")
+	}
+}
+
+// A restore cancelled right after pinning still puts the tag back: the pinned
+// image's ID is read under the rollback's own bounded, uncancellable context
+// (Greptile review of #606).
+func TestCancelledRestorePutsTheTagBack(t *testing.T) {
+	repo, id := chunkedImageFixture(t, false)
+	r := newImageRegistry()
+	r.tags["nginx:1"] = "new-image"
+	r.remote[pinRef] = "old-image"
+	base := r.imageInspect
+	r.imageInspect = func(ctx context.Context, ref string) (client.ImageInspectResult, error) {
+		if err := ctx.Err(); err != nil {
+			return client.ImageInspectResult{}, err
+		}
+		return base(ctx, ref)
+	}
+	ctx, cancel := context.WithCancel(WithRestoreTrust(t.Context(), RestoreTrust{ArtifactTrusted: true}))
+	defer cancel()
+	ctx = WithApprovalsSettled(ctx, cancel) // cancelled the moment the pin is in place
+	if err := (&ContainerHandler{cli: r}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress); err == nil {
+		t.Fatal("cancelled restore succeeded")
+	}
+	if got := r.tags["nginx:1"]; got != "new-image" {
+		t.Errorf("tag left on %q after a cancelled restore", got)
 	}
 }

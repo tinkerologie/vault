@@ -77,13 +77,15 @@ func pinBackupImage(ctx context.Context, cli dockerClient, image, digestRef stri
 		return fmt.Errorf("pointing %s at %s: %w", image, digestRef, err)
 	}
 	// From here the tag may have moved, so a failed check puts it back.
+	// The rollback checks the tag still names the image just tagged, so a tag
+	// someone else moved in the meantime keeps their change.
 	tagged, err := cli.ImageInspect(ctx, image)
 	if err != nil {
-		restoreImageTag(ctx, cli, image, priorID, "")
+		restoreImageTag(ctx, cli, image, priorID, pinned.ID)
 		return fmt.Errorf("inspecting %s: %w", image, err)
 	}
 	if tagged.ID != pinned.ID {
-		restoreImageTag(ctx, cli, image, priorID, "")
+		restoreImageTag(ctx, cli, image, priorID, pinned.ID)
 		return fmt.Errorf("%s resolves to %s, not the backup-time image %s", image, tagged.ID, pinned.ID)
 	}
 	return nil
@@ -123,8 +125,9 @@ var imageTagRollbackTimeout = 2 * time.Minute
 // that did not exist before (priorID "") is left on the backup-time image,
 // which is still on this server.
 //
-// When pinnedID is set, the tag is put back only while it still names that
-// image: if someone moved it since the restore pinned it, their change stands.
+// The tag is put back only while it still names pinnedID, the image the
+// restore tagged: if someone moved it since, their change stands. An empty
+// pinnedID skips that check and is used only by tests of the bound.
 func restoreImageTag(ctx context.Context, cli dockerClient, image, priorID, pinnedID string) {
 	if priorID == "" {
 		return
