@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"time"
 
 	"github.com/distribution/reference"
 	"github.com/moby/moby/client"
@@ -99,16 +100,24 @@ func tagTarget(ctx context.Context, cli dockerClient, image string) string {
 	return res.ID
 }
 
+// imageTagRollbackTimeout bounds the tag rollback. The Docker client sets no
+// request timeout of its own, so without it a hung daemon would hold the
+// restore, and the runner with it, forever. A var so tests can shorten it.
+var imageTagRollbackTimeout = 2 * time.Minute
+
 // restoreImageTag points image back at priorID, the image it named before a
 // restore pinned it, so a restore that fails leaves later pulls and
 // recreations of the tag where they were (#599). It runs even after the
-// restore's context is cancelled. A tag that did not exist before (priorID
-// "") is left on the backup-time image, which is still on this server.
+// restore's context is cancelled, for at most imageTagRollbackTimeout. A tag
+// that did not exist before (priorID "") is left on the backup-time image,
+// which is still on this server.
 func restoreImageTag(ctx context.Context, cli dockerClient, image, priorID string) {
 	if priorID == "" {
 		return
 	}
-	if _, err := cli.ImageTag(context.WithoutCancel(ctx), client.ImageTagOptions{Source: priorID, Target: image}); err != nil {
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), imageTagRollbackTimeout)
+	defer cancel()
+	if _, err := cli.ImageTag(rollbackCtx, client.ImageTagOptions{Source: priorID, Target: image}); err != nil {
 		log.Printf("engine: chunked restore: could not point %s back at %s: %v", image, priorID, err)
 		return
 	}

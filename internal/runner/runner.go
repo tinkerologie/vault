@@ -4364,15 +4364,24 @@ func startUntilApprovalsSettled(ctx context.Context, itemName string, restore fu
 			}
 		}()
 	}
+	isSettled := func() bool {
+		select {
+		case <-settled:
+			return true
+		default:
+			return false
+		}
+	}
 	select {
 	case err := <-done:
+		// A restore that got past its checks has started, whatever happened
+		// next; only one that ended before them reports its error here.
+		if err != nil && isSettled() {
+			log.Printf("runner: restore of %s failed: %v", itemName, err)
+			return nil
+		}
 		return err
 	case <-settled:
-		select {
-		case err := <-done:
-			return err
-		default:
-		}
 		logLater()
 		return nil
 	case <-ctx.Done():

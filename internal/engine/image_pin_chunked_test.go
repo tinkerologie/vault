@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/client"
 	"github.com/tinkerologie/vault/internal/dedup"
@@ -321,5 +322,41 @@ func TestForgetUnraidLocalDigest(t *testing.T) {
 	seedRestoredImageStatus(t.Context(), nil, "nginx:1", "")
 	if got := readFile458(t, statusPath); got != content {
 		t.Errorf("status file changed: %s", got)
+	}
+}
+
+// hungTagDaemon never answers a tag request until its context ends.
+type hungTagDaemon struct {
+	*imageRegistry
+	sawDeadline bool
+}
+
+func (h *hungTagDaemon) ImageTag(ctx context.Context, _ client.ImageTagOptions) (client.ImageTagResult, error) {
+	_, h.sawDeadline = ctx.Deadline()
+	<-ctx.Done()
+	return client.ImageTagResult{}, ctx.Err()
+}
+
+// The tag rollback after a cancelled restore gives up within its bound when
+// Docker hangs, instead of holding the restore forever.
+func TestImageTagRollbackIsBounded(t *testing.T) {
+	orig := imageTagRollbackTimeout
+	imageTagRollbackTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { imageTagRollbackTimeout = orig })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // the restore was cancelled after pinning
+	h := &hungTagDaemon{imageRegistry: newImageRegistry()}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		restoreImageTag(ctx, h, "nginx:1", "new-image")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("rollback blocked on a hung Docker daemon")
+	}
+	if !h.sawDeadline {
+		t.Error("rollback ran without a deadline")
 	}
 }

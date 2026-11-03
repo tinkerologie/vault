@@ -43,14 +43,20 @@ func TestStartUntilApprovalsSettled(t *testing.T) {
 		close(release)
 		<-finished
 	})
-	t.Run("an error already in hand when settled wins", func(t *testing.T) {
-		err := startUntilApprovalsSettled(t.Context(), "web", func(ctx context.Context) error {
-			engine.ApprovalsSettled(ctx)
-			return errors.New("failed at once")
-		})
-		// Either outcome is a truthful answer; the error must never be lost
-		// when the restore has already returned it.
-		if err != nil && err.Error() != "failed at once" {
+	t.Run("a failure after the checks still means started", func(t *testing.T) {
+		for range 50 {
+			err := startUntilApprovalsSettled(t.Context(), "web", func(ctx context.Context) error {
+				engine.ApprovalsSettled(ctx)
+				return errors.New("failed at once")
+			})
+			if err != nil {
+				t.Fatalf("err = %v, want nil once settled", err)
+			}
+		}
+	})
+	t.Run("a failure before the checks is returned", func(t *testing.T) {
+		err := startUntilApprovalsSettled(t.Context(), "web", func(context.Context) error { return errors.New("no such job") })
+		if err == nil || err.Error() != "no such job" {
 			t.Fatalf("err = %v", err)
 		}
 	})
