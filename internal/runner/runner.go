@@ -2544,7 +2544,7 @@ func (r *Runner) rewrapDedupKey(dest db.StorageDestination, passphrase string) (
 func (r *Runner) ensureDedupEscrow(repo *dedup.Repo, dest db.StorageDestination) {
 	// Not tied to the passphrase or its cache: a failed removal is retried on
 	// every dedup backup, with or without a passphrase.
-	if err := repo.RemoveRetiredHeaders(); err != nil {
+	if err := repo.RemoveRetiredHeaders(r.serverKey); err != nil {
 		log.Printf("runner: dedup: destination %q: %v", dest.Name, err)
 	}
 	pass := r.resolvePassphrase()

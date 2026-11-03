@@ -205,17 +205,18 @@ func TestRewrapKeepsRollbackCopyAgainstConcurrentSweep(t *testing.T) {
 
 	sweep := make(chan error, 1)
 	r.adapter = fa
-	go func() { sweep <- r.RemoveRetiredHeaders() }()
+	newKey := bytes.Repeat([]byte{0x22}, SecretSize)
+	go func() { sweep <- r.RemoveRetiredHeaders(newKey) }()
 	select {
 	case err := <-sweep:
 		t.Fatalf("sweep ran during a rewrap: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
 	// A stalled rewrap holds up only its own repository.
-	other, _, cleanupOther := newTestRepo(t)
+	other, otherKey, cleanupOther := newTestRepo(t)
 	defer cleanupOther()
 	otherDone := make(chan error, 1)
-	go func() { otherDone <- other.RemoveRetiredHeaders() }()
+	go func() { otherDone <- other.RemoveRetiredHeaders(otherKey) }()
 	select {
 	case err := <-otherDone:
 		if err != nil {
@@ -274,5 +275,68 @@ func TestRewrapRefusesReplacedRepository(t *testing.T) {
 	}
 	if backups, err := HeaderBackups(fa); err != nil || len(backups) != 0 {
 		t.Fatalf("wrote despite the replaced repository: %v, %v", backups, err)
+	}
+}
+
+// When the current header is damaged or holds another key, a copy may be the
+// only good header left, so the sweep must keep them.
+func TestRemoveRetiredHeadersKeepsCopiesUnlessHeaderVerifies(t *testing.T) {
+	r, key, cleanup := newTestRepo(t)
+	defer cleanup()
+	bak := repoConfigPath + ".20260101T000000Z.bak"
+	if err := r.adapter.Write(bak, strings.NewReader("{}")); err != nil {
+		t.Fatal(err)
+	}
+	good, err := r.adapter.Read(repoConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := io.ReadAll(good)
+	_ = good.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := func(what string, k []byte) {
+		t.Helper()
+		if err := r.RemoveRetiredHeaders(k); err == nil {
+			t.Errorf("%s: want error", what)
+		}
+		if b, err := HeaderBackups(r.adapter); err != nil || len(b) != 1 {
+			t.Errorf("%s: copies = %v, %v", what, b, err)
+		}
+	}
+	keep("wrong key", bytes.Repeat([]byte{0x77}, SecretSize))
+
+	if err := r.adapter.Write(repoConfigPath, strings.NewReader("not json")); err != nil {
+		t.Fatal(err)
+	}
+	keep("damaged header", key)
+
+	// A valid header sealing a different master key.
+	other, _, cleanupOther := newTestRepo(t)
+	defer cleanupOther()
+	sealed, err := SealMaster(key, other.master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg repoConfig
+	if err := json.Unmarshal(original, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SealedMaster = sealed
+	body, _ := json.Marshal(cfg)
+	if err := r.adapter.Write(repoConfigPath, bytes.NewReader(body)); err != nil {
+		t.Fatal(err)
+	}
+	keep("different master", key)
+
+	if err := r.adapter.Write(repoConfigPath, bytes.NewReader(original)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RemoveRetiredHeaders(key); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := HeaderBackups(r.adapter); err != nil || len(b) != 0 {
+		t.Fatalf("copies after a good check = %v, %v", b, err)
 	}
 }

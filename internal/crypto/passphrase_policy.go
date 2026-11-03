@@ -59,7 +59,7 @@ func CheckPassphraseStrength(p string) error {
 	if stepped*4 >= (len(runes)-1)*3 {
 		return errors.New("passphrase is too predictable: avoid runs such as 123456 or abcdef")
 	}
-	if isAllDigits(lower) && len(lower) < 20 {
+	if isAllDigits(lower) && len(runes) < 20 {
 		return errors.New("passphrase is too predictable: a number needs at least 20 digits")
 	}
 	if onlyCommonWords(lower) || onlyCommonWords(passphraseLeet.Replace(lower)) {

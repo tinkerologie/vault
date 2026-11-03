@@ -224,11 +224,24 @@ func RewrapMaster(a storage.Adapter, serverKey []byte, passphrase string, now ti
 // RemoveRetiredHeaders deletes header copies left by an earlier rewrap, which
 // still open with the key that rewrap retired. It does nothing for a repository
 // unlocked through its escrow: there, the current header may still need them.
-func (r *Repo) RemoveRetiredHeaders() error {
+// The header is checked under the lock, because a rewrap this call waited for
+// may have damaged it, and then a copy is the only good one left.
+func (r *Repo) RemoveRetiredHeaders(serverKey []byte) error {
 	if r.viaEscrow {
 		return nil
 	}
 	defer lockHeaders(r.uuid)()
+	cfg, _, err := readRepoConfig(r.adapter)
+	if err != nil {
+		return fmt.Errorf("dedup: keeping header copies: %w", err)
+	}
+	master, err := UnsealMaster(serverKey, cfg.SealedMaster)
+	if err != nil {
+		return fmt.Errorf("dedup: keeping header copies, current header does not open: %w", err)
+	}
+	if subtle.ConstantTimeCompare(master, r.master) != 1 {
+		return errors.New("dedup: keeping header copies, current header holds a different key")
+	}
 	return removeHeaderBackups(r.adapter)
 }
 
