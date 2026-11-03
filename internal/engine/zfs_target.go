@@ -55,6 +55,10 @@ func isASCIILetter(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
+// ZFSRestoreTarget is zfsRestoreTarget for callers that build a restore's
+// settings, so they can check the target the handler will choose.
+func ZFSRestoreTarget(settings map[string]any) (string, error) { return zfsRestoreTarget(settings) }
+
 // zfsRestoreTarget returns the dataset a ZFS restore may force-receive into.
 // Only two values authorise a target: a destination the user chose for this
 // restore, and the dataset configured on the job's item. A pool root takes

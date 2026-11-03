@@ -4547,6 +4547,24 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 // settings came from a backup rather than from this server.
 const importedItemSetting = "imported"
 
+// zfsRestoreSettings returns the settings that let engine.ZFSRestoreTarget pick
+// a ZFS restore's target: the trusted dataset, if any, and the destination the
+// user chose for this restore, if any.
+func (r *Runner) zfsRestoreSettings(jobID int64, itemName, destination string) (map[string]any, error) {
+	settings := map[string]any{}
+	ds, err := r.configuredZFSDataset(jobID, itemName)
+	if err != nil {
+		return nil, err
+	}
+	if ds != "" {
+		settings["dataset"] = ds
+	}
+	if destination != "" {
+		settings["restore_destination"] = destination
+	}
+	return settings, nil
+}
+
 // configuredZFSDataset returns the dataset a restore of a job's ZFS item may
 // target, or "" when none is trusted, which zfsRestoreTarget refuses. A dataset
 // set on the item wins. Otherwise an item created on this server names its
@@ -4583,7 +4601,9 @@ func (r *Runner) configuredZFSDataset(jobID int64, itemName string) (string, err
 			return "", fmt.Errorf("checking how job %d was created: %w", jobID, err)
 		}
 		if first == db.JobRunStatusImported {
-			return "", fmt.Errorf("ZFS item %q was created by importing a backup, so its name is not a trusted target: set its dataset on the job, then restore again", itemName)
+			// No trusted dataset: an explicit destination still works, and
+			// zfsRestoreTarget refuses with the fix when there is none.
+			return "", nil
 		}
 		return ji.ItemName, nil
 	}
@@ -5748,13 +5768,11 @@ func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, i
 	// A ZFS restore force-receives into the dataset configured on the job's
 	// item; the backup's own metadata never chooses it (see zfsRestoreTarget).
 	if itemType == "zfs" {
-		ds, err := r.configuredZFSDataset(jobID, itemName)
+		zs, err := r.zfsRestoreSettings(jobID, itemName, destination)
 		if err != nil {
 			return err
 		}
-		if ds != "" {
-			backupItem.Settings["dataset"] = ds
-		}
+		maps.Copy(backupItem.Settings, zs)
 	}
 
 	// Override restore destination if specified.

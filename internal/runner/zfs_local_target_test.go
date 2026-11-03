@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/engine"
 )
 
 // A ZFS item created on this server with no settings is backed up from the
@@ -101,8 +102,8 @@ func TestZFSDatasetRefusesLegacyImportedItems(t *testing.T) {
 		}
 	}
 
-	if got, err := r.configuredZFSDataset(legacy, "tank/victim"); err == nil || got != "" || !strings.Contains(err.Error(), "dataset") {
-		t.Fatalf("legacy imported item = %q, %v, want a refusal naming the fix", got, err)
+	if got, err := r.configuredZFSDataset(legacy, "tank/victim"); err != nil || got != "" {
+		t.Fatalf("legacy imported item = %q, %v, want no trusted target", got, err)
 	}
 	if got, err := r.configuredZFSDataset(local, "tank/data"); err != nil || got != "tank/data" {
 		t.Fatalf("local item = %q, %v", got, err)
@@ -113,5 +114,42 @@ func TestZFSDatasetRefusesLegacyImportedItems(t *testing.T) {
 	}
 	if got, err := r.configuredZFSDataset(legacy, "tank/victim"); err != nil || got != "tank/restored" {
 		t.Fatalf("explicit dataset = %q, %v", got, err)
+	}
+}
+
+// An older imported item with no dataset restores to an explicitly chosen
+// destination, and without one is refused with the error naming the fix.
+func TestZFSLegacyImportHonoursExplicitDestination(t *testing.T) {
+	t.Parallel()
+	r, database, root := setupTestRunner(t)
+	dest := createNamedLocalDest(t, database, "zfs-legacy-dest", root)
+	legacy, err := database.CreateJob(db.Job{Name: "legacy", BackupTypeChain: "full", StorageDestID: dest.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddJobItem(db.JobItem{JobID: legacy, ItemType: "zfs", ItemName: "tank/victim", Settings: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateImportedJobRun(db.JobRun{JobID: legacy, Status: db.JobRunStatusImported, BackupType: "full"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	settings, err := r.zfsRestoreSettings(legacy, "tank/victim", "tank/chosen")
+	if err != nil {
+		t.Fatalf("settings with an explicit destination: %v", err)
+	}
+	if got, err := engine.ZFSRestoreTarget(settings); err != nil || got != "tank/chosen" {
+		t.Fatalf("target with an explicit destination = %q, %v", got, err)
+	}
+
+	settings, err = r.zfsRestoreSettings(legacy, "tank/victim", "")
+	if err != nil {
+		t.Fatalf("settings without a destination: %v", err)
+	}
+	if _, ok := settings["dataset"]; ok {
+		t.Fatalf("legacy item name became a target: %v", settings)
+	}
+	if got, err := engine.ZFSRestoreTarget(settings); err == nil || !strings.Contains(err.Error(), "no target dataset") {
+		t.Fatalf("target without a destination = %q, %v, want a refusal", got, err)
 	}
 }
