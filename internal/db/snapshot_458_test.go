@@ -444,3 +444,75 @@ func TestSaveSnapshotCreatesMissingParent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRotationHelpersRefuseBadEntries(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	if err := os.WriteFile(filepath.Join(dir, "file"), []byte("snap"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"file", "link", "missing"} {
+		if sub, err := openRealSubdir(root, name); err == nil {
+			_ = sub.Close()
+			t.Errorf("openRealSubdir(%q) succeeded", name)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "out"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	out, err := openRealSubdir(root, "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = out.Close() })
+	if err := copyIntoRoot(root, "file", out, "copy"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "out", "copy")); string(got) != "snap" {
+		t.Fatalf("copy = %q", got)
+	}
+	if err := copyIntoRoot(root, "file", out, "copy"); err == nil {
+		t.Fatal("existing copy overwritten")
+	}
+	if err := copyIntoRoot(root, "missing", out, "other"); err == nil {
+		t.Fatal("missing source copied")
+	}
+	sm := &SnapshotManager{}
+	sm.pruneRotated(filepath.Join(dir, "link"))
+	sm.pruneRotated(filepath.Join(dir, "gone", "rotated"))
+	sm.pruneRotated(filepath.Join(dir, "missing"))
+}
+
+func TestCopySnapshotPrivatelyCarriesWAL(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "snap.db")
+	for name, body := range map[string]string{src: "main", src + "-wal": "wal"} {
+		if err := os.WriteFile(name, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	copied, remove, err := copySnapshotPrivately(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remove()
+	if got, _ := os.ReadFile(copied + "-wal"); string(got) != "wal" {
+		t.Fatalf("wal copy = %q", got)
+	}
+	if err := os.Remove(src + "-wal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(src+"-wal", 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := copySnapshotPrivately(src); err == nil {
+		t.Fatal("non-regular WAL accepted")
+	}
+}

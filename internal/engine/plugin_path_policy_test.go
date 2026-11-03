@@ -87,3 +87,47 @@ func TestPluginDefaultPathsRefuseSymlinks(t *testing.T) {
 		t.Errorf("good.plg = %q", got)
 	}
 }
+
+// The plugins directory itself must not be reachable through a symlink, and a
+// symlinked installer is never read into a backup.
+func TestPluginsRootAndInstallerRefuseSymlinks(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "plugins")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	orig := pluginsDir
+	t.Cleanup(func() { pluginsDir = orig })
+
+	pluginsDir = link
+	if _, err := pluginsRoot(); err == nil {
+		t.Error("symlinked plugins directory accepted")
+	}
+	if err := writePluginInstaller("p", []byte("x")); err == nil {
+		t.Error("installer written into a symlinked plugins directory")
+	}
+	if err := checkPluginConfigDir(filepath.Join(link, "p")); err == nil {
+		t.Error("config directory under a symlinked plugins directory accepted")
+	}
+
+	pluginsDir = real
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(real, "evil.plg")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPluginInstaller("evil"); err == nil {
+		t.Error("symlinked installer read")
+	}
+	if _, err := (&PluginHandler{}).Backup(t.Context(), BackupItem{Name: "evil", Settings: map[string]any{}}, t.TempDir(), noopProgress); err == nil {
+		t.Error("classic backup read a symlinked installer")
+	}
+	if err := os.WriteFile(filepath.Join(real, "good.plg"), []byte("<PLUGIN/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readPluginInstaller("good"); err != nil || string(got) != "<PLUGIN/>" {
+		t.Errorf("readPluginInstaller = %q, %v", got, err)
+	}
+}

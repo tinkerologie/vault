@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,7 +89,7 @@ func checkPluginConfigDir(dir string) error {
 	if _, err := safepath.CheckFolderLocation(dir); err != nil {
 		return err
 	}
-	base, err := evalExistingPrefix(pluginsDir)
+	base, err := pluginsRoot()
 	if err != nil {
 		return err
 	}
@@ -100,6 +101,47 @@ func checkPluginConfigDir(dir string) error {
 		return fmt.Errorf("plugin config directory %s resolves outside %s", dir, pluginsDir)
 	}
 	return nil
+}
+
+// pluginsRoot returns pluginsDir after checking that no symlink leads to it, so
+// a replaced plugins directory cannot carry backups or restores elsewhere.
+func pluginsRoot() (string, error) {
+	clean := filepath.Clean(pluginsDir)
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", err
+	}
+	if resolved != clean {
+		return "", fmt.Errorf("plugins directory %s is reached through a symlink", pluginsDir)
+	}
+	return resolved, nil
+}
+
+// openPluginsRoot opens pluginsDir through a handle that follows no symlinks.
+func openPluginsRoot() (*os.Root, error) {
+	dir, err := pluginsRoot()
+	if err != nil {
+		return nil, err
+	}
+	return safepath.OpenPinnedDir(dir)
+}
+
+// readPluginInstaller reads <pluginsDir>/<name>.plg, refusing anything but a
+// regular file so a planted symlink cannot pull another file into the backup.
+func readPluginInstaller(name string) ([]byte, error) {
+	root, err := openPluginsRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name + ".plg")
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s.plg is not a regular file", name)
+	}
+	return root.ReadFile(name + ".plg")
 }
 
 // PluginPath returns the canonical config directory for a plugin under
@@ -189,12 +231,12 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	progress(item.Name, 10, "copying plugin file")
 	plgSrc := filepath.Join(pluginsDir, pluginName+".plg")
 	plgDst := filepath.Join(destDir, pluginName+".plg")
-	if _, err := os.Stat(plgSrc); err != nil {
+	data, err := readPluginInstaller(pluginName)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("plugin file not found: %w", err)
 	}
-	data, err := os.ReadFile(plgSrc) // #nosec G304 — pluginName validated by normalizeRestoreComponent above
 	if err != nil {
-		return nil, fmt.Errorf("reading plugin file: %w", err)
+		return nil, fmt.Errorf("reading plugin file %s: %w", plgSrc, err)
 	}
 	if err := os.WriteFile(plgDst, data, 0644); err != nil {
 		return nil, fmt.Errorf("writing plugin file: %w", err)
@@ -509,7 +551,7 @@ func (h *PluginHandler) restorePluginInstaller(ctx context.Context, item BackupI
 // plugins directory, refusing to follow a symlink at that name. name must already
 // be a validated single component.
 func writePluginInstaller(name string, data []byte) error {
-	root, err := os.OpenRoot(pluginsDir)
+	root, err := openPluginsRoot()
 	if err != nil {
 		return err
 	}

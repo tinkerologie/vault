@@ -427,7 +427,17 @@ func cleanStageDir(stageBase string) {
 		log.Printf("tempdir: not cleaning %s: it is not a real directory", stageBase)
 		return
 	}
-	root, err := os.OpenRoot(stageBase)
+	// Pinned from the filesystem root after resolving, so an ancestor swapped
+	// for a symlink cannot move the deletion to another directory.
+	resolved, err := filepath.EvalSymlinks(stageBase)
+	if err == nil {
+		_, err = safepath.CheckFolderLocation(resolved)
+	}
+	if err != nil {
+		log.Printf("tempdir: not cleaning %s: %v", stageBase, err)
+		return
+	}
+	root, err := safepath.OpenPinnedDir(resolved)
 	if err != nil {
 		log.Printf("tempdir: not cleaning %s: %v", stageBase, err)
 		return

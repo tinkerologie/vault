@@ -794,3 +794,24 @@ func TestMkdirPinnedTempRefusesSwappedSymlink(t *testing.T) {
 		t.Fatal("unresolvable stage location accepted")
 	}
 }
+
+// Cleanup is pinned after resolving, so it still works through a legitimate
+// symlinked ancestor but refuses a stage location that resolves into a system tree.
+func TestCleanStageDirResolvesAncestors(t *testing.T) {
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, StageDirName, "backup-1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "pool")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(filepath.Join(link, StageDirName))
+	if _, err := os.Lstat(filepath.Join(real, StageDirName)); !os.IsNotExist(err) {
+		t.Fatalf("stage dir behind a legitimate symlink not cleaned: %v", err)
+	}
+	cleanStageDir("/etc")
+	if _, err := os.Stat("/etc/hosts"); err != nil {
+		t.Fatal(err)
+	}
+}
