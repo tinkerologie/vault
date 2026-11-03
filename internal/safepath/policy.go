@@ -106,13 +106,9 @@ func CheckSnapshotLocation(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Re-anchored element by element so a name like "backups..2026.db" stays
-	// valid while the path reaching Lstat is provably free of traversal.
-	anchored, err := NormalizeAbsoluteUnderRoots(cleaned, []string{filepath.VolumeName(cleaned) + string(filepath.Separator)})
-	if err != nil {
-		return "", fmt.Errorf("snapshot path %q: %w", cleaned, err)
-	}
-	info, err := os.Lstat(anchored)
+	// Inspected through a handle pinned to the resolved parent rather than by
+	// pathname, so the answer is about the file in the checked directory.
+	info, err := lstatPinned(cleaned)
 	if errors.Is(err, fs.ErrNotExist) {
 		return cleaned, nil
 	}
@@ -140,6 +136,21 @@ func ResolvesUnderRoots(p string, roots []string) bool {
 		}
 	}
 	return false
+}
+
+// lstatPinned returns Lstat of p's final component, read through a pinned handle
+// to p's resolved parent directory.
+func lstatPinned(p string) (os.FileInfo, error) {
+	parent, err := resolveExistingPrefix(filepath.Dir(p))
+	if err != nil {
+		return nil, err
+	}
+	root, err := OpenPinnedDir(parent)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Lstat(filepath.Base(p))
 }
 
 // checkPolicy applies allowed to p as written and to its resolved form, and

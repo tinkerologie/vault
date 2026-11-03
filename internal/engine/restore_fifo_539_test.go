@@ -34,7 +34,6 @@ func callWithTimeout(t *testing.T, fn func() (*os.File, error)) error {
 func TestRestoreOpenRefusesFIFO(t *testing.T) {
 	t.Parallel()
 	openers := map[string]func(string) (*os.File, error){
-		"openRestoreFile":        func(p string) (*os.File, error) { return openRestoreFile(p, 0o644) },
 		"openRestoreDestination": func(p string) (*os.File, error) { return openRestoreDestination(p, p, 0o644) },
 	}
 	for name, open := range openers {
@@ -71,7 +70,6 @@ func TestRestoreOpenTruncatesRegularFileAndRefusesSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, open := range []func(string) (*os.File, error){
-		func(p string) (*os.File, error) { return openRestoreFile(p, 0o644) },
 		func(p string) (*os.File, error) { return openRestoreDestination(p, p, 0o644) },
 	} {
 		if err := os.WriteFile(path, []byte("old contents"), 0o600); err != nil {
@@ -86,7 +84,8 @@ func TestRestoreOpenTruncatesRegularFileAndRefusesSymlink(t *testing.T) {
 			t.Fatalf("not truncated: %d bytes", info.Size())
 		}
 	}
-	if f, err := openRestoreFile(filepath.Join(dir, "no-such-dir", "f"), 0o644); err == nil {
+	missing := filepath.Join(dir, "no-such-dir", "f")
+	if f, err := openRestoreDestination(missing, missing, 0o644); err == nil {
 		_ = f.Close()
 		t.Fatal("opened a path with a missing parent")
 	}
@@ -94,7 +93,7 @@ func TestRestoreOpenTruncatesRegularFileAndRefusesSymlink(t *testing.T) {
 	if err := os.Symlink(path, link); err != nil {
 		t.Fatal(err)
 	}
-	if f, err := openRestoreFile(link, 0o644); err == nil {
+	if f, err := openRestoreDestination(link, link, 0o644); err == nil {
 		_ = f.Close()
 		t.Fatal("followed a symlink")
 	}
