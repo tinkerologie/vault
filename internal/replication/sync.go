@@ -179,7 +179,7 @@ type SyncResult struct {
 func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (result *SyncResult, err error) {
 	// A source that does not exist leaves no gate behind.
 	if _, err := s.db.GetReplicationSource(sourceID); err != nil {
-		return nil, fmt.Errorf("get replication source: %w", err)
+		return nil, fmt.Errorf("get replication source %d: %w", sourceID, err)
 	}
 	// Registered before the source is read for the sync, so a destination
 	// change either finishes first, and this sync reads the new destination,
@@ -187,7 +187,7 @@ func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (result *Sync
 	defer s.beginSync(sourceID)()
 	src, err := s.db.GetReplicationSource(sourceID)
 	if err != nil {
-		return nil, fmt.Errorf("get replication source: %w", err)
+		return nil, fmt.Errorf("get replication source %d: %w", sourceID, err)
 	}
 
 	// Sync processes data from another machine on a goroutine of its own, where

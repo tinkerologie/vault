@@ -2,7 +2,9 @@ package replication
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,8 +28,8 @@ func TestSourceGatesMissingSources610(t *testing.T) {
 		if err := s.UpdateSource(id, func(bool) error { called = true; return nil }); !errors.Is(err, db.ErrNotFound) || called {
 			t.Fatalf("UpdateSource(%d) = %v (update called %v), want db.ErrNotFound", id, err, called)
 		}
-		if _, err := s.SyncSource(id, nil); err == nil {
-			t.Fatalf("SyncSource(%d) succeeded for a missing source", id)
+		if _, err := s.SyncSource(id, nil); !errors.Is(err, db.ErrNotFound) || !strings.Contains(err.Error(), fmt.Sprintf("source %d:", id)) {
+			t.Fatalf("SyncSource(%d) = %v, want db.ErrNotFound naming the source", id, err)
 		}
 	}
 	if n := gateCount(s); n != 0 {
