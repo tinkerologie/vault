@@ -3004,6 +3004,9 @@ func itemManifestIDs(metadata string) ([]dedup.ID, error) {
 	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
 		return nil, fmt.Errorf("unreadable metadata: %w", err)
 	}
+	if meta == nil { // "null": no writer emits it, so it may hide item_manifests
+		return nil, errors.New("metadata is null")
+	}
 	raw, present := meta["item_manifests"]
 	if !present {
 		return nil, nil
@@ -4571,6 +4574,16 @@ func (r *Runner) configuredZFSDataset(jobID int64, itemName string) (string, err
 		}
 		if imported, _ := s[importedItemSetting].(bool); imported || job.SourceID != 0 {
 			return "", nil
+		}
+		// Older importers left no marker on items, but every importer recorded
+		// its backups as "imported" runs. A job whose first run is one was
+		// created by an import, so its item names came from a backup.
+		first, err := r.db.FirstJobRunStatus(jobID)
+		if err != nil {
+			return "", fmt.Errorf("checking how job %d was created: %w", jobID, err)
+		}
+		if first == db.JobRunStatusImported {
+			return "", fmt.Errorf("ZFS item %q was created by importing a backup, so its name is not a trusted target: set its dataset on the job, then restore again", itemName)
 		}
 		return ji.ItemName, nil
 	}
@@ -7288,7 +7301,7 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 
 		run := db.JobRun{
 			JobID:       job.ID,
-			Status:      "imported",
+			Status:      db.JobRunStatusImported,
 			BackupType:  backupType,
 			ItemsTotal:  itemsTotal,
 			ItemsDone:   itemsDone,

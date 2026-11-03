@@ -3,6 +3,7 @@ package runner
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
 )
@@ -66,5 +67,51 @@ func TestZFSDatasetFromTrustedItemName(t *testing.T) {
 		if !strings.Contains(it.Settings, `"imported":true`) {
 			t.Errorf("imported ZFS item not marked: %s", it.Settings)
 		}
+	}
+}
+
+// Items an older importer created carry no marker, but every importer has
+// recorded its backups as runs with status "imported". A job whose first run is
+// one came from an import, so its item names are not trusted.
+func TestZFSDatasetRefusesLegacyImportedItems(t *testing.T) {
+	t.Parallel()
+	r, database, root := setupTestRunner(t)
+	dest := createNamedLocalDest(t, database, "zfs-legacy", root)
+	legacy, err := database.CreateJob(db.Job{Name: "legacy", BackupTypeChain: "full", StorageDestID: dest.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddJobItem(db.JobItem{JobID: legacy, ItemType: "zfs", ItemName: "tank/victim", Settings: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateImportedJobRun(db.JobRun{JobID: legacy, Status: "imported", BackupType: "full"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// A local job that later imported backups keeps trusting its own items.
+	local, err := database.CreateJob(db.Job{Name: "local", BackupTypeChain: "full", StorageDestID: dest.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddJobItem(db.JobItem{JobID: local, ItemType: "zfs", ItemName: "tank/data", Settings: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"completed", "imported"} {
+		if _, err := database.CreateJobRun(db.JobRun{JobID: local, Status: status, BackupType: "full"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got, err := r.configuredZFSDataset(legacy, "tank/victim"); err == nil || got != "" || !strings.Contains(err.Error(), "dataset") {
+		t.Fatalf("legacy imported item = %q, %v, want a refusal naming the fix", got, err)
+	}
+	if got, err := r.configuredZFSDataset(local, "tank/data"); err != nil || got != "tank/data" {
+		t.Fatalf("local item = %q, %v", got, err)
+	}
+	// The override: a dataset set on the item is used as is.
+	if _, err := database.Exec(`UPDATE job_items SET settings = '{"dataset":"tank/restored"}' WHERE job_id = ?`, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.configuredZFSDataset(legacy, "tank/victim"); err != nil || got != "tank/restored" {
+		t.Fatalf("explicit dataset = %q, %v", got, err)
 	}
 }

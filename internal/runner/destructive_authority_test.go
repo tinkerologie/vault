@@ -139,13 +139,14 @@ func TestOrphanScanFailsClosed(t *testing.T) {
 func TestCollectLiveManifestIDsFailsClosed(t *testing.T) {
 	t.Parallel()
 	for name, meta := range map[string]string{
-		"bad json": "{",
-		"bad hex":  `{"item_manifests":{"a":"zz"}}`,
-		"short id": `{"item_manifests":{"a":"abcd"}}`,
-		"not text": `{"item_manifests":{"a":5}}`,
-		"array":    `{"item_manifests":["ab"]}`,
-		"null":     `{"item_manifests":null}`,
-		"string":   `{"item_manifests":"ab"}`,
+		"bad json":      "{",
+		"bad hex":       `{"item_manifests":{"a":"zz"}}`,
+		"short id":      `{"item_manifests":{"a":"abcd"}}`,
+		"not text":      `{"item_manifests":{"a":5}}`,
+		"array":         `{"item_manifests":["ab"]}`,
+		"null":          `{"item_manifests":null}`,
+		"metadata null": `null`,
+		"string":        `{"item_manifests":"ab"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

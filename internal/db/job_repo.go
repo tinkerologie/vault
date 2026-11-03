@@ -356,6 +356,21 @@ func (d *DB) CreateJobRun(run JobRun) (int64, error) {
 	return res.LastInsertId()
 }
 
+// JobRunStatusImported is the status of a run that records a backup imported
+// from storage. Every version of the importer has written it.
+const JobRunStatusImported = "imported"
+
+// FirstJobRunStatus returns the status of a job's earliest run, or "" if it has
+// none. An import creates a job together with its imported runs.
+func (d *DB) FirstJobRunStatus(jobID int64) (string, error) {
+	var status string
+	err := d.QueryRow(`SELECT status FROM job_runs WHERE job_id = ? ORDER BY id LIMIT 1`, jobID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return status, err
+}
+
 // CreateImportedJobRun creates a synthetic JobRun for a backup imported
 // from storage, preserving the original backup timestamp on both
 // started_at and completed_at so the History page reflects when the
