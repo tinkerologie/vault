@@ -285,7 +285,7 @@ func TestAnomalyList_CursorPagination(t *testing.T) {
 
 	// Page 1: limit=3.
 	req1 := newReq(http.MethodGet, "/api/v1/anomalies", nil)
-	req1.URL.RawQuery = "limit=3&state=open&since=-1d"
+	req1.URL.RawQuery = "limit=3&state=open&since=-1d&order=id"
 	w1 := httptest.NewRecorder()
 	h.List(w1, req1)
 
@@ -314,7 +314,7 @@ func TestAnomalyList_CursorPagination(t *testing.T) {
 
 	// Page 2: follow the cursor.
 	req2 := newReq(http.MethodGet, "/api/v1/anomalies", nil)
-	req2.URL.RawQuery = "limit=3&state=open&since=-1d&cursor=" + nextCursor
+	req2.URL.RawQuery = "limit=3&state=open&since=-1d&order=id&cursor=" + nextCursor
 	w2 := httptest.NewRecorder()
 	h.List(w2, req2)
 
@@ -371,7 +371,7 @@ func TestAnomalyList_NextCursorAbsentWhenLastPage(t *testing.T) {
 func listAnomalyPage(t *testing.T, h *AnomalyHandler, limit int, cursor string) ([]int64, string) {
 	t.Helper()
 	req := newReq(http.MethodGet, "/api/v1/anomalies", nil)
-	q := url.Values{"state": {"open"}, "since": {"-1d"}, "limit": {strconv.Itoa(limit)}}
+	q := url.Values{"state": {"open"}, "since": {"-1d"}, "limit": {strconv.Itoa(limit)}, "order": {"id"}}
 	if cursor != "" {
 		q.Set("cursor", cursor)
 	}
@@ -486,6 +486,72 @@ func TestAnomalyList_RefreshDuringPagingKeepsRow(t *testing.T) {
 		cursor = next
 	}
 	assertEachOnce(t, got, want)
+}
+
+// The Anomalies page's first page and the pages after it share one order,
+// so an old row seen again before paging starts is neither repeated nor
+// skipped (#587).
+func TestAnomalyList_RefreshBeforeFirstPageKeepsOrder(t *testing.T) {
+	h, d := newAnomalyHandler(t)
+	want := seedSameSecondAnomalies(t, d, 7)
+	if err := d.RefreshOpenAnomaly(want[0], 1, nil, time.Now(), "info"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	var got []int64
+	cursor := ""
+	for range 10 {
+		ids, next := listAnomalyPage(t, h, 3, cursor)
+		got = append(got, ids...)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	assertEachOnce(t, got, want)
+}
+
+// The Dashboard asks for one page without order=id. An old anomaly seen
+// again must come first there, and no cursor is issued, because following
+// one would switch to id order mid-list.
+func TestAnomalyList_SnapshotPutsRecentlySeenFirst(t *testing.T) {
+	h, d := newAnomalyHandler(t)
+	ids := seedSameSecondAnomalies(t, d, 3)
+	if err := d.RefreshOpenAnomaly(ids[0], 1, nil, time.Now(), "critical"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	req := newReq(http.MethodGet, "/api/v1/anomalies", nil)
+	req.URL.RawQuery = "state=open&limit=3"
+	w := httptest.NewRecorder()
+	h.List(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Anomalies  []db.Anomaly `json:"anomalies"`
+		NextCursor string       `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Anomalies) != 3 || resp.Anomalies[0].ID != ids[0] {
+		t.Errorf("first anomaly = %v, want the re-seen id %d", resp.Anomalies, ids[0])
+	}
+	if resp.NextCursor != "" {
+		t.Errorf("next_cursor = %q, want none without order=id", resp.NextCursor)
+	}
+}
+
+func TestAnomalyList_InvalidOrder(t *testing.T) {
+	h, _ := newAnomalyHandler(t)
+	req := newReq(http.MethodGet, "/api/v1/anomalies", nil)
+	req.URL.RawQuery = "order=last_seen"
+	w := httptest.NewRecorder()
+	h.List(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
 }
 
 // A cursor issued before the upgrade still returns 200, so a browser tab

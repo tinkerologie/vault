@@ -29,7 +29,9 @@ describe('Anomalies load more', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Load more' }))
     await screen.findByLabelText('Select anomaly 2')
 
-    expect(api.listAnomalies).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'v2:3' }))
+    // The first page uses the same id order as the pages after it.
+    expect(api.listAnomalies).toHaveBeenNthCalledWith(1, expect.objectContaining({ order: 'id', cursor: undefined }))
+    expect(api.listAnomalies).toHaveBeenLastCalledWith(expect.objectContaining({ order: 'id', cursor: 'v2:3' }))
     expect(screen.getAllByLabelText('Select anomaly 1')).toHaveLength(1)
   })
 })

@@ -463,7 +463,7 @@ func TestAnomalyRepoListKeysetPagination(t *testing.T) {
 	pages := 0
 
 	for {
-		filter := AnomalyFilter{Limit: 2, Cursor: cursor}
+		filter := AnomalyFilter{Limit: 2, Cursor: cursor, PageByID: true}
 		rows, err := d.ListAnomalies(filter)
 		if err != nil {
 			t.Fatalf("ListAnomalies page %d: %v", pages, err)
@@ -962,5 +962,46 @@ func TestAnomalyRepoPruneOldAnomalies(t *testing.T) {
 	// Recent ack row still present.
 	if _, err := d.GetAnomaly(recentAckID); err != nil {
 		t.Errorf("recent ack row should survive prune: %v", err)
+	}
+}
+
+// TestAnomalyRepoListOrder verifies a one-page snapshot puts an old anomaly
+// that was seen again first, while paging mode keeps id order.
+func TestAnomalyRepoListOrder(t *testing.T) {
+	d := setupTestDB(t)
+	base := time.Now().UTC().Add(-time.Hour)
+	ids := make([]int64, 2)
+	for i, fp := range []string{"fp-order-old", "fp-order-new"} {
+		a := makeAnomaly(fp)
+		a.FirstSeenAt = base.Add(time.Duration(i) * time.Minute)
+		a.LastSeenAt = a.FirstSeenAt
+		if _, err := d.InsertOpenAnomaly(a); err != nil {
+			t.Fatalf("insert %s: %v", fp, err)
+		}
+		row, err := d.GetOpenAnomalyByFingerprint(fp)
+		if err != nil {
+			t.Fatalf("fetch %s: %v", fp, err)
+		}
+		ids[i] = row.ID
+	}
+	if err := d.RefreshOpenAnomaly(ids[0], 1, nil, time.Now().UTC(), "critical"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		filter AnomalyFilter
+		first  int64
+	}{
+		{"snapshot", AnomalyFilter{}, ids[0]},
+		{"paging", AnomalyFilter{PageByID: true}, ids[1]},
+	} {
+		rows, err := d.ListAnomalies(tc.filter)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(rows) != 2 || rows[0].ID != tc.first {
+			t.Errorf("%s: first row = %v, want id %d", tc.name, rows, tc.first)
+		}
 	}
 }

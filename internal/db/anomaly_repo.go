@@ -215,6 +215,9 @@ type AnomalyFilter struct {
 	Since      *time.Time
 	Limit      int
 	Cursor     string // opaque; see EncodeAnomalyCursor
+	// PageByID orders by id for keyset paging. A Cursor implies it. Without
+	// either, rows come most recently seen first, for one-page snapshots.
+	PageByID bool
 }
 
 // anomalyCursorPrefix marks cursors that page on the row id.
@@ -252,9 +255,11 @@ func DecodeAnomalyCursor(cursor string) (id int64, legacy bool, err error) {
 	return 0, true, nil
 }
 
-// ListAnomalies returns anomaly rows matching filter, newest first by id
-// (the order they were first detected). Keyset pagination via Cursor keeps
-// page fetches efficient on large tables.
+// ListAnomalies returns anomaly rows matching filter. With PageByID or a
+// Cursor they come newest first by id, the order they were first detected:
+// the id never changes, so keyset paging never skips or repeats a row.
+// Otherwise they come most recently seen first, so a one-page snapshot keeps
+// an old anomaly that was seen again.
 func (d *DB) ListAnomalies(filter AnomalyFilter) ([]Anomaly, error) {
 	limit := filter.Limit
 	if limit <= 0 {
@@ -318,7 +323,11 @@ func (d *DB) ListAnomalies(filter AnomalyFilter) ([]Anomaly, error) {
 		// aikido-ignore-next-line AIK_go_G202 -- conditions are constant column predicates (e.g. "scope_id=?"); every filter value is bound via args and is never interpolated into the SQL string.
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY id DESC LIMIT ?"
+	if filter.PageByID || filter.Cursor != "" {
+		query += " ORDER BY id DESC LIMIT ?"
+	} else {
+		query += " ORDER BY last_seen_at DESC, id DESC LIMIT ?"
+	}
 	args = append(args, limit)
 
 	rows, err := d.Query(query, args...)

@@ -502,21 +502,24 @@ describe('poll mode', () => {
     vi.useFakeTimers()
     try {
       await loadWs({ liveMode: 'poll' })
-      const a1 = { id: 1, state: 'open' }
-      const a2 = { id: 2, state: 'open' }
+      // Pages come newest-detected first; a1 is older but was seen again.
+      const a1 = { id: 1, state: 'open', last_seen_at: '2026-01-02T00:00:00Z' }
+      const a2 = { id: 2, state: 'open', last_seen_at: '2026-01-01T00:00:00.5Z' }
       const urls = []
       fetchMock.mockImplementation(async (url) => {
         if (!String(url).includes('/anomalies')) return jsonResponse({ active: false, queue: [] })
         urls.push(new URL(url, 'http://x').searchParams)
         return urls.length === 1
-          ? jsonResponse({ anomalies: [a1], next_cursor: 'c2' })
-          : jsonResponse({ anomalies: [a2], next_cursor: '' })
+          ? jsonResponse({ anomalies: [a2], next_cursor: 'c2' })
+          : jsonResponse({ anomalies: [a1], next_cursor: '' })
       })
       ws.connectWs()
       await vi.advanceTimersByTimeAsync(15 * 2000)
       expect(urls).toHaveLength(2)
       expect(urls[0].get('since')).toBe('1970-01-01T00:00:00Z')
+      expect(urls[0].get('order')).toBe('id')
       expect(urls[1].get('cursor')).toBe('c2')
+      // Shared list is most recently seen first, as the Dashboard card expects.
       expect(anomalies.setOpenList).toHaveBeenLastCalledWith([a1, a2])
       ws.disconnectWs()
     } finally {
@@ -553,8 +556,8 @@ describe('poll mode', () => {
       await loadWs({ liveMode: 'poll' })
       const seen = []
       ws.onWsMessage((m) => seen.push(m))
-      const a1 = { id: 1, state: 'open', title: 'a' }
-      const a2 = { id: 2, state: 'open', title: 'b' }
+      const a1 = { id: 1, state: 'open', title: 'a', last_seen_at: '2026-01-02T00:00:00Z' }
+      const a2 = { id: 2, state: 'open', title: 'b', last_seen_at: '2026-01-01T00:00:00Z' }
       const responses = [[a1, a2], [{ ...a1, title: 'changed' }, a2], [a2], [a2]]
       const anomalyUrls = []
       fetchMock.mockImplementation(async (url) => {

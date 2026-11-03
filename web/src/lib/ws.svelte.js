@@ -126,6 +126,10 @@ function emitMessage(msg) {
   }
 }
 
+// Most recently seen first, as a one-page list comes, so the Dashboard card's
+// top rows keep an old anomaly that was seen again.
+const bySeenNewest = (a, b) => (Date.parse(b.last_seen_at) || 0) - (Date.parse(a.last_seen_at) || 0) || b.id - a.id
+
 /**
  * Every open anomaly, whatever its age. Returns null unless the whole set was
  * read, because replacing the shared list with part of it would drop the rest.
@@ -134,7 +138,7 @@ async function fetchOpenAnomalies(signal) {
   const list = []
   let cursor = ''
   for (let page = 0; page < ANOMALY_POLL_MAX_PAGES; page++) {
-    const query = `state=open&since=${encodeURIComponent(ANOMALY_POLL_SINCE)}&limit=${ANOMALY_POLL_LIMIT}` +
+    const query = `state=open&since=${encodeURIComponent(ANOMALY_POLL_SINCE)}&limit=${ANOMALY_POLL_LIMIT}&order=id` +
       (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
     const { url, options } = buildApiRequest('GET', `/anomalies?${query}`)
     const res = await fetch(url, { ...options, signal })
@@ -194,7 +198,7 @@ async function pollAnomalies() {
       if (one.ok || one.status === 404) goneAnomalies = goneAnomalies.filter((g) => g !== id)
     }
     knownAnomalies = next
-    setOpenList(list)
+    setOpenList([...list].sort(bySeenNewest))
   } catch {
     // Best-effort: the next check catches up.
   } finally {

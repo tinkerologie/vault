@@ -117,6 +117,9 @@
       scope_kind: filterScope || undefined,
       since: filterSince || undefined,
       limit: 50,
+      // Page in id order from the first page on, so "Load more" never skips
+      // or repeats a row.
+      order: 'id',
       cursor: cursor || undefined,
     }
   }
