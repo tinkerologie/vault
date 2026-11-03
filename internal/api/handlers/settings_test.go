@@ -606,7 +606,7 @@ func TestSetEncryption_HappyPath(t *testing.T) {
 	t.Parallel()
 	h := newTestSettingsHandler(t)
 
-	body := `{"passphrase":"hunter42!"}`
+	body := `{"passphrase":"hunter-orchid-42"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.SetEncryption(w, req)
@@ -647,13 +647,34 @@ func TestSetEncryption_TooShortPassphrase(t *testing.T) {
 	}
 }
 
+// Length alone is not enough: an easily guessed passphrase protects nothing
+// once a backup is copied (#553).
+func TestSetEncryption_RefusesWeakPassphrase(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+	for _, weak := range []string{"longenough", "Password1234!", "123456789012"} {
+		w := httptest.NewRecorder()
+		h.SetEncryption(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
+			strings.NewReader(`{"passphrase":"`+weak+`"}`)))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%q: status = %d", weak, w.Code)
+		}
+		if strings.Contains(w.Body.String(), weak) {
+			t.Errorf("%q: response repeats the passphrase", weak)
+		}
+	}
+	if hash, _ := h.db.GetSetting("encryption_passphrase_hash", ""); hash != "" {
+		t.Error("a weak passphrase was stored")
+	}
+}
+
 func TestSetEncryption_EmptyPassphraseDisables(t *testing.T) {
 	t.Parallel()
 	h := newTestSettingsHandler(t)
 
 	// First enable it.
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
-		strings.NewReader(`{"passphrase":"hunter42!"}`))
+		strings.NewReader(`{"passphrase":"hunter-orchid-42"}`))
 	w1 := httptest.NewRecorder()
 	h.SetEncryption(w1, req1)
 	if w1.Code != http.StatusOK {
@@ -698,7 +719,7 @@ func TestGetEncryptionStatus_Enabled(t *testing.T) {
 
 	// Enable encryption first.
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
-		strings.NewReader(`{"passphrase":"hunter42!"}`))
+		strings.NewReader(`{"passphrase":"hunter-orchid-42"}`))
 	h.SetEncryption(httptest.NewRecorder(), req1)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/encryption", nil)
@@ -744,12 +765,12 @@ func TestVerifyEncryption_Correct(t *testing.T) {
 
 	// Set passphrase first.
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
-		strings.NewReader(`{"passphrase":"hunter42!"}`))
+		strings.NewReader(`{"passphrase":"hunter-orchid-42"}`))
 	h.SetEncryption(httptest.NewRecorder(), req1)
 
 	// Verify with correct passphrase.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption/verify",
-		strings.NewReader(`{"passphrase":"hunter42!"}`))
+		strings.NewReader(`{"passphrase":"hunter-orchid-42"}`))
 	w := httptest.NewRecorder()
 	h.VerifyEncryption(w, req)
 
@@ -771,12 +792,12 @@ func TestVerifyEncryption_Incorrect(t *testing.T) {
 
 	// Set passphrase first.
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
-		strings.NewReader(`{"passphrase":"hunter42!"}`))
+		strings.NewReader(`{"passphrase":"hunter-orchid-42"}`))
 	h.SetEncryption(httptest.NewRecorder(), req1)
 
 	// Verify with wrong passphrase.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption/verify",
-		strings.NewReader(`{"passphrase":"wrongpass!"}`))
+		strings.NewReader(`{"passphrase":"wrong-orchid-pass"}`))
 	w := httptest.NewRecorder()
 	h.VerifyEncryption(w, req)
 
@@ -833,7 +854,7 @@ func TestGetEncryptionPassphrase_HappyPath(t *testing.T) {
 
 	// Set passphrase first.
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
-		strings.NewReader(`{"passphrase":"hunter42!"}`))
+		strings.NewReader(`{"passphrase":"hunter-orchid-42"}`))
 	h.SetEncryption(httptest.NewRecorder(), req1)
 
 	// Retrieve it.
@@ -848,8 +869,8 @@ func TestGetEncryptionPassphrase_HappyPath(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["passphrase"] != "hunter42!" {
-		t.Errorf("passphrase = %q, want hunter42!", resp["passphrase"])
+	if resp["passphrase"] != "hunter-orchid-42" {
+		t.Errorf("passphrase = %q, want hunter-orchid-42", resp["passphrase"])
 	}
 }
 
@@ -1373,5 +1394,15 @@ func TestUpdate_LogLevel_ConcurrentInterleaving(t *testing.T) {
 
 	if stored != finalHook {
 		t.Errorf("stored setting %q does not match final applied hook level %q", stored, finalHook)
+	}
+}
+
+func TestSettingsUpdate_RefusesHostKeyPins(t *testing.T) {
+	h := newTestSettingsHandler(t)
+	w := httptest.NewRecorder()
+	h.Update(w, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"`+db.SFTPHostKeyPinPrefix+`nas:22":"SHA256:forged"}`)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", w.Code)
 	}
 }

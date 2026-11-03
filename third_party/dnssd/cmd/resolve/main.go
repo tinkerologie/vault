@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/brutella/dnssd"
+	"github.com/brutella/dnssd/cmd/internal/termsafe" // Vault patch: escape untrusted display data
 )
 
 var instanceFlag = flag.String("Name", "Service", "Service Name")
@@ -36,9 +37,9 @@ func main() {
 		if e.ServiceInstanceName() == instance {
 			text := ""
 			for key, value := range e.Text {
-				text += fmt.Sprintf("%s=%s", key, value)
+				text += fmt.Sprintf("%s=%s", termsafe.String(key), termsafe.String(value)) // Vault patch
 			}
-			fmt.Printf("%s	%s can be reached at %s %v\n", time.Now().Format(timeFormat), e.ServiceInstanceName(), e.IPs, text)
+			fmt.Printf("%s	%s can be reached at %s %v\n", time.Now().Format(timeFormat), termsafe.String(e.ServiceInstanceName()), e.IPs, text) // Vault patch
 		}
 	}
 

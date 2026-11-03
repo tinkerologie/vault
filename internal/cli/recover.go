@@ -52,6 +52,8 @@ var (
 		PersistentPreRun: func(*cobra.Command, []string) {
 			if !recoverVerbose {
 				log.SetOutput(io.Discard)
+			} else {
+				log.SetOutput(terminalLogWriter{log.Writer()})
 			}
 			// Piping output into head or less must not kill a run before it
 			// removes its scratch files: a closed pipe then fails the write
@@ -86,7 +88,7 @@ Typical use:
 		Use:   "list",
 		Short: "List the backups on the destination",
 		Args:  cobra.NoArgs,
-		RunE:  runRecoverList,
+		RunE:  safeRecoverErrors(runRecoverList),
 		// Errors here are about backups or connection details, not flags;
 		// the usage text would only bury them.
 		SilenceUsage: true,
@@ -96,7 +98,7 @@ Typical use:
 		Use:   "contents",
 		Short: "List the files of one item in a backup",
 		Args:  cobra.NoArgs,
-		RunE:  runRecoverContents,
+		RunE:  safeRecoverErrors(runRecoverContents),
 		// Errors here are about backups or connection details, not flags;
 		// the usage text would only bury them.
 		SilenceUsage: true,
@@ -118,7 +120,7 @@ macOS; Windows skips all links. Absolute links, device files and file
 ownership are never recreated. With --raw, each step of an incremental or
 differential chain is copied into its own folder.`,
 		Args: cobra.NoArgs,
-		RunE: runRecoverExtract,
+		RunE: safeRecoverErrors(runRecoverExtract),
 		// Errors here are about backups or connection details, not flags;
 		// the usage text would only bury them.
 		SilenceUsage: true,
@@ -256,7 +258,7 @@ func runRecoverList(cmd *cobra.Command, _ []string) error {
 	for _, p := range points {
 		items := make([]string, 0, len(p.Items))
 		for _, it := range p.Items {
-			items = append(items, it.Name+" ("+it.Type+")")
+			items = append(items, format.Terminal(it.Name+" ("+it.Type+")"))
 		}
 		enc := p.Encryption
 		if p.IsDedup() {
@@ -270,7 +272,7 @@ func runRecoverList(cmd *cobra.Command, _ []string) error {
 		if !p.CreatedAt.IsZero() {
 			created = p.CreatedAt.Local().Format("2006-01-02 15:04")
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.StoragePath, created, orDash(p.BackupType), orDash(enc), strings.Join(items, ", "))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", format.Terminal(p.StoragePath), created, format.Terminal(orDash(p.BackupType)), format.Terminal(orDash(enc)), strings.Join(items, ", "))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -307,12 +309,12 @@ func runRecoverContents(cmd *cobra.Command, _ []string) error {
 	files := 0
 	for _, e := range entries {
 		if e.IsDir {
-			fmt.Fprintf(out, "%12s  %s/\n", "", e.Path)
+			fmt.Fprintf(out, "%12s  %s/\n", "", format.Terminal(e.Path))
 			continue
 		}
 		files++
 		total += e.Size
-		fmt.Fprintf(out, "%12s  %s\n", format.Bytes(float64(e.Size)), e.Path)
+		fmt.Fprintf(out, "%12s  %s\n", format.Bytes(float64(e.Size)), format.Terminal(e.Path))
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "\n%d files, %s\n", files, format.Bytes(float64(total)))
 	return nil
@@ -351,7 +353,7 @@ func runRecoverExtract(cmd *cobra.Command, _ []string) error {
 		Raw:       recoverRaw,
 		SafeNames: safe,
 		Overwrite: recoverOverwrite,
-		Progress:  func(line string) { _, _ = fmt.Fprintln(errOut, line) },
+		Progress:  func(line string) { _, _ = fmt.Fprintln(errOut, format.Terminal(line)) },
 	})
 	if err != nil {
 		return err
@@ -360,10 +362,10 @@ func runRecoverExtract(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	for _, it := range rep.Items {
 		if it.Error != "" {
-			fmt.Fprintf(out, "%s: FAILED: %s\n", it.Item, it.Error)
+			fmt.Fprintf(out, "%s: FAILED: %s\n", format.Terminal(it.Item), format.Terminal(it.Error))
 			continue
 		}
-		fmt.Fprintf(out, "%s: %d files, %s -> %s\n", it.Item, it.Files, format.Bytes(float64(it.Bytes)), it.Dir)
+		fmt.Fprintf(out, "%s: %d files, %s -> %s\n", format.Terminal(it.Item), it.Files, format.Bytes(float64(it.Bytes)), format.Terminal(it.Dir))
 		printLimited(out, "  renamed", len(it.Renamed), func(i int) string {
 			return it.Renamed[i].From + " -> " + it.Renamed[i].To
 		})
@@ -395,11 +397,43 @@ func printLimited(out io.Writer, heading string, n int, line func(int) string) {
 	}
 	fmt.Fprintf(out, "%s (%d):\n", heading, n)
 	for i := 0; i < n && i < 20; i++ {
-		fmt.Fprintf(out, "    %s\n", line(i))
+		fmt.Fprintf(out, "    %s\n", format.Terminal(line(i)))
 	}
 	if n > 20 {
 		fmt.Fprintf(out, "    … and %d more, listed in %s\n", n-20, recoverReportName)
 	}
+}
+
+// safeRecoverErrors makes a command's error safe to print: errors can quote
+// names from the backup, and cobra writes them straight to the terminal.
+func safeRecoverErrors(run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		err := run(cmd, args)
+		if err == nil {
+			return nil
+		}
+		return errors.New(format.Terminal(err.Error()))
+	}
+}
+
+// terminalLogWriter escapes each --verbose log record, which can quote backup
+// metadata, and keeps the final newline that ends the record.
+type terminalLogWriter struct{ w io.Writer }
+
+func (l terminalLogWriter) Write(p []byte) (int, error) {
+	line, hadNewline := strings.CutSuffix(string(p), "\n")
+	safe := format.Terminal(line)
+	if hadNewline {
+		safe += "\n"
+	}
+	n, err := io.WriteString(l.w, safe)
+	if err != nil {
+		return 0, err
+	}
+	if n < len(safe) {
+		return 0, io.ErrShortWrite
+	}
+	return len(p), nil
 }
 
 func writeJSON(w io.Writer, v any) error {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/mount"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 var (
@@ -54,6 +55,7 @@ func runMountCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("open db %s: %w", mountDBVal, err)
 	}
 	defer database.Close()
+	storage.SetHostKeyPinner(database.PinSFTPHostKey)
 
 	keyPath := mountKey
 	if keyPath == "" {

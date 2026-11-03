@@ -314,7 +314,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for k := range incoming {
-		if protectedSettingKeys[k] {
+		if protectedSettingKeys[k] || strings.HasPrefix(k, db.SFTPHostKeyPinPrefix) {
 			respondError(w, http.StatusBadRequest, "cannot modify protected setting: "+k)
 			return
 		}
@@ -397,8 +397,8 @@ func (h *SettingsHandler) SetEncryption(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if len(req.Passphrase) < 8 {
-		respondError(w, http.StatusBadRequest, "passphrase must be at least 8 characters")
+	if err := crypto.CheckPassphraseStrength(req.Passphrase); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

@@ -198,8 +198,9 @@ Deduplicated destinations are sealed with the server's `vault.key`. After a
 recovery onto a server with a different key, `POST /storage/dedup-keys/rewrap`
 with `{"passphrase": "…"}` opens each one through its backup-password escrow
 (written by every dedup backup that ran with a backup password set) and
-re-seals it with this server's key; the previous `_vault/repo.json` is kept
-as `_vault/repo.json.<time>.bak`. An empty passphrase changes nothing and only
+re-seals it with this server's key. The previous `_vault/repo.json` is kept as
+`_vault/repo.json.<time>.bak` only until the new header has been verified, and
+then removed because it still opens with the old key. An empty passphrase changes nothing and only
 reports status. The response is
 `{"destinations": [{"storage_id", "name", "status", "error"}]}`, where
 `status` is `ok`, `rewrapped`, `not_initialised`, `locked_needs_passphrase`,

@@ -35,9 +35,9 @@ func RepoSubpaths() []string {
 	return []string{repoConfigPath, escrowPath, packsRoot, indexRootPath}
 }
 
-// HeaderBackups lists the repo.json copies RewrapMaster keeps
-// (_vault/repo.json.<time>.bak). They hold a sealed master key, so whoever
-// removes the repository removes these too. Their names vary, hence a
+// HeaderBackups lists the repo.json copies a rewrap leaves behind when it fails
+// or predates their automatic removal (_vault/repo.json.<time>.bak). They hold
+// a sealed master key, so whoever removes the repository removes these too. Their names vary, hence a
 // listing rather than an entry in RepoSubpaths.
 func HeaderBackups(a storage.Adapter) ([]string, error) {
 	entries, err := a.List(RepoRoot)

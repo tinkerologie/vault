@@ -30,6 +30,7 @@ func NewClient(baseURL string) (*Client, error) {
 		baseURL: normalizedBaseURL,
 		httpClient: &http.Client{
 			Timeout:       10 * time.Minute,
+			Transport:     peerTransport,
 			CheckRedirect: refuseKeyLeakingRedirect,
 		},
 	}, nil
@@ -203,9 +204,8 @@ func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, 
 		return nil, fmt.Errorf("download file %q: %w", filePath, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("download file %q: status %d: %s", filePath, resp.StatusCode, body)
+		return nil, fmt.Errorf("download file %q: %w", filePath, statusError(resp.StatusCode))
 	}
 	return resp.Body, nil
 }
@@ -214,6 +214,12 @@ func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, 
 // restore points and files stay far below this; file downloads are streamed and
 // not subject to it.
 var maxPeerJSONBytes int64 = 1 << 30
+
+// statusError describes a failed peer response. The body is left out: the URL
+// can point at any service, and its responses must not reach the caller.
+func statusError(code int) error {
+	return fmt.Errorf("status %d", code)
+}
 
 // getJSON performs a GET request and decodes the JSON response.
 func (c *Client) getJSON(path string, target any) error {
@@ -229,8 +235,7 @@ func (c *Client) getJSONWithParams(path string, params map[string]string, target
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("status %d: %s", resp.StatusCode, body)
+		return statusError(resp.StatusCode)
 	}
 	return bounded.DecodeJSON(resp.Body, maxPeerJSONBytes, target)
 }

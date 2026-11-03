@@ -107,7 +107,7 @@ func TestSetEncryption_DBClosed(t *testing.T) {
 	h := newTestSettingsHandler(t)
 	_ = h.db.Close()
 
-	body := []byte(`{"passphrase":"correct horse battery staple"}`)
+	body := []byte(`{"passphrase":"violet tractor spoons"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/encryption",
 		bytes.NewReader(body))
 	w := httptest.NewRecorder()

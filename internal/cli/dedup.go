@@ -134,6 +134,7 @@ func openDedupContext(dbPath, keyPath string) (*dedupContext, func(), error) {
 		return nil, nil, fmt.Errorf("get destination %d: %w", dedupDestID, err)
 	}
 
+	storage.SetHostKeyPinner(database.PinSFTPHostKey)
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		database.Close()

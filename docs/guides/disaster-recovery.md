@@ -266,12 +266,12 @@ the same fields as the destination's settings in Vault. For example
 }
 ```
 
-| `--type` | Fields                                                                                          |
-| -------- | ----------------------------------------------------------------------------------------------- |
-| `s3`     | `bucket`, `region`, `endpoint`, `access_key`, `secret_key`, `base_path`, `force_path_style`     |
-| `sftp`   | `host`, `port`, `user`, `password` or `key_file`, `base_path`, `host_key` or `known_hosts_file` |
-| `smb`    | `host`, `port`, `user`, `password`, `share`, `base_path`                                        |
-| `webdav` | `url`, `username`, `password`, `base_path`                                                      |
+| `--type` | Fields                                                                                                                                                                                           |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `s3`     | `bucket`, `region`, `endpoint`, `access_key`, `secret_key`, `base_path`, `force_path_style`                                                                                                      |
+| `sftp`   | `host`, `port`, `user`, `password` or `key_file`, `base_path`, `host_key` or `known_hosts_file` (required; without one, the error shows the server's fingerprint to check and use as `host_key`) |
+| `smb`    | `host`, `port`, `user`, `password`, `share`, `base_path`                                                                                                                                         |
+| `webdav` | `url`, `username`, `password`, `base_path`                                                                                                                                                       |
 
 Keep that file private — it contains your storage credentials.
 

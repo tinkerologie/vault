@@ -24,3 +24,21 @@ describe('StorageForm Test Connection', () => {
     expect(api.testStorageConfig.mock.calls[0][0].id).toBeUndefined()
   })
 })
+
+// The SFTP form lets users set the host key. A refused connection tells them
+// to do this (#551).
+const sftp = (config) => ({ name: 'nas', type: 'sftp', config: JSON.stringify(config) })
+
+describe('StorageForm SFTP host key', () => {
+  it('shows the stored fingerprint when editing', () => {
+    render(StorageForm, { initial: sftp({ host: 'nas', host_key: 'SHA256:abc' }) })
+    expect(document.getElementById('cfg_shostkey').value).toBe('SHA256:abc')
+  })
+
+  it('accepts a new fingerprint', async () => {
+    render(StorageForm, { initial: sftp({ host: 'nas' }) })
+    const input = document.getElementById('cfg_shostkey')
+    await fireEvent.input(input, { target: { value: 'SHA256:new' } })
+    expect(input.value).toBe('SHA256:new')
+  })
+})

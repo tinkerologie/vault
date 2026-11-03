@@ -216,7 +216,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"SFTPConfig.KeyFile":        "Path to the private key file for key-based authentication.",
 	"SFTPConfig.BasePath":       "Base directory on the server under which backups are stored.",
 	"SFTPConfig.Path":           "Deprecated alias for BasePath, kept for backward compatibility.",
-	"SFTPConfig.HostKey":        "SHA-256 fingerprint of the server's host public key for verification.",
+	"SFTPConfig.HostKey":        "SHA-256 fingerprint of the server's host public key. If this and known_hosts_file are empty, the key seen on first connection is pinned.",
 	"SFTPConfig.KnownHostsFile": "Path to an OpenSSH known_hosts file used to verify the host key.",
 
 	// storage.SMBConfig

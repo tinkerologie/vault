@@ -276,6 +276,50 @@ func TestReclaimRemovesEscrowAndHeaderBackups(t *testing.T) {
 	}
 }
 
+// A backup removes header copies left by an earlier rewrap, which still open
+// with the retired key, once its repository is known to open with this
+// server's key (#553).
+func TestEnsureDedupEscrowRemovesRetiredHeaders(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := database.SetSetting("encryption_passphrase", "pw"); err != nil {
+		t.Fatal(err)
+	}
+	dest := namedDedupDest(t, database, "retired")
+	adapter := adapterFor(t, dest)
+	repo, err := dedup.InitRepo(database, adapter, dest.ID, testServerKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(storageDirOf(t, dest), "_vault", "repo.json.20261007T030405Z.bak")
+	if err := os.WriteFile(stale, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := runnerWithKey(database, testServerKey())
+	r.ensureDedupEscrow(repo, dest)
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("retired header copy survived: %v", err)
+	}
+
+	// Removal is retried when the passphrase is already confirmed, and when
+	// none is set: neither may skip it.
+	for _, pass := range []string{"pw", ""} {
+		if err := database.SetSetting("encryption_passphrase", pass); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(stale, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r.ensureDedupEscrow(repo, dest)
+		if _, err := os.Stat(stale); !os.IsNotExist(err) {
+			t.Fatalf("passphrase %q: retired header copy survived: %v", pass, err)
+		}
+	}
+}
+
 // failingWriteAdapter refuses every write, to exercise escrow write failures.
 type failingWriteAdapter struct{ storage.Adapter }
 
