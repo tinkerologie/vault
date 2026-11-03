@@ -176,6 +176,9 @@ test.describe('screen reader polish (#608)', () => {
     await expect(trigger).toBeFocused();
     await expect(page.getByRole('tooltip')).toContainText('Maximum number of retry attempts');
     await expect(trigger).toHaveAccessibleDescription(/Maximum number of retry attempts/);
+    // The open tip lives inside <main>, so it belongs to a landmark (axe "region").
+    await expect(page.getByRole('main').getByRole('tooltip')).toBeVisible();
+    await audit(page, 'Settings with a tooltip open');
     await page.keyboard.press('Escape');
     await expect(page.getByRole('tooltip')).toHaveCount(0);
 
@@ -189,17 +192,54 @@ test.describe('screen reader polish (#608)', () => {
     await next.click();
     await page.locator('#storage').selectOption({ label: 'Local Array Backup (local)' });
     await next.click();
+    // The switches here are named by visible labels, not only aria-labelledby.
+    await expect(dialog.getByLabel('Verify backups after writing', { exact: true })).toBeAttached();
+    await audit(page, 'Job editor options');
     await openAllDetails(dialog);
-    await expectTooltipNamesClean(dialog, 'Job editor options');
-    await expect(dialog.locator('summary', { hasText: 'Retention Policy' })).toHaveAccessibleName('Retention Policy');
-    await expect(dialog.getByRole('button', { name: 'More info: Retention Policy', exact: true })).toBeVisible();
-    // No axe run on this step: its summaries hold their tooltip triggers, which
-    // axe reports as nested-interactive. That predates #608 and is reported
-    // separately; the names checked above are what #608 changes.
+    await expectTooltipNamesClean(dialog, 'Job editor options, all open');
+    // Summary triggers sit beside the <summary>, not in it (axe "nested-interactive"),
+    // on the same row, right of the title.
+    const summary = dialog.locator('summary', { hasText: 'Retention Policy' });
+    await expect(summary).toHaveAccessibleName('Retention Policy');
+    await expect(summary.getByRole('button')).toHaveCount(0);
+    const tip = dialog.getByRole('button', { name: 'More info: Retention Policy', exact: true });
+    const [s, t] = [(await summary.boundingBox())!, (await tip.boundingBox())!];
+    expect(Math.abs((t.y + t.height / 2) - (s.y + s.height / 2))).toBeLessThan(1);
+    expect(t.x).toBeGreaterThan(s.x + 100);
+    // Opening the tip leaves the disclosure as it was.
+    const details = summary.locator('xpath=..');
+    await tip.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('tooltip')).toContainText('Keep Last N');
+    await expect(details).toHaveAttribute('open', '');
+    await audit(page, 'Job editor options, all open');
+    // Escape closes the tip and leaves the job editor open.
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await expect(dialog).toBeVisible();
     await next.click();
     await expect(dialog.getByRole('textbox', { name: 'Job Name', exact: true })).toBeVisible();
     await expectTooltipNamesClean(dialog, 'Job editor review');
     await audit(page, 'Job editor review');
+  });
+
+  test('an open tooltip stays visible and on top in the embedded view', async ({ page }) => {
+    const frame = await openPresentation(page, 'embedded', '#/settings');
+    const trigger = frame.getByRole('button', { name: 'More info: Max retries', exact: true });
+    await trigger.focus();
+    const tip = frame.getByRole('tooltip');
+    await expect(tip).toBeVisible();
+    await expect(frame.getByRole('main').getByRole('tooltip')).toHaveCount(1);
+    const topmost = await tip.evaluate((el) => {
+      // The popup ignores the pointer; let hit-testing see it for this check.
+      (el as HTMLElement).style.pointerEvents = 'auto';
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      (el as HTMLElement).style.pointerEvents = '';
+      return !!hit && el.contains(hit);
+    });
+    expect(topmost).toBe(true);
+    await audit(page, 'embedded Settings with a tooltip open', frame);
   });
 
   test('row actions name their item', async ({ page }) => {

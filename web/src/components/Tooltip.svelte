@@ -103,6 +103,9 @@
 
   function onKeydown(e) {
     if (e.key === 'Escape' && visible) {
+      // Escape closes only the tip, not a dialog the tip sits in.
+      e.preventDefault()
+      e.stopPropagation()
       visible = false
       triggerEl?.focus()
     }
@@ -133,9 +136,15 @@
     }
   })
 
-  /** Teleport node to document.body so fixed positioning isn't broken by ancestor transforms/filters. */
+  /**
+   * Teleport the popup out of the trigger's ancestors so fixed positioning isn't
+   * broken by their transforms or filters. It goes to the end of <main> rather
+   * than <body>, so the open tip stays inside a landmark (#608); <main> sets no
+   * transform, filter or z-index, so the popup still paints above the page.
+   * Inside an open modal, floatAboveDialogs moves it into the top dialog.
+   */
   function portal(node) {
-    document.body.appendChild(node)
+    ;(document.getElementById('main-content') ?? document.body).appendChild(node)
     return floatAboveDialogs(node)
   }
 
