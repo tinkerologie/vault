@@ -205,7 +205,7 @@ Responses never contain a source's API key: `config` shows `••••••�
 
 ### Restore approvals (`/jobs/{id}/restore`)
 
-Two optional booleans in the restore body approve what a container restore otherwise refuses. Both default to `false` and apply to every item in the request:
+Two optional booleans in the restore body approve what a container restore otherwise refuses. Both default to `false` and apply to every item in the request. The MCP `restore_item` tool takes the same two fields:
 
 - `allow_host_privileges` — restore host-level settings (privileged mode, host network, IPC or PID, added capabilities, devices, host paths outside `/mnt`) from a backup this server did not make: imported or replicated.
 - `allow_unpinned_image` — for a deduplicated container backup whose recorded image digest is missing or cannot be pulled, use the image the tag points to now.

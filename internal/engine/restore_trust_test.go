@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/moby/moby/client"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // sameServerRestore models an ordinary restore of this server's own backup that
@@ -82,14 +84,22 @@ func TestClassicRestoreRefusesUntrustedPrivilegesBeforeCreating(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"Name":"/x","Config":{"Image":"a:1"},"HostConfig":{"Privileged":true}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	created := false
-	f := &fakeDocker458{imageLoad: okImageLoad, containerCreate: func(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
-		created = true
-		return client.ContainerCreateResult{}, nil
-	}}
+	created, loaded := false, false
+	f := &fakeDocker458{
+		imageLoad: func(ctx context.Context, r io.Reader) (client.ImageLoadResult, error) {
+			loaded = true
+			return okImageLoad(ctx, r)
+		},
+		containerCreate: func(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+			created = true
+			return client.ContainerCreateResult{}, nil
+		},
+	}
 	err := (&ContainerHandler{cli: f}).Restore(t.Context(), BackupItem{Name: "x"}, dir, noopProgress)
-	if err == nil || !strings.Contains(err.Error(), "privileged mode") || created {
-		t.Fatalf("err = %v, created = %v", err, created)
+	// Loading the image can retarget shared tags, so a refused restore must not
+	// have reached Docker at all.
+	if err == nil || !strings.Contains(err.Error(), "privileged mode") || created || loaded {
+		t.Fatalf("err = %v, created = %v, loaded = %v", err, created, loaded)
 	}
 }
 
@@ -355,7 +365,7 @@ func (v *tagVanishes) ImageTag(context.Context, client.ImageTagOptions) (client.
 }
 
 func TestHostPrivilegesFollowsSymlinksUnderMnt(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := safepath.ResolveExistingPrefix(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,6 +388,21 @@ func TestHostPrivilegesFollowsSymlinksUnderMnt(t *testing.T) {
 	ri.HostConfig.Binds = []string{link + ":/config"}
 	if got := hostPrivileges(ri); len(got) != 1 {
 		t.Errorf("symlinked host path not listed: %v", got)
+	}
+	// Docker creates a missing directory, so a missing leaf under a link that
+	// leaves the data root still reaches the host (Codex review of #592).
+	ri.HostConfig.Binds = []string{filepath.Join(link, "newdir") + ":/host"}
+	if got := hostPrivileges(ri); len(got) != 1 {
+		t.Errorf("missing path under an outside link not listed: %v", got)
+	}
+	// A path that cannot be resolved at all fails closed.
+	loop := filepath.Join(root, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	ri.HostConfig.Binds = []string{filepath.Join(loop, "x") + ":/host"}
+	if got := hostPrivileges(ri); len(got) != 1 {
+		t.Errorf("unresolvable path not listed: %v", got)
 	}
 }
 

@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -213,22 +214,11 @@ func TestSnapshotManagerSignsSavesAndRotations(t *testing.T) {
 			release()
 		}
 	}
-	if err := sm.reauthenticate(filepath.Join(dir, "never-signed.db")); err != nil {
-		t.Errorf("unsigned path: %v", err)
+	if handled, err := sm.sealSigned(filepath.Join(dir, "never-signed.db"), credKeyA); handled || err != nil {
+		t.Errorf("unsigned path: handled = %v, err = %v", handled, err)
 	}
-	if err := os.WriteFile(snap, []byte("rewritten by sealing"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := sm.reauthenticate(snap); err != nil {
-		t.Fatal(err)
-	}
-	if _, release, err := a.VerifiedCopy(snap); err != nil {
-		t.Errorf("after reauthenticate: %v", err)
-	} else {
-		release()
-	}
-	if err := (&SnapshotManager{}).reauthenticate(snap); err != nil {
-		t.Errorf("no auth configured: %v", err)
+	if handled, err := (&SnapshotManager{}).sealSigned(snap, credKeyA); handled || err != nil {
+		t.Errorf("no auth configured: handled = %v, err = %v", handled, err)
 	}
 }
 
@@ -415,11 +405,8 @@ func TestUnreadableEnvelopeIsNotTreatedAsUnsigned(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) })
-	if err := sm.checkSigned(snap); err == nil {
-		t.Error("checkSigned: want error")
-	}
-	if err := sm.reauthenticate(snap); err == nil {
-		t.Error("reauthenticate: want error")
+	if handled, err := sm.sealSigned(snap, credKeyA); !handled || err == nil {
+		t.Errorf("handled = %v, err = %v; want the copy left alone with an error", handled, err)
 	}
 }
 
@@ -466,4 +453,121 @@ func TestSignedSnapshotIncludesPendingWALChanges(t *testing.T) {
 	if got, _ := fresh.GetSetting("wal_only", ""); got != "committed" {
 		t.Fatalf("restored setting = %q", got)
 	}
+}
+
+// A WAL planted beside a signed copy must not be replayed into the copy that
+// sealing re-signs (Codex review of #592).
+func TestSealSignedIgnoresPlantedWAL(t *testing.T) {
+	dir := t.TempDir()
+	d, err := Open(filepath.Join(dir, "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.SetSetting("api_key_hash", "genuine"); err != nil {
+		t.Fatal(err)
+	}
+	snap := filepath.Join(dir, "snap", "vault.db")
+	sm := NewSnapshotManager(d, snap, snap)
+	a, _ := testAuth(t, false)
+	sm.SetSnapshotAuth(a)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a WAL that rewrites api_key_hash against a byte-identical copy of
+	// the snapshot, then plant it beside the signed snapshot.
+	forge := filepath.Join(t.TempDir(), "vault.db")
+	if err := copyFile(snap, forge); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := Open(forge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fd.Exec(`PRAGMA wal_autocheckpoint=0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := fd.SetSetting("api_key_hash", "attacker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(forge+"-wal", snap+"-wal"); err != nil {
+		t.Fatal(err)
+	}
+	_ = fd.Close()
+
+	if handled, err := sm.sealSigned(snap, credKeyA); !handled || err != nil {
+		t.Fatalf("handled = %v, err = %v", handled, err)
+	}
+	copyPath, release, err := a.VerifiedCopy(snap)
+	if err != nil {
+		t.Fatalf("sealed snapshot no longer verifies: %v", err)
+	}
+	defer release()
+	check, err := Open(copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	if got, _ := check.GetSetting("api_key_hash", ""); got != "genuine" {
+		t.Fatalf("signed snapshot carries api_key_hash %q", got)
+	}
+	if _, err := os.Stat(snap + "-wal"); !os.IsNotExist(err) {
+		t.Errorf("planted WAL still beside the snapshot: %v", err)
+	}
+}
+
+// An envelope removed for the first read and put back before any second read
+// must not let the restore skip the content check (Greptile review of #592).
+func TestVerifiedCopyDecidesOnOneEnvelopeRead(t *testing.T) {
+	a, _ := testAuth(t, false)
+	dir := t.TempDir()
+	if err := a.Sign(writeSnapshot(t, dir, "enroll.db", "x")); err != nil {
+		t.Fatal(err)
+	}
+	snap := writeSnapshot(t, dir, "vault.db", "good")
+	if err := a.Sign(snap); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snap, []byte("evil"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	a.readHook = func(p string) (snapshotEnvelope, error) {
+		reads++
+		if reads == 1 {
+			return snapshotEnvelope{}, os.ErrNotExist
+		}
+		return a.readEnvelope(p)
+	}
+	got, release, err := a.VerifiedCopy(snap)
+	release()
+	if err == nil {
+		t.Fatalf("restored %q without checking its contents", got)
+	}
+}
+
+func TestWriteFileAtomicDurabilityAndSymlinks(t *testing.T) {
+	t.Run("a sync failure is reported", func(t *testing.T) {
+		old := syncFile
+		syncFile = func(*os.File) error { return errors.New("disk gone") }
+		t.Cleanup(func() { syncFile = old })
+		a, _ := testAuth(t, false)
+		if err := a.Sign(writeSnapshot(t, t.TempDir(), "s.db", "x")); err == nil {
+			t.Fatal("want error")
+		}
+	})
+	t.Run("a symlinked envelope directory is refused", func(t *testing.T) {
+		dir := t.TempDir()
+		outside := t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(dir, rotatedEnvelopeDir)); err != nil {
+			t.Skip(err)
+		}
+		if err := writeFileAtomic(filepath.Join(dir, rotatedEnvelopeDir, "x.auth"), []byte("{}")); err == nil {
+			t.Fatal("want refusal")
+		}
+		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+			t.Errorf("wrote through the symlink: %v", entries)
+		}
+	})
 }

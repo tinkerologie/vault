@@ -224,3 +224,13 @@ func TestChainProvenanceLocal(t *testing.T) {
 		t.Error("imported base step trusted")
 	}
 }
+
+func TestRestoreItemTrustCarriesApprovals(t *testing.T) {
+	if got := restoreItemTrust(nil); got != (engine.RestoreTrust{}) {
+		t.Errorf("no options = %+v", got)
+	}
+	got := restoreItemTrust([]RestoreItemOptions{{AllowHostPrivileges: true}, {AllowUnpinnedImage: true}})
+	if !got.AllowHostPrivileges || !got.AllowUnpinnedImage || got.ArtifactTrusted {
+		t.Errorf("trust = %+v", got)
+	}
+}

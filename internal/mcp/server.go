@@ -496,12 +496,25 @@ type restoreItemInput struct {
 	// the destination is replaced, false merges the restore into whatever
 	// is already there.
 	CleanDestination *bool `json:"clean_destination,omitempty"`
+	// AllowHostPrivileges and AllowUnpinnedImage mirror the restore API's
+	// container approvals; both default to false.
+	AllowHostPrivileges bool `json:"allow_host_privileges,omitempty"`
+	AllowUnpinnedImage  bool `json:"allow_unpinned_image,omitempty"`
+}
+
+// options maps the tool input onto the runner's restore options.
+func (in restoreItemInput) options() runner.RestoreItemOptions {
+	return runner.RestoreItemOptions{
+		CleanDestination:    in.CleanDestination,
+		AllowHostPrivileges: in.AllowHostPrivileges,
+		AllowUnpinnedImage:  in.AllowUnpinnedImage,
+	}
 }
 
 func (s *MCPServer) addRestoreItemTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "restore_item",
-		Description: "Restore an item from a specific restore point. The destination is replaced by default; pass clean_destination=false to merge into its existing contents instead.",
+		Description: "Restore an item from a specific restore point. The destination is replaced by default; pass clean_destination=false to merge into its existing contents instead. A container restore that stops for host-level access from an imported or replicated backup needs allow_host_privileges=true, and one whose backed-up image digest is unavailable needs allow_unpinned_image=true; set either only after the user has reviewed what the error listed.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input restoreItemInput) (*mcp.CallToolResult, any, error) {
 		rps, err := s.db.ListRestorePoints(input.JobID)
 		if err != nil {
@@ -519,7 +532,7 @@ func (s *MCPServer) addRestoreItemTool() {
 		}
 		go func() {
 			if err := s.runner.RestoreItem(*found, input.ItemName, input.ItemType, input.Destination, input.Passphrase,
-				runner.RestoreItemOptions{CleanDestination: input.CleanDestination}); err != nil {
+				input.options()); err != nil {
 				log.Printf("mcp: restore failed: %v", err)
 			}
 		}()

@@ -6,6 +6,8 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // RestoreTrust carries what the runner knows about a restore's artifact and
@@ -67,13 +69,12 @@ func hostPrivileges(ri restoreInspect) []string {
 		if !strings.HasPrefix(source, "/") {
 			continue // a named volume
 		}
-		// Docker follows symlinks, so a link under /mnt can point anywhere.
+		// Docker follows symlinks, so a link under /mnt can point anywhere,
+		// including through a directory Docker would create. Resolve the deepest
+		// existing ancestor; anything that cannot be resolved needs approval.
 		clean := filepath.Clean(source)
-		resolved := clean
-		if r, err := filepath.EvalSymlinks(clean); err == nil {
-			resolved = r
-		}
-		if !strings.HasPrefix(clean, hostDataRoot) || !strings.HasPrefix(resolved, hostDataRoot) {
+		resolved, err := safepath.ResolveExistingPrefix(clean)
+		if err != nil || !strings.HasPrefix(clean, hostDataRoot) || !strings.HasPrefix(resolved, hostDataRoot) {
 			out = append(out, fmt.Sprintf("host path %q", clean))
 		}
 	}

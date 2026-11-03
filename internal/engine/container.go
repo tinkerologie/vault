@@ -1704,12 +1704,35 @@ func chunkedPrevBySource(parent *dedup.Manifest, mounts []container.MountPoint, 
 // under that base directory instead of their original paths.
 func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
 
-	// Step 1: Load image.
-	progress(item.Name, 5, "loading image")
+	// The image archive is located first so a backup without one still fails
+	// with that error, but nothing reaches Docker until the config is approved:
+	// loading an image can retarget shared tags.
 	imagePath, err := findArchive(sourceDir, "image.tar")
 	if err != nil {
 		return fmt.Errorf("locating image archive: %w", err)
 	}
+
+	// Step 1: Read and authorise the container config.
+	progress(item.Name, 5, "reading config")
+	configPath := filepath.Join(sourceDir, "config.json")
+	configData, err := os.ReadFile(configPath) // #nosec G304 — sourceDir is vault-controlled temp directory
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+
+	// Decode using the shared partial-struct shape so both the classic
+	// (tar-on-disk) restore and the dedup-chunked restore unmarshal the
+	// same fields. See restoreInspect for the full shape.
+	var inspect restoreInspect
+	if err := json.Unmarshal(configData, &inspect); err != nil {
+		return fmt.Errorf("parsing config: %w", err)
+	}
+	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
+		return err
+	}
+
+	// Step 2: Load image.
+	progress(item.Name, 15, "loading image")
 	imgFile, err := os.Open(imagePath) // #nosec G304 — sourceDir is vault-controlled temp directory; findArchive only returns sourceDir-rooted paths
 	if err != nil {
 		return fmt.Errorf("opening image file: %w", err)
@@ -1730,25 +1753,6 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Drain the response to ensure the daemon completes the load.
 	_, _ = io.Copy(io.Discard, resp)
 	_ = resp.Close()
-
-	// Step 2: Read full container config.
-	progress(item.Name, 15, "reading config")
-	configPath := filepath.Join(sourceDir, "config.json")
-	configData, err := os.ReadFile(configPath) // #nosec G304 — sourceDir is vault-controlled temp directory
-	if err != nil {
-		return fmt.Errorf("reading config: %w", err)
-	}
-
-	// Decode using the shared partial-struct shape so both the classic
-	// (tar-on-disk) restore and the dedup-chunked restore unmarshal the
-	// same fields. See restoreInspect for the full shape.
-	var inspect restoreInspect
-	if err := json.Unmarshal(configData, &inspect); err != nil {
-		return fmt.Errorf("parsing config: %w", err)
-	}
-	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
-		return err
-	}
 
 	// Check for alternate restore destination.
 	restoreDest, _ := item.Settings["restore_destination"].(string)

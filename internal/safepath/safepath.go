@@ -233,6 +233,17 @@ func isStrictDescendantPath(parent, child string) bool {
 	return strings.HasPrefix(child, parent+string(filepath.Separator))
 }
 
+// ResolveExistingPrefix resolves symlinks in the deepest existing ancestor of p,
+// re-appends the part that does not exist yet, and maps macOS /private aliases
+// to their short form. Errors other than "does not exist" are returned.
+func ResolveExistingPrefix(p string) (string, error) {
+	resolved, err := resolveExistingPrefix(filepath.Clean(p))
+	if err != nil {
+		return "", err
+	}
+	return canonicalAlias(resolved), nil
+}
+
 // resolveExistingPrefix resolves symlinks in the deepest existing ancestor of
 // p and re-appends the part that does not exist yet. Any error other than
 // "does not exist" fails closed.

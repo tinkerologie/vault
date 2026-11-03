@@ -4308,6 +4308,20 @@ type RestoreItemOptions struct {
 	// clean_destination — so an automation that wants the old additive
 	// behaviour has to ask for it, but can.
 	CleanDestination *bool
+	// AllowHostPrivileges and AllowUnpinnedImage carry the same approvals as
+	// the restore API's allow_host_privileges and allow_unpinned_image.
+	AllowHostPrivileges bool
+	AllowUnpinnedImage  bool
+}
+
+// restoreItemTrust collects the approvals in opts.
+func restoreItemTrust(opts []RestoreItemOptions) engine.RestoreTrust {
+	var t engine.RestoreTrust
+	for _, o := range opts {
+		t.AllowHostPrivileges = t.AllowHostPrivileges || o.AllowHostPrivileges
+		t.AllowUnpinnedImage = t.AllowUnpinnedImage || o.AllowUnpinnedImage
+	}
+	return t
 }
 
 // RestoreItem restores a single item from a restore point.
@@ -4326,7 +4340,8 @@ func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, d
 	// Deliberately context.Background(): this is the un-tracked scripted/MCP
 	// entry point with no registered cancel func or stall watchdog. The tracked
 	// RunRestore path threads its own cancellable ctx through the chain.
-	return r.restoreItemWithReporter(context.Background(), restorePoint, itemName, itemType, destination, passphrase, nil, cleanDestination, restoreProgressReporter{})
+	ctx := engine.WithRestoreTrust(context.Background(), restoreItemTrust(opts))
+	return r.restoreItemWithReporter(ctx, restorePoint, itemName, itemType, destination, passphrase, nil, cleanDestination, restoreProgressReporter{})
 }
 
 func (r *Runner) restoreItemWithReporter(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {

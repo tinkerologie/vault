@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -43,6 +44,15 @@ type SnapshotAuth struct {
 	key           []byte
 	markerPath    string
 	allowUnsigned bool
+	// readHook replaces readEnvelope in tests that race the envelope.
+	readHook func(string) (snapshotEnvelope, error)
+}
+
+func (a *SnapshotAuth) read(path string) (snapshotEnvelope, error) {
+	if a.readHook != nil {
+		return a.readHook(path)
+	}
+	return a.readEnvelope(path)
 }
 
 // NewSnapshotAuth derives the signing key from the server key. anchorDir is the
@@ -163,7 +173,13 @@ func (a *SnapshotAuth) Admissible(path string) error {
 	if !info.Mode().IsRegular() {
 		return errors.New("not a regular file")
 	}
-	_, envErr := a.readEnvelope(path)
+	_, envErr := a.read(path)
+	return a.unsignedDecision(path, envErr)
+}
+
+// unsignedDecision applies the unsigned-snapshot policy to the result of one
+// envelope read. A nil envErr means the envelope was valid.
+func (a *SnapshotAuth) unsignedDecision(path string, envErr error) error {
 	switch {
 	case envErr == nil:
 		return nil
@@ -181,7 +197,7 @@ func (a *SnapshotAuth) Admissible(path string) error {
 
 // SavedAt returns a candidate's signed save time, if it has a valid envelope.
 func (a *SnapshotAuth) SavedAt(path string) (int64, bool) {
-	env, err := a.readEnvelope(path)
+	env, err := a.read(path)
 	return env.SavedAt, err == nil
 }
 
@@ -191,9 +207,11 @@ func (a *SnapshotAuth) SavedAt(path string) (int64, bool) {
 // Admissible let through without an envelope is returned in place.
 func (a *SnapshotAuth) VerifiedCopy(path string) (string, func(), error) {
 	noop := func() {}
-	env, err := a.readEnvelope(path)
+	// One read decides: re-reading the envelope after a failure would let an
+	// envelope put back in between skip the content check below.
+	env, err := a.read(path)
 	if err != nil {
-		if admitErr := a.Admissible(path); admitErr != nil {
+		if admitErr := a.unsignedDecision(path, err); admitErr != nil {
 			return "", noop, admitErr
 		}
 		return path, noop, nil
@@ -267,25 +285,56 @@ func writeFileAtomic(path string, data []byte) error {
 	if !filepath.IsAbs(path) || strings.Contains(path, "..") {
 		return fmt.Errorf("refusing suspicious snapshot path %q", path)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	dir, name := filepath.Dir(path), filepath.Base(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	// The snapshot tree may be writable by others: a directory swapped for a
+	// symlink must not send a root-owned write elsewhere. Everything below goes
+	// through a handle on the real directory.
+	if info, err := os.Lstat(dir); err != nil {
+		return err
+	} else if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	tmpName := fmt.Sprintf("%s.tmp-%d", name, time.Now().UnixNano())
+	tmp, err := root.OpenFile(tmpName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	_, err = tmp.Write(data)
+	if err == nil {
+		err = syncFile(tmp)
+	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}
 	if err == nil {
-		err = os.Rename(tmp.Name(), path)
+		err = root.Rename(tmpName, name)
 	}
 	if err != nil {
-		_ = os.Remove(tmp.Name())
+		_ = root.Remove(tmpName)
+		return err
+	}
+	// The rename is durable only once the directory entry is on disk.
+	d, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	err = syncFile(d)
+	if closeErr := d.Close(); err == nil {
+		err = closeErr
 	}
 	return err
 }
+
+// syncFile is (*os.File).Sync, swappable so tests can make it fail.
+var syncFile = (*os.File).Sync
 
 // SetSnapshotAuth turns on signing and lets restore require envelopes.
 func (sm *SnapshotManager) SetSnapshotAuth(a *SnapshotAuth) {
@@ -301,36 +350,47 @@ func (sm *SnapshotManager) SnapshotAuth() *SnapshotAuth {
 	return sm.auth
 }
 
-// checkSigned reports whether a path with an envelope still matches it. Paths
-// with no envelope, or no authenticator configured, pass.
-func (sm *SnapshotManager) checkSigned(path string) error {
+// sealSigned seals a signed copy. It reports false, leaving the caller to seal
+// in place, when no authenticator is set or the path has no envelope. Otherwise
+// the copy is verified into a private WAL-free file, sealed there, written back
+// in place of the original (whose WAL and SHM are dropped, keeping its mtime) and
+// signed. A copy that fails verification is left untouched: boot refuses it.
+func (sm *SnapshotManager) sealSigned(path string, key []byte) (bool, error) {
 	auth := sm.SnapshotAuth()
 	if auth == nil {
-		return nil
+		return false, nil
 	}
 	if _, err := os.Lstat(envelopePath(path)); errors.Is(err, os.ErrNotExist) {
-		return nil // nothing was signed for this path
+		return false, nil
 	} else if err != nil {
-		return fmt.Errorf("reading envelope: %w", err)
+		return true, fmt.Errorf("reading envelope: %w", err)
 	}
-	_, release, err := auth.VerifiedCopy(path)
-	release()
-	return err
-}
-
-// reauthenticate re-signs a snapshot this daemon rewrote in place. USB copies and
-// other paths with no envelope are left as they are.
-func (sm *SnapshotManager) reauthenticate(path string) error {
-	auth := sm.SnapshotAuth()
-	if auth == nil {
-		return nil
+	info, err := os.Lstat(path)
+	if err != nil {
+		return true, err
 	}
-	if _, err := os.Lstat(envelopePath(path)); errors.Is(err, os.ErrNotExist) {
-		return nil // nothing was signed for this path
-	} else if err != nil {
-		return fmt.Errorf("reading envelope: %w", err)
+	private, release, err := auth.VerifiedCopy(path)
+	defer release()
+	if err != nil || private == path {
+		log.Printf("Warning: not sealing %s: it does not match its envelope (%v)", path, err)
+		return true, nil
 	}
-	return auth.Sign(path)
+	if err := SealCopy(private, key); err != nil {
+		return true, err
+	}
+	sealed, err := os.ReadFile(private) // #nosec G304 -- private copy in a directory this process created
+	if err != nil {
+		return true, err
+	}
+	if err := writeFileAtomic(path, sealed); err != nil {
+		return true, err
+	}
+	_ = removeValidated(path + "-wal")
+	_ = removeValidated(path + "-shm")
+	if err := os.Chtimes(path, time.Now(), info.ModTime()); err != nil {
+		return true, err
+	}
+	return true, auth.Sign(path)
 }
 
 // CarryAPIKey copies the API key settings in force on from onto to, so replacing

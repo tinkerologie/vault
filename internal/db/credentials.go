@@ -293,25 +293,19 @@ func (d *DB) SealPersistentCopies(ctx context.Context, sm *SnapshotManager, extr
 			errs = append(errs, ctx.Err())
 			break
 		}
-		// Re-signing below would vouch for whatever the file now holds, so a
-		// signed copy that no longer matches its envelope is left untouched;
-		// boot refuses it anyway.
+		// A signed copy is sealed from its verified, WAL-free private copy and
+		// then re-signed, so neither a replaced file nor a planted WAL ends up
+		// with a valid signature.
 		if sm != nil {
-			if err := sm.checkSigned(p); err != nil {
-				log.Printf("Warning: not sealing %s: %v", p, err)
+			if handled, err := sm.sealSigned(p, key); handled {
+				if err != nil {
+					errs = append(errs, fmt.Errorf("seal signed copy %s: %w", p, err))
+				}
 				continue
 			}
 		}
 		if err := SealCopy(p, key); err != nil {
 			errs = append(errs, fmt.Errorf("seal copy %s: %w", p, err))
-			continue
-		}
-		// Sealing rewrote the file, so an envelope written for the old bytes
-		// would now reject a good snapshot.
-		if sm != nil {
-			if err := sm.reauthenticate(p); err != nil {
-				errs = append(errs, fmt.Errorf("authenticate copy %s: %w", p, err))
-			}
 		}
 	}
 	if len(errs) > 0 {
