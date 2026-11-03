@@ -6,7 +6,9 @@
   import { createFollowMarker, countNewEntries } from '../lib/followmarker.js'
   import { anchoredScrollTop } from '../lib/scrollanchor.js'
   import { nearBottom, nearOldestEdge, atTop as isAtTop } from '../lib/scrollflags.js'
-  import { getLiveMode } from '../lib/runtime-config.js'
+  import { getLiveMode, isEmbedded } from '../lib/runtime-config.js'
+  import { getVisibleArea, onVisibleAreaChange, scrollHostTo } from '../lib/embed.js'
+  import { elementPort, embeddedPort } from '../lib/consoleport.js'
   import { rowTime } from '../lib/tsformat.js'
   import { buildRows, logEmptyState, rowEntries, isRowExpanded, toggleRowExpanded, rowHasDetails } from '../lib/logrows.js'
   import { createLogWindow, scrollAction } from '../lib/logwindow.svelte.js'
@@ -28,6 +30,11 @@
   let showMeta = $state(false) // render the `key=value` tail; off by default to cut noise
   let suppressFollowPin = false // auto-follow must not fight an in-flight smooth scroll (#328)
   let box = $state(null)
+  // Embedded in Unraid's page, the page scrolls rather than the console (#526):
+  // `port` reads and writes the console's scroll position either way.
+  const embedded = isEmbedded()
+  const host = { visibleArea: () => getVisibleArea(), scrollTo: (top) => scrollHostTo(top) }
+  const port = $derived(box ? (embedded ? embeddedPort(box, host) : elementPort(box)) : null)
   let copiedId = $state(null)
   let confirmPurge = $state(false)
   let purging = $state(false)
@@ -53,7 +60,7 @@
   // the Logs page freeze the UI. logwindow.svelte.js moves the window as the
   // reader scrolls and owns every programmatic scrollTop write, so its own
   // scroll events can be told apart from the reader's (#328 r8 #4).
-  const win = createLogWindow({ rows: () => rows, box: () => box, tick })
+  const win = createLogWindow({ rows: () => rows, box: () => port, tick })
   const shownRows = $derived(win.rows)
 
   // atOldest is otherwise only refreshed by scroll events, but rows also
@@ -63,7 +70,7 @@
   $effect(() => {
     shownRows
     tick().then(() => {
-      if (box) atOldest = !win.hiddenBelow && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
+      if (box) atOldest = !win.hiddenBelow && nearBottom(port.scrollTop, port.scrollHeight, port.clientHeight)
     })
   })
 
@@ -89,6 +96,8 @@
     let destroyed = false
     let unsub = null
     let pollTimer = null
+    // The page-level scroll's events arrive as visible-area updates.
+    const unsubView = embedded ? onVisibleAreaChange(handleScroll) : null
 
     ;(async () => {
       await store.load()
@@ -114,6 +123,7 @@
 
     return () => {
       destroyed = true
+      unsubView?.()
       if (unsub) unsub()
       if (pollTimer) clearInterval(pollTimer)
       store.dispose()
@@ -146,8 +156,8 @@
     store.filtered
     collapse
     if (box) {
-      preScrollHeight = box.scrollHeight
-      preScrollTop = box.scrollTop
+      preScrollHeight = port.scrollHeight
+      preScrollTop = port.scrollTop
       preAnchor = untrack(() => {
         if (expanded.size === 0) return null
         const id = (focusedId && entryTopOffset(focusedId) != null) ? focusedId : topmostEntryId()
@@ -181,7 +191,7 @@
     store.filtered
     if (!box) return
     if (follow && !store.loadingOlder && !suppressFollowPin) {
-      box.scrollTop = 0
+      port.scrollTop = 0
       return
     }
     if (appendingOlder) return
@@ -192,7 +202,7 @@
         return
       }
     }
-    const grew = box.scrollHeight - preScrollHeight
+    const grew = port.scrollHeight - preScrollHeight
     if (grew > 0 && preScrollTop > 0) {
       win.write(preScrollTop + grew)
     }
@@ -208,21 +218,21 @@
     // Swallow the programmatic anchor write's own scroll event so it can't
     // re-trigger loadOlder or toggle follow (#328 r8 #4).
     if (win.consumeSuppressed()) return
-    atOldest = !win.hiddenBelow && nearBottom(box.scrollTop, box.scrollHeight, box.clientHeight)
+    atOldest = !win.hiddenBelow && nearBottom(port.scrollTop, port.scrollHeight, port.clientHeight)
     // Rendering rows that are already loaded needs no fetch, so it must not
     // wait for one: the background full-history load keeps loadingOlder set
     // for long stretches, and a reader reaching either edge of the window
     // would otherwise stall there until the load finished.
-    const nearOldest = nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight)
+    const nearOldest = nearOldestEdge(port.scrollTop, port.scrollHeight, port.clientHeight)
     if (store.loadingOlder) {
-      if (isAtTop(box.scrollTop) && win.hiddenAbove) win.raise()
+      if (isAtTop(port.scrollTop) && win.hiddenAbove) win.raise()
       else if (nearOldest && win.hiddenBelow) win.grow()
       return
     }
     // The live edge is the top now: being there means following, unless
     // newer rows are hidden above the window, which then grows upwards.
     const action = scrollAction({
-      atTop: isAtTop(box.scrollTop),
+      atTop: isAtTop(port.scrollTop),
       nearOldest,
       follow,
       hiddenAbove: win.hiddenAbove,
@@ -276,7 +286,7 @@
     }
     // The fetched batch lands beyond the window; a reader still parked at
     // the bottom would otherwise see nothing until they scroll again.
-    if (box) await win.afterOlderFetch(nearOldestEdge(box.scrollTop, box.scrollHeight, box.clientHeight))
+    if (box) await win.afterOlderFetch(nearOldestEdge(port.scrollTop, port.scrollHeight, port.clientHeight))
   }
 
   function jumpToPresent() {
@@ -287,19 +297,13 @@
     if (!box) return
     // Already at the top (a row opened at the live edge pauses follow there):
     // no scroll will happen, so no scrollend would ever re-arm the pin below.
-    if (box.scrollTop < 1) return
+    if (port.scrollTop < 1) return
     // The auto-follow effect pins scrollTop instantly on every entries
     // change — it would snap the viewport to the bottom and cancel the
     // smooth animation the moment `follow` flips true above. Suppress the
     // pin until the scroll settles (scrollend), then re-arm it (#328).
     suppressFollowPin = true
-    box.scrollTo({ top: 0, behavior: 'smooth' })
-    const rearm = () => { suppressFollowPin = false }
-    if ('onscrollend' in window) {
-      box.addEventListener('scrollend', rearm, { once: true })
-    } else {
-      setTimeout(rearm, 700)
-    }
+    port.smoothScrollTo(0, () => { suppressFollowPin = false })
   }
 
   // With the full history loaded, jump straight to the oldest log — now the
@@ -317,7 +321,7 @@
     // live-edge band, and with follow off they would read as a return to the
     // live edge, snapping the console back to the top. The scroll leaving
     // the band turns follow off and pins the window (scrollAction leaveLive).
-    box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' })
+    port.smoothScrollTo(port.scrollHeight)
   }
 
 
@@ -329,13 +333,13 @@
     followOffMarker = null
     win.reset()
     await tick()
-    if (box) box.scrollTop = 0
+    if (box) port.scrollTop = 0
   }
 
   // Return the data-entry-id of the topmost visible row, or null if none.
   function topmostEntryId() {
     if (!box) return null
-    const boxTop = box.getBoundingClientRect().top
+    const boxTop = port.viewTop()
     for (const row of box.querySelectorAll('[data-entry-id]')) {
       if (row.getBoundingClientRect().top >= boxTop - 1) return row.dataset.entryId
     }
@@ -366,7 +370,7 @@
   // exists.
   async function anchoredReflow(apply) {
     const anchorId = (focusedId && entryTopOffset(focusedId) != null) ? focusedId : topmostEntryId()
-    const prevScrollTop = box ? box.scrollTop : 0
+    const prevScrollTop = box ? port.scrollTop : 0
     const elTopBefore = anchorId ? entryTopOffset(anchorId) : null
     apply()
     if (!box) return
@@ -403,7 +407,7 @@
   async function fillViewport() {
     await tick()
     let guard = 0
-    while (box && box.scrollHeight <= box.clientHeight && store.hasMore && !store.loadingOlder && guard < 20) {
+    while (box && port.scrollHeight <= port.clientHeight && store.hasMore && !store.loadingOlder && guard < 20) {
       guard++
       await store.loadOlder()
       await tick()
@@ -743,25 +747,35 @@
       </EmptyState>
     {/if}
   {:else}
+    {#snippet presentButton()}
+      <button onclick={jumpToPresent}
+        class="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-vault/90 hover:bg-vault text-on-vault text-xs font-medium rounded-lg shadow-lg transition-all flex items-center gap-1.5"
+        title="Jump to present">
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+        {#if newCount > 0}{newCount} new {newCount === 1 ? 'entry' : 'entries'}{:else}Jump to present{/if}
+      </button>
+    {/snippet}
+    {#snippet oldestButton()}
+      <button onclick={jumpToOldest}
+        class="absolute top-1 right-3 z-10 h-6 px-2 flex items-center gap-1 text-xs bg-surface-3 border border-border rounded-md text-text-muted hover:text-text shadow-lg transition-colors"
+        title="Jump to oldest log" aria-label="Jump to oldest log">
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 14l7 7m0 0l7-7m-7 7V3"/></svg>
+        Oldest
+      </button>
+    {/snippet}
     <!-- Console wrapper: scroll container + fixed overlay buttons -->
     <div class="relative vault-console-frame" style="max-height: 72vh">
-      <!-- Jump to present / new-entries indicator (fixed, bottom-right whenever follow is off) -->
-      {#if !follow}
-        <button onclick={jumpToPresent}
-          class="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-vault/90 hover:bg-vault text-on-vault text-xs font-medium rounded-lg shadow-lg transition-all flex items-center gap-1.5"
-          title="Jump to present">
-          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
-          {#if newCount > 0}{newCount} new {newCount === 1 ? 'entry' : 'entries'}{:else}Jump to present{/if}
-        </button>
-      {/if}
-
-      {#if !atOldest || win.hiddenBelow}
-        <button onclick={jumpToOldest}
-          class="absolute top-1 right-3 z-10 h-6 px-2 flex items-center gap-1 text-xs bg-surface-3 border border-border rounded-md text-text-muted hover:text-text shadow-lg transition-colors"
-          title="Jump to oldest log" aria-label="Jump to oldest log">
-          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 14l7 7m0 0l7-7m-7 7V3"/></svg>
-          Oldest
-        </button>
+      {#if embedded}
+        <!-- Embedded, the page scrolls past a console at its natural height, so
+             the buttons ride zero-height sticky rails at the top and bottom of
+             the visible part instead of the console's own corners (#526). -->
+        <div class="sticky z-10 h-0" style="top: var(--vault-visible-top)">
+          {#if !atOldest || win.hiddenBelow}{@render oldestButton()}{/if}
+        </div>
+      {:else}
+        <!-- Jump to present / new-entries indicator (fixed, bottom-right whenever follow is off) -->
+        {#if !follow}{@render presentButton()}{/if}
+        {#if !atOldest || win.hiddenBelow}{@render oldestButton()}{/if}
       {/if}
 
       <!-- Older-batch loading spinner removed: the console now loads the
@@ -846,6 +860,11 @@
           </div>
         {/if}
       </div>
+      {#if embedded}
+        <div class="sticky z-10 h-0" style="bottom: var(--vault-visible-bottom)">
+          {#if !follow}{@render presentButton()}{/if}
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

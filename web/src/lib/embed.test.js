@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { parseViewportMessage, revealFrameTop, scrollHostTo, startEmbeddedPresentation } from './embed.js'
+import { getVisibleArea, onVisibleAreaChange, parseViewportMessage, revealFrameTop, scrollHostTo, startEmbeddedPresentation } from './embed.js'
 
 const ORIGIN = 'http://tower.test'
 
@@ -142,5 +142,43 @@ describe('host scrolling', () => {
     send(viewport({ top: 50 }))
     revealFrameTop(win)
     expect(parent.postMessage).toHaveBeenCalledWith({ source: 'vault-embed', type: 'scroll', top: 0 }, ORIGIN)
+  })
+})
+
+describe('visible area (#526)', () => {
+  it('defaults to the whole frame until the host reports, then follows it', () => {
+    const { win, send } = fakeWindow()
+    win.innerHeight = 700
+    startEmbeddedPresentation(win)
+    expect(getVisibleArea(win)).toEqual({ top: 0, height: 700 })
+    send(viewport({ top: 120, height: 450 }))
+    expect(getVisibleArea(win)).toEqual({ top: 120, height: 450 })
+  })
+
+  it('tells subscribers about each valid report until they unsubscribe', () => {
+    const { win, send } = fakeWindow()
+    startEmbeddedPresentation(win)
+    const fn = vi.fn()
+    const off = onVisibleAreaChange(fn)
+    send(viewport({ top: 'bad' }))
+    expect(fn).not.toHaveBeenCalled()
+    send(viewport())
+    expect(fn).toHaveBeenCalledOnce()
+    off()
+    send(viewport({ top: 30 }))
+    expect(fn).toHaveBeenCalledOnce()
+  })
+
+  it('reports grown content before asking the host to scroll, so the page can reach it', () => {
+    const { win, parent, app } = fakeWindow()
+    const stop = startEmbeddedPresentation(win)
+    parent.postMessage.mockClear()
+    app.offsetHeight = 1500
+    scrollHostTo(1200, win)
+    expect(parent.postMessage.mock.calls.map(([m]) => m.type)).toEqual(['size', 'scroll'])
+    stop()
+    parent.postMessage.mockClear()
+    scrollHostTo(10, win)
+    expect(parent.postMessage.mock.calls.map(([m]) => m.type)).toEqual(['scroll'])
   })
 })

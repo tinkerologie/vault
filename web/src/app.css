@@ -284,8 +284,12 @@ html.vault-embedded .max-h-\[90vh\] { max-height: calc(var(--vault-visible-heigh
 html.vault-embedded .max-h-\[80vh\] { max-height: calc(var(--vault-visible-height) * 0.8); }
 html.vault-embedded .max-h-\[70vh\] { max-height: calc(var(--vault-visible-height) * 0.7); }
 html.vault-embedded .min-h-\[60vh\] { min-height: 20rem; }
-html.vault-embedded .h-\[72vh\] { height: 30rem; }
-html.vault-embedded .vault-console-frame { max-height: 30rem !important; }
+/* The Logs console takes its natural height and the page scrolls past it: no
+   scroll box of its own. Its render window bounds that height. Clipping
+   sideways makes no scroll container, so its date headers still stick. */
+html.vault-embedded .vault-console-frame { max-height: none !important; }
+html.vault-embedded .console-scroll { height: auto; overflow: visible; overflow-x: clip; }
+html.vault-embedded .console-scroll > .sticky.top-0 { top: var(--vault-visible-top); }
 html.vault-embedded .fixed.top-0 { top: var(--vault-visible-top); }
 html.vault-embedded .fixed.top-4 { top: calc(var(--vault-visible-top) + 1rem); }
 html.vault-embedded .fixed.bottom-6 { bottom: calc(var(--vault-visible-bottom) + 1.5rem); }
