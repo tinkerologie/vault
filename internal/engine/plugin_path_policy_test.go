@@ -46,6 +46,15 @@ func TestPluginDefaultPathsRefuseSymlinks(t *testing.T) {
 	if err := os.Symlink("/etc", filepath.Join(base, "planted")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(base, "elsewhere")); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPluginConfigDir(filepath.Join(base, "elsewhere")); err == nil {
+		t.Error("plugin directory linked to another allowed tree accepted")
+	}
+	if err := checkPluginConfigDir(filepath.Join(base, "real")); err != nil {
+		t.Errorf("plain plugin directory refused: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(base, "planted.plg"), []byte("<PLUGIN/>"), 0o644); err != nil {
 		t.Fatal(err)
 	}

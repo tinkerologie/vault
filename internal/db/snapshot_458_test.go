@@ -389,3 +389,58 @@ func TestRestoreFromPathKeepsWALChanges(t *testing.T) {
 		t.Fatalf("wal_marker = %q; the WAL was dropped", got)
 	}
 }
+
+// Issue #545: a planted "rotated" symlink must not receive copies or lose files.
+func TestRotateSnapshotRefusesSymlinkedRotatedDir(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	snapDir := filepath.Join(dir, "snap")
+	snap := filepath.Join(snapDir, "vault.db")
+	sm := NewSnapshotManager(database, snap, snap)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	victim := t.TempDir()
+	for i := range rotatedSnapshotsKept + 3 {
+		if err := os.WriteFile(filepath.Join(victim, fmt.Sprintf("a%02d", i)), []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rotated := filepath.Join(snapDir, "rotated")
+	if err := os.RemoveAll(rotated); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, rotated); err != nil {
+		t.Fatal(err)
+	}
+	sm.rotateSnapshot()
+	sm.pruneRotated(rotated)
+	entries, err := os.ReadDir(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != rotatedSnapshotsKept+3 {
+		t.Fatalf("victim directory changed: %d entries", len(entries))
+	}
+}
+
+// A configured snapshot path whose directory does not exist yet is created.
+func TestSaveSnapshotCreatesMissingParent(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	snap := filepath.Join(dir, "new", "sub", "vault.db")
+	if err := NewSnapshotManager(database, snap, snap).SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(snap); err != nil {
+		t.Fatal(err)
+	}
+}

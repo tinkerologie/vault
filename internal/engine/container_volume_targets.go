@@ -216,3 +216,18 @@ func (h *ContainerHandler) liveMountSources(ctx context.Context, name string) []
 	}
 	return sources
 }
+
+// dumpBesideAllowed reports whether a preserved database dump may be written
+// into the parent of source, a mount source read from the backup.
+func dumpBesideAllowed(source string) bool {
+	parent := filepath.Dir(filepath.Clean(source))
+	if _, err := safepath.CheckVolumeTarget(parent); err == nil {
+		return true
+	}
+	// /var/lib/docker/volumes/<name>/_data keeps the dump in <name>.
+	if filepath.Base(source) == "_data" && filepath.Dir(parent) == "/var/lib/docker/volumes" {
+		_, err := safepath.CheckVolumeTarget(source)
+		return err == nil
+	}
+	return false
+}

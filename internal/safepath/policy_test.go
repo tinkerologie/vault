@@ -107,8 +107,12 @@ func TestCheckSnapshotLocationFileKinds(t *testing.T) {
 	if _, err := CheckSnapshotLocation(regular); err != nil {
 		t.Errorf("regular file refused: %v", err)
 	}
-	if _, err := CheckSnapshotLocation(filepath.Join(dir, "backups..2026.db")); err != nil {
-		t.Errorf("name containing consecutive dots refused: %v", err)
+	if _, err := CheckSnapshotLocation(filepath.Join(dir, "backups..2026.db")); err == nil {
+		t.Error("name containing consecutive dots allowed; its .tmp file could not be cleaned up")
+	}
+	// A parent directory that does not exist yet is fine: saves create it.
+	if _, err := CheckSnapshotLocation(filepath.Join(dir, "new", "sub", "vault.db")); err != nil {
+		t.Errorf("missing parent refused: %v", err)
 	}
 	if _, err := CheckSnapshotLocation(dir); err == nil {
 		t.Error("directory allowed")

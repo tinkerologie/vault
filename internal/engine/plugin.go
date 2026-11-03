@@ -81,6 +81,27 @@ func pluginPath(name string) string {
 	return filepath.Join(pluginsDir, name)
 }
 
+// checkPluginConfigDir refuses a plugin config directory that is not where it
+// claims to be: it must pass the folder policy and resolve inside pluginsDir, so
+// a symlink planted at the plugin's name cannot lead to another tree.
+func checkPluginConfigDir(dir string) error {
+	if _, err := safepath.CheckFolderLocation(dir); err != nil {
+		return err
+	}
+	base, err := evalExistingPrefix(pluginsDir)
+	if err != nil {
+		return err
+	}
+	resolved, err := evalExistingPrefix(dir)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resolved, base+string(filepath.Separator)) {
+		return fmt.Errorf("plugin config directory %s resolves outside %s", dir, pluginsDir)
+	}
+	return nil
+}
+
 // PluginPath returns the canonical config directory for a plugin under
 // /boot/config/plugins/. Exported for runner chain prune and restore path resolution.
 func PluginPath(name string) string {
@@ -183,7 +204,7 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// Step 2: Archive the config directory if it exists.
 	progress(item.Name, 40, "archiving config")
 	configDir := pluginPath(pluginName)
-	if _, err := safepath.CheckFolderLocation(configDir); err != nil {
+	if err := checkPluginConfigDir(configDir); err != nil {
 		return nil, fmt.Errorf("refusing to back up plugin config: %w", err)
 	}
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
@@ -357,9 +378,11 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	}
 	src, _ := item.Settings["path"].(string)
 	if src == "" {
+		if err := checkPluginConfigDir(pluginPath(safeName)); err != nil {
+			return dedup.ID{}, fmt.Errorf("plugin: %w", err)
+		}
 		src = pluginPath(safeName)
-	}
-	if _, err := safepath.CheckFolderLocation(src); err != nil {
+	} else if _, err := safepath.CheckFolderLocation(src); err != nil {
 		return dedup.ID{}, fmt.Errorf("plugin: %w", err)
 	}
 	// Forward the incremental cut-off and exclusions into the folder proxy.

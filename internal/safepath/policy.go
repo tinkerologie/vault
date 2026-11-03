@@ -106,6 +106,12 @@ func CheckSnapshotLocation(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Snapshot writes clean up "<path>.tmp" through a guard that refuses any
+	// path holding "..". A name like "backups..2026.db" would leave that file
+	// in place for a share writer to swap, so such names are refused up front.
+	if strings.Contains(cleaned, "..") {
+		return "", fmt.Errorf("snapshot path %q must not contain \"..\"", cleaned)
+	}
 	// Inspected through a handle pinned to the resolved parent rather than by
 	// pathname, so the answer is about the file in the checked directory.
 	info, err := lstatPinned(cleaned)

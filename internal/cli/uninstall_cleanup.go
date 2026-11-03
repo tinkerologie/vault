@@ -140,7 +140,7 @@ func runUninstallCleanup(cfg uninstallCleanupConfig) error {
 	}
 
 	for _, path := range managedSnapshotPaths(cfg, state) {
-		if err := removeSnapshotArtifacts(path); err != nil {
+		if err := removeSnapshotArtifacts(path, path == normalizePath(cfg.DefaultSnapshotDB)); err != nil {
 			return err
 		}
 	}
@@ -375,7 +375,11 @@ const sqliteMagic = "SQLite format 3\x00"
 // on trust: it must pass the snapshot location policy, the file must really be a
 // SQLite database, and everything is unlinked through a handle pinned to its
 // directory. It never removes a directory recursively.
-func removeSnapshotArtifacts(path string) error {
+//
+// orphanSidecars allows removing -wal, -shm and -journal files when the database
+// itself is gone. Only Vault's own default location gets that: a persisted
+// override has to prove it names a database first.
+func removeSnapshotArtifacts(path string, orphanSidecars bool) error {
 	path = normalizePath(path)
 	if path == "" {
 		return nil
@@ -406,7 +410,11 @@ func removeSnapshotArtifacts(path string) error {
 	f, err := root.Open(name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		// Sidecars can outlive the database; they are still removed below.
+		// Sidecars can outlive the database; they are removed below only at
+		// the default location, which is Vault's own.
+		if !orphanSidecars {
+			return nil
+		}
 	case err != nil:
 		return err
 	default:

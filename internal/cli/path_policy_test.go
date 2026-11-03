@@ -44,16 +44,16 @@ func TestRemoveSnapshotArtifactsRemovesDatabaseAndSidecars(t *testing.T) {
 	db := filepath.Join(dir, "vault.db")
 	writeSnapshot(t, db, sqliteMagic+"rest")
 	writeSnapshot(t, db+"-wal", "x")
-	if err := removeSnapshotArtifacts(db); err != nil {
+	if err := removeSnapshotArtifacts(db, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(dir); !os.IsNotExist(err) {
 		t.Fatalf("directory not pruned: %v", err)
 	}
-	if err := removeSnapshotArtifacts(""); err != nil {
+	if err := removeSnapshotArtifacts("", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeSnapshotArtifacts(filepath.Join(t.TempDir(), "gone", "vault.db")); err != nil {
+	if err := removeSnapshotArtifacts(filepath.Join(t.TempDir(), "gone", "vault.db"), false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -64,7 +64,7 @@ func TestRemoveSnapshotArtifactsKeepsPlantedTargets(t *testing.T) {
 
 	notDB := filepath.Join(root, "important.doc")
 	writeSnapshot(t, notDB, "user data, long enough to read a header from")
-	if err := removeSnapshotArtifacts(notDB); err != nil {
+	if err := removeSnapshotArtifacts(notDB, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(notDB); err != nil {
@@ -73,7 +73,7 @@ func TestRemoveSnapshotArtifactsKeepsPlantedTargets(t *testing.T) {
 
 	tree := filepath.Join(root, "share")
 	writeSnapshot(t, filepath.Join(tree, "file"), "x")
-	if err := removeSnapshotArtifacts(tree); err != nil {
+	if err := removeSnapshotArtifacts(tree, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(tree, "file")); err != nil {
@@ -88,7 +88,7 @@ func TestRemoveSnapshotArtifactsKeepsPlantedTargets(t *testing.T) {
 	if err := os.Symlink(victim, link); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeSnapshotArtifacts(link); err != nil {
+	if err := removeSnapshotArtifacts(link, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(victim); err != nil {
@@ -99,10 +99,10 @@ func TestRemoveSnapshotArtifactsKeepsPlantedTargets(t *testing.T) {
 	if err := os.Symlink("/etc", etc); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeSnapshotArtifacts(filepath.Join(etc, "hosts")); err != nil {
+	if err := removeSnapshotArtifacts(filepath.Join(etc, "hosts"), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeSnapshotArtifacts("/etc/hosts"); err != nil {
+	if err := removeSnapshotArtifacts("/etc/hosts", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat("/etc/hosts"); err != nil {
@@ -130,5 +130,23 @@ func TestWriteRecoverReportIsExclusive(t *testing.T) {
 	}
 	if err := writeRecoverReport(filepath.Join(dir, "missing"), "r.json", nil); err == nil {
 		t.Fatal("missing directory accepted")
+	}
+}
+
+func TestRemoveSnapshotArtifactsOrphanSidecars(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "s")
+	db := filepath.Join(dir, "vault.db")
+	writeSnapshot(t, db+"-wal", "x")
+	if err := removeSnapshotArtifacts(db, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(db + "-wal"); err != nil {
+		t.Fatalf("override sidecar removed without a database: %v", err)
+	}
+	if err := removeSnapshotArtifacts(db, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(db + "-wal"); !os.IsNotExist(err) {
+		t.Fatalf("default-location sidecar kept: %v", err)
 	}
 }

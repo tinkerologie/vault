@@ -2312,8 +2312,9 @@ func preserveDatabaseDump(ctx context.Context, dumpPath, restoreDest string, ins
 				continue
 			}
 			// The mount list came from the backup, so the dump directory has
-			// to pass the same test an in-place volume restore does.
-			if _, err := safepath.CheckVolumeTarget(filepath.Dir(m.Source)); err != nil {
+			// to pass the same test an in-place volume restore does. A named
+			// volume's data directory passes for its own volume directory.
+			if !dumpBesideAllowed(m.Source) {
 				continue
 			}
 			base = filepath.Dir(m.Source)

@@ -405,28 +405,89 @@ func (sm *SnapshotManager) rotateSnapshot() {
 		return
 	}
 
-	rotatedDir := filepath.Join(filepath.Dir(validPath), "rotated")
-	if err := os.MkdirAll(rotatedDir, 0o750); err != nil {
-		log.Printf("snapshot rotation: mkdir %s: %v", rotatedDir, err)
+	// The snapshot directory may be writable by others, so "rotated" and the
+	// copy are reached through a handle pinned to it: a symlink planted at
+	// "rotated" cannot lead the copy or the pruning anywhere else.
+	dir, err := filepath.EvalSymlinks(filepath.Dir(validPath))
+	if err != nil {
+		log.Printf("snapshot rotation: resolve %s: %v", filepath.Dir(validPath), err)
 		return
 	}
+	root, err := safepath.OpenPinnedDir(dir)
+	if err != nil {
+		log.Printf("snapshot rotation: open %s: %v", dir, err)
+		return
+	}
+	defer root.Close()
+	if err := root.Mkdir("rotated", 0o750); err != nil && !errors.Is(err, os.ErrExist) {
+		log.Printf("snapshot rotation: mkdir rotated in %s: %v", dir, err)
+		return
+	}
+	rotated, err := openRealSubdir(root, "rotated")
+	if err != nil {
+		log.Printf("snapshot rotation: %s/rotated: %v", dir, err)
+		return
+	}
+	defer rotated.Close()
 
 	base := filepath.Base(validPath)
 	// UTC + dashes only — works on every filesystem.
 	stamp := time.Now().UTC().Format("2006-01-02T15-04-05.000000000")
-	dstPath := filepath.Join(rotatedDir, base+"."+stamp)
+	name := base + "." + stamp
 
 	// Prefer hardlink (atomic, instant on same FS). Fall back to byte copy
 	// on cross-device failure.
-	if err := os.Link(validPath, dstPath); err != nil {
-		if copyErr := copyFile(validPath, dstPath); copyErr != nil {
-			log.Printf("snapshot rotation: copy %s -> %s failed: %v (link error: %v)",
-				validPath, dstPath, copyErr, err)
+	if err := root.Link(base, filepath.Join("rotated", name)); err != nil {
+		if copyErr := copyIntoRoot(root, base, rotated, name); copyErr != nil {
+			log.Printf("snapshot rotation: copy %s -> rotated/%s failed: %v (link error: %v)",
+				validPath, name, copyErr, err)
 			return
 		}
 	}
 
-	sm.pruneRotated(rotatedDir)
+	pruneRotatedIn(rotated, filepath.Join(dir, "rotated"))
+}
+
+// openRealSubdir opens name inside root, refusing a symlink or non-directory.
+func openRealSubdir(root *os.Root, name string) (*os.Root, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errors.New("not a real directory")
+	}
+	sub, err := root.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	if opened, err := sub.Stat("."); err != nil || !os.SameFile(info, opened) {
+		_ = sub.Close()
+		return nil, errors.New("changed while being opened")
+	}
+	return sub, nil
+}
+
+// copyIntoRoot copies src in from into a new file name in to, mode 0600.
+func copyIntoRoot(from *os.Root, src string, to *os.Root, name string) error {
+	in, err := from.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := to.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func copyFile(src, dst string) error {
@@ -447,9 +508,37 @@ func copyFile(src, dst string) error {
 }
 
 func (sm *SnapshotManager) pruneRotated(dir string) {
-	entries, err := os.ReadDir(dir)
+	parent, err := filepath.EvalSymlinks(filepath.Dir(dir))
 	if err != nil {
 		log.Printf("snapshot rotation: readdir %s: %v", dir, err)
+		return
+	}
+	root, err := safepath.OpenPinnedDir(parent)
+	if err != nil {
+		log.Printf("snapshot rotation: readdir %s: %v", dir, err)
+		return
+	}
+	defer root.Close()
+	rotated, err := openRealSubdir(root, filepath.Base(dir))
+	if err != nil {
+		log.Printf("snapshot rotation: readdir %s: %v", dir, err)
+		return
+	}
+	defer rotated.Close()
+	pruneRotatedIn(rotated, dir)
+}
+
+// pruneRotatedIn keeps the newest rotatedSnapshotsKept entries of rotated.
+func pruneRotatedIn(rotated *os.Root, display string) {
+	f, err := rotated.Open(".")
+	if err != nil {
+		log.Printf("snapshot rotation: readdir %s: %v", display, err)
+		return
+	}
+	entries, err := f.ReadDir(-1)
+	_ = f.Close()
+	if err != nil {
+		log.Printf("snapshot rotation: readdir %s: %v", display, err)
 		return
 	}
 	if len(entries) <= rotatedSnapshotsKept {
@@ -457,11 +546,9 @@ func (sm *SnapshotManager) pruneRotated(dir string) {
 	}
 	// Filenames embed a sortable timestamp, so lexical sort = chronological.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	toDelete := entries[:len(entries)-rotatedSnapshotsKept]
-	for _, e := range toDelete {
-		p := filepath.Join(dir, e.Name())
-		if err := removeValidated(p); err != nil {
-			log.Printf("snapshot rotation: remove %s: %v", p, err)
+	for _, e := range entries[:len(entries)-rotatedSnapshotsKept] {
+		if err := rotated.Remove(e.Name()); err != nil {
+			log.Printf("snapshot rotation: remove %s: %v", filepath.Join(display, e.Name()), err)
 		}
 	}
 }
