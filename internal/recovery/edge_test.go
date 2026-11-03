@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/tinkerologie/vault/internal/bounded"
 )
 
 // tarEntry is one header (and body, for regular files) of a test archive.
@@ -246,5 +249,26 @@ func TestExtractChainWithoutListingWarns(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(notes, "\n"), "no file listing") {
 		t.Fatalf("notes = %q, want the missing-listing note", notes)
+	}
+}
+
+// A volumes manifest is small, so it gets the manifest limit, not the index one.
+func TestReadJSON_HonoursLimit(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "v.json"), []byte(`["a very long value"]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := json.Marshal(map[string]string{"path": root})
+	s, err := Open(Options{StorageType: "local", StorageConfig: string(cfg)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var v []string
+	if err := s.readJSON("v.json", 4, &v); !errors.Is(err, bounded.ErrTooLarge) {
+		t.Fatalf("err = %v", err)
+	}
+	if err := s.readJSON("v.json", 1024, &v); err != nil || len(v) != 1 {
+		t.Fatalf("%v, %v", v, err)
 	}
 }

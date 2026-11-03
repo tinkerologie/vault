@@ -2,7 +2,6 @@ package recovery
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/runner"
 )
@@ -260,8 +260,8 @@ func (s *Session) chain(p Point) ([]Point, error) {
 }
 
 // readJSON reads one storage object, undoing encryption and transport
-// compression, and decodes it into v.
-func (s *Session) readJSON(name string, v any) error {
+// compression, and decodes it into v, up to limit bytes.
+func (s *Session) readJSON(name string, limit int64, v any) error {
 	rc, err := s.adapter.Read(name)
 	if err != nil {
 		return err
@@ -272,5 +272,5 @@ func (s *Session) readJSON(name string, v any) error {
 		return err
 	}
 	defer closeFn() //nolint:errcheck // read-only stream
-	return json.NewDecoder(plain).Decode(v)
+	return bounded.DecodeJSON(plain, limit, v)
 }

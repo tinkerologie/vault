@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -717,7 +718,7 @@ func (s *Session) pruneDeleted(x *extractor, newest Point, item Item, trees map[
 			continue
 		}
 		var listing engine.TarIndex
-		if err := s.readJSON(f.Path, &listing); err != nil {
+		if err := s.readJSON(f.Path, bounded.IndexBytes, &listing); err != nil {
 			return fmt.Errorf("read listing %s: %w", f.Path, err)
 		}
 		covered[archiveKey(f.Path)] = tree

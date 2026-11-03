@@ -344,11 +344,12 @@ func (s *MCPServer) addTestStorageTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("getting storage %d: %w", input.ID, err)
 		}
-		adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+		adapter, err := newStorageAdapter(dest.Type, dest.Config)
 		if err != nil {
 			r, _ := textResult(map[string]any{"success": false, "error": err.Error()})
 			return r, nil, nil
 		}
+		defer storage.CloseAdapter(adapter)
 		if err := adapter.TestConnection(); err != nil {
 			r, _ := textResult(map[string]any{"success": false, "error": err.Error()})
 			return r, nil, nil
@@ -639,6 +640,9 @@ func (s *MCPServer) addGetJobHistoryTool() {
 
 // --- Storage CRUD Tools ---
 
+// newStorageAdapter is a variable so tests can observe an adapter's lifecycle.
+var newStorageAdapter = storage.NewAdapter
+
 // validateStorageConfig builds (and closes) an adapter from the config, which
 // rejects unknown types, malformed configs and unsafe local roots.
 func validateStorageConfig(storageType, configJSON string) error {
@@ -776,10 +780,11 @@ func (s *MCPServer) addListStorageFilesTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("getting storage %d: %w", input.ID, err)
 		}
-		adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+		adapter, err := newStorageAdapter(dest.Type, dest.Config)
 		if err != nil {
 			return nil, nil, fmt.Errorf("creating adapter: %w", err)
 		}
+		defer storage.CloseAdapter(adapter)
 		files, err := adapter.List(input.Prefix)
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing files: %w", err)

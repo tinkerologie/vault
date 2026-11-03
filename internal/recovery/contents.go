@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/storage"
@@ -179,7 +180,7 @@ func (s *Session) treeArchives(p Point, item Item) (map[string]treeArchive, erro
 		out := map[string]treeArchive{}
 		found := false
 		for _, name := range []string{"volumes.json", "volumes.json.age"} {
-			err := s.readJSON(path.Join(p.StoragePath, item.Name, name), &vols)
+			err := s.readJSON(path.Join(p.StoragePath, item.Name, name), bounded.ManifestBytes, &vols)
 			if err == nil {
 				found = true
 				break
@@ -266,7 +267,7 @@ func (s *Session) classicContents(p Point, item Item) ([]Entry, error) {
 				continue
 			}
 			var idx engine.TarIndex
-			if err := s.readJSON(f.Path, &idx); err != nil {
+			if err := s.readJSON(f.Path, bounded.IndexBytes, &idx); err != nil {
 				return false, fmt.Errorf("read %s: %w", f.Path, err)
 			}
 			add(f.Path, idx)

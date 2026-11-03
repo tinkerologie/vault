@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"path"
 	"strings"
 
+	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/storage"
@@ -69,19 +69,20 @@ func isAppdataArchivePath(p string) bool {
 // use it too), so the file must be an encrypted Vault manifest envelope or
 // a JSON object with the key set every Vault manifest has (isVaultManifest)
 // whose job_name is the run's parent directory (jobNameMatchesDir).
-// The whole file is read: manifests carry per-item checksums and have no
-// size bound, and a truncated read would misclassify a real backup.
+// The whole file is read, because a truncated read would misclassify a real
+// backup, up to bounded.ManifestBytes. A larger file counts as not a manifest,
+// which only ever keeps data.
 func hasManifest(adapter storage.Adapter, dir string) bool {
 	p := path.Join(dir, "manifest.json")
 	fi, err := adapter.Stat(p)
-	if err != nil || fi.IsDir {
+	if err != nil || fi.IsDir || fi.Size > bounded.ManifestBytes {
 		return false
 	}
 	rc, err := adapter.Read(p)
 	if err != nil {
 		return false
 	}
-	data, err := io.ReadAll(rc)
+	data, err := bounded.ReadAll(rc, bounded.ManifestBytes)
 	_ = rc.Close()
 	if err != nil {
 		return false
