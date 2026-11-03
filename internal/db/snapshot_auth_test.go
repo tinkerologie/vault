@@ -377,8 +377,13 @@ func TestSealPersistentCopiesSkipsReplacedSignedCopy(t *testing.T) {
 	if _, err := d.SealSecretsAtRest(); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SealPersistentCopies(context.Background(), sm, nil); err != nil {
-		t.Fatal(err)
+	// The replaced copy is not sealed or re-signed, and the scrub stays pending
+	// so the next start retries it.
+	if err := d.SealPersistentCopies(context.Background(), sm, nil); err == nil {
+		t.Fatal("want an error for the copy that failed verification")
+	}
+	if v, _ := d.GetSetting(settingSealScrubPending, ""); v != "1" {
+		t.Fatal("scrub marker cleared although a copy was not sealed")
 	}
 	if _, _, err := a.VerifiedCopy(rotated[0]); err == nil {
 		t.Fatal("replaced copy was re-signed")

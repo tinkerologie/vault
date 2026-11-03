@@ -107,7 +107,7 @@ func (h *ContainerHandler) resolveChunkedImage(ctx context.Context, item BackupI
 		}
 	}
 	if !RestoreTrustFrom(ctx).AllowUnpinnedImage {
-		return "", fmt.Errorf("cannot restore %s with the image it was backed up with: %w; nothing was changed. If the registry is reachable and %q is acceptable as it is today, restart the restore with \"Use the image's current tag\" enabled (API: allow_unpinned_image)", item.Name, err, image)
+		return "", fmt.Errorf("%w: cannot restore %s with the image it was backed up with: %w; nothing was changed. If the registry is reachable and %q is acceptable as it is today, restart the restore with \"Use the image's current tag\" enabled (API: allow_unpinned_image)", ErrRestoreNeedsApproval, item.Name, err, image)
 	}
 	log.Printf("engine: chunked restore: %s is using the current image for %q as approved: %v", item.Name, image, err)
 	if progress != nil {

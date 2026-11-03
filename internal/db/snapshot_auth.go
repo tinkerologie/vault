@@ -354,7 +354,9 @@ func (sm *SnapshotManager) SnapshotAuth() *SnapshotAuth {
 // in place, when no authenticator is set or the path has no envelope. Otherwise
 // the copy is verified into a private WAL-free file, sealed there, written back
 // in place of the original (whose WAL and SHM are dropped, keeping its mtime) and
-// signed. A copy that fails verification is left untouched: boot refuses it.
+// signed. A copy that fails verification is left untouched and reported as an
+// error, so the scrub stays pending and is retried at the next start. One whose
+// envelope the unsigned-snapshot policy waives is handed back as unsigned.
 func (sm *SnapshotManager) sealSigned(path string, key []byte) (bool, error) {
 	auth := sm.SnapshotAuth()
 	if auth == nil {
@@ -371,9 +373,11 @@ func (sm *SnapshotManager) sealSigned(path string, key []byte) (bool, error) {
 	}
 	private, release, err := auth.VerifiedCopy(path)
 	defer release()
-	if err != nil || private == path {
-		log.Printf("Warning: not sealing %s: it does not match its envelope (%v)", path, err)
-		return true, nil
+	if err != nil {
+		return true, fmt.Errorf("not sealed, it does not match its envelope: %w", err)
+	}
+	if private == path {
+		return false, nil
 	}
 	if err := SealCopy(private, key); err != nil {
 		return true, err

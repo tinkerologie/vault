@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -225,12 +227,19 @@ func TestChainProvenanceLocal(t *testing.T) {
 	}
 }
 
-func TestRestoreItemTrustCarriesApprovals(t *testing.T) {
-	if got := restoreItemTrust(nil); got != (engine.RestoreTrust{}) {
-		t.Errorf("no options = %+v", got)
+func TestRestoreItemPointsApprovalsToTheUI(t *testing.T) {
+	refused := fmt.Errorf("%w: restoring web would grant host access", engine.ErrRestoreNeedsApproval)
+	got := approvalInUI(refused)
+	if !errors.Is(got, engine.ErrRestoreNeedsApproval) || !strings.Contains(got.Error(), "Vault UI") {
+		t.Fatalf("err = %v", got)
 	}
-	got := restoreItemTrust([]RestoreItemOptions{{AllowHostPrivileges: true}, {AllowUnpinnedImage: true}})
-	if !got.AllowHostPrivileges || !got.AllowUnpinnedImage || got.ArtifactTrusted {
-		t.Errorf("trust = %+v", got)
+	other := errors.New("disk full")
+	if approvalInUI(other) != other || approvalInUI(nil) != nil {
+		t.Fatal("unrelated errors changed")
+	}
+	// RestoreItem itself carries no approvals into the restore.
+	r, _ := newTestRunner(t)
+	if err := r.RestoreItem(db.RestorePoint{JobID: 9999, Metadata: `{}`}, "web", "container", "", ""); err == nil {
+		t.Fatal("want error for an unknown job")
 	}
 }

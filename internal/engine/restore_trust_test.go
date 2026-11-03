@@ -59,7 +59,7 @@ func TestEnforceRestorePrivileges(t *testing.T) {
 	})
 	t.Run("an untrusted artifact is refused and told what it asks for", func(t *testing.T) {
 		err := enforceRestorePrivileges(t.Context(), item, ri)
-		if err == nil || !strings.Contains(err.Error(), "privileged mode") || !strings.Contains(err.Error(), "allow_host_privileges") {
+		if err == nil || !errors.Is(err, ErrRestoreNeedsApproval) || !strings.Contains(err.Error(), "privileged mode") || !strings.Contains(err.Error(), "allow_host_privileges") {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -227,7 +227,7 @@ func TestResolveChunkedImage(t *testing.T) {
 			}
 			before := len(r.pulled)
 			_, err := (&ContainerHandler{cli: r}).resolveChunkedImage(t.Context(), item, "nginx:1", c.digests, noopProgress)
-			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "allow_unpinned_image") {
+			if err == nil || !errors.Is(err, ErrRestoreNeedsApproval) || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "allow_unpinned_image") {
 				t.Fatalf("err = %v", err)
 			}
 			if c.digests == nil && len(r.pulled) != before {

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -25,6 +26,11 @@ type RestoreTrust struct {
 }
 
 type restoreTrustKey struct{}
+
+// ErrRestoreNeedsApproval marks a restore refused until a person approves it:
+// host-level access from an untrusted backup, or the current image tag in place
+// of a missing backup-time digest.
+var ErrRestoreNeedsApproval = errors.New("restore needs approval")
 
 // WithRestoreTrust attaches a restore's trust decision to ctx.
 func WithRestoreTrust(ctx context.Context, t RestoreTrust) context.Context {
@@ -98,5 +104,5 @@ func enforceRestorePrivileges(ctx context.Context, item BackupItem, ri restoreIn
 		log.Printf("engine: restore: %s granted approved host access from an unverified backup: %s", item.Name, summary)
 		return nil
 	}
-	return fmt.Errorf("restoring %s would grant host access from a backup this server cannot vouch for (imported or replicated): %s; nothing was changed. Review these settings, then restart the restore with \"Allow host-level access\" enabled (API: allow_host_privileges)", item.Name, summary)
+	return fmt.Errorf("%w: restoring %s would grant host access from a backup this server cannot vouch for (imported or replicated): %s; nothing was changed. Review these settings, then restart the restore with \"Allow host-level access\" enabled (API: allow_host_privileges)", ErrRestoreNeedsApproval, item.Name, summary)
 }
