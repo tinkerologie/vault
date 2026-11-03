@@ -397,10 +397,10 @@ func TestPinRestoredParentApprovedRoots(t *testing.T) {
 func TestDumpBesideAllowed(t *testing.T) {
 	t.Parallel()
 	for source, want := range map[string]bool{
-		"/mnt/user/appdata/app":             true,
-		"/etc/cron.d":                       false,
-		"/opt/app":                          false,
-		"/var/lib/docker/volumes/x/other":   false,
+		"/mnt/user/appdata/app":              true,
+		"/etc/cron.d":                        false,
+		"/opt/app":                           false,
+		"/var/lib/docker/volumes/x/other":    false,
 		"/var/lib/docker/volumes/../x/_data": false,
 	} {
 		if got := dumpBesideAllowed(source); got != want {
