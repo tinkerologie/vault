@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
 )
@@ -202,11 +203,12 @@ func TestReplicatedRunCounts585(t *testing.T) {
 
 func TestPeerTime585(t *testing.T) {
 	t.Parallel()
-	if got := peerTime("2026-10-15T13:25:59.5+10:00"); got.IsZero() || got.UTC().Hour() != 3 {
+	now := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	if got, _ := peerTime("2026-10-15T13:25:59.5+10:00", now); got.IsZero() || got.UTC().Hour() != 3 {
 		t.Errorf("peerTime = %v", got)
 	}
 	for _, bad := range []string{"", "2026-10-15 13:25:59"} {
-		if got := peerTime(bad); !got.IsZero() {
+		if got, _ := peerTime(bad, now); !got.IsZero() {
 			t.Errorf("peerTime(%q) = %v, want zero", bad, got)
 		}
 	}

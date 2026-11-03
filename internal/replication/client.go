@@ -205,10 +205,15 @@ func (c *Client) ListRestorePoints(jobID int64) ([]RemoteRestorePoint, error) {
 // RemoteRun mirrors the fields of a remote job run that describe its outcome.
 type RemoteRun struct {
 	ID          int64  `json:"id"`
+	JobID       int64  `json:"job_id"`
 	Status      string `json:"status"`
 	ItemsTotal  int    `json:"items_total"`
 	ItemsDone   int    `json:"items_done"`
 	ItemsFailed int    `json:"items_failed"`
+
+	// unconfirmed is set locally, never by the peer, when the peer keeps run
+	// history but could not describe this run.
+	unconfirmed bool
 }
 
 // maxPeerRuns is how much of a remote job's history ListJobRuns asks for, the
@@ -223,6 +228,32 @@ func (c *Client) ListJobRuns(jobID int64) ([]RemoteRun, error) {
 		return nil, fmt.Errorf("list remote runs for job %d: %w", jobID, err)
 	}
 	return runs, nil
+}
+
+// errRunNotFound reports that the peer has no run with the requested ID, or is
+// too old to serve single runs.
+var errRunNotFound = errors.New("peer has no such run")
+
+// GetRun returns one run of the remote peer, however far back in its history
+// it is. It returns errRunNotFound when the peer answers 404 or 405.
+func (c *Client) GetRun(runID int64) (*RemoteRun, error) {
+	resp, err := c.doRequestWithParams(http.MethodGet, fmt.Sprintf("/api/v1/runs/%d", runID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get remote run %d: %w", runID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		err := peerStatusError(resp)
+		if endpointMissing(err) {
+			return nil, fmt.Errorf("get remote run %d: %w", runID, errRunNotFound)
+		}
+		return nil, fmt.Errorf("get remote run %d: %w", runID, err)
+	}
+	var run RemoteRun
+	if err := bounded.DecodeJSON(resp.Body, maxPeerJSONBytes, &run); err != nil {
+		return nil, fmt.Errorf("get remote run %d: %w", runID, err)
+	}
+	return &run, nil
 }
 
 // ListStorageFiles lists files at the given path on a remote storage destination.
@@ -332,10 +363,30 @@ func peerStatusError(resp *http.Response) error {
 			msg = sanitizePeerMessage(body.Error)
 		}
 	}
-	if msg == "" {
-		return fmt.Errorf("status %d", resp.StatusCode)
+	return &peerHTTPError{code: resp.StatusCode, msg: msg}
+}
+
+// peerHTTPError is a failed peer response, kept with its status code so a
+// caller can tell an endpoint the peer lacks from one that failed.
+type peerHTTPError struct {
+	code int
+	msg  string
+}
+
+func (e *peerHTTPError) Error() string {
+	if e.msg == "" {
+		return fmt.Sprintf("status %d", e.code)
 	}
-	return fmt.Errorf("status %d: %s", resp.StatusCode, msg)
+	return fmt.Sprintf("status %d: %s", e.code, e.msg)
+}
+
+// endpointMissing reports whether err is the peer saying it has no such
+// endpoint (404 or 405), which an older peer answers for routes it predates.
+// Any other failure, such as a 5xx, a timeout or an unreadable body, says
+// nothing about what the peer supports.
+func endpointMissing(err error) bool {
+	he, ok := errors.AsType[*peerHTTPError](err)
+	return ok && (he.code == http.StatusNotFound || he.code == http.StatusMethodNotAllowed)
 }
 
 // sanitizePeerMessage keeps the printable text of a peer message on one line,

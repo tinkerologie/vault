@@ -148,6 +148,9 @@ func (s *Server) SetConfigChangeHook(fn handlers.ConfigChangeHook) {
 	if s.recoveryHandler != nil {
 		s.recoveryHandler.SetConfigChangeHook(fn)
 	}
+	if s.syncer != nil {
+		s.syncer.SetConfigChangeHook(fn)
+	}
 }
 
 // SetPreShutdownHook registers a function called immediately on SIGTERM,
@@ -185,6 +188,10 @@ func (s *Server) MountManager() *mount.Manager {
 // SetReplicationSyncer sets the replication syncer for use by API handlers.
 func (s *Server) SetReplicationSyncer(syncer *replication.Syncer) {
 	s.syncer = syncer
+	// A destination a sync binds is configuration, flushed like the rest.
+	if syncer != nil && s.configChangeHook != nil {
+		syncer.SetConfigChangeHook(s.configChangeHook)
+	}
 }
 
 // Syncer returns the replication syncer for use by API handlers.

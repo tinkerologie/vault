@@ -248,3 +248,36 @@ func TestProbeTimeoutLeavesRoomToRespond(t *testing.T) {
 		t.Errorf("headroom = %v, want at least %v to serialise and flush the error", got, probeTimeoutHeadroom)
 	}
 }
+
+// TestUpdateJob_ReplicatedDestinationIsReadOnly600 pins that the REST adapter
+// refuses moving a replicated job off the destination its source writes to.
+func TestUpdateJob_ReplicatedDestinationIsReadOnly600(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	destA, destB := seedStorageDest(t, d), seedStorageDest(t, d)
+	srcID, err := d.CreateReplicationSource(db.ReplicationSource{
+		Name: "peer", Type: "remote_vault", URL: "http://peer.invalid:24085", StorageDestID: destA, Config: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	jobID, err := d.CreateReplicatedJob(db.Job{
+		Name: "[peer] nightly", BackupTypeChain: "full", Compression: "zstd", Encryption: "none",
+		NotifyOn: "failure", StorageDestID: destA, SourceID: srcID,
+	})
+	if err != nil {
+		t.Fatalf("create replicated job: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := newReq(http.MethodPut, "/api/v1/jobs/1",
+		[]byte(`{"name":"[peer] nightly","storage_dest_id":`+strconv.FormatInt(destB, 10)+`}`))
+	r = withURLParam(r, "id", strconv.FormatInt(jobID, 10))
+	h.Update(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if job, err := d.GetJob(jobID); err != nil || job.StorageDestID != destA {
+		t.Fatalf("job destination = %d (err %v), want %d", job.StorageDestID, err, destA)
+	}
+}

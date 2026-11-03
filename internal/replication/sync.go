@@ -39,6 +39,72 @@ type Syncer struct {
 	// not exist until the download ends, so the ownership check cannot see them.
 	inFlightMu sync.Mutex
 	inFlight   map[int64][]string
+
+	// onConfigChange flushes the database to flash after sync changes
+	// configuration. Nil when there is nothing to flush to.
+	onConfigChange func()
+
+	// gates holds one sourceGate per source, created on first use.
+	gatesMu sync.Mutex
+	gates   map[int64]*sourceGate
+}
+
+// sourceGate serialises a source's updates with the start of its syncs. A sync
+// registers under mu before it reads the source, and an update holds mu while
+// it reads and writes the source, so a sync either starts after the update
+// and reads its result, or is running and the update knows it.
+type sourceGate struct {
+	mu      sync.Mutex
+	running int
+}
+
+func (s *Syncer) gate(sourceID int64) *sourceGate {
+	s.gatesMu.Lock()
+	defer s.gatesMu.Unlock()
+	if s.gates == nil {
+		s.gates = map[int64]*sourceGate{}
+	}
+	g := s.gates[sourceID]
+	if g == nil {
+		g = &sourceGate{}
+		s.gates[sourceID] = g
+	}
+	return g
+}
+
+// ErrSyncInProgress refuses changing a source's storage destination while a
+// sync of that source is running.
+var ErrSyncInProgress = errors.New("a sync of this replication source is running; wait for it to finish before changing its storage destination")
+
+// beginSync records a running sync of sourceID and returns its end.
+func (s *Syncer) beginSync(sourceID int64) (end func()) {
+	g := s.gate(sourceID)
+	g.mu.Lock()
+	g.running++
+	g.mu.Unlock()
+	return func() {
+		g.mu.Lock()
+		g.running--
+		g.mu.Unlock()
+	}
+}
+
+// UpdateSource runs update, which reads and writes one replication source,
+// while no sync of that source can start, and tells it whether one is
+// running. Syncs of other sources are not held up. update should read the
+// source afresh and refuse a destination change, with ErrSyncInProgress,
+// while syncing is true.
+func (s *Syncer) UpdateSource(sourceID int64, update func(syncing bool) error) error {
+	g := s.gate(sourceID)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return update(g.running > 0)
+}
+
+// SetConfigChangeHook registers the daemon's configuration flush. Call it
+// before the first sync.
+func (s *Syncer) SetConfigChangeHook(fn func()) {
+	s.onConfigChange = fn
 }
 
 // claimPath reserves a restore point path on a destination for one download,
@@ -90,6 +156,9 @@ type SyncResult struct {
 // SyncSource performs a sync operation for a replication source.
 // It pulls backups from the remote Vault instance.
 func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (result *SyncResult, err error) {
+	// Registered before the source is read, so a destination change either
+	// finishes first, and this sync reads the new destination, or is refused.
+	defer s.beginSync(sourceID)()
 	src, err := s.db.GetReplicationSource(sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("get replication source: %w", err)
@@ -224,12 +293,18 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 	// name it: restore and preflight open the job's destination, and a later
 	// sync must keep writing to the same place. Jobs created while the source
 	// had no destination are bound too, even if the source names one now.
-	if err := s.db.AdoptReplicationDestination(sourceID, storageDestID); err != nil {
+	bound, err := s.db.AdoptReplicationDestination(sourceID, storageDestID)
+	if err != nil {
 		storage.CloseAdapter(localAdapter)
 		errMsg := fmt.Sprintf("record storage destination: %v", err)
 		s.updateSyncStatus(sourceID, "failed", errMsg)
 		s.logSyncError(sourceID, src.Name, errMsg)
 		return nil, fmt.Errorf("record storage destination: %w", err)
+	}
+	// The binding is configuration: flush it like any other, so losing the
+	// working database before the next periodic snapshot cannot lose it.
+	if bound && s.onConfigChange != nil {
+		s.onConfigChange()
 	}
 	src.StorageDestID = storageDestID
 	// Release pooled connections / mounts when the sync finishes — scheduled
@@ -405,6 +480,7 @@ func (s *Syncer) syncJob(
 	var firstErr error
 	var totalBytes int64
 	var peerRuns map[int64]RemoteRun
+	var history historyState
 
 	// Parents first, so an incremental or differential point can be linked to
 	// the local copy of the backup it builds on.
@@ -415,7 +491,7 @@ func (s *Syncer) syncJob(
 		}
 
 		if peerRuns == nil {
-			peerRuns = s.peerRuns(client, src.Name, rj)
+			peerRuns, history = s.peerRuns(client, src.Name, rj)
 		}
 		// Checked before downloading, so a refused point leaves no files.
 		err := dedupUnsupported(rrp)
@@ -423,12 +499,11 @@ func (s *Syncer) syncJob(
 		if err == nil {
 			parentID, err = localParent(rrp, remoteByID, localIDs, normPath)
 		}
+		var peerRun *RemoteRun
 		if err == nil {
-			run, ok := peerRuns[rrp.JobRunID]
-			var peerRun *RemoteRun
-			if ok {
-				peerRun = &run
-			}
+			peerRun, err = peerRunFor(client, rj, rrp.JobRunID, peerRuns, history)
+		}
+		if err == nil {
 			rpID, bytes, err = s.syncRestorePoint(client, src, destID, rj, rrp, localJobID, parentID, peerRun, localAdapter)
 		}
 		if err != nil {
@@ -453,19 +528,65 @@ func (s *Syncer) syncJob(
 	return newCount, totalBytes, nil
 }
 
-// peerRuns returns the remote job's runs by ID, so each copied backup can
-// carry the outcome its run had on the peer. When the peer cannot list them,
-// the outcome falls back to the restore point metadata.
-func (s *Syncer) peerRuns(client *Client, sourceName string, rj RemoteJob) map[int64]RemoteRun {
+// historyState is what a peer's history listing says about run outcomes.
+type historyState int
+
+const (
+	historyListed      historyState = iota // the newest page was listed
+	historyUnsupported                     // the peer has no history endpoint
+	historyFailed                          // the listing failed for another reason
+)
+
+// peerRuns returns the newest page of the remote job's runs by ID, so each
+// copied backup can carry the outcome its run had on the peer, and what the
+// listing says about the peer. Only a 404 or 405 means the peer lacks the
+// endpoint; any other failure leaves the outcomes unknown.
+func (s *Syncer) peerRuns(client *Client, sourceName string, rj RemoteJob) (map[int64]RemoteRun, historyState) {
 	runs, err := client.ListJobRuns(rj.ID)
+	state := historyListed
 	if err != nil {
-		logx.Warnf("replication: run history of %q from %q unavailable, using restore point metadata for run outcomes: %v", rj.Name, sourceName, err)
+		logx.Warnf("replication: run history of %q from %q unavailable: %v", rj.Name, sourceName, err)
+		state = historyFailed
+		if endpointMissing(err) {
+			state = historyUnsupported
+		}
 	}
 	byID := make(map[int64]RemoteRun, len(runs))
 	for _, r := range runs {
 		byID[r.ID] = r
 	}
-	return byID
+	return byID, state
+}
+
+// peerRunFor returns the peer's run behind a restore point. A run outside the
+// newest history page is fetched on its own, since its outcome cannot be read
+// from the restore point: a run that skipped files is partial with no failed
+// items. The result is nil only when the peer has neither a history nor a
+// single-run endpoint, leaving the outcome to the restore point metadata.
+// When the peer could have described the run but did not, the run is marked
+// unconfirmed rather than taken as a success. Any other lookup failure fails
+// the restore point, so the next sync tries again.
+func peerRunFor(client *Client, rj RemoteJob, runID int64, page map[int64]RemoteRun, history historyState) (*RemoteRun, error) {
+	if runID <= 0 {
+		return nil, nil
+	}
+	if run, ok := page[runID]; ok {
+		return &run, nil
+	}
+	run, err := client.GetRun(runID)
+	switch {
+	case err == nil && run.ID == runID && run.JobID == rj.ID:
+		return run, nil
+	case err == nil:
+		// The peer answered with another run, so its answer says nothing.
+		return &RemoteRun{ID: runID, unconfirmed: true}, nil
+	case errors.Is(err, errRunNotFound) && history == historyUnsupported:
+		return nil, nil
+	case errors.Is(err, errRunNotFound):
+		return &RemoteRun{ID: runID, unconfirmed: true}, nil
+	default:
+		return nil, fmt.Errorf("look up the peer's outcome for this backup: %w", err)
+	}
 }
 
 // errDedupUnsupported marks a restore point refused because it is
@@ -638,6 +759,11 @@ func (s *Syncer) syncRestorePoint(
 	// the next sync downloads them again to the same path.
 	metadata := s.rewriteMetadata(rrp.Metadata, src.Name)
 	run := replicatedRun(localJobID, src.Name, rrp, metadata, totalBytes, peerRun)
+	createdAt, skew := peerTime(rrp.CreatedAt, time.Now())
+	if skew != "" {
+		logx.Warnf("replication: restore point %q from %q: %s", rrp.StoragePath, src.Name, skew)
+		run.Log += " " + skew
+	}
 	rp := db.RestorePoint{
 		JobID:                localJobID,
 		BackupType:           rrp.BackupType,
@@ -647,7 +773,7 @@ func (s *Syncer) syncRestorePoint(
 		ParentRestorePointID: parentID,
 		SourceID:             src.ID,
 	}
-	_, rpID, err = s.db.CreateReplicatedRestorePoint(run, rp, peerTime(rrp.CreatedAt))
+	_, rpID, err = s.db.CreateReplicatedRestorePoint(run, rp, createdAt, destID)
 	if err != nil {
 		return 0, totalBytes, fmt.Errorf("record restore point: %w", err)
 	}
@@ -655,10 +781,12 @@ func (s *Syncer) syncRestorePoint(
 }
 
 // replicatedRun describes, as a finished local run, the peer backup that
-// produced rrp. The outcome is the peer run's own when the peer listed it, so
-// a backup the peer marked partial (failed items, or files it could not read)
-// stays partial here. Otherwise it comes from the restore point metadata,
-// where only failed items are recorded.
+// produced rrp. The outcome is the peer run's own when the peer described it,
+// so a backup the peer marked partial (failed items, or files it could not
+// read) stays partial here. Otherwise the counts come from the restore point
+// metadata, where only failed items are recorded. A run the peer keeps
+// history for but could not describe is unconfirmed, so it is recorded as
+// partial, not as a success it may not have been.
 func replicatedRun(localJobID int64, sourceName string, rrp RemoteRestorePoint, metadata string, sizeBytes int64, peerRun *RemoteRun) db.JobRun {
 	run := db.JobRun{
 		JobID:      localJobID,
@@ -668,7 +796,7 @@ func replicatedRun(localJobID int64, sourceName string, rrp RemoteRestorePoint, 
 		Log:        fmt.Sprintf("Replicated from %s; the backup ran on that server.", sourceName),
 		SizeBytes:  sizeBytes,
 	}
-	if peerRun != nil {
+	if peerRun != nil && !peerRun.unconfirmed {
 		run.ItemsTotal = max(peerRun.ItemsTotal, 0)
 		run.ItemsDone = max(peerRun.ItemsDone, 0)
 		run.ItemsFailed = max(peerRun.ItemsFailed, 0)
@@ -690,17 +818,32 @@ func replicatedRun(localJobID int64, sourceName string, rrp RemoteRestorePoint, 
 	if run.ItemsFailed > 0 {
 		run.Status = "partial"
 	}
+	if peerRun != nil && peerRun.unconfirmed {
+		run.Status = "partial"
+		run.Log += fmt.Sprintf(" Outcome unconfirmed: %s couldn't report how its run %d ended, so this backup is marked partial, as it may have skipped files.", sourceName, peerRun.ID)
+	}
 	return run
 }
 
-// peerTime parses the peer's restore point timestamp, returning the zero time
-// (meaning now) when it is missing or unreadable.
-func peerTime(s string) time.Time {
+// maxPeerClockSkew is how far ahead of this server's clock a peer's backup
+// time may be. Retention keeps the newest backups, so a backup dated far in
+// the future would outlive every real one; a day covers a peer whose clock or
+// time zone is set wrong.
+const maxPeerClockSkew = 24 * time.Hour
+
+// peerTime parses the peer's restore point timestamp. It returns the zero time
+// (meaning now) when the timestamp is missing or unreadable, or later than
+// maxPeerClockSkew past now, with the reason. Old timestamps are kept: they
+// are backups made long ago.
+func peerTime(s string, now time.Time) (time.Time, string) {
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, ""
 	}
-	return t
+	if t.After(now.Add(maxPeerClockSkew)) {
+		return time.Time{}, fmt.Sprintf("The peer dated this backup %s, more than %s ahead of this server's clock, so the time it was copied is used instead.", s, maxPeerClockSkew)
+	}
+	return t, ""
 }
 
 // rewriteMetadata adds replication origin info to the metadata. The result

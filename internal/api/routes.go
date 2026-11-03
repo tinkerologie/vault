@@ -237,6 +237,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		})
 
 		runlogH := handlers.NewRunLogHandler(s.db)
+		r.Get("/runs/{runId}", runlogH.Get)
 		r.Get("/runs/{runId}/logs", runlogH.List)
 
 		r.Route("/settings", func(r chi.Router) {
