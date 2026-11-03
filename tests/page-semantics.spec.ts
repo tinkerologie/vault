@@ -404,6 +404,20 @@ test.describe('Page semantics (#529)', () => {
 // presentations, at desktop and 375 px. Tab from the top of the document to the
 // end and check what each stop would announce.
 test.describe('keyboard walkthrough on every page (#529)', () => {
+  test('the walk flags a control Tab skips, but not a roving group member or hidden content', async ({ page }) => {
+    await page.setContent(`<a href="#top">Skip</a>
+      <div role="tablist" aria-label="Sections">
+        <button role="tab" aria-selected="true" tabindex="0">One</button>
+        <button role="tab" aria-selected="false" tabindex="-1">Two</button>
+      </div>
+      <label><input type="radio" name="mode" checked> Light</label>
+      <label><input type="radio" name="mode"> Dark</label>
+      <button tabindex="-1">Stranded</button>
+      <div aria-hidden="true"><button tabindex="-1">Decorative</button></div>`);
+    const { unreached } = await tabWalk(page, page.mainFrame());
+    expect(unreached).toEqual(['<button tabindex="-1">Stranded</button>']);
+  });
+
   for (const presentation of PRESENTATIONS) {
     for (const viewport of VIEWPORTS) {
       test.describe(`${presentation} at ${viewport.name}`, () => {
@@ -454,6 +468,14 @@ test.describe('screen-reader state and names (#529)', () => {
     await expect(page.getByRole('switch', { name: 'Enable Docker & Appdata', checked: true })).toBeVisible();
     await expect(page.getByRole('switch', { name: 'Enable VM Backups', checked: true })).toBeVisible();
     await expect(page.getByRole('switch', { name: /Disable/ })).toHaveCount(0);
+    // No hover title or description that contradicts the state, on or off.
+    const docker = page.getByRole('switch', { name: 'Enable Docker & Appdata' });
+    await expect(docker).not.toHaveAttribute('title');
+    await expect(docker).toHaveAccessibleDescription('');
+    await docker.click();
+    await expect(docker).toHaveAttribute('aria-checked', 'false');
+    await expect(docker).not.toHaveAttribute('title');
+    await expect(docker).toHaveAccessibleDescription('');
   });
 
   for (const viewport of VIEWPORTS) {

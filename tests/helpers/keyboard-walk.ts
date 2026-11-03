@@ -71,14 +71,24 @@ export async function tabWalk(page: Page, frame: Frame, limit = 300): Promise<Wa
   // visible if either the keyboard pass or the replay shows a difference.
   looks.forEach((ok, i) => { if (stops[i]) stops[i].visibleFocus = ok; });
 
+  // A control with a negative tabIndex still counts as unreached unless it is
+  // deliberately out of the Tab order and usable another way.
   const unreached = await frame.evaluate((widgets) => {
     const seen = new Set((window as WalkWindow).__walk!);
+    const ROVING = '[role="tablist"], [role="radiogroup"], [role="toolbar"], [role="menu"], [role="menubar"], [role="listbox"], [role="grid"], [role="treegrid"], [role="tree"]';
+    // A roving-tabindex member whose group has a member Tab reached: arrows move between them.
+    const rovingWithReachedMember = (el: HTMLElement) => {
+      const group = el.closest(ROVING);
+      return !!group && [...seen].some((s) => s !== el && group.contains(s));
+    };
+    // A native radio whose group (same name, same form) has a member Tab reached.
+    const radioWithReachedMember = (el: HTMLElement) => el instanceof HTMLInputElement && el.type === 'radio' && !!el.name
+      && [...seen].some((s) => s instanceof HTMLInputElement && s.type === 'radio' && s.name === el.name && s.form === el.form);
     return [...document.querySelectorAll<HTMLElement>(widgets)]
       .filter((el) => !seen.has(el))
       .filter((el) => el.checkVisibility() && el.getBoundingClientRect().width > 0)
-      .filter((el) => !el.closest('[inert]') && !(el as HTMLButtonElement).disabled && el.getAttribute('aria-disabled') !== 'true')
-      // Roving groups (tabs, radios) keep one member in the Tab order on purpose.
-      .filter((el) => el.tabIndex >= 0 && !(el instanceof HTMLInputElement && el.type === 'radio' && !el.checked))
+      .filter((el) => !el.closest('[inert], [aria-hidden="true"]') && !(el as HTMLButtonElement).disabled && el.getAttribute('aria-disabled') !== 'true')
+      .filter((el) => !rovingWithReachedMember(el) && !radioWithReachedMember(el))
       // Content inside a closed <details> is skipped by Tab; its summary is reached instead.
       .filter((el) => !el.closest('details:not([open]) > :not(summary)'))
       .map((el) => el.outerHTML.slice(0, 120));

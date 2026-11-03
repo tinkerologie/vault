@@ -1261,7 +1261,6 @@
                 <button
                   onclick={(e) => { e.stopPropagation(); toggleEnabled(job) }}
                   class="relative w-9 h-5 rounded-full transition-colors shrink-0 {job.enabled ? 'bg-vault' : 'bg-surface-4'}"
-                  title={job.enabled ? 'Disable job' : 'Enable job'}
                   aria-label="Enable {job.name}"
                   role="switch"
                   aria-checked={job.enabled}
