@@ -563,7 +563,7 @@ func pruneRotatedIn(rotated *os.Root, display string) {
 		if err := rotated.Remove(e.Name()); err != nil {
 			log.Printf("snapshot rotation: remove %s: %v", filepath.Join(display, e.Name()), err)
 		}
-		_ = os.Remove(envelopePath(p))
+		_ = removeValidated(envelopePath(p))
 	}
 }
 

@@ -77,6 +77,10 @@ func envelopePath(snapshot string) string {
 // the server. SavedAt is the file's mtime, so an aligned USB copy still ties with
 // it during restore ordering.
 func (a *SnapshotAuth) Sign(path string) error {
+	path, err := validateSnapshotPath(path)
+	if err != nil {
+		return err
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -108,7 +112,11 @@ func (a *SnapshotAuth) Sign(path string) error {
 // copyEnvelope gives a rotated copy its source's envelope; the two files are
 // byte-identical and the envelope names no path.
 func (a *SnapshotAuth) copyEnvelope(src, dst string) error {
-	data, err := os.ReadFile(envelopePath(src)) // #nosec G304 -- derived from a validated snapshot path
+	from, err := validateSnapshotPath(envelopePath(src))
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(from) // #nosec G304 -- validated snapshot path
 	if err != nil {
 		return err
 	}
@@ -220,6 +228,10 @@ func (a *SnapshotAuth) VerifiedCopy(path string) (string, func(), error) {
 // openRegular opens a file only if it and the opened handle are regular files,
 // refusing a symlink at the final path component.
 func openRegular(path string) (*os.File, error) {
+	path, err := validateSnapshotPath(path)
+	if err != nil {
+		return nil, err
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -248,6 +260,10 @@ func hashReader(r io.Reader) (string, error) {
 }
 
 func writeFileAtomic(path string, data []byte) error {
+	path, err := validateSnapshotPath(path)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
