@@ -10,7 +10,7 @@ import { expect, type Page } from '@playwright/test';
  * palette, seed its theme and call the same functions.
  */
 
-export type ThemeStyle = 'default' | '1bit' | 'retro';
+export type ThemeStyle = 'default' | '1bit' | 'retro' | 'dracula' | 'catppuccin';
 export type ThemeMode = 'light' | 'dark';
 
 export interface ContrastOptions {

@@ -56,9 +56,9 @@ test.describe('Theme style picker', () => {
     await setupVaultMockApi(page);
   });
 
-  test('offers exactly Default, 1-Bit and Retro', async ({ page }) => {
+  test('offers exactly Default, 1-Bit, Retro, Dracula and Catppuccin', async ({ page }) => {
     await page.goto('/#/settings');
-    await expect(styleButtons(page)).toHaveText(['Default', '1-Bit', 'Retro']);
+    await expect(styleButtons(page)).toHaveText(['Default', '1-Bit', 'Retro', 'Dracula', 'Catppuccin']);
   });
 
   test('switches style with the mouse, keeping one style class and persisting it', async ({ page }) => {
@@ -100,11 +100,11 @@ test.describe('Theme style picker', () => {
   test('fits a 375 px viewport in every style', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/#/settings');
-    for (const name of ['1-Bit', 'Retro', 'Default']) {
+    for (const name of ['1-Bit', 'Retro', 'Dracula', 'Catppuccin', 'Default']) {
       await styleButton(page, name).click();
-      await expect(styleButtons(page)).toHaveCount(3);
+      await expect(styleButtons(page)).toHaveCount(5);
       const widths = await styleButtons(page).evaluateAll((els) => els.map((el) => el.scrollWidth - el.clientWidth));
-      expect(widths, `${name} labels overflow their buttons`).toEqual([0, 0, 0]);
+      expect(widths, `${name} labels overflow their buttons`).toEqual([0, 0, 0, 0, 0]);
       const overflow = await page.locator('main').evaluate((el) => el.scrollWidth - el.clientWidth);
       expect(overflow, `${name} overflows the page`).toBeLessThanOrEqual(0);
     }
@@ -276,7 +276,7 @@ test.describe('Pixel fonts', () => {
     await setupVaultMockApi(page);
   });
 
-  for (const style of ['default', '1bit']) {
+  for (const style of ['default', '1bit', 'dracula', 'catppuccin']) {
     for (const mode of ['light', 'dark']) {
       test(`${style} ${mode} requests no fonts on any page`, async ({ page }) => {
         const { fonts, foreign } = watch(page);
@@ -336,5 +336,239 @@ test.describe('Pixel fonts', () => {
     await page.goto('/#/settings');
     await expect(page.locator('link[rel="preload"][as="font"]')).toHaveCount(0);
     await expect(page.locator('link[href*="fonts.g"]')).toHaveCount(0);
+  });
+});
+
+// Colour-only styles (#590 Dracula, #591 Catppuccin): Default fonts and layout,
+// their own palette, and the colour mode they allow.
+
+const modeButton = (page: Page, name: string) => page.getByRole('group', { name: 'Color mode' }).getByRole('button', { name, exact: true });
+const token = (page: Page, name: string) => page.evaluate((n) => {
+  const probe = document.createElement('i');
+  probe.style.color = `var(${n})`;
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  return color;
+}, name);
+const rgbOf = (hex: string) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+const sidebarBrand = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' });
+
+test.describe('Dracula style', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  });
+
+  test('applies the palette without a reload and keeps it after one', async ({ page }) => {
+    await seed(page, { 'vault-mode': 'light' });
+    await page.goto('/#/settings');
+    await page.evaluate(() => { (window as unknown as { marker: number }).marker = 1; });
+    await styleButton(page, 'Dracula').click();
+    const html = page.locator('html');
+    await expect(html).toHaveClass(/\btheme-dracula\b/);
+    await expect(html).toHaveClass(/\bdark\b/);
+    expect(await token(page, '--color-surface')).toBe(rgbOf('#282a36'));
+    expect(await token(page, '--color-vault')).toBe(rgbOf('#bd93f9'));
+    expect(await page.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(1);
+    expect(await stored(page, 'vault-style')).toBe('dracula');
+    expect(await stored(page, 'vault-mode')).toBe('light');
+
+    await page.reload();
+    await expect(html).toHaveClass(/\btheme-dracula\b/);
+    await expect(styleButton(page, 'Dracula')).toHaveClass(/bg-vault/);
+  });
+
+  test('disables the colour mode with a note and restores the saved mode on the way out', async ({ page }) => {
+    await seed(page, { 'vault-style': 'dracula', 'vault-mode': 'light' });
+    await page.goto('/#/settings');
+    const group = page.getByRole('group', { name: 'Color mode' });
+    for (const name of ['Light', 'System', 'Dark']) await expect(modeButton(page, name)).toBeDisabled();
+    // The highlight shows the mode that comes back.
+    await expect(modeButton(page, 'Light')).toHaveClass(/bg-vault/);
+    await expect(group).toHaveAccessibleDescription(/Dracula is always dark/);
+
+    await page.keyboard.press('Control+Shift+L');
+    expect(await stored(page, 'vault-mode')).toBe('light');
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+
+    await styleButton(page, 'Default').click();
+    await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
+    await expect(page.locator('html')).not.toHaveClass(/\btheme-/);
+    for (const name of ['Light', 'System', 'Dark']) await expect(modeButton(page, name)).toBeEnabled();
+    await expect(page.getByText('Dracula is always dark')).toHaveCount(0);
+    expect(await token(page, '--color-vault')).toBe(rgbOf('#f59e0b'));
+
+    await page.keyboard.press('Control+Shift+L');
+    expect(await stored(page, 'vault-mode')).toBe('system');
+  });
+
+  test('keeps the Default brand, fonts and corners', async ({ page }) => {
+    await seed(page, { 'vault-style': 'dracula', 'vault-mode': 'dark' });
+    await page.goto('/#/jobs');
+    await expect(sidebarBrand(page).getByText('Backup Manager')).toBeVisible();
+    await expect(sidebarBrand(page).getByText('┌─ VAULT ─┐')).toHaveCount(0);
+    await expect(page.locator('body')).toHaveCSS('font-family', /-apple-system/);
+    await expect(page.getByRole('button', { name: /new job/i })).not.toHaveCSS('border-radius', '0px');
+  });
+});
+
+test.describe('Catppuccin style', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+  });
+
+  for (const [mode, surface, vault] of [['light', '#eff1f5', '#8839ef'], ['dark', '#1e1e2e', '#cba6f7']]) {
+    test(`uses ${mode === 'light' ? 'Latte' : 'Mocha'} in ${mode} mode`, async ({ page }) => {
+      await seed(page, { 'vault-style': 'catppuccin', 'vault-mode': mode });
+      await page.goto('/#/settings');
+      expect(await token(page, '--color-surface')).toBe(rgbOf(surface));
+      expect(await token(page, '--color-vault')).toBe(rgbOf(vault));
+      for (const name of ['Light', 'System', 'Dark']) await expect(modeButton(page, name)).toBeEnabled();
+    });
+  }
+
+  test('follows the device in System mode, live', async ({ page }) => {
+    await seed(page, { 'vault-style': 'catppuccin', 'vault-mode': 'system' });
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.goto('/#/settings');
+    expect(await token(page, '--color-surface')).toBe(rgbOf('#eff1f5'));
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect.poll(() => token(page, '--color-surface')).toBe(rgbOf('#1e1e2e'));
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect.poll(() => token(page, '--color-surface')).toBe(rgbOf('#eff1f5'));
+  });
+
+  test('switches modes from Settings without a reload', async ({ page }) => {
+    await seed(page, { 'vault-mode': 'dark' });
+    await page.goto('/#/settings');
+    await styleButton(page, 'Catppuccin').click();
+    await expect(page.locator('html')).toHaveClass(/\btheme-catppuccin\b/);
+    expect(await token(page, '--color-surface')).toBe(rgbOf('#1e1e2e'));
+    await modeButton(page, 'Light').click();
+    await expect.poll(() => token(page, '--color-surface')).toBe(rgbOf('#eff1f5'));
+    await page.reload();
+    await expect(styleButton(page, 'Catppuccin')).toHaveClass(/bg-vault/);
+    expect(await token(page, '--color-surface')).toBe(rgbOf('#eff1f5'));
+    await expect(sidebarBrand(page).getByText('Backup Manager')).toBeVisible();
+  });
+});
+
+// Colours that only the Default style paints. Tailwind's own palette computes to
+// oklch(), so any shade a style block misses shows up as oklch too.
+const DEFAULT_ONLY = [
+  '#f59e0b', '#d97706', '#92400e', '#f0b429', '#111827', '#1f2937', '#374151', '#4b5563', '#6b7280', '#aeb4be',
+  '#ffffff', '#f9fafb', '#f3f4f6', '#e5e7eb', '#d1d5db', '#5f6673', '#166534', '#991b1b', '#1d4ed8',
+  '#4ade80', '#fca5a5', '#fbbf24', '#93c5fd',
+].map(rgbOf);
+
+/** Every painted colour on the page, including dialogs, chart marks, pseudo-elements and backdrops. */
+function paintedColours(page: Page) {
+  return page.evaluate(() => {
+    const found = new Map<string, string>();
+    const props = ['color', 'background-color', 'border-top-color', 'border-bottom-color', 'border-left-color', 'border-right-color', 'outline-color', 'fill', 'stroke', 'caret-color', 'accent-color'];
+    const note = (el: Element, style: CSSStyleDeclaration, pseudo = '') => {
+      for (const prop of props) {
+        const value = style.getPropertyValue(prop);
+        if (!value || value === 'none' || value === 'auto' || value.endsWith(' 0)') || value === 'transparent') continue;
+        if (!found.has(value)) found.set(value, `${el.tagName.toLowerCase()}.${String(el.getAttribute('class') ?? '').slice(0, 80)}${pseudo} ${prop}`);
+      }
+    };
+    for (const el of document.querySelectorAll('*')) {
+      note(el, getComputedStyle(el));
+      for (const pseudo of ['::before', '::after', '::placeholder']) {
+        const style = getComputedStyle(el, pseudo);
+        if (pseudo === '::placeholder' || style.content !== 'none') note(el, style, pseudo);
+      }
+      if (el.tagName === 'DIALOG') note(el, getComputedStyle(el, '::backdrop'), '::backdrop');
+    }
+    return [...found].map(([value, where]) => ({ value, where }));
+  });
+}
+
+test.describe('No leftover Default colours', () => {
+  const STYLES = [
+    { style: 'dracula', mode: 'dark' },
+    { style: 'catppuccin', mode: 'light' },
+    { style: 'catppuccin', mode: 'dark' },
+  ];
+  const VISITS: { name: string; hash: string; then?: (page: Page) => Promise<void> }[] = [
+    { name: 'Dashboard', hash: '#/' },
+    { name: 'Jobs', hash: '#/jobs' },
+    { name: 'New job wizard', hash: '#/jobs', then: async (p) => {
+      await p.getByRole('button', { name: /new job/i }).click();
+      await p.getByRole('button', { name: /Containers/i }).first().click();
+    } },
+    { name: 'Storage', hash: '#/storage' },
+    { name: 'Add storage dialog', hash: '#/storage', then: async (p) => {
+      await p.locator('main').getByRole('button', { name: /add storage/i }).first().click();
+      await expect(p.getByRole('dialog', { name: 'Add Storage' })).toBeVisible();
+    } },
+    { name: 'Restore', hash: '#/restore' },
+    { name: 'History with chart', hash: '#/history', then: async (p) => {
+      await expect(p.locator('main svg').first()).toBeVisible();
+    } },
+    { name: 'Logs', hash: '#/logs', then: async (p) => {
+      await expect(p.getByText('Failed to reach remote endpoint').first()).toBeVisible();
+    } },
+    { name: 'Anomalies', hash: '#/anomalies' },
+    { name: 'Replication', hash: '#/replication' },
+    { name: 'Settings', hash: '#/settings' },
+    { name: 'Delete job dialog', hash: '#/jobs', then: async (p) => {
+      await p.getByRole('button', { name: /delete job/i }).first().click();
+      await expect(p.getByRole('dialog').first()).toBeVisible();
+    } },
+  ];
+
+  for (const { style, mode } of STYLES) {
+    for (const { name, hash, then } of VISITS) {
+      test(`${style} ${mode}: ${name}`, async ({ page }) => {
+        await setupVaultMockApi(page);
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await seed(page, { 'vault-style': style, 'vault-mode': mode });
+        await page.goto(`/${hash}`);
+        await expect(page.locator('main')).toBeVisible();
+        await page.waitForLoadState('networkidle');
+        if (then) await then(page);
+        const leftovers = (await paintedColours(page)).filter(({ value }) =>
+          DEFAULT_ONLY.includes(value.replace(/rgba\((\d+), (\d+), (\d+), 1\)/, 'rgb($1, $2, $3)')) || value.startsWith('oklch('));
+        expect(leftovers).toEqual([]);
+      });
+    }
+  }
+});
+
+test.describe('Appearance pickers announce the selection', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  test('style and mode buttons report pressed state as it changes', async ({ page }) => {
+    await seed(page, { 'vault-style': 'default', 'vault-mode': 'light' });
+    await page.goto('/#/settings');
+    const styles = page.getByRole('group', { name: 'Theme style' });
+    await expect(styles.getByRole('button', { name: 'Default', pressed: true })).toBeVisible();
+    await expect(styles.getByRole('button', { pressed: true })).toHaveCount(1);
+    await expect(modeButton(page, 'Light')).toHaveAttribute('aria-pressed', 'true');
+    for (const name of ['System', 'Dark']) await expect(modeButton(page, name)).toHaveAttribute('aria-pressed', 'false');
+
+    await styles.getByRole('button', { name: 'Catppuccin' }).click();
+    await expect(styles.getByRole('button', { name: 'Catppuccin' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(styles.getByRole('button', { name: 'Default' })).toHaveAttribute('aria-pressed', 'false');
+    await modeButton(page, 'Dark').click();
+    await expect(modeButton(page, 'Dark')).toHaveAttribute('aria-pressed', 'true');
+    await expect(modeButton(page, 'Light')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('under Dracula the mode buttons read as disabled, keep the saved mode pressed, and carry the note', async ({ page }) => {
+    await seed(page, { 'vault-style': 'dracula', 'vault-mode': 'system' });
+    await page.goto('/#/settings');
+    const group = page.getByRole('group', { name: 'Color mode' });
+    await expect(group).toHaveAccessibleDescription('Dracula is always dark. Your saved mode comes back when you choose another style.');
+    for (const name of ['Light', 'System', 'Dark']) await expect(group.getByRole('button', { name, disabled: true })).toBeVisible();
+    await expect(group.getByRole('button', { name: 'System', pressed: true })).toBeDisabled();
+    const snapshot = await group.ariaSnapshot();
+    expect(snapshot).toContain('button "System" [disabled] [pressed]');
   });
 });

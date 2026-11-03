@@ -3,7 +3,7 @@
   import { pageTitle } from './lib/routes.js'
   import { createRouteChangeDetector, focusPageHeading } from './lib/focus.js'
   import { connectWs, getWsStatus } from './lib/ws.svelte.js'
-  import { initTheme, getMode, setMode, getIsThemed } from './lib/theme.svelte.js'
+  import { initTheme, getMode, setMode, getIsThemed, getIsModeLocked } from './lib/theme.svelte.js'
   import { api, setReplicaMode } from './lib/api.js'
   import { shouldRedirectRoute } from './lib/route-guard.js'
   import { groupBySection, isMobileNavActive, isMoreActive, moreNavItems } from './lib/mobile-nav.js'
@@ -233,6 +233,8 @@
   }
 
   function cycleTheme() {
+    // Dracula is always dark: a hidden mode change would surprise the user later.
+    if (getIsModeLocked()) return
     /** @type {Array<'light'|'system'|'dark'>} */
     const modes = ['light', 'system', 'dark']
     const current = getMode()

@@ -335,3 +335,122 @@ describe('initTheme host default (#526)', () => {
     expect(storage.data['vault-mode']).toBeUndefined()
   })
 })
+
+describe('colour-only styles (#590, #591)', () => {
+  it.each(['dracula', 'catppuccin'])('restores a stored %s with the Default fonts and branding', async (saved) => {
+    await setup({ stored: { 'vault-style': saved, 'vault-mode': 'dark' } })
+    theme.initTheme()
+    expect(theme.getStyle()).toBe(saved)
+    expect(theme.getIsThemed()).toBe(false)
+    expect(theme.getIsRetro()).toBe(false)
+    expect([...classes].sort()).toEqual(['dark', `theme-${saved}`])
+  })
+
+  it('keeps 1-Bit and Retro as the styles with their own look', async () => {
+    await setup()
+    theme.initTheme()
+    for (const [style, themed] of [['1bit', true], ['retro', true], ['dracula', false], ['catppuccin', false], ['default', false]]) {
+      theme.setStyle(style)
+      expect(theme.getIsThemed(), style).toBe(themed)
+    }
+  })
+
+  it('leaves exactly one style class when switching between every style', async () => {
+    await setup()
+    theme.initTheme()
+    for (const style of ['catppuccin', 'retro', 'dracula', '1bit', 'catppuccin', 'default', 'dracula']) {
+      theme.setStyle(style)
+      expect([...classes].filter((c) => c.startsWith('theme-')), style).toEqual(style === 'default' ? [] : [`theme-${style}`])
+      expect(storage.data['vault-style']).toBe(style)
+    }
+  })
+})
+
+describe('Dracula is dark only (#590)', () => {
+  it.each([
+    ['light', true],
+    ['light', false],
+    ['system', false],
+  ])('stays dark with a saved %s mode (OS dark: %s) and keeps that mode', async (saved, prefersDark) => {
+    await setup({ stored: { 'vault-style': 'dracula', 'vault-mode': saved }, prefersDark })
+    theme.initTheme()
+    expect(theme.getIsDark()).toBe(true)
+    expect(theme.getIsModeLocked()).toBe(true)
+    expect(classes.has('dark')).toBe(true)
+    expect(theme.getMode()).toBe(saved)
+    expect(storage.data['vault-mode']).toBe(saved)
+  })
+
+  it('ignores a change of OS preference', async () => {
+    await setup({ stored: { 'vault-style': 'dracula', 'vault-mode': 'system' }, prefersDark: true })
+    theme.initTheme()
+    mq.fire(false)
+    expect(classes.has('dark')).toBe(true)
+    expect(theme.getIsDark()).toBe(true)
+  })
+
+  it('brings the saved light mode back when switching away, without a reload', async () => {
+    await setup({ stored: { 'vault-mode': 'light' }, prefersDark: true })
+    theme.initTheme()
+    theme.setStyle('dracula')
+    expect(classes.has('dark')).toBe(true)
+    expect(storage.data['vault-mode']).toBe('light')
+    theme.setStyle('default')
+    expect(theme.getIsModeLocked()).toBe(false)
+    expect(theme.getIsDark()).toBe(false)
+    expect(classes.has('dark')).toBe(false)
+    expect(classes.has('theme-dracula')).toBe(false)
+  })
+
+  it('brings system mode back and follows the OS again', async () => {
+    await setup({ stored: { 'vault-style': 'dracula', 'vault-mode': 'system' }, prefersDark: false })
+    theme.initTheme()
+    theme.setStyle('catppuccin')
+    expect(theme.getIsDark()).toBe(false)
+    mq.fire(true)
+    expect(theme.getIsDark()).toBe(true)
+  })
+
+  it('does not lock in a host default mode', async () => {
+    await setup({ prefersDark: true })
+    theme.initTheme('light')
+    theme.setStyle('dracula')
+    expect(theme.getIsDark()).toBe(true)
+    expect(storage.data['vault-mode']).toBeUndefined()
+    theme.setStyle('default')
+    expect(theme.getIsDark()).toBe(false)
+  })
+
+  it('only Dracula locks the mode', async () => {
+    await setup()
+    theme.initTheme()
+    for (const style of ['default', '1bit', 'retro', 'catppuccin']) {
+      theme.setStyle(style)
+      expect(theme.getIsModeLocked(), style).toBe(false)
+    }
+  })
+})
+
+describe('Catppuccin follows the mode (#591)', () => {
+  it.each([
+    ['light', true, false],
+    ['dark', false, true],
+    ['system', false, false],
+    ['system', true, true],
+  ])('mode %s with OS dark %s applies dark=%s', async (mode, prefersDark, dark) => {
+    await setup({ stored: { 'vault-style': 'catppuccin', 'vault-mode': mode }, prefersDark })
+    theme.initTheme()
+    expect(theme.getIsDark()).toBe(dark)
+    expect(classes.has('dark')).toBe(dark)
+    expect(classes.has('theme-catppuccin')).toBe(true)
+  })
+
+  it('switches between Latte and Mocha when the OS preference changes in system mode', async () => {
+    await setup({ stored: { 'vault-style': 'catppuccin', 'vault-mode': 'system' }, prefersDark: false })
+    theme.initTheme()
+    mq.fire(true)
+    expect(classes.has('dark')).toBe(true)
+    mq.fire(false)
+    expect(classes.has('dark')).toBe(false)
+  })
+})
