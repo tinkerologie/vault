@@ -71,7 +71,7 @@ describe('MoreSheet', () => {
     expect([...current].map((el) => el.textContent.trim())).toEqual(['Logs'])
   })
 
-  it('marks Recovery while the recover wizard is open', async () => {
+  it('marks Disaster Recovery while the recover wizard is open', async () => {
     await open({ route: '/recover' })
     expect(dialog().querySelector('[aria-current="page"]').textContent.trim()).toBe('Disaster Recovery')
   })

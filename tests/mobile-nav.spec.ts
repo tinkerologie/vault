@@ -291,7 +291,7 @@ test.describe('mobile navigation at 375 px (#530)', () => {
     });
   });
 
-  test('the recover wizard counts as part of Recovery', async ({ page }) => {
+  test('the recover wizard counts as part of Disaster Recovery', async ({ page }) => {
     await setupVaultMockApi(page);
     await page.goto('/#/recovery');
     await page.getByRole('link', { name: 'Recover Vault' }).click();
