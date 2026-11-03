@@ -7,7 +7,9 @@ import (
 	"log"
 	"path"
 	"runtime/debug"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
@@ -25,6 +27,32 @@ type Syncer struct {
 	db        *db.DB
 	hub       *ws.Hub
 	serverKey []byte
+
+	// inFlight holds the paths being downloaded per destination. Their rows do
+	// not exist until the download ends, so the ownership check cannot see them.
+	inFlightMu sync.Mutex
+	inFlight   map[int64][]string
+}
+
+// claimPath reserves a restore point path on a destination for one download,
+// reporting false if it overlaps one already in progress.
+func (s *Syncer) claimPath(destID int64, p string) (release func(), ok bool) {
+	s.inFlightMu.Lock()
+	defer s.inFlightMu.Unlock()
+	for _, other := range s.inFlight[destID] {
+		if storage.PathsOverlap(p, other) {
+			return nil, false
+		}
+	}
+	if s.inFlight == nil {
+		s.inFlight = map[int64][]string{}
+	}
+	s.inFlight[destID] = append(s.inFlight[destID], p)
+	return func() {
+		s.inFlightMu.Lock()
+		defer s.inFlightMu.Unlock()
+		s.inFlight[destID] = slices.DeleteFunc(s.inFlight[destID], func(o string) bool { return o == p })
+	}, true
 }
 
 // NewSyncer creates a new replication syncer.
@@ -426,6 +454,13 @@ func (s *Syncer) syncRestorePoint(
 	if err != nil {
 		return 0, fmt.Errorf("invalid remote storage path: %w", err)
 	}
+
+	// Claim first, so the check below and the download cover the same state.
+	release, claimed := s.claimPath(destID, storagePath)
+	if !claimed {
+		return 0, fmt.Errorf("remote storage path %q overlaps a sync already in progress", storagePath)
+	}
+	defer release()
 
 	// The peer chooses this path, so it must not reach data held for anyone
 	// else: the download would overwrite it, and the new row would authorise

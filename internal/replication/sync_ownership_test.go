@@ -208,3 +208,52 @@ func runFor(t *testing.T, d *db.DB, jobID int64) int64 {
 	}
 	return id
 }
+
+// Two syncs cannot download to overlapping paths at once: neither has a row yet
+// for the ownership check to see.
+func TestSyncRestorePointRefusesPathInProgress(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	d := openTestDB(t)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + root + `"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloads := 0
+	c := newListingServer(t, map[string][]StorageFile{"J/1": {{Path: "J/1/a.bin", Size: 3}}}, &downloads)
+	src := db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}
+	rj := RemoteJob{ID: 8, StorageDestID: 3, Name: "J"}
+	s := NewSyncer(d, nil)
+	jobID, err := s.ensureLocalJob(src, destID, rj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, ok := s.claimPath(destID, "J/1/sub")
+	if !ok {
+		t.Fatal("first claim refused")
+	}
+	if rel, ok := s.claimPath(destID+1, "J/1"); !ok {
+		t.Fatal("another destination must be unaffected")
+	} else {
+		rel()
+	}
+	rrp := RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: "J/1"}
+	if _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, storage.NewLocalAdapter(root)); err == nil || !strings.Contains(err.Error(), "in progress") {
+		t.Fatalf("sync during another download = %v", err)
+	}
+	if downloads != 0 {
+		t.Fatalf("downloaded %d file(s)", downloads)
+	}
+	release()
+	if _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, storage.NewLocalAdapter(root)); err != nil && strings.Contains(err.Error(), "in progress") {
+		t.Fatalf("claim not released: %v", err)
+	}
+	if downloads != 1 {
+		t.Fatalf("downloads = %d, want 1 after release", downloads)
+	}
+	rel, ok := s.claimPath(destID, "J/1")
+	if !ok {
+		t.Fatal("claim leaked by a finished sync")
+	}
+	rel()
+}
