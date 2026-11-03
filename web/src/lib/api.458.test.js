@@ -118,7 +118,7 @@ const routes = [
   ['pathAudit', () => api.pathAudit(), 'GET', '/api/v1/recovery/path-audit'],
   ['pathRemap', () => api.pathRemap([{ id: 1 }]), 'POST', '/api/v1/recovery/path-remap', { updates: [{ id: 1 }] }],
   ['listAnomalies none', () => api.listAnomalies(), 'GET', '/api/v1/anomalies'],
-  ['listAnomalies all filters', () => api.listAnomalies({ state: 'open', severity: 'high', scope_kind: 'job', scope_id: 3, since: '2026-01-01', limit: 5, cursor: 'c' }), 'GET', '/api/v1/anomalies?state=open&severity=high&scope_kind=job&scope_id=3&since=2026-01-01&limit=5&cursor=c'],
+  ['listAnomalies all filters', () => api.listAnomalies({ state: 'open', severity: 'high', scope_kind: 'job', scope_id: 3, since: '2026-01-01', limit: 5, order: 'id', cursor: 'c' }), 'GET', '/api/v1/anomalies?state=open&severity=high&scope_kind=job&scope_id=3&since=2026-01-01&limit=5&order=id&cursor=c'],
   ['getAnomaly', () => api.getAnomaly(8), 'GET', '/api/v1/anomalies/8'],
   ['ackAnomaly', () => api.ackAnomaly(8, 'ack'), 'POST', '/api/v1/anomalies/8/ack', { action: 'ack', reason: '', by: '' }],
   ['bulkAckAnomalies', () => api.bulkAckAnomalies([1, 2], 'resolve', 'r', 'me'), 'POST', '/api/v1/anomalies/ack-bulk', { ids: [1, 2], action: 'resolve', reason: 'r', by: 'me' }],

@@ -117,6 +117,9 @@
       scope_kind: filterScope || undefined,
       since: filterSince || undefined,
       limit: 50,
+      // Page in id order from the first page on, so "Load more" never skips
+      // or repeats a row.
+      order: 'id',
       cursor: cursor || undefined,
     }
   }
@@ -136,7 +139,13 @@
       const res = await api.listAnomalies(buildFilter(reset ? undefined : nextCursor))
       if (reqId !== listRequestId) return // stale response – discard
       const rows = res?.anomalies ?? []
-      anomalies = reset ? rows : [...anomalies, ...rows]
+      if (reset) {
+        anomalies = rows
+      } else {
+        // A live update can already have added an older row this page returns.
+        const shown = new Set(anomalies.map(a => a.id))
+        anomalies = [...anomalies, ...rows.filter(a => !shown.has(a.id))]
+      }
       nextCursor = res?.next_cursor ?? ''
     } catch (e) {
       if (reqId !== listRequestId) return

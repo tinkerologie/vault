@@ -41,6 +41,8 @@ const ANOMALY_POLL_MAX_PAGES = 20
 const ANOMALY_POLL_SINCE = '1970-01-01T00:00:00Z'
 // Records fetched per check for anomalies that left the open list.
 const ANOMALY_POLL_MAX_GONE = 20
+// Removals queued for those lookups. Past this, listeners reload instead.
+const ANOMALY_POLL_MAX_QUEUED = 200
 /** Anomalies that left the open list and haven't been reported yet. @type {number[]} */
 let goneAnomalies = []
 const ANOMALY_POLL_TIMEOUT_MS = 15000
@@ -124,6 +126,10 @@ function emitMessage(msg) {
   }
 }
 
+// Most recently seen first, as a one-page list comes, so the Dashboard card's
+// top rows keep an old anomaly that was seen again.
+const bySeenNewest = (a, b) => (Date.parse(b.last_seen_at) || 0) - (Date.parse(a.last_seen_at) || 0) || b.id - a.id
+
 /**
  * Every open anomaly, whatever its age. Returns null unless the whole set was
  * read, because replacing the shared list with part of it would drop the rest.
@@ -132,7 +138,7 @@ async function fetchOpenAnomalies(signal) {
   const list = []
   let cursor = ''
   for (let page = 0; page < ANOMALY_POLL_MAX_PAGES; page++) {
-    const query = `state=open&since=${encodeURIComponent(ANOMALY_POLL_SINCE)}&limit=${ANOMALY_POLL_LIMIT}` +
+    const query = `state=open&since=${encodeURIComponent(ANOMALY_POLL_SINCE)}&limit=${ANOMALY_POLL_LIMIT}&order=id` +
       (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
     const { url, options } = buildApiRequest('GET', `/anomalies?${query}`)
     const res = await fetch(url, { ...options, signal })
@@ -172,16 +178,27 @@ async function pollAnomalies() {
     // Any beyond the per-check cap wait for the next check rather than being lost.
     const newlyGone = [...knownAnomalies.keys()].filter((id) => !next.has(id) && !goneAnomalies.includes(id))
     goneAnomalies = [...goneAnomalies, ...newlyGone].filter((id) => !next.has(id))
-    for (const id of goneAnomalies.slice(0, ANOMALY_POLL_MAX_GONE)) {
+    if (goneAnomalies.length > ANOMALY_POLL_MAX_QUEUED) {
+      // Too many to report one by one. bulk_acked makes the Anomalies page
+      // reload and drops these ids from the shared list; bulk_resolved would
+      // also make the Dashboard card swap this complete list for one page.
+      emitMessage({ type: 'anomaly.bulk_acked', data: { ids: goneAnomalies } })
+      goneAnomalies = []
+    }
+    // This batch moves to the back, so a lookup that keeps failing is retried
+    // after the rest rather than holding them up.
+    const batch = goneAnomalies.slice(0, ANOMALY_POLL_MAX_GONE)
+    goneAnomalies = [...goneAnomalies.slice(ANOMALY_POLL_MAX_GONE), ...batch]
+    for (const id of batch) {
       const { url: oneUrl, options: oneOptions } = buildApiRequest('GET', `/anomalies/${id}`)
       const one = await fetch(oneUrl, { ...oneOptions, signal: controller.signal })
       noteUnauthorized(one)
       if (one.ok) emitMessage({ type: 'anomaly.updated', data: await one.json() })
-      // A deleted row has nothing to report; a failure is retried next time.
+      // A deleted row has nothing to report; a failure is retried later.
       if (one.ok || one.status === 404) goneAnomalies = goneAnomalies.filter((g) => g !== id)
     }
     knownAnomalies = next
-    setOpenList(list)
+    setOpenList([...list].sort(bySeenNewest))
   } catch {
     // Best-effort: the next check catches up.
   } finally {

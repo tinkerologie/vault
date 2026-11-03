@@ -391,6 +391,68 @@ describe('poll mode', () => {
     }
   })
 
+  // #593: lookups that keep failing must not hold up later removals.
+  it('still reports later removals while earlier lookups keep failing', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const many = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, state: 'open' }))
+      const lists = [many]
+      fetchMock.mockImplementation(async (url) => {
+        const one = String(url).match(/\/anomalies\/(\d+)/)
+        if (one) {
+          const id = Number(one[1])
+          return id <= 20 ? jsonResponse({}, false, 500) : jsonResponse({ id, state: 'acknowledged' })
+        }
+        if (String(url).includes('/anomalies')) return jsonResponse({ anomalies: lists.shift() ?? [] })
+        return jsonResponse({ active: false, queue: [] })
+      })
+      const updated = []
+      ws.onWsMessage((m) => { if (m.type === 'anomaly.updated') updated.push(m.data.id) })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(15 * 2000) // baseline: 30 open
+      await vi.advanceTimersByTimeAsync(15 * 2000) // all gone: ids 1-20 fail
+      await vi.advanceTimersByTimeAsync(15 * 2000) // the failures wait behind 21-30
+      expect([...updated].sort((a, b) => a - b)).toEqual(many.slice(20).map((a) => a.id))
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // #593: the queue is bounded; past the limit, listeners reload instead.
+  it('asks listeners to reload when too many removals are queued', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const many = Array.from({ length: 201 }, (_, i) => ({ id: i + 1, state: 'open' }))
+      const lists = [many]
+      let lookups = 0
+      fetchMock.mockImplementation(async (url) => {
+        if (/\/anomalies\/\d+/.test(String(url))) { lookups++; return jsonResponse({}, false, 500) }
+        if (String(url).includes('/anomalies')) return jsonResponse({ anomalies: lists.shift() ?? [] })
+        return jsonResponse({ active: false, queue: [] })
+      })
+      const bulk = []
+      ws.onWsMessage((m) => { if (m.type.startsWith('anomaly.bulk_')) bulk.push(m) })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(15 * 2000) // baseline: 201 open
+      await vi.advanceTimersByTimeAsync(15 * 2000) // all gone: over the limit
+      // Not bulk_resolved, which makes the Dashboard card replace the
+      // complete shared list with one page.
+      expect(bulk.map((m) => m.type)).toEqual(['anomaly.bulk_acked'])
+      expect(bulk[0].data.ids).toEqual(many.map((a) => a.id))
+      expect(anomalies.handleBulkAcked).toHaveBeenCalledWith({ ids: many.map((a) => a.id) })
+      expect(lookups).toBe(0)
+      await vi.advanceTimersByTimeAsync(15 * 2000) // nothing left queued
+      expect(lookups).toBe(0)
+      expect(anomalies.setOpenList).toHaveBeenLastCalledWith([])
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('never runs two anomaly checks at once', async () => {
     vi.useFakeTimers()
     try {
@@ -440,21 +502,24 @@ describe('poll mode', () => {
     vi.useFakeTimers()
     try {
       await loadWs({ liveMode: 'poll' })
-      const a1 = { id: 1, state: 'open' }
-      const a2 = { id: 2, state: 'open' }
+      // Pages come newest-detected first; a1 is older but was seen again.
+      const a1 = { id: 1, state: 'open', last_seen_at: '2026-01-02T00:00:00Z' }
+      const a2 = { id: 2, state: 'open', last_seen_at: '2026-01-01T00:00:00.5Z' }
       const urls = []
       fetchMock.mockImplementation(async (url) => {
         if (!String(url).includes('/anomalies')) return jsonResponse({ active: false, queue: [] })
         urls.push(new URL(url, 'http://x').searchParams)
         return urls.length === 1
-          ? jsonResponse({ anomalies: [a1], next_cursor: 'c2' })
-          : jsonResponse({ anomalies: [a2], next_cursor: '' })
+          ? jsonResponse({ anomalies: [a2], next_cursor: 'c2' })
+          : jsonResponse({ anomalies: [a1], next_cursor: '' })
       })
       ws.connectWs()
       await vi.advanceTimersByTimeAsync(15 * 2000)
       expect(urls).toHaveLength(2)
       expect(urls[0].get('since')).toBe('1970-01-01T00:00:00Z')
+      expect(urls[0].get('order')).toBe('id')
       expect(urls[1].get('cursor')).toBe('c2')
+      // Shared list is most recently seen first, as the Dashboard card expects.
       expect(anomalies.setOpenList).toHaveBeenLastCalledWith([a1, a2])
       ws.disconnectWs()
     } finally {
@@ -491,8 +556,8 @@ describe('poll mode', () => {
       await loadWs({ liveMode: 'poll' })
       const seen = []
       ws.onWsMessage((m) => seen.push(m))
-      const a1 = { id: 1, state: 'open', title: 'a' }
-      const a2 = { id: 2, state: 'open', title: 'b' }
+      const a1 = { id: 1, state: 'open', title: 'a', last_seen_at: '2026-01-02T00:00:00Z' }
+      const a2 = { id: 2, state: 'open', title: 'b', last_seen_at: '2026-01-01T00:00:00Z' }
       const responses = [[a1, a2], [{ ...a1, title: 'changed' }, a2], [a2], [a2]]
       const anomalyUrls = []
       fetchMock.mockImplementation(async (url) => {
