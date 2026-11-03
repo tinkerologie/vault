@@ -39,8 +39,10 @@ const ANOMALY_POLL_EVERY = 15
 const ANOMALY_POLL_LIMIT = 500
 const ANOMALY_POLL_MAX_PAGES = 20
 const ANOMALY_POLL_SINCE = '1970-01-01T00:00:00Z'
-// Beyond this many at once, the replaced open list alone carries the change.
+// Records fetched per check for anomalies that left the open list.
 const ANOMALY_POLL_MAX_GONE = 20
+/** Anomalies that left the open list and haven't been reported yet. @type {number[]} */
+let goneAnomalies = []
 const ANOMALY_POLL_TIMEOUT_MS = 15000
 let status = $state('disconnected')
 
@@ -167,12 +169,16 @@ async function pollAnomalies() {
     // An anomaly that left the open list was resolved, acked or expired. Report
     // its real record, as the live event would: a bulk event would make
     // listeners refetch a smaller page over this complete list.
-    const gone = [...knownAnomalies.keys()].filter((id) => !next.has(id)).slice(0, ANOMALY_POLL_MAX_GONE)
-    for (const id of gone) {
+    // Any beyond the per-check cap wait for the next check rather than being lost.
+    const newlyGone = [...knownAnomalies.keys()].filter((id) => !next.has(id) && !goneAnomalies.includes(id))
+    goneAnomalies = [...goneAnomalies, ...newlyGone].filter((id) => !next.has(id))
+    for (const id of goneAnomalies.slice(0, ANOMALY_POLL_MAX_GONE)) {
       const { url: oneUrl, options: oneOptions } = buildApiRequest('GET', `/anomalies/${id}`)
       const one = await fetch(oneUrl, { ...oneOptions, signal: controller.signal })
       noteUnauthorized(one)
       if (one.ok) emitMessage({ type: 'anomaly.updated', data: await one.json() })
+      // A deleted row has nothing to report; a failure is retried next time.
+      if (one.ok || one.status === 404) goneAnomalies = goneAnomalies.filter((g) => g !== id)
     }
     knownAnomalies = next
     setOpenList(list)

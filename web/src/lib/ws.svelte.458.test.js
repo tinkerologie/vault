@@ -359,6 +359,38 @@ describe('poll mode', () => {
     }
   })
 
+  it('reports every anomaly that left the open list, across checks if needed', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const many = Array.from({ length: 25 }, (_, i) => ({ id: i + 1, state: 'open' }))
+      const lists = [many, [], []]
+      let failOnce = true
+      fetchMock.mockImplementation(async (url) => {
+        const one = String(url).match(/\/anomalies\/(\d+)/)
+        if (one) {
+          const id = Number(one[1])
+          if (id === 3 && failOnce) { failOnce = false; return jsonResponse({}, false, 500) }
+          if (id === 4) return jsonResponse({}, false, 404)
+          return jsonResponse({ id, state: 'acknowledged' })
+        }
+        if (String(url).includes('/anomalies')) return jsonResponse({ anomalies: lists.shift() ?? [] })
+        return jsonResponse({ active: false, queue: [] })
+      })
+      const updated = []
+      ws.onWsMessage((m) => { if (m.type === 'anomaly.updated') updated.push(m.data.id) })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(15 * 2000) // baseline: 25 open
+      await vi.advanceTimersByTimeAsync(15 * 2000) // all 25 gone: first 20 checked
+      expect(updated).toHaveLength(18) // 3 failed and is retried; 4 was deleted
+      await vi.advanceTimersByTimeAsync(15 * 2000) // the rest, and the retry
+      expect([...updated].sort((a, b) => a - b)).toEqual(many.map((a) => a.id).filter((id) => id !== 4))
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('never runs two anomaly checks at once', async () => {
     vi.useFakeTimers()
     try {
