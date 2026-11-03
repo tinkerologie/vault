@@ -1,20 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-// Tests for the small browser-facing helpers (issue #458): auth stub,
-// clipboard, and the hash router. DOM globals are faked per case.
+// Tests for the small browser-facing helpers (issue #458): clipboard and the
+// hash router. DOM globals are faked per case.
 
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
-})
-
-describe('auth stub', () => {
-  it('reports an always-authenticated session with no client-side key', async () => {
-    const auth = await import('./auth.svelte.js')
-    expect(auth.getApiKey()).toBe('')
-    expect(auth.isAuthenticated()).toBe(true)
-    await expect(auth.checkAuthStatus()).resolves.toBeUndefined()
-  })
 })
 
 describe('copyText', () => {

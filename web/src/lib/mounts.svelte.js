@@ -21,8 +21,10 @@ export function getMounts() {
   }
 }
 
+/** Replaces the list, leaving it untouched when a poll finds nothing new. */
 export function setActiveMounts(list) {
-  activeMounts = list || []
+  const next = list || []
+  if (JSON.stringify(next) !== JSON.stringify(activeMounts)) activeMounts = next
 }
 
 export async function refreshMounts() {

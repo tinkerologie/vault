@@ -57,7 +57,8 @@ mDNS discovery; see [Network discovery](getting-started.md#network-discovery-mdn
 }
 ```
 
-If you have set an API key (Settings → API), pass it as a header. Note there is
+A connection from another machine needs an API key: Vault refuses it until one exists
+(Settings → Security → API Access in the Unraid web UI). Pass it as a header. Note there is
 no space after the colon — `mcp-remote` mishandles spaces in header values:
 
 ```json
@@ -105,7 +106,9 @@ Add to your project's `.mcp.json`:
 ```
 
 The daemon binds to loopback by default, so reach it over an SSH tunnel
-(`ssh -L 24085:127.0.0.1:24085 root@<unraid-host>`) and point the URL at
+(`ssh -L 24085:127.0.0.1:24085 root@<server-ip>`, or
+`ssh -L 24085:<server-ip>:24085 root@<server-ip>` if Vault is bound to the
+server's IP, where nothing listens on loopback) and point the URL at
 `http://127.0.0.1:24085/mcp`. For a client that only speaks stdio, bridge it
 with `npx mcp-remote http://127.0.0.1:24085/mcp` rather than running a second
 process against the database directly.

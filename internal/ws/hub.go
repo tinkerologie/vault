@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -49,6 +50,8 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	mu         sync.RWMutex
+
+	originPatterns []string
 }
 
 func NewHub() *Hub {
@@ -127,43 +130,24 @@ func (h *Hub) BroadcastLossy(msg []byte) {
 	}
 }
 
+// SetAllowedOrigins sets the exact scheme://host[:port] origins accepted besides
+// same-origin. Call before serving requests.
+func (h *Hub) SetAllowedOrigins(origins []string) {
+	h.originPatterns = make([]string, len(origins))
+	for i, origin := range origins {
+		// Patterns are globs; IPv6 hosts carry brackets that must stay literal.
+		h.originPatterns[i] = originGlobEscaper.Replace(origin)
+	}
+}
+
+var originGlobEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`, `*`, `\*`, `?`, `\?`)
+
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Validate origin: allow same-origin and local network connections.
-		// The coder/websocket library rejects cross-origin by default when
-		// InsecureSkipVerify is false, but we use OriginPatterns to allow
-		// common local access patterns.
-		OriginPatterns: []string{
-			"localhost:*",
-			"127.0.0.1:*",
-			"*.local:*",
-			"192.168.*.*:*",
-			"10.*.*.*:*",
-			// RFC1918 reserves 172.16.0.0/12 — 172.16.0.0 through
-			// 172.31.255.255. Previously we listed only "172.16.*.*"
-			// which excluded the other 15 /16s and prevented WS
-			// progress updates from rendering on LANs in those ranges
-			// (e.g. Docker's default 172.17.0.0/16, which a few users
-			// reverse-proxy through). Enumerate all 16 octet-2 values
-			// because coder/websocket's pattern matcher treats "*" as
-			// a single label/segment, not a range.
-			"172.16.*.*:*",
-			"172.17.*.*:*",
-			"172.18.*.*:*",
-			"172.19.*.*:*",
-			"172.20.*.*:*",
-			"172.21.*.*:*",
-			"172.22.*.*:*",
-			"172.23.*.*:*",
-			"172.24.*.*:*",
-			"172.25.*.*:*",
-			"172.26.*.*:*",
-			"172.27.*.*:*",
-			"172.28.*.*:*",
-			"172.29.*.*:*",
-			"172.30.*.*:*",
-			"172.31.*.*:*",
-		},
+		// coder/websocket always accepts same-origin; anything else must be an
+		// origin the operator listed. A private-network or .local address says
+		// nothing about who controls the page (issue #565).
+		OriginPatterns: h.originPatterns,
 	})
 	if err != nil {
 		log.Printf("ws accept error: %v", err)

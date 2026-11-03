@@ -26,7 +26,7 @@ func TestHealthEndpoint(t *testing.T) {
 	database := testDB(t)
 	srv := NewServer(database, ServerConfig{Addr: ":0"})
 
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := asLocal(httptest.NewRequest("GET", "/api/v1/health", nil))
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -56,7 +56,7 @@ func TestGetEncryptionPassphrase(t *testing.T) {
 		database := testDB(t)
 		srv := NewServer(database, ServerConfig{Addr: ":0", ServerKey: serverKey})
 
-		req := httptest.NewRequest("GET", "/api/v1/settings/encryption/passphrase", nil)
+		req := asLocal(httptest.NewRequest("GET", "/api/v1/settings/encryption/passphrase", nil))
 		w := httptest.NewRecorder()
 		srv.router.ServeHTTP(w, req)
 
@@ -72,7 +72,7 @@ func TestGetEncryptionPassphrase(t *testing.T) {
 
 		// Set a passphrase via the API.
 		body, _ := json.Marshal(map[string]string{"passphrase": "violet-tractor-spoons"})
-		setReq := httptest.NewRequest("POST", "/api/v1/settings/encryption", bytes.NewReader(body))
+		setReq := asLocal(httptest.NewRequest("POST", "/api/v1/settings/encryption", bytes.NewReader(body)))
 		setReq.Header.Set("Content-Type", "application/json")
 		setW := httptest.NewRecorder()
 		srv.router.ServeHTTP(setW, setReq)
@@ -82,7 +82,7 @@ func TestGetEncryptionPassphrase(t *testing.T) {
 		}
 
 		// Retrieve the passphrase.
-		getReq := httptest.NewRequest("GET", "/api/v1/settings/encryption/passphrase", nil)
+		getReq := asLocal(httptest.NewRequest("GET", "/api/v1/settings/encryption/passphrase", nil))
 		getW := httptest.NewRecorder()
 		srv.router.ServeHTTP(getW, getReq)
 

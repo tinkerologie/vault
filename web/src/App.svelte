@@ -9,6 +9,7 @@
   import { groupBySection, isMobileNavActive, isMoreActive, moreNavItems } from './lib/mobile-nav.js'
   import { loadFeatureFlags, getAnomalyEnabled, getReplicationEnabled, getFeatureFlagsLoaded } from './lib/settings.svelte.js'
   import { getHostThemeMode, isEmbedded } from './lib/runtime-config.js'
+  import { isAuthRequired } from './lib/auth.svelte.js'
   import { revealFrameTop } from './lib/embed.js'
   import { onMount, tick } from 'svelte'
 
@@ -24,6 +25,7 @@
   import RecoverWizard from './pages/RecoverWizard.svelte'
   import Anomalies from './pages/Anomalies.svelte'
   import Spinner from './components/Spinner.svelte'
+  import ApiKeyPrompt from './components/ApiKeyPrompt.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
   import MoreSheet from './components/MoreSheet.svelte'
   import EmbeddedNav from './components/EmbeddedNav.svelte'
@@ -240,6 +242,10 @@
 </script>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
+
+{#if isAuthRequired()}
+  <ApiKeyPrompt />
+{/if}
 
 <CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
 

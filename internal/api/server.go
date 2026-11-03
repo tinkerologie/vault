@@ -28,6 +28,9 @@ type ServerConfig struct {
 	ServerKey []byte // AES-256 key for sealing secrets at rest.
 	Version   string // Application version injected at build time.
 	ReadOnly  bool   // When true, write endpoints return 403 (replica mode).
+	// AllowedOrigins lists the exact browser origins that may call the API
+	// cross-origin. Empty by default; those callers still need the API key.
+	AllowedOrigins []string
 }
 
 type Server struct {
