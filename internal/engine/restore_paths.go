@@ -238,7 +238,7 @@ func normalizeVMRestorePlan(plan *vmRestorePlan) error {
 		}
 		plan.Disks[i].BackupFile = backupFile
 
-		targetPath, err := normalizeRestorePath(plan.Disks[i].TargetPath)
+		targetPath, err := normalizeVMDiskTarget(plan.Disks[i].TargetPath)
 		if err != nil {
 			return err
 		}
@@ -253,7 +253,7 @@ func normalizeVMRestorePlan(plan *vmRestorePlan) error {
 		plan.NVRAMBackupFile = backupFile
 	}
 	if plan.NVRAMTargetPath != "" {
-		targetPath, err := normalizeRestorePath(plan.NVRAMTargetPath)
+		targetPath, err := normalizeVMNVRAMTarget(plan.NVRAMTargetPath)
 		if err != nil {
 			return err
 		}
@@ -261,6 +261,23 @@ func normalizeVMRestorePlan(plan *vmRestorePlan) error {
 	}
 
 	return nil
+}
+
+// normalizeVMDiskTarget applies the VM disk policy, then the general restore
+// normalization. Used when the plan is validated and again before each write.
+func normalizeVMDiskTarget(path string) (string, error) {
+	if _, err := safepath.CheckVMDiskTarget(path); err != nil {
+		return "", err
+	}
+	return normalizeRestorePath(path)
+}
+
+// normalizeVMNVRAMTarget is normalizeVMDiskTarget for the NVRAM file.
+func normalizeVMNVRAMTarget(path string) (string, error) {
+	if _, err := safepath.CheckVMNVRAMTarget(path); err != nil {
+		return "", err
+	}
+	return normalizeRestorePath(path)
 }
 
 func resolveRestorePath(path string) (string, error) {

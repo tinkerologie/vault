@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // vmShutdownTimeout and vmShutdownPollInterval are variables, not constants,
@@ -66,6 +68,9 @@ func buildVMRestorePlan(xmlData []byte, restoreDest string) (*vmRestorePlan, err
 	}
 
 	if restoreDest != "" {
+		if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
+			return nil, err
+		}
 		resolvedRestoreDest, err := normalizeRestorePath(restoreDest)
 		if err != nil {
 			return nil, err
@@ -77,7 +82,11 @@ func buildVMRestorePlan(xmlData []byte, restoreDest string) (*vmRestorePlan, err
 	for _, disk := range disks {
 		targetPath := disk.Path
 		if restoreDest != "" {
-			targetPath = filepath.Join(restoreDest, filepath.Base(disk.Path))
+			name, err := normalizeRestoreComponent(filepath.Base(disk.Path))
+			if err != nil {
+				return nil, fmt.Errorf("disk path %q: %w", disk.Path, err)
+			}
+			targetPath = filepath.Join(restoreDest, name)
 			plan.DomainXML = strings.ReplaceAll(plan.DomainXML, disk.Path, targetPath)
 		}
 
@@ -93,7 +102,11 @@ func buildVMRestorePlan(xmlData []byte, restoreDest string) (*vmRestorePlan, err
 		plan.NVRAMBackupFile = filepath.Base(nvramPath)
 		plan.NVRAMTargetPath = nvramPath
 		if restoreDest != "" {
-			plan.NVRAMTargetPath = filepath.Join(restoreDest, filepath.Base(nvramPath))
+			name, err := normalizeRestoreComponent(filepath.Base(nvramPath))
+			if err != nil {
+				return nil, fmt.Errorf("NVRAM path %q: %w", nvramPath, err)
+			}
+			plan.NVRAMTargetPath = filepath.Join(restoreDest, name)
 			plan.DomainXML = strings.ReplaceAll(plan.DomainXML, nvramPath, plan.NVRAMTargetPath)
 		}
 	}

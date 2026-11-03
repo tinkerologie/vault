@@ -3,6 +3,7 @@ package tempdir
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -641,5 +642,281 @@ func TestRankCandidatesByFreeSpace(t *testing.T) {
 		if p == missing {
 			t.Errorf("unexpected missing dir in ranked candidates: %s", missing)
 		}
+	}
+}
+
+// A symlink named .vault-stage must not have its target's contents deleted.
+func TestCleanStageDirIgnoresSymlink(t *testing.T) {
+	base, victim := t.TempDir(), t.TempDir()
+	keep := filepath.Join(victim, "keep")
+	if err := os.WriteFile(keep, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stage := filepath.Join(base, StageDirName)
+	if err := os.Symlink(victim, stage); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(stage)
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("symlink target's contents were deleted: %v", err)
+	}
+}
+
+func TestCleanStageDirRemovesRealEntries(t *testing.T) {
+	stage := filepath.Join(t.TempDir(), StageDirName)
+	if err := os.MkdirAll(filepath.Join(stage, "backup-1", "x"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(stage)
+	if _, err := os.Lstat(stage); !os.IsNotExist(err) {
+		t.Fatalf("stage dir not removed: %v", err)
+	}
+}
+
+// A symlinked or non-directory stage location is skipped for a usable one.
+func TestCreateDirSkipsUnsafeStageBase(t *testing.T) {
+	victim := t.TempDir()
+	override := t.TempDir()
+	if err := os.Symlink(victim, filepath.Join(override, StageDirName)); err != nil {
+		t.Fatal(err)
+	}
+	cache := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cache, StageDirName), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(SetCachePathsForTest([]string{cache}))
+	dir, cleanup, err := CreateBackupDir(StorageConfig{}, override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if strings.HasPrefix(dir, victim) || strings.HasPrefix(dir, filepath.Join(override, StageDirName)) || strings.HasPrefix(dir, filepath.Join(cache, StageDirName)) {
+		t.Fatalf("staged in an unsafe location: %s", dir)
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Fatalf("wrote through the symlink: %v", entries)
+	}
+}
+
+func TestStageDirRefusesNonDirectories(t *testing.T) {
+	file := filepath.Join(t.TempDir(), StageDirName)
+	if err := os.WriteFile(file, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(file)
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("file removed: %v", err)
+	}
+	if err := ensureStageDir(file); err == nil {
+		t.Fatal("regular file accepted as a stage directory")
+	}
+	if err := ensureStageDir(filepath.Join(t.TempDir(), "missing", StageDirName)); err == nil {
+		t.Fatal("missing parent accepted")
+	}
+	real := filepath.Join(t.TempDir(), StageDirName)
+	for range 2 { // creating and reusing are both fine
+		if err := ensureStageDir(real); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cleanStageDir(filepath.Join(t.TempDir(), "absent"))
+}
+
+// A symlinked stage directory on the cascade path falls through to the next one.
+func TestCreateDirCascadeSkipsSymlinkedStage(t *testing.T) {
+	victim, bad, good := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Symlink(victim, filepath.Join(bad, StageDirName)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(SetCachePathsForTest([]string{bad, good}))
+	dir, cleanup, err := CreateRestoreDir(StorageConfig{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if !strings.HasPrefix(dir, filepath.Join(good, StageDirName)) {
+		t.Fatalf("staged at %s", dir)
+	}
+}
+
+// A persisted override whose parent is a symlink into a system tree is unusable.
+func TestEnsureStageDirRefusesSymlinkedParent(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "override")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureStageDir(filepath.Join(link, StageDirName)); err == nil {
+		t.Fatal("stage directory through a symlink to /etc accepted")
+	}
+}
+
+// Once resolved, the stage location is walked without following links, so a parent
+// swapped for a symlink after the checks cannot redirect the new run directory.
+func TestMkdirPinnedTempRefusesSwappedSymlink(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(dir, "victim")
+	if err := os.Mkdir(victim, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	swapped := filepath.Join(dir, "swapped")
+	if err := os.Symlink(victim, swapped); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{swapped, filepath.Join(swapped, "sub")} {
+		if _, err := mkdirPinnedTemp(target, "backup-*"); err == nil {
+			t.Fatalf("created through symlink at %s", target)
+		}
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Fatalf("wrote through the symlink: %v", entries)
+	}
+	name, err := mkdirPinnedTemp(dir, "backup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(name, "backup-") || strings.Contains(name, "*") {
+		t.Fatalf("name = %q", name)
+	}
+	info, err := os.Stat(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %v", info.Mode())
+	}
+	if _, err := mkdirPinnedTemp(filepath.Join(dir, "missing"), "backup-*"); err == nil {
+		t.Fatal("missing directory accepted")
+	}
+	if _, err := makeStageTemp(filepath.Join(dir, "missing"), "backup-*"); err == nil {
+		t.Fatal("unresolvable stage location accepted")
+	}
+}
+
+// Cleanup is pinned after resolving, so it still works through a legitimate
+// symlinked ancestor but refuses a stage location that resolves into a system tree.
+func TestCleanStageDirResolvesAncestors(t *testing.T) {
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, StageDirName, "backup-1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "pool")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(filepath.Join(link, StageDirName))
+	if _, err := os.Lstat(filepath.Join(real, StageDirName)); !os.IsNotExist(err) {
+		t.Fatalf("stage dir behind a legitimate symlink not cleaned: %v", err)
+	}
+	cleanStageDir("/etc")
+	if _, err := os.Stat("/etc/hosts"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMkdirPinnedTempFailures(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mkdirPinnedTemp(dir, "fixed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mkdirPinnedTemp(dir, "fixed"); err == nil {
+		t.Fatal("a pattern without a wildcard reused an existing name")
+	}
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := makeStageTemp(file, "backup-*"); err == nil {
+		t.Fatal("staged inside a regular file")
+	}
+}
+
+// Issue #545: an ancestor swapped for a symlink before startup must not point
+// stale-stage cleanup at a directory outside the approved roots. Resolving alone
+// is not enough, because the resolved target can be any non-system directory
+// that happens to hold a ".vault-stage".
+func TestCleanStageDirRefusesAncestorSwapOutsideApprovedRoots(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need elevated rights on Windows")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	victim, err := os.MkdirTemp(home, "vault-victim-")
+	if err != nil {
+		t.Skipf("home not writable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(victim) })
+	if resolved, err := filepath.EvalSymlinks(victim); err != nil || strings.HasPrefix(resolved, "/mnt/") || strings.HasPrefix(resolved, "/tmp/") {
+		t.Skip("home is inside an approved root here")
+	}
+	keep := filepath.Join(victim, StageDirName, "keep")
+	if err := os.MkdirAll(keep, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	pool := filepath.Join(t.TempDir(), "pool")
+	if err := os.Symlink(victim, pool); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(filepath.Join(pool, StageDirName))
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("cleanup followed the swapped ancestor: %v", err)
+	}
+}
+
+func TestOwnedByDaemon(t *testing.T) {
+	info, err := os.Stat(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ownedByDaemon(info) {
+		t.Fatal("own temp directory not recognised")
+	}
+}
+
+func TestStageHelpersPermissionFailures(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ro := filepath.Join(dir, "ro")
+	if err := os.Mkdir(ro, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
+	if _, err := mkdirPinnedTemp(ro, "backup-*"); err == nil {
+		t.Fatal("created inside a read-only directory")
+	}
+	// Traversable but unreadable: the path resolves, the pinned walk cannot open it.
+	noread := filepath.Join(dir, "noread")
+	stage := filepath.Join(noread, StageDirName)
+	if err := os.MkdirAll(filepath.Join(stage, "backup-1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(noread, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(noread, 0o700) })
+	cleanStageDir(stage)
+	_ = os.Chmod(noread, 0o700)
+	if _, err := os.Stat(filepath.Join(stage, "backup-1")); err != nil {
+		t.Fatalf("cleaned through a directory the pinned walk could not open: %v", err)
+	}
+
+	link := filepath.Join(dir, "etc")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := makeStageTemp(link, "backup-*"); err == nil {
+		t.Fatal("staged in /etc through a symlink")
 	}
 }

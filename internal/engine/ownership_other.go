@@ -4,7 +4,6 @@ package engine
 
 import (
 	"os"
-	"time"
 )
 
 // openNoFollow is 0 on non-unix platforms where O_NOFOLLOW is not defined.
@@ -13,17 +12,6 @@ const openNoFollow = 0
 // isSymlinkErr reports false on non-unix platforms where O_NOFOLLOW is not supported.
 func isSymlinkErr(_ error) bool { return false }
 
-// chtimesNoFollow updates the modification time on non-unix platforms.
-func chtimesNoFollow(path string, t time.Time) error {
-	return os.Chtimes(path, t, t)
-}
-
 // fileOwner has no meaning off unix: there is no numeric uid/gid to record, so
 // every caller sees "unknown" and ownership is left to the filesystem.
 func fileOwner(_ os.FileInfo) (uid, gid int) { return -1, -1 }
-
-// openRestoreFile opens path for a restore write. Non-unix builds are not a
-// runtime target and have no FIFOs to guard against.
-func openRestoreFile(path string, mode os.FileMode) (*os.File, error) {
-	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 //nolint:gosec // callers validate path
-}

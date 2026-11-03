@@ -681,6 +681,9 @@ func (w *WebDAVAdapter) readManifest(c *gowebdav.Client, full string) (webDAVChu
 	if manifest.Version != webDAVManifestVersion {
 		return webDAVChunkManifest{}, false, fmt.Errorf("webdav: unsupported chunk manifest version %d", manifest.Version)
 	}
+	if err := validateWebDAVManifest(manifest, full); err != nil {
+		return webDAVChunkManifest{}, false, err
+	}
 	return manifest, true, nil
 }
 
@@ -795,6 +798,26 @@ func (w *WebDAVAdapter) writeChunked(c *gowebdav.Client, logicalPath string, ful
 		return err
 	}
 	return nil
+}
+
+// validateWebDAVManifest treats a manifest as untrusted: its chunk paths drive
+// reads and deletes on the server, so each must be a file directly inside this
+// object's own sidecar directory. Names are not pinned to the current .dat
+// scheme because older restore points hold .part chunks.
+func validateWebDAVManifest(m webDAVChunkManifest, full string) error {
+	dir := webDAVChunkDir(full)
+	for i, chunk := range m.Chunks {
+		if chunk.Size < 0 || path.Clean(chunk.Path) != chunk.Path || path.Dir(chunk.Path) != dir || !isWebDAVChunkFileName(path.Base(chunk.Path)) {
+			return fmt.Errorf("webdav: chunk manifest for %s has an invalid entry %d", full, i)
+		}
+	}
+	return nil
+}
+
+// isWebDAVChunkFileName accepts the names Vault has written for chunk files.
+func isWebDAVChunkFileName(name string) bool {
+	stem := strings.TrimSuffix(strings.TrimSuffix(name, ".dat"), ".part")
+	return stem != name && stem != "" && strings.Trim(stem, "0123456789") == ""
 }
 
 func (w *WebDAVAdapter) deleteChunkSidecars(c *gowebdav.Client, full string) error {
@@ -1096,6 +1119,13 @@ func (w *WebDAVAdapter) List(prefix string) ([]FileInfo, error) {
 					return nil, fmt.Errorf("webdav: decode chunk manifest %s: %w", manifestPath, decodeErr)
 				}
 				if manifest.Version == webDAVManifestVersion && manifest.Path != "" {
+					// A manifest only speaks for the object it is stored beside:
+					// a forged path would make cleanup act on another object.
+					logicalFull, pathErr := w.fullPath(manifest.Path, false)
+					if pathErr != nil || webDAVManifestPath(logicalFull) != manifestPath {
+						log.Printf("webdav: ignoring chunk manifest %s: its path does not match its location", manifestPath)
+						continue
+					}
 					out = append(out, FileInfo{Path: manifest.Path, Size: manifest.Size, ModTime: e.ModTime(), IsDir: false})
 					seen[manifest.Path] = struct{}{}
 				}

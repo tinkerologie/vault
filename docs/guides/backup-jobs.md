@@ -375,3 +375,20 @@ Vault executes one mutating backup or restore operation at a time under its runn
 - Point your job at the right target: [Storage Destinations](storage-destinations.md)
 - Let Vault warn you when backups drift from normal: [Anomaly Detection](anomaly-detection.md)
 - Make sure you can recover if the server dies: [Disaster Recovery](disaster-recovery.md)
+
+## Restore locations
+
+Vault runs as root and treats paths read from a backup as untrusted, so restores
+only write to these locations:
+
+| Restore                   | Allowed locations                                                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Custom destination        | Under `/mnt`, a temp directory, or `/boot/config/plugins/<name>`                                                                                 |
+| Container volume in place | Under `/mnt`, `/var/lib/docker/volumes/<name>/_data`, `/boot/config/plugins/<name>`, or a bind the same-named container on this host already has |
+| VM disk in place          | Under `/mnt` or `/var/lib/libvirt/images`                                                                                                        |
+| VM NVRAM in place         | `/etc/libvirt/qemu/nvram`, `/var/lib/libvirt/qemu/nvram`, or under `/mnt`                                                                        |
+| Folder in place           | The job's own path, which can be anywhere except protected system trees such as `/etc`, `/usr` and `/var/lib`                                    |
+
+If a restore is refused, pick a custom destination under `/mnt` and move the data
+afterwards. A custom destination for a VM must be under `/mnt` or a temp directory. A
+symlink that leads outside these locations is refused too.

@@ -14,7 +14,14 @@ func TestNormalizeRestoreDestination(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "valid mnt", input: "/mnt/user/appdata", want: "/mnt/user/appdata", wantErr: false},
-		{name: "valid boot", input: "/boot/config", want: "/boot/config", wantErr: false},
+		{name: "valid plugin config", input: "/boot/config/plugins/foo", want: "/boot/config/plugins/foo", wantErr: false},
+		{name: "rest of flash denied", input: "/boot/config", wantErr: true},
+		{name: "system tree denied", input: "/etc/cron.d", wantErr: true},
+		{name: "var denied", input: "/var/lib/foo", wantErr: true},
+		{name: "usr local denied", input: "/usr/local/emhttp", wantErr: true},
+		{name: "opt denied", input: "/opt/foo", wantErr: true},
+		{name: "home denied", input: "/home/foo", wantErr: true},
+		{name: "newline denied", input: "/mnt/user/x\ny", wantErr: true},
 		{name: "valid tmp", input: "/tmp/restore_test", want: "/tmp/restore_test", wantErr: false},
 		{name: "traversal with slash", input: "/mnt/../etc/passwd", wantErr: true},
 		{name: "traversal with backslash", input: "/mnt/..\\etc/passwd", wantErr: true},

@@ -1754,6 +1754,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		if err != nil {
 			return err
 		}
+		if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
+			return err
+		}
 		restoreDest = normalizedRestoreDest
 	}
 	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
@@ -1767,7 +1770,6 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err != nil {
 		return fmt.Errorf("volumes manifest for %s: %w", item.Name, err)
 	}
-
 	// The restore file picker's selection arrives as container-internal
 	// absolute paths. Previously it was ignored here entirely and every volume
 	// was extracted whole, whatever the user had picked (issue #275).
@@ -1778,6 +1780,31 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	for _, mount := range inspect.Mounts {
 		if backupableMount(mount.Type) && mount.Destination != "" {
 			allDests = append(allDests, mount.Destination)
+		}
+	}
+
+	// Authorize every volume this restore will write before writing any. It
+	// resolves archives the same way as the loop below, so a mount the manifest
+	// omits cannot slip past on a source-hash archive.
+	var liveSources []string
+	if restoreDest == "" {
+		var sources []string
+		for i, mount := range inspect.Mounts {
+			if !backupableMount(mount.Type) {
+				continue
+			}
+			if _, wanted := containerVolumeIncludes(selection, mount.Destination, allDests); !wanted {
+				continue
+			}
+			entry, found := findVolumeManifestEntry(savedManifest, mount.Source, i)
+			legacyIndex := legacyVolumeIndex(entry, found, manifestPresent, i)
+			if _, archiveErr := resolveVolumeArchive(sourceDir, entry.Archive, mount.Source, legacyIndex); archiveErr == nil {
+				sources = append(sources, mount.Source)
+			}
+		}
+		liveSources = h.liveMountSources(ctx, item.Name)
+		if err := authorizeVolumeSources(sources, liveSources); err != nil {
+			return err
 		}
 	}
 
@@ -1814,6 +1841,12 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 				log.Printf("engine: restore: skipping volume %s — no archive found: %v", mount.Source, err)
 			}
 			continue // skip if archive doesn't exist
+		}
+
+		if restoreDest == "" {
+			if err := authorizeVolumeSources([]string{mount.Source}, liveSources); err != nil {
+				return err
+			}
 		}
 
 		// For named volumes the recreated container's bind is rewritten to
@@ -2276,6 +2309,12 @@ func preserveDatabaseDump(ctx context.Context, dumpPath, restoreDest string, ins
 				continue
 			}
 			if info, err := os.Stat(m.Source); err != nil || !info.IsDir() {
+				continue
+			}
+			// The mount list came from the backup, so the dump directory has
+			// to pass the same test an in-place volume restore does. A named
+			// volume's data directory passes for its own volume directory.
+			if !dumpBesideAllowed(m.Source) {
 				continue
 			}
 			base = filepath.Dir(m.Source)
@@ -2868,7 +2907,12 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		if err != nil {
 			return err
 		}
+		if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
+			return err
+		}
 		restoreDest = normalized
+	} else if err := authorizeVolumeSources(chunkedVolumeSources(m, inspect, extractRestoreFilePaths(item.Settings)), h.liveMountSources(ctx, item.Name)); err != nil {
+		return err
 	}
 
 	// 4. Restore volumes. Each __vol__<dest> entry's single chunk ID is a
@@ -2996,7 +3040,7 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		// RestoreChunked owns the clearing, and declines it for a partial
 		// restore (issue #321).
 		proxy.Settings[SettingCleanDestination] = clean
-		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
+		if err := fh.restoreChunkedTree(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
 		rootUID, rootGID := v.Owner()
@@ -3084,17 +3128,11 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	if mode == 0 {
 		mode = 0o644
 	}
-	// normalizeRestorePath validated the PARENT. Without openNoFollow the final
-	// component is still free to be a pre-existing symlink pointing anywhere
-	// on the host, and the open would follow it straight out of the approved
-	// roots and truncate whatever it found (CWE-22/CWE-59). openNoFollow closes
-	// the race as well as the check: there is no window between testing the
-	// path and opening it.
-	out, err := openRestoreFile(path, mode)
+	// normalizeRestorePath validated the PARENT. The final component may still
+	// be a symlink pointing anywhere on the host, so the open walks descriptors
+	// and refuses to follow one (CWE-22/CWE-59).
+	out, err := openRestoreDestination(path, path, mode)
 	if err != nil {
-		if isSymlinkErr(err) {
-			return fmt.Errorf("refusing to restore file mount through the symlink at %s", path)
-		}
 		return err
 	}
 	for _, id := range entry.Chunks {
@@ -3903,9 +3941,8 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			// OpenFile only applies its mode when it creates the file, and
 			// even then the daemon's umask masks it, so a restore over an
 			// existing tree would otherwise keep the old permissions.
-			applyMode(target, safeFileMode(header.Mode))
-			applyOwner(target, header.Uid, header.Gid)
-			applyModTimeFromTime(target, header.ModTime)
+			fileMode := safeFileMode(header.Mode)
+			applyRestoredMeta(cleanDest, target, restoredMeta{mode: &fileMode, uid: header.Uid, gid: header.Gid, modTime: header.ModTime})
 		case tar.TypeSymlink:
 			// Relative targets must resolve within destDir after following
 			// existing symlinks; absolute targets are container-internal and
@@ -3929,13 +3966,13 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := mkdirRestored(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
-			removeExistingNonDir(target)                                // overwrite semantics for links (#175)
-			if err := os.Symlink(header.Linkname, target); err != nil { // #nosec G305 — target validated by joinArchiveTarget + resolveWithinBase; linkname validated by resolveSymlinkTarget, and nothing is written through the link (every entry re-checks its real parent chain)
+			removeExistingNonDir(target) // overwrite semantics for links (#175)
+			if err := symlinkPinned(cleanDest, header.Linkname, target); err != nil {
 				return fmt.Errorf("creating symlink %s -> %s: %w", target, header.Linkname, err)
 			}
 			// Lchown, so the link itself is chowned and not whatever it
 			// points at — which may be outside the restore entirely.
-			applyOwner(target, header.Uid, header.Gid)
+			applyRestoredMeta(cleanDest, target, restoredMeta{uid: header.Uid, gid: header.Gid})
 		case tar.TypeLink:
 			linkTarget, err := joinArchiveTarget(destDir, header.Linkname)
 			if err != nil {
@@ -3957,7 +3994,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := os.Link(linkTarget, target); err != nil {
 				return fmt.Errorf("creating hard link %s -> %s: %w", target, linkTarget, err)
 			}
-			applyModTimeFromTime(target, header.ModTime)
+			applyRestoredMeta(cleanDest, target, restoredMeta{uid: -1, gid: -1, modTime: header.ModTime})
 		default:
 			continue
 		}
@@ -3968,11 +4005,21 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 
 		// MkdirAll leaves an existing directory's mode alone, so an in-place
 		// restore needs the explicit chmod as much as a fresh one does.
-		applyMode(d.path, d.mode)
-		applyOwner(d.path, d.uid, d.gid)
-		applyModTimeFromTime(d.path, d.modTime)
+		dirMode := d.mode
+		applyRestoredMeta(cleanDest, d.path, restoredMeta{mode: &dirMode, uid: d.uid, gid: d.gid, modTime: d.modTime})
 	}
 	return nil
+}
+
+// symlinkPinned creates a symlink at target through a handle pinned to its
+// parent, after checking the parent still resolves inside base.
+func symlinkPinned(base, linkname, target string) error {
+	root, name, err := pinRestoredParent(base, target)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Symlink(linkname, name)
 }
 
 // removeExistingNonDir removes an existing file or link at target so a

@@ -69,6 +69,9 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	}
 
 	srcPath = filepath.Clean(srcPath)
+	if _, err := safepath.CheckFolderLocation(srcPath); err != nil {
+		return nil, fmt.Errorf("refusing to back up: %w", err)
+	}
 
 	// Preserve the user-configured path for folder_meta.json so that
 	// restore targets the share path (e.g. /mnt/user/myshare), not the
@@ -212,12 +215,17 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// Check for restore destination override first.
 	destPath, _ := item.Settings["restore_destination"].(string)
 
+	isCustom := destPath != ""
+
 	// Fall back to path from settings.
 	if destPath == "" {
 		destPath, _ = item.Settings["path"].(string)
 	}
+	fromJob := !isCustom && destPath != ""
 
-	// Try reading stored metadata if settings don't have the path.
+	// Try reading stored metadata if settings don't have the path. It comes
+	// from backup storage, so it gets the operator-destination policy below
+	// and never the wider allowance a local job's own path has.
 	if destPath == "" {
 		metaPath := filepath.Join(sourceDir, "folder_meta.json")
 		if data, err := os.ReadFile(metaPath); err == nil { // #nosec G304 — metaPath is sourceDir + fixed filename
@@ -236,6 +244,13 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 
 	if !restorePathSafe(destPath) || strings.Contains(destPath, "../") || strings.Contains(destPath, "..\\") {
 		return fmt.Errorf("suspicious restore destination %q", destPath)
+	}
+	if fromJob {
+		if _, err := safepath.CheckFolderLocation(destPath); err != nil {
+			return err
+		}
+	} else if _, err := safepath.CheckCustomRestoreDestination(destPath); err != nil {
+		return err
 	}
 	normalizedDestPath, err := normalizeRestorePath(destPath)
 	if err != nil {
@@ -286,6 +301,11 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 // bits so Restore can recreate them with the same mode. Empty files produce
 // a manifest entry with zero chunks (not an error).
 func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
+	if p, _ := item.Settings["path"].(string); p != "" {
+		if _, err := safepath.CheckFolderLocation(p); err != nil {
+			return dedup.ID{}, fmt.Errorf("refusing to back up: %w", err)
+		}
+	}
 	m, totalBytes, skipped, err := h.buildChunkedManifest(ctx, item, repo, parent, progress)
 	if err != nil {
 		return dedup.ID{}, err
@@ -476,6 +496,21 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 // fetched in order and concatenated; mtime is preserved via os.Chtimes.
 // Empty files (zero chunks) are created as zero-byte files.
 func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	if custom, _ := item.Settings["restore_destination"].(string); custom != "" {
+		if _, err := safepath.CheckCustomRestoreDestination(custom); err != nil {
+			return err
+		}
+	} else if destPath != "" {
+		if _, err := safepath.CheckFolderLocation(destPath); err != nil {
+			return err
+		}
+	}
+	return h.restoreChunkedTree(ctx, item, repo, manifestID, destPath, progress)
+}
+
+// restoreChunkedTree extracts a manifest into destPath. Callers authorize the
+// destination; container volumes and plugin configs have their own policies.
+func (h *FolderHandler) restoreChunkedTree(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
 	if destPath == "" {
 		if rd, ok := item.Settings["restore_destination"].(string); ok && rd != "" {
 			destPath = rd
@@ -606,19 +641,16 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if err := resolveWithinBase(destPath, full); err != nil {
 			return fmt.Errorf("restore %s: %w", fp, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := mkdirRestored(filepath.Dir(full), 0o755); err != nil {
 			return err
 		}
 		mode := os.FileMode(e.Mode)
 		if mode == 0 {
 			mode = 0o644
 		}
-		out, err := openRestoreFile(full, mode)
+		out, err := openRestoreDestination(full, full, mode)
 		if err != nil {
-			if isSymlinkErr(err) {
-				return fmt.Errorf("refusing to restore %s through symlink at %s", fp, full)
-			}
-			return err
+			return fmt.Errorf("restore %s: %w", fp, err)
 		}
 		var written int64
 		for _, cid := range e.Chunks {
@@ -641,10 +673,9 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		counter.addFile()
 		// O_CREATE only applies the mode when it creates the file, so a
 		// restore over an existing tree needs the mode set explicitly.
-		applyMode(full, mode)
 		uid, gid := e.Owner()
-		applyOwner(full, uid, gid)
-		applyModTime(full, e.ModTime)
+		fileTime, _ := time.Parse(time.RFC3339, e.ModTime)
+		applyRestoredMeta(cleanDest, full, restoredMeta{mode: &mode, uid: uid, gid: gid, modTime: fileTime})
 		if progress != nil {
 			progress(item.Name, -1, fmt.Sprintf("restored %s", fp))
 		}
@@ -654,8 +685,8 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 
 		// MkdirAll leaves an existing directory's mode untouched, which an
 		// in-place restore over a previous one relies on this to correct.
-		applyMode(d.full, d.mode)
-		applyOwner(d.full, d.uid, d.gid)
+		dirMode := d.mode
+		applyRestoredMeta(cleanDest, d.full, restoredMeta{mode: &dirMode, uid: d.uid, gid: d.gid})
 	}
 	return nil
 }
