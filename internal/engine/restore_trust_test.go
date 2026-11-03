@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 	"github.com/tinkerologie/vault/internal/safepath"
 )
@@ -147,11 +149,24 @@ type imageRegistry struct {
 func newImageRegistry() *imageRegistry {
 	r := &imageRegistry{fakeDocker458: &fakeDocker458{}, tags: map[string]string{}, remote: map[string]string{}}
 	r.imageInspect = func(_ context.Context, ref string) (client.ImageInspectResult, error) {
+		var res client.ImageInspectResult
 		id, ok := r.tags[ref]
 		if !ok {
-			return client.ImageInspectResult{}, errFake458
+			// Inspecting by image ID lists the digests that name it.
+			for k, v := range r.tags {
+				if v == ref {
+					ok, id = true, ref
+					if strings.Contains(k, "@") {
+						res.RepoDigests = append(res.RepoDigests, familiarRef(k))
+					}
+				}
+			}
+			if !ok {
+				return client.ImageInspectResult{}, fmt.Errorf("%w: no such image: %s", cerrdefs.ErrNotFound, ref)
+			}
+			res.ID = id
+			return res, nil
 		}
-		var res client.ImageInspectResult
 		res.ID = id
 		if strings.Contains(ref, "@") {
 			res.RepoDigests = []string{familiarRef(ref)}

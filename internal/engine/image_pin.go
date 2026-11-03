@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/distribution/reference"
 	"github.com/moby/moby/client"
 )
@@ -66,38 +67,48 @@ func pinBackupImage(ctx context.Context, cli dockerClient, image, digestRef stri
 			return nil
 		}
 	}
-	priorID := tagTarget(ctx, cli, image)
+	// Without knowing what the tag names now, a failed check could not put it
+	// back, so the pin stops before changing anything.
+	priorID, err := tagTarget(ctx, cli, image)
+	if err != nil {
+		return err
+	}
 	if _, err := cli.ImageTag(ctx, client.ImageTagOptions{Source: digestRef, Target: image}); err != nil {
 		return fmt.Errorf("pointing %s at %s: %w", image, digestRef, err)
 	}
 	// From here the tag may have moved, so a failed check puts it back.
 	tagged, err := cli.ImageInspect(ctx, image)
 	if err != nil {
-		restoreImageTag(ctx, cli, image, priorID)
+		restoreImageTag(ctx, cli, image, priorID, "")
 		return fmt.Errorf("inspecting %s: %w", image, err)
 	}
 	if tagged.ID != pinned.ID {
-		restoreImageTag(ctx, cli, image, priorID)
+		restoreImageTag(ctx, cli, image, priorID, "")
 		return fmt.Errorf("%s resolves to %s, not the backup-time image %s", image, tagged.ID, pinned.ID)
 	}
 	return nil
 }
 
 // tagTarget returns the image ID that the tag image names now, or "" when
-// image is a digest reference or the tag does not exist on this server.
-func tagTarget(ctx context.Context, cli dockerClient, image string) string {
+// image is a digest reference or the tag does not exist on this server. Any
+// other inspect failure is returned, so it is never mistaken for an absent tag
+// whose rollback can be skipped.
+func tagTarget(ctx context.Context, cli dockerClient, image string) (string, error) {
 	named, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	if _, isDigest := named.(reference.Canonical); isDigest {
-		return ""
+		return "", nil
 	}
 	res, err := cli.ImageInspect(ctx, image)
-	if err != nil {
-		return ""
+	if cerrdefs.IsNotFound(err) {
+		return "", nil
 	}
-	return res.ID
+	if err != nil {
+		return "", fmt.Errorf("checking which image %s names before pinning it: %w", image, err)
+	}
+	return res.ID, nil
 }
 
 // imageTagRollbackTimeout bounds the tag rollback. The Docker client sets no
@@ -111,12 +122,26 @@ var imageTagRollbackTimeout = 2 * time.Minute
 // restore's context is cancelled, for at most imageTagRollbackTimeout. A tag
 // that did not exist before (priorID "") is left on the backup-time image,
 // which is still on this server.
-func restoreImageTag(ctx context.Context, cli dockerClient, image, priorID string) {
+//
+// When pinnedID is set, the tag is put back only while it still names that
+// image: if someone moved it since the restore pinned it, their change stands.
+func restoreImageTag(ctx context.Context, cli dockerClient, image, priorID, pinnedID string) {
 	if priorID == "" {
 		return
 	}
 	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), imageTagRollbackTimeout)
 	defer cancel()
+	if pinnedID != "" {
+		now, err := cli.ImageInspect(rollbackCtx, image)
+		if err != nil {
+			log.Printf("engine: chunked restore: left %s as it is: cannot check it still names the pinned image %s: %v", image, pinnedID, err)
+			return
+		}
+		if now.ID != pinnedID {
+			log.Printf("engine: chunked restore: left %s on %s: it was moved off the pinned image %s during the restore", image, now.ID, pinnedID)
+			return
+		}
+	}
 	if _, err := cli.ImageTag(rollbackCtx, client.ImageTagOptions{Source: priorID, Target: image}); err != nil {
 		log.Printf("engine: chunked restore: could not point %s back at %s: %v", image, priorID, err)
 		return

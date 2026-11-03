@@ -148,18 +148,21 @@ func forgetUnraidLocalDigest(imageTag string) {
 }
 
 // seedRestoredImageStatus records in Unraid's update-status cache the digest
-// of the image a chunked restore left the container on: the pinned
-// backup-time digest, or, when the current tag was accepted instead, the
-// digest that tag carries now. Seeding the backup-time digest after an
-// override would make the badge describe an image that is not running (#599).
-func seedRestoredImageStatus(ctx context.Context, cli dockerClient, image, pinnedRef string) {
+// of the image the restored container was created from. It reads the image ID
+// from the container itself, not from the tag, which another pull can move
+// after the container is created, so the badge never describes an image the
+// container is not running (#599). When no digest for the image's repository
+// is known, the recorded one is cleared so Unraid inspects the image itself.
+func seedRestoredImageStatus(ctx context.Context, cli dockerClient, image, containerName string) {
 	if image == "" {
 		return
 	}
-	ref := pinnedRef
-	if ref == "" && cli != nil {
-		if res, err := cli.ImageInspect(ctx, image); err == nil {
-			ref, _ = backupImageRef(image, res.RepoDigests)
+	var ref string
+	if cli != nil && containerName != "" {
+		if c, err := cli.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{}); err == nil && c.Container.Image != "" {
+			if res, err := cli.ImageInspect(ctx, c.Container.Image); err == nil {
+				ref, _ = backupImageRef(image, res.RepoDigests)
+			}
 		}
 	}
 	if sha := extractSHA(ref); sha != "" {

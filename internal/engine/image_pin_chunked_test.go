@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	containertypes "github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/tinkerologie/vault/internal/dedup"
 )
@@ -175,9 +176,96 @@ func TestFailedPinCheckPutsTheTagBack(t *testing.T) {
 	}
 	// A failure to put it back is logged, not raised over the pin error.
 	r.tagErr = errFake458
-	restoreImageTag(t.Context(), r, "nginx:1", "new-image")
-	if tagTarget(t.Context(), r, "nginx@"+pinDigest) != "" || tagTarget(t.Context(), r, "NOT A REF") != "" || tagTarget(t.Context(), r, "missing:1") != "" {
-		t.Error("tagTarget named an image for a digest, bad or missing reference")
+	restoreImageTag(t.Context(), r, "nginx:1", "new-image", "")
+	for _, ref := range []string{"nginx@" + pinDigest, "NOT A REF", "missing:1"} {
+		if id, err := tagTarget(t.Context(), r, ref); id != "" || err != nil {
+			t.Errorf("tagTarget(%q) = %q, %v", ref, id, err)
+		}
+	}
+}
+
+// A tag that cannot be inspected for any reason other than "not found" stops
+// the pin before the tag is touched, so a failed restore is never left unable
+// to put it back (Aikido review of #606).
+func TestUninspectableTagStopsThePin(t *testing.T) {
+	broken := func() *imageRegistry {
+		r := newImageRegistry()
+		r.tags["nginx:1"] = "new-image"
+		r.tags[pinRef] = "old-image"
+		base := r.imageInspect
+		r.imageInspect = func(ctx context.Context, ref string) (client.ImageInspectResult, error) {
+			if ref == "nginx:1" {
+				return client.ImageInspectResult{}, errFake458
+			}
+			return base(ctx, ref)
+		}
+		return r
+	}
+	r := broken()
+	if _, err := tagTarget(t.Context(), r, "nginx:1"); !errors.Is(err, errFake458) {
+		t.Errorf("tagTarget err = %v", err)
+	}
+	if err := pinBackupImage(t.Context(), r, "nginx:1", pinRef); !errors.Is(err, errFake458) || len(r.tagged) != 0 {
+		t.Errorf("pin err = %v, tagged = %v", err, r.tagged)
+	}
+
+	repo, id := chunkedImageFixture(t, false)
+	r = broken()
+	ctx := WithRestoreTrust(t.Context(), RestoreTrust{ArtifactTrusted: true, AllowUnpinnedImage: true})
+	err := (&ContainerHandler{cli: r}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress)
+	if !errors.Is(err, errFake458) || !strings.Contains(err.Error(), "nothing was changed") || len(r.tagged) != 0 || len(r.pulled) != 0 {
+		t.Fatalf("err = %v, tagged = %v, pulled = %v", err, r.tagged, r.pulled)
+	}
+}
+
+// The rollback after a failed restore undoes only Vault's own pin: a tag that
+// someone moved while the restore ran is left where they put it (Aikido review
+// of #606).
+func TestFailedRestoreLeavesATagMovedByOthers(t *testing.T) {
+	repo, id := chunkedImageFixture(t, false)
+	r := newImageRegistry()
+	r.tags["nginx:1"] = "new-image"
+	r.remote[pinRef] = "old-image"
+	r.tags["someone/else:2"] = "their-image"
+	r.containerCreate = func(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+		r.tags["nginx:1"] = "their-image" // an update lands mid-restore
+		return client.ContainerCreateResult{}, errFake458
+	}
+	ctx := WithRestoreTrust(t.Context(), RestoreTrust{ArtifactTrusted: true})
+	if err := (&ContainerHandler{cli: r}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress); err == nil {
+		t.Fatal("restore succeeded")
+	}
+	if got := r.tags["nginx:1"]; got != "their-image" {
+		t.Errorf("rollback overwrote a tag moved by someone else: %q", got)
+	}
+	// Nor is it rolled back when the tag can no longer be checked.
+	before := len(r.tagged)
+	delete(r.tags, "nginx:1")
+	restoreImageTag(t.Context(), r, "nginx:1", "new-image", "old-image")
+	if len(r.tagged) != before {
+		t.Errorf("retagged without checking the tag: %v", r.tagged[before:])
+	}
+}
+
+// trackCreatedContainer makes the fake daemon remember the image a restore
+// created the container from, and report it the way ContainerInspect does.
+func trackCreatedContainer(r *imageRegistry, onStart func()) {
+	var created string
+	r.containerCreate = func(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+		created = r.tags[o.Config.Image]
+		return client.ContainerCreateResult{ID: "c1"}, nil
+	}
+	r.containerStart = func(context.Context, string) (client.ContainerStartResult, error) {
+		if onStart != nil {
+			onStart()
+		}
+		return client.ContainerStartResult{}, nil
+	}
+	r.containerInspect = func(context.Context, string) (client.ContainerInspectResult, error) {
+		if created == "" {
+			return client.ContainerInspectResult{}, errInspectMissing
+		}
+		return client.ContainerInspectResult{Container: containertypes.InspectResponse{ID: "c1", Image: created}}, nil
 	}
 }
 
@@ -201,15 +289,19 @@ func (s *tagLandsElsewhere) ImageTag(ctx context.Context, o client.ImageTagOptio
 // digest of the image the container runs, not the backup-time one.
 func TestChunkedRestoreSeedsTheRunningDigest(t *testing.T) {
 	const current = "sha256:" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const newer = "sha256:" + "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	cases := []struct {
 		name      string
 		pinned    bool
-		tagDigest []string
+		digests   []string // the current image's digests, for an override
+		moveAfter bool     // a pull moves the tag after the container is created
 		want      any
 	}{
 		{name: "pinned", pinned: true, want: pinDigest},
-		{name: "override keeps the current tag", tagDigest: []string{"other/repo@" + pinDigest, "nginx@" + current}, want: current},
-		{name: "override with no digest for the tag", want: nil},
+		{name: "pinned, tag moved after create", pinned: true, moveAfter: true, want: pinDigest},
+		{name: "override keeps the current tag", digests: []string{"other/repo@" + pinDigest, "nginx@" + current}, want: current},
+		{name: "override, tag moved after create", digests: []string{"nginx@" + current}, moveAfter: true, want: current},
+		{name: "override with no digest for the image", want: nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -228,14 +320,23 @@ func TestChunkedRestoreSeedsTheRunningDigest(t *testing.T) {
 			base := r.imageInspect
 			r.imageInspect = func(ctx context.Context, ref string) (client.ImageInspectResult, error) {
 				res, err := base(ctx, ref)
-				if ref == "nginx:1" && !tc.pinned {
-					res.RepoDigests = tc.tagDigest
+				switch ref {
+				case "current-image":
+					// The image outlives the tag moving off it.
+					res, err = client.ImageInspectResult{}, nil
+					res.ID, res.RepoDigests = ref, tc.digests
+				case "newer-image", "nginx:1":
+					if r.tags["nginx:1"] == "newer-image" {
+						res.RepoDigests = []string{"nginx@" + newer}
+					}
 				}
 				return res, err
 			}
-			r.containerCreate = func(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
-				return client.ContainerCreateResult{ID: "c1"}, nil
-			}
+			trackCreatedContainer(r, func() {
+				if tc.moveAfter {
+					r.tags["nginx:1"] = "newer-image"
+				}
+			})
 			if err := (&ContainerHandler{cli: r}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress); err != nil {
 				t.Fatal(err)
 			}
@@ -318,8 +419,8 @@ func TestForgetUnraidLocalDigest(t *testing.T) {
 	statusPath := withUpdateStatusPath458(t, &content)
 	forgetUnraidLocalDigest("")
 	forgetUnraidLocalDigest("nginx:1")
-	seedRestoredImageStatus(t.Context(), nil, "", "")
-	seedRestoredImageStatus(t.Context(), nil, "nginx:1", "")
+	seedRestoredImageStatus(t.Context(), nil, "", "web")
+	seedRestoredImageStatus(t.Context(), nil, "nginx:1", "web")
 	if got := readFile458(t, statusPath); got != content {
 		t.Errorf("status file changed: %s", got)
 	}
@@ -349,7 +450,7 @@ func TestImageTagRollbackIsBounded(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		restoreImageTag(ctx, h, "nginx:1", "new-image")
+		restoreImageTag(ctx, h, "nginx:1", "new-image", "")
 	}()
 	select {
 	case <-done:

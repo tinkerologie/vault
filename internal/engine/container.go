@@ -2025,10 +2025,7 @@ func (ri restoreInspect) mountInfos() []mountInfo {
 // RestoreChunked path uses the same code, avoiding a 200-LOC copy.
 func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item BackupItem, inspect restoreInspect, restoreDest, sourceDir string, progress ProgressFunc) error {
 	progress(item.Name, 55, "recreating container")
-	containerName := strings.TrimPrefix(inspect.Name, "/")
-	if containerName == "" {
-		containerName = item.Name
-	}
+	containerName := restoredContainerName(item, inspect)
 	safeContainerName, err := normalizeRestoreComponent(containerName)
 	if err != nil {
 		return err
@@ -2905,17 +2902,35 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	// Pinning moves the tag. If the restore then fails, the tag goes back to
 	// the image it named before, so a later pull or recreation of the tag is
 	// not quietly left on the backup-time image (#599).
-	priorImageID := tagTarget(ctx, h.cli, inspect.Config.Image)
+	// Only a restore that will pin needs the prior image, and one that cannot
+	// tell what the tag names stops here, before anything changed.
+	var priorImageID string
+	if _, digestErr := backupImageRef(inspect.Config.Image, meta.RepoDigests); digestErr == nil {
+		if priorImageID, err = tagTarget(ctx, h.cli, inspect.Config.Image); err != nil {
+			return fmt.Errorf("container restore: %w; nothing was changed", err)
+		}
+	}
 	inspect.pinnedImage, err = h.resolveChunkedImage(ctx, item, inspect.Config.Image, meta.RepoDigests, progress)
 	if err != nil {
 		return err
 	}
 	ApprovalsSettled(ctx)
 	if inspect.pinnedImage != "" {
+		// The rollback only undoes Vault's own pin: it needs the pinned image's
+		// ID to tell whether someone else has moved the tag since.
+		var pinnedID string
+		if pinned, pErr := h.cli.ImageInspect(ctx, inspect.pinnedImage); pErr == nil {
+			pinnedID = pinned.ID
+		}
 		defer func() {
-			if retErr != nil {
-				restoreImageTag(ctx, h.cli, inspect.Config.Image, priorImageID)
+			if retErr == nil {
+				return
 			}
+			if pinnedID == "" {
+				log.Printf("engine: chunked restore: left %s as it is: the pinned image %s could not be inspected", inspect.Config.Image, inspect.pinnedImage)
+				return
+			}
+			restoreImageTag(ctx, h.cli, inspect.Config.Image, priorImageID, pinnedID)
 		}()
 	}
 
@@ -2969,7 +2984,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	}
 	// 6. Record in Unraid's update-status cache the digest of the image the
 	//    container now runs, once the restore has succeeded.
-	seedRestoredImageStatus(ctx, h.cli, inspect.Config.Image, inspect.pinnedImage)
+	seedRestoredImageStatus(ctx, h.cli, inspect.Config.Image, restoredContainerName(item, inspect))
 	if progress != nil {
 		progress(item.Name, 100, "container restored")
 	}
@@ -4300,4 +4315,13 @@ func (h *ContainerHandler) readStatsSample(ctx context.Context, containerID stri
 		return nil, fmt.Errorf("decoding stats for %s: %w", containerID, err)
 	}
 	return &s, nil
+}
+
+// restoredContainerName is the name a restore gives the container: the one in
+// its backed-up config, or the item's name when the config has none.
+func restoredContainerName(item BackupItem, inspect restoreInspect) string {
+	if name := strings.TrimPrefix(inspect.Name, "/"); name != "" {
+		return name
+	}
+	return item.Name
 }
