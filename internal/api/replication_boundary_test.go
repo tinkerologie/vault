@@ -28,6 +28,8 @@ func remoteVault(t *testing.T, database *db.DB) *httptest.Server {
 // The real replication client against the real boundary, both ways of holding
 // the key: in memory, and sealed in the database as a saved source keeps it.
 func TestReplicationClientAgainstBoundary(t *testing.T) {
+	// The client's dial policy refuses loopback, where httptest peers listen.
+	t.Setenv(replication.AllowLoopbackEnv, "1")
 	peerDB := testDB(t)
 	key := setTestAPIKey(t, peerDB)
 	peer := remoteVault(t, peerDB)
@@ -83,8 +85,8 @@ func TestReplicationClientAgainstBoundary(t *testing.T) {
 		}
 		// The peer has no jobs and this side no storage: any failure past the
 		// connection test is fine here, a refusal is not.
-		if err := sync(key); err != nil && strings.Contains(err.Error(), "401") {
-			t.Errorf("sealed key was refused: %v", err)
+		if err := sync(key); err != nil && strings.Contains(err.Error(), "test connection") {
+			t.Errorf("sealed key didn't get past the connection test: %v", err)
 		}
 		if err := sync("wrong-key-value"); err == nil || !strings.Contains(err.Error(), "401") {
 			t.Errorf("wrong sealed key: %v, want 401", err)
