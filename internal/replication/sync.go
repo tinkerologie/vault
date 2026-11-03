@@ -220,19 +220,18 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 		s.logSyncError(sourceID, src.Name, errMsg)
 		return nil, fmt.Errorf("open local storage: %w", err)
 	}
-	// An auto-selected destination is where this sync's files go, so the
-	// source and its jobs must name it: restore and preflight open the job's
-	// destination, and a later sync must keep writing to the same place.
-	if src.StorageDestID == 0 {
-		if err := s.db.AdoptReplicationDestination(sourceID, storageDestID); err != nil {
-			storage.CloseAdapter(localAdapter)
-			errMsg := fmt.Sprintf("record storage destination: %v", err)
-			s.updateSyncStatus(sourceID, "failed", errMsg)
-			s.logSyncError(sourceID, src.Name, errMsg)
-			return nil, fmt.Errorf("record storage destination: %w", err)
-		}
-		src.StorageDestID = storageDestID
+	// This sync's files go to storageDestID, so the source and its jobs must
+	// name it: restore and preflight open the job's destination, and a later
+	// sync must keep writing to the same place. Jobs created while the source
+	// had no destination are bound too, even if the source names one now.
+	if err := s.db.AdoptReplicationDestination(sourceID, storageDestID); err != nil {
+		storage.CloseAdapter(localAdapter)
+		errMsg := fmt.Sprintf("record storage destination: %v", err)
+		s.updateSyncStatus(sourceID, "failed", errMsg)
+		s.logSyncError(sourceID, src.Name, errMsg)
+		return nil, fmt.Errorf("record storage destination: %w", err)
 	}
+	src.StorageDestID = storageDestID
 	// Release pooled connections / mounts when the sync finishes — scheduled
 	// syncs leaked one SFTP pool (or NFS mount) per tick without this (#173).
 	defer storage.CloseAdapter(localAdapter)
@@ -406,6 +405,7 @@ func (s *Syncer) syncJob(
 	var firstErr error
 	var totalBytes int64
 	var peerRuns map[int64]RemoteRun
+	var peerDedup bool
 
 	// Parents first, so an incremental or differential point can be linked to
 	// the local copy of the backup it builds on.
@@ -417,9 +417,14 @@ func (s *Syncer) syncJob(
 
 		if peerRuns == nil {
 			peerRuns = s.peerRuns(client, src.Name, rj)
+			peerDedup = s.peerDedupDestination(client, src.Name, rj)
 		}
-		parentID, err := localParent(rrp, remoteByID, localIDs, normPath)
-		var rpID, bytes int64
+		// Checked before downloading, so a refused point leaves no files.
+		err := dedupUnsupported(rrp, peerDedup)
+		var parentID, rpID, bytes int64
+		if err == nil {
+			parentID, err = localParent(rrp, remoteByID, localIDs, normPath)
+		}
 		if err == nil {
 			run, ok := peerRuns[rrp.JobRunID]
 			var peerRun *RemoteRun
@@ -463,6 +468,38 @@ func (s *Syncer) peerRuns(client *Client, sourceName string, rj RemoteJob) map[i
 		byID[r.ID] = r
 	}
 	return byID
+}
+
+// errDedupUnsupported marks a restore point refused because it is
+// deduplicated: its data lives in the peer's shared chunk store under
+// _vault/packs, which replication does not copy, so the replica could not
+// restore it.
+var errDedupUnsupported = errors.New("replication of deduplicated backups isn't supported yet: their data is in the peer's _vault/packs, which replication doesn't copy")
+
+// peerDedupDestination reports whether the remote job writes to a
+// deduplicated destination on the peer. When the peer cannot say, each
+// restore point's own metadata still decides.
+func (s *Syncer) peerDedupDestination(client *Client, sourceName string, rj RemoteJob) bool {
+	dest, err := client.GetStorage(rj.StorageDestID)
+	if err != nil {
+		logx.Warnf("replication: storage destination of %q from %q unavailable, checking each restore point for deduplication instead: %v", rj.Name, sourceName, err)
+		return false
+	}
+	return dest.DedupEnabled
+}
+
+// dedupUnsupported returns errDedupUnsupported for a deduplicated restore
+// point: one on a dedup destination, or one whose metadata or row names dedup
+// manifests.
+func dedupUnsupported(rrp RemoteRestorePoint, dedupDestination bool) error {
+	var meta struct {
+		ItemManifests map[string]any `json:"item_manifests"`
+	}
+	_ = json.Unmarshal([]byte(rrp.Metadata), &meta)
+	if dedupDestination || len(meta.ItemManifests) > 0 || len(rrp.ManifestID) > 0 {
+		return errDedupUnsupported
+	}
+	return nil
 }
 
 // parentsFirst orders restore points so each one follows the parent it lists,

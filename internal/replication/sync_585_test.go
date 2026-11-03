@@ -3,10 +3,12 @@ package replication
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -404,5 +406,91 @@ func TestSyncSourceAdoptDestinationFails585(t *testing.T) {
 	}
 	if src, _ := d.GetReplicationSource(srcID); src.LastSyncStatus != "failed" {
 		t.Errorf("status = %q, want failed", src.LastSyncStatus)
+	}
+}
+
+// A deduplicated restore point is refused before anything is downloaded: its
+// data lives in the peer's _vault/packs, which replication does not copy, so
+// the replica could not restore it.
+func TestSyncSourceRefusesDedupPoints585(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		rp        RemoteRestorePoint
+		dedupDest bool
+	}{
+		{"item manifests", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", Metadata: `{"items":1,"item_manifests":{"src":"ab"}}`}, false},
+		{"manifest id", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", ManifestID: []byte{1, 2}}, false},
+		{"dedup destination", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", Metadata: `{"items":1}`}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var downloads, lists atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+				case "/api/v1/jobs":
+					_ = json.NewEncoder(w).Encode([]RemoteJob{{ID: 5, Name: "J", StorageDestID: 9}})
+				case "/api/v1/jobs/5/restore-points":
+					_ = json.NewEncoder(w).Encode([]RemoteRestorePoint{tc.rp})
+				case "/api/v1/storage/9":
+					_ = json.NewEncoder(w).Encode(RemoteStorage{ID: 9, DedupEnabled: tc.dedupDest})
+				case "/api/v1/storage/9/list":
+					lists.Add(1)
+					_ = json.NewEncoder(w).Encode([]StorageFile{{Name: "f", Path: "J/run1/f", Size: 1}})
+				case "/api/v1/storage/9/files":
+					downloads.Add(1)
+					_, _ = w.Write([]byte("x"))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			d := openTestDB(t)
+			storageDir := t.TempDir()
+			destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "l", Type: "local", Config: `{"path":"` + storageDir + `"}`})
+			srcID, _ := d.CreateReplicationSource(db.ReplicationSource{Name: "P", URL: srv.URL, StorageDestID: destID})
+
+			res, err := NewSyncer(d, nil).SyncSource(srcID, nil)
+			if err != nil || res.JobsFailed != 1 || res.RestorePointsNew != 0 {
+				t.Fatalf("SyncSource = %+v, %v; want the point failed", res, err)
+			}
+			if lists.Load()+downloads.Load() != 0 {
+				t.Errorf("listed %d and downloaded %d for a refused point", lists.Load(), downloads.Load())
+			}
+			if n := countRows(t, d, "restore_points") + countRows(t, d, "job_runs"); n != 0 {
+				t.Errorf("rows recorded = %d, want 0", n)
+			}
+			if entries, _ := os.ReadDir(storageDir); len(entries) != 0 {
+				t.Errorf("files left on the replica: %v", entries)
+			}
+			if src, _ := d.GetReplicationSource(srcID); src.LastSyncStatus != "failed" {
+				t.Errorf("status = %q, want failed", src.LastSyncStatus)
+			}
+		})
+	}
+	if err := dedupUnsupported(RemoteRestorePoint{Metadata: `{"item_manifests":{"a":"b"}}`}, false); !errors.Is(err, errDedupUnsupported) || !strings.Contains(err.Error(), "deduplicated backups isn't supported yet") {
+		t.Errorf("reason = %v", err)
+	}
+}
+
+// A job replicated while its source had no destination is bound to the
+// destination the source names now, so restore can open its files.
+func TestSyncSourceBindsOlderUnboundJobs585(t *testing.T) {
+	t.Parallel()
+	var downloads atomic.Int64
+	srv := peer585(t, []RemoteRestorePoint{{ID: 1, BackupType: "full", StoragePath: "J/run1"}}, &downloads)
+	d, srcID := setup585(t, srv.URL)
+	src, _ := d.GetReplicationSource(srcID)
+	older, err := d.CreateReplicatedJob(db.Job{Name: "[P] J", SourceID: srcID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := NewSyncer(d, nil).SyncSource(srcID, nil); err != nil || res.RestorePointsNew != 1 {
+		t.Fatalf("SyncSource = %+v, %v", res, err)
+	}
+	if job, _ := d.GetJob(older); job.StorageDestID != src.StorageDestID || job.StorageDestID == 0 {
+		t.Errorf("older job destination = %d, want the source's %d", job.StorageDestID, src.StorageDestID)
 	}
 }
