@@ -133,6 +133,8 @@ type NextRunResolver = func(jobID int64) (string, bool)
 type JobHandler struct {
 	db     *db.DB
 	runner *runner.Runner
+	// readOnly is set on a replica: reads must not persist anything.
+	readOnly bool
 	// intake owns every Job write. It is shared with the MCP adapter so both
 	// enforce the same policy by construction rather than by convention.
 	intake         *jobintake.Intake
@@ -140,6 +142,9 @@ type JobHandler struct {
 	nextRun        NextRunResolver
 	onConfigChange ConfigChangeHook
 }
+
+// SetReadOnly marks the handler as serving a read-only replica.
+func (h *JobHandler) SetReadOnly(readOnly bool) { h.readOnly = readOnly }
 
 func NewJobHandler(database *db.DB, r *runner.Runner, reload ScheduleReloader, intake *jobintake.Intake) *JobHandler {
 	return &JobHandler{db: database, runner: r, schedReload: reload, intake: intake}
@@ -1567,6 +1572,11 @@ func (h *JobHandler) scanStale(jobID int64) ([]db.JobItem, error) {
 			// must not clear a real stale mark.
 			clearIDs = append(clearIDs, item.ID)
 		}
+	}
+	// A read-only server reports the scan but records nothing. A replica has
+	// none of the backed-up items, so it would mark every one missing.
+	if h.readOnly {
+		return stale, nil
 	}
 	if len(markIDs) > 0 {
 		if err := h.db.MarkJobItemsMissing(markIDs, time.Now().UTC().Format(time.RFC3339)); err != nil {

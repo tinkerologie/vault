@@ -42,6 +42,8 @@ RUN chown vault:vault /usr/local/bin/vault
 EXPOSE 24085
 VOLUME /data
 RUN mkdir -p /data && chown vault:vault /data
+# One lock file for every user in the container (see internal/maintlock).
+RUN touch /var/run/vault-maintenance.lock && chown vault:vault /var/run/vault-maintenance.lock
 
 USER vault
 

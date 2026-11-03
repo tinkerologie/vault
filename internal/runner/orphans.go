@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/maintlock"
 	"github.com/tinkerologie/vault/internal/storage"
 )
 
@@ -43,13 +44,18 @@ func (r *Runner) ScanStorageOrphans(dest db.StorageDestination) ([]string, int64
 	}
 	known := make([]string, 0, 32)
 	for _, job := range jobs {
-		if job.StorageDestID != dest.ID {
+		// A replicated job from a source with no fixed destination has no
+		// destination of its own but keeps its files on one, so its paths
+		// count as known everywhere.
+		unbound := job.SourceID != 0 && job.StorageDestID == 0
+		if job.StorageDestID != dest.ID && !unbound {
 			continue
 		}
+		// Missing rows would make live backups look orphaned, so a failure
+		// here fails the whole scan.
 		rps, err := r.db.ListRestorePoints(job.ID)
 		if err != nil {
-			log.Printf("runner: orphan scan: skipping job %d due to RP load error: %v", job.ID, err)
-			continue
+			return nil, 0, fmt.Errorf("list restore points for job %d: %w", job.ID, err)
 		}
 		for _, rp := range rps {
 			if rp.StoragePath != "" {
@@ -97,6 +103,25 @@ func (r *Runner) DeleteStorageOrphans(dest db.StorageDestination, paths []string
 	if dest.DedupEnabled {
 		return 0, []string{fmt.Sprintf("dedup destination uses chunk-store GC instead; call POST /api/v1/storage/%d/gc", dest.ID)}
 	}
+	// The re-scan below and every delete must see one stable view: a backup's
+	// files have no restore point row until it finishes, and imports and
+	// replication syncs adopt files the same way. Refuse rather than wait, as
+	// these writers can run for hours and this is a request handler.
+	if r.shouldRefuseStart() {
+		return 0, []string{"daemon is shutting down"}
+	}
+	r.markStart()
+	defer r.markFinish()
+	if !r.mu.TryLock() {
+		return 0, []string{"a backup or restore is running; try again when it finishes"}
+	}
+	defer r.mu.Unlock()
+	release, ok := maintlock.TryExclusiveDestination(r.db, dest.ID)
+	if !ok {
+		return 0, []string{errDestinationAdopting.Error()}
+	}
+	defer release()
+
 	currentOrphans, _, err := r.ScanStorageOrphans(dest)
 	if err != nil {
 		return 0, []string{fmt.Sprintf("rescan failed: %v", err)}

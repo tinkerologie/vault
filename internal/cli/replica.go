@@ -32,6 +32,8 @@ disaster recovery.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logx.Setup(os.Stderr)
 
+		defer holdMaintenanceLock(cmd.Context())()
+
 		dbPath, _ := cmd.Flags().GetString("db")
 		addr, _ := cmd.Flags().GetString("addr")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")

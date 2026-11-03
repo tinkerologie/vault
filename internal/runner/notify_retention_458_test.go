@@ -289,15 +289,30 @@ func TestRunDedupGCBranchesB458(t *testing.T) {
 		existing = hex.EncodeToString(id[:])
 	}
 	runID, _ := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "completed", BackupType: "full"})
-	meta := `{"item_manifests":{"n":5,"e":"","bad":"zz","short":"abcd","ghost":"` + strings.Repeat("ee", 32) + `","dup":"` + existing + `"}}`
-	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "escrow/extra", Metadata: meta}); err != nil {
+	meta := `{"item_manifests":{"e":"","bad":"zz","dup":"` + existing + `"}}`
+	badRP, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: "escrow/extra", Metadata: meta})
+	if err != nil {
 		t.Fatal(err)
 	}
 	_ = d.SetSetting("dedup_compaction_min_dead_ratio", "not-a-number")
-	r.RunDedupGC(dest, "gc-ok")
 
 	repoAdapter := adapterFor(t, dest)
 	repo, err := r.openExistingDedupRepo(repoAdapter, dest)
+	if err != nil {
+		t.Fatalf("repo should open: %v", err)
+	}
+	// A malformed ID may be hiding a live manifest, so GC stops.
+	if _, err := r.collectLiveManifestIDs(repo, dest.ID); err == nil {
+		t.Fatal("malformed item manifest ID did not stop GC")
+	}
+	r.RunDedupGC(dest, "gc-refused")
+
+	// With only sound metadata it runs, and nothing live is lost.
+	if err := d.DeleteRestorePoint(badRP); err != nil {
+		t.Fatal(err)
+	}
+	r.RunDedupGC(dest, "gc-ok")
+	repo, err = r.openExistingDedupRepo(repoAdapter, dest)
 	if err != nil {
 		t.Fatalf("repo should still open after GC: %v", err)
 	}
@@ -305,8 +320,8 @@ func TestRunDedupGCBranchesB458(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(live) < 2 {
-		t.Fatalf("expected the real manifest and the unreadable ghost to stay live, got %d", len(live))
+	if len(live) < 1 {
+		t.Fatalf("expected the real manifest to stay live, got %d", len(live))
 	}
 }
 

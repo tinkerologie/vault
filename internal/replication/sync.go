@@ -11,6 +11,7 @@ import (
 
 	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/maintlock"
 	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/storage"
 	"github.com/tinkerologie/vault/internal/ws"
@@ -188,6 +189,10 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 	// syncs leaked one SFTP pool (or NFS mount) per tick without this (#173).
 	defer storage.CloseAdapter(localAdapter)
 
+	// Hold off orphan deletion: downloaded files have no restore point row
+	// until each one finishes.
+	defer maintlock.HoldDestination(s.db, storageDestID)()
+
 	// Only pull jobs the remote peer created itself. Jobs the remote peer
 	// replicated from elsewhere carry a non-zero source_id; re-importing them
 	// makes reciprocal peers bounce jobs back and forth, nesting "[A] [B] …"
@@ -216,7 +221,7 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 			"detail":      detail,
 		})
 
-		newRPs, bytes, syncErr := s.syncJob(client, src, rj, localAdapter)
+		newRPs, bytes, syncErr := s.syncJob(client, src, storageDestID, rj, localAdapter)
 		if syncErr != nil {
 			log.Printf("replication: failed to sync job %q from %q: %v", rj.Name, src.Name, syncErr)
 			result.JobsFailed++
@@ -307,11 +312,12 @@ func (s *Syncer) completeSyncStatus(sourceID int64, sourceName string, result *S
 func (s *Syncer) syncJob(
 	client *Client,
 	src db.ReplicationSource,
+	destID int64,
 	rj RemoteJob,
 	localAdapter storage.Adapter,
 ) (int, int64, error) {
 	// Find or create the local replicated job.
-	localJobID, err := s.ensureLocalJob(src, rj)
+	localJobID, err := s.ensureLocalJob(src, destID, rj)
 	if err != nil {
 		return 0, 0, fmt.Errorf("ensure local job: %w", err)
 	}
@@ -350,7 +356,7 @@ func (s *Syncer) syncJob(
 			continue // Already synced.
 		}
 
-		bytes, err := s.syncRestorePoint(client, src, rj, rrp, localJobID, localAdapter)
+		bytes, err := s.syncRestorePoint(client, src, destID, rj, rrp, localJobID, localAdapter)
 		if err != nil {
 			log.Printf("replication: skipping restore point %q: %v", rrp.StoragePath, err)
 			continue
@@ -363,12 +369,21 @@ func (s *Syncer) syncJob(
 }
 
 // ensureLocalJob finds or creates a local job record for a replicated remote job.
-func (s *Syncer) ensureLocalJob(src db.ReplicationSource, rj RemoteJob) (int64, error) {
+func (s *Syncer) ensureLocalJob(src db.ReplicationSource, destID int64, rj RemoteJob) (int64, error) {
 	// Use a prefixed name to distinguish replicated jobs.
 	localName := fmt.Sprintf("[%s] %s", src.Name, rj.Name)
 
 	existing, err := s.db.GetJobByName(localName)
 	if err == nil {
+		// A matching name proves nothing: only a job this source created may
+		// receive its restore points, or a peer could attach them to a local
+		// job and have them deleted with it.
+		if existing.SourceID != src.ID {
+			return 0, fmt.Errorf("local job %q already exists and was not replicated from this source; rename it or the source", localName)
+		}
+		if existing.StorageDestID != 0 && existing.StorageDestID != destID {
+			return 0, fmt.Errorf("local job %q uses storage destination %d but this source now writes to %d", localName, existing.StorageDestID, destID)
+		}
 		return existing.ID, nil
 	}
 	if err != db.ErrNotFound {
@@ -398,6 +413,7 @@ func (s *Syncer) ensureLocalJob(src db.ReplicationSource, rj RemoteJob) (int64, 
 func (s *Syncer) syncRestorePoint(
 	client *Client,
 	src db.ReplicationSource,
+	destID int64,
 	rj RemoteJob,
 	rrp RemoteRestorePoint,
 	localJobID int64,
@@ -409,6 +425,20 @@ func (s *Syncer) syncRestorePoint(
 	storagePath, err := safepath.NormalizeRestorePointPath(rrp.StoragePath)
 	if err != nil {
 		return 0, fmt.Errorf("invalid remote storage path: %w", err)
+	}
+
+	// The peer chooses this path, so it must not reach data held for anyone
+	// else: the download would overwrite it, and the new row would authorise
+	// deleting it. Another job from this same source is the same peer's data
+	// (for example after the source is renamed), so it is not refused here.
+	owners, err := s.db.ListRestorePointOwners(destID, localJobID)
+	if err != nil {
+		return 0, fmt.Errorf("check restore point path ownership: %w", err)
+	}
+	for _, o := range owners {
+		if o.SourceID != src.ID && storage.PathsOverlap(storagePath, o.StoragePath) {
+			return 0, fmt.Errorf("remote storage path %q overlaps a restore point of local job %d", storagePath, o.JobID)
+		}
 	}
 
 	// Recursively list and download all files in the remote storage path.

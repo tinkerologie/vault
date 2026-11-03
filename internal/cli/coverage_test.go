@@ -502,16 +502,9 @@ func TestCollectLiveManifestIDsForCLI_WithRestorePoint(t *testing.T) {
 		t.Fatalf("update manifest_id: %v", err)
 	}
 
-	ids, err := collectLiveManifestIDsForCLI(repo, database, destID)
-	if err != nil {
-		// engine.WalkManifestClosure will fail to read the fake manifest;
-		// the function logs a warning and still includes the top-level ID.
-		t.Logf("collectLiveManifestIDsForCLI err = %v (expected — fake manifest is unreadable)", err)
-	}
-	// We expect at least one ID (the top-level, via the warning-fallback
-	// path that adds the top even when WalkManifestClosure errors).
-	if len(ids) == 0 {
-		t.Error("expected at least one manifest ID, got 0")
+	// The manifest is unreadable, so the live set would be incomplete.
+	if ids, err := collectLiveManifestIDsForCLI(repo, database, destID); err == nil {
+		t.Errorf("collectLiveManifestIDsForCLI = %x, want an error", ids)
 	}
 }
 

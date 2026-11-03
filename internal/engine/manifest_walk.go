@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -28,9 +29,11 @@ import (
 //
 // Folder and plugin top-level manifests have no sub-manifests, so the walk just
 // returns their data chunks. Sub-manifest detection is key-aware
-// (containerVolPrefix) AND confirmed by a successful manifest decode, so a real
-// file literally named like a `__vol__` key is treated as ordinary data rather
-// than mis-recursed.
+// (containerVolPrefix) AND confirmed by a manifest decode, so a real file
+// literally named like a `__vol__` key is treated as ordinary data rather than
+// mis-recursed. A chunk under such a key that cannot be read at all is an error:
+// it may be a sub-manifest, and treating it as data would hide everything it
+// references from GC.
 func WalkManifestClosure(repo *dedup.Repo, tops []dedup.ID) (manifests, data []dedup.ID, err error) {
 	if repo == nil {
 		return nil, nil, fmt.Errorf("WalkManifestClosure: nil repo")
@@ -59,11 +62,15 @@ func WalkManifestClosure(repo *dedup.Repo, tops []dedup.ID) (manifests, data []d
 				// Confirm by decoding before recursing so a pathological data
 				// chunk under such a key can't derail the walk.
 				if isVol {
-					if _, derr := repo.GetManifest(c); derr == nil {
+					_, derr := repo.GetManifest(c)
+					if derr == nil {
 						if werr := walk(c); werr != nil {
 							return werr
 						}
 						continue
+					}
+					if !errors.Is(derr, dedup.ErrNotManifest) {
+						return fmt.Errorf("walk nested manifest %x under %q: %w", c[:8], key, derr)
 					}
 				}
 				seen[c] = struct{}{}

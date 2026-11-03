@@ -79,6 +79,8 @@ var daemonCmd = &cobra.Command{
 		logRing := logbuf.New(daemonLogBufferBytes)
 		logx.Setup(io.MultiWriter(os.Stderr, logRing))
 
+		defer holdMaintenanceLock(cmd.Context())()
+
 		// Hybrid mode detection: if a pool drive is mounted, use a RAM-backed
 		// working database with periodic snapshots to the pool drive. This
 		// avoids USB flash wear from SQLite WAL writes.

@@ -497,6 +497,11 @@ func (r *Repo) PutManifest(item string, m Manifest) (ID, error) {
 	return r.Put(envelope)
 }
 
+// ErrNotManifest marks a chunk that was read intact but does not decode as a
+// manifest. Any other GetManifest error means the chunk could not be read, so
+// nothing is known about what it references.
+var ErrNotManifest = errors.New("chunk is not a manifest")
+
 // GetManifest fetches and parses a manifest stored via PutManifest. It
 // transparently handles both layouts: a v1 single-chunk manifest, and a
 // SegmentedManifest envelope whose segments are reassembled before decoding.
@@ -508,13 +513,18 @@ func (r *Repo) GetManifest(id ID) (Manifest, error) {
 	if !isSegmentedManifest(body) {
 		m, err := DecodeManifest(body)
 		if err != nil {
-			return Manifest{}, fmt.Errorf("dedup: decode manifest: %w", err)
+			return Manifest{}, fmt.Errorf("dedup: decode manifest: %w: %w", ErrNotManifest, err)
 		}
 		return m, nil
 	}
 	var env SegmentedManifest
 	if err := json.Unmarshal(body, &env); err != nil {
-		return Manifest{}, fmt.Errorf("dedup: decode manifest envelope: %w", err)
+		return Manifest{}, fmt.Errorf("dedup: decode manifest envelope: %w: %w", ErrNotManifest, err)
+	}
+	// PutManifest only segments a manifest too big for one chunk, so an envelope
+	// with no segments is file data that happens to look like one.
+	if len(env.Segments) == 0 {
+		return Manifest{}, fmt.Errorf("dedup: manifest envelope has no segments: %w", ErrNotManifest)
 	}
 	var buf bytes.Buffer
 	for i, segID := range env.Segments {
@@ -526,7 +536,7 @@ func (r *Repo) GetManifest(id ID) (Manifest, error) {
 	}
 	m, err := DecodeManifest(buf.Bytes())
 	if err != nil {
-		return Manifest{}, fmt.Errorf("dedup: decode reassembled manifest: %w", err)
+		return Manifest{}, fmt.Errorf("dedup: decode reassembled manifest: %w: %w", ErrNotManifest, err)
 	}
 	return m, nil
 }

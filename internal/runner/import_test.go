@@ -836,6 +836,8 @@ func TestScanAndImportAgeEncryptedManifest(t *testing.T) {
 	manifest := map[string]any{
 		"version":           float64(manifestVersionCurrent),
 		"job_name":          "age-job",
+		"run_id":            float64(1),
+		"items_done":        float64(1),
 		"backup_type":       "full",
 		"backup_type_chain": "full",
 		"encryption":        "age",
@@ -967,6 +969,8 @@ func TestScanAndImportDedupEncryptedManifest(t *testing.T) {
 	manifest := map[string]any{
 		"version":           float64(manifestVersionCurrent),
 		"job_name":          "dedup-job",
+		"run_id":            float64(1),
+		"items_done":        float64(1),
 		"backup_type":       "full",
 		"backup_type_chain": "full",
 		"compression":       "zstd",
@@ -1268,7 +1272,7 @@ func TestImportEncryptedManifestEdgeCases(t *testing.T) {
 	}
 
 	// 6. Successful dedup placeholder import
-	validManifest := []byte(`{"version":1,"job_name":"dedup-placeholder-job","items":[{"name":"c1","type":"container"}]}`)
+	validManifest := []byte(`{"version":1,"job_name":"dedup-placeholder-job","run_id":1,"backup_type":"full","items_done":1,"items":[{"name":"c1","type":"container"}]}`)
 	validCipher, err := repo.EncryptManifest(validManifest)
 	if err != nil {
 		t.Fatal(err)

@@ -116,7 +116,7 @@ Thumbnails and re-encoded video are re-created by Immich on demand after a resto
 #### Notes on ZFS datasets
 
 - Vault uses `zfs send` (full) and `zfs send -i` (incremental) under the hood and manages the snapshot lifecycle itself.
-- Restoration goes through `zfs receive`, preserving properties and child datasets.
+- Restoration goes through `zfs receive -F`, preserving properties and child datasets. It overwrites the dataset configured on the job's item, never one named by the backup itself. A job imported from storage or replicated from a peer has no dataset until you add one to its item, and a pool root is never restored to implicitly.
 - The host `zfs` binary must be on `PATH` — true on any Unraid system with a ZFS pool.
 
 #### Notes on folders
@@ -352,8 +352,8 @@ Operational notes:
 
 - Each backup writes a per-item manifest into the dedup repo. The `manifest_id` (or `item_manifests` map for multi-item jobs) is stored on the restore point so restores can resolve chunks.
 - The Storage card shows live dedup stats (chunks, packs, logical/physical bytes, dedup ratio).
-- `vault dedup gc --dest <id>` (or `POST /api/v1/storage/{id}/gc`) runs mark-and-sweep GC: walks every live restore point's manifest, marks reachable chunks, then deletes packs whose every chunk is unreachable. Mixed packs are left in place.
-- `vault dedup repair --dest <id>` rebuilds the SQLite chunk/pack index from the on-storage `*.idx` blobs — use when the local DB is lost or corrupted but the destination is intact.
+- `vault dedup gc --dest <id>` (or `POST /api/v1/storage/{id}/gc`) runs mark-and-sweep GC: walks every live restore point's manifest, marks reachable chunks, then deletes packs whose every chunk is unreachable. Mixed packs are left in place. If any restore point's manifest or metadata cannot be read, GC stops without deleting anything, because it can no longer tell what is still in use; fix or delete that restore point and run it again. The CLI command refuses to run while the Vault service is running, so use the API or the Storage page then.
+- `vault dedup repair --dest <id>` rebuilds the SQLite chunk/pack index from the on-storage `*.idx` blobs — use when the local DB is lost or corrupted but the destination is intact. Stop the Vault service first; the command refuses to run alongside it.
 - Dedup-mode and non-dedup destinations can coexist on the same Vault install; the flag is per-destination and immutable after creation.
 
 Imported backups (Storage → _Scan_ + _Import_) carry per-item dedup manifest IDs in their `manifest.json`, so dedup restore points produced on one Vault instance can be re-discovered and restored on another. Run manifests are encrypted at rest (AES-256-GCM for deduplicated destinations, age encryption for age-encrypted jobs); scanning an age-encrypted destination prompts for the decryption passphrase to unlock and import the backup metadata.

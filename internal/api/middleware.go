@@ -100,6 +100,30 @@ func remoteAddrHost(addr string) string {
 	return addr
 }
 
+// guardReplica returns ReadOnlyGuard on a replica and a pass-through elsewhere.
+func guardReplica(readOnly bool) func(http.Handler) http.Handler {
+	if readOnly {
+		return ReadOnlyGuard
+	}
+	return func(next http.Handler) http.Handler { return next }
+}
+
+// guardReplicaFileCleanup blocks deleting a destination's backup files on a
+// replica. Removing the destination's record stays allowed, as a replica's
+// destinations are configured through the API.
+func guardReplicaFileCleanup(readOnly bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		guarded := ReadOnlyGuard(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if readOnly && r.URL.Query().Get("deleteFiles") == "true" {
+				guarded.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // ReadOnlyGuard returns middleware that blocks non-GET/HEAD requests in
 // replica mode. Used to prevent write operations on read-only replicas.
 func ReadOnlyGuard(next http.Handler) http.Handler {

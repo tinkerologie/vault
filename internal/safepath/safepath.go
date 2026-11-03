@@ -271,12 +271,21 @@ func NormalizeRestorePointPath(p string) (string, error) {
 	if path.IsAbs(trimmed) {
 		return "", fmt.Errorf("restore point path %q must be relative", trimmed)
 	}
+	// The S3 adapter turns a backslash into a separator, so a path holding one
+	// names something other than what every check here would see.
+	if strings.Contains(trimmed, `\`) {
+		return "", fmt.Errorf("restore point path %q must not contain a backslash", trimmed)
+	}
 	cleaned := path.Clean(trimmed)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("restore point path %q must stay within the destination", trimmed)
 	}
 	if !strings.Contains(cleaned, "/") {
 		return "", fmt.Errorf("restore point path %q must be <job>/<run>", trimmed)
+	}
+	// _vault holds the dedup repository and database backups, never a run.
+	if first, _, _ := strings.Cut(cleaned, "/"); first == "_vault" {
+		return "", fmt.Errorf("restore point path %q is inside Vault's reserved directory", trimmed)
 	}
 	return cleaned, nil
 }

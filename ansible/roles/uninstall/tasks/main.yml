@@ -71,9 +71,9 @@
 # and is re-adopted on start, so losing the key leaves a live database full of
 # secrets that can never be unsealed: dedup restore points fail to open with
 # "unseal master (wrong serverKey?)". Stash the key when a deploy follows, so
-# a redeploy replaces the code without orphaning the data. A plain
-# `--tags uninstall` run is a real uninstall and must still take the key with
-# it, so nothing is stashed there.
+# a redeploy replaces the code without orphaning the data. cleanup-uninstall
+# itself keeps vault.key on a plain `--tags uninstall` too (#451); this stash
+# covers the fallback paths that remove the whole directory.
 - name: Preserve the server key across a redeploy
   ansible.builtin.raw: >
     if [ -f {{ config_dir }}/vault.key ]; then
@@ -98,7 +98,6 @@
     --log-path={{ log_path }}
     --pid-file={{ pid_file }}
     --hybrid-working-dir=/var/local/vault
-    --snapshot-path=/mnt/cache/.vault/vault.db
   when: "'EXISTS' in plugin_check.stdout"
   changed_when: true
 

@@ -123,17 +123,17 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/test", storageH.TestConfig)
 			r.Get("/{id}", storageH.Get)
 			r.Put("/{id}", storageH.Update)
-			r.Delete("/{id}", storageH.Delete)
+			r.With(guardReplicaFileCleanup(s.config.ReadOnly)).Delete("/{id}", storageH.Delete)
 			r.Post("/{id}/test", storageH.TestConnection)
 			r.Post("/{id}/health-check", storageH.HealthCheck)
 			r.Post("/{id}/capacity-check", storageH.RefreshCapacity)
-			r.Post("/{id}/breaker/close", storageH.CloseBreaker)
+			r.With(guardReplica(s.config.ReadOnly)).Post("/{id}/breaker/close", storageH.CloseBreaker)
 			r.Post("/{id}/scan-orphans", storageH.ScanOrphans)
-			r.Post("/{id}/delete-orphans", storageH.DeleteOrphans)
+			r.With(guardReplica(s.config.ReadOnly)).Post("/{id}/delete-orphans", storageH.DeleteOrphans)
 			r.Get("/{id}/dedup-stats", storageH.GetDedupStats)
-			r.Post("/{id}/gc", storageH.RunDedupGC)
+			r.With(guardReplica(s.config.ReadOnly)).Post("/{id}/gc", storageH.RunDedupGC)
 			r.Post("/{id}/scan", storageH.Scan)
-			r.Post("/{id}/import", storageH.Import)
+			r.With(guardReplica(s.config.ReadOnly)).Post("/{id}/import", storageH.Import)
 			// Restoring the DB is a full-config overwrite — blocked on
 			// replicas like the other write endpoints (see path-remap).
 			if s.config.ReadOnly {
@@ -175,6 +175,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		s.jobIntake = intake
 
 		jobH := handlers.NewJobHandler(s.db, s.runner, reloadScheduler, intake)
+		jobH.SetReadOnly(s.config.ReadOnly)
 		s.jobHandler = jobH
 		if s.nextRunResolver != nil {
 			jobH.SetNextRunResolver(s.nextRunResolver)
@@ -275,12 +276,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 		activityH := handlers.NewActivityHandler(s.db)
 		r.Route("/activity", func(r chi.Router) {
 			r.Get("/", activityH.List)
-			r.Delete("/", activityH.Purge)
+			r.With(guardReplica(s.config.ReadOnly)).Delete("/", activityH.Purge)
 		})
 
 		historyH := handlers.NewHistoryHandler(s.db)
 		r.Get("/history", historyH.List)
-		r.Delete("/history", historyH.Purge)
+		r.With(guardReplica(s.config.ReadOnly)).Delete("/history", historyH.Purge)
 		r.Get("/history/trend", historyH.Trend)
 
 		// Discovery endpoints are only relevant in daemon mode.
@@ -310,7 +311,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/test-url", replH.TestURL)
 			r.Get("/{id}", replH.Get)
 			r.Put("/{id}", replH.Update)
-			r.Delete("/{id}", replH.Delete)
+			// A replica's job is to receive, so it keeps the routes that set up
+			// and run its sources. Deleting one drops its restore point records.
+			r.With(guardReplica(s.config.ReadOnly)).Delete("/{id}", replH.Delete)
 			r.Post("/{id}/test", replH.TestConnection)
 			r.Post("/{id}/sync", replH.SyncNow)
 			r.Get("/{id}/jobs", replH.ListReplicatedJobs)
@@ -320,9 +323,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 		s.anomalyHandler = anomalyH
 		r.Route("/anomalies", func(r chi.Router) {
 			r.Get("/", anomalyH.List)
-			r.Post("/ack-bulk", anomalyH.AckBulk)
+			r.With(guardReplica(s.config.ReadOnly)).Post("/ack-bulk", anomalyH.AckBulk)
 			r.Get("/{id}", anomalyH.Get)
-			r.Post("/{id}/ack", anomalyH.Ack)
+			r.With(guardReplica(s.config.ReadOnly)).Post("/{id}/ack", anomalyH.Ack)
 		})
 		r.Get("/jobs/{id}/baseline", anomalyH.GetBaseline)
 		r.Get("/destinations/{id}/capacity-trajectory", anomalyH.GetTrajectory)

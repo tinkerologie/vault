@@ -95,7 +95,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/storage/{id}/capacity-check` | Refresh used / total / free capacity (broadcasts `storage_capacity_updated` over WS)                               |
 | POST   | `/storage/{id}/breaker/close`  | Manually close the destination circuit breaker — clears sticky failure state                                       |
 | POST   | `/storage/{id}/scan-orphans`   | Scan storage for orphaned files (no matching restore point)                                                        |
-| POST   | `/storage/{id}/delete-orphans` | Delete files surfaced by `scan-orphans`                                                                            |
+| POST   | `/storage/{id}/delete-orphans` | Delete files surfaced by `scan-orphans`; each path reports an error while a backup, import or sync is running      |
 | GET    | `/storage/{id}/dedup-stats`    | Dedup repo statistics (chunks, packs, logical/physical bytes, dedup ratio)                                         |
 | POST   | `/storage/{id}/gc`             | Run mark-and-sweep GC on the destination's dedup repo                                                              |
 | POST   | `/storage/{id}/scan`           | Scan storage for importable backups. Send `passphrase` in the JSON body; in the query string it returns 400        |
@@ -176,6 +176,8 @@ Storage responses mask secrets the same way. On update, a masked secret keeps th
 ## Replication
 
 A replication source's `schedule` field takes the same cron expressions as a job's (see [Jobs](#jobs)); an empty string means the source is only synced on demand.
+
+On a `vault replica`, a source can be created, edited, tested and synced, because receiving backups is what a replica is for, but not deleted (`403`). Replicas also refuse storage GC, orphan deletion, import, closing a breaker, deleting a destination's backup files, history and activity purges, and anomaly acknowledgement.
 
 Replication is pull-based: a sync imports only the remote jobs whose `source_id` is `0`, i.e. jobs created on that server. Jobs the remote server itself replicated from elsewhere are skipped, so two servers can each configure the other as a source without bouncing jobs back and forth. Multi-hop relays (A → B → C) are not forwarded; configure each origin server as a direct source.
 
