@@ -28,7 +28,7 @@ export const ROUTES = [
   { name: 'Restore', hash: '#/restore', heading: 'Restore', ready: 'text=plex' },
   { name: 'Logs', hash: '#/logs', heading: 'Logs', ready: 'text=Storage capacity above 75%' },
   { name: 'Replication', hash: '#/replication', heading: 'Replication', ready: 'h1' },
-  { name: 'Recovery', hash: '#/recovery', heading: 'Recovery Guide', ready: 'h1' },
+  { name: 'Disaster Recovery', hash: '#/recovery', heading: 'Disaster Recovery', ready: 'h1' },
   { name: 'Recover wizard', hash: '#/recover', heading: 'Recover Vault', ready: 'h1' },
   { name: 'Anomalies', hash: '#/anomalies', heading: 'Anomalies', ready: 'text=/Backup size spike/i' },
   { name: 'Settings', hash: '#/settings', heading: 'Settings', ready: '[role="tabpanel"]' },

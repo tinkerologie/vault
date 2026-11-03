@@ -14,12 +14,12 @@ const RESTORE = entry('Restore', '#/restore', 'Restore');
 const REPLICATION = entry('Replication', '#/replication', 'Replication');
 const LOGS = entry('Logs', '#/logs', 'Logs');
 const STORAGE = entry('Storage', '#/storage', 'Storage Destinations');
-const RECOVERY = entry('Recovery', '#/recovery', 'Recovery Guide');
+const RECOVERY = entry('Disaster Recovery', '#/recovery', 'Disaster Recovery');
 const ANOMALIES = entry('Anomalies', '#/anomalies', 'Anomalies');
 const SETTINGS = entry('Settings', '#/settings', 'Settings');
 
 const MODES = [
-  { mode: 'daemon', replica: false, bar: [HOME, JOBS, HISTORY, RESTORE], sheet: [STORAGE, RECOVERY, REPLICATION, LOGS, ANOMALIES, SETTINGS] },
+  { mode: 'daemon', replica: false, bar: [HOME, JOBS, HISTORY, RESTORE], sheet: [STORAGE, REPLICATION, RECOVERY, LOGS, ANOMALIES, SETTINGS] },
   { mode: 'replica', replica: true, bar: [HOME, REPLICATION, HISTORY, LOGS], sheet: [STORAGE, ANOMALIES, SETTINGS] },
 ];
 
@@ -32,7 +32,7 @@ const ALL_PAGES = [
   { name: 'Restore', hash: '#/restore', heading: 'Restore', replica: false },
   { name: 'Logs', hash: '#/logs', heading: 'Logs', replica: true },
   { name: 'Replication', hash: '#/replication', heading: 'Replication', replica: true },
-  { name: 'Recovery', hash: '#/recovery', heading: 'Recovery Guide', replica: false },
+  { name: 'Disaster Recovery', hash: '#/recovery', heading: 'Disaster Recovery', replica: false },
   { name: 'Recover wizard', hash: '#/recover', heading: 'Recover Vault', replica: false },
   { name: 'Anomalies', hash: '#/anomalies', heading: 'Anomalies', replica: true },
   { name: 'Settings', hash: '#/settings', heading: 'Settings', replica: true },
@@ -139,7 +139,7 @@ test.describe('mobile navigation at 375 px (#530)', () => {
       : route.fallback()));
     await page.goto('/#/');
     await more(page).click();
-    await expect(sheetLinks(page)).toHaveText(['Storage', 'Recovery', 'Logs', 'Settings', 'Documentation']);
+    await expect(sheetLinks(page)).toHaveText(['Storage', 'Disaster Recovery', 'Logs', 'Settings', 'Documentation']);
   });
 
   test.describe('the sheet', () => {
@@ -291,14 +291,14 @@ test.describe('mobile navigation at 375 px (#530)', () => {
     });
   });
 
-  test('the recover wizard counts as part of Recovery', async ({ page }) => {
+  test('the recover wizard counts as part of Disaster Recovery', async ({ page }) => {
     await setupVaultMockApi(page);
     await page.goto('/#/recovery');
     await page.getByRole('link', { name: 'Recover Vault' }).click();
     await expect(h1(page, 'Recover Vault')).toBeFocused();
     await expect(more(page)).toHaveAttribute('aria-current', 'page');
     await more(page).click();
-    await expect(sheet(page).locator('[aria-current="page"]')).toHaveText('Recovery');
+    await expect(sheet(page).locator('[aria-current="page"]')).toHaveText('Disaster Recovery');
   });
 
   for (const style of ['default', '1bit', 'retro'] as const) {
@@ -327,7 +327,7 @@ test.describe('desktop navigation is unchanged (#530)', () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/#/logs');
     const sidebar = page.getByRole('navigation', { name: 'Main navigation' });
-    await expect(sidebar.getByRole('link')).toHaveText(['Dashboard', 'Jobs', 'Storage', 'Restore', 'History', 'Recovery', 'Replication', 'Logs', 'Anomalies', 'Settings', 'Documentation']);
+    await expect(sidebar.getByRole('link')).toHaveText(['Dashboard', 'Jobs', 'Storage', 'Replication', 'Restore', 'History', 'Disaster Recovery', 'Logs', 'Anomalies', 'Settings', 'Documentation']);
     await expect(sidebar.locator('[aria-current="page"]')).toHaveText('Logs');
     for (const section of ['Protect', 'Recover', 'System']) {
       await expect(sidebar.getByText(section, { exact: true })).toBeVisible();

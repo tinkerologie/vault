@@ -13,7 +13,7 @@ const ROUTES = [
   { hash: '#/restore', heading: 'Restore' },
   { hash: '#/logs', heading: 'Logs' },
   { hash: '#/replication', heading: 'Replication' },
-  { hash: '#/recovery', heading: 'Recovery Guide' },
+  { hash: '#/recovery', heading: 'Disaster Recovery' },
   { hash: '#/recover', heading: 'Recover Vault' },
   { hash: '#/anomalies', heading: 'Anomalies' },
   { hash: '#/settings', heading: 'Settings' },
@@ -25,7 +25,7 @@ const SIDEBAR = [
   ['Storage', '#/storage'],
   ['Restore', '#/restore'],
   ['History', '#/history'],
-  ['Recovery', '#/recovery'],
+  ['Disaster Recovery', '#/recovery'],
   ['Logs', '#/logs'],
   ['Anomalies', '#/anomalies'],
   ['Settings', '#/settings'],
@@ -539,7 +539,7 @@ test.describe('screen-reader state and names (#529)', () => {
     await expect(run).toHaveAttribute('aria-expanded', 'true');
   });
 
-  test('Recovery: the ways into the wizard and to Jobs are links', async ({ page, context }) => {
+  test('Disaster Recovery: the ways into the wizard and to Jobs are links', async ({ page, context }) => {
     await page.goto('/#/recovery');
     const recover = page.getByRole('link', { name: 'Recover Vault' });
     await expect(recover).toHaveAttribute('href', '#/recover');

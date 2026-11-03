@@ -8,7 +8,7 @@ const PAGE_HEADINGS = {
   '/restore': 'Restore',
   '/logs': 'Logs',
   '/replication': 'Replication',
-  '/recovery': 'Recovery Guide',
+  '/recovery': 'Disaster Recovery',
   '/recover': 'Recover Vault',
   '/anomalies': 'Anomalies',
   '/settings': 'Settings',

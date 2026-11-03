@@ -5,7 +5,7 @@ const nav = [
   { path: '/', label: 'Dashboard' },
   { path: '/jobs', label: 'Jobs', section: 'Protect' },
   { path: '/storage', label: 'Storage', section: 'Protect' },
-  { path: '/recovery', label: 'Recovery', section: 'Recover' },
+  { path: '/recovery', label: 'Disaster Recovery', section: 'Recover' },
   { path: '/logs', label: 'Logs', section: 'System' },
   { path: '/docs-external', label: 'Documentation', section: 'System', external: true },
 ]
