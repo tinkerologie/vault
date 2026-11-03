@@ -611,6 +611,9 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
 
 /* Monospace chars are wider than proportional – tighten buttons to keep layouts consistent */
 .theme-1bit button { letter-spacing: -0.5px; font-size: 0.8125rem; }
+/* A link that does a button's job (the #607 buttons that became links) keeps
+   the buttons' tighter spacing. .btn links already match .btn buttons. */
+.theme-1bit .action-link { letter-spacing: -0.5px; }
 .theme-1bit aside nav a { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
 .theme-1bit th, .theme-1bit td { font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
 .theme-1bit input, .theme-1bit select, .theme-1bit textarea {

@@ -8,9 +8,18 @@
    * Props:
    * - text: string – tooltip content
    * - id: string (optional) – unique ID for aria-describedby linking
+   * - label: string (optional) – what the tip explains, e.g. the field or
+   *   heading it sits next to. The default trigger is named "More info: {label}"
+   *   so each trigger is distinct. Ignored with custom children, which name the
+   *   trigger themselves.
    * - children: Snippet (optional) – custom trigger content
+   *
+   * Anything inside a <label>, heading or <summary> becomes part of that
+   * element's accessible name ("Max retries More info"). Put the trigger beside
+   * a <label>, not inside it. In a heading or summary, wrap the visible text in
+   * an id'd span and point the container's aria-labelledby at it.
    */
-  let { text = '', id = undefined, children } = $props()
+  let { text = '', id = undefined, label = '', children } = $props()
 
   let visible = $state(false)
   let position = $state('above')
@@ -155,7 +164,7 @@
         <circle cx="12" cy="12" r="10" />
         <path d="M12 16v-4M12 8h.01" />
       </svg>
-      <span class="sr-only">More info</span>
+      <span class="sr-only">{label ? `More info: ${label}` : 'More info'}</span>
     {/if}
   </button>
 

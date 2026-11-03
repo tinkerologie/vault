@@ -80,6 +80,12 @@
     return a.scope_kind || '–'
   }
 
+  // Names a row action after its anomaly ("Dismiss: Backup size spike (Job #3)")
+  // so a screen reader doesn't hear the same "Dismiss" on every row (#608).
+  function rowName(a) {
+    return `${prettyAnomalySummary(a.summary)} (${scopeLabel(a)})`
+  }
+
   const severityBg = { critical: 'bg-danger/10 border-l-2 border-danger', warning: 'bg-warning/10 border-l-2 border-warning', info: 'bg-info/10 border-l-2 border-info' }
 </script>
 
@@ -129,7 +135,7 @@
         {#if !isReplicaMode()}
         <div class="px-5 py-1.5 flex items-center justify-end gap-1 text-[11px] text-text-dim">
           <span>Expected teaches the baseline</span>
-          <Tooltip text="Mark an anomaly as normal so future runs like it won't be flagged (feeds the baseline). Dismiss only clears it once." />
+          <Tooltip label="Expected" text="Mark an anomaly as normal so future runs like it won't be flagged (feeds the baseline). Dismiss only clears it once." />
         </div>
         {/if}
         {#each displayed as anomaly (anomaly.id)}
@@ -151,6 +157,7 @@
                   disabled={ackingId === anomaly.id}
                   class="text-xs px-2 py-1 rounded-lg bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text transition-colors disabled:opacity-40"
                   title="Dismiss anomaly"
+                  aria-label="Dismiss: {rowName(anomaly)}"
                 >
                   Dismiss
                 </button>
@@ -159,6 +166,7 @@
                   disabled={ackingId === anomaly.id}
                   class="text-xs px-2 py-1 rounded-lg bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text transition-colors disabled:opacity-40"
                   title="Mark as expected"
+                  aria-label="Expected: {rowName(anomaly)}"
                 >
                   Expected
                 </button>

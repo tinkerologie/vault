@@ -240,6 +240,8 @@ export interface VaultMockOptions {
   storage?: MockStorageDestination[];
   /** Runs served by the history endpoints; defaults to one success, one failure and a restore. */
   historyRuns?: Record<string, unknown>[];
+  /** Anomalies served by GET /anomalies; defaults to one open size spike. */
+  anomalies?: Record<string, unknown>[];
 }
 
 export async function setupVaultMockApi(page: Page, options: VaultMockOptions = {}) {
@@ -301,7 +303,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
     },
   ];
 
-  let anomaliesList = [
+  let anomaliesList: Record<string, unknown>[] = options.anomalies ?? [
     {
       id: 1,
       scope_kind: 'job',

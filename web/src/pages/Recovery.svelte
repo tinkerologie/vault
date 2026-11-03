@@ -162,7 +162,7 @@
           {/each}
         </ul>
         {#if totalUnprotected > 0}
-          <a href="#/jobs" class="mt-3 inline-block text-xs text-vault-text hover:underline font-medium">
+          <a href="#/jobs" class="action-link mt-3 inline-block text-xs text-vault-text hover:underline font-medium">
             Configure backup jobs →
           </a>
         {/if}

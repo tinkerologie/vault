@@ -1347,7 +1347,7 @@
                   disabled={progress.cancelling && progress.activeRun?.job_id === job.id}
                   class="p-2 text-danger hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-50"
                   title={progress.activeRun?.job_id === job.id ? 'Cancel running backup' : 'Cancel queued backup'}
-                  aria-label="Cancel backup"
+                  aria-label="Cancel backup: {job.name}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9h6v6H9z"/></svg>
                 </button>
@@ -1357,7 +1357,7 @@
                   disabled={runningJob === job.id}
                   class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors"
                   title="Run Now"
-                  aria-label="Run backup now"
+                  aria-label="Run backup now: {job.name}"
                 >
                   {#if runningJob === job.id}
                     <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -1366,13 +1366,13 @@
                   {/if}
                 </button>
               {/if}
-              <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job">
+              <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job: {job.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
               </button>
-              <button onclick={() => openEdit(job.id)} class="p-2 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit job">
+              <button onclick={() => openEdit(job.id)} class="p-2 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit job: {job.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
               </button>
-              <button onclick={() => deleteJob(job.id, job.name)} class="p-2 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete job">
+              <button onclick={() => deleteJob(job.id, job.name)} class="p-2 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete job: {job.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
             </div>
@@ -1704,7 +1704,10 @@
     {#if step === 4}
       <div class="space-y-5">
         <div>
-          <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name <Tooltip text="Used for display and log identification. No strict naming constraints." /></label>
+          <div class="block text-sm font-medium text-text-muted mb-1.5">
+            <label for="name">Job Name</label>
+            <Tooltip label="Job Name" text="Used for display and log identification. No strict naming constraints." />
+          </div>
           <input id="name" type="text" bind:value={form.name} required
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted focus:border-vault focus:ring-1 focus:ring-vault" placeholder="Daily Docker Backup" />
           {#if suggestedName && !form.name.trim()}
@@ -1736,9 +1739,9 @@
         </div>
         <!-- Advanced: Retention -->
         <details class="group" open>
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-retention-policy-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Retention Policy <Tooltip text="'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply – whichever triggers first will prune old backups." />
+            <span id="job-summary-retention-policy-label">Retention Policy</span> <Tooltip label="Retention Policy" text="'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply – whichever triggers first will prune old backups." />
           </summary>
           <div class="grid grid-cols-2 gap-4 mt-3 pl-6">
             <div>
@@ -1762,9 +1765,9 @@
 
         <!-- Advanced: Long-Term Retention (LTR) -->
         <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-long-term-retention-ltr-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Long-Term Retention (LTR) <Tooltip text="Keep N latest, plus the most recent backup per day/week/month/year. A single backup can fill multiple buckets. If any of these is > 0, the simple Retention Policy above is ignored for this job." />
+            <span id="job-summary-long-term-retention-ltr-label">Long-Term Retention (LTR)</span> <Tooltip label="Long-Term Retention (LTR)" text="Keep N latest, plus the most recent backup per day/week/month/year. A single backup can fill multiple buckets. If any of these is > 0, the simple Retention Policy above is ignored for this job." />
           </summary>
           <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-3 pl-6">
             <div>
@@ -1820,9 +1823,9 @@
 
         <!-- Advanced: Scheduled verification (Feature A) -->
         <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-scheduled-verification-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Scheduled verification <Tooltip text="Periodically checks that your latest backup is still intact on its destination. Quick: confirms the files exist at the right size (no download). Deep: re-downloads and checksums everything to catch silent corruption. Recommended: Quick, or Deep for critical data." />
+            <span id="job-summary-scheduled-verification-label">Scheduled verification</span> <Tooltip label="Scheduled verification" text="Periodically checks that your latest backup is still intact on its destination. Quick: confirms the files exist at the right size (no download). Deep: re-downloads and checksums everything to catch silent corruption. Recommended: Quick, or Deep for critical data." />
           </summary>
           <div class="mt-3 pl-6 space-y-3">
             <label class="flex items-center gap-2 text-sm text-text-muted">
@@ -1848,9 +1851,9 @@
         <!-- Advanced: Scheduled full backup (issue #322) -->
         {#if form.backup_type_chain !== 'full'}
           <details class="group">
-            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-scheduled-full-backup-label">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Scheduled full backup <Tooltip text="Runs a full backup on its own cadence, in addition to this job's schedule. Incremental and differential runs chain from the most recent full, so a periodic full keeps restore chains short and bounds how much a single damaged archive can cost you. Without this you need a duplicate job that differs only in backup type." />
+              <span id="job-summary-scheduled-full-backup-label">Scheduled full backup</span> <Tooltip label="Scheduled full backup" text="Runs a full backup on its own cadence, in addition to this job's schedule. Incremental and differential runs chain from the most recent full, so a periodic full keeps restore chains short and bounds how much a single damaged archive can cost you. Without this you need a duplicate job that differs only in backup type." />
             </summary>
             <div class="mt-3 pl-6 space-y-3">
               <label class="flex items-center gap-2 text-sm text-text-muted">
@@ -1873,9 +1876,9 @@
 
         <!-- Advanced: Scripts -->
         <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-scripts-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Scripts <Tooltip text="Pre-backup scripts run before any containers are stopped. Post-backup scripts run after all items are backed up. Environment variables like VAULT_JOB_NAME and VAULT_STATUS are available." />
+            <span id="job-summary-scripts-label">Scripts</span> <Tooltip label="Scripts" text="Pre-backup scripts run before any containers are stopped. Post-backup scripts run after all items are backed up. Environment variables like VAULT_JOB_NAME and VAULT_STATUS are available." />
           </summary>
           <div class="space-y-4 mt-3 pl-6">
             <ScriptBrowser bind:value={form.pre_script} label="Pre-Backup Script" placeholder="/path/to/script.sh" />
@@ -1885,9 +1888,9 @@
 
         <!-- Advanced: Notifications -->
         <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-notifications-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Notifications <Tooltip text="Controls when this job sends Unraid system notifications. The global notifications toggle in Settings must be enabled for any to be sent. Discord notifications are configured separately in Settings." />
+            <span id="job-summary-notifications-label">Notifications</span> <Tooltip label="Notifications" text="Controls when this job sends Unraid system notifications. The global notifications toggle in Settings must be enabled for any to be sent. Discord notifications are configured separately in Settings." />
           </summary>
           <div class="mt-3 pl-6">
             <label for="notify_on" class="block text-xs font-medium text-text-muted mb-1">Notify On</label>
@@ -1905,9 +1908,9 @@
 
         <!-- Advanced: Verification -->
         <details class="group" open>
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-backup-verification-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Backup Verification <Tooltip text="Right after each backup, re-reads the archive and checksums it to confirm nothing was corrupted in transit. Adds time but catches problems while you can still re-run. Recommended: on for important jobs." />
+            <span id="job-summary-backup-verification-label">Backup Verification</span> <Tooltip label="Backup Verification" text="Right after each backup, re-reads the archive and checksums it to confirm nothing was corrupted in transit. Adds time but catches problems while you can still re-run. Recommended: on for important jobs." />
           </summary>
           <div class="mt-3 pl-6">
             <div class="flex items-start gap-3">
@@ -1934,9 +1937,9 @@
 
         <!-- Advanced: Retry policy override (Task 11 – resilience hardening) -->
         <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-override-retry-policy-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Override retry policy <Tooltip text="Per-job retry settings that override the global defaults in Settings. Leave blank to use the global values. Failed runs are retried in the background after each delay." />
+            <span id="job-summary-override-retry-policy-label">Override retry policy</span> <Tooltip label="Override retry policy" text="Per-job retry settings that override the global defaults in Settings. Leave blank to use the global values. Failed runs are retried in the background after each delay." />
           </summary>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3 pl-6">
             <div>
@@ -1961,9 +1964,9 @@
         <!-- Advanced: Anomaly sensitivity override (Task 19) – only when anomaly detection is enabled -->
         {#if getAnomalyEnabled()}
         <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-anomaly-sensitivity-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Anomaly sensitivity <Tooltip text="Override the global anomaly detection sensitivity for this job. '(default)' uses the value configured in Settings → General." />
+            <span id="job-summary-anomaly-sensitivity-label">Anomaly sensitivity</span> <Tooltip label="Anomaly sensitivity" text="Override the global anomaly detection sensitivity for this job. '(default)' uses the value configured in Settings → General." />
           </summary>
           <div class="mt-3 pl-6">
             <label for="anomaly-sensitivity-override" class="block text-xs font-medium text-text-muted mb-1">
@@ -1985,9 +1988,9 @@
 
         <!-- Advanced: Max parallel uploads (Task 12 – storage resilience) -->
         <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-upload-concurrency-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Upload concurrency <Tooltip text="How many files upload to the destination at once. Higher is faster on fast links; set to 1 for fragile or rate-limited remotes." />
+            <span id="job-summary-upload-concurrency-label">Upload concurrency</span> <Tooltip label="Upload concurrency" text="How many files upload to the destination at once. Higher is faster on fast links; set to 1 for fragile or rate-limited remotes." />
           </summary>
           <div class="mt-3 pl-6">
             <label for="job_parallel" class="block text-xs font-medium text-text-muted mb-1">
@@ -2010,9 +2013,9 @@
           {@const _selectedStorage = storageList.find(s => s.id === form.storage_dest_id)}
           {@const _isLocalDest = !_selectedStorage || _selectedStorage.type === 'local'}
           <details class="group">
-            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-deferred-remote-upload-label">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Deferred Remote Upload <Tooltip text="Best for slow upload links. Stops, backs up, and restarts each container locally first, then uploads everything to the remote destination after all containers are running again. Requires sufficient local staging space." />
+              <span id="job-summary-deferred-remote-upload-label">Deferred Remote Upload</span> <Tooltip label="Deferred Remote Upload" text="Best for slow upload links. Stops, backs up, and restarts each container locally first, then uploads everything to the remote destination after all containers are running again. Requires sufficient local staging space." />
             </summary>
             <div class="mt-3 pl-6">
               <div class="flex items-start gap-3">
@@ -2030,9 +2033,9 @@
         {/if}
 
         <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-adaptive-backup-label">
             <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Adaptive Backup <Tooltip text="Checks whether this job's containers, VMs, or folders are actively in use before each scheduled run. Busy workloads (e.g. Plex mid-stream, a folder still being written to) postpone the backup, re-checking every few minutes until idle — or until the max-postpone window elapses, when the backup runs anyway. Manual Run Now always runs immediately. Idle thresholds are configured in Settings." />
+            <span id="job-summary-adaptive-backup-label">Adaptive Backup</span> <Tooltip label="Adaptive Backup" text="Checks whether this job's containers, VMs, or folders are actively in use before each scheduled run. Busy workloads (e.g. Plex mid-stream, a folder still being written to) postpone the backup, re-checking every few minutes until idle — or until the max-postpone window elapses, when the backup runs anyway. Manual Run Now always runs immediately. Idle thresholds are configured in Settings." />
           </summary>
           <div class="mt-3 pl-6">
             <div class="flex items-start gap-3">
@@ -2050,9 +2053,9 @@
 
         {#if form.selectedTypes.includes('containers') || form.selectedTypes.includes('container') || hasContainers || form.auto_include_containers}
           <details class="group">
-            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-auto-include-new-containers-label">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Auto-Include New Containers <Tooltip text="Automatically adds newly created Docker containers to this job on each backup run, and automatically prunes deleted containers." />
+              <span id="job-summary-auto-include-new-containers-label">Auto-Include New Containers</span> <Tooltip label="Auto-Include New Containers" text="Automatically adds newly created Docker containers to this job on each backup run, and automatically prunes deleted containers." />
             </summary>
             <div class="mt-3 pl-6">
               <div class="flex items-start gap-3">
@@ -2071,9 +2074,9 @@
 
         {#if hasVMs}
           <details class="group" open>
-            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text" aria-labelledby="job-summary-vm-restore-verification-label">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              VM Restore Verification <Tooltip text="After restoring a VM that was running at backup time, Vault auto-starts it and checks that it came up successfully." />
+              <span id="job-summary-vm-restore-verification-label">VM Restore Verification</span> <Tooltip label="VM Restore Verification" text="After restoring a VM that was running at backup time, Vault auto-starts it and checks that it came up successfully." />
             </summary>
             <div class="space-y-4 mt-3 pl-6">
               <p class="text-xs text-text-dim">Applies only when a VM was running at backup time and Vault auto-starts it after restore.</p>
@@ -2087,7 +2090,10 @@
                   </div>
 
                   <div>
-                    <label for={`${verifyIdBase}-mode`} class="block text-xs font-medium text-text-muted mb-1.5">Readiness Check <Tooltip text="Running State: quick check that the VM is powered on. QEMU Guest Agent: waits for the guest OS to respond. TCP Service: waits for a specific port to accept connections." /></label>
+                    <div class="block text-xs font-medium text-text-muted mb-1.5">
+                      <label for={`${verifyIdBase}-mode`}>Readiness Check</label>
+                      <Tooltip label="Readiness Check" text="Running State: quick check that the VM is powered on. QEMU Guest Agent: waits for the guest OS to respond. TCP Service: waits for a specific port to accept connections." />
+                    </div>
                     <select
                       id={`${verifyIdBase}-mode`}
                       value={verify.mode}

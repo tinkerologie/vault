@@ -27,6 +27,18 @@ export interface Walk {
 type WalkWindow = Window & { __walk?: Element[] };
 
 /**
+ * The role and name from the first line of an ARIA snapshot. The line may be
+ * YAML-quoted (a name with a colon) and may end in the element's own text when
+ * that differs from its name: `'button "Dismiss: Size spike"': Dismiss`.
+ */
+export function announcement(snapshot: string): string {
+  const line = (snapshot.split('\n')[0] ?? '').replace(/^- /, '');
+  const quoted = line.match(/^'((?:[^']|'')*)'(?::.*)?$/);
+  if (quoted) return quoted[1].replace(/''/g, "'");
+  return line.replace(/^([\w-]+ "[^"]*"(?: \[[^\]]*\])*):(?: .*)?$/, '$1');
+}
+
+/**
  * Presses Tab from the start of the document until focus wraps, leaves the frame
  * or `limit` stops pass, and describes each stop as a screen reader would meet it.
  */
@@ -49,7 +61,7 @@ export async function tabWalk(page: Page, frame: Frame, limit = 300): Promise<Wa
     }, WIDGETS);
     if (state === 'left' || state === 'wrapped') break;
     const snapshot = await frame.locator(':focus').ariaSnapshot().catch(() => '');
-    const announced = (snapshot.split('\n')[0] ?? '').replace(/^- /, '').replace(/:$/, '').replace(/^'(.*)'$/, (_, inner: string) => inner.replace(/''/g, "'"));
+    const announced = announcement(snapshot);
     stops.push({ announced, named: /^[\w-]+ "[^"]*\S[^"]*"/.test(announced), visibleFocus: true, nestedIn: state });
   }
 
