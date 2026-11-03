@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/tinkerologie/vault/internal/credentials"
 )
 
 // Client talks to a remote Vault API server.
@@ -27,9 +29,37 @@ func NewClient(baseURL string) (*Client, error) {
 	return &Client{
 		baseURL: normalizedBaseURL,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Minute,
+			Timeout:       10 * time.Minute,
+			CheckRedirect: refuseKeyLeakingRedirect,
 		},
 	}, nil
+}
+
+// refuseKeyLeakingRedirect stops a redirect to another host or from HTTPS to
+// HTTP. Go forwards custom headers across redirects, so following one would hand
+// X-API-Key to whatever the redirect names.
+func refuseKeyLeakingRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
+	origin := via[0].URL
+	if req.URL.Host != origin.Host {
+		return fmt.Errorf("refusing redirect to a different host (%s)", req.URL.Host)
+	}
+	if origin.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect from https to %s", req.URL.Scheme)
+	}
+	return nil
+}
+
+// PlaintextWarning returns a warning when a replication URL sends the API key
+// and backup data unencrypted to another machine, and "" otherwise. Plain HTTP
+// stays allowed because most home servers have no TLS.
+func PlaintextWarning(baseURL string) string {
+	if !credentials.IsPlaintextRemote(baseURL) {
+		return ""
+	}
+	return "This connection uses plain HTTP, so the API key and backup data can be read on the network. Use it only on a network you trust, or use https://."
 }
 
 // NewClientWithAPIKey creates a replication client that authenticates using

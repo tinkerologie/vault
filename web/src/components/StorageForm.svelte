@@ -160,7 +160,7 @@
     const testedKey = JSON.stringify({ type: form.type, config: form.config })
     const isStale = () => JSON.stringify({ type: form.type, config: form.config }) !== testedKey
     try {
-      const result = await api.testStorageConfig({ type: form.type, config: JSON.stringify(form.config) })
+      const result = await api.testStorageConfig({ id: initial?.id, type: form.type, config: JSON.stringify(form.config) })
       if (isStale()) return
       formTestResult = result
       ontoast(result.success ? 'Connection successful!' : `Connection failed: ${result.error || 'unknown error'}`, result.success ? 'success' : 'error')
@@ -332,6 +332,9 @@
       <label for="dav_url" class="block text-sm font-medium text-text-muted mb-1.5">Server URL <Tooltip text="Full URL to the WebDAV endpoint, e.g. https://nextcloud.example.com/remote.php/dav/files/username/" /></label>
       <input id="dav_url" type="url" bind:value={form.config.url} placeholder="https://webdav.example.com/"
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
+      {#if form.config.url?.trim().toLowerCase().startsWith('http://')}
+        <p class="text-xs text-warning mt-1" role="note">Plain HTTP: the login and backup data can be read on the network. Use it only on a network you trust, or use https://.</p>
+      {/if}
     </div>
     <div class="grid grid-cols-2 gap-3">
       <div>

@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/storage"
@@ -84,6 +85,18 @@ type remoteVaultConfig struct {
 // syncRemoteVault performs a pull-based sync from a remote Vault instance.
 func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc) (*SyncResult, error) {
 	sourceID := src.ID
+
+	// A key this server cannot open must not become an unauthenticated request.
+	if credentials.IsLocked(src.Config) {
+		errMsg := fmt.Sprintf("source %q: %v", src.Name, credentials.ErrLocked)
+		s.updateSyncStatus(sourceID, "failed", errMsg)
+		s.logSyncError(sourceID, src.Name, errMsg)
+		return nil, fmt.Errorf("source %q: %w", src.Name, credentials.ErrLocked)
+	}
+
+	if warning := PlaintextWarning(src.URL); warning != "" {
+		log.Printf("Replication source %d: %s", sourceID, warning)
+	}
 
 	// Extract optional API key from config.
 	var cfg remoteVaultConfig

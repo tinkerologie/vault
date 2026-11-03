@@ -368,6 +368,9 @@
     try {
       const result = await api.restoreDB(confirmReplaceDB.storageId, confirmReplaceDB.path)
       showToast(result.message || 'Database restored. Please restart Vault.', 'success')
+      if (result.locked_credentials > 0) {
+        showToast(`${result.locked_credentials} restored destination(s) or source(s) need the original vault.key or their credentials entered again.`, 'warning')
+      }
       // Close one at a time, so focus unwinds through both to the Import button.
       confirmReplaceDB = null
       await tick()
@@ -690,6 +693,9 @@
               {:else if dest.last_health_check_status === 'failed'}
                 <span class="text-xs px-2.5 py-1 rounded-full bg-danger/10 text-danger font-medium whitespace-nowrap" title={dest.last_health_check_error || 'health check failed'}>Unhealthy</span>
               {/if}
+            {/if}
+            {#if dest.credentials_locked}
+              <span class="text-xs px-2.5 py-1 rounded-full bg-danger/10 text-danger font-medium whitespace-nowrap" title="This server's vault.key can't open the stored credentials. Edit the destination and enter them again, or restore the original vault.key.">Credentials locked</span>
             {/if}
             {#if dest.breaker_state === 'open'}
               <span

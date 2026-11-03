@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -238,25 +239,27 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.Name = name
 	}
 	if patch.Config != nil {
-		// preserveRedactedSecrets carries forward credentials that the
-		// caller (typically the UI's edit modal) round-tripped as the
-		// "••••••••" marker rather than retyping. Without this, editing
-		// any non-credential field on a destination with a password would
-		// silently overwrite the password with the marker bytes and
-		// every subsequent request would 401.
-		merged, mErr := preserveRedactedSecrets(*patch.Config, existing.Config)
+		// Reads never return sealed values, so one in a request is not ours to
+		// keep: it would be stored as if it were already encrypted.
+		if credentials.IsLocked(*patch.Config) {
+			respondError(w, http.StatusBadRequest, "config must not contain sealed values")
+			return
+		}
+		// The edit modal round-trips secrets as the "••••••••" marker. Keep the
+		// stored value for those, unless the edit moves the destination, which
+		// would hand the stored secret to the new server.
+		merged, mErr := credentials.MergeStorageEdit(existing.Type, existing.Type, *patch.Config, existing.Config)
 		if mErr != nil {
-			respondInternalError(w, mErr)
+			respondError(w, http.StatusBadRequest, mErr.Error())
 			return
 		}
 		existing.Config = merged
-		// Re-validate; the user may have broken the config blob.
-		adapter, err := storage.NewAdapter(existing.Type, existing.Config)
-		if err != nil {
+		// Re-validate; the user may have broken the config blob. Secrets that
+		// stay locked don't block saving other fields.
+		if err := storage.ValidateConfig(existing.Type, existing.Config); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		storage.CloseAdapter(adapter)
 	}
 	if patch.BackupDatabaseEnabled != nil {
 		existing.BackupDatabaseEnabled = *patch.BackupDatabaseEnabled
@@ -409,6 +412,25 @@ func (h *StorageHandler) TestConfig(w http.ResponseWriter, r *http.Request) {
 	dest.Type = strings.TrimSpace(dest.Type)
 	if dest.Type == "" {
 		respondError(w, http.StatusBadRequest, "type is required")
+		return
+	}
+	// While editing, the modal also posts the row's id so masked secrets test
+	// with the stored values, under the same rule as saving. The mask itself is
+	// never sent to a server as a password.
+	if dest.ID != 0 {
+		stored, err := h.db.GetStorageDestination(dest.ID)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "not found")
+			return
+		}
+		dest.Config, err = credentials.MergeStorageEdit(stored.Type, dest.Type, dest.Config, stored.Config)
+		if err != nil {
+			respondJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+	}
+	if credentials.HasMarker(dest.Config) {
+		respondJSON(w, http.StatusOK, map[string]any{"success": false, "error": "enter the password or secret to test this connection"})
 		return
 	}
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
@@ -941,9 +963,19 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	// loss before the next periodic flush would revert the restore at boot.
 	h.notifyConfigChange()
 
+	// A database from another server keeps its secrets sealed with that
+	// server's vault.key. Say so, rather than letting the next backup find out.
+	lockedCredentials, err := h.db.CountLockedCredentials()
+	if err != nil {
+		log.Printf("RestoreDB: counting locked credentials: %v", err)
+	} else if lockedCredentials > 0 {
+		log.Printf("RestoreDB: %d restored destination(s) or source(s) need the original vault.key or their credentials re-entered", lockedCredentials)
+	}
+
 	respondJSON(w, http.StatusOK, map[string]any{
-		"message":  "Database restored successfully.",
-		"resealed": resealed,
+		"message":            "Database restored successfully.",
+		"resealed":           resealed,
+		"locked_credentials": lockedCredentials,
 	})
 }
 
@@ -1248,113 +1280,9 @@ func newGCRunID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// sensitiveConfigKeys are config field names that contain credentials.
-var sensitiveConfigKeys = map[string]bool{
-	"password":          true,
-	"secret_key":        true,
-	"secret_access_key": true,
-	"passphrase":        true,
-	"key_file":          true,
-	"refresh_token":     true,
-	"client_secret":     true,
-}
-
-// redactionMarker is the placeholder used by redactConfig to mask sensitive
-// values. preserveRedactedSecrets uses it to detect round-tripped values
-// on Update so the API does not silently overwrite the stored credential
-// with the marker bytes when the caller (typically the UI) re-submits a
-// partial edit without touching the password field.
-const redactionMarker = "••••••••"
-
-// preserveRedactedSecrets parses an incoming config JSON and, for any
-// sensitiveConfigKey whose value equals the redactionMarker, replaces the
-// value with the corresponding field from the existing stored config.
-// Returns the (possibly rewritten) incoming JSON.
-//
-// Rationale: redactConfig masks credentials in every read path so the API
-// never leaks them. The UI's edit modal populates its password field with
-// whatever the GET returned — i.e. the literal marker — and Svelte's
-// two-way bind:value posts that marker back verbatim when the user saves
-// after changing an unrelated field (name, bandwidth limit, base path…).
-// Without this helper the server stored the marker as the new password
-// and every subsequent request 401'd. The fix is server-side because the
-// API contract is the one anyone (UI, MCP tools, ansible automation,
-// scripts) can hit; pushing the responsibility to every client is brittle.
-//
-// A non-marker string passes through unchanged, so users who DO want to
-// rotate the credential simply type the new value as before. A marker on
-// a key that has no corresponding value in the existing config is left
-// alone — the adapter validator further down the Update path will reject
-// the empty/marker credential with a clearer error.
-func preserveRedactedSecrets(incoming, existing string) (string, error) {
-	var inMap map[string]any
-	if err := json.Unmarshal([]byte(incoming), &inMap); err != nil {
-		// Not JSON; pass through unchanged. The adapter validator on the
-		// Update path will surface the real parsing error in context.
-		return incoming, nil
-	}
-	var exMap map[string]any
-	if err := json.Unmarshal([]byte(existing), &exMap); err != nil {
-		exMap = nil
-	}
-	changed := false
-	for k := range sensitiveConfigKeys {
-		v, ok := inMap[k]
-		if !ok {
-			continue
-		}
-		s, isStr := v.(string)
-		if !isStr || s != redactionMarker {
-			continue
-		}
-		if exMap == nil {
-			continue
-		}
-		old, ok := exMap[k]
-		if !ok {
-			continue
-		}
-		inMap[k] = old
-		changed = true
-	}
-	if !changed {
-		return incoming, nil
-	}
-	out, err := json.Marshal(inMap)
-	if err != nil {
-		return "", fmt.Errorf("preserve secrets: %w", err)
-	}
-	return string(out), nil
-}
-
-// redactConfig parses a JSON config string and replaces sensitive field
-// values with a redacted placeholder. Returns the original string if
-// parsing fails.
+// redactConfig masks a config for an API response. See credentials.Mask.
 func redactConfig(configJSON string) string {
-	var cfg map[string]any
-	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
-		return configJSON
-	}
-
-	redacted := false
-	for k, v := range cfg {
-		if sensitiveConfigKeys[k] {
-			if s, ok := v.(string); ok && s != "" {
-				cfg[k] = redactionMarker
-				redacted = true
-			}
-		}
-	}
-
-	if !redacted {
-		return configJSON
-	}
-
-	out, err := json.Marshal(cfg)
-	if err != nil {
-		return configJSON
-	}
-	return string(out)
+	return credentials.Mask(configJSON)
 }
 
 // storageResponseWithCapacity adapts a StorageDestination into the
@@ -1374,6 +1302,7 @@ func storageResponseWithCapacity(d db.StorageDestination) map[string]any {
 		"name":                     d.Name,
 		"type":                     d.Type,
 		"config":                   redactConfig(d.Config),
+		"credentials_locked":       credentials.IsLocked(d.Config),
 		"dedup_enabled":            d.DedupEnabled,
 		"stage_beside_destination": d.StageBesideDestination,
 		"last_health_check_at":     d.LastHealthCheckAt,

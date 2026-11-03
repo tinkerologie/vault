@@ -111,7 +111,9 @@ the restore points that came with the database.
   **Server key** → Download). Deduplicated destinations are sealed with this
   file. They also open with your backup password, but only once a backup has
   run with that password set. **If you use deduplication without a backup
-  password, `vault.key` is the only way back into those backups.**
+  password, `vault.key` is the only way back into those backups.** Storage
+  passwords and replication API keys are sealed with it too, as described in
+  [Stored credentials and vault.key](#stored-credentials-and-vaultkey).
 - **Enable database backup on at least one destination** (Storage →
   destination → **Include in DB backup**). This writes your settings
   alongside your data after every successful backup.
@@ -132,6 +134,33 @@ the restore points that came with the database.
 The CLI tools take a key from anywhere with `--key`, for example
 `vault dedup repair --key /path/to/vault.key` or
 `vault recover … --key /path/to/vault.key`.
+
+### Stored credentials and vault.key
+
+Storage passwords, S3 keys and replication API keys are encrypted in the
+database with `vault.key`. Hosts, paths and usernames stay readable. The same
+server keeps working as before, including after restoring an older database,
+which is sealed as soon as it is restored.
+
+Restoring a database on a server with a different `vault.key` leaves those
+credentials **locked**. Nothing is lost: Storage shows **Credentials locked**,
+and backups and syncs that need them stop with a clear error rather than trying
+to log in without them. To unlock them, do either of these:
+
+- Put the original `vault.key` back as described above and restart Vault.
+- Edit each destination or replication target and enter its credentials again.
+
+You can still change other settings on a locked destination, such as its name
+or path, and the sealed credentials are kept.
+
+A locked deduplicated destination needs one of these before its dedup key can
+be unlocked.
+
+Upgrading seals existing credentials on the first start, and also rewrites the
+local snapshot, rotated snapshots and flash copies. Database backups already on
+your storage are not rewritten. Without a backup password, older ones still hold
+plaintext credentials until pruning removes them, after 14 more backups. Delete
+`_vault/vault.db.*` on the destination if you want them gone sooner.
 
 Uninstalling the plugin keeps `vault.key`, so a reinstall opens the same
 destinations. To remove every trace of Vault, delete

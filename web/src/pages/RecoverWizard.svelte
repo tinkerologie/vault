@@ -36,6 +36,7 @@
   let remapping = $state(false)
   let remapResults = $state(null)
   let summary = $state({ jobs: 0, storage: 0 })
+  let lockedCredentials = $state(0)
   // Dedup destinations this server's vault.key cannot open yet (#451).
   let dedupResults = $state([])
   let dedupPass = $state('')
@@ -125,7 +126,8 @@
   async function doRestore() {
     restoring = true
     try {
-      await api.restoreDB(dest.id, selected.path, selected.encrypted ? passphrase : '')
+      const restored = await api.restoreDB(dest.id, selected.path, selected.encrypted ? passphrase : '')
+      lockedCredentials = restored?.locked_credentials || 0
       const [jobs, storage] = await Promise.all([
         api.listJobs().catch(() => []),
         api.listStorage().catch(() => []),
@@ -408,6 +410,12 @@
         To bring files, containers or VMs back, use the normal Restore page. And store your backup
         password somewhere safe off this server — it's the one thing recovery always needs.
       </p>
+      {#if lockedCredentials > 0}
+        <p class="text-sm text-warning max-w-md mx-auto mb-6" role="alert">
+          {lockedCredentials} destination(s) or replication source(s) were sealed with the old server's vault.key.
+          Restore that file and restart Vault, or enter their credentials again on the Storage and Replication pages.
+        </p>
+      {/if}
       <div class="flex items-center justify-center gap-3">
         <button type="button" class="btn btn-primary" onclick={() => navigate('/restore')}>Go to Restore</button>
         <button type="button" class="btn btn-secondary" onclick={() => navigate('/')}>Go to Dashboard</button>

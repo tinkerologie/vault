@@ -7,10 +7,14 @@ import (
 )
 
 func (d *DB) CreateStorageDestination(dest StorageDestination) (int64, error) {
+	config, err := d.sealConfig(dest.Config)
+	if err != nil {
+		return 0, err
+	}
 	res, err := d.Exec(
 		`INSERT INTO storage_destinations (name, type, config, dedup_enabled, anomaly_sensitivity, stage_beside_destination)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.AnomalySensitivity, dest.StageBesideDestination,
+		dest.Name, dest.Type, config, dest.DedupEnabled, dest.AnomalySensitivity, dest.StageBesideDestination,
 	)
 	if err != nil {
 		return 0, err
@@ -45,6 +49,7 @@ func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
 	if err == sql.ErrNoRows {
 		return dest, ErrNotFound
 	}
+	dest.Config = d.openConfig(dest.Config)
 	return dest, err
 }
 
@@ -80,6 +85,7 @@ func (d *DB) ListStorageDestinations() ([]StorageDestination, error) {
 			&dest.CreatedAt, &dest.UpdatedAt); err != nil {
 			return nil, err
 		}
+		dest.Config = d.openConfig(dest.Config)
 		dests = append(dests, dest)
 	}
 	return dests, rows.Err()
@@ -167,12 +173,16 @@ func nullableInt64(v int64) any {
 }
 
 func (d *DB) UpdateStorageDestination(dest StorageDestination) error {
-	_, err := d.Exec(
+	config, err := d.sealForUpdate(dest.Config, selectStorageConfig, dest.ID)
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(
 		`UPDATE storage_destinations
 		 SET name=?, type=?, config=?, dedup_enabled=?, backup_database_enabled=?,
 		     anomaly_sensitivity=?, stage_beside_destination=?, updated_at=CURRENT_TIMESTAMP
 		 WHERE id=?`,
-		dest.Name, dest.Type, dest.Config, dest.DedupEnabled, dest.BackupDatabaseEnabled,
+		dest.Name, dest.Type, config, dest.DedupEnabled, dest.BackupDatabaseEnabled,
 		dest.AnomalySensitivity, dest.StageBesideDestination, dest.ID,
 	)
 	return err

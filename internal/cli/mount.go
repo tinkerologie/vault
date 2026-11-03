@@ -64,6 +64,7 @@ func runMountCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("read server key from %s: %w", keyPath, err)
 	}
 
+	database.SetCredentialKey(serverKey)
 	mgr := mount.NewManager(database, nil, serverKey)
 
 	session, err := mgr.MountRestorePointTo(ctx, mountJobID, mountRPID, mountDir)
