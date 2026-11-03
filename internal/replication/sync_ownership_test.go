@@ -103,7 +103,7 @@ func TestSyncRestorePointRejectsPathOfAnotherJob(t *testing.T) {
 				t.Fatal(err)
 			}
 			rrp := RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: peerPath}
-			if _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, storage.NewLocalAdapter(root)); err == nil {
+			if _, _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, 0, nil, storage.NewLocalAdapter(root)); err == nil {
 				t.Fatal("peer path accepted")
 			}
 			if downloads != 0 {
@@ -151,7 +151,7 @@ func TestSyncRestorePointRefusesSameSourceOtherJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	sync := func(p string) error {
-		_, err := s.syncRestorePoint(c, src, destID, rj, RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}, jobID, storage.NewLocalAdapter(root))
+		_, _, err := s.syncRestorePoint(c, src, destID, rj, RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}, jobID, 0, nil, storage.NewLocalAdapter(root))
 		return err
 	}
 	if err := sync("B/1"); !errors.Is(err, errPathRefused) {
@@ -255,14 +255,14 @@ func TestSyncRestorePointRefusesPathInProgress(t *testing.T) {
 		rel()
 	}
 	rrp := RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: "J/1"}
-	if _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, storage.NewLocalAdapter(root)); err == nil || !strings.Contains(err.Error(), "in progress") {
+	if _, _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, 0, nil, storage.NewLocalAdapter(root)); err == nil || !strings.Contains(err.Error(), "in progress") {
 		t.Fatalf("sync during another download = %v", err)
 	}
 	if downloads != 0 {
 		t.Fatalf("downloaded %d file(s)", downloads)
 	}
 	release()
-	if _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, storage.NewLocalAdapter(root)); err != nil && strings.Contains(err.Error(), "in progress") {
+	if _, _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, 0, nil, storage.NewLocalAdapter(root)); err != nil && strings.Contains(err.Error(), "in progress") {
 		t.Fatalf("claim not released: %v", err)
 	}
 	if downloads != 1 {
@@ -355,7 +355,7 @@ func TestSyncRestorePointRefusesPathOfOrphanedLocalJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	sync := func(p string) error {
-		_, err := s.syncRestorePoint(c, src, destID, rj, RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}, jobID, storage.NewLocalAdapter(root))
+		_, _, err := s.syncRestorePoint(c, src, destID, rj, RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}, jobID, 0, nil, storage.NewLocalAdapter(root))
 		return err
 	}
 	for _, p := range []string{"kept/run", "kept/run/", "kept//run"} {

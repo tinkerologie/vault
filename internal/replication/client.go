@@ -1,12 +1,19 @@
 package replication
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/credentials"
@@ -17,6 +24,8 @@ type Client struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
+	// download streams files. It has no total timeout; see DownloadFile.
+	download *http.Client
 }
 
 // NewClient creates a replication client for the given remote Vault URL.
@@ -26,11 +35,17 @@ func NewClient(baseURL string) (*Client, error) {
 		return nil, err
 	}
 
+	downloads := peerTransport.Clone()
+	downloads.ResponseHeaderTimeout = downloadIdleTimeout
 	return &Client{
 		baseURL: normalizedBaseURL,
 		httpClient: &http.Client{
 			Timeout:       10 * time.Minute,
 			Transport:     peerTransport,
+			CheckRedirect: refuseKeyLeakingRedirect,
+		},
+		download: &http.Client{
+			Transport:     downloads,
 			CheckRedirect: refuseKeyLeakingRedirect,
 		},
 	}, nil
@@ -140,7 +155,9 @@ type RemoteRestorePoint struct {
 	Metadata             string `json:"metadata"`
 	SizeBytes            int64  `json:"size_bytes"`
 	ParentRestorePointID int64  `json:"parent_restore_point_id"`
-	CreatedAt            string `json:"created_at"`
+	// ManifestID is set on deduplicated restore points.
+	ManifestID []byte `json:"manifest_id,omitempty"`
+	CreatedAt  string `json:"created_at"`
 }
 
 // HealthResponse represents the remote /health endpoint response.
@@ -185,6 +202,29 @@ func (c *Client) ListRestorePoints(jobID int64) ([]RemoteRestorePoint, error) {
 	return rps, nil
 }
 
+// RemoteRun mirrors the fields of a remote job run that describe its outcome.
+type RemoteRun struct {
+	ID          int64  `json:"id"`
+	Status      string `json:"status"`
+	ItemsTotal  int    `json:"items_total"`
+	ItemsDone   int    `json:"items_done"`
+	ItemsFailed int    `json:"items_failed"`
+}
+
+// maxPeerRuns is how much of a remote job's history ListJobRuns asks for, the
+// most the peer's history endpoint returns.
+const maxPeerRuns = 1000
+
+// ListJobRuns returns the most recent runs of a remote job, newest first.
+func (c *Client) ListJobRuns(jobID int64) ([]RemoteRun, error) {
+	var runs []RemoteRun
+	path := fmt.Sprintf("/api/v1/jobs/%d/history", jobID)
+	if err := c.getJSONWithParams(path, map[string]string{"limit": fmt.Sprint(maxPeerRuns)}, &runs); err != nil {
+		return nil, fmt.Errorf("list remote runs for job %d: %w", jobID, err)
+	}
+	return runs, nil
+}
+
 // ListStorageFiles lists files at the given path on a remote storage destination.
 func (c *Client) ListStorageFiles(storageID int64, prefix string) ([]StorageFile, error) {
 	var files []StorageFile
@@ -195,19 +235,75 @@ func (c *Client) ListStorageFiles(storageID int64, prefix string) ([]StorageFile
 	return files, nil
 }
 
+// downloadIdleTimeout is how long a file download may wait for the response
+// headers, or between pieces of data, before it is abandoned. Downloads have
+// no total time limit, since a large backup file over a slow link can take
+// hours.
+var downloadIdleTimeout = 2 * time.Minute
+
 // DownloadFile streams a file from the remote storage destination.
 // The caller is responsible for closing the returned ReadCloser.
 func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, error) {
+	// The same request, sent by the client without a total timeout.
+	streaming := *c
+	streaming.httpClient = c.download
 	reqPath := fmt.Sprintf("/api/v1/storage/%d/files", storageID)
-	resp, err := c.doRequestWithParams(http.MethodGet, reqPath, map[string]string{"path": filePath})
+	resp, err := streaming.doRequestWithParams(http.MethodGet, reqPath, map[string]string{"path": filePath})
 	if err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			err = fmt.Errorf("peer sent no data for %s: %w", downloadIdleTimeout, err)
+		}
 		return nil, fmt.Errorf("download file %q: %w", filePath, err)
 	}
+	// Every body this client reads, error responses included, goes through
+	// the idle reader: it has no total timeout to fall back on.
+	body := newIdleReader(resp.Body, downloadIdleTimeout)
 	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("download file %q: %w", filePath, statusError(resp.StatusCode))
+		resp.Body = body
+		err := peerStatusError(resp)
+		_ = body.Close()
+		return nil, fmt.Errorf("download file %q: %w", filePath, err)
 	}
-	return resp.Body, nil
+	return body, nil
+}
+
+// idleReader is a download body that is closed when a single Read waits more
+// than idle for the peer. Only time spent inside Read counts, so a slow
+// destination write between reads never looks like a stalled peer.
+type idleReader struct {
+	rc      io.ReadCloser
+	idle    time.Duration
+	timer   *time.Timer
+	expired atomic.Bool
+}
+
+func newIdleReader(rc io.ReadCloser, idle time.Duration) *idleReader {
+	r := &idleReader{rc: rc, idle: idle}
+	r.timer = time.AfterFunc(idle, func() {
+		r.expired.Store(true)
+		_ = rc.Close() // unblocks the Read waiting on the peer
+	})
+	r.timer.Stop() // armed only while a Read is in progress
+	return r
+}
+
+func (r *idleReader) Read(p []byte) (int, error) {
+	if r.expired.Load() {
+		return 0, fmt.Errorf("peer sent no data for %s", r.idle)
+	}
+	r.timer.Reset(r.idle)
+	n, err := r.rc.Read(p)
+	r.timer.Stop()
+	if err != nil && err != io.EOF && r.expired.Load() {
+		err = fmt.Errorf("peer sent no data for %s: %w", r.idle, err)
+	}
+	return n, err
+}
+
+func (r *idleReader) Close() error {
+	r.timer.Stop()
+	return r.rc.Close()
 }
 
 // maxPeerJSONBytes limits one JSON response from a peer. Listings of jobs,
@@ -215,10 +311,50 @@ func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, 
 // not subject to it.
 var maxPeerJSONBytes int64 = 1 << 30
 
-// statusError describes a failed peer response. The body is left out: the URL
-// can point at any service, and its responses must not reach the caller.
-func statusError(code int) error {
-	return fmt.Errorf("status %d", code)
+// Limits on what peerStatusError takes from an error response.
+const (
+	maxPeerErrorBody  = 4 << 10
+	maxPeerErrorRunes = 200
+)
+
+// peerStatusError describes a failed peer response by its status code and, when
+// the response is JSON, the short "error" message Vault puts there, such as how
+// to create an API key. The URL can point at any service, so nothing else from
+// the body is returned, and the message is bounded and stripped of control and
+// formatting characters.
+func peerStatusError(resp *http.Response) error {
+	msg := ""
+	if mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err == nil && mt == "application/json" {
+		var body struct {
+			Error string `json:"error"`
+		}
+		if raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPeerErrorBody)); err == nil && json.Unmarshal(raw, &body) == nil {
+			msg = sanitizePeerMessage(body.Error)
+		}
+	}
+	if msg == "" {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return fmt.Errorf("status %d: %s", resp.StatusCode, msg)
+}
+
+// sanitizePeerMessage keeps the printable text of a peer message on one line,
+// at most maxPeerErrorRunes long.
+func sanitizePeerMessage(s string) string {
+	printable := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		if r == utf8.RuneError || !unicode.IsGraphic(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+	msg := []rune(strings.Join(strings.Fields(printable), " "))
+	if len(msg) > maxPeerErrorRunes {
+		return string(msg[:maxPeerErrorRunes]) + "…"
+	}
+	return string(msg)
 }
 
 // getJSON performs a GET request and decodes the JSON response.
@@ -235,7 +371,7 @@ func (c *Client) getJSONWithParams(path string, params map[string]string, target
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return statusError(resp.StatusCode)
+		return peerStatusError(resp)
 	}
 	return bounded.DecodeJSON(resp.Body, maxPeerJSONBytes, target)
 }

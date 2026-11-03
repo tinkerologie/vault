@@ -389,6 +389,70 @@ func (d *DB) CreateImportedJobRun(run JobRun, ts time.Time) (int64, error) {
 	return res.LastInsertId()
 }
 
+// CreateReplicatedRestorePoint records a restore point copied from a
+// replication peer together with the finished run it belongs to, in one
+// transaction: if either insert fails, neither row is kept, so a failed
+// insert never leaves a run that looks like a completed backup. ts is when
+// the peer took the backup; it becomes the run's start and end time and the
+// restore point's creation time. A zero ts means now. rp.JobRunID is ignored,
+// and the restore point takes its job from the run: a non-zero rp.JobID that
+// names another job is an error.
+func (d *DB) CreateReplicatedRestorePoint(run JobRun, rp RestorePoint, ts time.Time) (runID, rpID int64, err error) {
+	runType := run.RunType
+	if runType == "" {
+		runType = "backup"
+	}
+	if rp.JobID != 0 && rp.JobID != run.JobID {
+		return 0, 0, fmt.Errorf("create replicated restore point: restore point job %d does not match run job %d", rp.JobID, run.JobID)
+	}
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	// The CURRENT_TIMESTAMP format, which SQLite's datetime() and julianday()
+	// read, so durations, retention and "since" queries see these rows.
+	at := ts.UTC().Format("2006-01-02 15:04:05")
+
+	tx, err := d.BeginTx(context.Background(), nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("create replicated restore point: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
+
+	res, err := tx.Exec(
+		`INSERT INTO job_runs (job_id, status, backup_type, run_type, log, items_total,
+			items_done, items_failed, size_bytes, started_at, completed_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.JobID, run.Status, run.BackupType, runType, run.Log, run.ItemsTotal,
+		run.ItemsDone, run.ItemsFailed, run.SizeBytes, at, at,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("create replicated job run: %w", err)
+	}
+	if runID, err = res.LastInsertId(); err != nil {
+		return 0, 0, fmt.Errorf("create replicated job run: last insert id: %w", err)
+	}
+
+	// job_id is read from the run just inserted, so the two rows always agree.
+	res, err = tx.Exec(
+		`INSERT INTO restore_points (job_run_id, job_id, backup_type, storage_path, metadata,
+			size_bytes, parent_restore_point_id, source_id, manifest_id, created_at)
+			SELECT id, job_id, ?, ?, ?, ?, ?, ?, ?, ? FROM job_runs WHERE id = ?`,
+		rp.BackupType, rp.StoragePath, rp.Metadata,
+		rp.SizeBytes, rp.ParentRestorePointID, rp.SourceID, rp.ManifestID, at, runID,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("create replicated restore point: %w", err)
+	}
+	if rpID, err = res.LastInsertId(); err != nil {
+		return 0, 0, fmt.Errorf("create replicated restore point: last insert id: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("create replicated restore point: commit: %w", err)
+	}
+	return runID, rpID, nil
+}
+
 func (d *DB) UpdateJobRun(run JobRun) error {
 	_, err := d.Exec(
 		`UPDATE job_runs SET status=?, completed_at=CURRENT_TIMESTAMP, log=?,
