@@ -194,7 +194,11 @@ it safely even if it contains quotes or backslashes. A JSON file with
 
 List available snapshots first with `GET /api/v1/storage/ID/db-backups`.
 
-If you are calling from another machine, an API key is required; include it with `-H "X-API-Key: $VAULT_API_KEY"`.
+Running `curl` on the Vault server itself needs no key. From another machine an
+API key is required: include it with `-H "X-API-Key: $VAULT_API_KEY"`. A fresh
+install has no key, and one can only be created on the server, so first SSH in
+and run `vault api-key generate`, or generate it in the Unraid web UI under
+Vault > Settings > Security > API Access.
 
 ---
 

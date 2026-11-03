@@ -291,6 +291,21 @@ describe('websocket mode', () => {
 })
 
 describe('poll mode', () => {
+  it('asks for a key when a poll is refused, as after a rotation', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const auth = await import('./auth.svelte.js')
+      fetchMock.mockResolvedValue(jsonResponse({}, false, 401))
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(auth.isAuthRequired()).toBe(true)
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('refreshes mounts a polling client gets no events for, on every check', async () => {
     vi.useFakeTimers()
     try {
@@ -449,6 +464,8 @@ describe('poll mode', () => {
       const responses = [[a1, a2], [{ ...a1, title: 'changed' }, a2], [a2], [a2]]
       const anomalyUrls = []
       fetchMock.mockImplementation(async (url) => {
+        const one = String(url).match(/\/anomalies\/(\d+)/)
+        if (one) return jsonResponse({ id: Number(one[1]), state: 'resolved' })
         if (String(url).includes('/anomalies')) {
           anomalyUrls.push(url)
           const next = responses.shift()
@@ -472,7 +489,9 @@ describe('poll mode', () => {
 
       seen.length = 0
       await window()
-      expect(types()).toEqual([['anomaly.bulk_resolved', undefined]])
+      // The real record, not a bulk event that would make listeners refetch.
+      expect(types()).toEqual([['anomaly.updated', 1]])
+      expect(seen.find((m) => m.type === 'anomaly.updated').data.state).toBe('resolved')
 
       seen.length = 0
       await window()

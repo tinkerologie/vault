@@ -66,6 +66,15 @@ describe('direct-mode API key', () => {
     expect(auth.isAuthRequired()).toBe(false)
   })
 
+  it('asks for a key when a download is refused', async () => {
+    vi.resetModules()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 401 })))
+    const fresh = await import('./api.js')
+    const auth = await import('./auth.svelte.js')
+    await expect(fresh.api.downloadDiagnostics()).rejects.toThrow()
+    expect(auth.isAuthRequired()).toBe(true)
+  })
+
   it('tolerates blocked storage', () => {
     vi.stubGlobal('sessionStorage', {
       getItem: () => { throw new Error('blocked') },
