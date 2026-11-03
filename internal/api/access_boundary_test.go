@@ -365,6 +365,11 @@ func TestSettingsUIKeyLifecycle(t *testing.T) {
 		// BIND_ADDRESS set to the LAN IP: cURL targets that IP, and Linux sources
 		// the connection from it, so peer and Host are both the NIC address.
 		"plugin proxy over NIC bind": {nicIP + ":40000", nicIP + ":24085", map[string]string{"X-Vault-Proxy": "unraid-plugin-proxy"}},
+		// A tunnel to a LAN-IP bind: sshd connects from the NIC address, and the
+		// browser still addresses the tunnel's local end.
+		"same-origin through a tunnel to a NIC bind": {nicIP + ":40000", "127.0.0.1:8080", map[string]string{
+			"Origin": "http://127.0.0.1:8080", "Sec-Fetch-Site": "same-origin",
+		}},
 		"same-origin through a tunnel": {loopbackPeer, "127.0.0.1:8080", map[string]string{
 			"Origin": "http://127.0.0.1:8080", "Sec-Fetch-Site": "same-origin",
 		}},

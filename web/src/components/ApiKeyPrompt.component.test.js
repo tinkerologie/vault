@@ -28,6 +28,11 @@ describe('ApiKeyPrompt', () => {
     const text = document.body.textContent
     expect(text).toContain('Unraid web UI')
     expect(text).toContain('SSH tunnel')
+    // This prompt appears on a LAN-IP bind, where nothing listens on the host's
+    // loopback, so the server's own address must be the form it leads with.
+    expect(text).toContain('ssh -L 24085:<server-ip>:24085 root@<server-ip>')
+    expect(text).toContain('ssh -L 24085:127.0.0.1:24085 root@<server-ip>')
+    expect(text).toContain('bound to loopback')
     expect(text).toContain('vault api-key generate')
   })
 

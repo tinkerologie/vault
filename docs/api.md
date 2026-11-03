@@ -39,7 +39,7 @@ docker exec vault-replica vault api-key generate # a Docker replica
 
 **Browser origins:** the cross-origin allowlist is empty by default. To let a page on another origin call the API, list its exact origin, either with `--allowed-origin https://ha.example:8123` (repeatable) on `vault daemon` or `vault replica`, or as a comma-separated `ALLOWED_ORIGINS` in the `vault.cfg` beside the database, then restart. Wildcards aren't accepted. The list also controls CORS, Private Network Access preflights and WebSocket origins.
 
-**Opening the daemon's port from another machine:** as with a Docker replica's own UI, this asks for the API key and keeps it for that browser tab. Live progress then uses polling, because a browser can't send the key on a WebSocket connection. Same-origin pages on the Vault host don't need a key, including through an SSH tunnel. Generating, showing, rotating and revoking the key need the Vault host: use the Unraid web UI, an SSH tunnel, or the CLI.
+**Opening the daemon's port from another machine:** as with a Docker replica's own UI, this asks for the API key and keeps it for that browser tab. Live progress then uses polling, because a browser can't send the key on a WebSocket connection. Same-origin pages on the Vault host don't need a key, including through an SSH tunnel, which must target the address Vault is bound to: `ssh -L 24085:<server-ip>:24085 root@<server-ip>` when bound to the server's IP, or `ssh -L 24085:127.0.0.1:24085 root@<server-ip>` when bound to loopback. Then open `http://127.0.0.1:24085`. Generating, showing, rotating and revoking the key need the Vault host: use the Unraid web UI, an SSH tunnel, or the CLI.
 
 ## Core
 
