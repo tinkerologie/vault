@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -88,4 +89,27 @@ func (h *RunLogHandler) List(w http.ResponseWriter, r *http.Request) {
 		"entries": entries,
 		"last_id": lastID,
 	})
+}
+
+// Get returns one run, however old. A replicating peer uses it to read the
+// outcome of a backup that has fallen outside the newest page of the job's
+// history, so it does not have to guess the outcome from the restore point.
+//
+//	GET /api/v1/runs/{runId}
+func (h *RunLogHandler) Get(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.ParseInt(chi.URLParam(r, "runId"), 10, 64)
+	if err != nil || runID < 1 {
+		respondError(w, http.StatusBadRequest, "invalid run id")
+		return
+	}
+	run, err := h.db.GetJobRun(runID)
+	if errors.Is(err, db.ErrNotFound) {
+		respondError(w, http.StatusNotFound, "run not found")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, run)
 }

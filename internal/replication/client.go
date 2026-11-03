@@ -205,10 +205,15 @@ func (c *Client) ListRestorePoints(jobID int64) ([]RemoteRestorePoint, error) {
 // RemoteRun mirrors the fields of a remote job run that describe its outcome.
 type RemoteRun struct {
 	ID          int64  `json:"id"`
+	JobID       int64  `json:"job_id"`
 	Status      string `json:"status"`
 	ItemsTotal  int    `json:"items_total"`
 	ItemsDone   int    `json:"items_done"`
 	ItemsFailed int    `json:"items_failed"`
+
+	// unconfirmed is set locally, never by the peer, when the peer keeps run
+	// history but could not describe this run.
+	unconfirmed bool
 }
 
 // maxPeerRuns is how much of a remote job's history ListJobRuns asks for, the
@@ -223,6 +228,32 @@ func (c *Client) ListJobRuns(jobID int64) ([]RemoteRun, error) {
 		return nil, fmt.Errorf("list remote runs for job %d: %w", jobID, err)
 	}
 	return runs, nil
+}
+
+// errRunNotFound reports that the peer has no run with the requested ID, or is
+// too old to serve single runs.
+var errRunNotFound = errors.New("peer has no such run")
+
+// GetRun returns one run of the remote peer, however far back in its history
+// it is. It returns errRunNotFound when the peer answers 404.
+func (c *Client) GetRun(runID int64) (*RemoteRun, error) {
+	resp, err := c.doRequestWithParams(http.MethodGet, fmt.Sprintf("/api/v1/runs/%d", runID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get remote run %d: %w", runID, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return nil, fmt.Errorf("get remote run %d: %w", runID, errRunNotFound)
+	default:
+		return nil, fmt.Errorf("get remote run %d: %w", runID, peerStatusError(resp))
+	}
+	var run RemoteRun
+	if err := bounded.DecodeJSON(resp.Body, maxPeerJSONBytes, &run); err != nil {
+		return nil, fmt.Errorf("get remote run %d: %w", runID, err)
+	}
+	return &run, nil
 }
 
 // ListStorageFiles lists files at the given path on a remote storage destination.

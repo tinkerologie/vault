@@ -169,3 +169,51 @@ func TestMCPCreateJobUsesSharedDefaults(t *testing.T) {
 		t.Errorf("NotifyOn = %q, want %q", got.NotifyOn, want.NotifyOn)
 	}
 }
+
+// TestMCPUpdateJobReplicatedDestinationIsReadOnly600 pins that update_job
+// refuses moving a replicated job off its source's destination, and still
+// accepts an edit that leaves the destination alone.
+func TestMCPUpdateJobReplicatedDestinationIsReadOnly600(t *testing.T) {
+	session, database, reloads := setupCountingReloads(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var dests [2]int64
+	for i, name := range []string{"a", "b"} {
+		id, err := database.CreateStorageDestination(db.StorageDestination{
+			Name: name, Type: "local", Config: `{"path":"` + t.TempDir() + `"}`,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dests[i] = id
+	}
+	srcID, err := database.CreateReplicationSource(db.ReplicationSource{
+		Name: "peer", Type: "remote_vault", URL: "http://peer.invalid:24085", StorageDestID: dests[0], Config: "{}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := database.CreateReplicatedJob(db.Job{
+		Name: "[peer] nightly", BackupTypeChain: "full", Compression: "zstd", Encryption: "none",
+		NotifyOn: "failure", StorageDestID: dests[0], SourceID: srcID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if r := callToolRaw(t, session, ctx, "update_job", map[string]any{"id": jobID, "storage_dest_id": dests[1]}); !r.IsError {
+		t.Fatal("update_job moved a replicated job to another destination, want rejection")
+	}
+	if got := reloads.Load(); got != 0 {
+		t.Fatalf("scheduler reloads after a refused update = %d, want 0", got)
+	}
+	callTool(t, session, ctx, "update_job", map[string]any{"id": jobID, "retention_count": 9})
+	job, err := database.GetJob(jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.StorageDestID != dests[0] || job.RetentionCount != 9 {
+		t.Fatalf("job = dest %d retention %d, want dest %d retention 9", job.StorageDestID, job.RetentionCount, dests[0])
+	}
+}

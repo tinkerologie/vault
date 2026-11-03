@@ -119,11 +119,20 @@ func (i *Intake) Create(job db.Job, items []db.JobItem) (db.Job, []db.JobItem, e
 // that does not error on zero rows, so without this check updating a missing
 // id was a silent no-op.
 func (i *Intake) Update(id int64, job db.Job, items []db.JobItem) (db.Job, []db.JobItem, error) {
-	if _, err := i.db.GetJob(id); err != nil {
+	persisted, err := i.db.GetJob(id)
+	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return db.Job{}, nil, ErrJobNotFound
 		}
 		return db.Job{}, nil, err
+	}
+	// A replicated job's files are on the destination its source syncs to, and
+	// restore and preflight open the job's destination to find them. Pointing
+	// the job anywhere else would make its restore points unreadable, so its
+	// destination follows the source. The persisted origin decides this; the
+	// request's source_id is never trusted.
+	if persisted.SourceID != 0 && job.StorageDestID != persisted.StorageDestID {
+		return db.Job{}, nil, invalid("storage_dest_id", "the destination of a replicated job follows its replication source and cannot be changed")
 	}
 
 	// A request that omits items leaves the persisted items in place, so check

@@ -183,8 +183,8 @@ func TestAdoptReplicationDestination585(t *testing.T) {
 	bound, _ := d.CreateReplicatedJob(Job{Name: "[s] bound", SourceID: srcID, StorageDestID: b})
 	other, _ := d.CreateReplicatedJob(Job{Name: "[t] other", SourceID: srcID + 1})
 
-	if err := d.AdoptReplicationDestination(srcID, a); err != nil {
-		t.Fatal(err)
+	if changed, err := d.AdoptReplicationDestination(srcID, a); err != nil || !changed {
+		t.Fatalf("first adoption = %v, %v; want a change", changed, err)
 	}
 	if src, _ := d.GetReplicationSource(srcID); src.StorageDestID != a {
 		t.Errorf("source destination = %d, want %d", src.StorageDestID, a)
@@ -195,15 +195,15 @@ func TestAdoptReplicationDestination585(t *testing.T) {
 		}
 	}
 	// A source that names a destination keeps it.
-	if err := d.AdoptReplicationDestination(srcID, b); err != nil {
-		t.Fatal(err)
+	if changed, err := d.AdoptReplicationDestination(srcID, b); err != nil || changed {
+		t.Fatalf("second adoption = %v, %v; want no change", changed, err)
 	}
 	if src, _ := d.GetReplicationSource(srcID); src.StorageDestID != a {
 		t.Errorf("source destination changed to %d", src.StorageDestID)
 	}
 
 	_ = d.Close()
-	if err := d.AdoptReplicationDestination(srcID, a); err == nil {
+	if _, err := d.AdoptReplicationDestination(srcID, a); err == nil {
 		t.Error("want an error from a closed database")
 	}
 }
