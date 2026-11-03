@@ -231,7 +231,8 @@ func TestZFSDatasetProvenance(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for name, want := range map[string]string{"set": "tank/set", "unset": "", "wrongtype": "", "missing": ""} {
+	// "unset" is a local item, so its name is its dataset (TestZFSDatasetFromTrustedItemName).
+	for name, want := range map[string]string{"set": "tank/set", "unset": "unset", "wrongtype": "", "missing": ""} {
 		if got, err := r.configuredZFSDataset(jobID, name); err != nil || got != want {
 			t.Errorf("configuredZFSDataset(%s) = %q, %v, want %q", name, got, err, want)
 		}

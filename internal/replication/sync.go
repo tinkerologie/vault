@@ -2,6 +2,7 @@ package replication
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,10 @@ import (
 	"github.com/tinkerologie/vault/internal/storage"
 	"github.com/tinkerologie/vault/internal/ws"
 )
+
+// errPathRefused marks a remote restore point refused because its path reaches
+// data held for someone else. It is failed work, not a skip.
+var errPathRefused = errors.New("remote restore point path refused")
 
 // ProgressFunc reports sync progress on a scale of 0.0 to 1.0.
 type ProgressFunc func(progress float64, detail string)
@@ -250,6 +255,9 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 		})
 
 		newRPs, bytes, syncErr := s.syncJob(client, src, storageDestID, rj, localAdapter)
+		// Restore points that did sync still count when others were refused.
+		result.RestorePointsNew += newRPs
+		result.BytesTransferred += bytes
 		if syncErr != nil {
 			log.Printf("replication: failed to sync job %q from %q: %v", rj.Name, src.Name, syncErr)
 			result.JobsFailed++
@@ -259,8 +267,6 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 		if newRPs > 0 {
 			result.JobsSynced++
 		}
-		result.RestorePointsNew += newRPs
-		result.BytesTransferred += bytes
 	}
 
 	s.completeSyncStatus(sourceID, src.Name, result, progress)
@@ -376,7 +382,7 @@ func (s *Syncer) syncJob(
 		localPaths[normPath(lrp.StoragePath)] = true
 	}
 
-	var newCount int
+	var newCount, refused int
 	var totalBytes int64
 
 	for _, rrp := range remoteRPs {
@@ -387,12 +393,18 @@ func (s *Syncer) syncJob(
 		bytes, err := s.syncRestorePoint(client, src, destID, rj, rrp, localJobID, localAdapter)
 		if err != nil {
 			log.Printf("replication: skipping restore point %q: %v", rrp.StoragePath, err)
+			if errors.Is(err, errPathRefused) {
+				refused++
+			}
 			continue
 		}
 		newCount++
 		totalBytes += bytes
 	}
 
+	if refused > 0 {
+		return newCount, totalBytes, fmt.Errorf("%w: %d of %d restore point(s)", errPathRefused, refused, len(remoteRPs))
+	}
 	return newCount, totalBytes, nil
 }
 
@@ -458,7 +470,7 @@ func (s *Syncer) syncRestorePoint(
 	// Claim first, so the check below and the download cover the same state.
 	release, claimed := s.claimPath(destID, storagePath)
 	if !claimed {
-		return 0, fmt.Errorf("remote storage path %q overlaps a sync already in progress", storagePath)
+		return 0, fmt.Errorf("%w: %q overlaps a sync already in progress", errPathRefused, storagePath)
 	}
 	defer release()
 
@@ -472,7 +484,7 @@ func (s *Syncer) syncRestorePoint(
 	}
 	for _, o := range owners {
 		if o.SourceID != src.ID && storage.PathsOverlap(storagePath, o.StoragePath) {
-			return 0, fmt.Errorf("remote storage path %q overlaps a restore point of local job %d", storagePath, o.JobID)
+			return 0, fmt.Errorf("%w: %q overlaps a restore point of local job %d", errPathRefused, storagePath, o.JobID)
 		}
 	}
 

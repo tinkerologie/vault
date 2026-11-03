@@ -257,3 +257,52 @@ func TestSyncRestorePointRefusesPathInProgress(t *testing.T) {
 	}
 	rel()
 }
+
+// A sync whose restore points are refused is not a success: every refusal is
+// failed work, so the source reports failed rather than success.
+func TestSyncReportsRejectedRestorePointsAsFailed(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	d := openTestDB(t)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + root + `"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	victim, err := d.CreateJob(db.Job{Name: "victim", BackupTypeChain: "full", StorageDestID: destID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runFor(t, d, victim), JobID: victim, BackupType: "full", StoragePath: "victim/run"}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/restore-points"):
+			_, _ = w.Write([]byte(`[{"id":1,"job_id":1,"backup_type":"full","storage_path":"victim/run"}]`))
+		case strings.HasSuffix(r.URL.Path, "/jobs"):
+			_, _ = w.Write([]byte(`[{"id":1,"name":"J"}]`))
+		default:
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}
+	}))
+	defer srv.Close()
+	srcID, err := d.CreateReplicationSource(db.ReplicationSource{Name: "S", Type: "remote_vault", URL: srv.URL, StorageDestID: destID, Config: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewSyncer(d, nil)
+	res, err := s.SyncSource(srcID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.JobsFailed != 1 || res.RestorePointsNew != 0 {
+		t.Fatalf("result = %+v, want the job counted as failed", res)
+	}
+	src, err := d.GetReplicationSource(srcID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.LastSyncStatus != "failed" {
+		t.Fatalf("status = %q, want failed", src.LastSyncStatus)
+	}
+}

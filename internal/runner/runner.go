@@ -4540,9 +4540,20 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 	}
 }
 
-// configuredZFSDataset returns the dataset set on a job's ZFS item, or "" when
-// none is, which zfsRestoreTarget refuses.
+// importedItemSetting marks a job item created by an import, whose name and
+// settings came from a backup rather than from this server.
+const importedItemSetting = "imported"
+
+// configuredZFSDataset returns the dataset a restore of a job's ZFS item may
+// target, or "" when none is trusted, which zfsRestoreTarget refuses. A dataset
+// set on the item wins. Otherwise an item created on this server names its
+// dataset, as ZFSHandler.Backup reads it, but an item that came from a peer
+// (replicated job) or from a backup (imported item) does not.
 func (r *Runner) configuredZFSDataset(jobID int64, itemName string) (string, error) {
+	job, err := r.db.GetJob(jobID)
+	if err != nil {
+		return "", fmt.Errorf("loading job for ZFS restore: %w", err)
+	}
 	jobItems, err := r.db.GetJobItems(jobID)
 	if err != nil {
 		return "", fmt.Errorf("loading job items for ZFS restore: %w", err)
@@ -4555,8 +4566,13 @@ func (r *Runner) configuredZFSDataset(jobID int64, itemName string) (string, err
 		if err != nil {
 			return "", fmt.Errorf("reading settings of ZFS item %q: %w", itemName, err)
 		}
-		ds, _ := s["dataset"].(string)
-		return ds, nil
+		if ds, _ := s["dataset"].(string); ds != "" {
+			return ds, nil
+		}
+		if imported, _ := s[importedItemSetting].(bool); imported || job.SourceID != 0 {
+			return "", nil
+		}
+		return ji.ItemName, nil
 	}
 	return "", nil
 }
@@ -7407,13 +7423,21 @@ func buildImportJobItems(b map[string]any) []db.JobItem {
 			}
 			itemID, _ := m["id"].(string)
 			settingsJSON := "{}"
-			if s, ok := m["settings"]; ok && s != nil {
-				// A manifest's dataset is unauthenticated and would later choose
-				// a forced ZFS receive target, so an imported ZFS item starts
-				// without one until the user configures it.
-				if sm, isMap := s.(map[string]any); isMap && itemType == "zfs" {
-					delete(sm, "dataset")
+			s, hasSettings := m["settings"]
+			// A manifest's dataset and item name are unauthenticated and would
+			// later choose a forced ZFS receive target, so an imported ZFS item
+			// drops the dataset and is marked as imported until the user
+			// configures one (configuredZFSDataset).
+			if itemType == "zfs" {
+				sm, isMap := s.(map[string]any)
+				if !isMap {
+					sm = map[string]any{}
 				}
+				delete(sm, "dataset")
+				sm[importedItemSetting] = true
+				s, hasSettings = sm, true
+			}
+			if hasSettings && s != nil {
 				if sb, err := json.Marshal(s); err == nil {
 					settingsJSON = string(sb)
 				}
