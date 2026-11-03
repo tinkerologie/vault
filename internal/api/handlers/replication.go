@@ -359,6 +359,10 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
+		if errors.Is(err, db.ErrReplicationDestinationInUse) {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		respondWriteError(w, err, "replication source")
 		return
 	}

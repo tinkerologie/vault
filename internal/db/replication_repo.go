@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -89,7 +90,16 @@ func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 	return sources, rows.Err()
 }
 
-// UpdateReplicationSource updates an existing replication source.
+// ErrReplicationDestinationInUse refuses moving a replication source to
+// another destination while its replicated jobs have restore points on the
+// old one: their files stay there, and the jobs' destination follows the
+// source, so restore would look in the wrong place and every sync would fail.
+var ErrReplicationDestinationInUse = errors.New("this source's replicated jobs have restore points on its current storage destination; delete those jobs or create a new source before changing it")
+
+// UpdateReplicationSource updates an existing replication source. Its
+// replicated jobs follow its destination: those without restore points are
+// rebound in the same transaction, and the change is refused with
+// ErrReplicationDestinationInUse if any job has restore points elsewhere.
 func (d *DB) UpdateReplicationSource(src ReplicationSource) error {
 	var destID any
 	if src.StorageDestID != 0 {
@@ -99,13 +109,38 @@ func (d *DB) UpdateReplicationSource(src ReplicationSource) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(
+	tx, err := d.BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("update replication source %d: begin tx: %w", src.ID, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
+	var stranded int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM jobs j WHERE j.source_id = ?
+		AND COALESCE(j.storage_dest_id, 0) != ?
+		AND EXISTS (SELECT 1 FROM restore_points rp WHERE rp.job_id = j.id)`,
+		src.ID, src.StorageDestID).Scan(&stranded); err != nil {
+		return fmt.Errorf("update replication source %d: check replicated jobs: %w", src.ID, err)
+	}
+	if stranded > 0 {
+		return ErrReplicationDestinationInUse
+	}
+	if _, err := tx.Exec(
 		`UPDATE replication_sources SET name=?, type=?, url=?, config=?, storage_dest_id=?,
 		schedule=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		src.Name, src.Type, src.URL, cfg, destID,
 		src.Schedule, src.Enabled, src.ID,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE jobs SET storage_dest_id = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE source_id = ? AND COALESCE(storage_dest_id, 0) != ?`,
+		destID, src.ID, src.StorageDestID); err != nil {
+		return fmt.Errorf("update replication source %d: rebind replicated jobs: %w", src.ID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update replication source %d: commit: %w", src.ID, err)
+	}
+	return nil
 }
 
 // UpdateReplicationSyncStatus stores the status of a sync attempt without

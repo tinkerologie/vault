@@ -14,9 +14,9 @@ import (
 )
 
 // peer600 serves one remote job with one restore point from run 11. history
-// is the job's history page (nil answers 404), and runs answers
-// /api/v1/runs/11.
-func peer600(t *testing.T, jobRunID int64, history []RemoteRun, runs http.HandlerFunc, downloads *atomic.Int64) *httptest.Server {
+// answers the job's history page and runs answers /api/v1/runs/11; nil
+// answers 404 for either.
+func peer600(t *testing.T, jobRunID int64, history, runs http.HandlerFunc, downloads *atomic.Int64) *httptest.Server {
 	t.Helper()
 	rps := []RemoteRestorePoint{{ID: 1, JobRunID: jobRunID, BackupType: "full", StoragePath: "J/run11", Metadata: `{"items":2}`}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +28,7 @@ func peer600(t *testing.T, jobRunID int64, history []RemoteRun, runs http.Handle
 		case r.URL.Path == "/api/v1/jobs/5/restore-points":
 			_ = json.NewEncoder(w).Encode(rps)
 		case r.URL.Path == "/api/v1/jobs/5/history" && history != nil:
-			_ = json.NewEncoder(w).Encode(history)
+			history(w, r)
 		case r.URL.Path == "/api/v1/runs/11" && runs != nil:
 			runs(w, r)
 		case r.URL.Path == "/api/v1/storage/9/list":
@@ -45,6 +45,16 @@ func peer600(t *testing.T, jobRunID int64, history []RemoteRun, runs http.Handle
 	return srv
 }
 
+func listJSON(runs []RemoteRun) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(runs)
+	}
+}
+
+func status600(code int) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }
+}
+
 func runJSON(run map[string]any) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -58,11 +68,11 @@ func runJSON(run map[string]any) http.HandlerFunc {
 func TestSyncSourceRunOutsideHistoryPage600(t *testing.T) {
 	t.Parallel()
 	// The newest page holds other runs only: run 11 has fallen off it.
-	page := []RemoteRun{{ID: 900, JobID: 5, Status: "completed"}}
+	page := listJSON([]RemoteRun{{ID: 900, JobID: 5, Status: "completed"}})
 	for _, tc := range []struct {
 		name       string
 		jobRunID   int64
-		history    []RemoteRun
+		history    http.HandlerFunc
 		runs       http.HandlerFunc
 		wantStatus string
 		wantLog    string
@@ -81,13 +91,25 @@ func TestSyncSourceRunOutsideHistoryPage600(t *testing.T) {
 			wantStatus: "partial", wantLog: "couldn't report"},
 		{name: "peer keeps no run outcomes", jobRunID: 11,
 			wantStatus: "success"},
+		{name: "peer without history answers 405", jobRunID: 11, history: status600(http.StatusMethodNotAllowed),
+			runs: status600(http.StatusMethodNotAllowed), wantStatus: "success"},
+		// A history listing that failed says nothing about what the peer
+		// supports, so a missing run is unconfirmed, never a success.
+		{name: "history fails and the run lookup is missing", jobRunID: 11, history: status600(http.StatusInternalServerError),
+			wantStatus: "partial", wantLog: "Outcome unconfirmed"},
+		{name: "history body unreadable and the run lookup is missing", jobRunID: 11,
+			history:    func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<html>") },
+			wantStatus: "partial", wantLog: "Outcome unconfirmed"},
+		{name: "history fails but the run is fetched", jobRunID: 11, history: status600(http.StatusBadGateway),
+			runs:       runJSON(map[string]any{"id": 11, "job_id": 5, "status": "partial", "items_total": 2, "items_done": 2}),
+			wantStatus: "partial"},
 		{name: "restore point names no run", jobRunID: 0, history: page,
 			runs: func(w http.ResponseWriter, _ *http.Request) {
 				t.Error("looked up a run for a restore point without one")
 			},
 			wantStatus: "success"},
 		{name: "lookup fails", jobRunID: 11, history: page, wantFailed: true,
-			runs: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }},
+			runs: status600(http.StatusBadGateway)},
 		{name: "lookup returns garbage", jobRunID: 11, history: page, wantFailed: true,
 			runs: func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<html>") }},
 	} {

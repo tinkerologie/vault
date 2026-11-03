@@ -421,7 +421,7 @@ func (s *Syncer) syncJob(
 	var firstErr error
 	var totalBytes int64
 	var peerRuns map[int64]RemoteRun
-	var historyListed bool
+	var history historyState
 
 	// Parents first, so an incremental or differential point can be linked to
 	// the local copy of the backup it builds on.
@@ -432,7 +432,7 @@ func (s *Syncer) syncJob(
 		}
 
 		if peerRuns == nil {
-			peerRuns, historyListed = s.peerRuns(client, src.Name, rj)
+			peerRuns, history = s.peerRuns(client, src.Name, rj)
 		}
 		// Checked before downloading, so a refused point leaves no files.
 		err := dedupUnsupported(rrp)
@@ -442,7 +442,7 @@ func (s *Syncer) syncJob(
 		}
 		var peerRun *RemoteRun
 		if err == nil {
-			peerRun, err = peerRunFor(client, rj, rrp.JobRunID, peerRuns, historyListed)
+			peerRun, err = peerRunFor(client, rj, rrp.JobRunID, peerRuns, history)
 		}
 		if err == nil {
 			rpID, bytes, err = s.syncRestorePoint(client, src, destID, rj, rrp, localJobID, parentID, peerRun, localAdapter)
@@ -469,30 +469,45 @@ func (s *Syncer) syncJob(
 	return newCount, totalBytes, nil
 }
 
+// historyState is what a peer's history listing says about run outcomes.
+type historyState int
+
+const (
+	historyListed      historyState = iota // the newest page was listed
+	historyUnsupported                     // the peer has no history endpoint
+	historyFailed                          // the listing failed for another reason
+)
+
 // peerRuns returns the newest page of the remote job's runs by ID, so each
-// copied backup can carry the outcome its run had on the peer, and whether the
-// peer listed its history at all.
-func (s *Syncer) peerRuns(client *Client, sourceName string, rj RemoteJob) (map[int64]RemoteRun, bool) {
+// copied backup can carry the outcome its run had on the peer, and what the
+// listing says about the peer. Only a 404 or 405 means the peer lacks the
+// endpoint; any other failure leaves the outcomes unknown.
+func (s *Syncer) peerRuns(client *Client, sourceName string, rj RemoteJob) (map[int64]RemoteRun, historyState) {
 	runs, err := client.ListJobRuns(rj.ID)
+	state := historyListed
 	if err != nil {
 		logx.Warnf("replication: run history of %q from %q unavailable: %v", rj.Name, sourceName, err)
+		state = historyFailed
+		if endpointMissing(err) {
+			state = historyUnsupported
+		}
 	}
 	byID := make(map[int64]RemoteRun, len(runs))
 	for _, r := range runs {
 		byID[r.ID] = r
 	}
-	return byID, err == nil
+	return byID, state
 }
 
 // peerRunFor returns the peer's run behind a restore point. A run outside the
 // newest history page is fetched on its own, since its outcome cannot be read
 // from the restore point: a run that skipped files is partial with no failed
-// items. The result is nil when the peer keeps no run outcomes at all (it
-// lists no history and has no single-run endpoint), leaving the outcome to the
-// restore point metadata. When the peer keeps history but cannot describe
-// this run, the run is marked unconfirmed rather than taken as a success. Any
-// other lookup failure fails the restore point, so the next sync tries again.
-func peerRunFor(client *Client, rj RemoteJob, runID int64, page map[int64]RemoteRun, historyListed bool) (*RemoteRun, error) {
+// items. The result is nil only when the peer has neither a history nor a
+// single-run endpoint, leaving the outcome to the restore point metadata.
+// When the peer could have described the run but did not, the run is marked
+// unconfirmed rather than taken as a success. Any other lookup failure fails
+// the restore point, so the next sync tries again.
+func peerRunFor(client *Client, rj RemoteJob, runID int64, page map[int64]RemoteRun, history historyState) (*RemoteRun, error) {
 	if runID <= 0 {
 		return nil, nil
 	}
@@ -506,10 +521,10 @@ func peerRunFor(client *Client, rj RemoteJob, runID int64, page map[int64]Remote
 	case err == nil:
 		// The peer answered with another run, so its answer says nothing.
 		return &RemoteRun{ID: runID, unconfirmed: true}, nil
-	case errors.Is(err, errRunNotFound) && historyListed:
-		return &RemoteRun{ID: runID, unconfirmed: true}, nil
-	case errors.Is(err, errRunNotFound):
+	case errors.Is(err, errRunNotFound) && history == historyUnsupported:
 		return nil, nil
+	case errors.Is(err, errRunNotFound):
+		return &RemoteRun{ID: runID, unconfirmed: true}, nil
 	default:
 		return nil, fmt.Errorf("look up the peer's outcome for this backup: %w", err)
 	}
@@ -746,7 +761,7 @@ func replicatedRun(localJobID int64, sourceName string, rrp RemoteRestorePoint, 
 	}
 	if peerRun != nil && peerRun.unconfirmed {
 		run.Status = "partial"
-		run.Log += fmt.Sprintf(" %s couldn't report how its run %d ended, so this backup is marked partial: it may have skipped files.", sourceName, peerRun.ID)
+		run.Log += fmt.Sprintf(" Outcome unconfirmed: %s couldn't report how its run %d ended, so this backup is marked partial, as it may have skipped files.", sourceName, peerRun.ID)
 	}
 	return run
 }
