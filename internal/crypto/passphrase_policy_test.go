@@ -31,12 +31,12 @@ func TestCheckPassphraseStrength(t *testing.T) {
 	}
 }
 
-// Repeated words must not make the check quadratic: at this size that took
-// minutes, and the endpoint accepts bodies this large.
+// Repeated words must not make the check quadratic. This 4 MiB input takes well
+// under the limit when linear; deleting per match blows far past it.
 func TestCheckPassphraseStrength_LongRepeatedWordsStayCheap(t *testing.T) {
 	t.Parallel()
 	start := time.Now()
-	if err := CheckPassphraseStrength(strings.Repeat("password", 1<<17)); err == nil {
+	if err := CheckPassphraseStrength(strings.Repeat("password", 1<<19)); err == nil {
 		t.Error("repeated common word accepted")
 	}
 	if d := time.Since(start); d > 15*time.Second {
