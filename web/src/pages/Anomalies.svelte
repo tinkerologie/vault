@@ -136,9 +136,13 @@
       const res = await api.listAnomalies(buildFilter(reset ? undefined : nextCursor))
       if (reqId !== listRequestId) return // stale response – discard
       const rows = res?.anomalies ?? []
-      // A live update can already have added an older row this page returns.
-      const shown = new Set(anomalies.map(a => a.id))
-      anomalies = reset ? rows : [...anomalies, ...rows.filter(a => !shown.has(a.id))]
+      if (reset) {
+        anomalies = rows
+      } else {
+        // A live update can already have added an older row this page returns.
+        const shown = new Set(anomalies.map(a => a.id))
+        anomalies = [...anomalies, ...rows.filter(a => !shown.has(a.id))]
+      }
       nextCursor = res?.next_cursor ?? ''
     } catch (e) {
       if (reqId !== listRequestId) return
