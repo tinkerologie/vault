@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -299,7 +300,14 @@ func TestChangeSourceDestinationWhileSyncing600(t *testing.T) {
 		}
 		<-release
 	})
+	// Unblocks the peer even if the test stops early, so it can shut down.
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
 	d, srcID := setup585(t, srv.URL)
+	otherID, err := d.CreateReplicationSource(db.ReplicationSource{Name: "Q", URL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := NewSyncer(d, nil)
 	done := make(chan error, 1)
 	go func() { _, err := s.SyncSource(srcID, nil); done <- err }()
@@ -317,7 +325,7 @@ func TestChangeSourceDestinationWhileSyncing600(t *testing.T) {
 		t.Fatalf("change during a sync = %v (applied %v), want ErrSyncInProgress", err, applied)
 	}
 	// Another source is neither held up nor reported as syncing.
-	if err := s.UpdateSource(srcID+1, func(syncing bool) error {
+	if err := s.UpdateSource(otherID, func(syncing bool) error {
 		if syncing {
 			t.Error("another source reported as syncing")
 		}
@@ -325,7 +333,7 @@ func TestChangeSourceDestinationWhileSyncing600(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("change of another source: %v", err)
 	}
-	close(release)
+	unblock()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
@@ -341,8 +349,12 @@ func TestUpdateSourceLocksOneSource600(t *testing.T) {
 	var downloads atomic.Int64
 	srv := peer585(t, []RemoteRestorePoint{{ID: 1, BackupType: "full", StoragePath: "J/run1"}}, &downloads)
 	d, srcID := setup585(t, srv.URL)
+	otherID, err := d.CreateReplicationSource(db.ReplicationSource{Name: "Q", URL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := NewSyncer(d, nil)
-	if err := s.UpdateSource(srcID+1, func(bool) error {
+	if err := s.UpdateSource(otherID, func(bool) error {
 		_, err := s.SyncSource(srcID, nil) // would deadlock if the lock were global
 		return err
 	}); err != nil {

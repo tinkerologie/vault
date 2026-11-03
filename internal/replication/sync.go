@@ -44,7 +44,8 @@ type Syncer struct {
 	// configuration. Nil when there is nothing to flush to.
 	onConfigChange func()
 
-	// gates holds one sourceGate per source, created on first use.
+	// gates holds a sourceGate for each source with a sync or update in
+	// progress. An entry is removed when its last holder lets go.
 	gatesMu sync.Mutex
 	gates   map[int64]*sourceGate
 }
@@ -55,10 +56,14 @@ type Syncer struct {
 // and reads its result, or is running and the update knows it.
 type sourceGate struct {
 	mu      sync.Mutex
-	running int
+	running int // syncs in progress, under mu
+	refs    int // syncs and updates holding the gate, under Syncer.gatesMu
 }
 
-func (s *Syncer) gate(sourceID int64) *sourceGate {
+// acquireGate returns sourceID's gate, creating it if needed, and holds it in
+// the map until releaseGate. A gate nobody holds can be removed and
+// recreated later: with no holder, a fresh gate is in the same state.
+func (s *Syncer) acquireGate(sourceID int64) *sourceGate {
 	s.gatesMu.Lock()
 	defer s.gatesMu.Unlock()
 	if s.gates == nil {
@@ -69,7 +74,17 @@ func (s *Syncer) gate(sourceID int64) *sourceGate {
 		g = &sourceGate{}
 		s.gates[sourceID] = g
 	}
+	g.refs++
 	return g
+}
+
+// releaseGate lets go of a gate from acquireGate, removing it once unheld.
+func (s *Syncer) releaseGate(sourceID int64, g *sourceGate) {
+	s.gatesMu.Lock()
+	defer s.gatesMu.Unlock()
+	if g.refs--; g.refs == 0 && s.gates[sourceID] == g {
+		delete(s.gates, sourceID)
+	}
 }
 
 // ErrSyncInProgress refuses changing a source's storage destination while a
@@ -78,7 +93,7 @@ var ErrSyncInProgress = errors.New("a sync of this replication source is running
 
 // beginSync records a running sync of sourceID and returns its end.
 func (s *Syncer) beginSync(sourceID int64) (end func()) {
-	g := s.gate(sourceID)
+	g := s.acquireGate(sourceID)
 	g.mu.Lock()
 	g.running++
 	g.mu.Unlock()
@@ -86,6 +101,7 @@ func (s *Syncer) beginSync(sourceID int64) (end func()) {
 		g.mu.Lock()
 		g.running--
 		g.mu.Unlock()
+		s.releaseGate(sourceID, g)
 	}
 }
 
@@ -93,9 +109,14 @@ func (s *Syncer) beginSync(sourceID int64) (end func()) {
 // while no sync of that source can start, and tells it whether one is
 // running. Syncs of other sources are not held up. update should read the
 // source afresh and refuse a destination change, with ErrSyncInProgress,
-// while syncing is true.
+// while syncing is true. A source that does not exist gets db.ErrNotFound
+// without update being called.
 func (s *Syncer) UpdateSource(sourceID int64, update func(syncing bool) error) error {
-	g := s.gate(sourceID)
+	if _, err := s.db.GetReplicationSource(sourceID); err != nil {
+		return fmt.Errorf("get replication source %d: %w", sourceID, err)
+	}
+	g := s.acquireGate(sourceID)
+	defer s.releaseGate(sourceID, g)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return update(g.running > 0)
@@ -156,12 +177,17 @@ type SyncResult struct {
 // SyncSource performs a sync operation for a replication source.
 // It pulls backups from the remote Vault instance.
 func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (result *SyncResult, err error) {
-	// Registered before the source is read, so a destination change either
-	// finishes first, and this sync reads the new destination, or is refused.
+	// A source that does not exist leaves no gate behind.
+	if _, err := s.db.GetReplicationSource(sourceID); err != nil {
+		return nil, fmt.Errorf("get replication source %d: %w", sourceID, err)
+	}
+	// Registered before the source is read for the sync, so a destination
+	// change either finishes first, and this sync reads the new destination,
+	// or is refused.
 	defer s.beginSync(sourceID)()
 	src, err := s.db.GetReplicationSource(sourceID)
 	if err != nil {
-		return nil, fmt.Errorf("get replication source: %w", err)
+		return nil, fmt.Errorf("get replication source %d: %w", sourceID, err)
 	}
 
 	// Sync processes data from another machine on a goroutine of its own, where
