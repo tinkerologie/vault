@@ -1164,7 +1164,7 @@
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
     {#each [{n:1, label:'Select Items'}, {n:2, label:'Choose Version'}, {n:3, label:'Restore'}] as s (s.n)}
-      <button type="button" onclick={() => {
+      <button type="button" aria-current={s.n === step ? 'step' : undefined} onclick={() => {
         if (s.n < step) {
           const curStep = step
           if (s.n === 1) {
@@ -1183,7 +1183,8 @@
             {s.n}
           {/if}
         </div>
-        <span class="text-xs font-medium {s.n === step ? 'text-text' : 'text-text-muted'} hidden sm:inline">{s.label}</span>
+        <!-- Hidden visually at narrow widths, but kept as the button's name. -->
+        <span class="text-xs font-medium {s.n === step ? 'text-text' : 'text-text-muted'} sr-only sm:not-sr-only">{s.label}</span>
       </button>
       {#if s.n < 3}
         <div class="flex-1 h-px {s.n < step ? 'bg-vault' : 'bg-border'}"></div>
@@ -1207,9 +1208,9 @@
       <div class="flex flex-col gap-3 mb-4">
         <div class="flex items-center justify-between flex-wrap gap-2">
           <!-- Type filter tabs -->
-          <div class="flex items-center gap-1.5 flex-wrap">
+          <div role="group" aria-label="Filter by type" class="flex items-center gap-1.5 flex-wrap">
             {#each typeOptions as t (t)}
-              <button type="button" onclick={() => typeFilter = t}
+              <button type="button" onclick={() => typeFilter = t} aria-pressed={typeFilter === t}
                 class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 {typeFilter === t ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
                 {#if t !== 'all'}
                   <svg aria-hidden="true" class="w-3.5 h-3.5 {typeFilter === t ? 'text-on-vault' : itemTypeColor(t)}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1286,7 +1287,7 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
           {#each filteredItems as item (itemKey(item))}
             {@const selected = isSelected(item)}
-            <button type="button" onclick={() => toggleItem(item)}
+            <button type="button" onclick={() => toggleItem(item)} aria-pressed={selected}
               class="bg-surface-2 border rounded-xl p-3 text-left hover:shadow-sm transition-all group
                 {selected ? 'border-vault ring-1 ring-vault/30 bg-surface-2/90' : 'border-border hover:border-vault/40'}">
               <div class="flex items-center gap-2.5 mb-1.5">

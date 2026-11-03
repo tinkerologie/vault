@@ -64,8 +64,10 @@ test.describe('Cold Disaster Recovery Wizard (#/recover)', () => {
 
     // Step 5: Vault is back
     await expect(page.getByRole('heading', { name: /Vault is back/i })).toBeVisible();
-    const dashboardBtn = page.getByRole('button', { name: /Go to Dashboard/i });
-    await expect(dashboardBtn).toBeVisible();
+    // Leaving the wizard is navigation, so both ways out are links (#529).
+    await expect(page.getByRole('link', { name: 'Go to Restore' })).toHaveAttribute('href', '#/restore');
+    const dashboardBtn = page.getByRole('link', { name: /Go to Dashboard/i });
+    await expect(dashboardBtn).toHaveAttribute('href', '#/');
     await dashboardBtn.click();
 
     // Navigates back to dashboard

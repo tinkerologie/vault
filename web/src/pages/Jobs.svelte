@@ -1186,9 +1186,9 @@
           class="w-full pl-8 pr-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault" />
       </div>
       <!-- Status segmented control -->
-      <div class="flex items-center rounded-lg border border-border bg-surface-3 p-0.5 text-xs">
+      <div role="group" aria-label="Filter by status" class="flex items-center rounded-lg border border-border bg-surface-3 p-0.5 text-xs">
         {#each [['all', 'All'], ['enabled', 'Enabled'], ['disabled', 'Disabled']] as [val, label] (val)}
-          <button type="button" onclick={() => statusFilter = val}
+          <button type="button" onclick={() => statusFilter = val} aria-pressed={statusFilter === val}
             class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer {statusFilter === val ? 'bg-vault text-on-vault' : 'text-text-muted hover:text-text'}">
             {label}
           </button>
@@ -1261,7 +1261,7 @@
                 <button
                   onclick={(e) => { e.stopPropagation(); toggleEnabled(job) }}
                   class="relative w-9 h-5 rounded-full transition-colors shrink-0 {job.enabled ? 'bg-vault' : 'bg-surface-4'}"
-                  title={job.enabled ? 'Disable job' : 'Enable job'}
+                  aria-label="Enable {job.name}"
                   role="switch"
                   aria-checked={job.enabled}
                 >

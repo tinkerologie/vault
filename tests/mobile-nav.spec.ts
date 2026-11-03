@@ -294,7 +294,7 @@ test.describe('mobile navigation at 375 px (#530)', () => {
   test('the recover wizard counts as part of Recovery', async ({ page }) => {
     await setupVaultMockApi(page);
     await page.goto('/#/recovery');
-    await page.getByRole('button', { name: 'Recover Vault' }).click();
+    await page.getByRole('link', { name: 'Recover Vault' }).click();
     await expect(h1(page, 'Recover Vault')).toBeFocused();
     await expect(more(page)).toHaveAttribute('aria-current', 'page');
     await more(page).click();

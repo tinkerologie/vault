@@ -1,5 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { setupVaultMockApi } from './mocks/vault-api';
+import { settleMotion } from './helpers/contrast';
+import { WIDGETS, tabWalk } from './helpers/keyboard-walk';
+import { PRESENTATIONS, ROUTES as EVERY_PAGE, VIEWPORTS, openPresentation } from './helpers/presentation';
 
 // Page headings and titles for every dispatched route (web/src/lib/routes.js).
 const ROUTES = [
@@ -395,4 +398,173 @@ test.describe('Page semantics (#529)', () => {
       await expect(h1(page, 'Backup & Restore History')).toBeFocused();
     });
   });
+});
+
+// The automated half of the #529 screen-reader pass: every routed page, in both
+// presentations, at desktop and 375 px. Tab from the top of the document to the
+// end and check what each stop would announce.
+test.describe('keyboard walkthrough on every page (#529)', () => {
+  test('the walk flags a control Tab skips, but not a roving group member or hidden content', async ({ page }) => {
+    await page.setContent(`<a href="#top">Skip</a>
+      <div role="tablist" aria-label="Sections">
+        <button role="tab" aria-selected="true" tabindex="0">One</button>
+        <button role="tab" aria-selected="false" tabindex="-1">Two</button>
+      </div>
+      <label><input type="radio" name="mode" checked> Light</label>
+      <label><input type="radio" name="mode"> Dark</label>
+      <button tabindex="-1">Stranded</button>
+      <div aria-hidden="true"><button tabindex="-1">Decorative</button></div>`);
+    const { unreached } = await tabWalk(page, page.mainFrame());
+    expect(unreached).toEqual(['<button tabindex="-1">Stranded</button>']);
+  });
+
+  for (const presentation of PRESENTATIONS) {
+    for (const viewport of VIEWPORTS) {
+      test.describe(`${presentation} at ${viewport.name}`, () => {
+        test.use({ viewport: { width: viewport.width, height: viewport.height } });
+
+        for (const route of EVERY_PAGE) {
+          test(`${route.name}: every control is reachable, named, visibly focused and not nested`, async ({ page }) => {
+            await settleMotion(page);
+            await setupVaultMockApi(page);
+            const frame = await openPresentation(page, presentation, route.hash);
+            await expect(frame.locator(route.ready).first()).toBeVisible();
+            await expect(frame.getByRole('heading', { level: 1, name: route.heading, exact: true })).toBeVisible();
+            expect(await frame.title()).toBe(`${route.heading} – Vault`);
+
+            const { stops, unreached } = await tabWalk(page, frame);
+            expect(stops.length, 'Tab reaches controls').toBeGreaterThan(1);
+            expect(stops[0].announced, 'the skip link is the first stop').toBe('link "Skip to main content"');
+            expect(stops.filter((s) => !s.named).map((s) => s.announced), 'unnamed stops').toEqual([]);
+            expect(stops.filter((s) => !s.visibleFocus).map((s) => s.announced), 'stops without a visible focus indicator').toEqual([]);
+            expect(stops.filter((s) => s.nestedIn).map((s) => `${s.announced} in ${s.nestedIn}`), 'nested controls').toEqual([]);
+            expect(unreached, 'controls Tab never reaches').toEqual([]);
+          });
+        }
+      });
+    }
+  }
+});
+
+// Defects the walkthrough found (#529): state a screen reader couldn't hear,
+// names that changed at 375 px, a control nested in a role="button" row, and
+// navigation done with buttons.
+test.describe('screen-reader state and names (#529)', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  test('Jobs: the status filter says which choice is on', async ({ page }) => {
+    await page.goto('/#/jobs');
+    const group = page.getByRole('group', { name: 'Filter by status' });
+    await expect(group.getByRole('button', { name: 'All', pressed: true })).toBeVisible();
+    await group.getByRole('button', { name: 'Disabled' }).click();
+    await expect(group.getByRole('button', { name: 'Disabled', pressed: true })).toBeVisible();
+    await expect(group.getByRole('button', { pressed: true })).toHaveCount(1);
+  });
+
+  test('Jobs: each enable switch names its job, so "on" means enabled', async ({ page }) => {
+    await page.goto('/#/jobs');
+    await expect(page.getByRole('switch', { name: 'Enable Docker & Appdata', checked: true })).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Enable VM Backups', checked: true })).toBeVisible();
+    await expect(page.getByRole('switch', { name: /Disable/ })).toHaveCount(0);
+    // No hover title or description that contradicts the state, on or off.
+    const docker = page.getByRole('switch', { name: 'Enable Docker & Appdata' });
+    await expect(docker).not.toHaveAttribute('title');
+    await expect(docker).toHaveAccessibleDescription('');
+    await docker.click();
+    await expect(docker).toHaveAttribute('aria-checked', 'false');
+    await expect(docker).not.toHaveAttribute('title');
+    await expect(docker).toHaveAccessibleDescription('');
+  });
+
+  for (const viewport of VIEWPORTS) {
+    test(`Restore at ${viewport.name}: steps keep their names and mark the current one`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('/#/restore');
+      const step1 = page.getByRole('button', { name: '1 Select Items' });
+      await expect(step1).toHaveAttribute('aria-current', 'step');
+      await expect(page.getByRole('button', { name: '2 Choose Version' })).not.toHaveAttribute('aria-current');
+      await expect(page.getByRole('button', { name: '3 Restore' })).toBeAttached();
+    });
+  }
+
+  test('Restore: the type filter and the item cards say what is selected', async ({ page }) => {
+    await page.goto('/#/restore');
+    const types = page.getByRole('group', { name: 'Filter by type' });
+    await expect(types.getByRole('button', { name: 'All', pressed: true })).toBeVisible();
+    await types.getByRole('button', { name: 'VMs' }).click();
+    await expect(types.getByRole('button', { name: 'VMs', pressed: true })).toBeVisible();
+    await types.getByRole('button', { name: 'All' }).click();
+
+    const plex = page.getByRole('button', { name: /^plex / });
+    await expect(plex).toHaveAttribute('aria-pressed', 'false');
+    await plex.focus();
+    await page.keyboard.press('Space');
+    await expect(plex).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('Enter');
+    await expect(plex).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('History: a run with details is a disclosure button, and its anomaly badge is a sibling', async ({ page }) => {
+    await page.route('**/api/v1/anomalies*', (route) => route.fulfill({ json: { anomalies: [{
+      id: 7, scope_kind: 'job', scope_id: 1, job_run_id: 901, summary: 'Backup size spike above baseline',
+      severity: 'warning', state: 'open', detected_at: '2026-10-01T02:20:00Z',
+    }] } }));
+    await page.goto('/#/history');
+    const run = page.getByRole('button', { name: 'Docker & Appdata completed', exact: true });
+    await expect(run).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('main [role="button"]')).toHaveCount(0);
+    expect(await run.locator(WIDGETS).count()).toBe(0);
+
+    await run.focus();
+    await page.keyboard.press('Enter');
+    await expect(run).toHaveAttribute('aria-expanded', 'true');
+    const details = page.locator(`#${await run.getAttribute('aria-controls')}`);
+    await expect(details).toContainText('Deduplication savings 53%');
+    await page.keyboard.press('Space');
+    await expect(run).toHaveAttribute('aria-expanded', 'false');
+
+    // The badge's tooltip button opens its tooltip without toggling the run.
+    const card = page.locator('main .rounded-xl', { has: run });
+    const badge = card.getByRole('button', { name: /warning/i });
+    await badge.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('tooltip')).toBeVisible();
+    await expect(run).toHaveAttribute('aria-expanded', 'false');
+
+    // A click anywhere on the summary row still toggles it.
+    const box = (await card.boundingBox())!;
+    await page.mouse.click(box.x + box.width - 40, box.y + 30);
+    await expect(run).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('Recovery: the ways into the wizard and to Jobs are links', async ({ page, context }) => {
+    await page.goto('/#/recovery');
+    const recover = page.getByRole('link', { name: 'Recover Vault' });
+    await expect(recover).toHaveAttribute('href', '#/recover');
+    await expect(page.getByRole('link', { name: 'Configure backup jobs →' })).toHaveAttribute('href', '#/jobs');
+    const [popup] = await Promise.all([context.waitForEvent('page'), recover.click({ modifiers: [NEW_TAB] })]);
+    await expect(popup).toHaveURL(/#\/recover$/);
+    await recover.click();
+    await expect(h1(page, 'Recover Vault')).toBeFocused();
+  });
+});
+
+test.describe('embedded presentation (#529)', () => {
+  for (const viewport of VIEWPORTS) {
+    test(`at ${viewport.name}: every route has its own title and focuses its heading`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await setupVaultMockApi(page);
+      const frame = await openPresentation(page, 'embedded', '#/logs');
+      const titles = new Set<string>();
+      for (const { hash, heading } of EVERY_PAGE.filter((r) => r.hash !== '#/logs')) {
+        await frame.evaluate((h) => { location.hash = h; }, hash);
+        await expect(frame.getByRole('heading', { level: 1, name: heading, exact: true })).toBeFocused();
+        expect(await frame.title()).toBe(`${heading} – Vault`);
+        titles.add(await frame.title());
+      }
+      expect(titles.size).toBe(EVERY_PAGE.length - 1);
+    });
+  }
 });

@@ -1,7 +1,6 @@
 <script>
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
-  import { navigate } from '../lib/router.svelte.js'
   import { api } from '../lib/api.js'
 	import { formatBytes, formatDate } from '../lib/utils.js'
 	import { recoveryCounts } from '../lib/recovery.js'
@@ -109,7 +108,7 @@
         The Recover Vault wizard reconnects your backup storage and restores your settings step by step.
       </p>
     </div>
-    <button class="btn btn-primary shrink-0" onclick={() => navigate('/recover')}>Recover Vault</button>
+    <a href="#/recover" class="btn btn-primary shrink-0 text-center">Recover Vault</a>
   </div>
 
   {#if loading}
@@ -163,9 +162,9 @@
           {/each}
         </ul>
         {#if totalUnprotected > 0}
-          <button onclick={() => navigate('/jobs')} class="mt-3 text-xs text-vault-text hover:underline font-medium">
+          <a href="#/jobs" class="mt-3 inline-block text-xs text-vault-text hover:underline font-medium">
             Configure backup jobs →
-          </button>
+          </a>
         {/if}
       </div>
     {/if}
