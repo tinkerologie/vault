@@ -815,3 +815,23 @@ func TestCleanStageDirResolvesAncestors(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMkdirPinnedTempFailures(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mkdirPinnedTemp(dir, "fixed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mkdirPinnedTemp(dir, "fixed"); err == nil {
+		t.Fatal("a pattern without a wildcard reused an existing name")
+	}
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := makeStageTemp(file, "backup-*"); err == nil {
+		t.Fatal("staged inside a regular file")
+	}
+}

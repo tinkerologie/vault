@@ -196,3 +196,13 @@ func TestExtractorWritesThroughItemHandle(t *testing.T) {
 	}
 	x.applyMeta("missing", 0o777, stamp)
 }
+
+func TestOpenItemRootRefusesFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openItemRoot(file); err == nil {
+		t.Fatal("regular file accepted as an item folder")
+	}
+}
