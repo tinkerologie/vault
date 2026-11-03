@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 var restoreAllowedRoots = []string{"/mnt", "/boot", "/tmp", "/etc", "/opt", "/usr/local", "/var", "/home", "/private/var", "/private/tmp"}
@@ -271,6 +272,11 @@ func NormalizeRestorePointPath(p string) (string, error) {
 	if path.IsAbs(trimmed) {
 		return "", fmt.Errorf("restore point path %q must be relative", trimmed)
 	}
+	// The S3 adapter turns a backslash into a separator, so a path holding one
+	// names something other than what every check here would see.
+	if strings.Contains(trimmed, `\`) {
+		return "", fmt.Errorf("restore point path %q must not contain a backslash", trimmed)
+	}
 	cleaned := path.Clean(trimmed)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("restore point path %q must stay within the destination", trimmed)
@@ -278,7 +284,23 @@ func NormalizeRestorePointPath(p string) (string, error) {
 	if !strings.Contains(cleaned, "/") {
 		return "", fmt.Errorf("restore point path %q must be <job>/<run>", trimmed)
 	}
+	// _vault holds the dedup repository and database backups, never a run.
+	if first, _, _ := strings.Cut(cleaned, "/"); isReservedVaultSegment(first) {
+		return "", fmt.Errorf("restore point path %q is inside Vault's reserved directory", trimmed)
+	}
 	return cleaned, nil
+}
+
+// isReservedVaultSegment reports whether seg is _vault, or becomes it on S3,
+// which stores each rune outside [A-Za-z0-9._~-] as an underscore ("$vault").
+func isReservedVaultSegment(seg string) bool {
+	rest, ok := strings.CutSuffix(seg, "vault")
+	if !ok || utf8.RuneCountInString(rest) != 1 {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	isKept := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '~'
+	return !isKept
 }
 
 // IsStrictDescendant reports whether child is a slash-separated path strictly

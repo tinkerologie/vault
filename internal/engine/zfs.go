@@ -283,12 +283,14 @@ func (h *ZFSHandler) Restore(ctx context.Context, item BackupItem, sourceDir str
 		return fmt.Errorf("parsing zfs metadata: %w", err)
 	}
 
-	// Determine restore destination.
-	destDataset := meta.Dataset
-	if rd, ok := item.Settings["restore_destination"].(string); ok && rd != "" {
-		destDataset = rd
-	} else if ds, ok := item.Settings["dataset"].(string); ok && ds != "" {
-		destDataset = ds
+	// The stream goes to a forced receive, so its target never comes from
+	// the backup's own metadata: zfs_meta.json sits on storage unauthenticated.
+	destDataset, err := zfsRestoreTarget(item.Settings)
+	if err != nil {
+		return fmt.Errorf("restoring %q: %w", item.Name, err)
+	}
+	if meta.Dataset != "" && meta.Dataset != destDataset {
+		log.Printf("engine/zfs: backup of %q is being received into configured dataset %q", meta.Dataset, destDataset)
 	}
 
 	// Validate the destination pool exists.

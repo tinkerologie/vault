@@ -1,11 +1,10 @@
 package cli
 
 import (
-	"database/sql"
-	"encoding/hex"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,7 +15,8 @@ import (
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/docsmeta"
-	"github.com/tinkerologie/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/maintlock"
+	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/storage"
 )
 
@@ -54,6 +54,8 @@ reachable chunks, then deletes packs whose every chunk is unreachable.
 
 Mixed packs (some live, some dead chunks) are left in place — reported as
 "rewritable bytes" only. Compaction is a separate future operation.
+
+Refuses to run while the Vault service is running; use the HTTP endpoint then. GC also stops, deleting nothing, if any restore point's manifest cannot be read.
 
 By default vault.key is read from the same directory as --db; use --key to point at a key restored to a different location (e.g. during disaster recovery).`,
 		RunE: runDedupGC,
@@ -179,6 +181,12 @@ func loadServerKeyAtPath(p string) ([]byte, error) {
 }
 
 func runDedupRepair(_ *cobra.Command, _ []string) error {
+	lock, err := lockForDedupMaintenance()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
 	ctx, cleanup, err := openDedupContext(dedupRepairDBVal, dedupRepairKey)
 	if err != nil {
 		return err
@@ -197,6 +205,12 @@ func runDedupRepair(_ *cobra.Command, _ []string) error {
 }
 
 func runDedupGC(_ *cobra.Command, _ []string) error {
+	lock, err := lockForDedupMaintenance()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
 	ctx, cleanup, err := openDedupContext(dedupGCDBVal, dedupGCKey)
 	if err != nil {
 		return err
@@ -229,90 +243,47 @@ func runDedupGC(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-// collectLiveManifestIDsForCLI mirrors runner.collectLiveManifestIDs. We
-// can't call the runner method directly without spinning up a full Runner
-// instance (which would pull in the entire engine + scheduler), so this
-// helper duplicates the (small) query. Keep in lockstep with runner.go —
-// including the engine.WalkManifestClosure expansion that pulls in
-// container-volume sub-manifests so GC never sweeps nested data chunks.
+// collectLiveManifestIDsForCLI is the daemon's reachability walk, so the two
+// can never disagree about what GC may delete.
 func collectLiveManifestIDsForCLI(repo *dedup.Repo, d *db.DB, destID int64) ([]dedup.ID, error) {
-	rows, err := d.Query(`
-        SELECT manifest_id, metadata
-          FROM restore_points
-         WHERE job_id IN (SELECT id FROM jobs WHERE storage_dest_id = ?)`, destID)
+	return runner.CollectLiveManifestIDs(repo, d, destID)
+}
+
+// lockForDedupMaintenance takes the host-wide maintenance lock, refusing while
+// a daemon runs: its backups register packs before their restore points exist,
+// so a sweep from here would delete them, and in hybrid mode it works from a
+// different database file than --db.
+func lockForDedupMaintenance() (*maintlock.HostLock, error) {
+	lock, err := maintlock.AcquireExclusive()
+	if errors.Is(err, maintlock.ErrBusy) {
+		return nil, fmt.Errorf("the Vault service or another vault dedup command is running; use Run cleanup on the Storage page (POST /api/v1/storage/{id}/gc), or stop the service first: %w", err)
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot confirm nothing else is writing to the repository: %w", err)
 	}
-	defer rows.Close()
+	return lock, nil
+}
 
-	tops := make([]dedup.ID, 0, 16)
-	seenTop := make(map[dedup.ID]struct{})
-	addTop := func(id dedup.ID) {
-		if _, ok := seenTop[id]; ok {
-			return
-		}
-		seenTop[id] = struct{}{}
-		tops = append(tops, id)
-	}
-	for rows.Next() {
-		var (
-			mID      []byte
-			metadata sql.NullString
-		)
-		if err := rows.Scan(&mID, &metadata); err != nil {
-			return nil, err
-		}
-		if len(mID) == 32 {
-			var id dedup.ID
-			copy(id[:], mID)
-			addTop(id)
-		}
-		if metadata.Valid && metadata.String != "" {
-			var meta map[string]any
-			if err := json.Unmarshal([]byte(metadata.String), &meta); err == nil {
-				if im, ok := meta["item_manifests"].(map[string]any); ok {
-					for _, v := range im {
-						hexStr, ok := v.(string)
-						if !ok || hexStr == "" {
-							continue
-						}
-						raw, derr := hex.DecodeString(hexStr)
-						if derr != nil || len(raw) != 32 {
-							continue
-						}
-						var id dedup.ID
-						copy(id[:], raw)
-						addTop(id)
-					}
-				}
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
+// noMaintenanceLockFlag lets a daemon start without the host lock, for an
+// unprivileged development run where /var/run cannot be used.
+const noMaintenanceLockFlag = "no-maintenance-lock"
 
-	// Expand each top-level manifest through its container-volume
-	// sub-manifests so GC marks the nested data chunks too.
-	seen := make(map[dedup.ID]struct{})
-	out := make([]dedup.ID, 0, len(tops))
-	for _, top := range tops {
-		manifests, _, werr := engine.WalkManifestClosure(repo, []dedup.ID{top})
-		if werr != nil {
-			fmt.Fprintf(os.Stderr, "  warning: skipping unreadable manifest %x: %v\n", top[:8], werr)
-			if _, ok := seen[top]; !ok {
-				seen[top] = struct{}{}
-				out = append(out, top)
-			}
-			continue
-		}
-		for _, id := range manifests {
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			out = append(out, id)
-		}
+// holdMaintenanceLock takes the host lock's shared side for a daemon's lifetime,
+// so vault dedup commands refuse to run alongside it. A daemon that cannot hold
+// it refuses to start: a maintenance command run by another user might still get
+// the lock, and could then sweep packs from a running backup.
+func holdMaintenanceLock(cmd *cobra.Command) (release func(), err error) {
+	if skip, _ := cmd.Flags().GetBool(noMaintenanceLockFlag); skip {
+		log.Printf("Warning: running without the maintenance lock (--%s); do not run vault dedup gc or repair while this process is up", noMaintenanceLockFlag)
+		return func() {}, nil
 	}
-	return out, nil
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lock, err := maintlock.AcquireShared(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot hold the maintenance lock (use --%s only for a development run): %w", noMaintenanceLockFlag, err)
+	}
+	return lock.Release, nil
 }

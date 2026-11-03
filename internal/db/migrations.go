@@ -357,10 +357,27 @@ var alterMigrations = []string{
 	"CREATE INDEX IF NOT EXISTS idx_mount_sessions_status ON mount_sessions(status)",
 }
 
+// settingZFSImportMarkerDone records that the one-time ZFS import marker
+// migration has run.
+const settingZFSImportMarkerDone = "zfs_import_marker_done"
+
 // dataMigrations are idempotent row rewrites, applied after alterMigrations.
 // Unlike the ALTER statements these are not expected to fail, so errors are
 // logged rather than swallowed.
 var dataMigrations = []string{
+	// ZFS import marker (#550). Restores trust a ZFS item's name as its target
+	// unless the item is marked as imported, because its name then came from a
+	// backup. Importers now write the marker; this marks items older importers
+	// created, recognised by their job's first run being an imported one. It
+	// runs once, so later history purges and retention cannot change an item's
+	// provenance. Items whose history was purged before the upgrade cannot be
+	// told apart and stay unmarked.
+	`UPDATE job_items SET settings = json_set(CASE WHEN COALESCE(settings, '') = '' THEN '{}' ELSE settings END, '$.imported', json('true'))
+	  WHERE item_type = 'zfs'
+	    AND NOT EXISTS (SELECT 1 FROM settings WHERE key = '` + settingZFSImportMarkerDone + `')
+	    AND (COALESCE(settings, '') = '' OR (json_valid(settings) AND json_type(settings) = 'object'))
+	    AND (SELECT status FROM job_runs WHERE job_id = job_items.job_id ORDER BY id LIMIT 1) = 'imported'`,
+	`INSERT OR IGNORE INTO settings (key, value) VALUES ('` + settingZFSImportMarkerDone + `', '1')`,
 	// container_mode canonicalisation (#261). The API's allow-list once named
 	// this mode "all_at_once", a value nothing else in the codebase used — the
 	// runner has only ever compared against "stop_all", so such a job silently

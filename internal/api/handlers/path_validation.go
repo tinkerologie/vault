@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/safepath"
 )
 
@@ -26,4 +27,17 @@ func normalizeRestoreDestination(path string) (string, error) {
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 	return safepath.NormalizeAbsoluteUnderRoots(path, safepath.RestoreAllowedRoots())
+}
+
+// restoreDestinationFor validates a restore destination for its items. A ZFS
+// restore receives into a dataset, named as zfs names it; every other item
+// restores to an absolute path under the allowed roots.
+func restoreDestinationFor(dest string, zfs bool) (string, error) {
+	if zfs {
+		if !engine.ValidZFSDatasetName(dest) {
+			return "", fmt.Errorf("%q is not a valid ZFS dataset name", dest)
+		}
+		return dest, nil
+	}
+	return normalizeRestoreDestination(dest)
 }

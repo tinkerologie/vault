@@ -35,6 +35,7 @@ import (
 	"github.com/tinkerologie/vault/internal/docsmeta"
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/format"
+	"github.com/tinkerologie/vault/internal/maintlock"
 	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/notify"
 	"github.com/tinkerologie/vault/internal/safepath"
@@ -2808,6 +2809,23 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// An import makes existing packs live only when its row commits, so a sweep
+	// during one would delete them. Refuse: holding the run slot while waiting
+	// for a long sync would stall every backup.
+	releaseDest, claimed := maintlock.TryExclusiveDestination(r.db, dest.ID)
+	if !claimed {
+		log.Printf("gc: refusing to run on dest %d (%q) during an import or replication sync", dest.ID, dest.Name)
+		r.Broadcast(map[string]any{
+			"type":        "dedup_gc_complete",
+			"gc_run_id":   runID,
+			"destination": dest.ID,
+			"status":      "failed",
+			"error":       errDestinationAdopting.Error(),
+		})
+		return
+	}
+	defer releaseDest()
+
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		log.Printf("gc: adapter for %q: %v", dest.Name, err)
@@ -2886,7 +2904,12 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 	r.Broadcast(msg)
 }
 
-// collectLiveManifestIDs returns every dedup manifest ID that GC must treat as
+// collectLiveManifestIDs is CollectLiveManifestIDs for this runner's database.
+func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup.ID, error) {
+	return CollectLiveManifestIDs(repo, r.db, destID)
+}
+
+// CollectLiveManifestIDs returns every dedup manifest ID that GC must treat as
 // reachable for the given destination. It reads each restore point's top-level
 // manifest IDs — both restore_points.manifest_id (the single-item shortcut) and
 // the per-item hex IDs under restore_points.metadata.item_manifests (multi-item
@@ -2897,11 +2920,15 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 // via __vol__ sub-manifests. GC's mark phase only marks the direct chunks of
 // each manifest in this list, so without the sub-manifest IDs here, every
 // data-only pack of a multi-pack container/plugin backup would be swept (silent
-// data loss). A manifest that can't be read (e.g. a partial/corrupt restore
-// point) is skipped rather than aborting GC for the whole destination.
-func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup.ID, error) {
-	rows, err := r.db.Query(`
-        SELECT manifest_id, metadata
+// data loss).
+//
+// The result must be complete, because anything missing from it is deleted. Any
+// metadata or manifest that cannot be read is therefore an error that stops GC
+// for the destination: unreclaimed space can be recovered later, swept packs
+// cannot.
+func CollectLiveManifestIDs(repo *dedup.Repo, d *db.DB, destID int64) ([]dedup.ID, error) {
+	rows, err := d.Query(`
+        SELECT id, manifest_id, metadata
           FROM restore_points
          WHERE job_id IN (SELECT id FROM jobs WHERE storage_dest_id = ?)`, destID)
 	if err != nil {
@@ -2920,36 +2947,26 @@ func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup
 	}
 	for rows.Next() {
 		var (
+			rpID     int64
 			mID      []byte
 			metadata sql.NullString
 		)
-		if err := rows.Scan(&mID, &metadata); err != nil {
+		if err := rows.Scan(&rpID, &mID, &metadata); err != nil {
 			return nil, err
 		}
-		if len(mID) == 32 {
-			var id dedup.ID
-			copy(id[:], mID)
-			addTop(id)
+		switch len(mID) {
+		case 0:
+		case len(dedup.ID{}):
+			addTop(dedup.ID(mID))
+		default:
+			return nil, fmt.Errorf("restore point %d: manifest_id has %d bytes", rpID, len(mID))
 		}
-		if metadata.Valid && metadata.String != "" {
-			var meta map[string]any
-			if err := json.Unmarshal([]byte(metadata.String), &meta); err == nil {
-				if im, ok := meta["item_manifests"].(map[string]any); ok {
-					for _, v := range im {
-						hexStr, ok := v.(string)
-						if !ok || hexStr == "" {
-							continue
-						}
-						raw, derr := hex.DecodeString(hexStr)
-						if derr != nil || len(raw) != 32 {
-							continue
-						}
-						var id dedup.ID
-						copy(id[:], raw)
-						addTop(id)
-					}
-				}
-			}
+		ids, err := itemManifestIDs(metadata.String)
+		if err != nil {
+			return nil, fmt.Errorf("restore point %d: %w", rpID, err)
+		}
+		for _, id := range ids {
+			addTop(id)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -2963,14 +2980,7 @@ func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup
 	for _, top := range tops {
 		manifests, _, werr := engine.WalkManifestClosure(repo, []dedup.ID{top})
 		if werr != nil {
-			log.Printf("gc: skipping unreadable manifest %x in reachability walk: %v", top[:8], werr)
-			// Still treat the top itself as reachable so we never delete a
-			// pack solely because one restore point's manifest is unreadable.
-			if _, ok := seen[top]; !ok {
-				seen[top] = struct{}{}
-				out = append(out, top)
-			}
-			continue
+			return nil, fmt.Errorf("manifest %x is unreadable, so its data cannot be protected: %w", top[:8], werr)
 		}
 		for _, id := range manifests {
 			if _, ok := seen[id]; ok {
@@ -2981,6 +2991,43 @@ func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup
 		}
 	}
 	return out, nil
+}
+
+// itemManifestIDs parses a restore point's metadata for its item_manifests.
+// Empty metadata has none; malformed metadata, or a malformed ID, may be hiding
+// live manifests and is an error.
+func itemManifestIDs(metadata string) ([]dedup.ID, error) {
+	if metadata == "" {
+		return nil, nil
+	}
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
+		return nil, fmt.Errorf("unreadable metadata: %w", err)
+	}
+	if meta == nil { // "null": no writer emits it, so it may hide item_manifests
+		return nil, errors.New("metadata is null")
+	}
+	raw, present := meta["item_manifests"]
+	if !present {
+		return nil, nil
+	}
+	im, ok := raw.(map[string]any)
+	if !ok {
+		return nil, errors.New("item_manifests is not an object")
+	}
+	ids := make([]dedup.ID, 0, len(im))
+	for item, v := range im {
+		hexStr, isString := v.(string)
+		if isString && hexStr == "" {
+			continue
+		}
+		decoded, err := hex.DecodeString(hexStr)
+		if !isString || err != nil || len(decoded) != len(dedup.ID{}) {
+			return nil, fmt.Errorf("invalid manifest ID for item %q", item)
+		}
+		ids = append(ids, dedup.ID(decoded))
+	}
+	return ids, nil
 }
 
 // backupItem executes a single item backup using the appropriate engine handler,
@@ -4486,7 +4533,7 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 	// RemoveAll, so a non-empty directory is left alone).
 	sort.Slice(pruneDirs, func(i, j int) bool { return len(pruneDirs[i]) > len(pruneDirs[j]) })
 	for _, rel := range pruneDirs {
-		if err := root.Remove(rel); err == nil {
+		if removeEmptyDirEntry(root, rel) {
 			pruned++
 		}
 	}
@@ -4494,6 +4541,73 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 		log.Printf("runner: chain prune removed %d entr%s deleted/excluded since restore point %d's chain base",
 			pruned, map[bool]string{true: "y", false: "ies"}[pruned == 1], newest.ID)
 	}
+}
+
+// importedItemSetting marks a job item created by an import, whose name and
+// settings came from a backup rather than from this server.
+const importedItemSetting = "imported"
+
+// zfsRestoreSettings returns the settings that let engine.ZFSRestoreTarget pick
+// a ZFS restore's target: the trusted dataset, if any, and the destination the
+// user chose for this restore, if any.
+func (r *Runner) zfsRestoreSettings(jobID int64, itemName, destination string) (map[string]any, error) {
+	settings := map[string]any{}
+	ds, err := r.configuredZFSDataset(jobID, itemName)
+	if err != nil {
+		return nil, err
+	}
+	if ds != "" {
+		settings["dataset"] = ds
+	}
+	if destination != "" {
+		settings["restore_destination"] = destination
+	}
+	return settings, nil
+}
+
+// configuredZFSDataset returns the dataset a restore of a job's ZFS item may
+// target, or "" when none is trusted, which zfsRestoreTarget refuses unless the
+// user chose a destination. A dataset set on the item wins. Otherwise an item
+// created on this server names its dataset, as ZFSHandler.Backup reads it, but
+// an item that came from a peer (replicated job) or from a backup (marked as
+// imported, by the importer or by the upgrade migration) does not.
+func (r *Runner) configuredZFSDataset(jobID int64, itemName string) (string, error) {
+	job, err := r.db.GetJob(jobID)
+	if err != nil {
+		return "", fmt.Errorf("loading job for ZFS restore: %w", err)
+	}
+	jobItems, err := r.db.GetJobItems(jobID)
+	if err != nil {
+		return "", fmt.Errorf("loading job items for ZFS restore: %w", err)
+	}
+	for _, ji := range jobItems {
+		if ji.ItemName != itemName || ji.ItemType != "zfs" {
+			continue
+		}
+		s, err := ji.ParsedSettings()
+		if err != nil {
+			return "", fmt.Errorf("reading settings of ZFS item %q: %w", itemName, err)
+		}
+		if ds, _ := s["dataset"].(string); ds != "" {
+			return ds, nil
+		}
+		if imported, _ := s[importedItemSetting].(bool); imported || job.SourceID != 0 {
+			return "", nil
+		}
+		return ji.ItemName, nil
+	}
+	return "", nil
+}
+
+// removeEmptyDirEntry removes a path a tar index marked as a directory, only if
+// it is one now. The index is unauthenticated and Remove also unlinks files and
+// symlinks, so the mark alone must not authorise deleting whatever is there.
+func removeEmptyDirEntry(root *os.Root, rel string) bool {
+	info, err := root.Lstat(rel)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	return root.Remove(rel) == nil
 }
 
 // pruneContainerChainResurrected removes files that the classic container
@@ -4671,7 +4785,7 @@ func (r *Runner) pruneContainerVolume(vol engine.ContainerVolumeTarget, stepDirs
 	// RemoveAll, so a directory holding anything kept is left alone).
 	sort.Slice(pruneDirs, func(i, j int) bool { return len(pruneDirs[i]) > len(pruneDirs[j]) })
 	for _, rel := range pruneDirs {
-		if err := root.Remove(rel); err == nil {
+		if removeEmptyDirEntry(root, rel) {
 			pruned++
 		}
 	}
@@ -5640,6 +5754,16 @@ func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, i
 		}
 	}
 
+	// A ZFS restore force-receives into the dataset configured on the job's
+	// item; the backup's own metadata never chooses it (see zfsRestoreTarget).
+	if itemType == "zfs" {
+		zs, err := r.zfsRestoreSettings(jobID, itemName, destination)
+		if err != nil {
+			return err
+		}
+		maps.Copy(backupItem.Settings, zs)
+	}
+
 	// Override restore destination if specified.
 	if destination != "" {
 		backupItem.Settings["restore_destination"] = destination
@@ -6126,7 +6250,7 @@ func (r *Runner) enforceRetentionLTR(ctx context.Context, dest db.StorageDestina
 		}
 		r.deleteVMCheckpointsForRP(rp)
 		if adapter != nil && rp.StoragePath != "" {
-			_ = r.deleteRestorePointDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
+			_ = r.deleteJobRestorePointDir(adapter, dest.ID, jobID, rp.StoragePath) // best-effort; errors are logged inside
 		}
 		if err := r.db.DeleteRestorePoint(rp.ID); err != nil {
 			log.Printf("runner: failed to delete restore point %d for job %d: %v", rp.ID, jobID, err)
@@ -6167,7 +6291,7 @@ func (r *Runner) enforceRetention(ctx context.Context, dest db.StorageDestinatio
 		// so retention continues to delete storage and the DB row.
 		r.deleteVMCheckpointsForRP(rp)
 		if adapter != nil && rp.StoragePath != "" {
-			_ = r.deleteRestorePointDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
+			_ = r.deleteJobRestorePointDir(adapter, dest.ID, jobID, rp.StoragePath) // best-effort; errors are logged inside
 		}
 		if err := r.db.DeleteRestorePoint(rp.ID); err != nil {
 			log.Printf("runner: failed to delete restore point %d for job %d: %v", rp.ID, jobID, err)
@@ -6300,14 +6424,14 @@ func (r *Runner) CleanupJobStorage(jobID int64) error {
 
 	for _, rp := range rps {
 		if rp.StoragePath != "" {
-			_ = r.deleteRestorePointDir(adapter, rp.StoragePath) // best-effort; errors are logged inside
+			_ = r.deleteJobRestorePointDir(adapter, dest.ID, jobID, rp.StoragePath) // best-effort; errors are logged inside
 		}
 	}
 
 	// Sweep the job directory for managed run folders the rows missed. Only
 	// directories holding a manifest.json are deleted, so foreign content in
 	// a directory that shares the job's name survives (#514).
-	_ = r.sweepManagedRunDirs(adapter, job.Name) // best-effort
+	_ = r.sweepManagedRunDirs(adapter, dest, jobID, job.Name) // best-effort
 
 	return nil
 }
@@ -6375,7 +6499,7 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 		var errs []error
 		for _, p := range storagePaths {
 			if p != "" {
-				if e := r.deleteRestorePointDir(adapter, p); e != nil {
+				if e := r.deleteJobRestorePointDir(adapter, dest.ID, jobID, p); e != nil {
 					errs = append(errs, e)
 				}
 			}
@@ -6386,7 +6510,7 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 		// (#514). A missing job directory is not an error (the sweep returns
 		// nil for it); any other failure leaves Vault data behind and is
 		// reported.
-		if e := r.sweepManagedRunDirs(adapter, jobName); e != nil {
+		if e := r.sweepManagedRunDirs(adapter, dest, jobID, jobName); e != nil {
 			errs = append(errs, e)
 		}
 
@@ -6430,13 +6554,28 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 // Repo-removal errors are appended to errs (genuine cleanup failures); GC
 // reports its own outcome via the dedup_gc_complete broadcast and the log.
 func (r *Runner) reclaimDedupAfterJobDelete(adapter storage.Adapter, jobID int64, dest db.StorageDestination, errs *[]error) {
+	// Hold the destination from the count through the removal, or an import
+	// finishing in between would lose its data to a stale count.
+	release, claimed := maintlock.TryExclusiveDestination(r.db, dest.ID)
+	if !claimed {
+		*errs = append(*errs, fmt.Errorf("dedup repository left in place: %w", errDestinationAdopting))
+		return
+	}
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	remaining, err := r.db.CountJobsByStorageDestID(dest.ID)
 	if err != nil {
 		log.Printf("runner: dedup cleanup: counting jobs for dest %d: %v", dest.ID, err)
 		return
 	}
 	if remaining > 0 {
-		// Other jobs still share the repo — reclaim only orphaned chunks.
+		// Other jobs still share the repo — reclaim only orphaned chunks. GC
+		// claims the destination itself.
+		release()
+		release = nil
 		r.RunDedupGC(dest, fmt.Sprintf("job-delete-%d", jobID))
 		return
 	}
@@ -6512,7 +6651,7 @@ func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.Stor
 		defer storage.CloseAdapter(adapter)
 
 		if storagePath != "" {
-			if e := r.deleteRestorePointDir(adapter, storagePath); e != nil {
+			if e := r.deleteJobRestorePointDir(adapter, dest.ID, jobID, storagePath); e != nil {
 				log.Printf("runner: async cleanup for restore point %d failed: %v", rpID, e)
 				r.logActivity("error", "system",
 					fmt.Sprintf("Failed to delete backup files for deleted restore point %d — files may remain on storage", rpID),
@@ -6558,6 +6697,12 @@ func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 		return fmt.Errorf("%w: list destination root: %w", ErrCleanupUnavailable, err)
 	}
 
+	release, claimed := maintlock.TryExclusiveDestination(r.db, dest.ID)
+	if !claimed {
+		return fmt.Errorf("%w: %w", ErrCleanupUnavailable, errDestinationAdopting)
+	}
+	defer release()
+
 	var errs []error
 
 	// 1. Restore points the database records for jobs on this destination.
@@ -6590,7 +6735,7 @@ func (r *Runner) CleanupStorageDestination(dest db.StorageDestination) error {
 		if !entry.IsDir || path.Clean(entry.Path) == "_vault" {
 			continue
 		}
-		if e := r.sweepManagedRunDirs(adapter, entry.Path); e != nil {
+		if e := r.sweepManagedRunDirs(adapter, dest, 0, entry.Path); e != nil {
 			errs = append(errs, e)
 		}
 	}
@@ -6880,6 +7025,10 @@ func parseAppdataTimestamp(dirName string) string {
 // Optional passphrase allows decrypting age-encrypted manifests if encrypted
 // placeholders are passed (issue #325).
 func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, passphrase ...string) (int, error) {
+	// Hold off orphan deletion: a file adopted here must not be deleted between
+	// its ownership check and its row being committed.
+	defer maintlock.HoldDestination(r.db, storageDestID)()
+
 	var pass string
 	if len(passphrase) > 0 {
 		pass = passphrase[0]
@@ -6933,6 +7082,10 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 		return importRepo, importRepoErr
 	}
 
+	unsealImportManifest := func(env manifestEnvelope) ([]byte, error) {
+		return unsealManifest(env, openDedup, pass)
+	}
+
 	imported := 0
 
 	for _, b := range backups {
@@ -6954,7 +7107,7 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 			log.Printf("runner: import: destination %d unavailable: %v", storageDestID, err)
 			continue
 		}
-		if err := checkImportPathOwned(adapter, b, validPath); err != nil {
+		if err := checkImportPathOwned(adapter, b, validPath, unsealImportManifest); err != nil {
 			log.Printf("runner: import: skipping %q: %v", rawPath, err)
 			continue
 		}
@@ -6975,28 +7128,9 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 			}
 
 			if isEnv, env := detectManifestEnvelope(data); isEnv {
-				var plaintext []byte
-				switch env.Key {
-				case "dedup":
-					if repo, openErr := openDedup(); openErr == nil {
-						if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
-							plaintext, _ = repo.DecryptManifest(cipherBytes)
-						}
-					}
-				case "age":
-					if pass != "" {
-						if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
-							if decReader, err := crypto.DecryptReader(pass, bytes.NewReader(cipherBytes)); err == nil {
-								if pt, readErr := bounded.ReadAll(decReader, bounded.ManifestBytes); readErr == nil {
-									plaintext = pt
-								}
-								_ = decReader.Close()
-							}
-						}
-					}
-				}
-				if plaintext == nil {
-					log.Printf("runner: import: cannot decrypt encrypted backup %s", storagePath)
+				plaintext, unsealErr := unsealImportManifest(env)
+				if unsealErr != nil {
+					log.Printf("runner: import: cannot decrypt encrypted backup %s: %v", storagePath, unsealErr)
 					continue
 				}
 				var decryptedManifest map[string]any
@@ -7027,8 +7161,20 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 			backupType = "full"
 		}
 
+		// The caller's job name decides which job's retention and cleanup govern
+		// this path, so a Vault backup must keep the job its directory names, and
+		// an existing job must live on this destination.
+		if source, _ := b["source"].(string); source != "appdata.backup" && !jobNameMatchesDir(jobName, path.Dir(storagePath)) {
+			log.Printf("runner: import: skipping %q: job name %q does not match its directory", storagePath, jobName)
+			continue
+		}
+
 		// Find or create the job.
 		job, err := r.db.GetJobByName(jobName)
+		if err == nil && job.StorageDestID != storageDestID {
+			log.Printf("runner: import: skipping %q: job %q uses another destination", storagePath, jobName)
+			continue
+		}
 		jobIsNew := false
 		if err != nil {
 			// Job doesn't exist — populate from the manifest where
@@ -7162,7 +7308,7 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 
 		run := db.JobRun{
 			JobID:       job.ID,
-			Status:      "imported",
+			Status:      db.JobRunStatusImported,
 			BackupType:  backupType,
 			ItemsTotal:  itemsTotal,
 			ItemsDone:   itemsDone,
@@ -7297,7 +7443,21 @@ func buildImportJobItems(b map[string]any) []db.JobItem {
 			}
 			itemID, _ := m["id"].(string)
 			settingsJSON := "{}"
-			if s, ok := m["settings"]; ok && s != nil {
+			s, hasSettings := m["settings"]
+			// A manifest's dataset and item name are unauthenticated and would
+			// later choose a forced ZFS receive target, so an imported ZFS item
+			// drops the dataset and is marked as imported until the user
+			// configures one (configuredZFSDataset).
+			if itemType == "zfs" {
+				sm, isMap := s.(map[string]any)
+				if !isMap {
+					sm = map[string]any{}
+				}
+				delete(sm, "dataset")
+				sm[importedItemSetting] = true
+				s, hasSettings = sm, true
+			}
+			if hasSettings && s != nil {
 				if sb, err := json.Marshal(s); err == nil {
 					settingsJSON = string(sb)
 				}

@@ -32,6 +32,12 @@ disaster recovery.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logx.Setup(os.Stderr)
 
+		releaseLock, err := holdMaintenanceLock(cmd)
+		if err != nil {
+			return err
+		}
+		defer releaseLock()
+
 		dbPath, _ := cmd.Flags().GetString("db")
 		addr, _ := cmd.Flags().GetString("addr")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
@@ -141,6 +147,7 @@ func init() {
 	replicaCmd.Flags().String("addr", ":24085", "API listen address")
 	replicaCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	replicaCmd.Flags().String("tls-key", "", "Path to TLS private key file")
+	replicaCmd.Flags().Bool(noMaintenanceLockFlag, false, "Start without the host maintenance lock (development only)")
 	replicaCmd.Flags().Bool("mdns", true, mdnsFlagUsage)
 	replicaCmd.Flags().StringSlice("allowed-origin", nil, allowedOriginFlagUsage)
 	rootCmd.AddCommand(replicaCmd)

@@ -24,7 +24,7 @@ func TestHasManifest_RefusesOversizedFile(t *testing.T) {
 	_ = f.Truncate(bounded.ManifestBytes + 1) // sparse
 	_ = f.Close()
 	a := storage.NewLocalAdapter(dir)
-	if hasManifest(a, "Job/run") {
+	if hasManifest(a, "Job/run", noUnseal) {
 		t.Fatal("oversized file treated as a manifest")
 	}
 }

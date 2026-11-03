@@ -77,7 +77,7 @@ func init() {
 	cleanupUninstallCmd.Flags().String("log-path", "/var/log/vault.log", "Vault log path")
 	cleanupUninstallCmd.Flags().String("pid-file", "/var/run/vault.pid", "Vault PID file path")
 	cleanupUninstallCmd.Flags().String("hybrid-working-dir", "/var/local/vault", "Hybrid-mode working database directory")
-	cleanupUninstallCmd.Flags().String("snapshot-path", "/mnt/cache/.vault/vault.db", "Default hybrid-mode snapshot database path")
+	cleanupUninstallCmd.Flags().String("snapshot-path", "", "Default hybrid-mode snapshot database path (default: .vault/vault.db on the preferred mounted pool)")
 	rootCmd.AddCommand(cleanupUninstallCmd)
 }
 

@@ -268,3 +268,21 @@ func TestJoinRemoteAlwaysUsesForwardSlashes(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeRestorePointPathRefusesReservedAndBackslash(t *testing.T) {
+	t.Parallel()
+	for _, p := range []string{"_vault/packs", "_vault/x/y", "$vault/packs", "é" + "vault/packs", `victim\run/sub`, `_vault\packs/aa`} {
+		if _, err := NormalizeRestorePointPath(p); err == nil {
+			t.Errorf("NormalizeRestorePointPath(%q) accepted", p)
+		}
+	}
+}
+
+func TestNormalizeRestorePointPathKeepsOrdinaryVaultNames(t *testing.T) {
+	t.Parallel()
+	for _, p := range []string{"vault/run", "myvault/run", "-vault/run", ".vault/run", "~vault/run", "xvault/run", "My Job/_vault"} {
+		if _, err := NormalizeRestorePointPath(p); err != nil {
+			t.Errorf("NormalizeRestorePointPath(%q) = %v", p, err)
+		}
+	}
+}
