@@ -394,11 +394,16 @@ func (d *DB) CreateImportedJobRun(run JobRun, ts time.Time) (int64, error) {
 // transaction: if either insert fails, neither row is kept, so a failed
 // insert never leaves a run that looks like a completed backup. ts is when
 // the peer took the backup; it becomes the run's start and end time and the
-// restore point's creation time. A zero ts means now. rp.JobRunID is ignored.
+// restore point's creation time. A zero ts means now. rp.JobRunID is ignored,
+// and the restore point takes its job from the run: a non-zero rp.JobID that
+// names another job is an error.
 func (d *DB) CreateReplicatedRestorePoint(run JobRun, rp RestorePoint, ts time.Time) (runID, rpID int64, err error) {
 	runType := run.RunType
 	if runType == "" {
 		runType = "backup"
+	}
+	if rp.JobID != 0 && rp.JobID != run.JobID {
+		return 0, 0, fmt.Errorf("create replicated restore point: restore point job %d does not match run job %d", rp.JobID, run.JobID)
 	}
 	if ts.IsZero() {
 		ts = time.Now()
@@ -427,12 +432,13 @@ func (d *DB) CreateReplicatedRestorePoint(run JobRun, rp RestorePoint, ts time.T
 		return 0, 0, fmt.Errorf("create replicated job run: last insert id: %w", err)
 	}
 
+	// job_id is read from the run just inserted, so the two rows always agree.
 	res, err = tx.Exec(
 		`INSERT INTO restore_points (job_run_id, job_id, backup_type, storage_path, metadata,
 			size_bytes, parent_restore_point_id, source_id, manifest_id, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		runID, rp.JobID, rp.BackupType, rp.StoragePath, rp.Metadata,
-		rp.SizeBytes, rp.ParentRestorePointID, rp.SourceID, rp.ManifestID, at,
+			SELECT id, job_id, ?, ?, ?, ?, ?, ?, ?, ? FROM job_runs WHERE id = ?`,
+		rp.BackupType, rp.StoragePath, rp.Metadata,
+		rp.SizeBytes, rp.ParentRestorePointID, rp.SourceID, rp.ManifestID, at, runID,
 	)
 	if err != nil {
 		return 0, 0, fmt.Errorf("create replicated restore point: %w", err)

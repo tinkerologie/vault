@@ -126,3 +126,44 @@ func TestCreateReplicatedRestorePointClosedDB585(t *testing.T) {
 		t.Fatal("want an error from a closed database")
 	}
 }
+
+// The restore point belongs to the job of the run it is recorded with: a zero
+// rp.JobID takes the run's job, and a different one is refused with no rows
+// written.
+func TestCreateReplicatedRestorePointJobFromRun585(t *testing.T) {
+	t.Parallel()
+	d, jobID := replicatedFixture(t)
+	otherID, err := d.CreateReplicatedJob(Job{Name: "[peer] other", SourceID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID, _, err := d.CreateReplicatedRestorePoint(
+		JobRun{JobID: jobID, Status: "success", BackupType: "full"},
+		RestorePoint{BackupType: "full", StoragePath: "j/run"}, time.Now())
+	if err != nil {
+		t.Fatalf("zero rp.JobID: %v", err)
+	}
+	rps, err := d.ListRestorePoints(jobID)
+	if err != nil || len(rps) != 1 || rps[0].JobID != jobID || rps[0].JobRunID != runID {
+		t.Fatalf("restore points = %+v, %v; want one on job %d, run %d", rps, err, jobID, runID)
+	}
+
+	if _, _, err := d.CreateReplicatedRestorePoint(
+		JobRun{JobID: jobID, Status: "success", BackupType: "full"},
+		RestorePoint{JobID: otherID, BackupType: "full", StoragePath: "j/run2"}, time.Now()); err == nil {
+		t.Fatal("want an error when rp.JobID names another job")
+	}
+	if n := countRunsAndPoints(t, d); n != 2 {
+		t.Errorf("rows = %d after the refused call, want 2 (one run, one restore point)", n)
+	}
+}
+
+func countRunsAndPoints(t *testing.T, d *DB) int {
+	t.Helper()
+	var n int
+	if err := d.QueryRow(`SELECT (SELECT COUNT(*) FROM job_runs) + (SELECT COUNT(*) FROM restore_points)`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
