@@ -695,6 +695,10 @@ func (m *mockDockerClient) ImageSave(ctx context.Context, _ []string, _ ...clien
 func (m *mockDockerClient) ImageLoad(ctx context.Context, _ io.Reader, _ ...client.ImageLoadOption) (client.ImageLoadResult, error) {
 	return nil, errors.New("mockDockerClient: ImageLoad not implemented")
 }
+func (m *mockDockerClient) ImageTag(_ context.Context, _ client.ImageTagOptions) (client.ImageTagResult, error) {
+	return client.ImageTagResult{}, nil
+}
+
 func (m *mockDockerClient) ImagePull(ctx context.Context, _ string, _ client.ImagePullOptions) (client.ImagePullResponse, error) {
 	return nil, errors.New("mockDockerClient: ImagePull not implemented")
 }

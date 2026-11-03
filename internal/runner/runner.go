@@ -3831,6 +3831,12 @@ type RestoreTarget struct {
 	// rather than merge the backup on top of them (issue #321). Ignored for a
 	// partial restore, where FilePaths names only some of the target's files.
 	CleanDestination bool
+	// AllowHostPrivileges approves host-level container settings from a backup
+	// this server cannot vouch for.
+	AllowHostPrivileges bool
+	// AllowUnpinnedImage accepts the image's current tag when a chunked backup's
+	// digest is missing or cannot be obtained.
+	AllowUnpinnedImage bool
 }
 
 // startStallWatchdog launches a goroutine that cancels ctx when no progress
@@ -4150,7 +4156,8 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		// restore reports its own size instead of the whole item's (#455).
 		tally := &engine.RestoreTally{}
 		diagBefore := runDiag.Snapshot()
-		restoreErr := r.restoreItemWithReporter(engine.WithRestoreTally(ctx, tally), restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
+		itemCtx := engine.WithRestoreTrust(engine.WithRestoreTally(ctx, tally), engine.RestoreTrust{AllowHostPrivileges: t.AllowHostPrivileges, AllowUnpinnedImage: t.AllowUnpinnedImage})
+		restoreErr := r.restoreItemWithReporter(itemCtx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
 		elapsed := time.Since(start)
 		itemDiag := diagDelta(diagBefore, runDiag.Snapshot())
 
@@ -4331,6 +4338,10 @@ func (r *Runner) restoreItemWithReporter(ctx context.Context, restorePoint db.Re
 }
 
 func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
+	trust := engine.RestoreTrustFrom(ctx)
+	trust.ArtifactTrusted = r.restorePointVouched(restorePoint, itemName)
+	ctx = engine.WithRestoreTrust(ctx, trust)
+
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
 		chain, err := r.buildRestoreChain(restorePoint)
@@ -5174,7 +5185,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		// prunable — and only when there is an earlier step to have
 		// resurrected anything.
 		if len(filePaths) == 0 && len(stepDirs) > 1 {
-			r.pruneContainerChainResurrected(stepDirs, mergedDir, destination, chain[len(chain)-1].ID)
+			r.pruneVouchedContainerChain(chain, itemName, stepDirs, mergedDir, destination, reporter)
 		}
 		return nil
 	}
@@ -5448,13 +5459,16 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		return fmt.Errorf("listing restore files: %w", err)
 	}
 
-	restoreFiles := make([]storage.FileInfo, 0, len(files))
+	restoreFiles, unlisted, err := selectRestoreObjects(files, expectedChecksums)
+	if err != nil {
+		return fmt.Errorf("restore files for %s: %w", itemName, err)
+	}
+	if len(unlisted) > 0 {
+		r.runLog(reporter.RunID, runLogLevelWarn,
+			fmt.Sprintf("Ignored %d file(s) in the backup of %s that this backup never recorded: %s", len(unlisted), itemName, strings.Join(unlisted, ", ")), nil)
+	}
 	var totalBytes int64
-	for _, fi := range files {
-		if fi.IsDir {
-			continue
-		}
-		restoreFiles = append(restoreFiles, fi)
+	for _, fi := range restoreFiles {
 		if fi.Size > 0 {
 			totalBytes += fi.Size
 		}

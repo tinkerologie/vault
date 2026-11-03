@@ -117,6 +117,7 @@ Thumbnails and re-encoded video are re-created by Immich on demand after a resto
 
 - Vault uses `zfs send` (full) and `zfs send -i` (incremental) under the hood and manages the snapshot lifecycle itself.
 - Restoration goes through `zfs receive -F`, preserving properties and child datasets. It overwrites the dataset configured on the job's item (or, for an item created on this server, the dataset it is named after), never one named by the backup itself. A job imported from storage or replicated from a peer has no trusted target: add a dataset to its item, or choose a dataset as the restore destination. Without either the restore is refused. A job imported by an older version may keep a dataset taken from the backup, so check that target before restoring. Upgrading marks the ZFS items of jobs an older version imported; a job whose run history was purged before the upgrade cannot be recognised and is treated as created on this server. A pool root is never restored to implicitly.
+- Mount settings come from this server, not the stream: `mountpoint`, `canmount` and `overlay` keep the values set on the existing dataset or are inherited, and the dataset is mounted after the receive.
 - The host `zfs` binary must be on `PATH` — true on any Unraid system with a ZFS pool.
 
 #### Notes on folders
@@ -304,6 +305,7 @@ The Restore wizard supports selecting items that belong to different backup jobs
    - Each source job is reviewed as an independent restore unit with its own destination overrides, passphrase (if age encrypted), clean destination toggle, and per-item file selection disclosures.
    - Pre-flight checks run per unit to ensure backups can be restored before starting.
    - Restores are submitted and executed sequentially, streaming live progress and logs per job.
+   - Container units have two approvals, both off by default. _Allow host-level access_ is needed when an imported or replicated backup, or one without stored checksums, asks for privileged mode, host networking, devices or host paths; the restore stops and lists them first. _Use the image's current tag_ is needed when a deduplicated backup's image digest is missing or can't be pulled; without it Vault restores the exact image that was backed up.
 
 <!-- prettier-ignore -->
 !!! note

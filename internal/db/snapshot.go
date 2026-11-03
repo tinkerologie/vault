@@ -30,6 +30,7 @@ type SnapshotManager struct {
 	snapshotPath        string
 	defaultSnapshotPath string // default path used when override is cleared.
 	usbBackupPath       string // USB flash shadow copy path (empty = disabled).
+	auth                *SnapshotAuth
 	lastSnapshot        time.Time
 	lastUSBBackup       time.Time
 	usbMinInterval      time.Duration // minimum interval between USB writes.
@@ -364,6 +365,13 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 	if err := sm.backupWorkingDBToPath(validPath); err != nil {
 		return fmt.Errorf("save snapshot: %w", err)
 	}
+	// Without its envelope the snapshot would be refused at the next boot, so
+	// the failure belongs to the caller.
+	if auth := sm.SnapshotAuth(); auth != nil {
+		if err := auth.Sign(validPath); err != nil {
+			return fmt.Errorf("authenticate snapshot: %w", err)
+		}
+	}
 
 	sm.mu.Lock()
 	sm.lastSnapshot = time.Now()
@@ -442,6 +450,11 @@ func (sm *SnapshotManager) rotateSnapshot() {
 			log.Printf("snapshot rotation: copy %s -> rotated/%s failed: %v (link error: %v)",
 				validPath, name, copyErr, err)
 			return
+		}
+	}
+	if auth := sm.SnapshotAuth(); auth != nil {
+		if err := auth.copyEnvelope(validPath, dstPath); err != nil {
+			log.Printf("snapshot rotation: authenticate %s: %v", dstPath, err)
 		}
 	}
 
@@ -550,6 +563,7 @@ func pruneRotatedIn(rotated *os.Root, display string) {
 		if err := rotated.Remove(e.Name()); err != nil {
 			log.Printf("snapshot rotation: remove %s: %v", filepath.Join(display, e.Name()), err)
 		}
+		_ = os.Remove(envelopePath(p))
 	}
 }
 

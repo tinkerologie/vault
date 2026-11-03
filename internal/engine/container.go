@@ -1746,6 +1746,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err := json.Unmarshal(configData, &inspect); err != nil {
 		return fmt.Errorf("parsing config: %w", err)
 	}
+	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
+		return err
+	}
 
 	// Check for alternate restore destination.
 	restoreDest, _ := item.Settings["restore_destination"].(string)
@@ -1973,6 +1976,10 @@ type restoreInspect struct {
 		Source      string `json:"Source"`
 		Destination string `json:"Destination"`
 	} `json:"Mounts"`
+
+	// imagePinned records that the tag was verified against the backup-time
+	// digest. It is decided during the restore and never read from the backup.
+	imagePinned bool
 }
 
 // mountInfo carries the mount fields needed to route a chunked volume
@@ -2208,7 +2215,12 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 	// the JSON-meta seeding is still safe to run as a confirmation, but
 	// when it fails (offline / private registry / etc.) we fall back to
 	// seeding from `image_meta.json` captured at backup time.
-	_ = populateRepoDigestsViaPull(ctx, h.cli, inspect.Config.Image)
+	//
+	// A pinned chunked restore skips the pull: the digest pull already set
+	// RepoDigests, and pulling the tag would move it off the backup-time image.
+	if !inspect.imagePinned {
+		_ = populateRepoDigestsViaPull(ctx, h.cli, inspect.Config.Image)
+	}
 	if sourceDir != "" {
 		restoreUnraidUpdateStatus(sourceDir, inspect.Config.Image)
 	}
@@ -2856,43 +2868,32 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		return fmt.Errorf("parse inspect: %w", err)
 	}
 
-	// 2. Pull the image fresh. We didn't save image.tar in chunked scope,
-	//    so this is the only way to get the layers locally. Errors are
-	//    logged-and-continued because the user may want to restore the
-	//    container metadata + volumes even when the registry is offline
-	//    (the container will fail to start, but at least the data is
-	//    back). populateRepoDigestsViaPull (called inside
-	//    recreateAndStartContainer) will run a second pull to refresh
-	//    RepoDigests for Unraid's update-status cache.
-	if inspect.Config.Image != "" {
-		if progress != nil {
-			progress(item.Name, 20, "pulling image "+inspect.Config.Image)
+	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
+		return err
+	}
+
+	// 2. Get the image. Chunked scope saved no image.tar, so the backup-time
+	//    digest is the only link to the code that was backed up; the tag may
+	//    have moved since.
+	var meta imageMeta
+	hasMeta := false
+	if metaEntry, ok := m.Files[containerImageMetaKey]; ok && len(metaEntry.Chunks) > 0 {
+		if metaBody, mErr := repo.Get(metaEntry.Chunks[0]); mErr == nil {
+			hasMeta = json.Unmarshal(metaBody, &meta) == nil
 		}
-		pullResp, pullErr := h.cli.ImagePull(ctx, inspect.Config.Image, client.ImagePullOptions{})
-		if pullErr != nil {
-			log.Printf("engine: chunked restore: image pull %q: %v (continuing — container may fail to start)", inspect.Config.Image, pullErr)
-		} else {
-			if waitErr := pullResp.Wait(ctx); waitErr != nil {
-				log.Printf("engine: chunked restore: image pull wait %q: %v", inspect.Config.Image, waitErr)
-			}
-			_ = pullResp.Close()
-		}
+	}
+	inspect.imagePinned, err = h.resolveChunkedImage(ctx, item, inspect.Config.Image, meta.RepoDigests, progress)
+	if err != nil {
+		return err
 	}
 
 	// 3. Seed Unraid update-status from the captured image_meta (only used
-	//    when the post-create populateRepoDigestsViaPull fails — e.g.
-	//    offline registry). Reuses the existing seedUnraidUpdateStatus
-	//    helper so the on-disk update-status.json format stays in sync
-	//    with the classic path. (recreateAndStartContainer calls
-	//    populateRepoDigestsViaPull again after the container is created.)
-	if metaEntry, ok := m.Files[containerImageMetaKey]; ok && len(metaEntry.Chunks) > 0 {
-		if metaBody, mErr := repo.Get(metaEntry.Chunks[0]); mErr == nil {
-			var meta imageMeta
-			if jErr := json.Unmarshal(metaBody, &meta); jErr == nil && len(meta.RepoDigests) > 0 {
-				if sha := extractSHA(meta.RepoDigests[0]); sha != "" {
-					seedUnraidUpdateStatus(inspect.Config.Image, sha)
-				}
-			}
+	//    when no digest pull populated RepoDigests — e.g. offline registry).
+	//    Reuses the existing seedUnraidUpdateStatus helper so the on-disk
+	//    update-status.json format stays in sync with the classic path.
+	if hasMeta && len(meta.RepoDigests) > 0 {
+		if sha := extractSHA(meta.RepoDigests[0]); sha != "" {
+			seedUnraidUpdateStatus(inspect.Config.Image, sha)
 		}
 	}
 

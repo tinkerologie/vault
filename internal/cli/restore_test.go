@@ -400,3 +400,134 @@ func TestValidateConfiguredPaths(t *testing.T) {
 	// Should not panic or error (just logs warnings).
 	validateConfiguredPaths(database)
 }
+
+// authFixture saves a real signed snapshot and returns a fresh manager to restore
+// it into, enrolled under the same key.
+func authFixture(t *testing.T) (dir, snapshot, usb string, sm *db.SnapshotManager, source *db.DB) {
+	t.Helper()
+	dir = t.TempDir()
+	snapshot = filepath.Join(dir, "cache", "vault.db")
+	usb = filepath.Join(dir, "usb", "vault.db.backup")
+	anchor := filepath.Join(dir, "usb")
+	if err := os.MkdirAll(anchor, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	auth := db.NewSnapshotAuth(make([]byte, 32), anchor, false)
+	var err error
+	if source, err = db.Open(filepath.Join(dir, "source.db")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	if err := source.SetSetting("marker", "signed"); err != nil {
+		t.Fatal(err)
+	}
+	saver := db.NewSnapshotManager(source, snapshot, snapshot)
+	saver.SetSnapshotAuth(auth)
+	if err := saver.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := db.Open(filepath.Join(dir, "fresh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fresh.Close() })
+	sm = db.NewSnapshotManager(fresh, snapshot, snapshot)
+	sm.SetSnapshotAuth(auth)
+	return dir, snapshot, usb, sm, source
+}
+
+func TestRestoreWithFallbackSignedSnapshotRestores(t *testing.T) {
+	_, snapshot, usb, sm, _ := authFixture(t)
+	info := restoreWithFallback(sm, snapshot, snapshot, "", usb)
+	if info.Source != "primary" {
+		t.Fatalf("source = %s (%s)", info.Source, info.Reason)
+	}
+}
+
+func TestRestoreWithFallbackRefusesReplacedSnapshot(t *testing.T) {
+	dir, snapshot, usb, sm, _ := authFixture(t)
+	// A real database an attacker prepared: valid, passes the integrity check.
+	evil, err := db.Open(filepath.Join(dir, "evil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewSnapshotManager(evil, filepath.Join(dir, "evil-snap.db"), filepath.Join(dir, "evil-snap.db")).SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	_ = evil.Close()
+	data, err := os.ReadFile(filepath.Join(dir, "evil-snap.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapshot, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info := restoreWithFallback(sm, snapshot, snapshot, "", usb)
+	if info.Source != "fresh" {
+		t.Fatalf("source = %s, want the replaced snapshot refused", info.Source)
+	}
+}
+
+func TestRestoreWithFallbackRefusesSnapshotWithEnvelopeRemoved(t *testing.T) {
+	_, snapshot, usb, sm, _ := authFixture(t)
+	if err := os.Remove(snapshot + ".auth"); err != nil {
+		t.Fatal(err)
+	}
+	// The stripped primary is refused; its signed rotated copy is the next choice.
+	if info := restoreWithFallback(sm, snapshot, snapshot, "", usb); info.Source != "rotated" {
+		t.Fatalf("source = %s", info.Source)
+	}
+}
+
+func TestRestoreWithFallbackFreshnessIgnoresForgedMtime(t *testing.T) {
+	dir, snapshot, usb, sm, source := authFixture(t)
+	if err := db.NewSnapshotManager(source, usb, usb).SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(usb, old, old); err != nil {
+		t.Fatal(err)
+	}
+	// Backdating the signed snapshot's mtime must not change its signed time...
+	if err := os.Chtimes(snapshot, old.Add(-time.Hour), old.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if info := restoreWithFallback(sm, snapshot, snapshot, "", usb); info.Source != "primary" {
+		t.Fatalf("source = %s (dir %s)", info.Source, dir)
+	}
+}
+
+func TestLoadSnapshotAuth(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "vault.cfg")
+	if err := os.WriteFile(cfg, []byte("ALLOW_UNSIGNED_SNAPSHOT=\"yes\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := loadSnapshotAuth(filepath.Join(dir, "vault.db"), cfg)
+	if err != nil || auth == nil {
+		t.Fatalf("auth = %v, err = %v", auth, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "vault.key")); err != nil {
+		t.Errorf("key not created: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad", "vault.key"), nil, 0o600); err == nil {
+		t.Fatal("setup")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "bad"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad", "vault.key"), []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSnapshotAuth(filepath.Join(dir, "bad", "vault.db"), cfg); err == nil {
+		t.Fatal("want error for a damaged key")
+	}
+}
+
+func TestRestoreWithFallbackSkipsMissingSnapshots(t *testing.T) {
+	_, snapshot, usb, sm, _ := authFixture(t)
+	missing := filepath.Join(t.TempDir(), "missing.db")
+	if info := restoreWithFallback(sm, snapshot, missing, "", usb); info.Source != "primary" {
+		t.Fatalf("source = %s", info.Source)
+	}
+}

@@ -44,6 +44,14 @@ type fakeZFS struct {
 	recvErr     error
 	zpoolErr    error
 
+	// Replies to `zfs get`: mountProps for the pre-receive read (an empty value
+	// reports a dataset that does not exist), mountState for the one after it.
+	mountProps  string
+	mountState  string
+	mountGetErr error
+	stateGetErr error
+	mountErr    error
+
 	calls     [][]string
 	destroyed []string
 	received  bytes.Buffer
@@ -92,6 +100,25 @@ func (f *fakeZFS) Run(_ context.Context, stdin io.Reader, stdout, stderr io.Writ
 	case "destroy":
 		f.destroyed = append(f.destroyed, args[len(args)-1])
 		return nil
+	case "get":
+		if slices.Contains(args, "value") {
+			if f.stateGetErr != nil {
+				return f.stateGetErr
+			}
+			_, err := io.WriteString(stdout, f.mountState)
+			return err
+		}
+		if f.mountGetErr != nil {
+			return f.mountGetErr
+		}
+		if f.mountProps == "" {
+			_, _ = io.WriteString(stderr, "cannot open: dataset does not exist")
+			return errors.New("exit status 1")
+		}
+		_, err := io.WriteString(stdout, f.mountProps)
+		return err
+	case "mount":
+		return f.mountErr
 	case "recv":
 		if _, err := io.Copy(&f.received, stdin); err != nil {
 			return err
@@ -455,7 +482,7 @@ func TestZFSRestore458(t *testing.T) {
 				t.Fatalf("Restore: %v", err)
 			}
 			recvs := f.commands("recv")
-			if len(recvs) != 1 || !slices.Equal(recvs[0][1:], []string{"recv", "-F", tt.want}) {
+			if len(recvs) != 1 || !slices.Equal(recvs[0][1:], []string{"recv", "-u", "-F", "-x", "mountpoint", "-x", "canmount", "-x", "overlay", tt.want}) {
 				t.Fatalf("recv = %v", recvs)
 			}
 			if f.received.String() != "stream-to-receive" {

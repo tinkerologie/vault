@@ -203,6 +203,13 @@ Responses never contain a source's API key: `config` shows `••••••�
 | GET    | `/recovery/path-audit` | List job/item paths that don't exist on this server (used by the Recover Vault wizard's path check)          |
 | POST   | `/recovery/path-remap` | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                              |
 
+### Restore approvals (`/jobs/{id}/restore`)
+
+Two optional booleans in the restore body approve what a container restore otherwise refuses. Both default to `false` and apply to every item in the request:
+
+- `allow_host_privileges` — restore host-level settings (privileged mode, host network, IPC or PID, added capabilities, devices, host paths outside `/mnt`) from a backup this server did not make or cannot verify: imported, replicated, or without stored checksums.
+- `allow_unpinned_image` — for a deduplicated container backup whose recorded image digest is missing or cannot be pulled, use the image the tag points to now.
+
 ### Restoring the database (`restore-db`)
 
 `POST /storage/{id}/restore-db` takes a JSON body:
@@ -212,6 +219,8 @@ Responses never contain a source's API key: `config` shows `••••••�
 - `verify_only` — when `true`, validates the backup (and passphrase) without replacing the current database.
 
 List the available backups first with `GET /storage/{id}/db-backups`.
+
+If this server has an API key, the restored database keeps that key rather than the one in the backup.
 
 The response's `locked_credentials` counts restored storage destinations and replication sources sealed with a different `vault.key`. See [Stored credentials and vault.key](guides/disaster-recovery.md#stored-credentials-and-vaultkey).
 

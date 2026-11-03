@@ -295,6 +295,14 @@ func (d *DB) SealPersistentCopies(ctx context.Context, sm *SnapshotManager, extr
 		}
 		if err := SealCopy(p, key); err != nil {
 			errs = append(errs, fmt.Errorf("seal copy %s: %w", p, err))
+			continue
+		}
+		// Sealing rewrote the file, so an envelope written for the old bytes
+		// would now reject a good snapshot.
+		if sm != nil {
+			if err := sm.reauthenticate(p); err != nil {
+				errs = append(errs, fmt.Errorf("authenticate copy %s: %w", p, err))
+			}
 		}
 	}
 	if len(errs) > 0 {

@@ -113,7 +113,7 @@ func TestContainerChunkedDatabaseRoundTrip458(t *testing.T) {
 	if err := os.Remove(filepath.Join(vol, "PG_VERSION")); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&ContainerHandler{cli: rf}).RestoreChunked(t.Context(), BackupItem{Name: "db"}, repo, id, "", noopProgress); err != nil {
+	if err := (&ContainerHandler{cli: rf}).RestoreChunked(sameServerRestore(t), BackupItem{Name: "db"}, repo, id, "", noopProgress); err != nil {
 		t.Fatalf("RestoreChunked: %v", err)
 	}
 	if got := readFile458(t, filepath.Join(vol, "PG_VERSION")); got != "16" {
@@ -172,7 +172,7 @@ func TestContainerRestoreChunkedManifestErrors458(t *testing.T) {
 			repo := newChunkTestRepo(t)
 			id := put(t, repo, tt.files)
 			f, _ := newRestoreDaemon458()
-			err := (&ContainerHandler{cli: f}).RestoreChunked(t.Context(), BackupItem{Name: "x"}, repo, id, tt.dest, nil)
+			err := (&ContainerHandler{cli: f}).RestoreChunked(sameServerRestore(t), BackupItem{Name: "x"}, repo, id, tt.dest, nil)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("err = %v, want %q", err, tt.wantErr)
 			}
