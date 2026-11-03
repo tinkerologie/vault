@@ -170,7 +170,7 @@ Replication is pull-based: a sync imports only the remote jobs whose `source_id`
 | POST   | `/replication/{id}/sync` | Trigger replication immediately |
 | GET    | `/replication/{id}/jobs` | List replicated jobs            |
 
-Responses never contain a source's API key: `config` shows `••••••••` instead, and `credentials_locked` is `true` when this server's `vault.key` cannot open it. On update, an omitted, blank or masked `api_key` keeps the stored key and a new value replaces it. Changing `url` requires sending the key again, so a stored key only goes to the server it was entered for. `warning` is set when the source uses plain HTTP to another machine. Plain HTTP stays allowed, so use it only on a network you trust.
+Responses never contain a source's API key: `config` shows `••••••••` instead, and `credentials_locked` is `true` when this server's `vault.key` cannot open it. On update, omitted fields keep their stored values, an omitted, blank or masked `api_key` keeps the stored key, and a new value replaces it. Changing `url` requires sending the key again, so a stored key only goes to the server it was entered for. `warning` is set when the source uses plain HTTP to another machine. Plain HTTP stays allowed, so use it only on a network you trust.
 
 ## Recovery
 

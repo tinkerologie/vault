@@ -486,3 +486,51 @@ func TestLockedURLLoginStillSavesOtherFields(t *testing.T) {
 		t.Fatalf("after = %+v", dest)
 	}
 }
+
+func TestReplicationUpdateKeepsCapitalizedStoredKey(t *testing.T) {
+	t.Parallel()
+	h, d := setupReplicationTest(t)
+	id, err := d.CreateReplicationSource(db.ReplicationSource{Name: "p", Type: "remote_vault", URL: "http://peer.lan", Config: `{"API_KEY":"` + replKey + `"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := updateSource(t, h, id, `{"name":"renamed","url":"http://peer.lan","config":"{\"api_key\":\"`+credentials.RedactionMarker+`\"}"}`)
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	if got := storedKey(t, d, id); got != replKey {
+		t.Fatalf("stored key = %q", got)
+	}
+}
+
+func TestReplicationPartialUpdateKeepsOtherFields(t *testing.T) {
+	t.Parallel()
+	h, d := setupReplicationTest(t)
+	id, err := d.CreateReplicationSource(db.ReplicationSource{Name: "p", Type: "remote_vault", URL: "http://peer.lan",
+		Config: `{"api_key":"` + replKey + `"}`, Schedule: "0 3 * * *", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := updateSource(t, h, id, `{"name":"renamed"}`); w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	src, err := d.GetReplicationSource(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.Name != "renamed" || src.URL != "http://peer.lan" || src.Schedule != "0 3 * * *" || !src.Enabled || storedKey(t, d, id) != replKey {
+		t.Fatalf("partial update changed other fields: %+v", src)
+	}
+	if w := updateSource(t, h, id, `{"enabled":false,"storage_dest_id":0,"schedule":"","type":""}`); w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	if src, _ = d.GetReplicationSource(id); src.Enabled || src.Schedule != "" {
+		t.Fatalf("explicit values ignored: %+v", src)
+	}
+	if w := updateSource(t, h, id, `{"url":""}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("empty url: %d", w.Code)
+	}
+	if w := updateSource(t, h, id, `{not json`); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad JSON: %d", w.Code)
+	}
+}

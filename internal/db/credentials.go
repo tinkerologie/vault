@@ -270,13 +270,22 @@ func (d *DB) SealPersistentCopies(ctx context.Context, sm *SnapshotManager, extr
 		if err := sm.FlushToUSB(); err != nil {
 			errs = append(errs, fmt.Errorf("flush sealed database: %w", err))
 		}
-		rotatedDir := filepath.Join(filepath.Dir(sm.SnapshotPath()), "rotated")
-		rotated, err := os.ReadDir(rotatedDir)
-		if err != nil && !os.IsNotExist(err) {
-			errs = append(errs, err)
+		// The default cache stays a restore candidate after a custom snapshot
+		// path is set, so its copies count too.
+		snapshots := []string{sm.SnapshotPath()}
+		if def := sm.DefaultSnapshotPath(); def != "" && def != sm.SnapshotPath() {
+			snapshots = append(snapshots, def)
+			paths = append(paths, def)
 		}
-		for _, e := range rotated {
-			paths = append(paths, filepath.Join(rotatedDir, e.Name()))
+		for _, snapshot := range snapshots {
+			rotatedDir := filepath.Join(filepath.Dir(snapshot), "rotated")
+			rotated, err := os.ReadDir(rotatedDir)
+			if err != nil && !os.IsNotExist(err) {
+				errs = append(errs, err)
+			}
+			for _, e := range rotated {
+				paths = append(paths, filepath.Join(rotatedDir, e.Name()))
+			}
 		}
 	}
 	for _, p := range paths {

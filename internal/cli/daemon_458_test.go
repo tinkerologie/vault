@@ -600,3 +600,19 @@ func TestDaemonRefusesHalfConfiguredTLSBeforeStarting(t *testing.T) {
 		t.Fatalf("started before refusing: %v", err)
 	}
 }
+
+func TestReplicaRefusesHalfConfiguredTLSBeforeStarting(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "vault.db")
+	cmd := &cobra.Command{Use: "replica"}
+	cmd.SetContext(context.Background())
+	cmd.Flags().String("db", dbPath, "")
+	cmd.Flags().String("addr", "127.0.0.1:0", "")
+	cmd.Flags().String("tls-cert", "", "")
+	cmd.Flags().String("tls-key", "/tmp/only-a-key", "")
+	if err := replicaCmd.RunE(cmd, nil); err == nil || !strings.Contains(err.Error(), "--tls-cert") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Fatalf("started before refusing: %v", err)
+	}
+}

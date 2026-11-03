@@ -573,3 +573,38 @@ func TestMalformedStoredConfigIsSealed(t *testing.T) {
 		t.Fatalf("config = %q (err %v)", dest.Config, err)
 	}
 }
+
+func TestSealPersistentCopiesCoversDefaultCacheWithCustomSnapshotPath(t *testing.T) {
+	dir := t.TempDir()
+	d, err := Open(filepath.Join(dir, "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	seedPlaintext(t, d)
+
+	// The default cache was written before the snapshot path moved.
+	def := filepath.Join(dir, "cache", "vault.db")
+	old := NewSnapshotManager(d, def, def)
+	if err := old.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	rotated, _ := filepath.Glob(filepath.Join(dir, "cache", "rotated", "*"))
+	if len(rotated) == 0 || !fileHasSecret(t, def) {
+		t.Fatalf("premise: default cache holds plaintext, rotated %v", rotated)
+	}
+
+	d.SetCredentialKey(credKeyA)
+	if _, err := d.SealSecretsAtRest(); err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSnapshotManager(d, filepath.Join(dir, "custom", "vault.db"), def)
+	if err := d.SealPersistentCopies(context.Background(), sm, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range append(rotated, def) {
+		if fileHasSecret(t, p) {
+			t.Errorf("%s still holds plaintext", p)
+		}
+	}
+}

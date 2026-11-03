@@ -182,7 +182,12 @@ func mergeReplicationKey(incoming db.ReplicationSource, stored db.ReplicationSou
 		}
 	}
 	key, _ := in["api_key"].(string)
-	storedKey, _ := ex["api_key"].(string)
+	storedKey := ""
+	for k, v := range ex {
+		if strings.EqualFold(k, "api_key") {
+			storedKey, _ = v.(string)
+		}
+	}
 	if key != "" && key != credentials.RedactionMarker {
 		out, err := json.Marshal(in)
 		return string(out), err
@@ -286,26 +291,26 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var src db.ReplicationSource
-	if err := json.NewDecoder(r.Body).Decode(&src); err != nil {
+	// Pointers tell "omitted" from "empty", so a partial body leaves the other
+	// fields alone instead of blanking them.
+	var patch struct {
+		Name          *string `json:"name"`
+		Type          *string `json:"type"`
+		URL           *string `json:"url"`
+		Config        *string `json:"config"`
+		StorageDestID *int64  `json:"storage_dest_id"`
+		Schedule      *string `json:"schedule"`
+		Enabled       *bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	src.ID = id
 
-	if src.Type == "" {
-		src.Type = "remote_vault"
-	}
-
-	switch src.Type {
-	case "remote_vault":
-		if src.URL != "" {
-			normalizedURL, err := replication.NormalizeBaseURL(src.URL)
-			if err != nil {
-				respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
-				return
-			}
-			src.URL = normalizedURL
+	if patch.URL != nil && *patch.URL != "" {
+		if _, err := replication.NormalizeBaseURL(*patch.URL); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+			return
 		}
 	}
 
@@ -314,6 +319,39 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
+	src := stored
+	src.Config = ""
+	if patch.Name != nil {
+		src.Name = *patch.Name
+	}
+	if patch.Type != nil && *patch.Type != "" {
+		src.Type = *patch.Type
+	}
+	if patch.URL != nil {
+		src.URL = *patch.URL
+	}
+	if patch.Config != nil {
+		src.Config = *patch.Config
+	}
+	if patch.StorageDestID != nil {
+		src.StorageDestID = *patch.StorageDestID
+	}
+	if patch.Schedule != nil {
+		src.Schedule = *patch.Schedule
+	}
+	if patch.Enabled != nil {
+		src.Enabled = *patch.Enabled
+	}
+
+	if src.Type == "remote_vault" {
+		normalizedURL, err := replication.NormalizeBaseURL(src.URL)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+			return
+		}
+		src.URL = normalizedURL
+	}
+
 	src.Config, err = mergeReplicationKey(src, stored)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())

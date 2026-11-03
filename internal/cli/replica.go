@@ -35,6 +35,9 @@ disaster recovery.`,
 		addr, _ := cmd.Flags().GetString("addr")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
+		if err := api.CheckTLSPair(tlsCert, tlsKey); err != nil {
+			return err
+		}
 		mdns, _ := cmd.Flags().GetBool("mdns")
 
 		// Ensure the database directory exists.
