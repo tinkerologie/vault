@@ -73,7 +73,7 @@ func TestRestorePointVouched(t *testing.T) {
 	}{
 		{"own backup with checksums", db.RestorePoint{JobID: local, Metadata: checksums}, true},
 		{"own chunked backup", db.RestorePoint{JobID: local, Metadata: `{"item_manifests":{"web":"` + strings.Repeat("ab", 32) + `"}}`}, true},
-		{"own backup without checksums", db.RestorePoint{JobID: local, Metadata: `{}`}, false},
+		{"own backup without checksums (Verify backup off)", db.RestorePoint{JobID: local, Metadata: `{}`}, true},
 		{"imported, whatever its manifest claims", db.RestorePoint{JobID: local, Metadata: `{"imported":true,"checksums":{"web":{"config.json":"h"}}}`}, false},
 		{"replicated", db.RestorePoint{JobID: local, SourceID: 7, Metadata: checksums}, false},
 		{"unreadable metadata", db.RestorePoint{JobID: local, Metadata: `{`}, false},
@@ -202,4 +202,25 @@ func TestPruneVouchedContainerChain(t *testing.T) {
 			t.Fatalf("file deleted on the word of unchecked sidecars: %v", err)
 		}
 	})
+}
+
+func TestChainProvenanceLocal(t *testing.T) {
+	r, database := newTestRunner(t)
+	dest, err := database.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := database.CreateJob(db.Job{Name: "j", StorageDestID: dest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := db.RestorePoint{JobID: jobID, Metadata: `{"item_sizes":{"web":1}}`}
+	imported := db.RestorePoint{JobID: jobID, Metadata: `{"item_sizes":{"web":1},"imported":true}`}
+	otherItem := db.RestorePoint{JobID: jobID, Metadata: `{"item_sizes":{"other":1},"imported":true}`}
+	if !r.chainProvenanceLocal([]db.RestorePoint{own, otherItem, own}, "web") {
+		t.Error("own chain refused")
+	}
+	if r.chainProvenanceLocal([]db.RestorePoint{imported, own}, "web") {
+		t.Error("imported base step trusted")
+	}
 }

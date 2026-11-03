@@ -422,3 +422,48 @@ func TestUnreadableEnvelopeIsNotTreatedAsUnsigned(t *testing.T) {
 		t.Error("reauthenticate: want error")
 	}
 }
+
+// Changes still only in the working database's WAL must be inside the signed
+// snapshot, because the verified copy never carries a WAL across.
+func TestSignedSnapshotIncludesPendingWALChanges(t *testing.T) {
+	dir := t.TempDir()
+	working, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = working.Close() })
+	if _, err := working.Exec(`PRAGMA wal_autocheckpoint=0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := working.SetSetting("wal_only", "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, "working.db-wal")); err != nil || info.Size() == 0 {
+		t.Fatalf("test premise: change should be pending in the WAL (%v)", err)
+	}
+	snap := filepath.Join(dir, "cache", "vault.db")
+	a, _ := testAuth(t, false)
+	sm := NewSnapshotManager(working, snap, snap)
+	sm.SetSnapshotAuth(a)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := Open(filepath.Join(dir, "fresh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fresh.Close() })
+	restorer := NewSnapshotManager(fresh, snap, snap)
+	restorer.SetSnapshotAuth(a)
+	copyPath, release, err := a.VerifiedCopy(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := restorer.RestoreFromPath(copyPath); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := fresh.GetSetting("wal_only", ""); got != "committed" {
+		t.Fatalf("restored setting = %q", got)
+	}
+}

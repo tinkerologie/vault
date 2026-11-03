@@ -66,17 +66,23 @@ func (r *Runner) restorePointProvenanceLocal(rp db.RestorePoint) bool {
 	return err == nil && job.SourceID == 0
 }
 
-// restorePointVouched reports whether local records vouch for an item's restored
-// config: the point is local and either the download is checked against stored
-// checksums or the config comes through a manifest ID stored locally.
-func (r *Runner) restorePointVouched(rp db.RestorePoint, itemName string) bool {
-	if !r.restorePointProvenanceLocal(rp) {
-		return false
+// restorePointVouched reports whether a restore may grant the host access its
+// container config asks for without approval: this server made the backup.
+// Verification is not required, so a server that runs with Verify backup off
+// restores its own privileged containers as before.
+func (r *Runner) restorePointVouched(rp db.RestorePoint, _ string) bool {
+	return r.restorePointProvenanceLocal(rp)
+}
+
+// chainProvenanceLocal reports whether this server made every chain step that
+// holds the item; a chain replay can take its config from any of them.
+func (r *Runner) chainProvenanceLocal(chain []db.RestorePoint, itemName string) bool {
+	for _, rp := range chain {
+		if rpContainsItem(rp, itemName) && !r.restorePointProvenanceLocal(rp) {
+			return false
+		}
 	}
-	if _, chunked := resolveManifestID(rp, itemName); chunked {
-		return true
-	}
-	return len(r.parseItemChecksums(rp.Metadata, itemName)) > 0
+	return true
 }
 
 // chainSidecarsVouched reports whether every step's sidecars were checked against

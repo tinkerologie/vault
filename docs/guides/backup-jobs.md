@@ -305,7 +305,7 @@ The Restore wizard supports selecting items that belong to different backup jobs
    - Each source job is reviewed as an independent restore unit with its own destination overrides, passphrase (if age encrypted), clean destination toggle, and per-item file selection disclosures.
    - Pre-flight checks run per unit to ensure backups can be restored before starting.
    - Restores are submitted and executed sequentially, streaming live progress and logs per job.
-   - Container units have two approvals, both off by default. _Allow host-level access_ is needed when an imported or replicated backup, or one without stored checksums, asks for privileged mode, host networking, devices or host paths; the restore stops and lists them first. _Use the image's current tag_ is needed when a deduplicated backup's image digest is missing or can't be pulled; without it Vault restores the exact image that was backed up.
+   - Container units have two approvals, both off by default. _Allow host-level access_ is needed when an imported or replicated backup asks for privileged mode, host networking, devices or host paths; the restore stops and lists them first. _Use the image's current tag_ is needed when a deduplicated backup's image digest is missing or can't be pulled; without it Vault restores the exact image that was backed up.
 
 <!-- prettier-ignore -->
 !!! note

@@ -12,8 +12,8 @@ import (
 // what the person starting it approved. The zero value is the safe one: an
 // untrusted artifact with nothing approved.
 type RestoreTrust struct {
-	// ArtifactTrusted means this server made the backup and its local records
-	// vouch for the container config being restored.
+	// ArtifactTrusted means this server made the backup itself: it was neither
+	// imported nor replicated from a peer.
 	ArtifactTrusted bool
 	// AllowHostPrivileges approves host-level settings from an untrusted artifact.
 	AllowHostPrivileges bool
@@ -97,5 +97,5 @@ func enforceRestorePrivileges(ctx context.Context, item BackupItem, ri restoreIn
 		log.Printf("engine: restore: %s granted approved host access from an unverified backup: %s", item.Name, summary)
 		return nil
 	}
-	return fmt.Errorf("restoring %s would grant host access from a backup this server cannot vouch for (imported, replicated or without stored checksums): %s; nothing was changed. Review these settings, then restart the restore with \"Allow host-level access\" enabled (API: allow_host_privileges)", item.Name, summary)
+	return fmt.Errorf("restoring %s would grant host access from a backup this server cannot vouch for (imported or replicated): %s; nothing was changed. Review these settings, then restart the restore with \"Allow host-level access\" enabled (API: allow_host_privileges)", item.Name, summary)
 }
