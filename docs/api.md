@@ -60,26 +60,26 @@ The job payload's `schedule`, `verify_schedule` and `full_backup_schedule` field
 
 The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `differential`. Incremental and differential jobs automatically run as a **full** backup on their first run (when the job has no previous restore point to attach to); later runs capture only changes.
 
-| Method | Endpoint                                           | Description                                                                    |
-| ------ | -------------------------------------------------- | ------------------------------------------------------------------------------ |
-| GET    | `/jobs`                                            | List jobs                                                                      |
-| POST   | `/jobs`                                            | Create job (response echoes the persisted items)                               |
-| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                               |
-| GET    | `/jobs/{id}`                                       | Get a job and its items                                                        |
-| PUT    | `/jobs/{id}`                                       | Update a job (response echoes the persisted items)                             |
-| DELETE | `/jobs/{id}`                                       | Delete a job                                                                   |
-| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                      |
-| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)         |
-| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune       |
-| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                  |
-| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points) |
-| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Trigger an on-demand SHA-256 verification of a restore point                   |
-| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                     |
-| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                           |
-| POST   | `/jobs/{id}/run`                                   | Trigger an immediate backup                                                    |
-| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup job                                                    |
-| POST   | `/jobs/{id}/restore`                               | Trigger a restore                                                              |
-| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                 |
+| Method | Endpoint                                           | Description                                                                           |
+| ------ | -------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| GET    | `/jobs`                                            | List jobs                                                                             |
+| POST   | `/jobs`                                            | Create job (response echoes the persisted items)                                      |
+| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                      |
+| GET    | `/jobs/{id}`                                       | Get a job and its items                                                               |
+| PUT    | `/jobs/{id}`                                       | Update a job (response echoes the persisted items)                                    |
+| DELETE | `/jobs/{id}`                                       | Delete a job                                                                          |
+| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                             |
+| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)                |
+| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune              |
+| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                         |
+| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)        |
+| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Trigger an on-demand SHA-256 verification of a restore point                          |
+| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                            |
+| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                  |
+| POST   | `/jobs/{id}/run`                                   | Trigger an immediate backup                                                           |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup job                                                           |
+| POST   | `/jobs/{id}/restore`                               | Trigger a restore; `destination` is an absolute path, or a dataset name for ZFS items |
+| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                        |
 
 ## Storage
 

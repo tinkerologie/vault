@@ -71,24 +71,22 @@ func TestZFSDatasetFromTrustedItemName(t *testing.T) {
 	}
 }
 
-// Items an older importer created carry no marker, but every importer has
-// recorded its backups as runs with status "imported". A job whose first run is
-// one came from an import, so its item names are not trusted.
-func TestZFSDatasetRefusesLegacyImportedItems(t *testing.T) {
+// Restores read provenance only from the item's marker, never from run history,
+// which history purges and retention remove. The upgrade migration marks items
+// of jobs an older importer created.
+func TestZFSDatasetUsesOnlyTheImportMarker(t *testing.T) {
 	t.Parallel()
 	r, database, root := setupTestRunner(t)
-	dest := createNamedLocalDest(t, database, "zfs-legacy", root)
-	legacy, err := database.CreateJob(db.Job{Name: "legacy", BackupTypeChain: "full", StorageDestID: dest.ID})
+	dest := createNamedLocalDest(t, database, "zfs-marker", root)
+	marked, err := database.CreateJob(db.Job{Name: "marked", BackupTypeChain: "full", StorageDestID: dest.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.AddJobItem(db.JobItem{JobID: legacy, ItemType: "zfs", ItemName: "tank/victim", Settings: `{}`}); err != nil {
+	if _, err := database.AddJobItem(db.JobItem{JobID: marked, ItemType: "zfs", ItemName: "tank/victim", Settings: `{"imported":true}`}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateImportedJobRun(db.JobRun{JobID: legacy, Status: "imported", BackupType: "full"}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	// A local job that later imported backups keeps trusting its own items.
+	// An unmarked item whose job's first run is imported is still local here:
+	// the marker, not history, decides.
 	local, err := database.CreateJob(db.Job{Name: "local", BackupTypeChain: "full", StorageDestID: dest.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -96,28 +94,26 @@ func TestZFSDatasetRefusesLegacyImportedItems(t *testing.T) {
 	if _, err := database.AddJobItem(db.JobItem{JobID: local, ItemType: "zfs", ItemName: "tank/data", Settings: `{}`}); err != nil {
 		t.Fatal(err)
 	}
-	for _, status := range []string{"completed", "imported"} {
-		if _, err := database.CreateJobRun(db.JobRun{JobID: local, Status: status, BackupType: "full"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if got, err := r.configuredZFSDataset(legacy, "tank/victim"); err != nil || got != "" {
-		t.Fatalf("legacy imported item = %q, %v, want no trusted target", got, err)
-	}
-	if got, err := r.configuredZFSDataset(local, "tank/data"); err != nil || got != "tank/data" {
-		t.Fatalf("local item = %q, %v", got, err)
-	}
-	// The override: a dataset set on the item is used as is.
-	if _, err := database.Exec(`UPDATE job_items SET settings = '{"dataset":"tank/restored"}' WHERE job_id = ?`, legacy); err != nil {
+	if _, err := database.CreateImportedJobRun(db.JobRun{JobID: local, Status: db.JobRunStatusImported, BackupType: "full"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := r.configuredZFSDataset(legacy, "tank/victim"); err != nil || got != "tank/restored" {
+
+	if got, err := r.configuredZFSDataset(marked, "tank/victim"); err != nil || got != "" {
+		t.Fatalf("marked item = %q, %v, want no trusted target", got, err)
+	}
+	if got, err := r.configuredZFSDataset(local, "tank/data"); err != nil || got != "tank/data" {
+		t.Fatalf("unmarked item = %q, %v, want its name", got, err)
+	}
+	// The override: a dataset set on the item is used as is.
+	if _, err := database.Exec(`UPDATE job_items SET settings = '{"imported":true,"dataset":"tank/restored"}' WHERE job_id = ?`, marked); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.configuredZFSDataset(marked, "tank/victim"); err != nil || got != "tank/restored" {
 		t.Fatalf("explicit dataset = %q, %v", got, err)
 	}
 }
 
-// An older imported item with no dataset restores to an explicitly chosen
+// An imported item with no dataset restores to an explicitly chosen
 // destination, and without one is refused with the error naming the fix.
 func TestZFSLegacyImportHonoursExplicitDestination(t *testing.T) {
 	t.Parallel()
@@ -127,10 +123,7 @@ func TestZFSLegacyImportHonoursExplicitDestination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.AddJobItem(db.JobItem{JobID: legacy, ItemType: "zfs", ItemName: "tank/victim", Settings: `{}`}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.CreateImportedJobRun(db.JobRun{JobID: legacy, Status: db.JobRunStatusImported, BackupType: "full"}, time.Now()); err != nil {
+	if _, err := database.AddJobItem(db.JobItem{JobID: legacy, ItemType: "zfs", ItemName: "tank/victim", Settings: `{"imported":true}`}); err != nil {
 		t.Fatal(err)
 	}
 

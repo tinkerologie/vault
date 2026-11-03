@@ -4566,10 +4566,11 @@ func (r *Runner) zfsRestoreSettings(jobID int64, itemName, destination string) (
 }
 
 // configuredZFSDataset returns the dataset a restore of a job's ZFS item may
-// target, or "" when none is trusted, which zfsRestoreTarget refuses. A dataset
-// set on the item wins. Otherwise an item created on this server names its
-// dataset, as ZFSHandler.Backup reads it, but an item that came from a peer
-// (replicated job) or from a backup (imported item) does not.
+// target, or "" when none is trusted, which zfsRestoreTarget refuses unless the
+// user chose a destination. A dataset set on the item wins. Otherwise an item
+// created on this server names its dataset, as ZFSHandler.Backup reads it, but
+// an item that came from a peer (replicated job) or from a backup (marked as
+// imported, by the importer or by the upgrade migration) does not.
 func (r *Runner) configuredZFSDataset(jobID int64, itemName string) (string, error) {
 	job, err := r.db.GetJob(jobID)
 	if err != nil {
@@ -4591,18 +4592,6 @@ func (r *Runner) configuredZFSDataset(jobID int64, itemName string) (string, err
 			return ds, nil
 		}
 		if imported, _ := s[importedItemSetting].(bool); imported || job.SourceID != 0 {
-			return "", nil
-		}
-		// Older importers left no marker on items, but every importer recorded
-		// its backups as "imported" runs. A job whose first run is one was
-		// created by an import, so its item names came from a backup.
-		first, err := r.db.FirstJobRunStatus(jobID)
-		if err != nil {
-			return "", fmt.Errorf("checking how job %d was created: %w", jobID, err)
-		}
-		if first == db.JobRunStatusImported {
-			// No trusted dataset: an explicit destination still works, and
-			// zfsRestoreTarget refuses with the fix when there is none.
 			return "", nil
 		}
 		return ji.ItemName, nil

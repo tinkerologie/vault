@@ -1332,7 +1332,9 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 	}
 	// Body is optional (unencrypted, original-location restore needs nothing).
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if req.Destination != "" {
+	// A preflight does not name its items, so a ZFS dataset name is accepted
+	// here too; Restore checks the destination against the items' type.
+	if req.Destination != "" && !engine.ValidZFSDatasetName(req.Destination) {
 		normalized, err := normalizeRestoreDestination(req.Destination)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
@@ -1399,13 +1401,13 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "restore_point_id is required")
 		return
 	}
-	if req.Destination != "" {
-		normalized, err := normalizeRestoreDestination(req.Destination)
-		if err != nil {
+	// The destination's kind depends on the items, resolved below; reject one
+	// that is neither kind now, so a malformed request fails before any lookup.
+	if req.Destination != "" && !engine.ValidZFSDatasetName(req.Destination) {
+		if _, err := normalizeRestoreDestination(req.Destination); err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
 			return
 		}
-		req.Destination = normalized
 	}
 	for item, paths := range req.FilePaths {
 		for _, p := range paths {
@@ -1490,6 +1492,19 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	if len(targets) == 0 {
 		respondError(w, http.StatusBadRequest, "no items to restore")
 		return
+	}
+
+	if req.Destination != "" {
+		allZFS := true
+		for _, t := range targets {
+			allZFS = allZFS && t.Type == "zfs"
+		}
+		dest, err := restoreDestinationFor(req.Destination, allZFS)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
+			return
+		}
+		req.Destination = dest
 	}
 
 	// Reject items this restore point never captured (e.g. added to the job

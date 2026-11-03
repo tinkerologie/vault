@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -118,9 +119,10 @@ func TestSyncRestorePointRejectsPathOfAnotherJob(t *testing.T) {
 	}
 }
 
-// Rows from older versions keep working: a path this job already holds, a path
-// held by the same source's other job (a renamed source), and a free path.
-func TestSyncRestorePointKeepsLegacyAndFreePaths(t *testing.T) {
+// A path another job holds is refused even when that job came from the same
+// source: the peer could otherwise point one job at another's backup. A free
+// path, and a retry for this job's own path, still sync.
+func TestSyncRestorePointRefusesSameSourceOtherJob(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	d := openTestDB(t)
@@ -128,33 +130,48 @@ func TestSyncRestorePointKeepsLegacyAndFreePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, err := d.CreateReplicatedJob(db.Job{Name: "[Old] J", StorageDestID: destID, SourceID: 1})
+	sibling, err := d.CreateReplicatedJob(db.Job{Name: "[S] B", StorageDestID: destID, SourceID: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runFor(t, d, old), JobID: old, BackupType: "full", StoragePath: "J/1", SourceID: 1}); err != nil {
+	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runFor(t, d, sibling), JobID: sibling, BackupType: "full", StoragePath: "B/1", SourceID: 1}); err != nil {
 		t.Fatal(err)
 	}
 	downloads := 0
 	c := newListingServer(t, map[string][]StorageFile{
-		"J/1": {{Path: "J/1/a.bin", Size: 3}},
-		"J/2": {{Path: "J/2/a.bin", Size: 3}},
+		"B/1": {{Path: "B/1/a.bin", Size: 3}},
+		"A/2": {{Path: "A/2/a.bin", Size: 3}},
+		"A/3": {{Path: "A/3/a.bin", Size: 3}},
 	}, &downloads)
-	src := db.ReplicationSource{ID: 1, Name: "New", StorageDestID: destID}
-	rj := RemoteJob{ID: 8, StorageDestID: 3, Name: "J"}
+	src := db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}
+	rj := RemoteJob{ID: 8, StorageDestID: 3, Name: "A"}
 	s := NewSyncer(d, nil)
-	jobID, err := s.ensureLocalJob(src, src.StorageDestID, rj)
+	jobID, err := s.ensureLocalJob(src, destID, rj)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"J/1", "J/2"} {
-		rrp := RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}
-		if _, err := s.syncRestorePoint(c, src, destID, rj, rrp, jobID, storage.NewLocalAdapter(root)); err != nil && strings.Contains(err.Error(), "overlaps") {
-			t.Errorf("sync %s refused: %v", p, err)
-		}
+	sync := func(p string) error {
+		_, err := s.syncRestorePoint(c, src, destID, rj, RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}, jobID, storage.NewLocalAdapter(root))
+		return err
+	}
+	if err := sync("B/1"); !errors.Is(err, errPathRefused) {
+		t.Fatalf("same-source sibling path = %v, want refused", err)
+	}
+	if downloads != 0 {
+		t.Fatalf("downloaded %d file(s) over a sibling's backup", downloads)
+	}
+	if err := sync("A/2"); err != nil && errors.Is(err, errPathRefused) {
+		t.Fatalf("free path refused: %v", err)
+	}
+	// This job's own row does not block a retry of the same path.
+	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runFor(t, d, jobID), JobID: jobID, BackupType: "full", StoragePath: "A/3", SourceID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sync("A/3"); err != nil && errors.Is(err, errPathRefused) {
+		t.Fatalf("retry of own path refused: %v", err)
 	}
 	if downloads != 2 {
-		t.Errorf("downloads = %d, want 2", downloads)
+		t.Fatalf("downloads = %d, want 2", downloads)
 	}
 }
 

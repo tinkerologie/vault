@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// ValidZFSDatasetName reports whether name is a filesystem or volume name zfs
+// would accept as a receive target.
+func ValidZFSDatasetName(name string) bool { return validZFSDatasetName(name) }
+
 // zfsMaxNameLen is OpenZFS's ZFS_MAX_DATASET_NAME_LEN, which counts the NUL.
 const zfsMaxNameLen = 256
 

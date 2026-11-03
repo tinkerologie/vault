@@ -474,16 +474,16 @@ func (s *Syncer) syncRestorePoint(
 	}
 	defer release()
 
-	// The peer chooses this path, so it must not reach data held for anyone
-	// else: the download would overwrite it, and the new row would authorise
-	// deleting it. Another job from this same source is the same peer's data
-	// (for example after the source is renamed), so it is not refused here.
+	// The peer chooses this path, so it must not reach data held for any other
+	// job, including another job from this same source: the download would
+	// overwrite it, and the new row would authorise deleting it. This job's own
+	// rows are excluded, so a retried or partial sync of its path still works.
 	owners, err := s.db.ListRestorePointOwners(destID, localJobID)
 	if err != nil {
 		return 0, fmt.Errorf("check restore point path ownership: %w", err)
 	}
 	for _, o := range owners {
-		if o.SourceID != src.ID && storage.PathsOverlap(storagePath, o.StoragePath) {
+		if storage.PathsOverlap(storagePath, o.StoragePath) {
 			return 0, fmt.Errorf("%w: %q overlaps a restore point of local job %d", errPathRefused, storagePath, o.JobID)
 		}
 	}
