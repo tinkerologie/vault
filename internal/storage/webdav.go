@@ -15,15 +15,18 @@ import (
 	"log"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/studio-b12/gowebdav"
+	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/safepath"
 )
 
@@ -224,9 +227,44 @@ func NewWebDAVAdapter(cfg WebDAVConfig) (*WebDAVAdapter, error) {
 	if cfg.ChunkSizeMB > maxWebDAVChunkSizeMB {
 		return nil, fmt.Errorf("webdav: chunk_size_mb must be <= %d, got %d", maxWebDAVChunkSizeMB, cfg.ChunkSizeMB)
 	}
-	cfg.URL = strings.TrimRight(url, "/")
+	cfg = moveURLCredentials(cfg, url)
+	warnPlaintextWebDAV(cfg.URL)
 	cfg.BasePath = strings.Trim(cfg.BasePath, "/")
 	return &WebDAVAdapter{config: cfg}, nil
+}
+
+// moveURLCredentials moves credentials embedded in the server URL into the
+// dedicated fields, so they stay out of request URLs, logs and error text. An
+// explicit username and password win over the embedded ones.
+func moveURLCredentials(cfg WebDAVConfig, rawURL string) WebDAVConfig {
+	cfg.URL = strings.TrimRight(rawURL, "/")
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil || parsed.User == nil {
+		return cfg
+	}
+	if cfg.Username == "" {
+		cfg.Username = parsed.User.Username()
+	}
+	if cfg.Password == "" {
+		cfg.Password, _ = parsed.User.Password()
+	}
+	parsed.User = nil
+	cfg.URL = strings.TrimRight(parsed.String(), "/")
+	return cfg
+}
+
+// warnedPlaintextWebDAV holds the endpoints already warned about, because an
+// adapter is built for nearly every storage operation.
+var warnedPlaintextWebDAV sync.Map
+
+func warnPlaintextWebDAV(rawURL string) {
+	if !credentials.IsPlaintextRemote(rawURL) {
+		return
+	}
+	if _, seen := warnedPlaintextWebDAV.LoadOrStore(rawURL, true); seen {
+		return
+	}
+	log.Printf("Warning: WebDAV destination %s uses plain HTTP; its login and backup data can be read on the network. Use https:// unless this network is trusted", rawURL) // #nosec G706 //nolint:gosec // credentials were removed from the URL above
 }
 
 // client builds a fresh WebDAV client.
@@ -257,7 +295,7 @@ func NewWebDAVAdapter(cfg WebDAVConfig) (*WebDAVAdapter, error) {
 // Power-users can still cap total request lifetime via TimeoutSeconds.
 func (w *WebDAVAdapter) client() *gowebdav.Client {
 	c := gowebdav.NewAuthClient(w.config.URL, gowebdav.NewAutoAuth(w.config.Username, w.config.Password))
-	c.SetTransport(&mkcolExistsTransport{base: w.transport()})
+	c.SetTransport(&mkcolExistsTransport{base: w.guardedTransport()})
 
 	if w.config.TimeoutSeconds > 0 {
 		c.SetTimeout(time.Duration(w.config.TimeoutSeconds) * time.Second)
@@ -364,11 +402,55 @@ func (t *mkcolExistsTransport) retryLockedMkcol(req *http.Request, resp *http.Re
 	return resp, nil
 }
 
+// guardedTransport is transport with credentialRedirectGuard, for every client
+// that sends the login.
+func (w *WebDAVAdapter) guardedTransport() http.RoundTripper {
+	return credentialRedirectGuard{base: w.transport()}
+}
+
+// credentialRedirectGuard stops a redirect that would expose the login. Go keeps
+// Authorization on a same-host redirect even from https to http, and this sits
+// below every WebDAV client, including the third-party one.
+type credentialRedirectGuard struct{ base http.RoundTripper }
+
+func (g credentialRedirectGuard) RoundTrip(req *http.Request) (*http.Response, error) {
+	if prev := req.Response; prev != nil && prev.Request != nil && req.Header.Get("Authorization") != "" {
+		from := prev.Request.URL
+		if from.Scheme == "https" && req.URL.Scheme != "https" {
+			return nil, fmt.Errorf("webdav: refusing to send credentials on a redirect from https to %s", req.URL.Scheme)
+		}
+		if !sameServer(from, req.URL) {
+			return nil, fmt.Errorf("webdav: refusing to send credentials on a redirect to %s", req.URL.Host)
+		}
+	}
+	return g.base.RoundTrip(req)
+}
+
 // transport builds the http.Transport used by both the gowebdav client
 // (Write/Read/List/Stat/Delete) and the raw http.Client used by ReadRange.
 // Centralising the construction keeps the phase-specific timeouts, TLS
 // settings, and proxy honouring in one place. See client() for the rationale
 // behind the individual timeout choices.
+// sameServer reports whether a redirect stays on one service: the same host and
+// port, or the plain upgrade from the default HTTP port to the default HTTPS port.
+func sameServer(from, to *neturl.URL) bool {
+	if !strings.EqualFold(from.Hostname(), to.Hostname()) {
+		return false
+	}
+	fromPort, toPort := effectivePort(from), effectivePort(to)
+	return fromPort == toPort || (fromPort == "80" && toPort == "443")
+}
+
+func effectivePort(u *neturl.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
+}
+
 func (w *WebDAVAdapter) transport() *http.Transport {
 	t := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
@@ -854,7 +936,7 @@ func (w *WebDAVAdapter) rawRangeRequest(full string, offset, length int64) (io.R
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
 	req.Header.Set("Accept-Encoding", "identity")
 
-	httpClient := &http.Client{Transport: w.transport()}
+	httpClient := &http.Client{Transport: w.guardedTransport()}
 	if w.config.TimeoutSeconds > 0 {
 		httpClient.Timeout = time.Duration(w.config.TimeoutSeconds) * time.Second
 	}
@@ -1177,7 +1259,7 @@ func (w *WebDAVAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 	if w.config.Username != "" || w.config.Password != "" {
 		req.SetBasicAuth(w.config.Username, w.config.Password)
 	}
-	httpClient := &http.Client{Transport: w.transport()}
+	httpClient := &http.Client{Transport: w.guardedTransport()}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return Capacity{}, fmt.Errorf("webdav: propfind: %w", err)

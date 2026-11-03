@@ -4,6 +4,10 @@ Base URL: `http://<host>:24085/api/v1`
 
 The Vault daemon exposes a REST API for managing backups, storage destinations, and system settings. WebSocket events are available for real-time progress streaming.
 
+## Transport
+
+The API serves plain HTTP unless the daemon is started with both `--tls-cert` and `--tls-key`; setting only one stops the daemon from starting. On a non-loopback address, plain HTTP exposes API keys and data to anyone who can read that network, and the daemon logs a warning at startup. Most home setups (replication between servers, Home Assistant on a LAN) run this way, so it stays supported. Use it only on a network you trust.
+
 ## Authentication
 
 By default Vault binds to `127.0.0.1` and all loopback requests are unauthenticated. When you configure an API key under **Settings → Security → API Access**, remote requests (non-loopback IPs) must include the key in every request:
@@ -146,6 +150,8 @@ A restore of selected files reports the size it actually wrote (`size_source: "r
 
 > Per-job history is available at `GET /jobs/{id}/history`. There is no global `GET /history` endpoint; query individual jobs and merge client-side.
 
+Storage responses mask secrets the same way. On update, a masked secret keeps the stored value, but changing where a destination connects requires entering the secret again, so a stored secret only goes to the server it was entered for: `host` and `port` (SFTP, SMB), `host_key` and `known_hosts_file` (SFTP), the scheme, host and port of `url` and `insecure_skip_verify` (WebDAV), and `endpoint`, `bucket` and `region` (S3). `POST /storage/test` takes an optional `id` to test an edit with the stored secrets under the same rule; without `id`, a masked secret is rejected.
+
 ## Replication
 
 A replication source's `schedule` field takes the same cron expressions as a job's (see [Jobs](#jobs)); an empty string means the source is only synced on demand.
@@ -164,6 +170,8 @@ Replication is pull-based: a sync imports only the remote jobs whose `source_id`
 | POST   | `/replication/{id}/sync` | Trigger replication immediately |
 | GET    | `/replication/{id}/jobs` | List replicated jobs            |
 
+Responses never contain a source's API key: `config` shows `••••••••` instead, and `credentials_locked` is `true` when this server's `vault.key` cannot open it. On update, omitted fields keep their stored values, an omitted, blank or masked `api_key` keeps the stored key, and a new value replaces it. Changing `url` requires sending the key again, so a stored key only goes to the server it was entered for. `warning` is set when the source uses plain HTTP to another machine. Plain HTTP stays allowed, so use it only on a network you trust.
+
 ## Recovery
 
 | Method | Endpoint               | Description                                                                                                  |
@@ -181,6 +189,8 @@ Replication is pull-based: a sync imports only the remote jobs whose `source_id`
 - `verify_only` — when `true`, validates the backup (and passphrase) without replacing the current database.
 
 List the available backups first with `GET /storage/{id}/db-backups`.
+
+The response's `locked_credentials` counts restored storage destinations and replication sources sealed with a different `vault.key`. See [Stored credentials and vault.key](guides/disaster-recovery.md#stored-credentials-and-vaultkey).
 
 ### Unlocking dedup destinations (`dedup-keys/rewrap`)
 

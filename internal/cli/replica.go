@@ -35,6 +35,9 @@ disaster recovery.`,
 		addr, _ := cmd.Flags().GetString("addr")
 		tlsCert, _ := cmd.Flags().GetString("tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("tls-key")
+		if err := api.CheckTLSPair(tlsCert, tlsKey); err != nil {
+			return err
+		}
 		mdns, _ := cmd.Flags().GetBool("mdns")
 
 		// Ensure the database directory exists.
@@ -70,6 +73,10 @@ disaster recovery.`,
 		serverKey, err := crypto.LoadOrCreateServerKey(keyPath)
 		if err != nil {
 			return fmt.Errorf("loading server key: %w", err)
+		}
+		database.SetCredentialKey(serverKey)
+		if _, sealErr := database.SealSecretsAtRest(); sealErr != nil {
+			log.Printf("ERROR: sealing secrets at rest failed, will retry at next start: %v", sealErr)
 		}
 
 		log.Println("Starting Vault replica daemon (read-only mode)...")

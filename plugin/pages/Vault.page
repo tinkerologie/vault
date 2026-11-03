@@ -194,7 +194,7 @@ Use <strong>127.0.0.1</strong> to keep the daemon local-only (recommended). Sele
 </blockquote>
 <?php if (!vault_is_loopback_bind_address($bind)): ?>
 <blockquote class="inline_help" style="color: var(--red-500, #c0392b);">
-Warning: the Vault API is accessible from your local network. Only use this if you need external access (e.g. Home Assistant).
+Warning: the Vault API is accessible from your local network over plain HTTP, so API keys and data can be read on that network. Only use this on a network you trust, and only if you need external access (e.g. Home Assistant or replication).
 </blockquote>
 <?php endif; ?>
 

@@ -20,6 +20,10 @@ func (d *DB) CreateReplicationSource(src ReplicationSource) (int64, error) {
 	if cfg == "" {
 		cfg = "{}"
 	}
+	cfg, err := d.sealConfig(cfg)
+	if err != nil {
+		return 0, err
+	}
 	res, err := d.Exec(
 		`INSERT INTO replication_sources (name, type, url, config, storage_dest_id, schedule, enabled)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -50,6 +54,7 @@ func (d *DB) GetReplicationSource(id int64) (ReplicationSource, error) {
 	if err == sql.ErrNoRows {
 		return src, ErrNotFound
 	}
+	src.Config = d.openConfig(src.Config)
 	return src, err
 }
 
@@ -77,6 +82,7 @@ func (d *DB) ListReplicationSources() ([]ReplicationSource, error) {
 			&src.CreatedAt, &src.UpdatedAt); err != nil {
 			return nil, err
 		}
+		src.Config = d.openConfig(src.Config)
 		sources = append(sources, src)
 	}
 	return sources, rows.Err()
@@ -88,10 +94,14 @@ func (d *DB) UpdateReplicationSource(src ReplicationSource) error {
 	if src.StorageDestID != 0 {
 		destID = src.StorageDestID
 	}
-	_, err := d.Exec(
+	cfg, err := d.sealForUpdate(src.Config, selectReplicationConfig, src.ID)
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(
 		`UPDATE replication_sources SET name=?, type=?, url=?, config=?, storage_dest_id=?,
 		schedule=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		src.Name, src.Type, src.URL, src.Config, destID,
+		src.Name, src.Type, src.URL, cfg, destID,
 		src.Schedule, src.Enabled, src.ID,
 	)
 	return err

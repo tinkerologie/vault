@@ -126,6 +126,14 @@ func openDedupContext(dbPath, keyPath string) (*dedupContext, func(), error) {
 		return nil, nil, fmt.Errorf("load server key at %s: %w", keyPath, err)
 	}
 
+	// The row was read before the key was known; its secrets need the key.
+	database.SetCredentialKey(serverKey)
+	dest, err = database.GetStorageDestination(dedupDestID)
+	if err != nil {
+		database.Close()
+		return nil, nil, fmt.Errorf("get destination %d: %w", dedupDestID, err)
+	}
+
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		database.Close()

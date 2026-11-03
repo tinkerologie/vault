@@ -3090,7 +3090,7 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	// roots and truncate whatever it found (CWE-22/CWE-59). openNoFollow closes
 	// the race as well as the check: there is no window between testing the
 	// path and opening it.
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, mode) // #nosec G304 — parent validated by normalizeRestorePath, joined via safepath.JoinUnderBase, final component pinned by openNoFollow
+	out, err := openRestoreFile(path, mode)
 	if err != nil {
 		if isSymlinkErr(err) {
 			return fmt.Errorf("refusing to restore file mount through the symlink at %s", path)

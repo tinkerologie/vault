@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/replication"
 )
@@ -132,6 +135,76 @@ func (h *ReplicationHandler) reloadScheduler() {
 	}
 }
 
+// replicationResponse is a source as the API shows it: the API key is masked,
+// plus a warning when the source is reached over plain HTTP.
+type replicationResponse struct {
+	db.ReplicationSource
+	CredentialsLocked bool   `json:"credentials_locked"`
+	Warning           string `json:"warning,omitempty"`
+}
+
+func newReplicationResponse(src db.ReplicationSource) replicationResponse {
+	out := replicationResponse{
+		ReplicationSource: src,
+		CredentialsLocked: credentials.IsLocked(src.Config),
+		Warning:           replication.PlaintextWarning(src.URL),
+	}
+	out.Config = credentials.Mask(src.Config)
+	return out
+}
+
+// mergeReplicationKey resolves the API key on an update. An omitted, blank or
+// masked key keeps the stored one and a new value replaces it. The stored key
+// only ever goes to the URL it was entered for: otherwise anyone who can edit a
+// source could point it at their own server and collect the key.
+func mergeReplicationKey(incoming db.ReplicationSource, stored db.ReplicationSource) (string, error) {
+	var in, ex map[string]any
+	if incoming.Config != "" {
+		if err := json.Unmarshal([]byte(incoming.Config), &in); err != nil {
+			return "", errors.New("invalid config JSON")
+		}
+	}
+	if in == nil {
+		in = map[string]any{}
+	}
+	if stored.Config != "" {
+		// A stored config that does not parse has no key worth keeping.
+		_ = json.Unmarshal([]byte(stored.Config), &ex)
+	}
+	if credentials.IsLocked(incoming.Config) {
+		return "", errors.New("config must not contain sealed values")
+	}
+	// The sync decodes field names without regard to case, so treat them alike.
+	for k, v := range in {
+		if k != "api_key" && strings.EqualFold(k, "api_key") {
+			in["api_key"] = v
+			delete(in, k)
+		}
+	}
+	key, _ := in["api_key"].(string)
+	storedKey := ""
+	for k, v := range ex {
+		if strings.EqualFold(k, "api_key") {
+			storedKey, _ = v.(string)
+		}
+	}
+	if key != "" && key != credentials.RedactionMarker {
+		out, err := json.Marshal(in)
+		return string(out), err
+	}
+	if storedKey == "" {
+		delete(in, "api_key")
+		out, err := json.Marshal(in)
+		return string(out), err
+	}
+	if incoming.URL != "" && incoming.URL != stored.URL {
+		return "", errors.New("re-enter the API key when changing the URL")
+	}
+	in["api_key"] = storedKey
+	out, err := json.Marshal(in)
+	return string(out), err
+}
+
 // List returns all replication sources.
 func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 	sources, err := h.db.ListReplicationSources()
@@ -139,7 +212,11 @@ func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, sources)
+	out := make([]replicationResponse, len(sources))
+	for i, src := range sources {
+		out[i] = newReplicationResponse(src)
+	}
+	respondJSON(w, http.StatusOK, out)
 }
 
 // Create adds a new replication source.
@@ -175,6 +252,11 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if credentials.IsLocked(src.Config) {
+		respondError(w, http.StatusBadRequest, "config must not contain sealed values")
+		return
+	}
+
 	id, err := h.db.CreateReplicationSource(src)
 	if err != nil {
 		respondWriteError(w, err, "replication source")
@@ -183,7 +265,7 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	src.ID = id
 
 	h.reloadScheduler()
-	respondJSON(w, http.StatusCreated, src)
+	respondJSON(w, http.StatusCreated, newReplicationResponse(src))
 	h.broadcastConfigChange()
 	h.notifyConfigChange()
 }
@@ -199,7 +281,7 @@ func (h *ReplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
-	respondJSON(w, http.StatusOK, src)
+	respondJSON(w, http.StatusOK, newReplicationResponse(src))
 }
 
 // Update modifies a replication source.
@@ -209,27 +291,71 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var src db.ReplicationSource
-	if err := json.NewDecoder(r.Body).Decode(&src); err != nil {
+	// Pointers tell "omitted" from "empty", so a partial body leaves the other
+	// fields alone instead of blanking them.
+	var patch struct {
+		Name          *string `json:"name"`
+		Type          *string `json:"type"`
+		URL           *string `json:"url"`
+		Config        *string `json:"config"`
+		StorageDestID *int64  `json:"storage_dest_id"`
+		Schedule      *string `json:"schedule"`
+		Enabled       *bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	src.ID = id
 
-	if src.Type == "" {
-		src.Type = "remote_vault"
+	if patch.URL != nil && *patch.URL != "" {
+		if _, err := replication.NormalizeBaseURL(*patch.URL); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+			return
+		}
 	}
 
-	switch src.Type {
-	case "remote_vault":
-		if src.URL != "" {
-			normalizedURL, err := replication.NormalizeBaseURL(src.URL)
-			if err != nil {
-				respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
-				return
-			}
-			src.URL = normalizedURL
+	stored, err := h.db.GetReplicationSource(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	src := stored
+	src.Config = ""
+	if patch.Name != nil {
+		src.Name = *patch.Name
+	}
+	if patch.Type != nil && *patch.Type != "" {
+		src.Type = *patch.Type
+	}
+	if patch.URL != nil {
+		src.URL = *patch.URL
+	}
+	if patch.Config != nil {
+		src.Config = *patch.Config
+	}
+	if patch.StorageDestID != nil {
+		src.StorageDestID = *patch.StorageDestID
+	}
+	if patch.Schedule != nil {
+		src.Schedule = *patch.Schedule
+	}
+	if patch.Enabled != nil {
+		src.Enabled = *patch.Enabled
+	}
+
+	if src.Type == "remote_vault" {
+		normalizedURL, err := replication.NormalizeBaseURL(src.URL)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+			return
 		}
+		src.URL = normalizedURL
+	}
+
+	src.Config, err = mergeReplicationKey(src, stored)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
@@ -238,7 +364,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.reloadScheduler()
-	respondJSON(w, http.StatusOK, src)
+	respondJSON(w, http.StatusOK, newReplicationResponse(src))
 	h.broadcastConfigChange()
 	h.notifyConfigChange()
 }
@@ -278,6 +404,11 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if credentials.IsLocked(src.Config) {
+		respondError(w, http.StatusConflict, credentials.ErrLocked.Error())
+		return
+	}
+
 	var cfg struct {
 		APIKey string `json:"api_key"`
 	}
@@ -303,7 +434,7 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		respondError(w, http.StatusBadGateway, connErr.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok", "warning": replication.PlaintextWarning(src.URL)})
 }
 
 // TestURL validates a remote Vault URL and performs a live connectivity check
@@ -327,6 +458,11 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 	normalizedURL, err := replication.NormalizeBaseURL(req.URL)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+		return
+	}
+	// Test URL never looks up a stored key, so the marker has no value to stand for.
+	if req.APIKey == credentials.RedactionMarker {
+		respondError(w, http.StatusBadRequest, "enter the API key to test a new URL")
 		return
 	}
 
@@ -353,6 +489,7 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 		"url":     normalizedURL,
 		"version": health.Version,
 		"message": "Connected successfully",
+		"warning": replication.PlaintextWarning(normalizedURL),
 	})
 }
 

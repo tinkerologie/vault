@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/engine"
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
@@ -303,6 +304,9 @@ func (s *MCPServer) addListStorageTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing storage: %w", err)
 		}
+		for i := range dests {
+			dests[i].Config = credentials.Mask(dests[i].Config)
+		}
 		r, _ := textResult(dests)
 		return r, nil, nil
 	})
@@ -321,6 +325,7 @@ func (s *MCPServer) addGetStorageTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("getting storage %d: %w", input.ID, err)
 		}
+		dest.Config = credentials.Mask(dest.Config)
 		r, _ := textResult(dest)
 		return r, nil, nil
 	})
@@ -698,15 +703,31 @@ func (s *MCPServer) addUpdateStorageTool() {
 		if input.Name != "" {
 			dest.Name = input.Name
 		}
+		storedType := dest.Type
 		if input.Type != "" {
 			dest.Type = input.Type
 		}
+		// get_storage returns masked secrets, so a client that edits and sends
+		// that config back must not overwrite them with the marker, or use them
+		// to send a stored secret to another server. A type change alone is
+		// checked as an edit that leaves every field masked.
+		edited := input.Config
+		if credentials.IsLocked(edited) {
+			return nil, nil, fmt.Errorf("config must not contain sealed values")
+		}
+		if edited == "" {
+			edited = credentials.Mask(dest.Config)
+		}
+		merged, mErr := credentials.MergeStorageEdit(storedType, dest.Type, edited, dest.Config)
+		if mErr != nil {
+			return nil, nil, mErr
+		}
 		if input.Config != "" {
-			dest.Config = input.Config
+			dest.Config = merged
 		}
 		if input.Type != "" || input.Config != "" {
-			if err := validateStorageConfig(dest.Type, dest.Config); err != nil {
-				return nil, nil, err
+			if err := storage.ValidateConfig(dest.Type, dest.Config); err != nil {
+				return nil, nil, fmt.Errorf("invalid storage config: %w", err)
 			}
 		}
 		if err := s.db.UpdateStorageDestination(dest); err != nil {
@@ -941,6 +962,9 @@ func (s *MCPServer) addListReplicationTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing replication sources: %w", err)
 		}
+		for i := range sources {
+			sources[i].Config = credentials.Mask(sources[i].Config)
+		}
 		r, _ := textResult(sources)
 		return r, nil, nil
 	})
@@ -959,6 +983,8 @@ func (s *MCPServer) addGetReplicationTool() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("getting replication source %d: %w", input.ID, err)
 		}
+
+		src.Config = credentials.Mask(src.Config)
 
 		// Include replicated jobs.
 		jobs, err := s.db.ListReplicatedJobs(input.ID)
