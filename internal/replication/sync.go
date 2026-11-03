@@ -44,11 +44,32 @@ type Syncer struct {
 	// configuration. Nil when there is nothing to flush to.
 	onConfigChange func()
 
-	// syncing counts the syncs running per source. A source's destination
-	// changes only under the same lock, while none is running, so no sync can
-	// be writing to the old destination when its jobs move.
-	syncingMu sync.Mutex
-	syncing   map[int64]int
+	// gates holds one sourceGate per source, created on first use.
+	gatesMu sync.Mutex
+	gates   map[int64]*sourceGate
+}
+
+// sourceGate serialises a source's updates with the start of its syncs. A sync
+// registers under mu before it reads the source, and an update holds mu while
+// it reads and writes the source, so a sync either starts after the update
+// and reads its result, or is running and the update knows it.
+type sourceGate struct {
+	mu      sync.Mutex
+	running int
+}
+
+func (s *Syncer) gate(sourceID int64) *sourceGate {
+	s.gatesMu.Lock()
+	defer s.gatesMu.Unlock()
+	if s.gates == nil {
+		s.gates = map[int64]*sourceGate{}
+	}
+	g := s.gates[sourceID]
+	if g == nil {
+		g = &sourceGate{}
+		s.gates[sourceID] = g
+	}
+	return g
 }
 
 // ErrSyncInProgress refuses changing a source's storage destination while a
@@ -57,32 +78,27 @@ var ErrSyncInProgress = errors.New("a sync of this replication source is running
 
 // beginSync records a running sync of sourceID and returns its end.
 func (s *Syncer) beginSync(sourceID int64) (end func()) {
-	s.syncingMu.Lock()
-	defer s.syncingMu.Unlock()
-	if s.syncing == nil {
-		s.syncing = map[int64]int{}
-	}
-	s.syncing[sourceID]++
+	g := s.gate(sourceID)
+	g.mu.Lock()
+	g.running++
+	g.mu.Unlock()
 	return func() {
-		s.syncingMu.Lock()
-		defer s.syncingMu.Unlock()
-		if s.syncing[sourceID]--; s.syncing[sourceID] <= 0 {
-			delete(s.syncing, sourceID)
-		}
+		g.mu.Lock()
+		g.running--
+		g.mu.Unlock()
 	}
 }
 
-// ChangeSourceDestination runs apply, the update that changes a source's
-// storage destination, only while no sync of that source is running, and
-// holds off new syncs of it until apply returns. It returns
-// ErrSyncInProgress, without calling apply, while one runs.
-func (s *Syncer) ChangeSourceDestination(sourceID int64, apply func() error) error {
-	s.syncingMu.Lock()
-	defer s.syncingMu.Unlock()
-	if s.syncing[sourceID] > 0 {
-		return ErrSyncInProgress
-	}
-	return apply()
+// UpdateSource runs update, which reads and writes one replication source,
+// while no sync of that source can start, and tells it whether one is
+// running. Syncs of other sources are not held up. update should read the
+// source afresh and refuse a destination change, with ErrSyncInProgress,
+// while syncing is true.
+func (s *Syncer) UpdateSource(sourceID int64, update func(syncing bool) error) error {
+	g := s.gate(sourceID)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return update(g.running > 0)
 }
 
 // SetConfigChangeHook registers the daemon's configuration flush. Call it

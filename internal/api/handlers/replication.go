@@ -284,6 +284,67 @@ func (h *ReplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, newReplicationResponse(src))
 }
 
+// sourcePatch is a replication source update. Pointers tell "omitted" from
+// "empty", so a partial body leaves the other fields alone.
+type sourcePatch struct {
+	Name          *string `json:"name"`
+	Type          *string `json:"type"`
+	URL           *string `json:"url"`
+	Config        *string `json:"config"`
+	StorageDestID *int64  `json:"storage_dest_id"`
+	Schedule      *string `json:"schedule"`
+	Enabled       *bool   `json:"enabled"`
+}
+
+// errSourceNotFound reports an update of a source that does not exist.
+var errSourceNotFound = errors.New("replication source not found")
+
+// badSourcePatch is an update the caller must fix, reported as a 400.
+type badSourcePatch struct{ msg string }
+
+func (e *badSourcePatch) Error() string { return e.msg }
+
+// apply returns stored with the patch applied, validated and its API key
+// merged.
+func (p sourcePatch) apply(stored db.ReplicationSource) (db.ReplicationSource, error) {
+	src := stored
+	src.Config = ""
+	if p.Name != nil {
+		src.Name = *p.Name
+	}
+	if p.Type != nil && *p.Type != "" {
+		src.Type = *p.Type
+	}
+	if p.URL != nil {
+		src.URL = *p.URL
+	}
+	if p.Config != nil {
+		src.Config = *p.Config
+	}
+	if p.StorageDestID != nil {
+		src.StorageDestID = *p.StorageDestID
+	}
+	if p.Schedule != nil {
+		src.Schedule = *p.Schedule
+	}
+	if p.Enabled != nil {
+		src.Enabled = *p.Enabled
+	}
+	if src.Type == "remote_vault" {
+		normalizedURL, err := replication.NormalizeBaseURL(src.URL)
+		if err != nil {
+			return src, &badSourcePatch{"invalid url: " + err.Error()}
+		}
+		src.URL = normalizedURL
+	}
+	cfg, err := mergeReplicationKey(src, stored)
+	if err != nil {
+		return src, &badSourcePatch{err.Error()}
+	}
+	src.Config = cfg
+	return src, nil
+}
+
 // Update modifies a replication source.
 func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
@@ -293,15 +354,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Pointers tell "omitted" from "empty", so a partial body leaves the other
 	// fields alone instead of blanking them.
-	var patch struct {
-		Name          *string `json:"name"`
-		Type          *string `json:"type"`
-		URL           *string `json:"url"`
-		Config        *string `json:"config"`
-		StorageDestID *int64  `json:"storage_dest_id"`
-		Schedule      *string `json:"schedule"`
-		Enabled       *bool   `json:"enabled"`
-	}
+	var patch sourcePatch
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
@@ -314,71 +367,49 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	stored, err := h.db.GetReplicationSource(id)
-	if err != nil {
-		respondError(w, http.StatusNotFound, "not found")
-		return
-	}
-	src := stored
-	src.Config = ""
-	if patch.Name != nil {
-		src.Name = *patch.Name
-	}
-	if patch.Type != nil && *patch.Type != "" {
-		src.Type = *patch.Type
-	}
-	if patch.URL != nil {
-		src.URL = *patch.URL
-	}
-	if patch.Config != nil {
-		src.Config = *patch.Config
-	}
-	if patch.StorageDestID != nil {
-		src.StorageDestID = *patch.StorageDestID
-	}
-	if patch.Schedule != nil {
-		src.Schedule = *patch.Schedule
-	}
-	if patch.Enabled != nil {
-		src.Enabled = *patch.Enabled
-	}
-
-	if src.Type == "remote_vault" {
-		normalizedURL, err := replication.NormalizeBaseURL(src.URL)
+	// The source is read and written under the syncer's lock for this source,
+	// so the patch applies to the current row, never to a snapshot another
+	// update has since changed, and a destination change is decided against
+	// the row it replaces while no sync of the source can start.
+	var src db.ReplicationSource
+	update := func(syncing bool) error {
+		stored, err := h.db.GetReplicationSource(id)
 		if err != nil {
-			respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
-			return
+			return errSourceNotFound
 		}
-		src.URL = normalizedURL
+		src, err = patch.apply(stored)
+		if err != nil {
+			return err
+		}
+		if syncing && src.StorageDestID != stored.StorageDestID {
+			return replication.ErrSyncInProgress
+		}
+		return h.db.UpdateReplicationSource(src)
 	}
-
-	src.Config, err = mergeReplicationKey(src, stored)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	update := func() error { return h.db.UpdateReplicationSource(src) }
 	var syncer *replication.Syncer
 	if h.getSyncer != nil {
 		syncer = h.getSyncer()
 	}
-	if syncer != nil && src.StorageDestID != stored.StorageDestID {
-		// Checked under the syncer's lock, so no sync of this source can be
-		// writing to the old destination when its jobs move.
-		apply := update
-		update = func() error { return syncer.ChangeSourceDestination(id, apply) }
+	var err error
+	if syncer != nil {
+		err = syncer.UpdateSource(id, update)
+	} else {
+		err = update(false)
 	}
-	if err := update(); err != nil {
-		if errors.Is(err, replication.ErrSyncInProgress) {
+	if err != nil {
+		var bad *badSourcePatch
+		switch {
+		case errors.Is(err, errSourceNotFound):
+			respondError(w, http.StatusNotFound, "not found")
+		case errors.As(err, &bad):
+			respondError(w, http.StatusBadRequest, bad.msg)
+		case errors.Is(err, replication.ErrSyncInProgress):
 			respondError(w, http.StatusConflict, err.Error())
-			return
-		}
-		if errors.Is(err, db.ErrReplicationDestinationInUse) {
+		case errors.Is(err, db.ErrReplicationDestinationInUse):
 			respondError(w, http.StatusBadRequest, err.Error())
-			return
+		default:
+			respondWriteError(w, err, "replication source")
 		}
-		respondWriteError(w, err, "replication source")
 		return
 	}
 

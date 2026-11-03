@@ -26,7 +26,7 @@ func TestReplicationUpdateRefusesStrandingRestorePoints600(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srcID, err := d.CreateReplicationSource(db.ReplicationSource{Name: "peer", Type: "remote_vault", URL: "http://192.168.1.1:24085", StorageDestID: 1})
+	srcID, err := d.CreateReplicationSource(db.ReplicationSource{Name: "peer", Type: "remote_vault", URL: "http://peer.invalid:24085", StorageDestID: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,5 +115,69 @@ func TestReplicationUpdateRefusesDestinationDuringSync600(t *testing.T) {
 	<-done
 	if w := put(`{"storage_dest_id":1}`); w.Code != http.StatusOK {
 		t.Errorf("move after the sync = %d %s, want 200", w.Code, w.Body.String())
+	}
+}
+
+// TestReplicationUpdateReadsSourceUnderLock600 pins that a schedule-only
+// update applies to the source row as it is once the source's lock is free,
+// so an update that was waiting cannot write back the destination it saw
+// before a move.
+func TestReplicationUpdateReadsSourceUnderLock600(t *testing.T) {
+	t.Parallel()
+	_, d := setupReplicationTest(t) // destination 1 exists
+	other, err := d.CreateStorageDestination(db.StorageDestination{Name: "other", Type: "local", Config: `{"path":"/tmp/other"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcID, err := d.CreateReplicationSource(db.ReplicationSource{Name: "peer", Type: "remote_vault", URL: "http://peer.invalid:24085", StorageDestID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncer := replication.NewSyncer(d, nil)
+	h := NewReplicationHandler(d, func() *replication.Syncer { return syncer }, make([]byte, 32), nil, nil)
+
+	moving, finish, moved := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		moved <- syncer.UpdateSource(srcID, func(bool) error {
+			close(moving)
+			<-finish
+			src, err := d.GetReplicationSource(srcID)
+			if err != nil {
+				return err
+			}
+			src.StorageDestID = other
+			return d.UpdateReplicationSource(src)
+		})
+	}()
+	<-moving
+
+	answered := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPut, "/replication/x", strings.NewReader(`{"schedule":"0 4 * * *"}`))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", strconv.FormatInt(srcID, 10))
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		h.Update(w, req)
+		answered <- w.Code
+	}()
+	select {
+	case code := <-answered:
+		t.Fatalf("schedule edit answered %d while the source was being moved, want it to wait", code)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(finish)
+	if err := <-moved; err != nil {
+		t.Fatal(err)
+	}
+	if code := <-answered; code != http.StatusOK {
+		t.Fatalf("schedule edit = %d, want 200", code)
+	}
+	src, err := d.GetReplicationSource(srcID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.StorageDestID != other || src.Schedule != "0 4 * * *" {
+		t.Errorf("source = destination %d schedule %q, want %d and the new schedule", src.StorageDestID, src.Schedule, other)
 	}
 }

@@ -306,19 +306,47 @@ func TestChangeSourceDestinationWhileSyncing600(t *testing.T) {
 	<-downloading
 
 	applied := false
-	if err := s.ChangeSourceDestination(srcID, func() error { applied = true; return nil }); !errors.Is(err, ErrSyncInProgress) || applied {
+	moveTo := func(syncing bool) error {
+		if syncing {
+			return ErrSyncInProgress
+		}
+		applied = true
+		return nil
+	}
+	if err := s.UpdateSource(srcID, moveTo); !errors.Is(err, ErrSyncInProgress) || applied {
 		t.Fatalf("change during a sync = %v (applied %v), want ErrSyncInProgress", err, applied)
 	}
-	// Another source is not held up.
-	if err := s.ChangeSourceDestination(srcID+1, func() error { return nil }); err != nil {
+	// Another source is neither held up nor reported as syncing.
+	if err := s.UpdateSource(srcID+1, func(syncing bool) error {
+		if syncing {
+			t.Error("another source reported as syncing")
+		}
+		return nil
+	}); err != nil {
 		t.Fatalf("change of another source: %v", err)
 	}
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ChangeSourceDestination(srcID, func() error { applied = true; return nil }); err != nil || !applied {
+	if err := s.UpdateSource(srcID, moveTo); err != nil || !applied {
 		t.Fatalf("change after the sync = %v (applied %v)", err, applied)
+	}
+}
+
+// An update holds off only its own source's syncs: another source's sync
+// starts and finishes while it runs.
+func TestUpdateSourceLocksOneSource600(t *testing.T) {
+	t.Parallel()
+	var downloads atomic.Int64
+	srv := peer585(t, []RemoteRestorePoint{{ID: 1, BackupType: "full", StoragePath: "J/run1"}}, &downloads)
+	d, srcID := setup585(t, srv.URL)
+	s := NewSyncer(d, nil)
+	if err := s.UpdateSource(srcID+1, func(bool) error {
+		_, err := s.SyncSource(srcID, nil) // would deadlock if the lock were global
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
