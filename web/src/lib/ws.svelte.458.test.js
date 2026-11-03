@@ -291,7 +291,7 @@ describe('websocket mode', () => {
 })
 
 describe('poll mode', () => {
-  it('refreshes mounts a polling client gets no events for, only when they change', async () => {
+  it('refreshes mounts a polling client gets no events for, on every check', async () => {
     vi.useFakeTimers()
     try {
       await loadWs({ liveMode: 'poll' })
@@ -309,11 +309,12 @@ describe('poll mode', () => {
       await vi.advanceTimersByTimeAsync(5 * 2000)
       expect(mounts.setActiveMounts).toHaveBeenLastCalledWith([m1])
       await vi.advanceTimersByTimeAsync(5 * 2000)
-      expect(mounts.setActiveMounts).toHaveBeenCalledTimes(1)
+      // Repeated, so a slower writer's older snapshot can't stick.
+      expect(mounts.setActiveMounts).toHaveBeenCalledTimes(2)
       await vi.advanceTimersByTimeAsync(5 * 2000)
       expect(mounts.setActiveMounts).toHaveBeenLastCalledWith([])
       await vi.advanceTimersByTimeAsync(10 * 2000) // a bad body, then an error
-      expect(mounts.setActiveMounts).toHaveBeenCalledTimes(2)
+      expect(mounts.setActiveMounts).toHaveBeenCalledTimes(3)
       ws.disconnectWs()
     } finally {
       vi.useRealTimers()

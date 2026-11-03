@@ -29,7 +29,6 @@ let pollTicks = 0
 /** Open anomalies at the last poll, by id, serialized to detect changes. @type {Map<number, string>} */
 let knownAnomalies = new Map()
 let anomalyPollInFlight = false
-let knownMounts = ''
 let mountPollInFlight = false
 // Mounts are started by hand, so someone is usually watching: every 10 s.
 const MOUNT_POLL_EVERY = 5
@@ -187,11 +186,7 @@ async function pollMounts() {
     const res = await fetch(url, { ...options, signal: controller.signal })
     if (!res.ok) return
     const list = await res.json()
-    const serialized = JSON.stringify(list)
-    if (Array.isArray(list) && serialized !== knownMounts) {
-      knownMounts = serialized
-      setActiveMounts(list)
-    }
+    if (Array.isArray(list)) setActiveMounts(list)
   } catch {
     // Best-effort: the next check catches up.
   } finally {
