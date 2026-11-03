@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/safepath"
 )
@@ -28,18 +29,46 @@ type NFSConfig struct {
 // variables only so tests can stand in for a real NFS server.
 var (
 	mountExport = func(args ...string) ([]byte, error) {
-		return exec.Command("mount", args...).CombinedOutput() // #nosec G204 //nolint:gosec // args validated in NewNFSAdapter
+		return runNFSCommand(nfsMountTimeout, "mount", args...)
 	}
 	unmountExport = func(dir string) error {
-		return exec.Command("umount", dir).Run() // #nosec G204 //nolint:gosec // dir is vault-controlled temp dir
+		_, err := runNFSCommand(nfsUnmountTimeout, "umount", dir)
+		return err
 	}
 )
+
+// A server that stops answering must not leave mount helpers running from every
+// health check. mount.nfs gives up by itself after about two minutes by default,
+// so these only stop commands that were never going to finish.
+var (
+	nfsMountTimeout   = 3 * time.Minute
+	nfsUnmountTimeout = time.Minute
+)
+
+// nfsWaitDelay bounds the wait for a helper's output after it was killed.
+const nfsWaitDelay = 5 * time.Second
+
+func runNFSCommand(timeout time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 //nolint:gosec // fixed command; args validated in NewNFSAdapter or a vault-controlled temp dir
+	cmd.WaitDelay = nfsWaitDelay
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("%s timed out after %s: %w", name, timeout, ctx.Err())
+	}
+	return out, err
+}
 
 // NFSAdapter implements Adapter for NFS shares.
 // It mounts the export to a temporary directory on first use and delegates
 // file operations to a LocalAdapter. The mount is reference-counted and
 // unmounted when the adapter is garbage-collected or explicitly closed.
 type NFSAdapter struct {
+	// stateMu guards the two fields below. It is never held across a command.
+	stateMu  sync.Mutex
+	mounting int  // mount calls waiting for or holding mu
+	closing  bool // Close ran while a mount was in flight
 	config   NFSConfig
 	mountDir string
 	local    *LocalAdapter
@@ -72,9 +101,35 @@ func NewNFSAdapter(config NFSConfig) (*NFSAdapter, error) {
 }
 
 // mount ensures the NFS share is mounted. Safe to call multiple times.
+// errNFSClosed is returned to a mount call that Close overtook.
+var errNFSClosed = errors.New("nfs: adapter was closed while mounting")
+
 func (n *NFSAdapter) mount() error {
+	n.stateMu.Lock()
+	n.mounting++
+	n.stateMu.Unlock()
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	err := n.mountLocked()
+
+	n.stateMu.Lock()
+	n.mounting--
+	abandoned := n.closing
+	if n.mounting == 0 {
+		n.closing = false
+	}
+	n.stateMu.Unlock()
+	// The caller's Close has already returned, so this call owns the cleanup,
+	// and its caller must not go on to use an adapter that is being torn down.
+	if abandoned {
+		n.unmountLocked()
+		return errNFSClosed
+	}
+	return err
+}
+
+func (n *NFSAdapter) mountLocked() error {
 	if n.mounted {
 		return nil
 	}
@@ -146,6 +201,10 @@ func (n *NFSAdapter) abortMount(dir string, cause error) error {
 func (n *NFSAdapter) unmount() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.unmountLocked()
+}
+
+func (n *NFSAdapter) unmountLocked() {
 	var still []string
 	for _, dir := range n.stale {
 		if err := unmountExport(dir); err != nil {
@@ -226,6 +285,17 @@ func (n *NFSAdapter) TestConnection() error {
 // Close unmounts the NFS share and cleans up the temporary mount point.
 // It is safe to call if the share is not currently mounted.
 func (n *NFSAdapter) Close() error {
+	// A timed-out caller must not wait out a stalled mount. That mount cleans up
+	// after itself when it returns, so nothing stays mounted.
+	n.stateMu.Lock()
+	inFlight := n.mounting > 0
+	if inFlight {
+		n.closing = true
+	}
+	n.stateMu.Unlock()
+	if inFlight {
+		return nil
+	}
 	n.unmount()
 	return nil
 }
